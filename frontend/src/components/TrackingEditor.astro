@@ -2,6 +2,7 @@
 import {statuses} from '../lib/tracker';
 import Icon from './Icon.astro';
 import CalendarDateInput from './CalendarDateInput.astro';
+import NumberStepper from './NumberStepper.astro';
 ---
 <dialog class="editor" id="tracking-editor" aria-labelledby="editor-title" data-motion-static>
   <div class="editor-hero">
@@ -19,11 +20,11 @@ import CalendarDateInput from './CalendarDateInput.astro';
   <form id="tracking-form">
     <div class="editor-fields">
       <div class="editor-status-field"><label id="editor-status-label" for="editor-status-trigger">Status</label><select name="status" class="editor-status-native" tabindex="-1" aria-hidden="true">{statuses.map(([value,label]) => <option value={value}>{label}</option>)}</select><div class="editor-status-dropdown" data-motion-static><button type="button" id="editor-status-trigger" class="editor-status-trigger tracker-dropdown-trigger" aria-labelledby="editor-status-label editor-status-value" aria-haspopup="listbox" aria-expanded="false" aria-controls="editor-status-options"><span id="editor-status-value">Watching</span><Icon name="chevron-down" /></button><div id="editor-status-options" class="editor-status-options tracker-dropdown-menu" role="listbox" aria-labelledby="editor-status-label" hidden>{statuses.map(([value,label]) => <button type="button" role="option" aria-selected="false" data-editor-status={value}>{label}</button>)}</div></div></div>
-      <div class="editor-score-field"><label for="editor-manual-score">Score</label><div class="score-stepper" data-score-stepper><input id="editor-manual-score" name="manual_score" type="number" min="0" max="10" step="0.1" value="0"/><span class="score-stepper-controls"><button type="button" data-score-step="up" aria-label="Increase score to the next half point"><Icon name="chevron-down" rotate={180} /></button><button type="button" data-score-step="down" aria-label="Decrease score to the previous half point"><Icon name="chevron-down" /></button></span></div></div>
-      <div id="progress-field" class="editor-number-field"><label for="editor-progress">Episode progress</label><div class="score-stepper" data-number-stepper><input id="editor-progress" name="progress" type="number" min="0" step="1"/><span class="score-stepper-controls"><button type="button" data-score-step="up" aria-label="Increase episode progress"><Icon name="chevron-down" rotate={180}/></button><button type="button" data-score-step="down" aria-label="Decrease episode progress"><Icon name="chevron-down"/></button></span></div></div>
-      <label data-game-only data-game-main hidden>Total time (hours)<input name="game_total_hours" type="number" min="0" step="any" inputmode="decimal"/></label>
-      <div class="game-first-completion" data-game-only data-game-first hidden><div class="game-field-heading"><label for="game-first-hours">First completion time</label><button type="button" class="game-value-button" data-game-first-edit>Add</button></div><input id="game-first-hours" name="game_first_hours" type="number" min="0" step="any" inputmode="decimal" aria-label="First completion time in hours" hidden/></div>
-      <label data-game-only data-game-main hidden>Replay count<input name="game_replays" type="number" min="0" max="2147483647" step="1" inputmode="numeric"/></label>
+      <div class="editor-score-field"><label for="editor-manual-score">Score</label><NumberStepper id="editor-manual-score" name="manual_score" label="Score" min={0} max={10} step={0.1} value={0} score/></div>
+      <div id="progress-field" class="editor-number-field"><label for="editor-progress">Episode progress</label><NumberStepper id="editor-progress" name="progress" label="Episode progress"/></div>
+      <div class="editor-number-field" data-game-only data-game-main hidden><label for="game-total-hours">Total time (hours)</label><NumberStepper id="game-total-hours" name="game_total_hours" label="Total time in hours" step="any"/></div>
+      <div class="game-first-completion" data-game-only data-game-first hidden><div class="game-field-heading"><label for="game-first-hours">First completion time</label><button type="button" class="game-value-button" data-game-first-edit>Add</button></div><div class="editor-number-field" data-game-first-input hidden><NumberStepper id="game-first-hours" name="game_first_hours" label="First completion time in hours" step="any"/></div></div>
+      <div class="editor-number-field" data-game-only data-game-main hidden><label for="game-replays">Replay count</label><NumberStepper id="game-replays" name="game_replays" label="Replay count" max={2147483647}/></div>
       <section class="wide game-achievement-editor" data-game-only data-game-main hidden aria-label="Achievement progress">
         <div class="game-field-heading"><span>Achievements</span><button type="button" class="game-value-button" data-game-achievement-add>Add</button><button type="button" class="game-value-button" data-game-achievement-remove hidden aria-label="Remove achievement progress">Remove</button></div>
         <div class="game-achievement-controls" data-game-achievement-controls hidden>
@@ -35,7 +36,7 @@ import CalendarDateInput from './CalendarDateInput.astro';
         </div>
       </section>
       <div class="editor-start-date"><label for="editor-start-date">Start date</label><CalendarDateInput id="editor-start-date" name="start_date" label="Start date"/></div><div class="editor-finish-date"><label for="editor-finish-date">Finish date</label><CalendarDateInput id="editor-finish-date" name="finish_date" label="Finish date"/></div>
-      <label class="editor-rewatches editor-number-field" for="editor-rewatches">Total rewatches<span class="score-stepper" data-number-stepper><input id="editor-rewatches" aria-label="Total rewatches" name="rewatch_count" type="number" min="0" max="10000" step="1"/><span class="score-stepper-controls"><button type="button" data-score-step="up" aria-label="Increase total rewatches"><Icon name="chevron-down" rotate={180}/></button><button type="button" data-score-step="down" aria-label="Decrease total rewatches"><Icon name="chevron-down"/></button></span></span></label>
+      <label class="editor-rewatches editor-number-field" for="editor-rewatches">Total rewatches<NumberStepper id="editor-rewatches" name="rewatch_count" label="Total rewatches" max={10000}/></label>
       <label class="wide editor-notes">Notes<textarea name="notes" rows="2"></textarea></label>
     </div>
     <p id="editor-error" role="alert" class="error-message" hidden></p>

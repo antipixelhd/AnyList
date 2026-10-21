@@ -6,7 +6,8 @@ import test from 'node:test';
 
 const trackerSource = readFileSync(new URL('../src/lib/tracker.ts', import.meta.url), 'utf8')
   .replace('"./responsive-artwork"', JSON.stringify(new URL('../src/lib/responsive-artwork.ts', import.meta.url).href))
-  .replace("'./date-time'", JSON.stringify(new URL('../src/lib/date-time.ts', import.meta.url).href));
+  .replace("'./date-time'", JSON.stringify(new URL('../src/lib/date-time.ts', import.meta.url).href))
+  .replaceAll("'./tracking-statuses.ts'", JSON.stringify(new URL('../src/lib/tracking-statuses.ts', import.meta.url).href));
 const {activityRating, activityAction,trackedWorkHref} = await import(
   `data:text/javascript;base64,${Buffer.from(stripTypeScriptTypes(trackerSource)).toString('base64')}`
 );

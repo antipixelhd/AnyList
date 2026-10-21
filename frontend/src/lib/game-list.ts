@@ -1,9 +1,9 @@
 import {editorStore,seedEditorPage,type EditorTitle} from './editor-store';
 import {gameProgress} from './game-progress';
 import {scoreLabel} from './tracker';
-import {reveal,dismiss} from './ui-motion';
 import {mountListCoverPreview} from './list-cover-preview';
-import {compareGameListEntries} from './game-list-data';
+import {mountListFilterControls} from './list-filter-controls';
+import {compareGameListEntries,gameListQuery} from './game-list-data';
 
 let listeners:AbortController|undefined;
 export function mountGameList(){
@@ -12,22 +12,82 @@ export function mountGameList(){
   listeners=new AbortController();const {signal}=listeners;
   document.addEventListener('astro:before-swap',()=>listeners?.abort(),{signal,once:true});
   if(root.dataset.owner==='true')seedEditorPage();
-  mountListCoverPreview(signal);
+  let previewListeners:AbortController;
+  const mountPreview=()=>{previewListeners?.abort();previewListeners=new AbortController();mountListCoverPreview(previewListeners.signal);};
+  mountPreview();
+  signal.addEventListener('abort',()=>previewListeners.abort(),{once:true});
   const counts=JSON.parse(root.dataset.statusCounts||'{}') as Record<string,number>;
   const hiddenBases=new Set<number>();
   const updateMembership=(row:HTMLElement,status:string|null)=>{
     const previous=row.dataset.entryStatus||null;
     if(previous!==status){if(previous)counts[previous]=(counts[previous]||0)-1;if(status)counts[status]=(counts[status]||0)+1;row.dataset.entryStatus=status||'';}
   };
-  const updateCounts=()=>root.querySelectorAll<HTMLElement>('[data-game-status-count]').forEach(node=>node.textContent=String(node.dataset.gameStatusCount==='all'?Object.values(counts).reduce((sum,value)=>sum+value,0):counts[node.dataset.gameStatusCount!]||0));
-  const updateGroups=()=>root.querySelectorAll<HTMLElement>('[data-game-group]').forEach(group=>group.hidden=!group.querySelector('.entry-row:not([hidden])'));
-  const toggle=root.querySelector<HTMLButtonElement>('[data-game-filter-toggle]')!,panel=root.querySelector<HTMLElement>('#game-list-filter-panel')!,filters=root.querySelector<HTMLElement>('.filters')!;
-  const mobile=matchMedia('(max-width:650px)');
-  const close=()=>{toggle.setAttribute('aria-expanded','false');panel.inert=mobile.matches;void dismiss(panel).then(current=>{if(current&&mobile.matches)filters.classList.remove('open');});};
-  panel.inert=mobile.matches;
-  toggle.addEventListener('click',()=>{if(toggle.getAttribute('aria-expanded')==='true'){close();return;}filters.classList.add('open');panel.inert=false;toggle.setAttribute('aria-expanded','true');reveal(panel);},{signal});
-  mobile.addEventListener('change',()=>{filters.classList.remove('open');toggle.setAttribute('aria-expanded','false');panel.inert=mobile.matches;reveal(panel);},{signal});
-  root.addEventListener('keydown',event=>{if(event.key==='Escape'&&filters.classList.contains('open')){event.preventDefault();close();toggle.focus();}},{signal});
+  const updateCounts=()=>{
+    root.dataset.statusCounts=JSON.stringify(counts);
+    root.querySelectorAll<HTMLElement>('[data-list-status-count]').forEach(node=>node.textContent=String(node.dataset.listStatusCount==='all'?Object.values(counts).reduce((sum,value)=>sum+value,0):counts[node.dataset.listStatusCount!]||0));
+  };
+  const updateGroups=()=>{
+    root.querySelectorAll<HTMLElement>('[data-game-group]').forEach(group=>group.hidden=!group.querySelector('.entry-row:not([hidden])'));
+    root.querySelector<HTMLElement>('#list-empty')!.hidden=!!root.querySelector('.entry-row:not([hidden])');
+  };
+  const filters=root.querySelector<HTMLElement>('#list-filters')!;
+  const controls=mountListFilterControls(filters,signal);
+  const form=filters.querySelector<HTMLFormElement>('[data-list-filter-form]')!;
+  const field=(name:string)=>form.elements.namedItem(name) as HTMLInputElement;
+  const defaultSort=filters.querySelector<HTMLButtonElement>('#reset-filters')!.dataset.defaultSort||'title';
+  let searchTimer:ReturnType<typeof setTimeout>|undefined;
+  let request:AbortController|undefined,generation=0;
+  const invalidate=()=>{generation++;request?.abort();};
+  const submit=async()=>{
+    clearTimeout(searchTimer);invalidate();
+    const revision=generation;request=new AbortController();const requestSignal=request.signal;
+    controls.sync(field('status').value||'all',defaultSort);
+    const values=new URLSearchParams();for(const [key,value] of new FormData(form))if(typeof value==='string')values.set(key,value);
+    const query=gameListQuery(values,defaultSort).query;
+    const url=new URL(location.href);url.search=query.toString();
+    const content=root.querySelector<HTMLElement>('.list-content')!;
+    content.setAttribute('aria-busy','true');root.querySelector('[data-game-list-error]')?.remove();
+    try{
+      // Reuse the server's bounded, private-safe list renderer without replacing
+      // the controls: typing, slider drags, mobile panel and focus stay intact.
+      const response=await fetch(url,{signal:requestSignal,cache:'no-store'});
+      if(!response.ok)throw new Error('Unable to filter this list.');
+      const html=new DOMParser().parseFromString(await response.text(),'text/html');
+      const next=html.querySelector<HTMLElement>('[data-game-list]'),nextContent=next?.querySelector('.list-content');
+      if(!next||!nextContent)throw new Error('Unable to filter this list.');
+      const nextCounts=JSON.parse(next.dataset.statusCounts||'{}');
+      if(signal.aborted||revision!==generation)return;
+      for(const key of Object.keys(counts))delete counts[key];Object.assign(counts,nextCounts);
+      for(const key of ['status','favorites','sort'])root.dataset[key]=next.dataset[key];
+      content.replaceChildren(...document.importNode(nextContent,true).childNodes);
+      const seed=document.querySelector('#list-editor-entries'),nextSeed=html.querySelector('#list-editor-entries');
+      if(seed&&nextSeed){seed.textContent=nextSeed.textContent;seedEditorPage();}
+      reconcileRows();mountPreview();updateCounts();
+      history.replaceState(history.state,'',url);
+    }catch(error){
+      if(signal.aborted||revision!==generation)return;
+      const message=document.createElement('p');message.className='error-message';message.dataset.gameListError='';message.setAttribute('role','alert');
+      message.append('Unable to filter this list. ');
+      const retry=document.createElement('button');retry.type='button';retry.className='lab-text-button';retry.textContent='Retry';retry.addEventListener('click',submit,{signal});message.append(retry);content.prepend(message);
+    }finally{if(!signal.aborted&&revision===generation){request=undefined;content.removeAttribute('aria-busy');}}
+  };
+  signal.addEventListener('abort',()=>{clearTimeout(searchTimer);invalidate();},{once:true});
+  form.addEventListener('submit',event=>{event.preventDefault();void submit();},{signal});
+  controls.sync(field('status').value||'all',defaultSort);
+  filters.querySelectorAll<HTMLButtonElement>('[data-status]').forEach(button=>button.addEventListener('click',()=>{
+    field('status').value=button.dataset.status==='all'?'':button.dataset.status!;submit();
+  },{signal}));
+  form.addEventListener('input',event=>{
+    const input=event.target as HTMLInputElement;
+    if(input.id==='year-filter')return;
+    clearTimeout(searchTimer);invalidate();
+    if(input.name==='q')searchTimer=setTimeout(submit,300);else void submit();
+  },{signal});
+  filters.querySelector('#year-filter')!.addEventListener('change',submit,{signal});
+  filters.querySelector('#reset-filters')!.addEventListener('click',()=>{
+    for(const name of ['q','genre','favorites','status','year'])field(name).value='';
+    filters.querySelector<HTMLInputElement>('#year-filter')!.value='0';field('sort').value=defaultSort;submit();
+  },{signal});
   const paint=(title:EditorTitle)=>{
     if(root.dataset.owner!=='true'||title.type!=='game')return;
     if(!['expansion','dlc'].includes(title.game_class||'')){
@@ -46,7 +106,7 @@ export function mountGameList(){
       row.dataset.score=String(entry.score??-1);row.dataset.hours=String(entry.total_seconds??-1);row.dataset.updated=entry.updated_at||'';
       row.querySelector('[data-score-label]')!.textContent=scoreLabel(entry.score);
       const progress=gameProgress(entry);row.querySelector('[data-game-list-hours]')!.textContent=progress.hours||'—';
-      const achievement=row.querySelector<HTMLElement>('[data-game-list-achievements]');if(achievement){achievement.textContent=progress.achievement||'—';achievement.dataset.known=String(progress.achievement!=null);}
+      row.querySelectorAll<HTMLElement>('[data-game-list-achievements]').forEach(achievement=>{achievement.textContent=progress.achievement||'—';achievement.dataset.known=String(progress.achievement!=null);if(achievement.classList.contains('game-inline-achievements'))achievement.setAttribute('aria-label',`Achievements ${progress.achievement||'unknown'}`);});
       row.querySelector<HTMLElement>('[data-game-list-favorite]')!.hidden=!title.favorite;
       root.querySelector(`[data-game-group="${entry.status}"] .entry-table`)?.append(row);
     }
@@ -58,12 +118,18 @@ export function mountGameList(){
     updateCounts();
     updateGroups();
   };
-  if(root.dataset.owner==='true')root.querySelectorAll<HTMLElement>('[data-game-entry]').forEach(row=>{
+  const reconcileRows=()=>{if(root.dataset.owner==='true')root.querySelectorAll<HTMLElement>('[data-game-entry]').forEach(row=>{
     const title=editorStore.findSubject({kind:'game',catalogue_id:Number(row.dataset.gameEntry)});if(!title)return;
     const entry=title.entry,achievement=row.querySelector('[data-game-list-achievements]');
-    if(!entry||entry.status!==row.dataset.entryStatus||Number(entry.score??-1)!==Number(row.dataset.score)||Number(entry.total_seconds??-1)!==Number(row.dataset.hours)||(achievement&&(gameProgress(entry).achievement||'—')!==achievement.textContent))paint(title);
-  });
-  document.addEventListener('anylist:editor-state',event=>paint((event as CustomEvent<EditorTitle>).detail),{signal});
+    if(!entry||entry.status!==row.dataset.entryStatus||Number(entry.score??-1)!==Number(row.dataset.score)||Number(entry.total_seconds??-1)!==Number(row.dataset.hours)||(achievement&&(gameProgress(entry).achievement||'—')!==achievement.textContent)||row.querySelector<HTMLElement>('[data-game-list-favorite]')!.hidden===!!title.favorite)paint(title);
+  });};
+  reconcileRows();
+  document.addEventListener('anylist:editor-state',event=>{
+    const title=(event as CustomEvent<EditorTitle>).detail;paint(title);
+    // A read begun before an optimistic write/commit may carry an older private
+    // snapshot. Restart it so it cannot seed that snapshot over the saved state.
+    if(title.type==='game'&&request&&!request.signal.aborted)void submit();
+  },{signal});
   root.addEventListener('click',async event=>{
     const button=(event.target as Element).closest<HTMLButtonElement>('[data-game-list-rate]');if(!button)return;
     const title=editorStore.findSubject({kind:'game',catalogue_id:Number(button.dataset.gameListRate)});if(!title)return;

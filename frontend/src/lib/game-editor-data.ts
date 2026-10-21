@@ -1,5 +1,8 @@
-/** Calendar dates and actual elapsed seconds cross the API boundary unchanged. */
-export const gameStatuses = [['planning','Planned'],['playing','Playing'],['paused','Paused'],['completed','Completed'],['dropped','Dropped']] as const;
+import {statuses} from './tracking-statuses.ts';
+
+/** Keep list groups and editor options in the same order across media domains. */
+export const gameStatuses = statuses.map(([value,label]):readonly [string,string] =>
+  value==='watching'?['playing','Playing']:value==='planning'?['planning','Planned']:[value,label]);
 
 export function hoursInput(seconds:number|null|undefined):string {
   return seconds==null?'':Number((seconds/3600).toFixed(6)).toString();

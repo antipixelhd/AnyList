@@ -1,0 +1,42 @@
+---
+import Icon from './Icon.astro';
+import ListFilterSelect from './ListFilterSelect.astro';
+interface Props {
+  statuses: ReadonlyArray<readonly [string,string]>;
+  counts: Record<string,number>;
+  genres: string[];
+  years: string[];
+  status?: string;
+  sort?: string;
+  defaultSort?: string;
+  query?: string;
+  genre?: string;
+  year?: string;
+  favorites?: boolean;
+  progressLabel?: string;
+}
+const {statuses,counts,genres,years,status='all',sort='title',defaultSort='title',query='',genre='',year='',favorites=false,progressLabel='Progress'}=Astro.props;
+const availableYears=[...years].sort();
+const yearPosition=year?availableYears.indexOf(year)+1:0;
+---
+<aside class="filters" id="list-filters" aria-label="List filters">
+  <form method="GET" class="list-filter-form" data-list-filter-form>
+    <input type="hidden" name="status" value={status==='all'?'':status}/>
+    <input type="hidden" name="year" value={year} data-list-selected-year/>
+    <div class="list-filter-search-row">
+      <label class="filter-search"><Icon name="search"/><input id="list-search" name="q" type="search" value={query} placeholder="Filter titles" aria-label="Search this list" maxlength="200"/></label>
+      <button type="button" class="mobile-filter-toggle" aria-label="Filters and sorting" aria-expanded="false" aria-controls="list-filter-panel"><Icon name="ellipsis"/></button>
+    </div>
+    <div class="list-filter-panel" id="list-filter-panel">
+      <h2>Lists</h2>
+      <div class="status-filters"><button type="button" data-status="all" class:list={{selected:status==='all'}} aria-pressed={status==='all'}>All <span data-list-status-count="all">{Object.values(counts).reduce((sum,count)=>sum+count,0)}</span></button>{statuses.map(([value,label])=><button type="button" data-status={value} class:list={{selected:status===value}} aria-pressed={status===value}>{label}<span data-list-status-count={value}>{counts[value]||0}</span></button>)}</div>
+      <h2>Filters</h2>
+      <ListFilterSelect id="genre-filter" name="genre" label="Genre" value={genre} options={[["","All genres"],...genres.map((value):[string,string]=>[value,value])]}/>
+      <label class="filter-year filter-control"><span class="filter-year-heading"><span>Year</span><output id="year-value" for="year-filter">{year||'Any year'}</output></span><input id="year-filter" type="range" min="0" max={availableYears.length} step="1" value={yearPosition} data-years={JSON.stringify(availableYears)} aria-label="Release year" aria-valuetext={year||'Any year'} disabled={!availableYears.length}/></label>
+      <ListFilterSelect id="favorite-filter" name="favorites" label="Favorites" value={favorites?'true':''} options={[["","All entries"],["true","Favorites only"]]}/>
+      <h2>Sort</h2>
+      <ListFilterSelect id="sort-filter" name="sort" label="Order" value={sort} options={[["title","Title"],["score","Score"],["progress",progressLabel],["updated","Recently updated"]]}/>
+      <button type="button" class="button-secondary" id="reset-filters" data-default-sort={defaultSort}>Reset filters</button>
+    </div>
+  </form>
+</aside>

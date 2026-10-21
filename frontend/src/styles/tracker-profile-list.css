@@ -149,6 +149,9 @@
   align-items:center;
   gap:12px
 }
+.list-filter-form {
+  display:contents
+}
 .list-filter-search-row .filter-search {
   flex:1;
   min-width:0
@@ -255,8 +258,9 @@
   cursor:pointer
 }
 .filter-dropdown-trigger:focus-visible {
-  border-color:var(--blue);
-  outline:2px solid color-mix(in srgb,var(--blue) 20%,transparent)
+  outline:none;
+  background:color-mix(in srgb,var(--blue) 12%,var(--dropdown-bg));
+  color:var(--bright)
 }
 .filter-dropdown-trigger .ui-icon {
   color:var(--muted);
@@ -365,8 +369,13 @@
   background:var(--bg)
 }
 .filter-year input[type="range"]:focus-visible {
-  outline:2px solid var(--blue);
-  outline-offset:3px
+  outline:none
+}
+.filter-year input[type="range"]:focus-visible::-webkit-slider-thumb {
+  background:var(--blue)
+}
+.filter-year input[type="range"]:focus-visible::-moz-range-thumb {
+  background:var(--blue)
 }
 .filter-year input[type="range"]:disabled {
   cursor:not-allowed;

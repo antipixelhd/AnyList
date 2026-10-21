@@ -14,6 +14,7 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
   const add=dialog.querySelector<HTMLButtonElement>('[data-game-achievement-add]')!;
   const remove=dialog.querySelector<HTMLButtonElement>('[data-game-achievement-remove]')!;
   const firstEdit=dialog.querySelector<HTMLButtonElement>('[data-game-first-edit]')!;
+  const firstInput=dialog.querySelector<HTMLElement>('[data-game-first-input]')!;
   const list=dialog.querySelector<HTMLElement>('[data-game-achievement-options]')!;
   const guidance=dialog.querySelector<HTMLElement>('[data-game-achievement-guidance]')!;
   const loadMore=dialog.querySelector<HTMLButtonElement>('[data-game-achievement-more]')!;
@@ -155,8 +156,8 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
     if(status==='completed'&&!totalTouched&&current.total_seconds==null&&first.value)total.value=first.value;
     renderFirst();
   };
-  firstEdit.addEventListener('click',()=>{first.hidden=false;firstEdit.hidden=true;first.focus();first.select();},{signal});
-  first.addEventListener('blur',()=>{if(!first.checkValidity())return;first.hidden=true;firstEdit.hidden=false;renderFirst();},{signal});
+  firstEdit.addEventListener('click',()=>{firstInput.hidden=false;firstEdit.hidden=true;first.focus();first.select();},{signal});
+  firstInput.addEventListener('focusout',event=>{if(firstInput.contains(event.relatedTarget as Node)||!first.checkValidity())return;firstInput.hidden=true;firstEdit.hidden=false;renderFirst();},{signal});
   first.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();first.blur();}},{signal});
   total.addEventListener('input',()=>{totalTouched=true;syncFirst();},{signal});
   first.addEventListener('input',()=>{firstTouched=true;if(!totalTouched&&current.total_seconds==null)total.value=first.value;renderFirst();},{signal});
@@ -192,7 +193,7 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
       });
       if(!game)return;
       total.value=hoursInput(current.total_seconds);first.value=hoursInput(current.completion_seconds);replays.value=current.replay_count==null?'':String(current.replay_count);
-      first.hidden=true;firstEdit.hidden=false;renderFirst();
+      firstInput.hidden=true;firstEdit.hidden=false;renderFirst();
       initialMode=shownMode=summary().mode||'';
       mode.replaceChildren(new Option('Not tracked',''));
       const known=summary().total!=null;

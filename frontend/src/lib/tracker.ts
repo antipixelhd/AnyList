@@ -10,10 +10,8 @@ export async function tracker(path: string, token?: string) {
   return response.json();
 }
 
-export const statuses = [
-  ['watching', 'Watching'], ['completed', 'Completed'], ['paused', 'Paused'],
-  ['dropped', 'Dropped'], ['planning', 'Planning'],
-];
+export {statuses} from './tracking-statuses.ts';
+import {statuses} from './tracking-statuses.ts';
 
 export function artwork(path: string | null, size = 'w342',route:ArtworkRoute='auto') {
   if (!path) return '';
