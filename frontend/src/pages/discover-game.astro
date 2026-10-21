@@ -1,0 +1,26 @@
+---
+import Tracker from '../layouts/Tracker.astro';
+const id=Number(Astro.url.searchParams.get('id'));
+if(!Number.isSafeInteger(id)||id<=0)return Astro.redirect('/browse');
+---
+<Tracker title="Loading game"><div class="page-width" data-resolve-game={id}><p role="status">Loading game details…</p><button type="button" class="button-secondary" data-resolve-game-retry hidden>Try again</button></div></Tracker>
+<script>
+import {resolveGameId} from '../lib/game-discovery';
+let controller:AbortController|undefined;
+document.addEventListener('astro:page-load',()=>{
+  controller?.abort();
+  const host=document.querySelector<HTMLElement>('[data-resolve-game]');
+  if(!host)return;
+  const current=new AbortController();controller=current;
+  const message=host.querySelector<HTMLElement>('[role=status]')!;
+  const retry=host.querySelector<HTMLButtonElement>('[data-resolve-game-retry]')!;
+  const resolve=async()=>{
+    retry.hidden=true;message.textContent='Loading game details…';
+    try{const id=await resolveGameId(Number(host.dataset.resolveGame),current.signal);if(!current.signal.aborted)location.replace(`/games/${id}`);}
+    catch(cause){if(!current.signal.aborted){message.textContent=(cause as Error).message;retry.hidden=false;}}
+  };
+  retry.addEventListener('click',resolve,{signal:current.signal});
+  document.addEventListener('astro:before-swap',()=>current.abort(),{once:true,signal:current.signal});
+  void resolve();
+});
+</script>

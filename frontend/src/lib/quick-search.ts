@@ -4,6 +4,7 @@ import { editorStore, type EditorTitle } from './editor-store';
 import { responsiveArtwork } from './responsive-artwork';
 import {quickSearchRequests,rankCombinedMedia,createQuickTitleBatch,createQuickSearchReader,visibleQuickSearchSections,availableQuickSearchTabs,resolvedQuickSearchTab,steppedQuickSearchTab,mergeContributorResults,type SearchSection} from './quick-search-data';
 import { animate } from 'motion/mini';
+import {gameResultHref,resolveGameId,type GameSearchResult} from './game-discovery';
 
 let pageListeners: AbortController;
 let mountedDialog:HTMLDialogElement|null=null;
@@ -12,7 +13,8 @@ export function mountQuickSearch() {
   if(nextDialog===mountedDialog&&pageListeners&&!pageListeners.signal.aborted)return;
   pageListeners?.abort();
   pageListeners = new AbortController();
-  type SearchResult = { id: number | null; tmdb_id?: number; type: 'movie' | 'series'; title: string; poster?: string | null; year?: string | null; search_rank?:number };
+  type MediaSearchResult = { id: number | null; tmdb_id?: number; type: 'movie' | 'series'; title: string; poster?: string | null; year?: string | null; search_rank?:number };
+  type SearchResult = MediaSearchResult | GameSearchResult;
   const dialog = document.querySelector<HTMLDialogElement>('[data-quick-search]');
   const openButton = document.querySelector<HTMLButtonElement>('[data-quick-search-open]');
   if (!dialog || !openButton) return;
@@ -23,8 +25,9 @@ export function mountQuickSearch() {
   const mobile=matchMedia('(max-width:650px)');
   const combined=()=>dialog.dataset.combined==='yes';
   const showMoviesSeries=()=>dialog.dataset.showMoviesSeries!=='false';
+  const showGames=()=>dialog.dataset.showGames!=='false';
   const tabs: ReadonlyArray<{kind:SearchSection;label:string}> = [
-    {kind:'all',label:'Movies & Series'}, {kind:'movie',label:'Movies'}, {kind:'series',label:'Series'}, {kind:'actor',label:'Actors'},
+    {kind:'all',label:'Movies & Series'}, {kind:'movie',label:'Movies'}, {kind:'series',label:'Series'}, {kind:'game',label:'Games'}, {kind:'actor',label:'Actors'},
     {kind:'staff',label:'Crew'}, {kind:'studio',label:'Studios'},
   ];
   let activeTab:SearchSection=combined()?'all':'movie';
@@ -41,18 +44,19 @@ export function mountQuickSearch() {
   const progress = dialog?.querySelector<HTMLElement>('[data-search-progress]');
   const addIcon = document.querySelector<HTMLTemplateElement>('[data-search-add-icon]');
   const editorTitles = new WeakMap<HTMLButtonElement, EditorTitle>();
+  const gameResults = new WeakMap<HTMLButtonElement, GameSearchResult>();
   // Discard restoration requests from older builds; saved edits now end search.
   try { sessionStorage.removeItem('anylist.quick-search.restore'); } catch { /* Storage may be unavailable. */ }
   let controller: AbortController | null = null;
   let timer = 0;
   let progressTimer = 0;
-  let latest: Record<'movie'|'series', SearchResult[]> = { movie: [], series: [] };
+  let latest:{movie:MediaSearchResult[];series:MediaSearchResult[];game:GameSearchResult[]} = { movie: [], series: [], game: [] };
   let contributors:Record<'actor'|'staff'|'studio',ContributorResult[]>={actor:[],staff:[],studio:[]};
-  let pending=0,failed=0,mediaPending=0;
+  let pending=0,failed=0,mediaPending=0,gamePending=false;
   const selected=()=>activeTab;
   const updatePlaceholder=()=>{input!.placeholder=mobile.matches?'Search titles, people, studios…':'Search titles, people and studios…';};
-  const resultCounts=()=>({all:latest.movie.length+latest.series.length,movie:latest.movie.length,series:latest.series.length,actor:contributors.actor.length,staff:contributors.staff.length,studio:contributors.studio.length});
-  const availableTabs=()=>availableQuickSearchTabs(resultCounts(),(input?.value.trim().length||0)>=2,mediaPending>0,combined(),showMoviesSeries());
+  const resultCounts=()=>({all:latest.movie.length+latest.series.length,movie:latest.movie.length,series:latest.series.length,game:latest.game.length,actor:contributors.actor.length,staff:contributors.staff.length,studio:contributors.studio.length});
+  const availableTabs=()=>availableQuickSearchTabs(resultCounts(),(input?.value.trim().length||0)>=2,mediaPending>0,combined(),showMoviesSeries(),showGames(),gamePending);
   const tabNav=dialog.querySelector<HTMLElement>('[data-search-tabs]')!;
   function updateTabs(available=availableTabs()) {
     activeTab=resolvedQuickSearchTab(activeTab,available);
@@ -72,11 +76,11 @@ export function mountQuickSearch() {
   updateTabs();
   updatePlaceholder();
 
-  const resultUrl = (item: SearchResult) => item.id ? `/title/${item.id}` : `/discover-title?type=${item.type}&id=${item.tmdb_id}`;
+  const resultUrl = (item: SearchResult) => item.type==='game'?gameResultHref(item):item.id ? `/title/${item.id}` : `/discover-title?type=${item.type}&id=${item.tmdb_id}`;
   function unique(items: SearchResult[]) {
     const seen = new Set<string>();
     return items.filter(item => {
-      const key = `${item.type}:${item.title.toLocaleLowerCase()}:${item.year || ''}`;
+      const key = item.type==='game'?`game:${item.igdb_id}`:`${item.type}:${item.title.toLocaleLowerCase()}:${item.year || ''}`;
       if (seen.has(key)) return false;
       seen.add(key); return true;
     });
@@ -106,18 +110,19 @@ export function mountQuickSearch() {
     }
     const copy = document.createElement('span');
     const name = document.createElement('strong'); name.textContent = item.title;
-    const meta = document.createElement('small'); meta.textContent = [item.year, item.type === 'movie' ? 'Movie' : 'Series'].filter(Boolean).join(' · ');
+    const meta = document.createElement('small'); meta.textContent = [item.year, item.type === 'game'?(item.game_class==='expansion'?'Expansion':'Game'):item.type === 'movie' ? 'Movie' : 'Series'].filter(Boolean).join(' · ');
     copy.append(name, meta); link.append(copy);
     const add = document.createElement('button');
     add.type = 'button';
     add.className = 'quick-search-add';
     add.dataset.searchAdd = '';
-    if (item.id) add.dataset.mediaId = String(item.id);
-    else if (item.tmdb_id) add.dataset.tmdbId = String(item.tmdb_id);
+    if (item.id&&item.type!=='game') add.dataset.mediaId = String(item.id);
+    else if (item.type!=='game'&&item.tmdb_id) add.dataset.tmdbId = String(item.tmdb_id);
     add.dataset.mediaType = item.type;
     add.setAttribute('aria-label', `Open list editor for ${item.title}`);
     add.title = `Open list editor for ${item.title}`;
-    editorTitles.set(add, editorStore.seed(item as unknown as EditorTitle));
+    if(item.type==='game')gameResults.set(add,item);
+    else editorTitles.set(add, editorStore.seed(item as unknown as EditorTitle));
     if (addIcon) add.append(addIcon.content.cloneNode(true));
     const addLabel = document.createElement('span');
     addLabel.textContent = 'List';
@@ -125,7 +130,7 @@ export function mountQuickSearch() {
     row.append(link, add);
     return row;
   }
-  function fill(kind: 'all'|'movie'|'series', items: SearchResult[]) {
+  function fill(kind: 'all'|'movie'|'series'|'game', items: SearchResult[]) {
     const target = dialog?.querySelector<HTMLElement>(`[data-search-results="${kind}"]`);
     if (!target) return;
     target.replaceChildren(...items.slice(0,8).map(resultNode));
@@ -148,16 +153,17 @@ export function mountQuickSearch() {
     state.textContent = message;
     state.hidden = !message;
   }
-  function render(updated?:'titles'|'contributors') {
+  function render(updated?:'titles'|'games'|'contributors') {
     if(updated==='titles'){
       fill('movie',latest.movie);fill('series',latest.series);fill('all', rankCombinedMedia(latest.movie, latest.series));
     }
     if(updated==='contributors')for(const kind of ['actor','staff','studio'] as const)fillContributors(kind);
+    if(updated==='games')fill('game',latest.game);
     const counts=resultCounts();
     const available=availableTabs();
     updateTabs(available);
-    const visible=visibleQuickSearchSections(mobile.matches,selected(),dialog?.dataset.combined==='yes',counts);
-    for (const kind of ['all','movie','series','actor','staff','studio'] as const) {
+    const visible=visibleQuickSearchSections(mobile.matches,selected(),dialog?.dataset.combined==='yes',counts,showMoviesSeries(),showGames());
+    for (const kind of ['all','movie','series','game','actor','staff','studio'] as const) {
       const section = dialog?.querySelector<HTMLElement>(`[data-search-section="${kind}"]`);
       if (section) section.hidden = !visible.includes(kind);
     }
@@ -186,13 +192,13 @@ export function mountQuickSearch() {
     const query = input?.value.trim() || '';
     controller?.abort();
     clearTimeout(progressTimer);progress?.classList.remove('visible');
-    latest={movie:[],series:[]};contributors={actor:[],staff:[],studio:[]};failed=0;pending=0;mediaPending=query.length>=2&&showMoviesSeries()?2:0;
+    latest={movie:[],series:[],game:[]};contributors={actor:[],staff:[],studio:[]};failed=0;pending=0;mediaPending=query.length>=2&&showMoviesSeries()?2:0;gamePending=query.length>=2&&showGames();
     if (resultShell) resultShell.hidden = true;
     if (announcement) announcement.textContent = '';
     if (query.length < 2) {
       updateTabs();
       showState(query ? 'Type one more character.' : '');
-      fill('movie',[]); fill('series',[]); fill('all',[]);
+      fill('movie',[]); fill('series',[]); fill('all',[]);fill('game',[]);
       if (resultShell) resultShell.setAttribute('aria-busy','false');
       return;
     }
@@ -203,8 +209,8 @@ export function mountQuickSearch() {
     clearTimeout(progressTimer);
     progressTimer=window.setTimeout(()=>{if(controller===current)progress?.classList.add('visible');},150);
     try {
-      const requests=quickSearchRequests(query,undefined,showMoviesSeries());pending=requests.length;
-      const settleTitles = createQuickTitleBatch<SearchResult>();
+      const requests=quickSearchRequests(query,undefined,showMoviesSeries(),showGames());pending=requests.length;
+      const settleTitles = createQuickTitleBatch<MediaSearchResult>();
       updateTabs();
       await Promise.all(requests.map(async request=>{
         let titleRows: SearchResult[] = [];
@@ -220,9 +226,10 @@ export function mountQuickSearch() {
           pending--;
           if(request.kind==='movie'||request.kind==='series'){
             mediaPending--;
-            const batch=settleTitles(request.kind,titleRows);
-            if(batch){latest=batch;render('titles');}
+            const batch=settleTitles(request.kind,titleRows as MediaSearchResult[]);
+            if(batch){latest={...latest,...batch};render('titles');}
           }
+          if(request.kind==='game'){gamePending=false;latest.game=titleRows as GameSearchResult[];render('games');}
           render();
         }}
       }));
@@ -237,7 +244,7 @@ export function mountQuickSearch() {
     activeTab=combined()?'all':'movie';updatePlaceholder();dialog?.removeAttribute('data-search-expanded');
     tabAnimations.forEach(control=>control.cancel());tabAnimations=[];
     if (input) input.value = '';
-    latest={movie:[],series:[]};contributors={actor:[],staff:[],studio:[]};mediaPending=0;
+    latest={movie:[],series:[],game:[]};contributors={actor:[],staff:[],studio:[]};mediaPending=0;gamePending=false;
     updateTabs();
     if (resultShell) resultShell.hidden = true;
     if (announcement) announcement.textContent = '';
@@ -247,9 +254,27 @@ export function mountQuickSearch() {
   }
   openButton?.addEventListener('click', open,{signal:pageListeners.signal});
   closeButton?.addEventListener('click', () => { if (dialog) void closeDialog(dialog); },{signal:pageListeners.signal});
-  resultShell?.addEventListener('click', event => {
+  resultShell?.addEventListener('click', async event => {
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-search-add]');
     if (!button || button.disabled) return;
+    const game=gameResults.get(button);
+    if(game){
+      const current=controller;
+      if(!current||current.signal.aborted||!dialog.open)return;
+      button.disabled=true;
+      try{
+        const id=await resolveGameId(game.igdb_id,current.signal);
+        const subject={kind:'game' as const,catalogue_id:id};
+        const title=await editorStore.loadSubject(subject);
+        if(controller!==current||current.signal.aborted||!dialog.open)return;
+        const image=button.closest('.quick-search-result')?.querySelector<HTMLImageElement>('img');
+        editorStore.warmArtwork(title,image?.currentSrc||image?.src);
+        dialog.close();
+        document.dispatchEvent(new CustomEvent('anylist:open-editor',{detail:{subject,title,opener:openButton}}));
+      }catch(cause){if(!current.signal.aborted)showState((cause as Error).message);}
+      finally{button.disabled=false;}
+      return;
+    }
     const title = editorTitles.get(button);
     if (!title || !dialog?.open) return;
     const image = button.closest('.quick-search-result')?.querySelector<HTMLImageElement>('img');
@@ -277,7 +302,7 @@ export function mountQuickSearch() {
   dialog?.addEventListener('close', () => { clearTimeout(timer);clearTimeout(progressTimer);progress?.classList.remove('visible');controller?.abort(); },{signal:pageListeners.signal});
   input?.addEventListener('input', () => {
     clearTimeout(timer);clearTimeout(progressTimer);controller?.abort();controller=null;progress?.classList.remove('visible');
-    latest={movie:[],series:[]};contributors={actor:[],staff:[],studio:[]};mediaPending=input.value.trim().length>=2&&showMoviesSeries()?2:0;
+    latest={movie:[],series:[],game:[]};contributors={actor:[],staff:[],studio:[]};mediaPending=input.value.trim().length>=2&&showMoviesSeries()?2:0;gamePending=input.value.trim().length>=2&&showGames();
     if (resultShell) resultShell.hidden = true;
     if (announcement) announcement.textContent = '';
     showState('');
@@ -285,7 +310,7 @@ export function mountQuickSearch() {
     timer = window.setTimeout(search, 60);
   },{signal:pageListeners.signal});
   document.addEventListener('anylist:quick-search-policy-changed',()=>{
-    controller?.abort();latest={movie:[],series:[]};mediaPending=0;
+    controller?.abort();latest={movie:[],series:[],game:[]};mediaPending=0;gamePending=false;
     if(dialog.open)void search();else updateTabs();
   },{signal:pageListeners.signal});
   tabButtons.forEach(button=>button.addEventListener('click',()=>{

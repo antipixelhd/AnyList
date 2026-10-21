@@ -1,8 +1,8 @@
 import {createBrowseCache} from './browse-cache.ts';
-export type SearchSection = 'all' | 'movie' | 'series' | 'actor' | 'staff' | 'studio';
+export type SearchSection = 'all' | 'movie' | 'series' | 'game' | 'actor' | 'staff' | 'studio';
 export type ResultSection = SearchSection;
 export type ContributorScope = 'people'|'actor'|'staff'|'studio';
-export type SearchRequest = {kind:'movie'|'series'|'contributors';url:string;scope?:ContributorScope};
+export type SearchRequest = {kind:'movie'|'series'|'game'|'contributors';url:string;scope?:ContributorScope};
 
 function verificationPause(signal:AbortSignal) {
   return new Promise<void>((resolve,reject)=>{
@@ -53,8 +53,9 @@ export function createQuickSearchReader(lifetime: AbortSignal, fetcher: typeof f
     },
   };
 }
-export function quickSearchRequests(query:string,region?:string,showMoviesSeries=true): SearchRequest[] {
+export function quickSearchRequests(query:string,region?:string,showMoviesSeries=true,showGames=true): SearchRequest[] {
   const requests:SearchRequest[] = (showMoviesSeries?['movie','series'] as const:[]).map(kind=>({kind,url:`/api/proxy/tracking/catalog?${new URLSearchParams({media_type:kind,q:query,...(region?{region}:{})})}`}));
+  if(showGames)requests.push({kind:'game',url:`/api/proxy/tracking/games/search?${new URLSearchParams({q:query})}`});
   for(const scope of ['people','studio'] as const)requests.push({kind:'contributors',scope,url:`/api/proxy/tracking/quick-search/contributors?${new URLSearchParams({q:query,kind:scope})}`});
   return requests;
 }
@@ -78,17 +79,19 @@ export function mergeContributorResults<T>(current:Record<'actor'|'staff'|'studi
     staff:scope==='studio'||scope==='actor'?current.staff:incoming.staff||[],
     studio:scope==='people'||scope==='actor'||scope==='staff'?current.studio:incoming.studio||[]};
 }
-export function visibleQuickSearchSections(mobile:boolean, selected:SearchSection, combined:boolean, counts:Record<ResultSection,number>): ResultSection[] {
-  const sections:ResultSection[] = mobile ? [resolvedQuickSearchTab(selected,quickSearchTabOrder(combined))] : quickSearchTabOrder(combined);
-  return sections.filter(section=>counts[section]>0);
+type SectionCounts=Partial<Record<ResultSection,number>>;
+export function visibleQuickSearchSections(mobile:boolean, selected:SearchSection, combined:boolean, counts:SectionCounts,showMoviesSeries=true,showGames=true): ResultSection[] {
+  const order=quickSearchTabOrder(combined,showMoviesSeries,showGames);
+  const sections:ResultSection[] = mobile ? [resolvedQuickSearchTab(selected,order)] : order;
+  return sections.filter(section=>(counts[section]||0)>0);
 }
 
-function quickSearchTabOrder(combined:boolean):SearchSection[] {
-  return [...(combined ? ['all' as const] : ['movie' as const,'series' as const]),'actor','staff','studio'];
+function quickSearchTabOrder(combined:boolean,showMoviesSeries=true,showGames=true):SearchSection[] {
+  return [...(showMoviesSeries?(combined ? ['all' as const] : ['movie' as const,'series' as const]):[]),...(showGames?['game' as const]:[]),'actor','staff','studio'];
 }
-export function availableQuickSearchTabs(counts:Record<ResultSection,number>, searching:boolean, mediaPending=false, combined=true,showMoviesSeries=true):SearchSection[] {
-  const order=quickSearchTabOrder(combined).filter(section=>showMoviesSeries||!['all','movie','series'].includes(section));
-  return searching?order.filter(kind=>counts[kind]>0||(['all','movie','series'].includes(kind)&&mediaPending)):order;
+export function availableQuickSearchTabs(counts:SectionCounts, searching:boolean, mediaPending=false, combined=true,showMoviesSeries=true,showGames=true,gamePending=false):SearchSection[] {
+  const order=quickSearchTabOrder(combined,showMoviesSeries,showGames);
+  return searching?order.filter(kind=>(counts[kind]||0)>0||(['all','movie','series'].includes(kind)&&mediaPending)||(kind==='game'&&gamePending)):order;
 }
 export function resolvedQuickSearchTab(selected:SearchSection, available:SearchSection[]):SearchSection {
   return available.includes(selected)?selected:available[0]??'all';

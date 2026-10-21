@@ -81,7 +81,7 @@ const mobileNavigation = appMobileNavigation({profile, pathname, signedIn: !!use
   </div>
 </header>
 <MobileNavigation {...mobileNavigation} mediaDomains={domains} quiet={quietNotifications} attention={attentionNotifications} notificationLabel={notificationLabel}/>
-{user && <QuickSearch combineLists={combineLists} showMoviesSeries={domains.show_movies_series} hideTrigger/>}
+{user && <QuickSearch combineLists={combineLists} showMoviesSeries={domains.show_movies_series} showGames={domains.show_games} hideTrigger/>}
 {user && <TrackingEditor />}
 {user && <script>
   import {subscribeNotifications, type NotificationSnapshot} from '../lib/notification-store';
@@ -286,7 +286,9 @@ const mobileNavigation = appMobileNavigation({profile, pathname, signedIn: !!use
     const quickSearch = document.querySelector<HTMLElement>('[data-quick-search]');
     if (quickSearch) {
       if(change.combine_lists!=null){quickSearch.dataset.combined = change.combine_lists ? 'yes' : 'no';quickSearch.querySelector('.quick-search-results')?.classList.toggle('combined', change.combine_lists);}
-      if(change.show_movies_series!=null){quickSearch.dataset.showMoviesSeries=String(change.show_movies_series);document.dispatchEvent(new Event('anylist:quick-search-policy-changed'));}
+      if(change.show_movies_series!=null)quickSearch.dataset.showMoviesSeries=String(change.show_movies_series);
+      if(change.show_games!=null)quickSearch.dataset.showGames=String(change.show_games);
+      if(change.show_movies_series!=null||change.show_games!=null)document.dispatchEvent(new Event('anylist:quick-search-policy-changed'));
     }
   };
   document.addEventListener('anylist:combine-lists-changed',event=>updateDomainNavigation({combine_lists:(event as CustomEvent).detail.combineLists}),{signal:appbarListeners.signal});

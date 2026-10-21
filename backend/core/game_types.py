@@ -49,6 +49,29 @@ def capabilities(attributes: dict | None) -> GameCapabilities:
                             kind in INDEPENDENT or kind == 'expansion', kind == 'expansion')
 
 
+def search_candidate(raw: dict) -> dict | None:
+    """Resolve an edition before eligibility; never promote an unknown add-on."""
+    from core.catalogue_normalize import date, image
+    parent = raw.get('version_parent')
+    work = raw if parent is None else parent
+    if not isinstance(work, dict) or work.get('version_parent') is not None:
+        return None
+    identifier = work.get('id')
+    if isinstance(identifier, bool) or not isinstance(identifier, int) or identifier <= 0 or not work.get('name'):
+        return None
+    kind = igdb_game_class(work)
+    caps = capabilities({'game_class': kind})
+    if not caps.searchable:
+        return None
+    if caps.expansion_page:
+        base = work.get('parent_game')
+        base_id = base.get('id') if isinstance(base, dict) else None
+        if isinstance(base_id, bool) or not isinstance(base_id, int) or base_id <= 0 or igdb_game_class(base) not in INDEPENDENT:
+            return None
+    return dict(external_id=str(identifier), name=work['name'], image_url=image(work.get('cover')),
+                release_date=date(work.get('first_release_date')), game_class=kind)
+
+
 def platform_group(platform: dict) -> str:
     """Exact provider identities remain internal; PC is one UI category."""
     identifier = str(platform.get('id') or '')

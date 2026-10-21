@@ -453,16 +453,14 @@ class CatalogueProviders:
         if provider == "igdb":
             rows = await self.igdb(
                 "games",
-                f"search {json.dumps(query)}; fields id,name,cover.url,first_release_date; where version_parent = null; limit {limit}; offset {(page - 1) * limit};",
+                f"search {json.dumps(query)}; fields id,name,cover.url,first_release_date,game_type.type,parent_game.game_type.type,version_parent.name,version_parent.cover.url,version_parent.first_release_date,version_parent.game_type.type,version_parent.version_parent,version_parent.parent_game.game_type.type; limit {limit}; offset {(page - 1) * limit};",
             )
-            return [
-                {
-                    "external_id": str(r["id"]),
-                    "name": r["name"],
-                    "image_url": r.get("cover", {}).get("url"),
-                }
-                for r in rows
-            ]
+            from core.game_types import search_candidate
+            results = {}
+            for row in rows:
+                if candidate := search_candidate(row):
+                    results.setdefault(candidate['external_id'], candidate)
+            return list(results.values())
         if provider == "hardcover":
             d = await self.hardcover(
                 'query($q:String!,$page:Int!,$limit:Int!){ search(query:$q,query_type:"Book",page:$page,per_page:$limit){results} }',

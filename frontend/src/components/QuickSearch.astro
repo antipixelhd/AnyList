@@ -1,9 +1,9 @@
 ---
 import Icon from './Icon.astro';
-const { combineLists = true, hideTrigger = false,showMoviesSeries=true } = Astro.props;
+const { combineLists = true, hideTrigger = false,showMoviesSeries=true,showGames=true } = Astro.props;
 ---
 {!hideTrigger && <button class="appbar-icon-link quick-search-trigger" type="button" aria-label="Fast search" aria-haspopup="dialog" data-quick-search-open><Icon name="search" /></button>}
-<dialog class="quick-search-dialog" data-quick-search data-combined={combineLists ? 'yes' : 'no'} data-show-movies-series={String(showMoviesSeries)} aria-labelledby="quick-search-heading">
+<dialog class="quick-search-dialog" data-quick-search data-combined={combineLists ? 'yes' : 'no'} data-show-movies-series={String(showMoviesSeries)} data-show-games={String(showGames)} aria-labelledby="quick-search-heading">
   <h1 class="sr-only" id="quick-search-heading">Fast search</h1>
   <div class="quick-search-bar">
     <Icon name="search" />
@@ -16,7 +16,7 @@ const { combineLists = true, hideTrigger = false,showMoviesSeries=true } = Astro
     <button type="button" data-search-tab-step="-1" aria-label="Previous search section" disabled><Icon name="chevron-left" /></button>
     <div class="quick-search-tab-current">
       <h2 data-search-tab-title aria-live="polite">{combineLists ? 'Movies & Series' : 'Movies'}</h2>
-      <div class="quick-search-tab-markers" aria-hidden="true"><span data-search-tab-marker="all" hidden={!combineLists}></span><span data-search-tab-marker="movie" hidden={combineLists}></span><span data-search-tab-marker="series" hidden={combineLists}></span><span data-search-tab-marker="actor"></span><span data-search-tab-marker="staff"></span><span data-search-tab-marker="studio"></span></div>
+      <div class="quick-search-tab-markers" aria-hidden="true"><span data-search-tab-marker="all" hidden={!combineLists}></span><span data-search-tab-marker="movie" hidden={combineLists}></span><span data-search-tab-marker="series" hidden={combineLists}></span><span data-search-tab-marker="game" hidden={!showGames}></span><span data-search-tab-marker="actor"></span><span data-search-tab-marker="staff"></span><span data-search-tab-marker="studio"></span></div>
     </div>
     <button type="button" data-search-tab-step="1" aria-label="Next search section"><Icon name="chevron-right" /></button>
   </nav>
@@ -26,6 +26,7 @@ const { combineLists = true, hideTrigger = false,showMoviesSeries=true } = Astro
     <section class="quick-search-card" data-search-section="all" hidden><h2>Movies & Series</h2><div data-search-results="all"></div></section>
     <section class="quick-search-card" data-search-section="movie" hidden><h2>Movies</h2><div data-search-results="movie"></div></section>
     <section class="quick-search-card" data-search-section="series" hidden><h2>Series</h2><div data-search-results="series"></div></section>
+    <section class="quick-search-card" data-search-section="game" hidden><h2>Games</h2><div data-search-results="game"></div></section>
     <section class="quick-search-card" data-search-section="actor" hidden><h2>Actors</h2><div data-search-results="actor"></div></section>
     <section class="quick-search-card" data-search-section="staff" hidden><h2>Crew</h2><div data-search-results="staff"></div></section>
     <section class="quick-search-card" data-search-section="studio" hidden><h2>Studios</h2><div data-search-results="studio"></div></section>

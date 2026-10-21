@@ -23,6 +23,25 @@ def fixture(name):
 
 
 class NormalizationTests(unittest.TestCase):
+    def test_game_search_resolves_editions_before_filtering_addons(self):
+        from core.game_types import search_candidate
+        base = {'id': 119133, 'name': 'Elden Ring', 'game_type': {'id': 0}}
+        expansion = {'id': 240009, 'name': 'Erdtree', 'game_type': {'id': 2}, 'parent_game': base}
+        edition = {'id': 999, 'name': 'Premium edition', 'game_type': {'id': 0}, 'version_parent': expansion}
+        self.assertEqual(search_candidate(edition)['external_id'], '240009')
+        self.assertEqual(search_candidate(edition)['game_class'], 'expansion')
+        for raw in ({'id': 2, 'name': 'Weapon pack', 'game_type': {'id': 1}},
+                    {'id': 3, 'name': 'Pack', 'game_type': {'id': 13}},
+                    {'id': 4, 'name': 'Update', 'game_type': {'id': 14}},
+                    {'id': 5, 'name': 'Unverified'},
+                    {**expansion, 'parent_game': None},
+                    {**edition, 'version_parent': 240009},
+                    {**edition, 'version_parent': {}},
+                    {**edition, 'version_parent': 0},
+                    {**expansion, 'parent_game': {**base, 'id': True}},
+                    {**edition, 'version_parent': {**expansion, 'version_parent': 123}}):
+            self.assertIsNone(search_candidate(raw))
+
     def test_game_classification_and_pc_platform_group_are_source_scoped(self):
         from core.game_types import capabilities
         raw = {'id': 240009, 'name': 'Expansion', 'game_type': {'id': 2, 'type': 'Expansion'},

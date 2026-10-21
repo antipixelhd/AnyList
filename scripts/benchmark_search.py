@@ -34,7 +34,7 @@ from core import chronological_discovery, contributor_evidence, contributor_sear
 from dependencies import get_current_user, get_current_user_or_api_key
 from models import GlobalSettings, Media, User, UserProfileData
 from models.base import MediaType
-from models.catalogue import CatalogueEntity, ContributorEvidence
+from models.catalogue import CatalogueEntity, CatalogueIdentity, ContributorEvidence
 from models.games import GameEntry, GameFavorite, GameActivity
 from routers.games import router as games_router
 from models.users import UserSettings
@@ -98,6 +98,8 @@ async def main(args):
                 db.add(GameEntry(user_id=viewer.id, work_id=game.id,
                     status=['planning', 'playing', 'completed', 'paused', 'dropped'][index % 5],
                     total_seconds=index * 3600, score=8 if index % 3 else None))
+                if args.case and 'game_search' in args.case:
+                    db.add(CatalogueIdentity(entity_id=game.id, namespace='igdb.game', external_id=str(8000000+index), source='igdb'))
                 if args.case and any(name.startswith('game_favorites') for name in args.case):
                     db.add(GameFavorite(user_id=viewer.id, work_id=game.id, position=index))
                 if args.case and any(name.startswith('game_activity') for name in args.case):
@@ -208,10 +210,17 @@ async def main(args):
                 raise RuntimeError(f'{current_case}: {response.status_code}: {response.text[:200]}')
             return response.json()
 
+        async def game_candidates(query):
+            counters['provider_requests'] += 1
+            counters['provider:igdb/search'] += 1
+            await asyncio.sleep(args.provider_delay_ms / 1000)
+            return [dict(external_id=str(8000000+i),name=f'Benchmark game {i:05}',game_class='game') for i in range(50)]
+
         event.listen(fixture.engine.sync_engine, 'before_cursor_execute', sql_start)
         event.listen(fixture.engine.sync_engine, 'after_cursor_execute', sql_end)
         feed = [{**title(1000 + i), 'imdb_votes': 10000, 'imdb_id': f'tt{1000+i}', 'imdb_score': 8} for i in range(120)]
         cases = [
+            ('game_search', 'games/search', {'q': 'Benchmark'}),
             ('game_list', f'games/users/{viewer.username}/list', {'limit': 50}),
             ('game_list_page_two', f'games/users/{viewer.username}/list', {'limit': 50, 'offset': 50}),
             ('game_list_genre_year', f'games/users/{viewer.username}/list', {'genre': 'Role-playing (RPG)', 'year': '2024', 'limit': 2}),
@@ -272,6 +281,7 @@ async def main(args):
             cases = [case for case in cases if case[0] in selected]
         with ExitStack() as stack:
             stack.enter_context(patch.object(tmdb, '_request', side_effect=provider))
+            stack.enter_context(patch('core.game_discovery.candidates', side_effect=game_candidates))
             stack.enter_context(patch('core.mdblist_discovery.ranked_rows', AsyncMock(return_value=(feed, False))))
             if args.skip_contributor_relevance:
                 async def unverified_studios(db, viewer, rows, api_key):

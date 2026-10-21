@@ -20,6 +20,7 @@ Use a verified Git-ignored output folder. `.local-design/search-browse/` was use
 | Pagination/refill/options/failure | `page_two`, `sparse_viewport`, `filter_options`, `provider_failure` |
 | Personal Games lists | `game_list`, `game_list_page_two`, `game_list_genre_year`, `game_list_status` (catalogue-rooted game entries, bounded page, full-collection facets/status counts; no provider requests) |
 | Game favorites/profile activity | `game_favorites`, `game_favorites_page_two`, `game_activity_profile` (bounded private-safe projections; no provider requests) |
+| Games quick-search candidates | `game_search` (50 controlled upstream candidates, eight result cards, one identity projection; upstream candidate reads are mocked and counted once per request, so this case does not establish IGDB response-cache/coalescing behavior) |
 
 Repeat `--case` for several cases. Group selectors are alternatives: `--filters-only`, `--contributors-only`, `--edge-cases-only`, `--stress-only`. Read the case list before combining a selector with `--case`, because named cases must belong to that selection.
 
