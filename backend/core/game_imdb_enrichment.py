@@ -26,20 +26,20 @@ def now():
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def snapshot(kind,key):
-    return select(MetadataSnapshot).where(MetadataSnapshot.provider=='imdb',
+def snapshot(kind,key,*,provider='imdb'):
+    return select(MetadataSnapshot).where(MetadataSnapshot.provider==provider,
         MetadataSnapshot.kind==kind,MetadataSnapshot.external_id==str(key))
 
 
-async def request(db,work_id,*,kind=JOB,entity_id=None):
-    """Cheap admission only. A read never waits on Wikidata or IMDb."""
+async def request(db,work_id,*,kind=JOB,entity_id=None,provider='imdb'):
+    """Cheap admission only; provider work stays off the request path."""
     stamp=now()
-    row=await header(db,work_id,kind=kind)
+    row=await header(db,work_id,kind=kind,provider=provider)
     view=status_view(row)
     if row and (row.next_attempt_at or row.lease_until and row.lease_until>stamp
                 or row.expires_at and row.expires_at>stamp):
         return view
-    statement=insert(MetadataSnapshot).values(provider='imdb',kind=kind,external_id=str(work_id),
+    statement=insert(MetadataSnapshot).values(provider=provider,kind=kind,external_id=str(work_id),
         entity_id=entity_id if entity_id is not None else work_id,next_attempt_at=stamp)
     await db.execute(statement.on_conflict_do_update(
         constraint='uq_catalogue_snapshot',set_={'next_attempt_at':stamp},where=(
@@ -49,8 +49,8 @@ async def request(db,work_id,*,kind=JOB,entity_id=None):
     return {**view,'state':'pending','pending':True,'error':None,'retry_after':2}
 
 
-async def header(db,work_id,*,kind=JOB):
-    return (await db.execute(snapshot(kind,work_id).with_only_columns(
+async def header(db,work_id,*,kind=JOB,provider='imdb'):
+    return (await db.execute(snapshot(kind,work_id,provider=provider).with_only_columns(
         MetadataSnapshot.coverage['state'].astext.label('coverage'),
         MetadataSnapshot.coverage['complete'].as_boolean().label('complete'),
         MetadataSnapshot.coverage['received'].as_integer().label('received'),
@@ -71,8 +71,8 @@ def status_view(row):
         'error':row.error_code,'retry_after':min(3600,delay)}
 
 
-async def status(db,work_id,*,kind=JOB):
-    return status_view(await header(db,work_id,kind=kind))
+async def status(db,work_id,*,kind=JOB,provider='imdb'):
+    return status_view(await header(db,work_id,kind=kind,provider=provider))
 
 
 class GameIMDbEnrichment:

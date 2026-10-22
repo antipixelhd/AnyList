@@ -210,7 +210,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
   });
   const sourceButton=root.querySelector<HTMLButtonElement>('[data-contributor-source-refresh]');
   const sourceRefresh=contributorSourceRefresh(signal,available=>{if(sourceButton)sourceButton.hidden=!available;});
-  sourceRefresh.update(params.get('media_type')==='game'?data.game_person_status:null);
+  sourceRefresh.update(params.get('media_type')==='game'?(data.game_company_status||data.game_person_status):null);
   sourceButton?.addEventListener('click',()=>{
     sourceButton.disabled=true;
     void waitForGameWrites(signal).then(()=>{if(!signal.aborted)location.reload();}).catch(()=>{});
@@ -280,7 +280,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
       for(const key of [...params.keys()])params.delete(key);
       query.forEach((value,key)=>params.set(key,value));
       root.dataset.mediaType=params.get('media_type')||'all';
-      sourceRefresh.update(params.get('media_type')==='game'?next.game_person_status:null);
+      sourceRefresh.update(params.get('media_type')==='game'?(next.game_company_status||next.game_person_status):null);
       const count=root.querySelector('[data-contributor-list-count]');
       if(count)count.textContent=String(data.list_count||0);
       const roles=root.querySelector<HTMLElement>('[data-contributor-roles]')!;
@@ -299,7 +299,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
         if (works) scrollToWorks(works);
       }
     }).catch(cause=>{
-      if(!signal.aborted&&!request.signal.aborted&&current===revision){restoreFilterControls();sourceRefresh.update(params.get('media_type')==='game'?data.game_person_status:null);showError(cause instanceof Error?cause.message:'Unable to load works.');}
+      if(!signal.aborted&&!request.signal.aborted&&current===revision){restoreFilterControls();sourceRefresh.update(params.get('media_type')==='game'?(data.game_company_status||data.game_person_status):null);showError(cause instanceof Error?cause.message:'Unable to load works.');}
     }).finally(()=>{
       if(!signal.aborted&&current===revision){
         filterRequest=undefined;region.removeAttribute('aria-busy');

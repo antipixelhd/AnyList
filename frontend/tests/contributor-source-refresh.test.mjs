@@ -39,3 +39,12 @@ test('new mappings offer a refresh even when the cached source timestamp stays f
   f.reply({id:'nm1',pending:false,complete:true,fetched_at:'same',revision:'new'});
   await f.tick();assert.equal(f.paint.at(-1),true);
 }));
+
+test('company portfolios poll an approval-protected compact status and preserve the shared refresh behavior',()=>fixture(async f=>{
+  f.resource.update({id:'42',source:'igdb-company',pending:true,complete:false,fetched_at:'old'});
+  f.reply({id:'42',source:'igdb-company',pending:false,complete:true,fetched_at:'new'});
+  await f.tick();assert.equal(f.calls[0].path,'/api/proxy/tracking/games/companies/42/works/status');
+  assert.equal(f.paint.at(-1),true);
+  f.resource.update({id:'42/../names',source:'igdb-company',pending:true,complete:false});
+  assert.equal(f.timers.length,0);
+}));

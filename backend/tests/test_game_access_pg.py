@@ -117,6 +117,7 @@ class GameAccessTests(unittest.IsolatedAsyncioTestCase):
             for path in ['/credits','/imdb','/imdb/candidates?q=Elden','/imdb/candidates/tt123']:
                 self.assertEqual((await self.client.get(base+path)).status_code,403,path)
             self.assertEqual((await self.client.get('/tracking/games/people/nm1/imdb')).status_code,403)
+            self.assertEqual((await self.client.get('/tracking/games/companies/1/works/status')).status_code,403)
             for suffix in ['/titles','/titles/tt123']:
                 self.assertEqual((await self.client.get('/tracking/games/people/nm1/imdb'+suffix)).status_code,403)
             self.other.games_access=True

@@ -13,6 +13,7 @@ export interface ContributorPage {
   roles: string[]; works: ContributorWork[]; known_works: number; list_count: number | null;
   total: number | null; page: number; has_more: boolean; next_cursor: string | null; source: 'local' | 'provider'; notice: string | null;
   game_person_status?:import('./contributor-source-refresh').GamePersonStatus|null;
+  game_company_status?:import('./contributor-source-refresh').GamePersonStatus|null;
 }
 export function contributorParams(search: URLSearchParams, signedIn: boolean) {
   const params = new URLSearchParams();

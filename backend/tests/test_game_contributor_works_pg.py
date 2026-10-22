@@ -141,6 +141,32 @@ class GameContributorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.request(media_type='game', cursor=cursor)).status_code, 409)
         self.assertEqual((await self.request(media_type='game')).json()['total'], 31)
 
+    async def test_actor_crew_and_company_portfolios_exclude_dlc_before_counts_and_paging(self):
+        games, _, company = await self.seed(2)
+        async with self.Session() as db:
+            expansion = CatalogueEntity(kind='game', name='Verified expansion', attributes={'game_class':'expansion'})
+            orphan = CatalogueEntity(kind='game', name='Unverified expansion', attributes={'game_class':'expansion'})
+            extras = [CatalogueEntity(kind='game', name=f'Add-on {i}', attributes={'game_class':kind})
+                for i, kind in enumerate(('dlc','pack','update','bundle','unknown') * 6)]
+            db.add_all([expansion, orphan, *extras]); await db.flush()
+            db.add(CatalogueRelationship(source_id=expansion.id, target_id=games[0].id,
+                relation='expansion', provider='igdb'))
+            for work in [*games, expansion, orphan, *extras]:
+                for contributor, role in ((self.person_id,'voice_actor'), (self.person_id,'composer'), (company,'developer')):
+                    db.add(CatalogueCredit(work_id=work.id, contributor_id=contributor, provider='igdb',
+                        source_key=f'portfolio-{work.id}-{role}', role=role))
+            await db.commit()
+        expected = {games[0].id, games[1].id, expansion.id}
+        for kind, contributor in (('actor',self.person_id), ('staff',self.person_id), ('studio',company)):
+            with self.subTest(kind=kind):
+                response = await self.request(kind, f'catalogue:{contributor}', media_type='game')
+                self.assertEqual(response.status_code, 200, response.text)
+                data = response.json()
+                self.assertEqual((data['known_works'], data['total'], data['has_more']), (3,3,False))
+                self.assertEqual({row['id'] for row in data['works']}, expected)
+                self.assertEqual(data['list_count'], 1)
+                self.assertIsNone(data['next_cursor'])
+
     async def test_profile_enrichment_does_not_fetch_movie_filmography_or_import(self):
         from models import Media
         from models.base import MediaType

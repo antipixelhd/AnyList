@@ -103,9 +103,18 @@ async def main(args):
             first_game=None
             children_base=None
             game_contributor_id=None
-            if not args.case or any(name.startswith(('game_contributor','game_people','game_person')) for name in args.case):
+            game_company_id=None
+            if not args.case or any(name.startswith(('game_contributor','game_people','game_person','game_company')) for name in args.case):
                 performer=CatalogueEntity(kind='person',name='Game works performer')
                 db.add(performer);await db.flush();game_contributor_id=performer.id
+                if args.case and 'game_company_cached' in args.case:
+                    company=CatalogueEntity(kind='organization',name='Portfolio company')
+                    db.add(company);await db.flush();game_company_id=company.id
+                    db.add(CatalogueIdentity(entity_id=company.id,namespace='igdb.company',external_id='7000000',source='igdb'))
+                    stamp=datetime.now(timezone.utc).replace(tzinfo=None)
+                    db.add(MetadataSnapshot(provider='igdb',kind='game_company_job',external_id='7000000',entity_id=company.id,
+                        coverage={'state':'complete','complete':True,'received':1000,'total':1000,'generation':'cached'},
+                        payload={'raw_company_evidence':'COMPANY_RAW_SENTINEL '*50000},fetched_at=stamp,expires_at=stamp+timedelta(days=7)))
                 if not args.case or any(name.startswith('game_person') for name in args.case):
                     db.add(CatalogueIdentity(entity_id=performer.id,namespace='imdb.person',external_id='nm8000000',source='imdb'))
                     stamp=datetime.now(timezone.utc).replace(tzinfo=None)
@@ -137,6 +146,9 @@ async def main(args):
                     db.add(CatalogueCredit(work_id=game.id,contributor_id=game_contributor_id,
                         provider='wikidata',source_key=f'game-works-{index}',role='voice_actor',
                         character_label=f'Character {index}',attributes={'statement':'evidence '*2048}))
+                if game_company_id:
+                    db.add(CatalogueCredit(work_id=game.id,contributor_id=game_company_id,
+                        provider='igdb',source_key=f'company-work-{index}',role='developer',attributes={'source_record':'evidence '*2048}))
                 db.add(GameEntry(user_id=viewer.id, work_id=game.id,
                     status=['planning', 'playing', 'completed', 'paused', 'dropped'][index % 5],
                     total_seconds=index * 3600, score=8 if index % 3 else None))
@@ -263,7 +275,7 @@ async def main(args):
                    'ms': round((time.perf_counter() - start) * 1000, 2), **dict(counters)}
             if isinstance(result, dict):
                 items = result.get('results', [])
-                if label.startswith('game_contributor') or label=='game_person_cached':items=result['works']
+                if label.startswith('game_contributor') or label in ('game_person_cached','game_company_cached'):items=result['works']
                 if label=='game_credits':items=result['people']+result['game_characters']
                 if result.get('sections'):
                     items = [item for section in result['sections'] for item in section['results']]
@@ -345,6 +357,7 @@ async def main(args):
             if args.case and 'game_person_review' in args.case:
                 cases += [('game_person_review','games/people/nm8000000/imdb/titles',{})]
         cases += [
+            *([('game_company_cached',f'contributors/studio/catalogue:{game_company_id}',{'media_type':'game'})] if game_company_id else []),
             ('game_search', 'games/search', {'q': 'Benchmark'}),
             ('game_search_prefix','games/search',{'q':'Elden R'}),
             *([('game_children',f'games/works/{children_base}/children',{'limit':24})] if children_base else []),
@@ -445,6 +458,19 @@ async def main(args):
                         params['unfiltered'] = 'true'
 
                     async def operation(path=path, params=params, label=label, mode=mode):
+                        if label=='game_company_cached':
+                            result=await request(path,params)
+                            if result['known_works']!=args.local_titles or len(result['works'])!=min(24,args.local_titles):
+                                raise RuntimeError('Company portfolio lost its full works or bounded page')
+                            state=result.get('game_company_status')
+                            if not state or not state['complete'] or state['pending']:raise RuntimeError('Cached company was requeued')
+                            if counters['provider_requests'] or counters['db_writes']:raise RuntimeError('Cached company read performed provider work or writes')
+                            if 'COMPANY_RAW_SENTINEL' in json.dumps(result):raise RuntimeError('Company read transferred raw source evidence')
+                            for identity in counters:
+                                sql=sql_patterns.get(identity.removeprefix('sql:'),'') if identity.startswith('sql:') else ''
+                                if 'catalogue_metadata_snapshots.payload,' in sql or 'catalogue_metadata_snapshots.payload FROM' in sql:
+                                    raise RuntimeError('Company read hydrated a full provider snapshot')
+                            return result
                         if label=='game_children':
                             result=await request(path,params)
                             if result['total']!=args.local_titles or len(result['results'])!=min(24,args.local_titles):

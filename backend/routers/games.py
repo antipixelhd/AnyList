@@ -41,6 +41,14 @@ async def imdb_person_status(native: Annotated[str,Path(pattern=r'^nm[0-9]+$',ma
     return await view(db,native,include_profile=False)
 
 
+@router.get('/companies/{company_id}/works/status')
+async def company_works_status(company_id:Annotated[int,Path(gt=0)],db:DB,viewer:Reader) -> dict:
+    from core.game_company_works import status
+    result=await status(db,company_id)
+    if not result:raise HTTPException(404,'Company source not found')
+    return result
+
+
 @router.get('/people/{native}/imdb/titles')
 async def imdb_person_titles(native: Annotated[str,Path(pattern=r'^nm[0-9]+$',max_length=30)],db:DB,viewer:Admin,
         page:Annotated[int,Query(ge=1,le=500)]=1,q:Annotated[str,Query(max_length=100)]='',

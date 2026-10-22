@@ -389,7 +389,7 @@ def normalize_igdb(raw):
                 "platforms": [{"id": str(p['id']), "name": p.get('name'), "group": platform_group(p)}
                               for p in game_platforms(raw)],
                 "release_date": date(raw.get("first_release_date")),
-                "genres": raw.get("genres"),
+                "genres": [g['name'] for g in raw.get('genres') or [] if isinstance(g,dict) and isinstance(g.get('name'),str)],
                 "artwork": [image(a) for a in raw.get("artworks") or []],
                 **game_countries(raw),
             },
@@ -498,15 +498,7 @@ def normalize_igdb(raw):
                 }
             )
     parent = raw.get("parent_game")
-    relation = {
-        "DLC Add-on": "dlc",
-        "DLC": "dlc",
-        "Expansion": "expansion",
-        "Standalone Expansion": "standalone_expansion",
-        "Remake": "remake",
-        "Remaster": "remaster",
-        "Port": "port",
-    }.get((raw.get("game_type") or {}).get("type"))
+    relation = {kind:kind for kind in ('dlc','expansion','standalone_expansion','remake','remaster','port')}.get(igdb_game_class(raw))
     if isinstance(parent, dict) and relation:
         doc["relationships"].append(
             {"target": entity("game", "igdb.game", parent, attributes={

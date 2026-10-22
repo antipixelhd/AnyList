@@ -72,3 +72,4 @@ class ContributorPage(BaseModel):
     source: Literal["local", "provider"] = "local"
     notice: str | None = None
     game_person_status: dict | None = None
+    game_company_status: dict | None = None

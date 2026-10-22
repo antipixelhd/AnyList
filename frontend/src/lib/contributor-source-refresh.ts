@@ -1,4 +1,5 @@
 export interface GamePersonStatus {
+  source?:'igdb-company';
   id:string; pending:boolean; complete:boolean; retry_after?:number; error?:string|null; fetched_at?:string|null; revision?:string|null;
 }
 
@@ -11,7 +12,8 @@ export function contributorSourceRefresh(signal:AbortSignal, ready:(available:bo
   signal.addEventListener('abort',stop,{once:true});
   return {update(initial?:GamePersonStatus|null){
     stop();
-    if(signal.aborted||!initial?.pending||!/^nm[0-9]+$/.test(initial.id))return;
+    const company=initial?.source==='igdb-company';
+    if(signal.aborted||!initial?.pending||!(company?/^[1-9][0-9]*$/:/^nm[0-9]+$/).test(initial.id))return;
     const current=generation;
     let attempts=0;
     const schedule=(delay:number)=>{timer=setTimeout(()=>void poll(),Math.max(3000,Math.min(60000,delay*1000)));};
@@ -19,7 +21,8 @@ export function contributorSourceRefresh(signal:AbortSignal, ready:(available:bo
       if(signal.aborted||generation!==current)return;
       request=new AbortController();
       try{
-        const response=await fetch(`/api/proxy/tracking/games/people/${initial.id}/imdb`,{signal:request.signal,cache:'no-store'});
+        const path=company?`companies/${initial.id}/works/status`:`people/${initial.id}/imdb`;
+        const response=await fetch(`/api/proxy/tracking/games/${path}`,{signal:request.signal,cache:'no-store'});
         if(!response.ok)return;
         const next:GamePersonStatus=await response.json();
         if(signal.aborted||generation!==current||next.id!==initial.id)return;

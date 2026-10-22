@@ -281,7 +281,12 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
             return None  # A broadcaster-only organization is not a production studio.
     attrs = dict(entity.attributes or {}) if entity else {}
     imdb_state=None
+    company_state=None
     imdb_profile={}
+    if games and kind=='studio' and entity:
+        from core.game_company_works import status as company_status
+        company_state=await company_status(db,entity.id,enqueue=True)
+        await db.commit()
     if games and kind!='studio' and entity:
         ids=[row.external_id for row in identities if row.namespace=='imdb.person']
         if len(ids)==1:
@@ -367,7 +372,7 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
             released = [row for row in works if '0000' < (row.get('release_date') or '') <= date.today().isoformat()]
             latest = next((row for row in released if row.get('backdrop') or row.get('poster')), {})
             share_summary = {'games': game_result['known_works'], 'background': latest.get('backdrop') or latest.get('poster')}
-        notice = ' '.join(filter(None, (notice, game_result['notice'])))
+        notice = ' '.join(filter(None, (notice, None if company_state and company_state['coverage']=='complete' else game_result['notice'])))
     else:
         # The caller supplies the current instance preference, including when metadata is offline.
         from models import GlobalSettings
@@ -454,4 +459,5 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
         "total": total, "page": page, "has_more": has_more, "notice": notice,
         "next_cursor": next_cursor, "source": result_source,
         **({'game_person_status':{key:value for key,value in imdb_state.items() if key!='profile'}} if imdb_state else {}),
+        **({'game_company_status':company_state} if company_state else {}),
         **({'share_summary':share_summary} if sharing else {})}
