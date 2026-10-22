@@ -112,7 +112,9 @@ html.light .contributor-banner.is-logo img { filter:brightness(0); }
 .contributor-pagination button:disabled { opacity:.6; cursor:wait; }
 .contributor-load-error { color:var(--danger,#e57474); margin:0; }
 .contributor-error { padding-block:60px; }
-.contributor-page :is(button,a,summary):focus-visible { outline:2px solid var(--blue); outline-offset:4px; }
+.contributor-page :is(button,a,summary):focus-visible { outline:none; color:var(--bright); }
+.contributor-page button:focus-visible { background:var(--surface-raised,var(--panel)); }
+.contributor-page .contributor-view-switch button[aria-pressed=true]:focus-visible { background:color-mix(in srgb,var(--blue) 85%,white); color:white; }
 @container contributor-works (max-width:900px) { .contributor-works-grid.browse-grid { grid-template-columns:repeat(5,minmax(0,1fr)); gap:24px 18px; } }
 @container contributor-works (max-width:720px) { .contributor-works-grid.browse-grid { grid-template-columns:repeat(4,minmax(0,1fr)); } }
 @container contributor-works (max-width:650px) { .contributor-works-grid.browse-grid { --browse-title-size:13px; grid-template-columns:repeat(3,minmax(0,1fr)); gap:22px 14px; } }

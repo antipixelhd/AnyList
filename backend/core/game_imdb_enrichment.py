@@ -31,16 +31,16 @@ def snapshot(kind,key):
         MetadataSnapshot.kind==kind,MetadataSnapshot.external_id==str(key))
 
 
-async def request(db,work_id):
+async def request(db,work_id,*,kind=JOB,entity_id=None):
     """Cheap admission only. A read never waits on Wikidata or IMDb."""
     stamp=now()
-    row=await header(db,work_id)
+    row=await header(db,work_id,kind=kind)
     view=status_view(row)
     if row and (row.next_attempt_at or row.lease_until and row.lease_until>stamp
                 or row.expires_at and row.expires_at>stamp):
         return view
-    statement=insert(MetadataSnapshot).values(provider='imdb',kind=JOB,external_id=str(work_id),
-        entity_id=work_id,next_attempt_at=stamp)
+    statement=insert(MetadataSnapshot).values(provider='imdb',kind=kind,external_id=str(work_id),
+        entity_id=entity_id if entity_id is not None else work_id,next_attempt_at=stamp)
     await db.execute(statement.on_conflict_do_update(
         constraint='uq_catalogue_snapshot',set_={'next_attempt_at':stamp},where=(
             MetadataSnapshot.next_attempt_at.is_(None)
@@ -49,8 +49,8 @@ async def request(db,work_id):
     return {**view,'state':'pending','pending':True,'error':None,'retry_after':2}
 
 
-async def header(db,work_id):
-    return (await db.execute(snapshot(JOB,work_id).with_only_columns(
+async def header(db,work_id,*,kind=JOB):
+    return (await db.execute(snapshot(kind,work_id).with_only_columns(
         MetadataSnapshot.coverage['state'].astext.label('coverage'),
         MetadataSnapshot.coverage['complete'].as_boolean().label('complete'),
         MetadataSnapshot.coverage['received'].as_integer().label('received'),
@@ -71,8 +71,8 @@ def status_view(row):
         'error':row.error_code,'retry_after':min(3600,delay)}
 
 
-async def status(db,work_id):
-    return status_view(await header(db,work_id))
+async def status(db,work_id,*,kind=JOB):
+    return status_view(await header(db,work_id,kind=kind))
 
 
 class GameIMDbEnrichment:
@@ -212,6 +212,7 @@ class GameIMDbEnrichment:
                     await db.execute(update(CatalogueCredit).where(CatalogueCredit.work_id==work_id,
                         CatalogueCredit.provider=='imdb',func.coalesce(
                             CatalogueCredit.attributes['imdb_generation'].astext,'')!=state['generation'],
+                        CatalogueCredit.scope!='person',
                         ~select(CharacterPerformance.id).where(CharacterPerformance.credit_id==CatalogueCredit.id,
                             CharacterPerformance.source=='reviewed').exists())
                         .values(attributes=CatalogueCredit.attributes.op('||')({'source_active':False}))

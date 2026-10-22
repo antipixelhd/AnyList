@@ -116,6 +116,7 @@ class GameAccessTests(unittest.IsolatedAsyncioTestCase):
                 prices.assert_not_awaited()
             for path in ['/credits','/imdb','/imdb/candidates?q=Elden','/imdb/candidates/tt123']:
                 self.assertEqual((await self.client.get(base+path)).status_code,403,path)
+            self.assertEqual((await self.client.get('/tracking/games/people/nm1/imdb')).status_code,403)
             self.other.games_access=True
             self.assertEqual((await self.client.get(base+'/credits')).status_code,200)
             self.assertEqual((await self.client.get(base+'/imdb')).status_code,200)

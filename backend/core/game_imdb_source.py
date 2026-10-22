@@ -28,13 +28,13 @@ TITLE_CREDITS = '''query GameCredits($id: ID!, $after: ID) {
     }
   }
 }'''
-PERSON_CREDITS = '''query GamePersonCredits($id: ID!, $after: ID) {
+PERSON_CREDITS = '''query GamePersonCredits($id: ID!, $after: ID, $profile: Boolean!) {
   name(id: $id) {
     id nameText { text }
-    birthDate { dateComponents { year month day } }
-    deathDate { dateComponents { year month day } }
-    primaryProfessions { category { text } }
-    bio { text { plainText } }
+    birthDate @include(if: $profile) { dateComponents { year month day } }
+    deathDate @include(if: $profile) { dateComponents { year month day } }
+    primaryProfessions @include(if: $profile) { category { text } }
+    bio @include(if: $profile) { text { plainText } }
     credits(first: 50, after: $after) {
       total pageInfo { hasNextPage endCursor }
       edges { node {
@@ -103,7 +103,8 @@ class IMDbGameSource:
         identifier(native,person)
         if after is not None and (not isinstance(after,str) or not 1<=len(after)<=4096):
             raise ProviderError('invalid_request')
-        body=await self.query(PERSON_CREDITS if person else TITLE_CREDITS,{'id':native,'after':after})
+        body=await self.query(PERSON_CREDITS if person else TITLE_CREDITS,
+            {'id':native,'after':after,**({'profile':after is None} if person else {})})
         raw=body.get('name' if person else 'title')
         if person:
             if not isinstance(raw,dict) or raw.get('id')!=native or not isinstance((raw.get('nameText') or {}).get('text'),str):

@@ -52,6 +52,9 @@ class IMDbSourceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('first: 50',PERSON_CREDITS)
         self.assertNotIn('knownFor',PERSON_CREDITS)
         self.assertNotIn('primaryImage',PERSON_CREDITS)
+        self.assertTrue(self.http.request.call_args.kwargs['json']['variables']['profile'])
+        await self.source.credits('nm123','next',person=True)
+        self.assertFalse(self.http.request.call_args.kwargs['json']['variables']['profile'])
 
     async def test_wrong_title_kind_and_identity_are_rejected_before_binding(self):
         for raw in (title(kind='movie'),title(native='tt456'),None):

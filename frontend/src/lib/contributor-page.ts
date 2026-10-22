@@ -12,6 +12,7 @@ import {createPrediction,bindPredictivePagination} from './predictive-loading';
 import { setLocalDateTime } from './date-time-dom';
 import { createSectionScroll } from './section-scroll';
 import {browseCardKey} from './browse-card-data';
+import {contributorSourceRefresh} from './contributor-source-refresh';
 
 export function initializeContributorPage(root: HTMLElement, signal: AbortSignal) {
   mountContributorBiography(root, signal);
@@ -207,6 +208,13 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     document.addEventListener('anylist:editor-state',changed);requestSignal.addEventListener('abort',aborted,{once:true});
     changed();
   });
+  const sourceButton=root.querySelector<HTMLButtonElement>('[data-contributor-source-refresh]');
+  const sourceRefresh=contributorSourceRefresh(signal,available=>{if(sourceButton)sourceButton.hidden=!available;});
+  sourceRefresh.update(params.get('media_type')==='game'?data.game_person_status:null);
+  sourceButton?.addEventListener('click',()=>{
+    sourceButton.disabled=true;
+    void waitForGameWrites(signal).then(()=>{if(!signal.aborted)location.reload();}).catch(()=>{});
+  },{signal});
   const requestPage=async(path:string,requestSignal:AbortSignal):Promise<ContributorPage>=>{
     const games=new URLSearchParams(path.split('?')[1]||'').get('media_type')==='game';
     // Wait outside provider/DB work, and discard a private read if a write began
@@ -257,6 +265,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
   more.addEventListener('click',()=>void loadMore(),{signal});
   form.addEventListener('submit',event=>{
     event.preventDefault();prediction.cancel();filterRequest?.abort();
+    sourceRefresh.stop();
     const worksAnchor = new URL(form.action).hash === '#contributor-works';
     const request=new AbortController(),current=++revision;
     filterRequest=request;error.hidden=true;region.setAttribute('aria-busy','true');
@@ -271,6 +280,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
       for(const key of [...params.keys()])params.delete(key);
       query.forEach((value,key)=>params.set(key,value));
       root.dataset.mediaType=params.get('media_type')||'all';
+      sourceRefresh.update(params.get('media_type')==='game'?next.game_person_status:null);
       const count=root.querySelector('[data-contributor-list-count]');
       if(count)count.textContent=String(data.list_count||0);
       const roles=root.querySelector<HTMLElement>('[data-contributor-roles]')!;
@@ -289,7 +299,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
         if (works) scrollToWorks(works);
       }
     }).catch(cause=>{
-      if(!signal.aborted&&!request.signal.aborted&&current===revision){restoreFilterControls();showError(cause instanceof Error?cause.message:'Unable to load works.');}
+      if(!signal.aborted&&!request.signal.aborted&&current===revision){restoreFilterControls();sourceRefresh.update(params.get('media_type')==='game'?data.game_person_status:null);showError(cause instanceof Error?cause.message:'Unable to load works.');}
     }).finally(()=>{
       if(!signal.aborted&&current===revision){
         filterRequest=undefined;region.removeAttribute('aria-busy');

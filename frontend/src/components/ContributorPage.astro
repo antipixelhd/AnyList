@@ -55,7 +55,7 @@ const listLink = new URLSearchParams(params);
 listLink.delete('cursor'); listLink.delete('page'); listLink.delete('source');
 listLink.set('list_scope','in'); listLink.set('view',view);
 ---
-<Tracker title={data?.name || (kind === 'studio' ? 'Studio' : 'Person')} shareDescription={data?.roles.join(' · ')} preloadBodyFonts predictionArtwork={[portrait,banner||backdrop].filter(Boolean)}>
+<Tracker title={data?.name || (kind === 'studio' ? 'Studio' : 'Person')} shareDescription={data?.roles.join(' · ')} preloadBodyFonts predictionArtwork={[portrait,banner||backdrop].filter(Boolean)} requiresGamesAccess={games}>
   {data ? <article class:list={['contributor-page', {'is-person':kind !== 'studio'}]} data-contributor-page data-view={view} data-media-type={params.get('media_type') || 'all'} data-contributor-query={params.toString()} data-endpoint={endpoint}>
     <div class:list={['contributor-banner', {'is-logo':!!banner}]} aria-hidden="true">{(banner || backdrop) && <img src={banner || backdrop} alt="" fetchpriority="high" data-contributor-banner data-banner-fallback={backdrop || undefined} />}{kind !== 'studio' && <div class="contributor-banner-shade"></div>}</div>
     <div class="page-width contributor-layout">
@@ -89,6 +89,7 @@ listLink.set('list_scope','in'); listLink.set('view',view);
             <button type="submit" class="contributor-apply">Apply</button>
           </form>
           <p class="contributor-notice" data-contributor-notice role="status" hidden={!data.notice}>{data.notice}</p>
+          <button class="contributor-biography-toggle" type="button" data-contributor-source-refresh hidden>Refresh game credits</button>
           <div class:list={['contributor-works-grid', {'browse-grid':view === 'grid'}]} data-contributor-works>
             {years.map(year => <section class="contributor-year" data-contributor-year={year} aria-label={year}><h3>{year}</h3><div class="contributor-year-works">{data!.works.filter(work => contributorYear(work) === year).map(work => <BrowseCard item={work} signedIn={signedIn} credits />)}</div></section>)}
           </div>

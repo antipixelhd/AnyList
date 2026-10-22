@@ -168,3 +168,51 @@ class GameContributorTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status_code,403,response.text)
                 self.assertNotIn('Known games',response.text)
             fetch.assert_not_awaited()
+
+    async def test_imdb_person_component_is_game_only_and_reads_never_fetch_its_connection(self):
+        from models.catalogue import CatalogueIdentity,MetadataSnapshot
+        from core.game_imdb_person import COMPONENT
+        await self.seed(2)
+        async with self.Session() as db:
+            person=await db.get(CatalogueEntity,self.person_id)
+            person.description=None
+            person.attributes={}
+            db.add(CatalogueIdentity(entity_id=self.person_id,namespace='imdb.person',external_id='nm1',source='tmdb'))
+            db.add(MetadataSnapshot(provider='imdb',kind=COMPONENT,external_id='nm1',entity_id=self.person_id,
+                payload={'profile':{'biography':'Restricted game biography','birthday':'1970-01-01'}},
+                coverage={'source_complete':True,'state':'partial','unmapped_games':7}))
+            await db.commit()
+        with patch('core.game_imdb_source.IMDbGameSource.credits',AsyncMock()) as source:
+            game=await self.request(media_type='game')
+            self.assertEqual(game.status_code,200,game.text)
+            self.assertEqual(game.json()['description'],'Restricted game biography')
+            self.assertTrue(game.json()['game_person_status']['pending'])
+            self.assertNotIn('profile',game.json()['game_person_status'])
+            self.viewer.games_access=False
+            denied=await self.request(media_type='game')
+            self.assertEqual(denied.status_code,403)
+            public=await self.request(media_type='movie')
+            self.assertEqual(public.status_code,200,public.text)
+            self.assertNotIn('Restricted game biography',public.text)
+            self.assertIsNone(public.json()['game_person_status'])
+            source.assert_not_awaited()
+
+    async def test_title_roles_take_display_precedence_over_sparse_person_connection_evidence(self):
+        games,_,_=await self.seed(2)
+        async with self.Session() as db:
+            db.add(CatalogueCredit(work_id=games[0].id,contributor_id=self.person_id,provider='imdb',
+                source_key='person-evidence',role='actor',role_label='Actor',scope='person',
+                attributes={'imdb_person_evidence':True,'source_active':True}))
+            await db.commit()
+        result=(await self.request(media_type='game')).json()
+        self.assertEqual(result['roles'],['Voice actor'])
+        self.assertTrue(all(row['roles']==['Voice actor'] for row in result['works']))
+        async with self.Session() as db:
+            # If title evidence is withdrawn, participation remains visible
+            # with unknown voice/character details from the person connection.
+            detailed=await db.scalar(select(CatalogueCredit).where(CatalogueCredit.work_id==games[0].id,
+                CatalogueCredit.role=='voice_actor'))
+            detailed.attributes={'source_active':False};await db.commit()
+        result=(await self.request(media_type='game')).json()
+        self.assertIn('Actor',result['roles'])
+        self.assertEqual(next(row for row in result['works'] if row['id']==games[0].id)['characters'],[])

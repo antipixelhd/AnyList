@@ -236,7 +236,7 @@ async def studio_timeline(db, viewer, known, native, provider_key, *, media_type
     return output, more, json.dumps({"scope": scope, "positions": positions}, separators=(",", ":")) if more else None
 
 
-async def resolve_contributor(db, kind, key):
+async def resolve_contributor(db, kind, key, *, include_identities=False):
     namespace, raw_id = key.split(":")
     native = positive_id(raw_id) if namespace == "tmdb" else None
     if kind == 'studio' and native:
@@ -258,17 +258,17 @@ async def resolve_contributor(db, kind, key):
         native = next((positive_id(i.external_id) for i in identities if i.namespace == f"tmdb.{provider_kind}"), None)
     if kind == 'studio' and native:
         native = studio_root(native)
-    return entity, native
+    return (entity,native,identities) if include_identities else (entity,native)
 
 
 async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scope="all", status="", page=1, cursor=None, source="", sharing=False):
     from core.game_access import allowed, require
     if media_type == 'game':
         require(viewer)
-    resolved = await resolve_contributor(db, kind, key)
+    resolved = await resolve_contributor(db, kind, key, include_identities=True)
     if resolved is None:
         return None
-    entity, native = resolved
+    entity, native, identities = resolved
     games = media_type == "game"
     if cursor and not games and (kind != 'studio' or source == 'local'):
         raise ValueError('Invalid timeline cursor')
@@ -280,6 +280,19 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
         if not await db.scalar(select(select(game_credits(entity.id, kind).c.id).exists())):
             return None  # A broadcaster-only organization is not a production studio.
     attrs = dict(entity.attributes or {}) if entity else {}
+    imdb_state=None
+    imdb_profile={}
+    if games and kind!='studio' and entity:
+        ids=[row.external_id for row in identities if row.namespace=='imdb.person']
+        if len(ids)==1:
+            from core.game_imdb_enrichment import request as admit_person
+            from core.game_imdb_person import JOB, view as person_view
+            admitted=await admit_person(db,ids[0],kind=JOB,entity_id=entity.id)
+            imdb_state=await person_view(db,ids[0],state=admitted,check_mapping=True)
+            await db.commit()
+            # IMDb profiles remain a restricted component, never a globally
+            # merged biography that could expose game work on public pages.
+            imdb_profile=imdb_state.get('profile') or {}
     legacy = None
     if native and kind != 'studio':
         if games:
@@ -323,6 +336,9 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
     protected = set(entity.protected_fields or []) if entity else set()
     attrs = {**profile, **{field:value for field,value in attrs.items()
         if value not in (None, '', [], {}) or 'attributes.' + field in protected}}
+    if games:
+        attrs={**imdb_profile,**{field:value for field,value in attrs.items()
+            if value not in (None,'',[],{}) or 'attributes.'+field in protected}}
     name = entity.name if entity else legacy.title if legacy else profile.get("name")
     # Cached company records and people credits supply names even without API keys.
     if not entity and not legacy and not profile.get("name") and native:
@@ -437,4 +453,5 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
         "links": links, "roles": roles, "works": works, "known_works": game_result["known_works"] if game_result else len(all_known), "list_count": list_count,
         "total": total, "page": page, "has_more": has_more, "notice": notice,
         "next_cursor": next_cursor, "source": result_source,
+        **({'game_person_status':{key:value for key,value in imdb_state.items() if key!='profile'}} if imdb_state else {}),
         **({'share_summary':share_summary} if sharing else {})}

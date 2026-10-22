@@ -135,7 +135,7 @@
   function remember(url: URL, doc: Document) {
     resetForIdentity();
     if (!cacheable(url) || doc.body.dataset.cacheUser !== state.user) return;
-    if(doc.querySelector('a[href^="/games/"]'))return;
+    if(doc.body.hasAttribute('data-games-access')||doc.querySelector('a[href^="/games/"], [data-contributor-page][data-media-type="game"]'))return;
     const html = sanitizedHtml(doc, url);
     if (!html) return;
     const bytes = new Blob([html]).size;

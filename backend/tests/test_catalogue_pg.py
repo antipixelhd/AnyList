@@ -97,6 +97,7 @@ class CatalogueDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 importlib.import_module("migrations.versions.mt061_game_contributor_search").upgrade()
                 importlib.import_module("migrations.versions.mt063_game_imdb_identity").upgrade()
                 importlib.import_module("migrations.versions.mt064_game_credit_participation").upgrade()
+                importlib.import_module("migrations.versions.mt065_person_credit_scope").upgrade()
 
         async with self.engine.begin() as conn:
             await conn.run_sync(setup)

@@ -32,6 +32,14 @@ def game_credits(entity_id, kind):
     ports, expansions = parents.alias(), parents.alias()
     role = CatalogueCredit.role
     role_filter = role.in_(COMPANIES) if kind == 'studio' else role.in_(ACTING) if kind == 'actor' else ~role.in_(ACTING) & (role!='thanks')
+    detailed=aliased(CatalogueCredit)
+    detailed_role=select(detailed.id).where(detailed.work_id==CatalogueCredit.work_id,
+        detailed.contributor_id.in_(aliases),detailed.attributes['source_active'].astext.is_distinct_from('false'),
+        detailed.scope!='person',
+        or_(and_(role.in_(ACTING),detailed.role.in_(ACTING)),detailed.role==role)).correlate(CatalogueCredit).exists()
+    # A sparse person connection remains stored as participation evidence, but
+    # a title's actual voice/job roles take display precedence for the same work.
+    role_filter=role_filter & or_(CatalogueCredit.scope!='person',~detailed_role)
     independent = INDEPENDENT - {'port'}
     def projected(work):
         expansion_base = select(expansions.c.parent).join(base, base.id == expansions.c.parent).where(

@@ -5,6 +5,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, update
+from sqlalchemy.dialects.postgresql import insert
 
 from core import catalogue
 from core.catalogue_providers import ProviderError, ProviderHTTP
@@ -14,6 +15,13 @@ from core.game_imdb_mapping import game_mapping
 from core.game_imdb_source import IMDbGameSource, identifier, game_header
 from core.game_types import capabilities
 from models.catalogue import CatalogueEntity, CatalogueIdentity, CatalogueCredit, MetadataSnapshot
+
+BINDING_REVISION='game_binding_revision'
+
+
+async def revision(db):
+    return await db.scalar(select(MetadataSnapshot.coverage['revision'].astext).where(
+        MetadataSnapshot.provider=='imdb',MetadataSnapshot.kind==BINDING_REVISION,MetadataSnapshot.external_id=='current'))
 
 
 def now():
@@ -57,6 +65,9 @@ class GameIMDbBindings:
             work,native,binding,items=await context(db,work_id)
             if binding:
                 # A reviewed selection is never remapped by background lookup.
+                bound_native=(binding.evidence or {}).get('igdb_id')
+                if bound_native is not None and str(bound_native)!=native:
+                    return {'status':'conflict','imdb_id':None}
                 return {'status':'bound','binding':binding_view(binding)}
             slug=(work.attributes or {}).get('slug') or (work.attributes or {}).get('igdb_slug')
         key=hashlib.sha256(json.dumps([native,slug,sorted(items)]).encode()).hexdigest()
@@ -115,6 +126,7 @@ class GameIMDbBindings:
             if old and old.source=='reviewed' and source!='reviewed':
                 return {'status':'bound','binding':binding_view(old)}
             changed=source=='reviewed' and (not old or old.external_id!=title_id)
+            mapping_changed=not old or old.external_id!=title_id or (old.evidence or {}).get('igdb_id')!=evidence.get('igdb_id')
             if source=='reviewed':
                 db.add(MetadataSnapshot(provider='imdb',kind='game_binding_review',external_id=uuid.uuid4().hex,
                     entity_id=work_id,payload={'previous':binding_view(old) if old else None,
@@ -139,5 +151,10 @@ class GameIMDbBindings:
                     MetadataSnapshot.kind=='game_credit_job',MetadataSnapshot.entity_id==work_id)
                     .values(payload={},coverage={},expires_at=None,next_attempt_at=now(),lease_token=None,lease_until=None,
                         error_code=None,attempts=0).execution_options(synchronize_session=False))
+            if mapping_changed:
+                stamp=now();version={'revision':uuid.uuid4().hex}
+                await db.execute(insert(MetadataSnapshot).values(provider='imdb',kind=BINDING_REVISION,external_id='current',
+                    coverage=version,fetched_at=stamp).on_conflict_do_update(constraint='uq_catalogue_snapshot',
+                        set_={'coverage':version,'fetched_at':stamp}))
             await db.commit()
             return {'status':'bound','binding':binding_view(binding)}

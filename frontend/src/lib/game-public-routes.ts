@@ -7,5 +7,6 @@ export function anonymousGameDiscoveryRoute(method:string,path:string){
 /** Restricted documents require a current server response on navigation. */
 export function approvedGamesPage(url:URL){
   return /^\/(?:games(?:\/|$)|browse\/games\/?$|discover-game\/?$|user\/[^/]+\/games\/?$)/.test(url.pathname)
-    || /^\/(?:actors|person|studio)\//.test(url.pathname)&&url.searchParams.get('media_type')==='game';
+    || /^\/(?:actors|person|studio)\//.test(url.pathname)&&(
+      url.searchParams.get('media_type')==='game'||url.searchParams.get('domain')==='game');
 }

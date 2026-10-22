@@ -9,7 +9,7 @@ export function predictionManifest(html:string,user:string) {
   if(!script)return;
   try{
     const value=JSON.parse(script[1]);
-    if(value.user!==user||!Array.isArray(value.artwork))return;
+    if(value.user!==user||value.requiresGamesAccess===true||!Array.isArray(value.artwork))return;
     return value.artwork.map((image:unknown)=>typeof image==='string'?{src:image}:image)
       .filter((image:any)=>typeof image?.src==='string'&&(image.src.startsWith('https://')||image.src.startsWith('/api/proxy/media/image/')))
       .slice(0,2) as PredictionArtwork[];

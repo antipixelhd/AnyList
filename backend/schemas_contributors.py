@@ -71,3 +71,4 @@ class ContributorPage(BaseModel):
     next_cursor: str | None = None
     source: Literal["local", "provider"] = "local"
     notice: str | None = None
+    game_person_status: dict | None = None

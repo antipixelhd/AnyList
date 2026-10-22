@@ -32,6 +32,15 @@ WorkId = Annotated[int, Path(gt=0)]
 Admin = Annotated[User, Depends(require_admin)]
 
 
+@router.get('/people/{native}/imdb')
+async def imdb_person_status(native: Annotated[str,Path(pattern=r'^nm[0-9]+$',max_length=30)],db:DB,viewer:Reader) -> dict:
+    from core.game_imdb_person import view
+    from core.catalogue import resolve_identity
+    if not await resolve_identity(db,'imdb.person',native):raise HTTPException(404,'Person not found')
+    # Status-only polls neither enqueue more people nor read raw filmographies.
+    return await view(db,native,include_profile=False)
+
+
 async def request_game_credits(work_id,engine):
     import logging
     from sqlalchemy.ext.asyncio import async_sessionmaker

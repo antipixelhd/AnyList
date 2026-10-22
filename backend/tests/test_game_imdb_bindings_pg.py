@@ -96,3 +96,24 @@ class IMDbBindingTests(unittest.IsolatedAsyncioTestCase):
             db.add(CatalogueIdentity(entity_id=work,namespace='imdb.title',external_id='tt456',source='reviewed',evidence={'title_type':'videoGame'}))
             with self.assertRaises(IntegrityError):await db.flush()
             await db.rollback()
+
+    async def test_changed_igdb_root_requires_review_and_preserves_the_existing_pin(self):
+        from core.game_imdb_bindings import revision
+        work=await self.setup_game()
+        service=self.service()
+        await service.review(work,'tt123',77,'Verified original game root')
+        async with self.Session() as db:
+            original=await revision(db)
+            game=await db.get(CatalogueEntity,work)
+            game.attributes={**game.attributes,'igdb_id':'11'}
+            db.add(CatalogueIdentity(entity_id=work,namespace='igdb.game',external_id='11',source='reviewed'))
+            await db.commit()
+        self.assertEqual((await service.resolve(work))['status'],'conflict')
+        service.wiki.game_item.assert_not_awaited()
+        async with self.Session() as db:
+            pin=await catalogue.resolve_identity(db,'imdb.title','tt123')
+            self.assertEqual(pin.evidence['igdb_id'],'10')
+        await service.review(work,'tt123',77,'Verified corrected game root')
+        async with self.Session() as db:
+            self.assertNotEqual(await revision(db),original)
+            self.assertEqual((await catalogue.resolve_identity(db,'imdb.title','tt123')).evidence['igdb_id'],'11')

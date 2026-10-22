@@ -1,6 +1,6 @@
 """Work-scoped game characters and performances; screen roles are a separate graph."""
 from types import SimpleNamespace
-from sqlalchemy import select,func
+from sqlalchemy import select,func,or_
 from sqlalchemy.orm import load_only
 from core.catalogue_normalize import image
 from models.catalogue import CatalogueEntity, CatalogueCredit, CharacterAppearance, CharacterPerformance
@@ -16,6 +16,8 @@ async def displayed_credits(db,work_id):
         CatalogueCredit.attributes['game_role'].label('game_role'),CatalogueEntity).join(
             CatalogueEntity,CatalogueEntity.id==CatalogueCredit.contributor_id).where(
             CatalogueCredit.work_id==work_id,
+            or_(CatalogueCredit.scope!='person',select(CharacterPerformance.id).where(
+                CharacterPerformance.credit_id==CatalogueCredit.id,CharacterPerformance.source=='reviewed').exists()),
             ~func.coalesce(CatalogueCredit.attributes['source_active'].astext=='false',False))
     query=query.options(load_only(CatalogueEntity.id,CatalogueEntity.kind,CatalogueEntity.name,
         CatalogueEntity.image_url,CatalogueEntity.canonical_person_id,CatalogueEntity.canonical_company_id))

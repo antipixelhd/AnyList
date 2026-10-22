@@ -14,7 +14,8 @@ test('a failed replacement filter restores pagination and ignores the older page
   const context=vm.createContext({
     Error,URL,URLSearchParams,AbortController,DOMException,FormData:class {forEach(){}},
     signal:new AbortController().signal,writeVersion:0,gameEdits:new Map(),
-    root:{dataset:{endpoint:'people/1'},querySelector:()=>({})},
+    root:{dataset:{endpoint:'people/1'},querySelector:()=>({addEventListener(){}})},
+    contributorSourceRefresh:()=>({update(){},stop(){}}),
     form:{action:'https://example.test/person/1',addEventListener:(name,handler)=>{handlers[name]=handler;}},
     document:{addEventListener(){}},region,more,data,
     error:{hidden:true},params:new URLSearchParams(),
@@ -50,6 +51,8 @@ test('a game filter read waits for pending writes and retries stale membership/c
   const snippet=source.slice(source.indexOf('  const waitForGameWrites='),source.indexOf('  const prediction='));
   const pendingWrites=new Set(),network=[],invalidated=[],document=new EventTarget();
   const context=vm.createContext({document,DOMException,Error,URLSearchParams,Set,Map,Promise,
+    root:{querySelector:()=>null},signal:new AbortController().signal,data:{},params:new URLSearchParams(),
+    contributorSourceRefresh:()=>({update(){},stop(){}}),
     writeVersion:0,gameEdits:new Map([[8,{}]]),items:new Map(),
     editorStore:{hasPendingSubject:subject=>pendingWrites.has(subject.catalogue_id),invalidateSubject:subject=>invalidated.push(subject.catalogue_id)},
     fetch:()=>new Promise(resolve=>network.push(resolve)),

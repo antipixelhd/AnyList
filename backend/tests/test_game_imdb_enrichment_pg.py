@@ -189,6 +189,19 @@ class IMDbEnrichmentTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await db.scalar(select(func.count()).select_from(CatalogueEntity).where(
                 CatalogueEntity.kind=='person',CatalogueEntity.name=='Exact namesake')),5)
 
+    async def test_title_refresh_does_not_retire_independent_person_connection_evidence(self):
+        await self.service.run(self.work_id)
+        async with self.Session() as db:
+            person=CatalogueEntity(kind='person',name='Person-only participation')
+            db.add(person);await db.flush()
+            proof=CatalogueCredit(work_id=self.work_id,contributor_id=person.id,provider='imdb',role='actor',
+                source_key='person:nm3:tt123:actor',scope='person',attributes={'source_active':True,'imdb_person_evidence':True})
+            db.add(proof);await db.commit();proof_id=proof.id
+        await self.due();self.source.credits.return_value=page([actor('nm1')],1)
+        self.assertEqual(await self.service.run(self.work_id),'ready')
+        async with self.Session() as db:
+            self.assertTrue((await db.get(CatalogueCredit,proof_id)).attributes['source_active'])
+
     async def test_status_and_cached_admission_read_only_small_coverage_headers(self):
         await self.service.run(self.work_id)
         statements=[]

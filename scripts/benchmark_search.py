@@ -100,9 +100,25 @@ async def main(args):
                     tmdb_data=title(900000 + index)))
             first_game=None
             game_contributor_id=None
-            if not args.case or any(name.startswith(('game_contributor','game_people')) for name in args.case):
+            if not args.case or any(name.startswith(('game_contributor','game_people','game_person')) for name in args.case):
                 performer=CatalogueEntity(kind='person',name='Game works performer')
                 db.add(performer);await db.flush();game_contributor_id=performer.id
+                if not args.case or any(name.startswith('game_person') for name in args.case):
+                    db.add(CatalogueIdentity(entity_id=performer.id,namespace='imdb.person',external_id='nm8000000',source='imdb'))
+                    stamp=datetime.now(timezone.utc).replace(tzinfo=None)
+                    db.add_all([
+                        MetadataSnapshot(provider='imdb',kind='game_person_job',external_id='nm8000000',entity_id=performer.id,
+                            coverage={'state':'complete','complete':True,'received':1000,'total':1000},
+                            payload={'private_source_evidence':'SOURCE_EVIDENCE_SENTINEL '*50000},expires_at=stamp+timedelta(days=30)),
+                        MetadataSnapshot(provider='imdb',kind='game_person_credits',external_id='nm8000000',entity_id=performer.id,
+                            payload={'profile':{'biography':'Benchmark cached biography.'},'generation':'fixture'},
+                            coverage={'source_complete':True,'state':'partial','projection_revision':'fixture-v1','binding_revision':None,
+                                'source_games':1000,'mapped_games':0,'unmapped_games':1000},fetched_at=stamp,expires_at=stamp+timedelta(days=30))])
+                    for page in range(20):
+                        db.add(MetadataSnapshot(provider='imdb',kind='game_person_page',external_id=f'nm8000000:fixture:{page}',
+                            entity_id=performer.id,coverage={'page':page},payload={'rows':[{'title':{'id':f'tt{page*50+i}',
+                                'titleType':{'id':'videoGame'},'titleText':{'text':'SOURCE_EVIDENCE_SENTINEL '*30}},
+                                'category':{'id':'actor'}} for i in range(50)]}))
             for index in range(args.local_titles):
                 game = CatalogueEntity(kind='game', name=f'Benchmark game {index:05}', attributes={
                     'game_class': 'game', 'release_date': f'{2000 + index % 26}-01-01',
@@ -234,7 +250,7 @@ async def main(args):
                    'ms': round((time.perf_counter() - start) * 1000, 2), **dict(counters)}
             if isinstance(result, dict):
                 items = result.get('results', [])
-                if label.startswith('game_contributor'):items=result['works']
+                if label.startswith('game_contributor') or label=='game_person_cached':items=result['works']
                 if label=='game_credits':items=result['people']+result['game_characters']
                 if result.get('sections'):
                     items = [item for section in result['sections'] for item in section['results']]
@@ -302,6 +318,7 @@ async def main(args):
                 ('game_contributor_pages',path,{'media_type':'game'})]
             cases += [('game_people_search','quick-search/contributors',{'q':'Game works performer','kind':'actor','work_domain':'game'}),
                 ('game_people_shared','quick-search/contributors',{'q':'Game works performer','kind':'actor'})]
+            cases += [('game_person_cached',path,{'media_type':'game'}),('game_person_status','games/people/nm8000000/imdb',{})]
         cases += [
             ('game_search', 'games/search', {'q': 'Benchmark'}),
             ('game_browse_preview','games/browse',{'limit':6}),
@@ -401,6 +418,19 @@ async def main(args):
                         params['unfiltered'] = 'true'
 
                     async def operation(path=path, params=params, label=label, mode=mode):
+                        if label.startswith('game_person'):
+                            result=await request(path,params)
+                            status=result['game_person_status'] if label=='game_person_cached' else result
+                            if not status['complete'] or status['pending']:raise RuntimeError('Cached person source was unnecessarily requeued')
+                            if label=='game_person_cached' and (result['known_works']!=args.local_titles or result['description']!='Benchmark cached biography.'):
+                                raise RuntimeError('Person component lost the existing game works or cached profile')
+                            if counters['provider_requests'] or counters['db_writes']:raise RuntimeError('Cached person reads performed provider work or writes')
+                            if 'SOURCE_EVIDENCE_SENTINEL' in json.dumps(result):raise RuntimeError('Person read exposed raw source evidence')
+                            for identity in counters:
+                                sql=sql_patterns.get(identity.removeprefix('sql:'),'') if identity.startswith('sql:') else ''
+                                if 'catalogue_metadata_snapshots.payload,' in sql or 'catalogue_metadata_snapshots.payload FROM' in sql:
+                                    raise RuntimeError('Person read hydrated a full cached filmography')
+                            return result
                         if label.startswith('game_people'):
                             result=await request(path,params)
                             rows=result['results']['actor']

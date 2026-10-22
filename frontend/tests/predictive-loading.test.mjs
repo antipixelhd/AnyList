@@ -47,6 +47,11 @@ test('manifest exposes only two primary images for the current identity',()=>{
   assert.equal(predictionManifest('<script id="page-prediction">broken</script>','7'),undefined);
 });
 
+test('implicit Games documents cannot be installed from prediction caches',()=>{
+  const html='<script id="page-prediction" type="application/json">'+JSON.stringify({user:'7',artwork:[],requiresGamesAccess:true})+'</script>';
+  assert.equal(predictionManifest(html,'7'),undefined);
+});
+
 test('only same-origin title and contributor pages can be predicted',()=>{
   const origin='https://anylist.test';
   for(const path of ['/title/1','/games/7','/actors/tmdb%3A123','/person/catalogue:7','/studio/tmdb:12'])assert.equal(predictivePage(new URL(path,origin),origin),true);
