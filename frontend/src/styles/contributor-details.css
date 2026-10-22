@@ -72,6 +72,8 @@ html.light .contributor-banner.is-logo img { filter:brightness(0); }
 .contributor-filter-switch label:hover>span,.contributor-filter-switch input:focus-visible+span { color:var(--bright); background:var(--surface-raised,var(--bg)); }
 .contributor-filter-switch input:checked+span { color:#ffffff; background:var(--blue); }
 .contributor-filter-switch input:checked:focus-visible+span { background:var(--white); color:var(--bg); }
+.contributor-filter-switch label:has(input:disabled) { cursor:default; }
+.contributor-filter-switch input:disabled+span { color:var(--muted); background:transparent; opacity:.4; }
 .contributor-list-toggle { position:relative; cursor:pointer; }
 .contributor-list-toggle input { position:absolute; opacity:0; width:1px; height:1px; margin:0; }
 .contributor-list-toggle>span { display:flex; align-items:center; gap:10px; min-height:42px; padding:9px 12px; border-radius:7px; background:var(--panel); color:var(--muted); font-size:13px; white-space:nowrap; transition:background-color 180ms ease,color 180ms ease; }

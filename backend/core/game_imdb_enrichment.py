@@ -46,7 +46,7 @@ async def request(db,work_id,*,kind=JOB,entity_id=None,provider='imdb'):
             MetadataSnapshot.next_attempt_at.is_(None)
             & or_(MetadataSnapshot.expires_at.is_(None),MetadataSnapshot.expires_at<=stamp)
             & or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=stamp))))
-    return {**view,'state':'pending','pending':True,'error':None,'retry_after':2}
+    return {**view,'state':'pending','pending':True,'complete':False,'error':None,'retry_after':2}
 
 
 async def header(db,work_id,*,kind=JOB,provider='imdb'):

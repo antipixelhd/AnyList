@@ -16,7 +16,7 @@ test('a failed replacement filter restores pagination and ignores the older page
     signal:new AbortController().signal,writeVersion:0,gameEdits:new Map(),
     root:{dataset:{endpoint:'people/1'},querySelector:()=>({addEventListener(){}})},
     contributorSourceRefresh:()=>({update(){},stop(){}}),
-    form:{action:'https://example.test/person/1',addEventListener:(name,handler)=>{handlers[name]=handler;}},
+    form:{action:'https://example.test/person/1',querySelectorAll:()=>[],addEventListener:(name,handler)=>{handlers[name]=handler;}},
     document:{addEventListener(){}},region,more,data,
     error:{hidden:true},params:new URLSearchParams(),
     createPrediction:()=>({cancel(){},consume:async()=>null}),

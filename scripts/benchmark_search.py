@@ -104,10 +104,11 @@ async def main(args):
             children_base=None
             game_contributor_id=None
             game_company_id=None
+            availability_evidence=None
             if not args.case or any(name.startswith(('game_contributor','game_people','game_person','game_company')) for name in args.case):
                 performer=CatalogueEntity(kind='person',name='Game works performer')
                 db.add(performer);await db.flush();game_contributor_id=performer.id
-                if args.case and 'game_company_cached' in args.case:
+                if args.case and any(name in args.case for name in ('game_company_cached','game_company_availability')):
                     company=CatalogueEntity(kind='organization',name='Portfolio company')
                     db.add(company);await db.flush();game_company_id=company.id
                     db.add(CatalogueIdentity(entity_id=company.id,namespace='igdb.company',external_id='7000000',source='igdb'))
@@ -184,6 +185,19 @@ async def main(args):
                 db.add_all([CharacterPerformance(work_id=credit_work.id,credit_id=credits[i//3].id,
                     appearance_id=appearances[i].id,language='en',source='wikidata') for i in range(90)])
                 game_credits_id=credit_work.id
+            if args.case and 'game_person_availability' in args.case:
+                from core.contributor_availability import movie_job
+                from core.game_imdb_bindings import revision
+                db.add(CatalogueIdentity(entity_id=game_contributor_id,namespace='tmdb.person',external_id='7000000',source='tmdb'))
+                key,config=movie_job('actor',7000000)
+                availability_evidence=dict(kind=key[0],native_id=key[1],variant=key[2],config=config,
+                    payload={'domain_availability':{'actor':{'movie':'available','series':'empty'}},
+                        'raw_movie_credits':'MOVIE_EVIDENCE_SENTINEL '*50000},expires_at=datetime.now(timezone.utc).replace(tzinfo=None)+timedelta(days=1),attempts=0,next_attempt_at=None)
+                db.add(ContributorEvidence(**availability_evidence))
+                await db.flush()
+                component=await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.kind=='game_person_credits',MetadataSnapshot.external_id=='nm8000000'))
+                component.coverage={**component.coverage,'binding_revision':await revision(db),
+                    'role_coverage':{'actor':{'source':args.local_titles,'unmapped':0}}}
             await db.commit()
         fixture.app.include_router(games_router)
         if not args.case or 'game_credits' in args.case:
@@ -290,6 +304,9 @@ async def main(args):
                 row['total'] = result.get('total')
                 row['has_more'] = result.get('has_more')
                 row['pending'] = result.get('verification_pending')
+                if label in ('game_company_availability','game_person_availability'):
+                    row['result_identity']=hashlib.sha256(json.dumps(result['domains'],sort_keys=True).encode()).hexdigest()
+                    row['pending']=result['pending']
             samples.append(row)
             return result
 
@@ -354,10 +371,13 @@ async def main(args):
             cases += [('game_people_search','quick-search/contributors',{'q':'Game works performer','kind':'actor','work_domain':'game'}),
                 ('game_people_shared','quick-search/contributors',{'q':'Game works performer','kind':'actor'})]
             cases += [('game_person_cached',path,{'media_type':'game'}),('game_person_status','games/people/nm8000000/imdb',{})]
+            if args.case and 'game_person_availability' in args.case:
+                cases += [('game_person_availability',path+'/availability',{})]
             if args.case and 'game_person_review' in args.case:
                 cases += [('game_person_review','games/people/nm8000000/imdb/titles',{})]
         cases += [
             *([('game_company_cached',f'contributors/studio/catalogue:{game_company_id}',{'media_type':'game'})] if game_company_id else []),
+            *([('game_company_availability',f'contributors/studio/catalogue:{game_company_id}/availability',{})] if game_company_id else []),
             ('game_search', 'games/search', {'q': 'Benchmark'}),
             ('game_search_prefix','games/search',{'q':'Elden R'}),
             *([('game_children',f'games/works/{children_base}/children',{'limit':24})] if children_base else []),
@@ -453,11 +473,29 @@ async def main(args):
                         async with fixture.Session() as db:
                             await db.execute(delete(ContributorEvidence))
                             await db.commit()
+                    if label=='game_person_availability':
+                        # Neighboring contributor-search cases clear their
+                        # evidence. Restore this case's cached fixture before
+                        # measurement, including when cases run together.
+                        async with fixture.Session() as db:
+                            await db.merge(ContributorEvidence(**availability_evidence))
+                            await db.commit()
                     params = {'region': 'DE', **values}
                     if mode == 'show_all' and path and path.startswith('browse'):
                         params['unfiltered'] = 'true'
 
                     async def operation(path=path, params=params, label=label, mode=mode):
+                        if label in ('game_company_availability','game_person_availability'):
+                            result=await request(path,params)
+                            expected={'movie':'unknown','series':'unknown','game':'available'} if label=='game_company_availability' else {'movie':'available','series':'empty','game':'available'}
+                            if result['domains']!=expected or result['pending']:
+                                raise RuntimeError('Availability lost known Games or invented a negative')
+                            if counters['provider_requests'] or counters['db_writes']:raise RuntimeError('Cached availability performed provider work or writes')
+                            for identity in counters:
+                                sql=sql_patterns.get(identity.removeprefix('sql:'),'') if identity.startswith('sql:') else ''
+                                if any(f'{table}.payload{suffix}' in sql for table in ('catalogue_metadata_snapshots','catalogue_contributor_evidence') for suffix in (',',' FROM')):
+                                    raise RuntimeError('Availability hydrated a full provider snapshot')
+                            return result
                         if label=='game_company_cached':
                             result=await request(path,params)
                             if result['known_works']!=args.local_titles or len(result['works'])!=min(24,args.local_titles):

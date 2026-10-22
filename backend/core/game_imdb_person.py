@@ -8,8 +8,8 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 from time import monotonic
 
-from sqlalchemy import Integer, cast, delete, or_, select, update
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import Integer, cast, delete, func, or_, select, update
+from sqlalchemy.dialects.postgresql import insert,JSONB
 
 from core import catalogue
 from core.catalogue_providers import ProviderError, ProviderHTTP
@@ -65,7 +65,7 @@ async def queue_projection(db,native):
     queued=await db.execute(update(MetadataSnapshot).where(MetadataSnapshot.provider=='imdb',
         MetadataSnapshot.kind==JOB,MetadataSnapshot.external_id==native,MetadataSnapshot.next_attempt_at.is_(None),
         or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=now()))
-        .values(next_attempt_at=now(),payload=MetadataSnapshot.payload.op('||')({'projection_only':True}))
+        .values(next_attempt_at=now(),payload=func.coalesce(MetadataSnapshot.payload,cast({},JSONB)).op('||')({'projection_only':True}))
         .returning(MetadataSnapshot.id))
     return queued.scalar_one_or_none() is not None
 
@@ -143,7 +143,12 @@ async def project_mapped(db,native,rows,generation,*,source_generation=None):
         ~select(CharacterPerformance.id).where(CharacterPerformance.credit_id==CatalogueCredit.id,
             CharacterPerformance.source=='reviewed').exists()).values(
                 attributes=CatalogueCredit.attributes.op('||')({'source_active':False})).execution_options(synchronize_session=False))
-    return {'state':'partial' if omitted or ids-set(bindings) else 'mapped','source_games':len(ids),
+    acting={'actor','actress','cast','voice_actor','narrator'}
+    role_coverage={}
+    for kind in ('actor','staff'):
+        titles={row['title_id'] for row in games if (row['category'] in acting)==(kind=='actor') and row['category']!='thanks'}
+        role_coverage[kind]={'source':len(titles),'unmapped':len(titles-set(bindings))}
+    return {'role_coverage':role_coverage,'state':'partial' if omitted or ids-set(bindings) else 'mapped','source_games':len(ids),
         'mapped_games':len(set(bindings)&ids),'unmapped_games':len(ids-set(bindings)),'omitted_rows':omitted,
         'scope':'retrieved_person_connection','official_filmography_complete':False}
 

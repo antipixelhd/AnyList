@@ -13,6 +13,7 @@ import { setLocalDateTime } from './date-time-dom';
 import { createSectionScroll } from './section-scroll';
 import {browseCardKey} from './browse-card-data';
 import {contributorSourceRefresh} from './contributor-source-refresh';
+import {contributorAvailability,disabledContributorOption} from './contributor-availability';
 
 export function initializeContributorPage(root: HTMLElement, signal: AbortSignal) {
   mountContributorBiography(root, signal);
@@ -46,6 +47,11 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
   },{signal});
   const ready = new Set<string>();
   const params = contributorParams(new URLSearchParams(root.dataset.contributorQuery ?? location.search), data.list_count !== null);
+  if(root.dataset.contributorAvailability==='true')contributorAvailability(root.dataset.endpoint!,data.key,signal,domains=>{
+    form.querySelectorAll<HTMLInputElement>('input[name=domain],input[name=media_type]').forEach(input=>{
+      input.disabled=disabledContributorOption(input.name,input.value,domains);
+    });
+  });
   const banner = root.querySelector<HTMLImageElement>('[data-contributor-banner]');
   const missingBanner = () => {
     if (!banner) return;
@@ -271,6 +277,10 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     filterRequest=request;error.hidden=true;region.setAttribute('aria-busy','true');
     const submitted=new URLSearchParams();
     new FormData(form).forEach((value,key)=>submitted.set(key,String(value)));
+    // A verified-empty selected option can still be opened by direct link.
+    // Disabled controls are absent from FormData; preserve its domain while
+    // the viewer changes another filter, without forcing a route switch.
+    form.querySelectorAll<HTMLInputElement>('input[name=domain]:checked,input[name=media_type]:checked').forEach(input=>submitted.set(input.name,input.value));
     const query=contributorParams(submitted,data.list_count!==null);
     void requestPage(`/api/proxy/tracking/${root.dataset.endpoint}?${query}`,request.signal).then(next=>{
       if(signal.aborted||current!==revision)return;

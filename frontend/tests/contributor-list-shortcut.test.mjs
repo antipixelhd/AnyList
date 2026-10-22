@@ -26,7 +26,7 @@ test('filtered shortcut results update the works anchor and scroll only after re
  const start=source.indexOf("  form.addEventListener('submit',event=>{");
  const snippet=source.slice(start,source.indexOf('  bindPredictivePagination',start));
  let submit,resolvePage;const order=[],works={},urls=[];
- const form={action:'https://example.test/person/1#contributor-works',addEventListener:(_,callback)=>submit=callback};
+ const form={action:'https://example.test/person/1#contributor-works',querySelectorAll:()=>[],addEventListener:(_,callback)=>submit=callback};
  const context={form,signal:new AbortController().signal,prediction:{cancel(){}},filterRequest:undefined,revision:0,AbortController,URL,URLSearchParams,
   sourceRefresh:{update(){},stop(){}},
   error:{hidden:true},region:{setAttribute(){},removeAttribute(){},replaceChildren(){order.push('replace')}},

@@ -56,7 +56,7 @@ listLink.delete('cursor'); listLink.delete('page'); listLink.delete('source');
 listLink.set('list_scope','in'); listLink.set('view',view);
 ---
 <Tracker title={data?.name || (kind === 'studio' ? 'Studio' : 'Person')} shareDescription={data?.roles.join(' · ')} preloadBodyFonts predictionArtwork={[portrait,banner||backdrop].filter(Boolean)} requiresGamesAccess={games}>
-  {data ? <article class:list={['contributor-page', {'is-person':kind !== 'studio'}]} data-contributor-page data-view={view} data-media-type={params.get('media_type') || 'all'} data-contributor-query={params.toString()} data-endpoint={endpoint}>
+  {data ? <article class:list={['contributor-page', {'is-person':kind !== 'studio'}]} data-contributor-page data-view={view} data-media-type={params.get('media_type') || 'all'} data-contributor-query={params.toString()} data-endpoint={endpoint} data-contributor-availability={domains.can_access_games?'true':undefined}>
     <div class:list={['contributor-banner', {'is-logo':!!banner}]} aria-hidden="true">{(banner || backdrop) && <img src={banner || backdrop} alt="" fetchpriority="high" data-contributor-banner data-banner-fallback={backdrop || undefined} />}{kind !== 'studio' && <div class="contributor-banner-shade"></div>}</div>
     <div class="page-width contributor-layout">
       <aside class:list={['contributor-sidebar', {'is-studio':kind === 'studio'}]}>

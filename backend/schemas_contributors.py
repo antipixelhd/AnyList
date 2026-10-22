@@ -20,6 +20,13 @@ class ContributorImages(BaseModel):
     image_status: ContributorImageStatus
 
 
+class ContributorAvailability(BaseModel):
+    key: str
+    domains: dict[Literal['movie','series','game'],Literal['unknown','available','empty']]
+    pending: bool
+    retry_after: int = Field(default=3,ge=1,le=3600)
+
+
 class ContributorLink(BaseModel):
     label: str
     href: str

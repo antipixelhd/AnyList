@@ -21,7 +21,7 @@ from models.base import MediaType, PrivacyLevel
 from models.tracking import MediaFavorite, TrackedEntry, TrackingActivity, TrackingDeliveryJob, TrackingDeletion, TrackingPreferences, SyncReview, StreamBaseline, ProviderIgnore, ProviderMatch, StreamAction, CloudAction
 from models.sync import SyncJob, SyncStatus
 from schemas_statistics import MediaScope, OverviewResponse, StudioDetail, PersonDetail, StatisticsRefresh
-from schemas_contributors import ContributorKind, ContributorMediaScope, ContributorPage, ContributorImages, ListScope
+from schemas_contributors import ContributorKind, ContributorMediaScope, ContributorPage, ContributorImages, ContributorAvailability, ListScope
 
 from core.tracking_access import catalog_access, profile_access, anime_is_visible
 
@@ -894,6 +894,23 @@ async def contributor_portraits(
     if result is None:
         raise HTTPException(404, 'Contributor not found')
     return ContributorImages.model_validate(result)
+
+
+@router.get('/contributors/{kind}/{contributor_key}/availability')
+async def contributor_domain_availability(
+    kind: ContributorKind,
+    contributor_key: Annotated[str,Path(pattern=r'^(catalogue|tmdb):[1-9][0-9]{0,9}$')],
+    response: Response,
+    db: Annotated[AsyncSession,Depends(get_db)],
+    viewer: Annotated[User,Depends(get_current_user_or_api_key)],
+) -> ContributorAvailability:
+    from core.contributor_availability import availability
+    await catalog_access(db,viewer)
+    if int(contributor_key.split(':')[1])>2147483647:raise HTTPException(422,'Invalid contributor identifier')
+    response.headers['Cache-Control']='private, no-store'
+    result=await availability(db,viewer,kind=kind,key=contributor_key)
+    if result is None:raise HTTPException(404,'Contributor not found')
+    return ContributorAvailability.model_validate(result)
 
 
 @router.get('/contributors/{kind}/{contributor_key}')
