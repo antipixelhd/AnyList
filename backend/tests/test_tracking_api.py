@@ -3203,8 +3203,17 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         # A newly released episode appears as unwatched without moving the
         # completed entry back into Watching.
         future=(await self.db.execute(select(Media).where(Media.tmdb_id==987654311))).scalar_one()
-        future.season_number=2
         future.release_date=date.today().isoformat()
+        await self.db.commit()
+        result=(await self.client.get(f'/tracking/profile/{self.owner.username}/series')).json()['entries'][0]
+        self.assertEqual(result['status'],'completed')
+        self.assertEqual(result['new_seasons'],0)
+        self.assertEqual(result['new_episodes'],1)
+        # Progress responses use the same classification as a fresh profile read.
+        result=(await self.save(self.show,progress=1)).json()
+        self.assertEqual(result['new_seasons'],0)
+        self.assertEqual(result['new_episodes'],1)
+        future.season_number=2
         await self.db.commit()
         res=await self.client.get(f'/tracking/profile/{self.owner.username}/series')
         result=res.json()['entries'][0]
@@ -3213,6 +3222,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['released_episodes'],2)
         self.assertEqual(result['season_position'],'S1E1')
         self.assertEqual(result['new_seasons'],1)
+        self.assertEqual(result['new_episodes'],0)
         entry=(await self.db.execute(select(TrackedEntry).where(
             TrackedEntry.user_id==self.owner.id,TrackedEntry.media_id==self.show.id))).scalar_one()
         entry.progress=8
