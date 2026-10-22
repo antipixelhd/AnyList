@@ -1,19 +1,19 @@
 ---
 import Icon from './Icon.astro';
-const {query=''}=Astro.props;
+const {query='',label='Search',placeholder='Search titles…',ariaLabel='Search titles'}=Astro.props;
 ---
       <div class="browse-search-row">
         <label class="browse-search">
-          <span>Search</span>
+          <span>{label}</span>
           <div>
             <Icon name="search" />
             <input
               type="search"
               name="q"
               value={query}
-              placeholder="Search titles…"
+              placeholder={placeholder}
               autocomplete="off"
-              aria-label="Search titles"
+              aria-label={ariaLabel}
             />
             <button type="button" class="browse-search-clear" data-browse-search-clear aria-label="Clear search" hidden={!query}>
               <Icon name="close" />

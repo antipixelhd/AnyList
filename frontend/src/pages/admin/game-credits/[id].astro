@@ -2,29 +2,28 @@
 import Tracker from '../../../layouts/Tracker.astro';
 import BrowseSelect from '../../../components/BrowseSelect.astro';
 import BrowseSearchField from '../../../components/BrowseSearchField.astro';
+import {gameAdminRequest} from '../../../lib/game-admin-api';
+import {reviewPerson,reviewKind,reviewHome} from '../../../lib/game-credit-review-data';
 import '../../../styles/browse.css';
+import '../../../styles/game-credits-review.css';
 const id=Astro.params.id||'';
 const admin=Astro.locals.user?.is_admin===true;
+let returnPerson=reviewPerson(Astro.url.searchParams.get('return_person')),returnKind=reviewKind(Astro.url.searchParams.get('return_kind'));
 Astro.response.headers.set('Cache-Control','private, no-store');
 let data:any=null,candidate:any=null,results:{id:string;name:string;year?:number}[]=[],error='',reason='';
 let query=Astro.url.searchParams.get('q')||'',selected=Astro.url.searchParams.get('imdb')||'';
 async function endpoint(path:string,body?:unknown){
-  const response=await fetch(`http://127.0.0.1:${process.env.BACKEND_PORT??'7331'}/tracking/games/works/${id}/imdb${path}`,{
-    method:body?'POST':'GET',headers:{Authorization:`Bearer ${Astro.locals.token}`,...(body?{'Content-Type':'application/json'}:{})},
-    ...(body?{body:JSON.stringify(body)}:{}),
-  });
-  const value=await response.json().catch(()=>({}));
-  if(!response.ok)throw new Error(typeof value.detail==='string'?value.detail:'The IMDb record could not be verified.');
-  return value;
+  return gameAdminRequest(`/works/${id}/imdb${path}`,Astro.locals.token,body);
 }
 if(!admin){Astro.response.status=403;error='An admin account is required.';}
 else if(!/^[1-9][0-9]*$/.test(id)){Astro.response.status=404;error='Game not found.';}
 else {
   if(Astro.request.method==='POST'){
     const form=await Astro.request.formData();selected=String(form.get('imdb')||'');reason=String(form.get('reason')||'');
+    returnPerson=reviewPerson(String(form.get('return_person')||''));returnKind=reviewKind(String(form.get('return_kind')||''));
     try{
       await endpoint('',{imdb_id:selected,reason,confirmed_game_and_edition:form.get('confirmed')==='on'});
-      return Astro.redirect(`/games/${id}?tab=people`,303);
+      return Astro.redirect((returnPerson&&reviewHome(returnPerson,returnKind))||`/games/${id}?tab=people`,303);
     }catch(cause){error=cause instanceof Error?cause.message:'Could not save the binding.';Astro.response.status=409;}
   }
   try{
@@ -39,15 +38,17 @@ else {
 }
 const selectedLabel=results.find(row=>row.id===selected)?.name||'Choose an IMDb game';
 ---
-<Tracker title="Match IMDb credits">
-  <div class="page-width browse-page imdb-match">
-    <header class="browse-header"><h1>Match IMDb credits</h1>{data&&<a href={`/games/${id}?tab=people`}>Back to game</a>}</header>
+<Tracker title="Match IMDb credits" requiresGamesAccess>
+  <div class="page-width browse-page imdb-match" data-game-credits-admin>
+    <header class="browse-header"><h1>Match IMDb credits</h1>{data&&<a href={(returnPerson&&reviewHome(returnPerson,returnKind))||`/games/${id}?tab=people`}>{returnPerson?'Back to review':'Back to game'}</a>}</header>
     {error&&<p class="match-error" role="alert">{error}</p>}
     {data&&<>
       <form method="get" class="match-search" data-astro-reload>
+        {returnPerson&&<><input type="hidden" name="return_person" value={returnPerson}/><input type="hidden" name="return_kind" value={returnKind}/></>}
         <BrowseSearchField query={query}/><button class="button-primary match-submit" type="submit">Search IMDb</button>
       </form>
       {!!results.length&&<form method="get" class="browse-filters match-candidates" data-astro-reload>
+        {returnPerson&&<><input type="hidden" name="return_person" value={returnPerson}/><input type="hidden" name="return_kind" value={returnKind}/></>}
         <input type="hidden" name="q" value={query}/>
         <BrowseSelect name="imdb" aria-label="IMDb game" valueLabel={selectedLabel} required>
           <option value="">Choose an IMDb game</option>
@@ -60,6 +61,7 @@ const selectedLabel=results.find(row=>row.id===selected)?.name||'Choose an IMDb 
         {candidate&&<section><h2>IMDb · Video game</h2><h3>{candidate.titleText?.text}</h3><p>{candidate.releaseYear?.year||'—'}</p><a href={`https://www.imdb.com/title/${selected}/`} target="_blank" rel="noreferrer">{selected}</a></section>}
       </div>
       {candidate&&<form method="post" class="match-review" data-astro-reload>
+        {returnPerson&&<><input type="hidden" name="return_person" value={returnPerson}/><input type="hidden" name="return_kind" value={returnKind}/></>}
         <input type="hidden" name="imdb" value={selected}/>
         <label for="match-reason">Review note</label>
         <textarea id="match-reason" name="reason" rows={2} required minlength={3} maxlength={1000}>{reason}</textarea>
@@ -70,50 +72,6 @@ const selectedLabel=results.find(row=>row.id===selected)?.name||'Choose an IMDb 
   </div>
 </Tracker>
 <script>
-  let listeners:AbortController|undefined;
-  let mounted:Element|null=null;
-  function mount(){
-    const root=document.querySelector('.imdb-match');
-    if(root===mounted&&listeners&&!listeners.signal.aborted)return;
-    listeners?.abort();mounted=root;
-    if(!root)return;
-    listeners=new AbortController();const {signal}=listeners;
-    document.addEventListener('astro:before-swap',()=>{listeners?.abort();mounted=null;},{signal,once:true});
-    const input=root.querySelector<HTMLInputElement>('input[type="search"]');
-    const clear=root.querySelector<HTMLButtonElement>('[data-browse-search-clear]');
-    input?.addEventListener('input',()=>{if(clear)clear.hidden=!input.value;},{signal});
-    clear?.addEventListener('click',()=>{if(input){input.value='';input.focus();clear.hidden=true;}},{signal});
-    root.querySelectorAll('form').forEach(form=>form.addEventListener('submit',()=>{
-      const button=form.querySelector<HTMLButtonElement>('button[type="submit"]');
-      if(button)button.disabled=true;
-    },{signal}));
-  }
-  mount();document.addEventListener('astro:page-load',mount);
+  import {initializeGameCreditsAdmin} from '../../../lib/admin-game-credits';
+  initializeGameCreditsAdmin();
 </script>
-<style>
-  .imdb-match{max-width:900px;margin-inline:auto;padding-inline:20px}
-  .imdb-match a{color:var(--blue);font-size:14px}
-  .match-search,.match-candidates{display:flex;align-items:end;gap:14px;margin-bottom:22px}
-  .match-search :global(.browse-search-row),.match-candidates :global(.tracker-select){flex:1;min-width:0}
-  .match-search :global(.browse-search-row){margin:0}
-  .match-search :global(.browse-search){width:100%;max-width:none}
-  .match-candidates{align-items:center}
-  .match-records{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin:28px 0}
-  .match-records section{padding:20px;background:var(--panel);border-radius:6px;min-width:0}
-  .match-records h2{font-size:13px;font-weight:500;color:var(--muted);margin:0 0 12px}
-  .match-records h3{font-size:19px;font-weight:600;margin:0;line-height:1.4}
-  .match-records p{font-size:14px;color:var(--muted);margin:8px 0 18px}
-  .match-records span{font-size:14px;color:var(--muted)}
-  .match-submit{min-height:40px;font-size:14px;white-space:nowrap;flex-shrink:0;cursor:pointer;transition:background-color .16s,transform .16s}
-  .match-submit:is(:hover,:focus-visible){outline:none;background:color-mix(in srgb,var(--blue) 85%,white)}
-  .match-submit:active{transform:scale(.98)}
-  .match-submit:disabled{opacity:.65;cursor:progress}
-  .match-review{display:grid;gap:12px;font-size:14px}
-  .match-review textarea{font:inherit;color:var(--bright);background:var(--panel);border:0;border-radius:5px;padding:12px;resize:vertical;transition:background-color .16s}
-  .match-review textarea:focus-visible{outline:none;background:color-mix(in srgb,var(--blue) 12%,var(--panel))}
-  .match-confirm{display:flex;gap:10px;align-items:center;margin:6px 0}
-  .match-review .match-submit{justify-self:start}
-  .match-error{color:#ef8e9d;font-size:14px;margin:16px 0}
-  @media(max-width:600px){.match-records{grid-template-columns:1fr}.match-search,.match-candidates{flex-wrap:wrap}.match-search :global(.browse-search-row),.match-candidates :global(.tracker-select){flex-basis:100%}}
-  @media(prefers-reduced-motion:reduce){.match-submit,.match-review textarea{transition:none}}
-</style>

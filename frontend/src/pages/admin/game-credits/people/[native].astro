@@ -1,0 +1,99 @@
+---
+import Tracker from '../../../../layouts/Tracker.astro';
+import BrowseSearchField from '../../../../components/BrowseSearchField.astro';
+import BrowseSelect from '../../../../components/BrowseSelect.astro';
+import {gameAdminRequest,GameAdminError} from '../../../../lib/game-admin-api';
+import {reviewPerson,reviewTitle,reviewKind,reviewHome,reviewMatch,type GameReviewTitle} from '../../../../lib/game-credit-review-data';
+import '../../../../styles/browse.css';
+import '../../../../styles/game-credits-review.css';
+const native=reviewPerson(Astro.params.native),admin=Astro.locals.user?.is_admin===true;
+let kind=reviewKind(Astro.url.searchParams.get('kind')),selected=reviewTitle(Astro.url.searchParams.get('title'));
+let query=(Astro.url.searchParams.get('q')||'').slice(0,100),generation=Astro.url.searchParams.get('generation');
+const bindings=Astro.url.searchParams.get('bindings');
+if(!/^[0-9a-f]{32}$/.test(generation||''))generation=null;
+const scope=Astro.url.searchParams.get('scope')==='all'?'all':'unmapped';
+const page=Math.min(500,Math.max(1,Number(Astro.url.searchParams.get('page'))||1));
+let data:any=null,target:GameReviewTitle|null=null,error='',candidates:any[]=[];
+Astro.response.headers.set('Cache-Control','private, no-store');
+const endpoint=`/people/${native}/imdb/titles`;
+if(!admin){Astro.response.status=403;error='An admin account is required.';}
+else if(!native){Astro.response.status=404;error='Person not found.';}
+else{
+  try{
+    if(Astro.request.method==='POST'){
+      const form=await Astro.request.formData();selected=reviewTitle(String(form.get('title')||''));
+      generation=String(form.get('generation')||'');kind=reviewKind(String(form.get('kind')||''));
+      const raw=String(form.get('igdb_id')||'');
+      if(!selected||!generation||!/^[0-9a-f]{32}$/.test(generation)||!/^[1-9][0-9]{0,14}$/.test(raw)||!Number.isSafeInteger(Number(raw)))
+        throw new GameAdminError('Select a game to preview.',422);
+      const cached=await gameAdminRequest(`${endpoint}/${selected}?${new URLSearchParams({generation})}`,Astro.locals.token);
+      data={person:cached.person,generation:cached.generation};target=cached.title;
+      const result=await gameAdminRequest(`/resolve/${raw}`,Astro.locals.token,{});
+      const location=reviewMatch(result.id,selected,native,kind);
+      if(!location)throw new GameAdminError('Game details are still loading. Please try again.',503);
+      return Astro.redirect(location,303);
+    }
+    if(selected){
+      const cached=await gameAdminRequest(`${endpoint}/${selected}${generation?`?${new URLSearchParams({generation})}`:''}`,Astro.locals.token);
+      data={person:cached.person,generation:cached.generation};target=cached.title;
+      if(!Astro.url.searchParams.has('q')&&target)query=target.title.slice(0,100);
+      const term=query.trim();
+      if(/^[1-9][0-9]{0,14}$/.test(term)&&Number.isSafeInteger(Number(term)))
+        candidates=[{igdb_id:Number(term),title:`IGDB ${term}`,year:null}];
+      else if(term.length>=2)candidates=(await gameAdminRequest(`/search?${new URLSearchParams({q:term})}`,Astro.locals.token)).results;
+    }else{
+      const params=new URLSearchParams({page:String(Math.floor(page)),q:query,scope,...(generation?{generation}:{}),...(bindings?{bindings}:{})});
+      data=await gameAdminRequest(`${endpoint}?${params}`,Astro.locals.token);
+    }
+  }catch(cause){error=cause instanceof Error?cause.message:'Game mappings are temporarily unavailable.';Astro.response.status=cause instanceof GameAdminError?cause.status:503;}
+}
+const home=native?reviewHome(native,kind):'/browse';
+const personLink=data?`/${kind==='staff'?'person':'actors'}/catalogue:${data.person.id}?media_type=game`:'/browse';
+const next=new URLSearchParams({kind,page:String(Math.floor(page)+1),q:query,scope,...(data?.generation?{generation:data.generation}:{}),...(data?.bindings?{bindings:data.bindings}:{})});
+---
+<Tracker title="Review game mappings" requiresGamesAccess>
+  <div class="page-width browse-page imdb-match" data-game-credits-admin>
+    <header class="browse-header"><h1>{target?'Choose an IGDB game':'Review game mappings'}</h1><a href={target?home:personLink}>{target?'Back to review':data?.person.name||'Back to person'}</a></header>
+    {error&&<p class="match-error" role="alert">{error}</p>}
+    {!data&&error&&<a href={home}>Refresh review</a>}
+    {target&&<>
+      <div class="match-records review-selected"><section><h2>IMDb · Video game</h2><h3>{target.title}</h3><p>{target.year||'—'}</p><a href={`https://www.imdb.com/title/${target.imdb_id}/`} target="_blank" rel="noreferrer">{target.imdb_id}</a></section></div>
+      <form method="get" class="match-search" data-astro-reload>
+        <input type="hidden" name="title" value={target.imdb_id}/><input type="hidden" name="kind" value={kind}/><input type="hidden" name="generation" value={data.generation}/>
+        <BrowseSearchField query={query} label="IGDB game" placeholder="Game title or IGDB ID…" ariaLabel="Search IGDB games or enter an IGDB ID"/>
+        <button type="submit" class="button-primary match-submit">Search games</button>
+      </form>
+      {(target.work_id||target.review_work_id)&&<p class="review-current"><a href={reviewMatch(target.work_id||target.review_work_id!,target.imdb_id,native!,kind)}>Review current binding</a></p>}
+      <div class="review-list" aria-label="IGDB game candidates">
+        {candidates.map(row=><article class="review-row"><div><h2>{row.title}</h2><p>{[row.year,row.game_class==='expansion'?'Expansion':null].filter(Boolean).join(' · ')||`IGDB ${row.igdb_id}`}</p></div>
+          <form method="post" data-astro-reload><input type="hidden" name="title" value={target.imdb_id}/><input type="hidden" name="kind" value={kind}/><input type="hidden" name="generation" value={data.generation}/><input type="hidden" name="igdb_id" value={row.igdb_id}/><button type="submit" class="button-primary match-submit">Preview game</button></form>
+        </article>)}
+      </div>
+      {!candidates.length&&!error&&<p class="review-empty">No games match this search.</p>}
+    </>}
+    {data&&!target&&<>
+      {data.ready?<>
+        <form method="get" class="browse-filters match-search review-filters" data-astro-reload>
+          <input type="hidden" name="kind" value={kind}/>
+          <BrowseSearchField query={query} placeholder="Filter cached titles…" ariaLabel="Filter cached IMDb game titles"/>
+          <BrowseSelect name="scope" aria-label="Game mappings" valueLabel={scope==='all'?'All games':'Unmapped games'}><option value="unmapped" selected={scope==='unmapped'}>Unmapped games</option><option value="all" selected={scope==='all'}>All games</option></BrowseSelect>
+          <button type="submit" class="button-primary match-submit">Apply</button>
+        </form>
+        <p class="review-count">{data.total} {scope==='unmapped'?'unmapped':'cached'} {data.total===1?'game':'games'}</p>
+        <div class="review-list">
+          {data.results.map((row:GameReviewTitle)=><article class="review-row"><div><h2>{row.title}</h2><p>{row.year||'—'} · <a href={`https://www.imdb.com/title/${row.imdb_id}/`} target="_blank" rel="noreferrer">{row.imdb_id}</a></p>{row.status==='bound'&&<p><a href={`/games/${row.work_id}`}>{row.game_title}</a></p>}</div>
+            <a class="review-action" href={`${home}&${new URLSearchParams({title:row.imdb_id,generation:data.generation})}`}>{row.status==='bound'?'Review binding':'Review'}</a>
+          </article>)}
+        </div>
+        {!data.results.length&&<p class="review-empty">No cached game titles need review with these filters.</p>}
+        {data.has_more&&<a class="review-next" href={`${Astro.url.pathname}?${next}`}>Next page</a>}
+      </>:<p class="review-empty" role="status">Cached game credits are being prepared.</p>}
+      <button type="button" class="review-refresh" data-game-review-refresh hidden>Refresh review</button>
+      <script type="application/json" data-game-review-status set:html={JSON.stringify(data.status).replaceAll('<','\\u003c')}/>
+    </>}
+  </div>
+</Tracker>
+<script>
+  import {initializeGameCreditsAdmin} from '../../../../lib/admin-game-credits';
+  initializeGameCreditsAdmin();
+</script>

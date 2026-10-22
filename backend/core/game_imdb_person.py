@@ -10,14 +10,13 @@ from time import monotonic
 
 from sqlalchemy import Integer, cast, delete, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.orm import aliased
 
 from core import catalogue
 from core.catalogue_providers import ProviderError, ProviderHTTP
 from core.game_imdb_enrichment import now, snapshot, request as admit, status as job_status
 from core.game_imdb_source import IMDbGameSource, identifier, TITLE_ID
 from core.game_imdb_projection import ROLE
-from core.game_imdb_bindings import revision as binding_revision
+from core.game_imdb_bindings import revision as binding_revision, verified_bindings
 from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity, MetadataSnapshot, CharacterPerformance
 
 JOB='game_person_job'
@@ -55,16 +54,20 @@ async def view(db,native,*,state=None,include_profile=True,check_mapping=False):
         if row.coverage.get('binding_revision')!=current:
             # A reviewed/new game mapping can unlock cached person works.
             # Replay the saved connection instead of refetching IMDb for it.
-            queued=await db.execute(update(MetadataSnapshot).where(MetadataSnapshot.provider=='imdb',
-                MetadataSnapshot.kind==JOB,MetadataSnapshot.external_id==native,MetadataSnapshot.next_attempt_at.is_(None),
-                or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=now()))
-                .values(next_attempt_at=now(),payload=MetadataSnapshot.payload.op('||')({'projection_only':True}))
-                .returning(MetadataSnapshot.id))
-            if queued.scalar_one_or_none():state={**state,'state':'pending','pending':True,'complete':False,'error':None,'retry_after':2}
+            if await queue_projection(db,native):state={**state,'state':'pending','pending':True,'complete':False,'error':None,'retry_after':2}
     return {'id':native,**state,**({'profile':row.profile if row else None} if include_profile else {}),
         'fetched_at':row.fetched_at.replace(tzinfo=timezone.utc).isoformat() if row and row.fetched_at else None,
         'revision':row.coverage.get('projection_revision') if row else None,
         'mapping':row.coverage if row else {'state':'unknown'}}
+
+
+async def queue_projection(db,native):
+    queued=await db.execute(update(MetadataSnapshot).where(MetadataSnapshot.provider=='imdb',
+        MetadataSnapshot.kind==JOB,MetadataSnapshot.external_id==native,MetadataSnapshot.next_attempt_at.is_(None),
+        or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=now()))
+        .values(next_attempt_at=now(),payload=MetadataSnapshot.payload.op('||')({'projection_only':True}))
+        .returning(MetadataSnapshot.id))
+    return queued.scalar_one_or_none() is not None
 
 
 def profile(header):
@@ -109,15 +112,8 @@ async def project_mapped(db,native,rows,generation,*,source_generation=None):
     games,omitted=await asyncio.to_thread(game_rows,rows)
     if omitted:raise ProviderError('bad_response')
     ids={row['title_id'] for row in games}
-    igdb=aliased(CatalogueIdentity)
-    bindings=dict((await db.execute(select(CatalogueIdentity.external_id,CatalogueIdentity.entity_id).join(
-        CatalogueEntity,CatalogueEntity.id==CatalogueIdentity.entity_id).where(CatalogueEntity.kind=='game',
-        CatalogueIdentity.namespace=='imdb.title',CatalogueIdentity.external_id.in_(ids),
-        CatalogueIdentity.source.in_(('reviewed','wikidata')),CatalogueIdentity.evidence['title_type'].astext=='videoGame',
-        or_(CatalogueEntity.attributes['igdb_id'].astext.is_(None),
-            CatalogueEntity.attributes['igdb_id'].astext==CatalogueIdentity.evidence['igdb_id'].astext),
-        select(igdb.id).where(igdb.entity_id==CatalogueEntity.id,igdb.namespace=='igdb.game',
-            igdb.external_id==CatalogueIdentity.evidence['igdb_id'].astext).exists()))).all()) if ids else {}
+    bindings=dict((await db.execute(verified_bindings(ids).with_only_columns(
+        CatalogueIdentity.external_id,CatalogueIdentity.entity_id))).all()) if ids else {}
     credits=[]
     for row in games:
         work=bindings.get(row['title_id'])
@@ -258,6 +254,9 @@ class GameIMDbPersonEnrichment:
                     **{key:now().isoformat() for key in incoming}}
                 component.payload={'profile':{**previous,**incoming},'profile_fetched_at':field_times,'generation':state['generation'],
                     'received':state['received'],'total':state['total'],'pages':state['pages']}
+                from core.game_imdb_review import write_index
+                component.payload={**component.payload,**await write_index(db,native,state['generation'],
+                    [row for stored in pages for row in stored['rows']],entity_id=job.entity_id)}
                 component.coverage={**mapping,'source_complete':True,'projection_revision':state['generation'],
                     'binding_revision':await binding_revision(db)}
                 component.fetched_at=now();component.expires_at=now()+timedelta(days=30)
@@ -286,6 +285,9 @@ class GameIMDbPersonEnrichment:
                 raise ProviderError('incomplete_cache')
             projection=uuid.uuid4().hex
             mapping=await project_mapped(db,native,[row for page in pages for row in page],projection,source_generation=generation)
+            from core.game_imdb_review import write_index
+            component.payload={**component.payload,**await write_index(db,native,generation,
+                [row for page in pages for row in page],entity_id=job.entity_id)}
             component.coverage={**mapping,'source_complete':True,'projection_revision':projection,
                 'binding_revision':await binding_revision(db)}
             state.pop('projection_only',None)

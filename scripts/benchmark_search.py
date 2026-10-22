@@ -90,6 +90,7 @@ async def main(args):
         async with fixture.Session() as db:
             viewer = await db.get(User, fixture.user_id)
             viewer.games_access = True
+            if args.case and 'game_person_review' in args.case:viewer.is_admin=True
             settings = UserSettings(user_id=viewer.id, tmdb_api_key='fixture-provider-key', preferences={})
             db.add(settings)
             global_settings = await db.get(GlobalSettings, 1)
@@ -111,10 +112,14 @@ async def main(args):
                             coverage={'state':'complete','complete':True,'received':1000,'total':1000},
                             payload={'private_source_evidence':'SOURCE_EVIDENCE_SENTINEL '*50000},expires_at=stamp+timedelta(days=30)),
                         MetadataSnapshot(provider='imdb',kind='game_person_credits',external_id='nm8000000',entity_id=performer.id,
-                            payload={'profile':{'biography':'Benchmark cached biography.'},'generation':'fixture'},
+                            payload={'profile':{'biography':'Benchmark cached biography.'},'generation':'fixture',
+                                'index_generation':'fixture','index_pages':20,'index_titles':1000},
                             coverage={'source_complete':True,'state':'partial','projection_revision':'fixture-v1','binding_revision':None,
                                 'source_games':1000,'mapped_games':0,'unmapped_games':1000},fetched_at=stamp,expires_at=stamp+timedelta(days=30))])
                     for page in range(20):
+                        db.add(MetadataSnapshot(provider='imdb',kind='game_person_index',external_id=f'nm8000000:fixture:{page}',
+                            entity_id=performer.id,coverage={'page':page},payload={'titles':[{'id':f'tt{page*50+i}',
+                                'title':f'Review game {page*50+i:04}','year':2024,'roles':['actor'],'position':page*50+i} for i in range(50)]}))
                         db.add(MetadataSnapshot(provider='imdb',kind='game_person_page',external_id=f'nm8000000:fixture:{page}',
                             entity_id=performer.id,coverage={'page':page},payload={'rows':[{'title':{'id':f'tt{page*50+i}',
                                 'titleType':{'id':'videoGame'},'titleText':{'text':'SOURCE_EVIDENCE_SENTINEL '*30}},
@@ -319,6 +324,8 @@ async def main(args):
             cases += [('game_people_search','quick-search/contributors',{'q':'Game works performer','kind':'actor','work_domain':'game'}),
                 ('game_people_shared','quick-search/contributors',{'q':'Game works performer','kind':'actor'})]
             cases += [('game_person_cached',path,{'media_type':'game'}),('game_person_status','games/people/nm8000000/imdb',{})]
+            if args.case and 'game_person_review' in args.case:
+                cases += [('game_person_review','games/people/nm8000000/imdb/titles',{})]
         cases += [
             ('game_search', 'games/search', {'q': 'Benchmark'}),
             ('game_browse_preview','games/browse',{'limit':6}),
@@ -420,7 +427,12 @@ async def main(args):
                     async def operation(path=path, params=params, label=label, mode=mode):
                         if label.startswith('game_person'):
                             result=await request(path,params)
-                            status=result['game_person_status'] if label=='game_person_cached' else result
+                            status=result['game_person_status'] if label=='game_person_cached' else result['status'] if label=='game_person_review' else result
+                            if label=='game_person_review':
+                                if not result['ready'] or result['total']!=1000 or len(result['results'])!=50 or not result['has_more']:
+                                    raise RuntimeError('Admin review lost cached game coverage or page bounds')
+                                if [row['imdb_id'] for row in result['results']]!=[f'tt{i}' for i in range(50)]:
+                                    raise RuntimeError('Admin review changed source ordering')
                             if not status['complete'] or status['pending']:raise RuntimeError('Cached person source was unnecessarily requeued')
                             if label=='game_person_cached' and (result['known_works']!=args.local_titles or result['description']!='Benchmark cached biography.'):
                                 raise RuntimeError('Person component lost the existing game works or cached profile')

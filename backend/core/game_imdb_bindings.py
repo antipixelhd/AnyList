@@ -4,8 +4,9 @@ import json
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.orm import aliased
 
 from core import catalogue
 from core.catalogue_providers import ProviderError, ProviderHTTP
@@ -17,6 +18,21 @@ from core.game_types import capabilities
 from models.catalogue import CatalogueEntity, CatalogueIdentity, CatalogueCredit, MetadataSnapshot
 
 BINDING_REVISION='game_binding_revision'
+
+
+def verified_bindings(title_ids=None):
+    """Explicit bindings whose current IGDB root still agrees with their evidence."""
+    igdb=aliased(CatalogueIdentity)
+    query=select(CatalogueIdentity.external_id.label('imdb_id'),CatalogueIdentity.entity_id.label('work_id'),
+        CatalogueEntity.name.label('game_title'),CatalogueIdentity.evidence['igdb_id'].astext.label('igdb_id')).join(
+        CatalogueEntity,CatalogueEntity.id==CatalogueIdentity.entity_id).where(CatalogueEntity.kind=='game',
+        CatalogueIdentity.namespace=='imdb.title',CatalogueIdentity.source.in_(('reviewed','wikidata')),
+        CatalogueIdentity.evidence['title_type'].astext=='videoGame',
+        or_(CatalogueEntity.attributes['igdb_id'].astext.is_(None),
+            CatalogueEntity.attributes['igdb_id'].astext==CatalogueIdentity.evidence['igdb_id'].astext),
+        select(igdb.id).where(igdb.entity_id==CatalogueEntity.id,igdb.namespace=='igdb.game',
+            igdb.external_id==CatalogueIdentity.evidence['igdb_id'].astext).exists())
+    return query.where(CatalogueIdentity.external_id.in_(title_ids)) if title_ids is not None else query
 
 
 async def revision(db):

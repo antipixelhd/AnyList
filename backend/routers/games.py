@@ -41,6 +41,32 @@ async def imdb_person_status(native: Annotated[str,Path(pattern=r'^nm[0-9]+$',ma
     return await view(db,native,include_profile=False)
 
 
+@router.get('/people/{native}/imdb/titles')
+async def imdb_person_titles(native: Annotated[str,Path(pattern=r'^nm[0-9]+$',max_length=30)],db:DB,viewer:Admin,
+        page:Annotated[int,Query(ge=1,le=500)]=1,q:Annotated[str,Query(max_length=100)]='',
+        scope:Literal['unmapped','all']='unmapped',
+        generation:Annotated[str|None,Query(pattern=r'^[0-9a-f]{32}$')]=None,
+        bindings:Annotated[str|None,Query(pattern=r'^(?:[0-9a-f]{32}|none)$')]=None) -> dict:
+    from core.game_imdb_review import review_titles,ReviewChanged
+    try:result=await review_titles(db,native,page=page,query=q.strip(),scope=scope,generation=generation,bindings=bindings)
+    except ReviewChanged as error:raise HTTPException(409,str(error)) from None
+    if result is None:raise HTTPException(404,'Person not found')
+    return result
+
+
+@router.get('/people/{native}/imdb/titles/{title_id}')
+async def imdb_person_title(native: Annotated[str,Path(pattern=r'^nm[0-9]+$',max_length=30)],
+        title_id:Annotated[str,Path(pattern=r'^tt[0-9]+$',max_length=30)],db:DB,viewer:Admin,
+        generation:Annotated[str|None,Query(pattern=r'^[0-9a-f]{32}$')]=None) -> dict:
+    from core.game_imdb_review import review_titles,ReviewChanged
+    try:result=await review_titles(db,native,title_id=title_id,scope='all',generation=generation)
+    except ReviewChanged as error:raise HTTPException(409,str(error)) from None
+    if not result:raise HTTPException(404,'Person not found')
+    if not result['ready']:raise HTTPException(409,'Cached credits are being prepared. Refresh this review.')
+    if not result['results']:raise HTTPException(404,'Game title not found in this cached connection')
+    return {'person':result['person'],'generation':result['generation'],'title':result['results'][0]}
+
+
 async def request_game_credits(work_id,engine):
     import logging
     from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -155,11 +181,12 @@ async def search_games(db: DB, viewer: Viewer, q: Annotated[str, Query(min_lengt
 async def resolve_game(igdb_id: WorkId, db: DB, viewer: Viewer) -> dict:
     from core import catalogue
     from core.catalogue_providers import CatalogueProviders, ProviderHTTP, ProviderError
-    from db import AsyncSessionLocal
+    from sqlalchemy.ext.asyncio import async_sessionmaker
     await catalog_access(db, viewer)
+    sessions=async_sessionmaker(db.bind,expire_on_commit=False)
     await db.close()
     try:
-        result = await catalogue.refresh_metadata(db, CatalogueProviders(ProviderHTTP(session_factory=AsyncSessionLocal)),
+        result = await catalogue.refresh_metadata(db, CatalogueProviders(ProviderHTTP(session_factory=sessions)),
             'igdb', 'game', str(igdb_id))
     except ProviderError:
         raise HTTPException(503, 'Game details are temporarily unavailable') from None

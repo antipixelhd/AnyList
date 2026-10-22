@@ -117,10 +117,14 @@ class GameAccessTests(unittest.IsolatedAsyncioTestCase):
             for path in ['/credits','/imdb','/imdb/candidates?q=Elden','/imdb/candidates/tt123']:
                 self.assertEqual((await self.client.get(base+path)).status_code,403,path)
             self.assertEqual((await self.client.get('/tracking/games/people/nm1/imdb')).status_code,403)
+            for suffix in ['/titles','/titles/tt123']:
+                self.assertEqual((await self.client.get('/tracking/games/people/nm1/imdb'+suffix)).status_code,403)
             self.other.games_access=True
             self.assertEqual((await self.client.get(base+'/credits')).status_code,200)
             self.assertEqual((await self.client.get(base+'/imdb')).status_code,200)
             self.assertEqual((await self.client.get(base+'/imdb/candidates?q=Elden')).status_code,403)
+            for suffix in ['/titles','/titles/tt123']:
+                self.assertEqual((await self.client.get('/tracking/games/people/nm1/imdb'+suffix)).status_code,403)
             self.assertEqual((await self.client.post(base+'/imdb',json={'imdb_id':'tt123',
                 'reason':'Verified identity','confirmed_game_and_edition':True})).status_code,403)
             source.assert_not_awaited()
@@ -134,3 +138,27 @@ class GameAccessTests(unittest.IsolatedAsyncioTestCase):
         self.viewer=self.other
         body=(await self.client.get(base+'/imdb')).json()
         self.assertNotIn('evidence',body['binding'])
+
+    async def test_admin_review_only_selects_cached_video_game_members(self):
+        from datetime import timedelta
+        from core.game_imdb_enrichment import now
+        from core.game_imdb_review import write_index
+        from models.catalogue import MetadataSnapshot
+        native='nm123';generation='a'*32
+        async with self.Session() as db:
+            db.add(CatalogueIdentity(entity_id=self.person_id,namespace='imdb.person',external_id=native,source='reviewed'))
+            db.add_all([
+                MetadataSnapshot(provider='imdb',kind='game_person_job',external_id=native,entity_id=self.person_id,
+                    coverage={'complete':True,'state':'complete'},expires_at=now()+timedelta(days=30)),
+                MetadataSnapshot(provider='imdb',kind='game_person_credits',external_id=native,entity_id=self.person_id,
+                    payload={'generation':generation,'index_generation':generation},coverage={'source_complete':True})])
+            await write_index(db,native,generation,[{'title':{'id':'tt123','titleType':{'id':'videoGame'},
+                'titleText':{'text':'Unmapped game'}},'category':{'id':'actor'}}],entity_id=self.person_id)
+            await db.commit()
+        path=f'/tracking/games/people/{native}/imdb/titles'
+        response=await self.client.get(path)
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertEqual(response.json()['total'],1)
+        self.assertEqual((await self.client.get(path+'/tt123')).status_code,200)
+        self.assertEqual((await self.client.get(path+'/tt999')).status_code,404)
+        self.assertEqual((await self.client.get(path,params={'generation':'b'*32})).status_code,409)
