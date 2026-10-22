@@ -65,6 +65,7 @@ async def base_work_id(db, entity):
     cls = capabilities(entity.attributes).game_class
     ids = list((await db.scalars(select(CatalogueRelationship.target_id).where(
         CatalogueRelationship.source_id == entity.id,
+        CatalogueRelationship.attributes['source_active'].astext.is_distinct_from('false'),
         CatalogueRelationship.relation == cls).distinct())).all())
     if len(ids) != 1:
         raise HTTPException(409, 'A verified base game is required')

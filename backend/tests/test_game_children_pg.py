@@ -43,6 +43,8 @@ class ChildrenTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await self.client.get(f'/tracking/games/works/{self.base}/children')).json()['total'],0)
             retained=await db.scalar(select(GameChildState).where(GameChildState.work_id==self.child))
             self.assertEqual(retained.score,8)
+        rejected=await self.client.patch(f'/tracking/games/children/{self.child}',json={'status':'playing','revision':retained.revision})
+        self.assertEqual(rejected.status_code,409)
 
     async def test_playable_types_unique_parent_and_sorted_paging(self):
         async with self.Session() as db:

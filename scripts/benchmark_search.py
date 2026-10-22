@@ -296,7 +296,7 @@ async def main(args):
                     return [] if 'search "Elden R";' in statement else [
                         {'id':119133,'name':'Elden Ring','game_type':{'id':0}},
                         {'id':9,'name':'Elden Sword','game_type':{'id':0}}]
-                api=CatalogueProviders();api.igdb=prefix_source
+                api=CatalogueProviders();api.validate=lambda *args:None;api.igdb=prefix_source
                 return await api.search('igdb','game',query,1,50)
             counters['provider_requests'] += 1
             counters['provider:igdb/search'] += 1

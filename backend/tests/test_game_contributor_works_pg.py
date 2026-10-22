@@ -118,6 +118,13 @@ class GameContributorTests(unittest.IsolatedAsyncioTestCase):
             await db.commit()
         data = (await self.request(media_type='game', list_scope='in')).json()
         self.assertEqual((data['list_count'], data['total']), (1, 1))
+        async with self.Session() as db:
+            relation=await db.scalar(select(CatalogueRelationship).where(
+                CatalogueRelationship.source_id==expansion.id,CatalogueRelationship.relation=='expansion'))
+            relation.attributes={'source_active':False};await db.commit()
+        data=(await self.request(media_type='game')).json()
+        self.assertEqual(data['known_works'],2)
+        self.assertNotIn(expansion.id,[row['id'] for row in data['works']])
 
     async def test_continuations_bind_scope_and_restart_when_collection_changes(self):
         await self.seed()

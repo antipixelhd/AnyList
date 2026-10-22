@@ -26,7 +26,8 @@ def game_credits(entity_id, kind):
     parents = select(CatalogueRelationship.source_id.label('child'),
         CatalogueRelationship.relation.label('relation'),
         func.min(CatalogueRelationship.target_id).label('parent')).where(
-        CatalogueRelationship.relation.in_(('port', 'expansion'))).group_by(
+        CatalogueRelationship.relation.in_(('port', 'expansion')),
+        CatalogueRelationship.attributes['source_active'].astext.is_distinct_from('false')).group_by(
         CatalogueRelationship.source_id, CatalogueRelationship.relation).having(
         func.count(func.distinct(CatalogueRelationship.target_id)) == 1).subquery()
     ports, expansions = parents.alias(), parents.alias()
