@@ -50,6 +50,6 @@ async def character_projection(db,work_id,credits):
             'image':character['image'],'language':row.language,'source':row.source,
             'role':credit.role,'role_label':credit.role_label})
         actor={'id':person.id,'name':person.name,'image':image(person.image_url),
-            'language':row.language,'role':credit.role,'role_label':credit.role_label,'url':f'/actors/catalogue:{person.id}'}
+            'language':row.language,'role':credit.role,'role_label':credit.role_label,'url':f'/actors/catalogue:{person.id}?media_type=game'}
         if actor not in character['performers']:character['performers'].append(actor)
     return by_credit,list(characters.values())

@@ -21,7 +21,7 @@ from models.base import MediaType, PrivacyLevel
 from models.tracking import MediaFavorite, TrackedEntry, TrackingActivity, TrackingDeliveryJob, TrackingDeletion, TrackingPreferences, SyncReview, StreamBaseline, ProviderIgnore, ProviderMatch, StreamAction, CloudAction
 from models.sync import SyncJob, SyncStatus
 from schemas_statistics import MediaScope, OverviewResponse, StudioDetail, PersonDetail, StatisticsRefresh
-from schemas_contributors import ContributorKind, ContributorPage, ContributorImages, ListScope
+from schemas_contributors import ContributorKind, ContributorMediaScope, ContributorPage, ContributorImages, ListScope
 
 from core.tracking_access import catalog_access, profile_access, anime_is_visible
 
@@ -902,14 +902,15 @@ async def contributor_details(
     response: Response,
     db: Annotated[AsyncSession, Depends(get_db)],
     viewer: Annotated[User, Depends(get_current_user_or_api_key)],
-    media_type: MediaScope = 'all',
+    media_type: ContributorMediaScope = 'all',
     list_scope: ListScope = 'all',
-    status: Literal['', 'watching', 'completed', 'planning', 'paused', 'dropped'] = '',
+    status: Literal['', 'watching', 'playing', 'completed', 'planning', 'paused', 'dropped'] = '',
     page: Annotated[int, Query(ge=1, le=500)] = 1,
     cursor: Annotated[str | None, Query(max_length=400)] = None,
     source: Literal['', 'local', 'provider'] = '',
 ) -> ContributorPage:
     from core.contributor_details import contributor_page
+    from core.game_contributor_works import GameWorksChanged
 
     await catalog_access(db, viewer)
     if int(contributor_key.split(':')[1]) > 2147483647:
@@ -921,6 +922,8 @@ async def contributor_details(
         result = await contributor_page(db, viewer, kind=kind, key=contributor_key,
                                         media_type=media_type, list_scope=list_scope, status=status,
                                         page=page, cursor=cursor, source=source)
+    except GameWorksChanged:
+        raise HTTPException(409, 'Game works changed. Refresh the works to continue.') from None
     except ValueError:
         raise HTTPException(422, 'Invalid timeline cursor') from None
     except RuntimeError:

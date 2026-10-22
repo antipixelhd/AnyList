@@ -27,6 +27,9 @@ MAX_BYTES = 16 * 1024 * 1024
 def target(path):
     """Accept identities, never arbitrary upstream URLs or viewer query state."""
     path = unquote(path)
+    games = bool(re.fullmatch(r'/(actors|person|studio)/((catalogue|tmdb):)?[1-9][0-9]{0,9}/?\?media_type=game', path))
+    if games:
+        path = path[:-len('?media_type=game')]
     if match := re.fullmatch(r'/(title|games)/([1-9][0-9]{0,9})/?', path):
         if int(match[2]) <= 2147483647:
             return match[1], match[2]
@@ -35,7 +38,8 @@ def target(path):
     if match := re.fullmatch(r'/(actors|person|studio)/((?:catalogue|tmdb):[1-9][0-9]{0,9}|[1-9][0-9]{0,9})/?', path):
         key = match[2] if ':' in match[2] else 'tmdb:' + match[2]
         if int(key.split(':')[1]) <= 2147483647:
-            return {'actors':'actor', 'person':'staff', 'studio':'studio'}[match[1]], key
+            kind = {'actors':'actor', 'person':'staff', 'studio':'studio'}[match[1]]
+            return ('game_' + kind if games else kind), key
     raise HTTPException(404, 'Preview not found')
 
 
@@ -101,6 +105,9 @@ async def card_data(db, path):
     from core.statistics_snapshots import CONTRACT_VERSION
 
     kind, key = target(path)
+    game_contributor = kind.startswith('game_')
+    if game_contributor:
+        kind = kind.removeprefix('game_')
     # This check deliberately runs before every cache lookup, even with a cookie.
     await catalog_access(db, None)
     avatar = None
@@ -154,15 +161,18 @@ async def card_data(db, path):
     else:
         from core.contributor_details import contributor_page
         async with asyncio.timeout(6):
-            data = await contributor_page(db, None, kind=kind, key=key, source='local', sharing=True)
+            data = await contributor_page(db, None, kind=kind, key=key, source='local', sharing=True,
+                media_type='game' if game_contributor else 'all')
         if not data:
             raise HTTPException(404, 'Contributor not found')
         summary = data['share_summary']
         years = age(data.get('birthday'), data.get('deathday')) if kind != 'studio' else None
         stats = ([{'value':str(years), 'label':'Age at death' if data.get('deathday') else 'Age'}] if years is not None else [])
-        stats += [{'value':str(summary['movies']), 'label':'Movies'}, {'value':str(summary['series']), 'label':'Series'}]
+        stats += ([{'value':str(summary['games']), 'label':'Known games'}] if game_contributor else
+            [{'value':str(summary['movies']), 'label':'Movies'}, {'value':str(summary['series']), 'label':'Series'}])
         card = dict(kind=kind, title=data['name'], eyebrow=' · '.join(data['roles'][:3]) or ('Studio' if kind == 'studio' else 'Actor' if kind == 'actor' else data.get('department') or 'Staff'),
-                    subtitle='', stats=stats, primary=data.get('image'), background=summary['background'])
+                    subtitle='', stats=stats, primary=data.get('image'),
+                    background=game_preview_artwork(summary['background'], landscape=True) if game_contributor else summary['background'])
     return card, avatar
 
 

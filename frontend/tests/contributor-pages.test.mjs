@@ -17,4 +17,13 @@ test('timeline groups dates and preserves internal, discover and provider destin
   assert.equal(workHref({id:null,tmdb_id:9,type:'series'}),'/discover-title?type=series&id=9');
   assert.equal(workHref({id:null,tmdb_id:null,type:'movie',href:'https://www.thetvdb.com/movie/1'}),'https://www.thetvdb.com/movie/1');
   assert.equal(workHref({id:null,tmdb_id:null,type:'movie'}),null);
+  assert.equal(workHref({id:8,type:'game'}),'/games/8');
+  assert.equal(workHref({id:null,igdb_id:9,type:'game'}),'/discover-game?id=9');
+});
+
+test('game works remain a separate domain and explicit movie/series choices survive reload',()=>{
+  assert.equal(contributorParams(new URLSearchParams('media_type=game&list_scope=in'),true).toString(),'media_type=game&list_scope=in');
+  assert.equal(contributorParams(new URLSearchParams('domain=game&media_type=movie'),true).get('media_type'),'game');
+  assert.equal(contributorParams(new URLSearchParams('domain=movies-series&media_type=all'),true).get('media_type'),'all');
+  assert.equal(contributorParams(new URLSearchParams('media_type=game&list_scope=in'),false).toString(),'media_type=game');
 });

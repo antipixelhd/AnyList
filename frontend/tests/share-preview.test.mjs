@@ -2,6 +2,18 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {SHARE_IMAGE_REVISION, shareImagePath, crawlerShareResponse, generalSharePage, loginSharePage, loginShareIdentity, shareMetadata, shareLoginPath, sharePagePath, sharePath, mediaShareDescription} from '../src/lib/share-preview.ts';
 
+test('game contributor previews retain only the public domain through cards and login',async()=>{
+  const path='/actors/catalogue:42',query='?media_type=game&list_scope=in&token=secret&page=9';
+  assert.equal(sharePath(path,query),`${path}?media_type=game`);
+  assert.equal(sharePagePath(path,query),`${path}?media_type=game`);
+  const redirect=new URL(shareLoginPath(path,query),'https://anylist.test');
+  assert.equal(loginShareIdentity(redirect.searchParams.get('next')),`${path}?media_type=game`);
+  assert.ok(!redirect.href.includes('secret'));
+  let request;
+  await shareMetadata(`${path}?media_type=game`,async url=>{request=new URL(url);return {ok:true,json:async()=>({title:'Actor',description:'1 Known games'})};});
+  assert.equal(request.searchParams.get('path'),`${path}?media_type=game`);
+});
+
 test('general previews retain public page labels through the login redirect', () => {
   for (const [path, title] of [['/', 'Welcome'], ['/home', 'Home'], ['/settings', 'Account'],
     ['/settings/media', 'Movies & series'], ['/settings/notifications', 'Notifications']]) {

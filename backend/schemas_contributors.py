@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 ContributorKind = Literal["actor", "staff", "studio"]
+ContributorMediaScope = Literal["all", "movie", "series", "game"]
 ListScope = Literal["all", "in", "out"]
 
 
@@ -28,7 +29,8 @@ class ContributorWork(BaseModel):
     key: str
     id: int | None = None
     tmdb_id: int | None = None
-    type: Literal["movie", "series"]
+    type: Literal["movie", "series", "game"]
+    game_class: str | None = None
     title: str
     poster: str | None = None
     backdrop: str | None = None

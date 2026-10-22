@@ -98,6 +98,10 @@ async def main(args):
                     tmdb_id=900000 + index, runtime=100, release_date='2026-10-01',
                     tmdb_data=title(900000 + index)))
             first_game=None
+            game_contributor_id=None
+            if not args.case or any(name.startswith('game_contributor') for name in args.case):
+                performer=CatalogueEntity(kind='person',name='Game works performer')
+                db.add(performer);await db.flush();game_contributor_id=performer.id
             for index in range(args.local_titles):
                 game = CatalogueEntity(kind='game', name=f'Benchmark game {index:05}', attributes={
                     'game_class': 'game', 'release_date': f'{2000 + index % 26}-01-01',
@@ -105,6 +109,10 @@ async def main(args):
                 db.add(game)
                 await db.flush()
                 if first_game is None:first_game=game
+                if game_contributor_id:
+                    db.add(CatalogueCredit(work_id=game.id,contributor_id=game_contributor_id,
+                        provider='wikidata',source_key=f'game-works-{index}',role='voice_actor',
+                        character_label=f'Character {index}',attributes={'statement':'evidence '*2048}))
                 db.add(GameEntry(user_id=viewer.id, work_id=game.id,
                     status=['planning', 'playing', 'completed', 'paused', 'dropped'][index % 5],
                     total_seconds=index * 3600, score=8 if index % 3 else None))
@@ -144,11 +152,14 @@ async def main(args):
             counters['db_reads' if statement.lstrip().upper().startswith(('SELECT', 'WITH')) else 'db_writes'] += 1
             normalized = re.sub(r'\s+', ' ', statement).strip()
             identity = hashlib.sha256(normalized.encode()).hexdigest()[:12]
+            context.benchmark_identity = identity
             sql_patterns[identity] = normalized
             counters['sql:' + identity] += 1
 
         def sql_end(conn, cursor, statement, parameters, context, many):
-            counters['db_ms'] += (time.perf_counter() - context.benchmark_started) * 1000
+            elapsed = (time.perf_counter() - context.benchmark_started) * 1000
+            counters['db_ms'] += elapsed
+            counters['sql_ms:' + context.benchmark_identity] += elapsed
 
         async def provider(client, url, headers, params, retries):
             counters['provider_requests'] += 1
@@ -216,6 +227,7 @@ async def main(args):
                    'ms': round((time.perf_counter() - start) * 1000, 2), **dict(counters)}
             if isinstance(result, dict):
                 items = result.get('results', [])
+                if label.startswith('game_contributor'):items=result['works']
                 if label=='game_credits':items=result['people']+result['game_characters']
                 if result.get('sections'):
                     items = [item for section in result['sections'] for item in section['results']]
@@ -276,6 +288,11 @@ async def main(args):
         feed = [{**title(1000 + i), 'imdb_votes': 10000, 'imdb_id': f'tt{1000+i}', 'imdb_score': 8} for i in range(120)]
         cases = [
             ('game_credits',f'catalogue/entities/{game_credits_id}/details',{})] if not args.case or 'game_credits' in args.case else []
+        if game_contributor_id:
+            path=f'contributors/actor/catalogue:{game_contributor_id}'
+            cases += [('game_contributor',path,{'media_type':'game'}),
+                ('game_contributor_listed',path,{'media_type':'game','list_scope':'in','status':'completed'}),
+                ('game_contributor_pages',path,{'media_type':'game'})]
         cases += [
             ('game_search', 'games/search', {'q': 'Benchmark'}),
             ('game_browse_preview','games/browse',{'limit':6}),
@@ -375,6 +392,19 @@ async def main(args):
                         params['unfiltered'] = 'true'
 
                     async def operation(path=path, params=params, label=label, mode=mode):
+                        if label.startswith('game_contributor'):
+                            first=await request(path,params)
+                            if first['known_works']!=args.local_titles or first['list_count']!=args.local_titles:
+                                raise RuntimeError('Game contributor counts lost complete collection membership')
+                            works=first['works']
+                            if label=='game_contributor_pages' and first['has_more']:
+                                second=await request(path,{**params,'page':2,'source':'local','cursor':first['next_cursor']})
+                                works+=second['works']
+                                if len(works)!=min(48,args.local_titles) or len({row['id'] for row in works})!=len(works):
+                                    raise RuntimeError('Game contributor continuation lost or repeated works')
+                            if any(row['entry'] is not None or row['type']!='game' for row in works) or 'statement' in json.dumps(first):
+                                raise RuntimeError('Game contributor projection exposed full editor/source evidence')
+                            return {**first,'works':works}
                         if label=='game_credits':
                             result=await request(path,params)
                             actors=[person for person in result['people'] if person['kind']=='actor']

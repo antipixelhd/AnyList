@@ -25,7 +25,7 @@ html.light .contributor-banner.is-logo img { filter:brightness(0); }
 }
 .contributor-portrait { width:100%; border:0; padding:0; cursor:pointer; }
 .contributor-portrait:disabled { cursor:default; }
-.contributor-portrait:focus-visible { outline:2px solid var(--blue); outline-offset:4px; }
+.contributor-page .contributor-sidebar .contributor-portrait:focus-visible { outline:none; filter:brightness(1.16); background:color-mix(in srgb,var(--blue) 18%,var(--panel)); color:var(--blue); }
 .contributor-biography { scroll-margin-top:96px; }
 .contributor-portrait [data-contributor-portrait-fallback] { display:grid; place-items:center; }
 .contributor-portrait [data-contributor-portrait-fallback] .ui-icon { display:flex; }
@@ -71,7 +71,7 @@ html.light .contributor-banner.is-logo img { filter:brightness(0); }
 .contributor-filter-switch label>span { display:flex; align-items:center; justify-content:center; min-height:36px; padding:7px; border-radius:5px; color:var(--muted); font-size:13px; white-space:nowrap; transition:background-color 180ms ease,color 180ms ease; }
 .contributor-filter-switch label:hover>span,.contributor-filter-switch input:focus-visible+span { color:var(--bright); background:var(--surface-raised,var(--bg)); }
 .contributor-filter-switch input:checked+span { color:#ffffff; background:var(--blue); }
-.contributor-filter-switch input:checked:focus-visible+span { background:var(--white); }
+.contributor-filter-switch input:checked:focus-visible+span { background:var(--white); color:var(--bg); }
 .contributor-list-toggle { position:relative; cursor:pointer; }
 .contributor-list-toggle input { position:absolute; opacity:0; width:1px; height:1px; margin:0; }
 .contributor-list-toggle>span { display:flex; align-items:center; gap:10px; min-height:42px; padding:9px 12px; border-radius:7px; background:var(--panel); color:var(--muted); font-size:13px; white-space:nowrap; transition:background-color 180ms ease,color 180ms ease; }
@@ -103,7 +103,7 @@ html.light .contributor-banner.is-logo img { filter:brightness(0); }
 .browse-work-date { display:block; font-size:13px; font-weight:400; color:var(--muted); margin-top:8px; }
 .browse-work-date:empty { display:none; }
 .browse-work-type { display:block; font-size:11px; color:var(--muted); margin-top:6px; }
-.contributor-page:is([data-media-type=movie],[data-media-type=series]) .browse-work-type { display:none; }
+.contributor-page:is([data-media-type=movie],[data-media-type=series],[data-media-type=game]) .browse-work-type { display:none; }
 .contributor-page[data-view=grid] :is(.contributor-year,.contributor-year-works) { display:contents; }
 .contributor-page[data-view=grid] .contributor-year>h3,.contributor-page[data-view=grid] :is(.browse-work-date,.browse-work-type) { display:none; }
 .contributor-page[data-view=grid] .browse-credit { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:var(--browse-meta-size); margin-top:5px; }

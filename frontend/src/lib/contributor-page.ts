@@ -11,6 +11,7 @@ import { mountPortraitViewer } from './image-viewer';
 import {createPrediction,bindPredictivePagination} from './predictive-loading';
 import { setLocalDateTime } from './date-time-dom';
 import { createSectionScroll } from './section-scroll';
+import {browseCardKey} from './browse-card-data';
 
 export function initializeContributorPage(root: HTMLElement, signal: AbortSignal) {
   mountContributorBiography(root, signal);
@@ -36,8 +37,14 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
   const more = root.querySelector<HTMLButtonElement>('[data-contributor-more]')!;
   const error = root.querySelector<HTMLElement>('[data-contributor-error]')!;
   const items = new Map<HTMLElement, ContributorWork>();
+  let writeVersion=0;
+  const gameEdits=new Map<number,{version:number;status:string|null;score:number|null}>();
+  document.addEventListener('anylist:editor-state',event=>{
+    const title=(event as CustomEvent<import('./editor-store').EditorTitle>).detail;
+    if(title.type==='game'&&title.id)gameEdits.set(title.id,{version:++writeVersion,status:title.entry?.status||null,score:title.entry?.score??null});
+  },{signal});
   const ready = new Set<string>();
-  const params = contributorParams(new URLSearchParams(location.search), data.list_count !== null);
+  const params = contributorParams(new URLSearchParams(root.dataset.contributorQuery ?? location.search), data.list_count !== null);
   const banner = root.querySelector<HTMLImageElement>('[data-contributor-banner]');
   const missingBanner = () => {
     if (!banner) return;
@@ -58,7 +65,23 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
   portrait?.addEventListener('error', missingPortrait, {signal});
   if (portrait?.complete && !portrait.naturalWidth) missingPortrait();
   root.dataset.enhanced = '';
-  form.addEventListener('change', () => form.requestSubmit(), {signal});
+  const syncDomainFields=()=>{
+    const movies = form.querySelector<HTMLFieldSetElement>('[data-contributor-screen-types]')!;
+    const games = (form.elements.namedItem('domain') as RadioNodeList).value === 'game';
+    movies.hidden = movies.disabled = games;
+  };
+  const restoreFilterControls=()=>{
+    const type=params.get('media_type')||'all';
+    form.querySelectorAll<HTMLInputElement>('[name=domain]').forEach(input=>input.checked=input.value===(type==='game'?'game':'movies-series'));
+    form.querySelectorAll<HTMLInputElement>('[name=media_type]').forEach(input=>input.checked=input.value===(type==='game'?'all':type));
+    const scope=form.elements.namedItem('list_scope') as HTMLInputElement|null;
+    if(scope)scope.checked=params.get('list_scope')==='in';
+    syncDomainFields();
+  };
+  form.addEventListener('change', () => {
+    syncDomainFields();
+    form.requestSubmit();
+  }, {signal});
   const scrollToWorks = createSectionScroll(signal);
   root.querySelector<HTMLAnchorElement>('.contributor-list-link')?.addEventListener('click',event=>{
     if(event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;
@@ -107,7 +130,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
   };
   const mount = (card: HTMLElement, item: ContributorWork) => {
     items.set(card, item);
-    if (data.list_count !== null && (item.id || item.tmdb_id)) editorStore.seed(item);
+    if (item.type !== 'game' && data.list_count !== null && (item.id || item.tmdb_id)) editorStore.seed(item);
     paint(card, item);
     const image = card.querySelector<HTMLImageElement>('[data-poster]')!;
     const missingPoster = () => {
@@ -146,6 +169,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
         group.append(heading, children); region.append(group);
       }
       const card = template.content.firstElementChild!.cloneNode(true) as HTMLElement;
+      card.dataset.key = browseCardKey({...item,href:item.href||undefined});
       card.dataset.workKey = item.key;
       card.querySelector('h2')!.textContent = item.title;
       card.querySelector('.browse-poster-link')!.setAttribute('aria-label', item.title);
@@ -172,15 +196,39 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
   };
   root.querySelector<HTMLElement>('[data-contributor-next]')!.hidden = true;
   more.hidden = !data.has_more;
+  const waitForGameWrites=(requestSignal:AbortSignal)=>new Promise<void>((resolve,reject)=>{
+    const pending=()=>[...new Set([...gameEdits.keys(),...[...items.values()].filter(item=>item.type==='game'&&item.id).map(item=>item.id!)])]
+      .some(id=>editorStore.hasPendingSubject({kind:'game',catalogue_id:id}));
+    const cleanup=()=>{document.removeEventListener('anylist:editor-state',changed);requestSignal.removeEventListener('abort',aborted);};
+    const changed=()=>{if(!pending()){cleanup();resolve();}};
+    const aborted=()=>{cleanup();reject(new DOMException('Aborted','AbortError'));};
+    if(requestSignal.aborted){aborted();return;}
+    if(!pending()){resolve();return;}
+    document.addEventListener('anylist:editor-state',changed);requestSignal.addEventListener('abort',aborted,{once:true});
+    changed();
+  });
   const requestPage=async(path:string,requestSignal:AbortSignal):Promise<ContributorPage>=>{
-    const response=await fetch(path,{signal:requestSignal,cache:'no-store'});
-    if(!response.ok)throw new Error('Unable to load more works. Please try again.');
-    return response.json();
+    const games=new URLSearchParams(path.split('?')[1]||'').get('media_type')==='game';
+    // Wait outside provider/DB work, and discard a private read if a write began
+    // during it. This protects full counts and filtered membership as well as
+    // individual cards; a partial overlay cannot repair missing filtered rows.
+    for(;;){
+      if(games)await waitForGameWrites(requestSignal);
+      const started=writeVersion;
+      const response=await fetch(path,{signal:requestSignal,cache:'no-store'});
+      if(!response.ok)throw Object.assign(new Error('Unable to load more works. Please try again.'),{status:response.status});
+      const next:ContributorPage=await response.json();
+      if(requestSignal.aborted)throw new DOMException('Aborted','AbortError');
+      if(games&&started!==writeVersion)continue;
+      for(const item of next.works)if(item.type==='game'&&item.id)editorStore.invalidateSubject({kind:'game',catalogue_id:item.id});
+      return next;
+    }
   };
   const prediction=createPrediction<ContributorPage>(requestPage,signal);
   let filterRequest:AbortController|undefined,revision=0;
   signal.addEventListener('abort',()=>filterRequest?.abort(),{once:true});
   document.addEventListener('anylist:cache-invalidated',prediction.cancel,{signal});
+  document.addEventListener('anylist:editor-state',event=>{if((event as CustomEvent).detail?.type==='game')prediction.cancel();},{signal});
   const nextPath=()=>{
     const query=new URLSearchParams(params);
     query.set('page',String(data.page+1));query.set('source',data.source);
@@ -198,7 +246,12 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
       append(next.works);
       data.page=next.page;data.source=next.source;data.next_cursor=next.next_cursor;data.has_more=next.has_more;
       more.hidden=!data.has_more;
-    }catch(cause){if(!signal.aborted&&current===revision)showError(cause instanceof Error?cause.message:'Unable to load more works.');}
+    }catch(cause){
+      if(!signal.aborted&&current===revision){
+        if((cause as Error & {status?:number}).status===409)form.requestSubmit();
+        else showError(cause instanceof Error?cause.message:'Unable to load more works.');
+      }
+    }
     finally{if(!signal.aborted&&current===revision){more.disabled=false;more.textContent='Load more';}}
   };
   more.addEventListener('click',()=>void loadMore(),{signal});
@@ -218,6 +271,13 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
       for(const key of [...params.keys()])params.delete(key);
       query.forEach((value,key)=>params.set(key,value));
       root.dataset.mediaType=params.get('media_type')||'all';
+      const count=root.querySelector('[data-contributor-list-count]');
+      if(count)count.textContent=String(data.list_count||0);
+      const roles=root.querySelector<HTMLElement>('[data-contributor-roles]')!;
+      roles.textContent=data.roles.slice(0,4).join(' / ');roles.hidden=!data.roles.length;
+      if(data.kind==='studio')root.querySelector('[data-contributor-kicker]')!.textContent=params.get('media_type')==='game'?'Game studio':'Production studio';
+      const listLink=root.querySelector<HTMLAnchorElement>('.contributor-list-link');
+      if(listLink){const href=new URL(location.pathname,location.origin);href.search=query.toString();href.searchParams.set('list_scope','in');href.searchParams.set('view',requestedView||'timeline');href.hash='contributor-works';listLink.href=href.href;}
       append(next.works);more.hidden=!data.has_more;more.disabled=false;more.textContent='Load more';
       const notice=root.querySelector<HTMLElement>('[data-contributor-notice]')!;
       notice.textContent=next.notice||'';notice.hidden=!next.notice;
@@ -229,7 +289,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
         if (works) scrollToWorks(works);
       }
     }).catch(cause=>{
-      if(!signal.aborted&&!request.signal.aborted)showError(cause instanceof Error?cause.message:'Unable to load works.');
+      if(!signal.aborted&&!request.signal.aborted&&current===revision){restoreFilterControls();showError(cause instanceof Error?cause.message:'Unable to load works.');}
     }).finally(()=>{
       if(!signal.aborted&&current===revision){
         filterRequest=undefined;region.removeAttribute('aria-busy');

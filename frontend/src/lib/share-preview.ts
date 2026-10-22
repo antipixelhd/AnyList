@@ -15,7 +15,7 @@ const generalPages: Record<string, string> = {
 };
 
 /** Bump when rendering or preview delivery changes invalidate messenger images. */
-export const SHARE_IMAGE_REVISION = '2026-10-21-games';
+export const SHARE_IMAGE_REVISION = '2026-10-22-game-contributors';
 export function shareImagePath(path: string): string {
   return `/api/proxy/sharing/image?${new URLSearchParams({path, v: SHARE_IMAGE_REVISION})}`;
 }
@@ -40,11 +40,13 @@ export function shareLoginPath(pathname: string, search = ''): string {
 /** Only known public card identities may supply metadata on a login page. */
 export function loginShareIdentity(next: string | null): string | null {
   if (!next || !next.startsWith('/') || next.startsWith('//') || /[\\\u0000-\u0020\u007f#]/.test(next)) return null;
-  return sharePath(next.split('?')[0]);
+  const split = next.indexOf('?');
+  return sharePath(split < 0 ? next : next.slice(0,split),split < 0 ? '' : next.slice(split));
 }
 
 export async function shareMetadata(path: string, fetcher = fetch): Promise<{title: string; description: string} | null> {
-  const identity = sharePath(path);
+  const split = path.indexOf('?');
+  const identity = sharePath(split < 0 ? path : path.slice(0,split),split < 0 ? '' : path.slice(split));
   if (!identity) return null;
   try {
     const port = process.env.BACKEND_PORT ?? '7331';
@@ -59,7 +61,7 @@ export async function shareMetadata(path: string, fetcher = fetch): Promise<{tit
 /** Crawlers get only the anonymous card projection, never a signed-in page. */
 export async function crawlerShareResponse(url: URL, userAgent: string, origin: string, fetcher = fetch): Promise<Response | null> {
   if (!/(?:Discordbot|WhatsApp|TelegramBot|Twitterbot|facebookexternalhit|Facebot|Slackbot|LinkedInBot|SkypeUriPreview|Applebot)/i.test(userAgent)) return null;
-  const path = sharePath(url.pathname);
+  const path = sharePath(url.pathname,url.search);
   if (!path) return null;
   // The backend rechecks logged-out navigation, profile privacy and visibility.
   const metadata = await shareMetadata(path, fetcher);
@@ -83,13 +85,13 @@ export function loginSharePage(next: string | null): {path: string; title: strin
 }
 
 /** Share identities exclude filters, pagination, tracking tokens and tabs. */
-export function sharePath(pathname: string): string | null {
+export function sharePath(pathname: string, search = ''): string | null {
   let path: string;
   try { path = decodeURIComponent(pathname).replace(/\/$/, ''); } catch { return null; }
   const profile = /^\/user\/([^/?#\\]{1,100})(?:\/(?:movies|series|games|list|social|stats|favorites|library))?$/.exec(path);
   if (profile) return `/user/${encodeURIComponent(profile[1])}`;
   if (/^\/(?:title|games)\/[1-9][0-9]{0,9}$/.test(path)) return path;
-  if (/^\/(actors|person|studio)\/(?:(?:catalogue|tmdb):)?[1-9][0-9]{0,9}$/.test(path)) return path;
+  if (/^\/(actors|person|studio)\/(?:(?:catalogue|tmdb):)?[1-9][0-9]{0,9}$/.test(path)) return path + (new URLSearchParams(search).get('media_type') === 'game' ? '?media_type=game' : '');
   return null;
 }
 
@@ -113,6 +115,7 @@ export function sharePagePath(pathname: string, search = ''): string {
       }
       return page + (allowed.size ? `?${allowed}` : '');
     }
+    if (/^\/(actors|person|studio)\//.test(page) && new URLSearchParams(search).get('media_type') === 'game') return page + '?media_type=game';
     return page;
   }
   // Token and auth callback URLs never become canonical share destinations.

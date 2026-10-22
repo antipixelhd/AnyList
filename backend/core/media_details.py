@@ -96,8 +96,8 @@ async def work_details(db, work, *, extras=True):
         if key not in group:
             path = 'studio' if kind == 'studio' else 'actors' if actor else 'person'
             group[key] = {'id': contributor.id, 'kind': kind, 'name': studio_name(contributor.name) if kind == 'studio' else contributor.name,
-                'image': image(contributor.image_url), 'url': f'/{path}/catalogue:{contributor.id}'
-                if kind != 'studio' or (work.kind in ('movie', 'series') and contributor.id in studio_ids) else None,
+                'image': image(contributor.image_url), 'url': f'/{path}/catalogue:{contributor.id}' + ('?media_type=game' if work.kind=='game' else '')
+                if kind != 'studio' or work.kind=='game' and credit.role in ('developer','publisher','supporting','porting') or (work.kind in ('movie', 'series') and contributor.id in studio_ids) else None,
                 'roles': [], 'role_codes': [], 'position': credit.position,
                 'credit_order': len(group), 'characters': []}
         row = group[key]

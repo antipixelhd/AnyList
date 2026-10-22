@@ -1,4 +1,5 @@
 import type { BrowseItem } from './browse-card-actions';
+import {browseCardHref} from './browse-card-data.ts';
 
 export interface ContributorWork extends BrowseItem {
   entry: Record<string, any> | null;
@@ -15,7 +16,8 @@ export interface ContributorPage {
 export function contributorParams(search: URLSearchParams, signedIn: boolean) {
   const params = new URLSearchParams();
   const type = search.get('media_type');
-  if (type === 'movie' || type === 'series') params.set('media_type', type);
+  if (search.get('domain') === 'game' || search.get('domain') !== 'movies-series' && type === 'game') params.set('media_type', 'game');
+  else if (type === 'all' || type === 'movie' || type === 'series') params.set('media_type', type);
   const list = search.get('list_scope');
   if (signedIn && list === 'in') params.set('list_scope', list);
   const page = Number(search.get('page'));
@@ -32,6 +34,7 @@ export function contributorMediaLabel(type: string) {
   return ({movie:'Movie',series:'Series',game:'Game',book:'Book'} as Record<string,string>)[type] || '';
 }
 export function workHref(work: BrowseItem & {href?:string|null}) {
+  if (work.type === 'game') return browseCardHref({...work,href:work.href||undefined}) || null;
   return work.id ? `/title/${work.id}` : work.tmdb_id ? `/discover-title?type=${work.type}&id=${work.tmdb_id}` : work.href || null;
 }
 

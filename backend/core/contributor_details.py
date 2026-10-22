@@ -5,6 +5,7 @@ import json
 import re
 from collections import defaultdict
 from datetime import date
+from types import SimpleNamespace
 from urllib.parse import urlsplit
 
 from sqlalchemy import or_, select
@@ -265,25 +266,42 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
     if resolved is None:
         return None
     entity, native = resolved
-    local = await known_works(db, entity, native, kind, viewer)
-    if kind == 'studio' and entity and not native and not local:
-        return None  # A broadcaster-only organization is not a production studio.
+    games = media_type == "game"
+    if cursor and not games and (kind != 'studio' or source == 'local'):
+        raise ValueError('Invalid timeline cursor')
+    local = [] if games else await known_works(db, entity, native, kind, viewer)
+    if not games and kind == 'studio' and entity and not native and not local:
+        from core.game_contributor_works import game_credits
+        if not await db.scalar(select(select(game_credits(entity.id, kind).c.id).exists())):
+            return None  # A broadcaster-only organization is not a production studio.
     attrs = dict(entity.attributes or {}) if entity else {}
-    legacy = await db.scalar(select(Media).where(Media.media_type == MediaType.person, Media.tmdb_id == native).order_by(Media.id).limit(1)) if native and kind != "studio" else None
+    legacy = None
+    if native and kind != 'studio':
+        if games:
+            fields = ('birthday','deathday','place_of_birth','known_for_department','also_known_as',
+                'origin_country','country','homepage','imdb_id','biography','profile_path','image_url')
+            row = (await db.execute(select(Media.title, Media.overview, Media.poster_path,
+                *(Media.tmdb_data[field].label(field) for field in fields)).where(
+                Media.media_type == MediaType.person, Media.tmdb_id == native).order_by(Media.id).limit(1))).mappings().first()
+            if row:
+                legacy = SimpleNamespace(title=row['title'], overview=row['overview'], poster_path=row['poster_path'],
+                    tmdb_data={field: row[field] for field in fields if row[field] is not None})
+        else:
+            legacy = await db.scalar(select(Media).where(Media.media_type == MediaType.person, Media.tmdb_id == native).order_by(Media.id).limit(1))
     if legacy:
         attrs = {**(legacy.tmdb_data or {}), **attrs}
     profile = {}
     remote = []
     notice = None
-    provider_key = await settings_store.get_user_tmdb_key(db, viewer.id if viewer else -1)
+    provider_key = await settings_store.get_user_tmdb_key(db, viewer.id if viewer else -1) if native or not games else None
     if native and provider_key:
         try:
             async with asyncio.timeout(12):
-                profile = await (tmdb.get_company(native, api_key=provider_key) if kind == "studio" else tmdb.get_person(native, api_key=provider_key))
+                profile = await (tmdb.get_company(native, api_key=provider_key) if kind == "studio" else (tmdb.get_person_profile if games else tmdb.get_person)(native, api_key=provider_key))
                 # Reject an unexpected provider response rather than borrowing another person's data.
                 if positive_id(profile.get("id")) != native:
                     raise ValueError("Provider identity mismatch")
-                if kind != "studio":
+                if kind != "studio" and not games:
                     field = "cast" if kind == "actor" else "crew"
                     remote = [item for raw in (profile.get("combined_credits") or {}).get(field) or []
                               if work_credit('Actor' if kind == 'actor' else raw.get('job'), raw.get('character'))
@@ -313,65 +331,80 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
         attrs = {**raw, **attrs}
     if not name:
         return None
-    if kind == "studio" and cursor and source != "local" and not profile:
+    if not games and kind == "studio" and cursor and source != "local" and not profile:
         raise RuntimeError("Unable to load more studio works")
-    # The caller supplies the current instance preference, including when metadata is offline.
-    from models import GlobalSettings
-    settings = await db.get(GlobalSettings, 1)
-    show_anime = True if settings is None else settings.show_anime
-    local = [r for r in local if not r.get("_metadata", {}).get("adult") and anime_visible(r.get("_metadata", {}), show_anime)]
-    remote = [r for r in remote if not r.get("_metadata", {}).get("adult") and anime_visible(r.get("_metadata", {}), show_anime)]
-    filters = await result_filters(db, viewer)
-    all_known = [r for r in merge_works(local + (remote if kind != "studio" else []))
-                 if matches_result_filters(r.get("_metadata") or {}, r["type"], **filters)]
-    for row in all_known + remote:
-        row.update(entry=None, list_status=None, score=None, rating_mode="manual")
-    await attach_editor_context(db, viewer, all_known)
-    list_count = sum(bool(r.get("list_status")) for r in all_known) if viewer else None
-    roles = sorted({role for row in all_known for role in row["roles"]}, key=lambda role: (role_order(role), role))
-    share_summary = None
-    if sharing:
-        share_rows = all_known
-        if kind == 'studio' and native:
-            # Count the complete evidence collection, never a displayed page.
-            from core.contributor_evidence import evidence_key, cached_evidence, eligible_work
-            evidence_id, config = evidence_key('studio', native, filters, show_anime)
-            evidence, _ = await cached_evidence(db, {evidence_id:config}, None, enqueue=False)
-            payload = evidence.get(evidence_id) or {}
-            if payload.get('complete'):
-                discovered = [remote_work(raw, None) for raw in payload.get('works', [])
-                    if eligible_work(raw, {'movie':'movie','tv':'series'}.get(raw.get('media_type')), filters, show_anime, released=True)]
-                share_rows = merge_works(all_known + [row for row in discovered if row])
-        released = sorted((row for row in share_rows if '0000' < (row.get('release_date') or '') <= date.today().isoformat()),
-            key=lambda row:(row['release_date'],row['key']), reverse=True)
-        latest = next((row for row in released if row.get('backdrop') or row.get('poster')), {})
-        share_summary = {'movies':sum(row['type']=='movie' for row in share_rows),
-            'series':sum(row['type']=='series' for row in share_rows),
-            'background':latest.get('backdrop') or latest.get('poster')}
-    filtered = [r for r in all_known if (media_type == "all" or r["type"] == media_type)
-                and (list_scope == "all" or bool(r.get("list_status")) == (list_scope == "in"))
-                and (not status or r.get("list_status") == status)]
-    filtered.sort(key=lambda r: (r.get("release_date") or "", r["title"], r["key"]), reverse=True)
-    start = (page - 1) * PAGE_SIZE
-    works = filtered[start:start + PAGE_SIZE]
-    has_more = start + PAGE_SIZE < len(filtered)
-    total = len(filtered)
-    next_cursor = None
-    result_source = "local"
-    if kind == "studio" and native and provider_key and profile and source != "local" and list_scope != "in" and not status:
-        try:
-            async with asyncio.timeout(12):
-                works, has_more, next_cursor = await studio_timeline(db, viewer, all_known, native, provider_key,
-                    media_type=media_type, list_scope=list_scope, show_anime=show_anime, cursor=cursor,
-                    scope=f"{key}:{studio_companies(native)}:{media_type}:{list_scope}:{json.dumps(filters, sort_keys=True)}", **filters)
-            result_source = "provider"
-            total = None  # Local and provider pages overlap; never invent a combined total.
-        except (ValueError, json.JSONDecodeError):
-            raise ValueError("Invalid timeline cursor") from None
-        except Exception:
-            if cursor:
-                raise RuntimeError("Unable to load more studio works") from None
-            notice = "Online metadata is temporarily unavailable. Showing saved information."
+    game_result = None
+    if games:
+        from core.game_contributor_works import works_page
+        game_result = await works_page(db, viewer, entity.id if entity else None, kind,
+            key=f'catalogue:{entity.id}' if entity else key, list_scope=list_scope, status=status,
+            page=page, cursor=cursor)
+        roles, works, list_count = game_result['roles'], game_result['works'], game_result['list_count']
+        total, has_more, next_cursor = game_result['total'], game_result['has_more'], game_result['next_cursor']
+        result_source, all_known, share_summary = 'local', [], None
+        if sharing:
+            released = [row for row in works if '0000' < (row.get('release_date') or '') <= date.today().isoformat()]
+            latest = next((row for row in released if row.get('backdrop') or row.get('poster')), {})
+            share_summary = {'games': game_result['known_works'], 'background': latest.get('backdrop') or latest.get('poster')}
+        notice = ' '.join(filter(None, (notice, game_result['notice'])))
+    else:
+        # The caller supplies the current instance preference, including when metadata is offline.
+        from models import GlobalSettings
+        settings = await db.get(GlobalSettings, 1)
+        show_anime = True if settings is None else settings.show_anime
+        local = [r for r in local if not r.get("_metadata", {}).get("adult") and anime_visible(r.get("_metadata", {}), show_anime)]
+        remote = [r for r in remote if not r.get("_metadata", {}).get("adult") and anime_visible(r.get("_metadata", {}), show_anime)]
+        filters = await result_filters(db, viewer)
+        all_known = [r for r in merge_works(local + (remote if kind != "studio" else []))
+                     if matches_result_filters(r.get("_metadata") or {}, r["type"], **filters)]
+        for row in all_known + remote:
+            row.update(entry=None, list_status=None, score=None, rating_mode="manual")
+        await attach_editor_context(db, viewer, all_known)
+        list_count = sum(bool(r.get("list_status")) for r in all_known) if viewer else None
+        roles = sorted({role for row in all_known for role in row["roles"]}, key=lambda role: (role_order(role), role))
+        share_summary = None
+        if sharing:
+            share_rows = all_known
+            if kind == 'studio' and native:
+                # Count the complete evidence collection, never a displayed page.
+                from core.contributor_evidence import evidence_key, cached_evidence, eligible_work
+                evidence_id, config = evidence_key('studio', native, filters, show_anime)
+                evidence, _ = await cached_evidence(db, {evidence_id:config}, None, enqueue=False)
+                payload = evidence.get(evidence_id) or {}
+                if payload.get('complete'):
+                    discovered = [remote_work(raw, None) for raw in payload.get('works', [])
+                        if eligible_work(raw, {'movie':'movie','tv':'series'}.get(raw.get('media_type')), filters, show_anime, released=True)]
+                    share_rows = merge_works(all_known + [row for row in discovered if row])
+            released = sorted((row for row in share_rows if '0000' < (row.get('release_date') or '') <= date.today().isoformat()),
+                key=lambda row:(row['release_date'],row['key']), reverse=True)
+            latest = next((row for row in released if row.get('backdrop') or row.get('poster')), {})
+            share_summary = {'movies':sum(row['type']=='movie' for row in share_rows),
+                'series':sum(row['type']=='series' for row in share_rows),
+                'background':latest.get('backdrop') or latest.get('poster')}
+        filtered = [r for r in all_known if (media_type == "all" or r["type"] == media_type)
+                    and (list_scope == "all" or bool(r.get("list_status")) == (list_scope == "in"))
+                    and (not status or r.get("list_status") == status)]
+        filtered.sort(key=lambda r: (r.get("release_date") or "", r["title"], r["key"]), reverse=True)
+        start = (page - 1) * PAGE_SIZE
+        works = filtered[start:start + PAGE_SIZE]
+        has_more = start + PAGE_SIZE < len(filtered)
+        total = len(filtered)
+        next_cursor = None
+        result_source = "local"
+        if kind == "studio" and native and provider_key and profile and source != "local" and list_scope != "in" and not status:
+            try:
+                async with asyncio.timeout(12):
+                    works, has_more, next_cursor = await studio_timeline(db, viewer, all_known, native, provider_key,
+                        media_type=media_type, list_scope=list_scope, show_anime=show_anime, cursor=cursor,
+                        scope=f"{key}:{studio_companies(native)}:{media_type}:{list_scope}:{json.dumps(filters, sort_keys=True)}", **filters)
+                result_source = "provider"
+                total = None  # Local and provider pages overlap; never invent a combined total.
+            except (ValueError, json.JSONDecodeError):
+                raise ValueError("Invalid timeline cursor") from None
+            except Exception:
+                if cursor:
+                    raise RuntimeError("Unable to load more studio works") from None
+                notice = "Online metadata is temporarily unavailable. Showing saved information."
     links = []
     if native:
         links.append({"label": "TMDB", "href": f"https://www.themoviedb.org/{'company' if kind == 'studio' else 'person'}/{native}"})
@@ -384,7 +417,9 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
     profile_image = poster(entity.image_url if entity and (entity.image_url or 'image_url' in protected) else legacy.poster_path if legacy and legacy.poster_path else attrs.get("profile_path") or attrs.get("logo_path") or attrs.get("image_url"))
     banner = public_url(attrs.get('studio_banner')) if kind == 'studio' else None
     if kind == 'studio' and not banner and 'attributes.studio_banner' not in protected:
-        banner = profile_image
+        # Opaque JPEG logos become solid rectangles under the shared silhouette
+        # treatment. Fall back to representative work artwork in that case.
+        banner = profile_image if not re.search(r'\.jpe?g(?:[?#]|$)', profile_image or '', re.I) else None
     from core.studio_names import studio_name
     name = studio_display_name(native, studio_name(name)) if kind == 'studio' else name
     return {"kind": kind, "key": f"catalogue:{entity.id}" if entity else key, "name": name,
@@ -394,7 +429,7 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
         "place_of_birth": attrs.get("place_of_birth"), "department": attrs.get("known_for_department"),
         "aliases": [n for n in attrs.get("also_known_as") or [] if isinstance(n, str) and n != name],
         "countries": country_codes(attrs.get("origin_country") or attrs.get("country")), "headquarters": attrs.get("headquarters"),
-        "links": links, "roles": roles, "works": works, "known_works": len(all_known), "list_count": list_count,
+        "links": links, "roles": roles, "works": works, "known_works": game_result["known_works"] if game_result else len(all_known), "list_count": list_count,
         "total": total, "page": page, "has_more": has_more, "notice": notice,
         "next_cursor": next_cursor, "source": result_source,
         **({'share_summary':share_summary} if sharing else {})}

@@ -19,7 +19,9 @@ class ShareProjectionTests(unittest.TestCase):
         self.assertEqual(preview.target('/user/alex/stats'), ('profile', 'alex'))
         self.assertEqual(preview.target('/actors/tmdb%3A42'), ('actor', 'tmdb:42'))
         self.assertEqual(preview.target('/studio/42'), ('studio', 'tmdb:42'))
-        for path in ['/title/2147483648', '/title/1?token=x', '//evil.test', '/user/a%2fb', '/actors/0']:
+        self.assertEqual(preview.target('/actors/catalogue:42?media_type=game'), ('game_actor', 'catalogue:42'))
+        for path in ['/title/2147483648', '/title/1?token=x', '//evil.test', '/user/a%2fb', '/actors/0',
+                     '/title/1?media_type=game', '/actors/42?media_type=game&list_scope=in']:
             with self.assertRaises(HTTPException):
                 preview.target(path)
 

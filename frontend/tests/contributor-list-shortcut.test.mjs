@@ -30,13 +30,13 @@ test('filtered shortcut results update the works anchor and scroll only after re
  const context={form,signal:new AbortController().signal,prediction:{cancel(){}},filterRequest:undefined,revision:0,AbortController,URL,URLSearchParams,
   error:{hidden:true},region:{setAttribute(){},removeAttribute(){},replaceChildren(){order.push('replace')}},
   FormData:class{forEach(callback){callback('in','list_scope');callback('movie','media_type')}},
-  contributorParams:p=>p,requestPage:()=>new Promise(resolve=>resolvePage=resolve),root:{dataset:{endpoint:'people/1'},querySelector:s=>s==='.contributor-works'?works:{}},
+  contributorParams:p=>p,requestPage:()=>new Promise(resolve=>resolvePage=resolve),root:{dataset:{endpoint:'people/1'},querySelector:s=>s==='.contributor-works'?works:s==='.contributor-list-link'?null:{}},
   items:new Map(),data:{list_count:2},params:new URLSearchParams(),append:()=>order.push('render'),more:{},
   location:{href:'https://example.test/person/1'},requestedView:'timeline',history:{state:null,replaceState:(_,__,url)=>urls.push(url)},
   scrollToWorks:target=>{assert.equal(target,works);order.push('scroll')},showError:message=>assert.fail(message)};
  vm.runInNewContext(stripTypeScriptTypes(snippet),context);
  submit({preventDefault(){}});assert.deepEqual(order,[]);
- resolvePage({works:[],has_more:false});await new Promise(setImmediate);
+ resolvePage({works:[],roles:[],kind:'actor',has_more:false});await new Promise(setImmediate);
  assert.deepEqual(order,['replace','render','scroll']);
  assert.equal(urls[0].hash,'#contributor-works');assert.equal(urls[0].searchParams.get('list_scope'),'in');
  assert.equal(urls[0].searchParams.get('media_type'),'movie');
