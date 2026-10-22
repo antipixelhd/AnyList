@@ -18,7 +18,8 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
   const signatures = new WeakMap<HTMLElement,string>();
   const pending = new WeakMap<HTMLElement,()=>void>();
   let mode: 'actors' | 'characters' = 'actors';
-  let metadataPending=!!info.backgroundAvailable&&info.characterStatus?.state!=='ready',error='';
+  const backgroundAvailable=!!(info.backgroundAvailable||info.gameCredits);
+  let metadataPending=backgroundAvailable&&info.characterStatus?.state!=='ready',error='';
   const statuses=[...root.querySelectorAll<HTMLElement>('[data-detail-people-status]')];
   const status=()=>statuses.forEach(node=>{
     node.hidden=!error;
@@ -161,14 +162,15 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
   const background=detailPeopleLoading(info.id,signal,update,(state,message)=>{
     error=state==='retry'?message||'People data is temporarily unavailable. Retrying automatically.':'';status();
   },{selected:()=>mode==='characters',needed:()=>metadataPending,
+    ...(info.gameCredits?{source:{people:`/api/proxy/tracking/games/works/${info.id}/credits`}}:{}),
     primaryReady:()=>waitForDetailPortraits([...root.querySelectorAll<HTMLImageElement>('[data-credit-preview] img')],signal),warm});
-  if(info.backgroundAvailable)background.start(!root.querySelector('[data-credit-preview] [data-person-id]'));
+  if(backgroundAvailable)background.start(!root.querySelector('[data-credit-preview] [data-person-id]'));
   root.addEventListener('click',event=>{
     const button=(event.target as Element).closest<HTMLButtonElement>('[data-cast-mode]');
     if((event.target as Element).closest('[data-detail-people-retry]')){void background.retry();return;}
     if(!button||button.dataset.castMode===mode)return;
     mode=button.dataset.castMode==='characters'?'characters':'actors';
-    if(mode==='characters'&&metadataPending&&info.backgroundAvailable)void background.characters();
+    if(mode==='characters'&&metadataPending&&backgroundAvailable)void background.characters();
     root.querySelectorAll<HTMLButtonElement>('[data-cast-mode]').forEach(control=>control.setAttribute('aria-pressed',String(control.dataset.castMode===mode)));
     const selected=mode;
     transitions.forEach((transition,container)=>void transition(()=>paint(container,selected)));

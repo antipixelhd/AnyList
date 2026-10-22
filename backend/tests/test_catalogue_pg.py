@@ -95,6 +95,8 @@ class CatalogueDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 importlib.import_module("migrations.versions.mt050_contributor_search").upgrade()
                 importlib.import_module("migrations.versions.mt060_wikidata_credit_identities").upgrade()
                 importlib.import_module("migrations.versions.mt061_game_contributor_search").upgrade()
+                importlib.import_module("migrations.versions.mt063_game_imdb_identity").upgrade()
+                importlib.import_module("migrations.versions.mt064_game_credit_participation").upgrade()
 
         async with self.engine.begin() as conn:
             await conn.run_sync(setup)
@@ -240,11 +242,14 @@ class CatalogueDatabaseTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_wikidata_identity_migration_empty_downgrade_and_reupgrade(self):
         migration=importlib.import_module('migrations.versions.mt060_wikidata_credit_identities')
+        imdb=importlib.import_module('migrations.versions.mt063_game_imdb_identity')
         def run(conn,operation):
             with Operations.context(MigrationContext.configure(conn)):operation()
         async with self.engine.begin() as conn:
+            await conn.run_sync(lambda conn:run(conn,imdb.downgrade))
             await conn.run_sync(lambda conn:run(conn,migration.downgrade))
             await conn.run_sync(lambda conn:run(conn,migration.upgrade))
+            await conn.run_sync(lambda conn:run(conn,imdb.upgrade))
         async with self.Session() as db:
             person=CatalogueEntity(kind='person',name='Person');db.add(person);await db.flush()
             await catalogue.bind_identity(db,person.id,'wikidata.item','Q10','wikidata');await db.commit()

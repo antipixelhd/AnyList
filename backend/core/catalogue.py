@@ -109,6 +109,9 @@ async def bind_identity(db, entity_id, namespace, external_id, source, evidence=
                 "Identifier already belongs to another entity; review before merging"
             )
         return previous
+    if namespace=='imdb.title' and entity.kind=='game' and (
+            source not in ('reviewed','wikidata') or (evidence or {}).get('title_type')!='videoGame'):
+        raise IdentityConflict('Game IMDb identity requires verified or reviewed videoGame evidence')
     row = CatalogueIdentity(
         entity_id=entity_id,
         namespace=namespace,
@@ -126,6 +129,8 @@ def source_rank(kind, source):
         return 1000
     if source == "legacy":
         return 200
+    if source == 'imdb':
+        return 5  # Credit/person enrichment must preserve richer primary metadata.
     if source == PRIMARY.get(kind):
         return 100
     if source == "rawg":

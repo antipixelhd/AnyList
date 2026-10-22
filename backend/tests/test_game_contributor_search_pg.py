@@ -104,11 +104,33 @@ class GameContributorSearchTests(unittest.IsolatedAsyncioTestCase):
         async with self.engine.begin() as conn:
             def run(sync):
                 migration=importlib.import_module('migrations.versions.mt061_game_contributor_search')
+                participation=importlib.import_module('migrations.versions.mt064_game_credit_participation')
                 with Operations.context(MigrationContext.configure(sync)):
-                    migration.downgrade();migration.upgrade()
+                    participation.downgrade();migration.downgrade();migration.upgrade();participation.upgrade()
             await conn.run_sync(run)
         row=await self.summary()
         self.assertEqual((row.work_count,row.actor_count,row.game_work_count,row.game_actor_count),(1,1,2,2))
+
+    async def test_acknowledgements_are_stored_without_becoming_work_and_uncredited_cast_still_counts(self):
+        games,_,_=await self.seed(1)
+        async with self.Session() as db:
+            person=CatalogueEntity(kind='person',name='Only thanked person')
+            db.add(person);await db.flush();native=person.id
+            db.add(CatalogueCredit(work_id=games[0].id,contributor_id=native,provider='imdb',
+                source_key='thanks',role='thanks',role_label='Special thanks',attributes={'source_active':True}))
+            await db.commit()
+        summary=await self.summary(native)
+        self.assertEqual((summary.game_work_count,summary.game_staff_count),(0,0))
+        self.assertFalse((await self.query('Only thanked','staff','game'))['results']['staff'])
+        async with self.Session() as db:
+            self.assertEqual(len(list(await db.scalars(select(CatalogueCredit).where(CatalogueCredit.contributor_id==native)))),1)
+            db.add(CatalogueCredit(work_id=games[0].id,contributor_id=native,provider='imdb',
+                source_key='voice',role='voice_actor',role_label='Voice actor',attributes={'uncredited':True}))
+            await db.commit()
+        summary=await self.summary(native)
+        self.assertEqual((summary.game_work_count,summary.game_actor_count,summary.game_staff_count),(1,1,0))
+        actors=(await self.query('Only thanked','actor','game'))['results']['actor']
+        self.assertEqual(actors[0]['key'],f'catalogue:{native}')
 
     async def test_simultaneous_game_credit_writers_do_not_lose_counts(self):
         async with self.Session() as db:

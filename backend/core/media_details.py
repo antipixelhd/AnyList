@@ -127,7 +127,15 @@ async def work_details(db, work, *, extras=True):
             row.setdefault('performances',[]).extend(performances)
             for lang in (credit.attributes or {}).get('languages') or ['']:
                 if lang not in row.setdefault('languages',[]):row['languages'].append(lang)
+            if credit.provider=='imdb':
+                row.setdefault('credit_performances',[]).append({'source':'imdb','position':credit.position,
+                    'characters':names,'languages':(credit.attributes or {}).get('languages') or [],
+                    'attributes':role.get('performance_attributes'),'voice':role.get('voice'),
+                    'credited_as':role.get('credited_as'),'uncredited':role.get('uncredited')})
             local_images.setdefault(key,[]).extend(value['image'] for value in performances if value['image'])
+        elif work.kind=='game':
+            jobs=((credit.attributes or {}).get('game_role') or {}).get('jobs') or []
+            row.setdefault('jobs',[]).extend(job for job in jobs if job not in row.get('jobs',[]))
         elif credit.character_label and len(row['characters']) < 8 and credit.character_label not in row['characters']:
             row['characters'].append(credit.character_label)
         if actor and credit.id in image_role_ids:
@@ -142,7 +150,8 @@ async def work_details(db, work, *, extras=True):
             if total:
                 row['episode_total'] = total
     if not extras:
-        return {'catalogue_id':work.id, 'people':list(people.values()), 'organizations':list(organizations.values())}
+        return {'catalogue_id':work.id, 'people':list(people.values()), 'organizations':list(organizations.values()),
+            **({'game_characters':game_characters} if work.kind=='game' else {})}
     attrs = work.attributes or {}
     artwork = [url for value in attrs.get('artwork') or [] if (url := image(value))]
     posters = [work.image_url, *(attrs.get('posters') or [])]
@@ -156,7 +165,8 @@ async def work_details(db, work, *, extras=True):
         MetadataSnapshot.payload['homepage'].astext.label('homepage'),
         MetadataSnapshot.payload['budget'].label('budget'),
         MetadataSnapshot.payload['revenue'].label('revenue'),
-        MetadataSnapshot.payload['url'].astext.label('url')).where(MetadataSnapshot.entity_id == work.id)
+        MetadataSnapshot.payload['url'].astext.label('url')).where(MetadataSnapshot.entity_id == work.id,
+            MetadataSnapshot.kind.not_like('game_credit%'),MetadataSnapshot.kind!='game_binding_review')
         .order_by(MetadataSnapshot.fetched_at.desc().nullslast()).limit(6))).all()
     sources = []
     for snapshot in snapshots:

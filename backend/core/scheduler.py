@@ -838,10 +838,12 @@ async def background_jobs():
     """Run periodic jobs for the application lifespan and cancel them on exit."""
     from core.statistics_snapshots import scheduler as statistics_scheduler
     from core.contributor_evidence import scheduler as contributor_verification
+    from core.game_imdb_enrichment import scheduler as game_credit_enrichment
 
     jobs = (
         statistics_scheduler,
         contributor_verification,
+        game_credit_enrichment,
         _auto_sync_scheduler,
         _stream_action_retry_scheduler,
         _rating_push_scheduler,

@@ -198,6 +198,10 @@ async def resolve(
         mapping = await catalogue.resolve_identity(db, namespace, external_id)
     except catalogue.IdentityConflict as e:
         raise safe_error(e) from None
+    if mapping:
+        entity = await db.get(CatalogueEntity, mapping.entity_id)
+        if entity:
+            await authorize_entity(db, entity, current_user)
     return {"entity_id": mapping.entity_id if mapping else None}
 
 
@@ -273,6 +277,10 @@ async def screen_characters(db: DB, current_user: Caller,
     limit: Annotated[int, Query(ge=1, le=100)] = 30):
     if actor_id is None and work_id is None:
         raise HTTPException(422, "Select an actor or media")
+    if work_id is not None:
+        work = await db.get(CatalogueEntity, work_id)
+        if work:
+            await authorize_entity(db, work, current_user)
     query = select(ScreenCharacter.id)
     if actor_id is not None:
         query = query.where(ScreenCharacter.actor_id == actor_id)
@@ -300,7 +308,13 @@ async def media_detail(entity_id: Annotated[int, Path(gt=0)], db: DB, current_us
     if not work or work.kind not in ('game', 'book'):
         raise HTTPException(404, "Game or book not found")
     await authorize_entity(db, work, current_user)
-    return await catalogue_title(db, work, current_user.id if current_user else None)
+    data=await catalogue_title(db, work, current_user.id if current_user else None)
+    if work.kind=='game':
+        from core.game_imdb_enrichment import request as request_credits
+        state=await request_credits(db,work.id)
+        await db.commit()
+        data['game_credit_status']=state
+    return data
 
 
 @router.get("/entities/{entity_id}/{section}")
@@ -534,6 +548,10 @@ async def prices(
     current_user: Caller,
     country: Annotated[str, Query(pattern=r"^[A-Za-z]{2}$")] = "DE",
 ) -> dict:
+    entity = await db.get(CatalogueEntity, entity_id)
+    if not entity:
+        raise HTTPException(404, "Catalogue entity not found")
+    await authorize_entity(db, entity, current_user)
     try:
         return await catalogue.refresh_prices(
             db, await providers(db, current_user), entity_id, appid, country

@@ -31,7 +31,7 @@ def game_credits(entity_id, kind):
         func.count(func.distinct(CatalogueRelationship.target_id)) == 1).subquery()
     ports, expansions = parents.alias(), parents.alias()
     role = CatalogueCredit.role
-    role_filter = role.in_(COMPANIES) if kind == 'studio' else role.in_(ACTING) if kind == 'actor' else ~role.in_(ACTING)
+    role_filter = role.in_(COMPANIES) if kind == 'studio' else role.in_(ACTING) if kind == 'actor' else ~role.in_(ACTING) & (role!='thanks')
     independent = INDEPENDENT - {'port'}
     def projected(work):
         expansion_base = select(expansions.c.parent).join(base, base.id == expansions.c.parent).where(

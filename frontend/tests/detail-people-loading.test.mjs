@@ -2,6 +2,31 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {detailPeopleLoading,waitForDetailPortraits} from '../src/lib/detail-people-loading.ts';
 
+test('a game connection polls its own progress without a second character request',async()=>{
+  const originalFetch=globalThis.fetch,originalSet=globalThis.setTimeout,originalClear=globalThis.clearTimeout;
+  const controller=new AbortController(),calls=[],timers=[];
+  globalThis.setTimeout=(callback,ms)=>{const timer={callback,ms};timers.push(timer);return timer;};
+  globalThis.clearTimeout=()=>{};
+  globalThis.fetch=async path=>{
+    calls.push(path);
+    return Response.json({people:[{kind:'actor'}],character_status:calls.length===1
+      ?{state:'loading',pending:true,retry_after:2}:{state:'ready',pending:false}});
+  };
+  try{
+    const resource=detailPeopleLoading(7,controller.signal,data=>data.character_status,()=>{},
+      {selected:()=>true,needed:()=>true,primaryReady:async()=>{},warm:()=>{},
+        source:{people:'/api/proxy/tracking/games/works/7/credits'}});
+    resource.start(true);await resource.characters();
+    assert.deepEqual(calls,['/api/proxy/tracking/games/works/7/credits']);
+    assert.equal(timers[0].ms,3000);
+    timers.shift().callback();await resource.characters();
+    assert.deepEqual(calls,Array(2).fill('/api/proxy/tracking/games/works/7/credits'));
+    assert.equal(timers.length,0);
+  }finally{
+    controller.abort();globalThis.fetch=originalFetch;globalThis.setTimeout=originalSet;globalThis.clearTimeout=originalClear;
+  }
+});
+
 test('missing credits load immediately and do not poll for optional character artwork',async()=>{
   const nativeFetch=globalThis.fetch,controller=new AbortController(),calls=[],published=[];
   globalThis.fetch=async path=>{calls.push(path);return Response.json({people:[{kind:'actor'}],credits_status:'updated',character_status:{state:'pending',pending:true}});};

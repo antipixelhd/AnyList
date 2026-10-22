@@ -9,7 +9,7 @@ import test_games_pg as fixture
 from core import contributor_search
 from core.share_preview import card_data
 from models import User
-from models.catalogue import CatalogueCredit, CatalogueEntity
+from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity
 from routers.admin import router as admin_router
 
 
@@ -101,3 +101,35 @@ class GameAccessTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(new.games_access)
                 existing = await db.get(User,self.other.id)
                 self.assertFalse(existing.games_access)
+
+    async def test_imdb_read_paths_require_approval_and_binding_requires_an_admin_review(self):
+        async with self.Session() as db:
+            db.add(CatalogueIdentity(entity_id=self.base,namespace='igdb.game',external_id='10',source='igdb'))
+            await db.commit()
+        base=f'/tracking/games/works/{self.base}'
+        self.viewer=self.other
+        with patch('core.game_imdb_source.IMDbGameSource.title',AsyncMock()) as source:
+            self.assertEqual((await self.client.get('/catalogue/resolve?namespace=igdb.game&external_id=10')).status_code,403)
+            self.assertEqual((await self.client.get(f'/catalogue/characters?work_id={self.base}')).status_code,403)
+            with patch('core.catalogue.refresh_prices',AsyncMock()) as prices:
+                self.assertEqual((await self.client.post(f'/catalogue/entities/{self.base}/steam-prices/10')).status_code,403)
+                prices.assert_not_awaited()
+            for path in ['/credits','/imdb','/imdb/candidates?q=Elden','/imdb/candidates/tt123']:
+                self.assertEqual((await self.client.get(base+path)).status_code,403,path)
+            self.other.games_access=True
+            self.assertEqual((await self.client.get(base+'/credits')).status_code,200)
+            self.assertEqual((await self.client.get(base+'/imdb')).status_code,200)
+            self.assertEqual((await self.client.get(base+'/imdb/candidates?q=Elden')).status_code,403)
+            self.assertEqual((await self.client.post(base+'/imdb',json={'imdb_id':'tt123',
+                'reason':'Verified identity','confirmed_game_and_edition':True})).status_code,403)
+            source.assert_not_awaited()
+            self.viewer=self.user
+            self.assertEqual((await self.client.post(base+'/imdb',json={'imdb_id':'tt123','reason':'Verified identity'})).status_code,422)
+            source.return_value={'id':'tt123','titleText':{'text':'Game'},'titleType':{'id':'videoGame'}}
+            response=await self.client.post(base+'/imdb',json={'imdb_id':'tt123','reason':'Reviewed game and edition',
+                'confirmed_game_and_edition':True})
+            self.assertEqual(response.status_code,200,response.text)
+            self.assertTrue(response.json()['binding']['reviewed'])
+        self.viewer=self.other
+        body=(await self.client.get(base+'/imdb')).json()
+        self.assertNotIn('evidence',body['binding'])

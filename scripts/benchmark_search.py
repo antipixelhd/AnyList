@@ -126,20 +126,23 @@ async def main(args):
                     db.add(GameActivity(user_id=viewer.id, work_id=game.id, status='playing', created_at=observed,
                         payload={'window_started_at': observed.isoformat(), 'status_changed': True}))
             if not args.case or 'game_credits' in args.case:
-                if first_game is None:
-                    first_game=CatalogueEntity(kind='game',name='Credit benchmark',attributes={'game_class':'game'})
-                    db.add(first_game);await db.flush()
+                credit_work=first_game
+                if credit_work is None or game_contributor_id:
+                    # Keep the 30-person projection fixture independent of the
+                    # contributor stress fixture when cases run together.
+                    credit_work=CatalogueEntity(kind='game',name='Credit benchmark',attributes={'game_class':'game'})
+                    db.add(credit_work);await db.flush()
                 people=[CatalogueEntity(kind='person',name=f'Fixture game actor {i}') for i in range(30)]
                 characters=[CatalogueEntity(kind='character',name=f'Fixture character {i}') for i in range(100)]
                 db.add_all(people+characters);await db.flush()
-                credits=[CatalogueCredit(work_id=first_game.id,contributor_id=person.id,provider='wikidata',
+                credits=[CatalogueCredit(work_id=credit_work.id,contributor_id=person.id,provider='wikidata',
                     source_key=f'fixture-{i}',role='voice_actor',role_label='Voice actor',
                     attributes={'languages':['en'],'statement':{'evidence':'fixture '*1024}}) for i,person in enumerate(people)]
-                appearances=[CharacterAppearance(work_id=first_game.id,character_id=character.id,provider='igdb') for character in characters]
+                appearances=[CharacterAppearance(work_id=credit_work.id,character_id=character.id,provider='igdb') for character in characters]
                 db.add_all(credits+appearances);await db.flush()
-                db.add_all([CharacterPerformance(work_id=first_game.id,credit_id=credits[i//3].id,
+                db.add_all([CharacterPerformance(work_id=credit_work.id,credit_id=credits[i//3].id,
                     appearance_id=appearances[i].id,language='en',source='wikidata') for i in range(90)])
-                game_credits_id=first_game.id
+                game_credits_id=credit_work.id
             await db.commit()
         fixture.app.include_router(games_router)
         if not args.case or 'game_credits' in args.case:

@@ -1,0 +1,97 @@
+"""IMDb query contract and response semantics, without importing third-party code."""
+import os
+import unittest
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+os.environ.setdefault('SECRET_KEY','imdb-source-test-only')
+os.environ.setdefault('DATABASE_URL','postgresql+asyncpg://test:test@localhost/test')
+
+from core.game_imdb_source import IMDbGameSource, TITLE_CREDITS, PERSON_CREDITS, page
+from core.catalogue_providers import ProviderError
+
+
+def title(native='tt123',kind='videoGame'):
+    return {'id':native,'titleText':{'text':'Game'},'titleType':{'id':kind},'releaseYear':{'year':2020}}
+
+
+def connection(rows,total=None,more=False,cursor=None):
+    return {'total':len(rows) if total is None else total,'pageInfo':{'hasNextPage':more,'endCursor':cursor},
+            'edges':[{'node':row} for row in rows]}
+
+
+class IMDbSourceTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.http=SimpleNamespace(request=AsyncMock())
+        self.source=IMDbGameSource(self.http)
+
+    async def test_expanded_connection_uses_id_cursor_and_preserves_null_attributes(self):
+        cast={'name':{'id':'nm123','nameText':{'text':'Actor'}},'category':{'id':'actor','text':'Cast'},
+              'characters':[{'name':'Hero'}],'attributes':None}
+        self.http.request.return_value={'data':{'title':{**title(),'credits':connection([cast],200,True,'next')}}}
+        result=await self.source.credits('tt123','previous')
+        self.assertIsNone(result['rows'][0]['attributes'])
+        self.assertEqual((result['total'],result['has_next'],result['cursor']),(200,True,'next'))
+        args,kwargs=self.http.request.call_args
+        self.assertEqual(args,('imdb','POST','https://caching.graphql.imdb.com/'))
+        self.assertEqual(kwargs['json']['variables'],{'id':'tt123','after':'previous'})
+        self.assertIn('$after: ID',kwargs['json']['query'])
+        self.assertIn('first: 100',kwargs['json']['query'])
+        self.assertIn('... on Crew',kwargs['json']['query'])
+        self.assertNotIn('principalCredits',TITLE_CREDITS)
+        self.assertEqual(set(kwargs['headers']),{'Content-Type','User-Agent','Origin','Referer'})
+        self.assertFalse(kwargs['cache'])
+
+    async def test_person_connection_is_not_known_for_and_does_not_request_images(self):
+        raw={'id':'nm123','nameText':{'text':'Actor'},'bio':None,
+             'credits':connection([{'title':title(),'category':{'id':'actor'}}])}
+        self.http.request.return_value={'data':{'name':raw}}
+        result=await self.source.credits('nm123',person=True)
+        self.assertIsNone(result['header']['bio'])
+        self.assertEqual(result['rows'][0]['title']['titleType']['id'],'videoGame')
+        self.assertIn('first: 50',PERSON_CREDITS)
+        self.assertNotIn('knownFor',PERSON_CREDITS)
+        self.assertNotIn('primaryImage',PERSON_CREDITS)
+
+    async def test_wrong_title_kind_and_identity_are_rejected_before_binding(self):
+        for raw in (title(kind='movie'),title(native='tt456'),None):
+            self.http.request.return_value={'data':{'title':raw}}
+            with self.assertRaisesRegex(ProviderError,'identity_conflict'):await self.source.title('tt123')
+
+    async def test_entitlement_denial_cannot_become_verified_empty_credits(self):
+        self.http.request.return_value={'data':{'title':{**title(),'credits':connection([])}},
+            'extensions':{'entitlements':{'fields':{'Title.credits':'DENY'}}}}
+        with self.assertRaisesRegex(ProviderError,'not_entitled'):await self.source.credits('tt123')
+        self.http.request.return_value={'data':{'name':{'id':'nm123','nameText':{'text':'Actor'},
+            'bio':None,'credits':connection([])}},'extensions':{'entitlements':{'fields':{'Name.bio':'DENY'}}}}
+        result=await self.source.credits('nm123',person=True)
+        self.assertEqual(result['header']['unavailable_fields'],['Name.bio'])
+
+    async def test_errors_never_trigger_an_alternate_transport(self):
+        for body in ({'data':{'title':title()},'errors':[{'message':'denied'}]}, {}, {'data':None}):
+            self.http.request.return_value=body
+            with self.assertRaisesRegex(ProviderError,'graphql_error'):await self.source.title('tt123')
+        self.http.request.side_effect=ProviderError('rate_limited')
+        with self.assertRaisesRegex(ProviderError,'rate_limited'):await self.source.credits('tt123')
+        self.assertEqual(self.http.request.await_count,4)
+        self.assertTrue(all(call.args[2]=='https://caching.graphql.imdb.com/' for call in self.http.request.await_args_list))
+
+    async def test_invalid_identifiers_and_cursors_do_not_make_requests(self):
+        for native in ['nm123','tt123/','https://imdb.com/title/tt123',True,None]:
+            with self.assertRaises(ProviderError):await self.source.credits(native)
+        for cursor in [True,{},'', 'x'*4097]:
+            with self.assertRaises(ProviderError):await self.source.credits('tt123',cursor)
+        self.http.request.assert_not_awaited()
+
+    async def test_search_candidates_are_filtered_and_still_need_identity_validation(self):
+        self.http.request.return_value={'d':[{'id':'tt1','l':'Game','y':2020,'qid':'videoGame'},
+            {'id':'tt2','l':'Film','qid':'movie'},{'id':'nm1','l':'Person','qid':'videoGame'}]}
+        self.assertEqual(await self.source.candidates('Game / Test'),[{'id':'tt1','name':'Game','year':2020}])
+        self.assertEqual(self.http.request.call_args.args[2],
+            'https://v3.sg.media-imdb.com/suggestion/titles/x/Game%20%2F%20Test.json')
+
+    def test_incomplete_or_malformed_pages_are_not_valid_empty_connections(self):
+        self.assertEqual(page(connection([]),100)['total'],0)
+        for raw in [None,connection([],True),connection([],0,True,'next'),
+                    connection([{}],1,True,None),{'total':1,'pageInfo':{'hasNextPage':False},'edges':[{'node':None}]}]:
+            with self.assertRaises(ProviderError):page(raw,100)

@@ -1,7 +1,8 @@
 """Catalogue-keyed game tracking. Visibility preferences are presentation only."""
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query
+from pydantic import BaseModel, Field
 from sqlalchemy import func, literal, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,8 +11,9 @@ from core.game_types import capabilities
 from core.game_access import approved_games_viewer
 from core.tracking_access import profile_access, profile_header
 from core.tracking_access import catalog_access
+from core.catalogue import IdentityConflict
 from db import get_db
-from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user_or_api_key
+from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user_or_api_key, require_admin
 from models import User
 from models.catalogue import CatalogueEntity
 from models.games import GameAchievement, GameAchievementUnlock, GameChildState, GameEntry, GameFavorite
@@ -27,6 +29,104 @@ Reader = Annotated[User, Depends(get_current_user_or_api_key)]
 Writer = Annotated[User, Depends(get_current_user)]
 Viewer = Annotated[User | None, Depends(get_optional_user_or_api_key)]
 WorkId = Annotated[int, Path(gt=0)]
+Admin = Annotated[User, Depends(require_admin)]
+
+
+async def request_game_credits(work_id,engine):
+    import logging
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    from core.game_imdb_enrichment import request
+    try:
+        async with async_sessionmaker(engine,expire_on_commit=False)() as db:
+            await request(db,work_id)
+            await db.commit()
+    except Exception:
+        # Tracking already committed. Metadata admission must not turn a
+        # successful personal write into a misleading optimistic rollback.
+        logging.getLogger(__name__).warning('Game credits could not be queued')
+
+
+@router.get('/works/{work_id}/credits')
+async def game_credits(work_id: WorkId, db: DB, viewer: Reader) -> dict:
+    from core.media_details import work_details
+    from core.game_imdb_enrichment import request
+    work=await tracking.work(db,work_id)
+    state=await request(db,work_id)
+    await db.commit()
+    details=await work_details(db,work,extras=False)
+    return {'people':details['people'],'organizations':details['organizations'],
+        'game_characters':details.get('game_characters',[]),'character_status':state,
+        'game_credit_status':state}
+
+
+class IMDbBindingReview(BaseModel):
+    imdb_id: str = Field(pattern=r'^tt[0-9]+$',max_length=30)
+    reason: str = Field(min_length=3,max_length=1000)
+    confirmed_game_and_edition: Literal[True]
+
+
+@router.get('/works/{work_id}/imdb')
+async def imdb_binding(work_id: WorkId, db: DB, viewer: Reader) -> dict:
+    from core.game_imdb_bindings import context, binding_view
+    from core.game_imdb_enrichment import status
+    try:work,native,binding,_=await context(db,work_id)
+    except IdentityConflict as error:raise HTTPException(409,str(error)) from None
+    selected=binding_view(binding) if binding else None
+    if selected and not viewer.is_admin:selected.pop('evidence',None)
+    return {'game':{'id':work.id,'name':work.name,'igdb_id':native,
+        'igdb_slug':(work.attributes or {}).get('igdb_slug'),
+        'release_date':(work.attributes or {}).get('release_date'),
+        'game_class':(work.attributes or {}).get('game_class')},
+        'binding':selected,
+        'credit_status':await status(db,work_id)}
+
+
+@router.get('/works/{work_id}/imdb/candidates')
+async def imdb_candidates(work_id: WorkId, db: DB, viewer: Admin,
+        q: Annotated[str, Query(min_length=2,max_length=100)]) -> dict:
+    from core.game_imdb_source import IMDbGameSource
+    from core.catalogue_providers import ProviderHTTP, ProviderError
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    await tracking.work(db,work_id)
+    sessions=async_sessionmaker(db.bind,expire_on_commit=False)
+    await db.close()
+    try:return {'results':await IMDbGameSource(ProviderHTTP(session_factory=sessions)).candidates(q)}
+    except ProviderError as error:raise HTTPException(503,'IMDb candidates are temporarily unavailable') from error
+
+
+@router.get('/works/{work_id}/imdb/candidates/{title_id}')
+async def imdb_candidate(work_id: WorkId,title_id: Annotated[str,Path(pattern=r'^tt[0-9]+$',max_length=30)],
+        db: DB,viewer: Admin) -> dict:
+    from core.game_imdb_source import IMDbGameSource
+    from core.catalogue_providers import ProviderHTTP, ProviderError
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    await tracking.work(db,work_id)
+    sessions=async_sessionmaker(db.bind,expire_on_commit=False)
+    await db.close()
+    try:return await IMDbGameSource(ProviderHTTP(session_factory=sessions)).title(title_id)
+    except ProviderError as error:
+        raise HTTPException(409 if error.code=='identity_conflict' else 503,
+            'Select a verified IMDb video game' if error.code=='identity_conflict' else 'IMDb is temporarily unavailable') from None
+
+
+@router.post('/works/{work_id}/imdb')
+async def review_imdb(work_id: WorkId,body:IMDbBindingReview,db:DB,viewer:Admin) -> dict:
+    from core.game_imdb_bindings import GameIMDbBindings
+    from core.catalogue import IdentityConflict
+    from core.catalogue_providers import ProviderError
+    from core.game_imdb_enrichment import request
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    await tracking.work(db,work_id)
+    sessions=async_sessionmaker(db.bind,expire_on_commit=False)
+    await db.close()
+    try:
+        result=await GameIMDbBindings(sessions).review(work_id,body.imdb_id,viewer.id,body.reason)
+    except (IdentityConflict,ProviderError) as error:
+        raise HTTPException(409 if isinstance(error,IdentityConflict) or error.code=='identity_conflict' else 503,
+            str(error) if isinstance(error,IdentityConflict) else 'IMDb identity could not be verified') from None
+    await request(db,work_id)
+    await db.commit()
+    return result
 
 
 @router.get('/search')
@@ -120,8 +220,10 @@ async def editor_state(work_id: WorkId, db: DB, viewer: Reader) -> GameEntryOut:
 
 
 @router.patch('/entries/{work_id}')
-async def save_entry(work_id: WorkId, body: GamePatch, db: DB, viewer: Writer) -> GameEntryOut:
-    return await tracking.save_entry(db, viewer.id, work_id, body)
+async def save_entry(work_id: WorkId, body: GamePatch, db: DB, viewer: Writer,background:BackgroundTasks) -> GameEntryOut:
+    result=await tracking.save_entry(db, viewer.id, work_id, body)
+    background.add_task(request_game_credits,work_id,db.bind)
+    return result
 
 
 @router.delete('/entries/{work_id}')

@@ -26,6 +26,7 @@ export type DetailMedia = EditorTitle & {
   genres: string[]; seasons: any[]; friends: any[]; friends_average?: number | null;
   people: DetailPerson[]; organizations: DetailPerson[]; posters: string[]; artwork: string[]; relations: any[]; similar: any[]; related_pending?: boolean;
   character_status?: {state:string;pending?:boolean;error?:string|null;retry_after?:number};
+  game_credit_status?: {state:string;pending?:boolean;error?:string|null;retry_after?:number;complete?:boolean;coverage?:string};
   image_status?: {state:string;error?:string|null;retry_after?:number};
   background_status?: {state:string;error?:string|null;retry_after?:number};
   backdrop_fallback?:string;
@@ -81,7 +82,7 @@ export function detailCredits(media:DetailMedia) {
   const screen=media.type==='movie'||media.type==='series';
   const cast=media.people.filter(person=>person.kind==='actor').sort((a,b)=>position(a)-position(b)).slice(0,screen?(media.type==='movie'?16:24):undefined);
   const priority=(person:DetailPerson)=>{
-    const roles=person.roles.length?person.roles:person.role_codes||[];
+    const roles=media.type==='game'?[...person.roles,...(person.role_codes||[])]:person.roles.length?person.roles:person.role_codes||[];
     const ranks=[/^(director|supervising director|creator|showrunner|head writer)$/i,/^(writer|screenplay|screenwriter|teleplay|story|author|novel|book|play|original story|characters|characters created by)$/i,/^(cinematographer|cinematography|director of photography|composer|original music composer|editor|film editor|production design|production designer|costume design|costume designer|casting|casting director|visual effects supervisor|animation director)$/i,/^(producer|developer)$/i,...(media.type==='series'?[/^executive producer$/i]:[])];
     const rank=ranks.findIndex(pattern=>roles.some(role=>pattern.test(role.trim())));
     return rank<0?99:rank;

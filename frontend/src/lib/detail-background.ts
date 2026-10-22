@@ -16,7 +16,7 @@ export function detailBackground<T>(path:string, signal:AbortSignal, apply:(data
       try {
         const response=await fetch(path,{signal});
         if(!response.ok){
-          if(response.status===401||response.status===403){done=true;throw new Error('Sign in again to load extra details.');}
+          if(response.status===401||response.status===403){done=true;throw new Error(response.status===403?'Access to these details is unavailable.':'Sign in again to load extra details.');}
           const header=response.headers.get('Retry-After')||'';
           const retry=Number(header)||Math.max(0,(Date.parse(header)-Date.now())/1000);
           if(response.status===429&&retry>0)schedule(retry);

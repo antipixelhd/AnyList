@@ -169,3 +169,13 @@ test('similar titles stay in the viewed media type while relations preserve dire
   assert.equal(api.relationLabel('based_on',false),'Source');
   assert.equal(api.relationLabel('based_on',true),'Adaptation');
 });
+
+test('game crew keep their detailed jobs while canonical writer roles determine prominence',()=>{
+  const people=[
+    {id:1,kind:'staff',name:'Composer',roles:['Composer'],role_codes:['composer'],position:0},
+    {id:2,kind:'staff',name:'Writer',roles:['world created by'],role_codes:['writer'],position:20},
+  ];
+  const game=api.prepareDetail({type:'game',people,organizations:[]});
+  assert.deepEqual(Array.from(api.detailCredits(game).principal,row=>row.name),['Writer','Composer']);
+  assert.equal(api.detailCredits(game).principal[0].roles[0],'world created by');
+});

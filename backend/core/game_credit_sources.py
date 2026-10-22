@@ -169,15 +169,15 @@ class GameCreditSources:
             ttl=timedelta(days=7),max_stale=timedelta(days=30))
 
     async def game_item(self,igdb_id,slug):
-        if not positive(igdb_id) or not isinstance(slug,str) or not SLUG.fullmatch(slug):
+        if not positive(igdb_id) or (slug is not None and (not isinstance(slug,str) or not SLUG.fullmatch(slug))):
             raise ProviderError('invalid_request')
         key=hashlib.sha256(json.dumps(['identity-v2',igdb_id,slug]).encode()).hexdigest()
         async def load():
-            query='''SELECT DISTINCT ?item ?id WHERE {
-                { ?item p:P5794 ?statement. ?statement ps:P5794 '''+json.dumps(slug)+'''.
+            slug_query='''{ ?item p:P5794 ?statement. ?statement ps:P5794 '''+json.dumps(slug)+'''.
                     FILTER NOT EXISTS {?statement wikibase:rank wikibase:DeprecatedRank}
-                    OPTIONAL { ?statement pq:P9043 ?id } }
-                UNION { ?item p:P5794 ?statement. ?statement pq:P9043 '''+json.dumps(str(igdb_id))+'''.
+                    OPTIONAL { ?statement pq:P9043 ?id } } UNION ''' if slug is not None else ''
+            query='''SELECT DISTINCT ?item ?id WHERE { '''+slug_query+'''
+                { ?item p:P5794 ?statement. ?statement pq:P9043 '''+json.dumps(str(igdb_id))+'''.
                     FILTER NOT EXISTS {?statement wikibase:rank wikibase:DeprecatedRank}
                     BIND('''+json.dumps(str(igdb_id))+''' AS ?id) }
                 UNION { ?item p:P9043 ?numeric. ?numeric ps:P9043 '''+json.dumps(str(igdb_id))+'''.

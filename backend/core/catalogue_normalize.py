@@ -25,7 +25,7 @@ NAMESPACE_KINDS = {
     "tmdb.series": {"series"},
     "tvdb.series": {"series"},
     "tvdb.movie": {"movie"},
-    "imdb.title": {"movie", "series"},
+    "imdb.title": {"movie", "series", "game"},
     "imdb.person": {"person"},
     "wikidata.item": {"game", "person", "organization", "character"},
     "tmdb.person": {"person"},
@@ -383,6 +383,8 @@ def normalize_igdb(raw):
             artwork=raw.get("cover"),
             attributes={
                 "game_class": igdb_game_class(raw),
+                "igdb_id": str(raw['id']),
+                "igdb_slug": raw.get('slug'),
                 "game_type": raw.get("game_type"),
                 "platforms": [{"id": str(p['id']), "name": p.get('name'), "group": platform_group(p)}
                               for p in game_platforms(raw)],
