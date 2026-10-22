@@ -91,6 +91,19 @@ def media_data(media):
     }
 
 
+def release_annotations(episodes, watched_ids, status):
+    """Classify released, unwatched episodes using actual season history."""
+    if status != 'completed':
+        return {'new_seasons': 0, 'new_episodes': 0}
+    watched_seasons = {episode.season_number for episode in episodes if episode.id in watched_ids}
+    unwatched = [episode for episode in episodes if episode.id not in watched_ids]
+    return {
+        'new_seasons': len({episode.season_number for episode in unwatched
+                            if episode.season_number not in watched_seasons}),
+        'new_episodes': sum(episode.season_number in watched_seasons for episode in unwatched),
+    }
+
+
 def entry_data(entry, media, owner=False, *, favorite=None):
     result = {
         **media_data(media),

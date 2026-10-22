@@ -21,6 +21,22 @@ def _media(**overrides):
 
 
 class TrackingProjectionTests(unittest.TestCase):
+    def test_release_annotations_distinguish_watched_seasons_from_untouched_seasons(self):
+        episodes = [SimpleNamespace(id=1, season_number=1), SimpleNamespace(id=2, season_number=1),
+                    SimpleNamespace(id=3, season_number=2), SimpleNamespace(id=4, season_number=3)]
+        self.assertEqual(tracking_projection.release_annotations(episodes[:2], {1}, 'completed'),
+                         {'new_seasons': 0, 'new_episodes': 1})
+        self.assertEqual(tracking_projection.release_annotations(episodes, {1}, 'completed'),
+                         {'new_seasons': 2, 'new_episodes': 1})
+        # Sparse history must use identities, rather than treating progress as a prefix.
+        self.assertEqual(tracking_projection.release_annotations(episodes, {2, 3, 4}, 'completed'),
+                         {'new_seasons': 0, 'new_episodes': 1})
+        self.assertEqual(tracking_projection.release_annotations(episodes, {1, 2, 3, 4}, 'completed'),
+                         {'new_seasons': 0, 'new_episodes': 0})
+        for status in ('watching', 'planning', 'paused', 'dropped'):
+            self.assertEqual(tracking_projection.release_annotations(episodes, {1}, status),
+                             {'new_seasons': 0, 'new_episodes': 0})
+
     def test_movie_financials_are_projected_from_cached_metadata_only_for_movies(self):
         data = {'budget': 150_000_000, 'revenue': 825_000_000}
         movie = tracking_projection.media_data(_media(media_type=MediaType.movie, tmdb_data=data))

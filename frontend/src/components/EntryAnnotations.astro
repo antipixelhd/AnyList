@@ -1,16 +1,19 @@
 ---
 import Icon from './Icon.astro';
+import {releaseAnnotation} from '../lib/release-annotation';
 interface Props {
   rewatchCount?: number;
   notes?: string | null;
   newSeasons?: number;
+  newEpisodes?: number;
 }
-const {rewatchCount = 0, notes, newSeasons = 0} = Astro.props;
+const {rewatchCount = 0, notes, newSeasons = 0, newEpisodes = 0} = Astro.props;
+const releaseLabel = releaseAnnotation(newSeasons, newEpisodes);
 const rewatchLabel = `${rewatchCount} ${rewatchCount === 1 ? 'rewatch' : 'rewatches'}`;
 const hasNote = Boolean(notes?.trim());
 ---
-{(newSeasons > 0 || rewatchCount > 0 || hasNote) && <span class="entry-annotations">
-  {newSeasons > 0 && <small class="unwatched-indicator">{newSeasons === 1 ? 'new season' : `${newSeasons} new seasons`}</small>}
+{(releaseLabel || rewatchCount > 0 || hasNote) && <span class="entry-annotations">
+  {releaseLabel && <small class="unwatched-indicator">{releaseLabel}</small>}
   {rewatchCount > 0 && <span class="entry-rewatch" role="img" tabindex="0" aria-label={rewatchLabel} data-rewatch-label={rewatchLabel}><Icon name="arrows-rotate"/></span>}
   {hasNote && <span class="entry-note" role="img" tabindex="0" aria-label={`Note: ${notes}`}>
     <Icon name="comment"/>

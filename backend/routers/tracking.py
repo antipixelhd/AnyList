@@ -1088,7 +1088,7 @@ async def profile_list(username: str, media_type: Literal["movie", "series", "al
                 watched_episodes = [r for r in title_episodes if r.id in watched]
                 latest = max(watched_episodes, key=lambda r: (r.season_number or 0, r.episode_number or 0), default=None)
                 result['season_position'] = f'S{latest.season_number}E{latest.episode_number}' if latest else None
-                result['new_seasons'] = len({r.season_number for r in unwatched}) if result['status'] == 'completed' else 0
+                result.update(tracking_projection.release_annotations(title_episodes, watched, result['status']))
     if owner:
         from core.tracking_editor import attach_editor_context
         await attach_editor_context(db, viewer, entries, media_rows=[media for _, media in rows])
@@ -2021,11 +2021,11 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
     else:
         result['availability_dot'], result['availability_reason'] = False, None
     if media.media_type == MediaType.series and episodes:
-        watched_episodes = [episode for episode in episodes if episode.id in desired] if episode_change else episodes[:entry.progress]
+        watched_episodes = [episode for episode in episodes if episode.id in desired]
         latest = watched_episodes[-1] if watched_episodes else None
         result["season_position"] = f"S{latest.season_number}E{latest.episode_number}" if latest else None
         result["released_episodes"] = len(episodes)
-        result["new_seasons"] = len({episode.season_number for episode in episodes[entry.progress:]}) if entry.status == "completed" else 0
+        result.update(tracking_projection.release_annotations(episodes, desired, entry.status))
     result["delivery_job_id"] = job.id
     return result
 
