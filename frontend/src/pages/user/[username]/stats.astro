@@ -9,6 +9,7 @@ import StatsGenreCard from '../../../components/StatsGenreCard.astro';
 import StatsActorCard from '../../../components/StatsActorCard.astro';
 import StatsStudioCard from '../../../components/StatsStudioCard.astro';
 import StatsStaffCard from '../../../components/StatsStaffCard.astro';
+import ProfileStatsDomains from '../../../components/ProfileStatsDomains.astro';
 import '../../../styles/stats-overview.css';
 import '../../../styles/stats-genres.css';
 import '../../../styles/stats-actors.css';
@@ -53,6 +54,7 @@ const actorTemplate = { key: '', label: '', image: null, href: '#', titles: 0, m
         <div id="statistics-sections"><ProfileSectionSelector heading="Statistics" ariaLabel="Statistics sections" options={[{id: 'overview', label: 'Overview'}, {id: 'genres', label: 'Genres'}, {id: 'actors', label: 'Actors'}, {id: 'studios', label: 'Studios'}, {id: 'staff', label: 'Staff'}]} active={section} width="100%" /></div>
       </aside>
       <div class="stats-overview-content">
+      <ProfileStatsDomains username={username!} owner={data.owner} active="movies-series"/>
       <header class="overview-heading"><h2 data-stats-heading>{section === 'staff' ? 'Staff' : section === 'studios' ? 'Studios' : section === 'actors' ? 'Actors' : section === 'genres' ? 'Genres' : 'Overview'}</h2><nav class="overview-media" aria-label="Statistics media type">
         {[['all', 'All'], ['movie', 'Movies'], ['series', 'Series']].map(([value, label]) => <a href={`?${new URLSearchParams({media: value, section, sort, actor_sort: actorSort, studio_sort: studioSort, staff_sort: staffSort, artwork})}`} data-overview-media={value} aria-current={value === media ? 'page' : undefined}>{label}</a>)}
       </nav></header>

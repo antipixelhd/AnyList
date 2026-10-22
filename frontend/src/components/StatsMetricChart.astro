@@ -2,24 +2,24 @@
 import type { MetricGroup } from '../lib/stats-overview-data';
 import { barChartRows, displayNumber, knownRows, watchYearRows } from '../lib/stats-overview-data';
 import { chartMinimumWidth } from '../lib/stats-chart-density';
-interface Props { id: string; title: string; rows: MetricGroup[]; score?: boolean; hidden?: boolean; }
-const { id, title, rows: allRows, score = false, hidden = false } = Astro.props;
-const rows = id === 'watch_years' ? watchYearRows(allRows) : id === 'scores' || id === 'episode_counts' ? barChartRows(allRows) : knownRows(allRows);
+interface Props { id: string; title: string; rows: MetricGroup[]; score?: boolean; hidden?: boolean;countLabel?:string;showHours?:boolean;categoryLabel?:string;emptyLabel?:string; }
+const { id, title, rows: allRows, score = false, hidden = false,countLabel='Titles',showHours=true,categoryLabel,emptyLabel='No watched titles.' } = Astro.props;
+const rows = id === 'watch_years' ? watchYearRows(allRows) : score || id === 'episode_counts' ? barChartRows(allRows) : knownRows(allRows);
 ---
 <section class="overview-chart" data-chart-section={id} hidden={hidden} aria-labelledby={`${id}-title`}>
   <header class="overview-chart-heading">
     <h3 id={`${id}-title`}>{title}</h3>
     <div class="overview-metrics" role="group" aria-label={`${title} metric`}>
-      {([['titles', 'Titles'], ['hours', 'Hours'], ...(!score ? [['mean_score', 'Mean score']] : [])]).map(([metric, label]) =>
+      {([['titles', countLabel], ...(showHours?[['hours', 'Hours']]:[]), ...(!score ? [['mean_score', 'Mean score']] : [])]).map(([metric, label]) =>
         <button type="button" data-chart={id} data-metric={metric} aria-pressed={metric === 'titles'}>{label}</button>)}
     </div>
   </header>
-  <div class="overview-plot"><div class="overview-chart-scroll"><div class="overview-chart-canvas" style={`--chart-min-width:${chartMinimumWidth(rows.length)}px`}><canvas data-overview-chart={id} role="img" aria-label={`${title}: titles watched`} aria-describedby={`${id}-data`}></canvas></div></div>
-    <p class="overview-plot-empty" data-chart-empty={id} hidden={rows.some(row => row.titles)}>No watched titles.</p>
+  <div class="overview-plot"><div class="overview-chart-scroll"><div class="overview-chart-canvas" style={`--chart-min-width:${chartMinimumWidth(rows.length)}px`}><canvas data-overview-chart={id} role="img" aria-label={`${title}: ${countLabel==='Titles'?'titles watched':countLabel.toLowerCase()}`} aria-describedby={`${id}-data`}></canvas></div></div>
+    <p class="overview-plot-empty" data-chart-empty={id} hidden={rows.some(row => row.titles)}>{emptyLabel}</p>
   </div>
   <div class="overview-sr-only" id={`${id}-data`}>
-    <div class="overview-table-scroll"><table><caption>{title}</caption><thead><tr><th scope="col">{id === 'scores' ? 'Score interval' : id.includes('years') ? 'Year' : 'Episode count'}</th><th scope="col">Titles</th><th scope="col">Hours</th>{!score && <th scope="col">Mean score</th>}</tr></thead>
-      <tbody data-chart-table={id}>{rows.map(row => <tr><th scope="row">{id === 'scores' ? `(${Number(row.key) - .5}, ${row.key}]` : row.label}</th><td>{displayNumber(row.titles)}</td><td>{displayNumber(row.minutes / 60, 1)}</td>{!score && <td>{displayNumber(row.mean_score, 2)}</td>}</tr>)}</tbody>
+    <div class="overview-table-scroll"><table><caption>{title}</caption><thead><tr><th scope="col">{categoryLabel||(id === 'scores' ? 'Score interval' : id.includes('years') ? 'Year' : 'Episode count')}</th><th scope="col">{countLabel}</th>{showHours&&<th scope="col">Hours</th>}{!score && <th scope="col">Mean score</th>}</tr></thead>
+      <tbody data-chart-table={id}>{rows.map(row => <tr><th scope="row" title={row.detail}>{id === 'scores' ? `(${Number(row.key) - .5}, ${row.key}]` : row.label}</th><td>{displayNumber(row.titles)}</td>{showHours&&<td>{displayNumber(row.time_known===false?null:row.minutes / 60, 1)}</td>}{!score && <td>{displayNumber(row.mean_score, 2)}</td>}</tr>)}</tbody>
     </table></div>
   </div>
 </section>

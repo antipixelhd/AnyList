@@ -36,6 +36,7 @@ from .streaming_library import StreamingLibraryIntent, StreamingLibraryDelivery
 from .netflix_import import NetflixImportSession
 from .watch_intent import WatchIntent
 from .statistics import StatsMetadataRevision, UserStatsSnapshot, UserStatsState
+from .game_statistics import GameStatsState
 from .games import GameEntry, GameChildState, GameFavorite, GameAchievement, GameAchievementUnlock, GameActivity
 from .catalogue import (CatalogueEntity, CatalogueIdentity, CatalogueLegacyLink, CatalogueShowLink,
                         BookEdition, GameRelease, CatalogueCredit, ScreenCharacter, CharacterAppearance,
@@ -95,5 +96,6 @@ __all__ = [
     "CharacterPerformance", "CatalogueRelationship", "MetadataSnapshot",
     "MetadataProviderBudget", "SteamPriceSnapshot",
     "StatsMetadataRevision", "UserStatsSnapshot", "UserStatsState",
+    "GameStatsState",
     "GameEntry", "GameChildState", "GameFavorite", "GameAchievement", "GameAchievementUnlock", "GameActivity",
 ]

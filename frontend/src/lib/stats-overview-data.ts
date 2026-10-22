@@ -9,6 +9,8 @@ export interface MetricGroup {
   minutes: number;
   mean_score: number | null;
   rated_titles: number;
+  detail?:string;
+  time_known?:boolean;
 }
 export interface Distribution { key: string; label: string; titles: number; }
 export interface GenreTitle { key: string; title: string; poster: string | null; href: string; score: number | null; }

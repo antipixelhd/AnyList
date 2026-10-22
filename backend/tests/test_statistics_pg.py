@@ -48,7 +48,7 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
 
         def setup(conn):
             conn.execute(text(f'SET LOCAL search_path TO "{self.schema}"'))
-            wanted = [t for t in Base.metadata.sorted_tables if not t.name.startswith("user_stats_") and t.name not in ("stats_metadata_revision", "catalogue_contributor_search")]
+            wanted = [t for t in Base.metadata.sorted_tables if not t.name.startswith("user_stats_") and t.name not in ("stats_metadata_revision", "catalogue_contributor_search", "game_stats_state")]
             Base.metadata.create_all(conn, tables=wanted)
             conn.execute(text("ALTER TABLE catalogue_credits DROP COLUMN character_image_url"))
             conn.execute(text("ALTER TABLE catalogue_credits DROP COLUMN screen_character_id"))
@@ -66,6 +66,7 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 importlib.import_module("migrations.versions.mt061_game_contributor_search").upgrade()
                 importlib.import_module("migrations.versions.mt064_game_credit_participation").upgrade()
                 importlib.import_module("migrations.versions.mt065_person_credit_scope").upgrade()
+                importlib.import_module("migrations.versions.mt066_game_statistics").upgrade()
             self.assertEqual(conn.scalar(text("SELECT count(*) FROM user_stats_state")), 1)
             self.assertEqual(tuple(conn.execute(text(
                 "SELECT condeferrable, condeferred FROM pg_constraint "

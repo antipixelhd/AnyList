@@ -390,6 +390,8 @@ def normalize_igdb(raw):
                               for p in game_platforms(raw)],
                 "release_date": date(raw.get("first_release_date")),
                 "genres": [g['name'] for g in raw.get('genres') or [] if isinstance(g,dict) and isinstance(g.get('name'),str)],
+                "genre_filters": {g['name'].casefold():f"igdb.genre:{g['id']}" for g in raw.get('genres') or []
+                    if isinstance(g,dict) and isinstance(g.get('name'),str) and type(g.get('id')) is int and g['id']>0},
                 "artwork": [image(a) for a in raw.get("artworks") or []],
                 **game_countries(raw),
             },

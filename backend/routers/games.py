@@ -1,7 +1,7 @@
 """Catalogue-keyed game tracking. Visibility preferences are presentation only."""
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query,Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, literal, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +22,7 @@ from models.base import PrivacyLevel
 from sqlalchemy import or_, and_
 from schemas_games import (AchievementOut, AchievementPage, ChildPatch, FavoritePatch,
                            GameEntryOut, GameListOut, GameListProfile, GamePlayingOut, GamePatch, GameStateBatch, GameStatus, GameFavoriteOrder)
+from schemas_game_statistics import GameStatsResponse,GameStatsSection
 
 router = APIRouter(prefix='/tracking/games', tags=['games'], dependencies=[Depends(approved_games_viewer)])
 DB = Annotated[AsyncSession, Depends(get_db)]
@@ -30,6 +31,20 @@ Writer = Annotated[User, Depends(get_current_user)]
 Viewer = Annotated[User | None, Depends(get_optional_user_or_api_key)]
 WorkId = Annotated[int, Path(gt=0)]
 Admin = Annotated[User, Depends(require_admin)]
+
+
+@router.get('/users/{username}/statistics')
+async def game_statistics(username:str,response:Response,db:DB,viewer:Reader,section:GameStatsSection='overview',
+    sort:Literal['count','mean_score','time']='count',page:Annotated[int,Query(ge=1,le=5000)]=1,
+    generation:Annotated[int|None,Query(ge=1)]=None) -> GameStatsResponse:
+    from core.game_statistics import read,GameStatisticsChanged
+    user,owner=await profile_access(db,username,viewer)
+    header=await profile_header(db,user,owner,viewer)
+    response.headers['Cache-Control']='private, no-store'
+    try:result=await read(db,user.id,section,sort=sort,page=page,generation=generation)
+    except GameStatisticsChanged:raise HTTPException(409,'Game statistics changed. Refresh to continue.') from None
+    return GameStatsResponse.model_validate({'profile':header,'owner':owner,'following':header['following'],
+        'follows_you':header['follows_you'],'combine_lists':header['combine_lists'],**result})
 
 
 @router.get('/people/{native}/imdb')

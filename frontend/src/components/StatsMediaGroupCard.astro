@@ -4,13 +4,13 @@ import type { MediaGroup } from '../lib/stats-overview-data';
 import { displayNumber } from '../lib/stats-overview-data';
 import { genreTime } from '../lib/stats-genres-data';
 import { responsiveArtwork } from '../lib/responsive-artwork';
-interface Props { group: MediaGroup; rank: number; href: string; prefix: 'genre' | 'studio'; }
-const { group: genre, rank, href, prefix } = Astro.props;
+interface Props { group: MediaGroup; rank: number; href: string|null; prefix: 'genre' | 'studio'; timeLabel?:string; }
+const { group: genre, rank, href, prefix,timeLabel='Time Watched' } = Astro.props;
 ---
 <article class="stats-genre-card" {...{[`data-${prefix}-key`]: genre.key, [`data-${prefix}-signature`]: JSON.stringify(genre)}} aria-label={genre.label}>
   <div class="stats-genre-summary">
     <header><h3><a {...{[`data-${prefix}-link`]: ""}} href={href}>{genre.label}</a></h3><span class="stats-genre-rank" {...{[`data-${prefix}-rank`]: ""}} aria-label={`Rank ${rank}`}>{rank}</span></header>
-    <dl><div><dt>Count</dt><dd {...{[`data-${prefix}-count`]: ""}}>{displayNumber(genre.titles)}</dd></div><div><dt>Mean Score</dt><dd {...{[`data-${prefix}-score`]: ""}}>{displayNumber(genre.mean_score, 2)}</dd></div><div><dt>Time Watched</dt><dd {...{[`data-${prefix}-time`]: ""}}>{genreTime(genre)}</dd></div></dl>
+    <dl><div><dt>Count</dt><dd {...{[`data-${prefix}-count`]: ""}}>{displayNumber(genre.titles)}</dd></div><div><dt>Mean Score</dt><dd {...{[`data-${prefix}-score`]: ""}}>{displayNumber(genre.mean_score, 2)}</dd></div><div><dt>{timeLabel}</dt><dd {...{[`data-${prefix}-time`]: ""}}>{genreTime(genre)}</dd></div></dl>
   </div>
   <div class="stats-genre-posters">
     <div class="stats-genre-track" data-genre-track tabindex="0" role="group" aria-label={`Highest-rated ${genre.label} titles`}>

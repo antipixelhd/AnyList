@@ -88,6 +88,8 @@ export function loginSharePage(next: string | null): {path: string; title: strin
 export function sharePath(pathname: string, search = ''): string | null {
   let path: string;
   try { path = decodeURIComponent(pathname).replace(/\/$/, ''); } catch { return null; }
+  const gameStatistics=/^\/user\/([^/?#\\]{1,100})\/stats\/games$/.exec(path);
+  if(gameStatistics)return `/user/${encodeURIComponent(gameStatistics[1])}/stats/games`;
   const profile = /^\/user\/([^/?#\\]{1,100})(?:\/(?:movies|series|games|list|social|stats|favorites|library))?$/.exec(path);
   if (profile) return `/user/${encodeURIComponent(profile[1])}`;
   if (/^\/(?:title|games)\/[1-9][0-9]{0,9}$/.test(path)) return path;
@@ -99,6 +101,12 @@ export function sharePath(pathname: string, search = ''): string | null {
 export function sharePagePath(pathname: string, search = ''): string {
   const identity = sharePath(pathname);
   if (identity) {
+    if(identity.endsWith('/stats/games')) {
+      const input=new URLSearchParams(search),allowed=new URLSearchParams();
+      for(const key of ['section','sort']){const value=input.get(key);if(value&&/^[a-z_]{1,50}$/.test(value))allowed.set(key,value);}
+      const page=Number(input.get('page'));if(Number.isInteger(page)&&page>1&&page<=5000)allowed.set('page',String(page));
+      return identity+(allowed.size?`?${allowed}`:'');
+    }
     let decoded: string;
     try { decoded = decodeURIComponent(pathname).replace(/\/$/, '') || '/'; }
     catch { return '/'; }

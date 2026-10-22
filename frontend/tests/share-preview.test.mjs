@@ -2,6 +2,15 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {SHARE_IMAGE_REVISION, shareImagePath, crawlerShareResponse, generalSharePage, loginSharePage, loginShareIdentity, shareMetadata, shareLoginPath, sharePagePath, sharePath, mediaShareDescription} from '../src/lib/share-preview.ts';
 
+test('Games statistics share identity retains its approved-access boundary and only safe destination state',async()=>{
+  const path='/user/alex/stats/games';
+  assert.equal(sharePath(path),path);
+  assert.equal(sharePagePath(path,'?section=actors&sort=time&page=2&token=secret'),`${path}?section=actors&sort=time&page=2`);
+  const login=new URL(shareLoginPath(path),'https://anylist.test');
+  assert.equal(loginShareIdentity(login.searchParams.get('next')),path);
+  assert.equal(await shareMetadata(path,async()=>new Response(null,{status:403})),null);
+});
+
 test('game contributor previews retain only the public domain through cards and login',async()=>{
   const path='/actors/catalogue:42',query='?media_type=game&list_scope=in&token=secret&page=9';
   assert.equal(sharePath(path,query),`${path}?media_type=game`);

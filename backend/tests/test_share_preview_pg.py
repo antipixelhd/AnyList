@@ -82,6 +82,11 @@ class ShareDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 card, _ = await card_data(db, f'/actors/catalogue:{actor.id}')
             self.assertEqual(card['stats'][1:], [{'value':'16','label':'Movies'}, {'value':'15','label':'Series'}])
             self.assertTrue(card['background'].endswith('/backdrop-29.jpg'))
+            # Actor-only evidence does not establish a crew portfolio. Give
+            # the crew preview its own verified role rather than relying on a
+            # person's name/actor credits to populate an unrelated page.
+            db.add(CatalogueCredit(work_id=work.id,contributor_id=actor.id,provider='tmdb',source_key='share-director',role='director'))
+            await db.commit()
         self.app.include_router(router)
         self.viewer = None
         for path in [f'/actors/catalogue:{actor.id}', f'/person/catalogue:{actor.id}', f'/studio/catalogue:{self.studio_id}']:

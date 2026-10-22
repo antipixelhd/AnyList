@@ -1,0 +1,14 @@
+---
+import {viewerMediaPreferences} from '../lib/viewer-media-preferences';
+import {profileMediaDomains} from '../lib/media-domains';
+interface Props {username:string;owner:boolean;active:'movies-series'|'game';gameAvailable?:boolean}
+const {username,owner,active,gameAvailable}=Astro.props;
+const domains=profileMediaDomains(owner,await viewerMediaPreferences(Astro.locals));
+const movies=domains.show_movies_series||active==='movies-series';
+const games=domains.can_access_games!==false&&(domains.show_games||active==='game');
+const base=`/user/${encodeURIComponent(username)}/stats`;
+---
+{movies&&games&&<nav class="overview-media stats-domain-navigation" aria-label="Statistics media domain">
+  <a href={base} aria-current={active==='movies-series'?'page':undefined}>Movies &amp; Series</a>
+  <a href={gameAvailable===false?undefined:`${base}/games`} aria-current={active==='game'?'page':undefined} aria-disabled={gameAvailable===false?'true':undefined}>Games</a>
+</nav>}

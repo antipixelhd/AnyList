@@ -87,6 +87,7 @@ async def main(args):
     counters = Counter()
     sql_patterns = {}
     current_case = ''
+    game_statistics_enabled=not args.case or any(name.startswith('game_statistics') for name in args.case)
     try:
         async with fixture.Session() as db:
             viewer = await db.get(User, fixture.user_id)
@@ -143,6 +144,11 @@ async def main(args):
                 db.add(game)
                 await db.flush()
                 if first_game is None:first_game=game
+                if game_statistics_enabled:
+                    performer=CatalogueEntity(kind='person',name=f'Statistics performer {index:05}')
+                    db.add(performer);await db.flush()
+                    db.add(CatalogueCredit(work_id=game.id,contributor_id=performer.id,provider='imdb',
+                        source_key=f'statistics-credit-{index}',role='actor',attributes={'evidence':'STATS_RAW_SENTINEL '*2048}))
                 if game_contributor_id:
                     db.add(CatalogueCredit(work_id=game.id,contributor_id=game_contributor_id,
                         provider='wikidata',source_key=f'game-works-{index}',role='voice_actor',
@@ -214,6 +220,9 @@ async def main(args):
             from routers.catalogue import router as catalogue_router
             fixture.app.include_router(catalogue_router,prefix='/tracking')
         fixture.viewer = viewer  # Optional-auth catalogue routes use the same approved fixture.
+        if game_statistics_enabled:
+            from core import game_statistics
+            await game_statistics.run_due(fixture.Session)
         fixture.app.dependency_overrides[get_current_user] = lambda: viewer
         fixture.app.dependency_overrides[get_current_user_or_api_key] = lambda: viewer
 
@@ -301,6 +310,7 @@ async def main(args):
                 items = result.get('results', [])
                 if label.startswith('game_contributor') or label in ('game_person_cached','game_company_cached'):items=result['works']
                 if label=='game_credits':items=result['people']+result['game_characters']
+                if label.startswith('game_statistics'):items=result.get('data') if isinstance(result.get('data'),list) else [result.get('data')]
                 if result.get('sections'):
                     items = [item for section in result['sections'] for item in section['results']]
                 elif isinstance(items, dict):
@@ -401,6 +411,10 @@ async def main(args):
             ('game_browse_timeline','games/browse',{'limit':24,'category':'newest','timeline':'true','q':'Benchmark'}),
             ('game_browse_genre_platform','games/browse',{'limit':24,'genres':'igdb.genre:5','platforms':'pc'}),
             ('game_list', f'games/users/{viewer.username}/list', {'limit': 50}),
+            *([('game_statistics_overview',f'games/users/{viewer.username}/statistics',{}),
+                ('game_statistics_rebuild',f'games/users/{viewer.username}/statistics',{}),
+                ('game_statistics_actors',f'games/users/{viewer.username}/statistics',{'section':'actors','sort':'time'}),
+                ('game_statistics_actors_page_two',f'games/users/{viewer.username}/statistics',{'section':'actors','sort':'time','page':2})] if game_statistics_enabled else []),
             ('game_list_page_two', f'games/users/{viewer.username}/list', {'limit': 50, 'offset': 50}),
             ('game_list_genre_year', f'games/users/{viewer.username}/list', {'genre': 'Role-playing (RPG)', 'year': '2024', 'limit': 2}),
             ('game_list_status', f'games/users/{viewer.username}/list', {'status': 'playing', 'sort': 'score', 'limit': 50}),
@@ -533,6 +547,29 @@ async def main(args):
                                 sql=sql_patterns.get(identity.removeprefix('sql:'),'') if identity.startswith('sql:') else ''
                                 if 'catalogue_metadata_snapshots.payload,' in sql or 'catalogue_metadata_snapshots.payload FROM' in sql:
                                     raise RuntimeError('Company read hydrated a full provider snapshot')
+                            return result
+                        if label.startswith('game_statistics'):
+                            if label=='game_statistics_rebuild':
+                                from models.game_statistics import GameStatsState
+                                from sqlalchemy import update
+                                async with fixture.Session() as db:
+                                    await db.execute(update(GameStatsState).where(GameStatsState.user_id==viewer.id).values(
+                                        payload=None,source_revision=GameStatsState.source_revision+1,next_due_at=game_statistics.now()))
+                                    await db.commit()
+                                if await game_statistics.run_due(fixture.Session)!=1:raise RuntimeError('Statistics rebuild was not published')
+                            result=await request(path,params)
+                            if result['status']!='ready':raise RuntimeError('Cached Games statistics were not ready')
+                            played=args.local_titles-(args.local_titles+4)//5
+                            if label in ('game_statistics_overview','game_statistics_rebuild'):
+                                if result['data']['totals']['listed_games']!=args.local_titles or result['data']['totals']['played_games']!=played:
+                                    raise RuntimeError('Statistics lost parent counts or included Planned games in played totals')
+                            else:
+                                if result['total']!=played or len(result['data'])!=min(24,max(0,played-(24 if params.get('page')==2 else 0))):
+                                    raise RuntimeError('Statistics lost full contributor coverage or bounded paging')
+                                times=[row['recorded_seconds'] for row in result['data']]
+                                if times!=sorted(times,reverse=True):raise RuntimeError('Statistics sorted only a truncated subset')
+                            if counters['provider_requests'] or label!='game_statistics_rebuild' and counters['db_writes']:raise RuntimeError('Cached statistics performed provider work or writes')
+                            if 'STATS_RAW_SENTINEL' in json.dumps(result):raise RuntimeError('Statistics exposed source credit evidence')
                             return result
                         if label=='game_children':
                             result=await request(path,params)

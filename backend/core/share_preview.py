@@ -27,6 +27,8 @@ MAX_BYTES = 16 * 1024 * 1024
 def target(path):
     """Accept identities, never arbitrary upstream URLs or viewer query state."""
     path = unquote(path)
+    if match := re.fullmatch(r'/user/([^/?#]{1,100})/stats/games/?', path):
+        return 'game_statistics', match[1]
     games = bool(re.fullmatch(r'/(actors|person|studio)/((catalogue|tmdb):)?[1-9][0-9]{0,9}/?\?media_type=game', path))
     if games:
         path = path[:-len('?media_type=game')]
@@ -105,6 +107,8 @@ async def card_data(db, path):
     from core.statistics_snapshots import CONTRACT_VERSION
 
     kind, key = target(path)
+    if kind == 'game_statistics':
+        raise HTTPException(403, 'Games access requires approval')
     game_contributor = kind.startswith('game_')
     if kind == 'games' or game_contributor or re.fullmatch(r'/user/[^/?#\\]{1,100}/games/?', unquote(path)):
         raise HTTPException(403, 'Games access requires approval')
