@@ -190,9 +190,10 @@ async def main(args):
                 from core.game_imdb_bindings import revision
                 db.add(CatalogueIdentity(entity_id=game_contributor_id,namespace='tmdb.person',external_id='7000000',source='tmdb'))
                 key,config=movie_job('actor',7000000)
-                availability_evidence=dict(kind=key[0],native_id=key[1],variant=key[2],config=config,
-                    payload={'domain_availability':{'actor':{'movie':'available','series':'empty'}},
-                        'raw_movie_credits':'MOVIE_EVIDENCE_SENTINEL '*50000},expires_at=datetime.now(timezone.utc).replace(tzinfo=None)+timedelta(days=1),attempts=0,next_attempt_at=None)
+                availability_evidence={'kind':key[0],'native_id':key[1],'variant':key[2],'config':config,
+                    'payload':{'domain_availability':{'actor':{'movie':'available','series':'empty'}},
+                        'raw_movie_credits':'MOVIE_EVIDENCE_SENTINEL '*50000},
+                    'expires_at':datetime.now(timezone.utc).replace(tzinfo=None)+timedelta(days=1),'attempts':0,'next_attempt_at':None}
                 db.add(ContributorEvidence(**availability_evidence))
                 await db.flush()
                 component=await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.kind=='game_person_credits',MetadataSnapshot.external_id=='nm8000000'))
