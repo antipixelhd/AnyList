@@ -508,6 +508,7 @@ async def ingest_document(db, doc, provider, *, entities=None, project_screen_ro
         if old:
             values = {k: v for k, v in values.items() if has_value(v)}
         await upsert(db, GameRelease, values, ["entity_id"])
+    child_edges={'dlc':set(),'expansion':set()}
     for r in doc["relationships"]:
         target = await upsert_entity(db, r["target"], provider)
         source_id, target_id = (
@@ -515,6 +516,8 @@ async def ingest_document(db, doc, provider, *, entities=None, project_screen_ro
         )
         if source_id == target_id:
             continue
+        if target_id==work.id and r['relation'] in child_edges:
+            child_edges[r['relation']].add(source_id)
         await upsert(
             db,
             CatalogueRelationship,
@@ -523,11 +526,20 @@ async def ingest_document(db, doc, provider, *, entities=None, project_screen_ro
                 "target_id": target_id,
                 "relation": r["relation"],
                 "provider": provider,
-                "attributes": r.get("attributes", {}),
+                "attributes": {**r.get("attributes", {}),**({'source_active':True}
+                    if provider=='igdb' and r['relation'] in child_edges else {})},
             },
             ["source_id", "target_id", "relation", "provider"],
             preserve_missing=True,
         )
+    if provider=='igdb' and work.kind=='game' and doc.get('coverage',{}).get('children_complete') is True:
+        # Only a successful complete child projection can withdraw old IGDB
+        # relationships. Personal child records and other sources are retained.
+        for relation,ids in child_edges.items():
+            await db.execute(update(CatalogueRelationship).where(CatalogueRelationship.provider=='igdb',
+                CatalogueRelationship.target_id==work.id,CatalogueRelationship.relation==relation,
+                CatalogueRelationship.source_id.not_in(ids)).values(
+                    attributes=CatalogueRelationship.attributes.op('||')({'source_active':False})))
     await db.flush()
     if work.kind == "book":
         await rollup_book_countries(db, work)

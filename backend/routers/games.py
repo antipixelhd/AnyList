@@ -255,6 +255,13 @@ async def editor_state(work_id: WorkId, db: DB, viewer: Reader) -> GameEntryOut:
     return state
 
 
+@router.get('/works/{work_id}/children')
+async def game_children(work_id:WorkId,db:DB,viewer:Reader,
+        offset:Annotated[int,Query(ge=0)]=0,limit:Annotated[int,Query(ge=1,le=50)]=24) -> dict:
+    from core.game_children import children
+    return await children(db,work_id,viewer.id,offset=offset,limit=limit)
+
+
 @router.patch('/entries/{work_id}')
 async def save_entry(work_id: WorkId, body: GamePatch, db: DB, viewer: Writer,background:BackgroundTasks) -> GameEntryOut:
     result=await tracking.save_entry(db, viewer.id, work_id, body)

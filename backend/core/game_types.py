@@ -1,5 +1,6 @@
 """Game work capabilities, independent of provider display labels and viewer state."""
 from dataclasses import dataclass
+import re
 
 
 # IGDB game_types identities, not the deprecated category field. Keep the source
@@ -20,6 +21,16 @@ TYPE_NAMES = {
 }
 INDEPENDENT = frozenset({'game', 'standalone_expansion', 'remake', 'remaster', 'expanded_game', 'port'})
 PLAYABLE_CHILDREN = frozenset({'dlc', 'expansion'})
+# IGDB's general DLC type also contains item/cosmetic products. Keep source
+# identity/type intact; conservatively omit those products from playable lists.
+# Explicit Expansions take precedence over ambiguous product-name exclusions.
+NONPLAYABLE_DLC_NAME = r'\m(pack|soundtrack|artbook|costume|cosmetic|skin)\M|\mart[ -]?book\M|\mseason[ -]?pass\M'
+_NONPLAYABLE_DLC = re.compile(r'\b(pack|soundtrack|artbook|costume|cosmetic|skin)\b|\bart[ -]?book\b|\bseason[ -]?pass\b',re.I)
+
+
+def playable_child(attributes,name=''):
+    kind=(attributes or {}).get('game_class')
+    return kind=='expansion' or kind=='dlc' and not _NONPLAYABLE_DLC.search(name)
 
 
 def igdb_game_class(raw: dict) -> str:

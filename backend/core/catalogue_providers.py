@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import json
+import re
 import logging
 import time
 from collections import OrderedDict
@@ -329,7 +330,7 @@ IGDB_FIELDS = (
             "ports",
             "similar_games",
         )
-        for projection in ("name", "cover.url", "first_release_date", "game_type.type", "version_parent.name", "version_parent.cover.url", "version_parent.first_release_date", "version_parent.game_type.type")
+        for projection in ("name", "summary", "cover.url", "first_release_date", "game_type.type", "version_parent.name", "version_parent.summary", "version_parent.cover.url", "version_parent.first_release_date", "version_parent.game_type.type")
     )
     + ',ports.platforms.name,ports.platforms.platform_family.name'
 )
@@ -468,6 +469,18 @@ class CatalogueProviders:
             for row in rows:
                 if candidate := search_candidate(row):
                     results.setdefault(candidate['external_id'], candidate)
+            # IGDB search can return no matches while a user types the last
+            # word ("Elden R"). One bounded broader query recovers prefix
+            # candidates; it never establishes cross-provider identity.
+            words=re.findall(r'[^\W_]+',query.casefold())
+            if not results and page==1 and len(words)>1 and re.fullmatch(r'[^\W_]+(?:\s+[^\W_]+)+',query.strip()):
+                broader=query.rsplit(None,1)[0] if len(query.split())>1 else ''
+                if len(broader)>=2:
+                    fallback=await self.igdb('games',f'search {json.dumps(broader)}; fields {fields}; limit {limit}; offset 0;')
+                    for row in fallback:
+                        candidate=search_candidate(row)
+                        if candidate and all(any(part.startswith(word) for part in re.findall(r'[^\W_]+',candidate['name'].casefold())) for word in words):
+                            results.setdefault(candidate['external_id'],candidate)
             return list(results.values())
         if provider == "hardcover":
             d = await self.hardcover(
@@ -561,6 +574,7 @@ class CatalogueProviders:
 
     async def _detail(self, provider, kind, id, *, credit_groups=None):
         if provider == "igdb":
+            from core.game_types import igdb_game_class
             rows = await self.igdb(
                 "games", f"fields {IGDB_FIELDS}; where id = {id}; limit 1;"
             )
@@ -585,6 +599,9 @@ class CatalogueProviders:
             )
             raw["_coverage"] = {
                 "characters_complete": complete,
+                "children_complete": all(isinstance(raw.get(field,[]),list) and all(
+                    isinstance(child,dict) and child.get('id') and child.get('name') and igdb_game_class(child)!='unknown'
+                    for child in raw.get(field,[])) for field in ('dlcs','expansions')),
                 "release_dates": "provider_projection",
                 "contributors": "companies_only",
             }

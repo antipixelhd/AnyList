@@ -89,7 +89,6 @@ listLink.set('list_scope','in'); listLink.set('view',view);
             <button type="submit" class="contributor-apply">Apply</button>
           </form>
           <p class="contributor-notice" data-contributor-notice role="status" hidden={!data.notice}>{data.notice}</p>
-          {Astro.locals.user?.is_admin&&games&&data.game_person_status?.id&&<a class="contributor-biography-toggle" href={`/admin/game-credits/people/${data.game_person_status.id}?kind=${kind==='staff'?'staff':'actor'}`}>Review game mappings</a>}
           <button class="contributor-biography-toggle" type="button" data-contributor-source-refresh hidden>Refresh game credits</button>
           <div class:list={['contributor-works-grid', {'browse-grid':view === 'grid'}]} data-contributor-works>
             {years.map(year => <section class="contributor-year" data-contributor-year={year} aria-label={year}><h3>{year}</h3><div class="contributor-year-works">{data!.works.filter(work => contributorYear(work) === year).map(work => <BrowseCard item={work} signedIn={signedIn} credits />)}</div></section>)}

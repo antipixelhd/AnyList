@@ -13,6 +13,7 @@ import {currentDetailSeason,detailSeasonState,type DetailSeason} from './season-
 import {observeDeferredArtwork} from './visible-artwork';
 import {responsiveArtwork} from './responsive-artwork';
 import {gameProgress} from './game-progress';
+import {mountDetailDlc} from './media-detail-dlc';
 
 let pageListeners: AbortController | undefined;
 let mountedRoot: HTMLElement | null = null;
@@ -29,6 +30,7 @@ export function mountMediaDetail() {
   document.addEventListener('astro:before-swap', () => {pageListeners?.abort();mountedRoot=null;}, {signal,once:true});
   seedEditorPage();
   const info = JSON.parse(root.querySelector('#media-detail-data')!.textContent!);
+  const loadDlc=mountDetailDlc(root,info.id,signal);
   const deferArtwork=observeDeferredArtwork(root,signal);
   mountDetailCast(root,signal,info);
   if(info.backgroundAvailable){
@@ -170,7 +172,7 @@ export function mountMediaDetail() {
   const panels = [...root.querySelectorAll<HTMLElement>('[data-detail-panel]')];
   const switchPanel = createContentTransition(root.querySelector<HTMLElement>('[data-detail-panels]')!,signal);
   const selectTab = (id: string, animate = true) => {
-    if (!tabs.some(tab => tab.dataset.detailTab === id)) return;
+    if (!tabs.some(tab => tab.dataset.detailTab === id&&!tab.disabled)) return;
     const change = () => {
       tabs.forEach(tab => { const active = tab.dataset.detailTab === id; tab.setAttribute('aria-selected',String(active)); tab.tabIndex = active ? 0 : -1; });
       panels.forEach(panel => panel.hidden = panel.dataset.detailPanel !== id);
@@ -182,14 +184,16 @@ export function mountMediaDetail() {
     if(id==='artwork')void loadDetailImages();
     if(id==='seasons')loadEpisodeImages();
     if(id==='social')loadSocial();
+    if(id==='dlc')loadDlc();
   };
   selectTab(new URLSearchParams(location.search).get('tab') || 'overview',false);
   tabs.forEach((tab,index) => {
     tab.addEventListener('click', () => selectTab(tab.dataset.detailTab!), {signal});
     tab.addEventListener('keydown', event => {
-      const next = event.key === 'ArrowRight' ? (index+1)%tabs.length : event.key === 'ArrowLeft' ? (index-1+tabs.length)%tabs.length : event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length-1 : null;
+      const enabled=tabs.filter(item=>!item.disabled),position=enabled.indexOf(tab);
+      const next = event.key === 'ArrowRight' ? (position+1)%enabled.length : event.key === 'ArrowLeft' ? (position-1+enabled.length)%enabled.length : event.key === 'Home' ? 0 : event.key === 'End' ? enabled.length-1 : null;
       if (next == null) return;
-      event.preventDefault(); tabs[next].focus(); selectTab(tabs[next].dataset.detailTab!);
+      event.preventDefault(); enabled[next].focus(); selectTab(enabled[next].dataset.detailTab!);
     }, {signal});
   });
   root.querySelectorAll<HTMLButtonElement>('[data-detail-open-tab]').forEach(button => button.addEventListener('click', () => {

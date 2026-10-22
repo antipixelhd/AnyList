@@ -38,6 +38,7 @@ from models.catalogue import (
     CatalogueCredit,
     CatalogueEntity,
     CatalogueIdentity,
+    CatalogueRelationship,
     CharacterAppearance,
     CharacterPerformance,
     ContributorEvidence,
@@ -100,6 +101,7 @@ async def main(args):
                     tmdb_id=900000 + index, runtime=100, release_date='2026-10-01',
                     tmdb_data=title(900000 + index)))
             first_game=None
+            children_base=None
             game_contributor_id=None
             if not args.case or any(name.startswith(('game_contributor','game_people','game_person')) for name in args.case):
                 performer=CatalogueEntity(kind='person',name='Game works performer')
@@ -138,6 +140,12 @@ async def main(args):
                 db.add(GameEntry(user_id=viewer.id, work_id=game.id,
                     status=['planning', 'playing', 'completed', 'paused', 'dropped'][index % 5],
                     total_seconds=index * 3600, score=8 if index % 3 else None))
+                if args.case and 'game_children' in args.case:
+                    if children_base is None:children_base=game.id
+                    child=CatalogueEntity(kind='game',name=f'Child {index:05}',description='Synopsis '*200,
+                        attributes={'game_class':'expansion' if index%2==0 else 'dlc','release_date':f'{2000+index%26}-01-01'})
+                    db.add(child);await db.flush()
+                    db.add(CatalogueRelationship(source_id=child.id,target_id=children_base,relation=child.attributes['game_class'],provider='igdb'))
                 if not args.case or any(name=='game_search' or name.startswith('game_browse') for name in args.case):
                     db.add(CatalogueIdentity(entity_id=game.id, namespace='igdb.game', external_id=str(8000000+index), source='igdb'))
                 if args.case and any(name.startswith('game_favorites') for name in args.case):
@@ -280,6 +288,16 @@ async def main(args):
             return response.json()
 
         async def game_candidates(query):
+            if current_case=='game_search_prefix':
+                from core.catalogue_providers import CatalogueProviders
+                async def prefix_source(endpoint,statement):
+                    counters['provider_requests']+=1;counters['provider:igdb/search']+=1
+                    await asyncio.sleep(args.provider_delay_ms/1000)
+                    return [] if 'search "Elden R";' in statement else [
+                        {'id':119133,'name':'Elden Ring','game_type':{'id':0}},
+                        {'id':9,'name':'Elden Sword','game_type':{'id':0}}]
+                api=CatalogueProviders();api.igdb=prefix_source
+                return await api.search('igdb','game',query,1,50)
             counters['provider_requests'] += 1
             counters['provider:igdb/search'] += 1
             await asyncio.sleep(args.provider_delay_ms / 1000)
@@ -328,6 +346,8 @@ async def main(args):
                 cases += [('game_person_review','games/people/nm8000000/imdb/titles',{})]
         cases += [
             ('game_search', 'games/search', {'q': 'Benchmark'}),
+            ('game_search_prefix','games/search',{'q':'Elden R'}),
+            *([('game_children',f'games/works/{children_base}/children',{'limit':24})] if children_base else []),
             ('game_browse_preview','games/browse',{'limit':6}),
             ('game_browse_grid','games/browse',{'limit':24}),
             ('game_browse_pages','games/browse',{'limit':24}),
@@ -425,6 +445,19 @@ async def main(args):
                         params['unfiltered'] = 'true'
 
                     async def operation(path=path, params=params, label=label, mode=mode):
+                        if label=='game_children':
+                            result=await request(path,params)
+                            if result['total']!=args.local_titles or len(result['results'])!=min(24,args.local_titles):
+                                raise RuntimeError('DLC paging lost collection coverage')
+                            if any(row['game_class']!='expansion' for row in result['results']):
+                                raise RuntimeError('DLC category ordering did not prioritize expansions')
+                            if counters['provider_requests'] or counters['db_writes']:raise RuntimeError('DLC read performed provider work or writes')
+                            return result
+                        if label=='game_search_prefix':
+                            result=await request(path,params)
+                            if [row['igdb_id'] for row in result['results']]!=[119133] or counters['provider_requests']!=2:
+                                raise RuntimeError('Partial-title fallback lost the matching game or exceeded its provider bound')
+                            return result
                         if label.startswith('game_person'):
                             result=await request(path,params)
                             status=result['game_person_status'] if label=='game_person_cached' else result['status'] if label=='game_person_review' else result

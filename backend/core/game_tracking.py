@@ -9,7 +9,7 @@ from fastapi import HTTPException
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import defer
 
-from core.game_types import capabilities
+from core.game_types import capabilities,playable_child
 from models import User
 from models.catalogue import CatalogueEntity, CatalogueRelationship
 from models.games import (GameAchievement, GameAchievementUnlock, GameActivity,
@@ -293,7 +293,7 @@ async def save_child(db, user_id, work_id, patch, *, listed):
     await lock_owner(db, user_id)
     entity = await work(db, work_id)
     caps = capabilities(entity.attributes)
-    if not caps.playable_child or (listed and not caps.expansion_page):
+    if not playable_child(entity.attributes,entity.name) or (listed and not caps.expansion_page):
         raise HTTPException(422, 'Only a verified expansion can have a child list entry')
     base_id = await base_work_id(db, entity)
     base_entry = await db.scalar(select(GameEntry).where(GameEntry.user_id == user_id, GameEntry.work_id == base_id))

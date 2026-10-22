@@ -470,12 +470,13 @@ def normalize_igdb(raw):
                     "game",
                     "igdb.game",
                     parent if isinstance(parent, dict) else {"id": parent},
+                    description=parent.get('summary') if isinstance(parent,dict) else None,
                     artwork=parent.get('cover') if isinstance(parent, dict) else None,
                     attributes={'release_date':date(parent.get('first_release_date')),
                                 **({'game_class': igdb_game_class(parent)} if parent.get('game_type') is not None else {})} if isinstance(parent, dict) else {},
                 )
                 if parent
-                else entity("game", "igdb.game", r, artwork=r.get('cover'), attributes={
+                else entity("game", "igdb.game", r, description=r.get('summary'),artwork=r.get('cover'), attributes={
                     'release_date':date(r.get('first_release_date')),
                     **({'game_class': igdb_game_class(r)} if r.get('game_type') is not None else {})})
             )

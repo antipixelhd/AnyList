@@ -104,6 +104,8 @@ async def catalogue_related(db, work):
 
     relations, similar, seen = [], [], set()
     for edge in edges:
+        if work.kind=='game' and edge.target_id==work.id and edge.relation in ('dlc','expansion'):
+            continue  # Playable children have their own bounded DLC projection.
         target = targets.get(edge.target_id if edge.source_id == work.id else edge.source_id)
         row = card(target) if target else None
         reverse = edge.target_id == work.id

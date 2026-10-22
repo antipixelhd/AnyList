@@ -94,3 +94,29 @@ class GameDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([r['external_id'] for r in rows],['1960','100'])
         self.assertEqual(rows[0]['name'],'Original')
         self.assertEqual(api.igdb.await_count,1)
+
+    async def test_partial_last_word_recovers_only_matching_canonical_candidates(self):
+        api=CatalogueProviders();api.validate=lambda *args:None
+        api.igdb=AsyncMock(side_effect=[[],[
+            {'id':119133,'name':'Elden Ring','game_type':{'id':0}},
+            {'id':5,'name':'Elden Sword','game_type':{'id':0}},
+            {'id':7,'name':'Elden R Cosmetic Pack','game_type':{'id':13}}]])
+        rows=await api.search('igdb','game','Elden R')
+        self.assertEqual([row['external_id'] for row in rows],['119133'])
+        self.assertEqual(api.igdb.await_count,2)
+        self.assertIn('search "Elden";',api.igdb.call_args.args[1])
+
+    async def test_partial_search_does_not_turn_provider_failure_into_empty_or_fan_out(self):
+        api=CatalogueProviders();api.validate=lambda *args:None
+        api.igdb=AsyncMock(side_effect=ProviderError('unavailable'))
+        with self.assertRaises(ProviderError):await api.search('igdb','game','Elden R')
+        self.assertEqual(api.igdb.await_count,1)
+
+    async def test_child_coverage_does_not_certify_unknown_addon_types_as_empty(self):
+        api=CatalogueProviders()
+        api._igdb_pages=AsyncMock(return_value=([],True))
+        for children,expected in [([],True),([{'id':2,'name':'Pack','game_type':{'id':13}}],True),
+                ([{'id':2,'name':'Future type','game_type':{'id':999}}],False)]:
+            api.igdb=AsyncMock(return_value=[{'id':1,'name':'Base','game_type':{'id':0},'dlcs':children}])
+            doc,_=await api._detail('igdb','game',1)
+            self.assertEqual(doc['coverage']['children_complete'],expected)
