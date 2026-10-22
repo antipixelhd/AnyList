@@ -7,39 +7,14 @@ from datetime import timedelta
 from core.catalogue_normalize import document, identity
 from core.catalogue_providers import ProviderError
 from core.game_browse_sources import GameBrowseSources, SLUG, positive
+from core.wikidata_claims import ITEM, claims, item_ids, qualified, snak_value, values
 
-ITEM = re.compile(r'Q[1-9][0-9]*\Z')
 STATEMENT = re.compile(r'Q[1-9][0-9]*\$[a-zA-Z0-9-]{1,100}\Z')
 ROLES = {'P725':('voice_actor','Voice actor'), 'P161':('actor','Actor'),
          'P57':('director','Director'), 'P58':('writer','Writer'),
          'P86':('composer','Composer'), 'P170':('creator','Creator'),
          'P50':('writer','Writer'), 'P162':('producer','Producer')}
-PROPERTIES = set(ROLES) | {'P5794','P1733','P4985','P345','P31','P18','P674','P424'}
-
-
-def snak_value(snak):
-    if not isinstance(snak,dict) or snak.get('snaktype')!='value':
-        return None
-    value=(snak.get('datavalue') or {}).get('value')
-    return value.get('id') if isinstance(value,dict) and value.get('entity-type')=='item' else value
-
-
-def claims(item,prop):
-    return [row for row in (item.get('claims') or {}).get(prop,[])
-            if isinstance(row,dict) and row.get('rank')!='deprecated']
-
-
-def values(item,prop):
-    return [value for row in claims(item,prop) if (value:=snak_value(row.get('mainsnak'))) is not None]
-
-
-def qualified(row,prop):
-    return [value for snak in (row.get('qualifiers') or {}).get(prop,[])
-            if (value:=snak_value(snak)) is not None]
-
-
-def item_ids(rows):
-    return {value for value in rows if isinstance(value,str) and ITEM.fullmatch(value)}
+PROPERTIES = set(ROLES) | {'P5794','P9043','P1733','P4985','P345','P31','P18','P674','P424'}
 
 
 def title(item):
@@ -76,14 +51,30 @@ def language(item):
 
 
 def verify_game(item,igdb_id,slug):
-    matched=False
-    for row in claims(item,'P5794'):
-        if snak_value(row.get('mainsnak'))!=slug:
-            continue
-        ids=qualified(row,'P9043')
-        if any(value!=str(igdb_id) for value in ids):return False
-        matched=True
-    return matched
+    from core.game_imdb_mapping import igdb_evidence
+    return igdb_evidence(item,igdb_id,slug)[0]=='verified'
+
+
+def entity_redirects(body,ids):
+    redirects={}
+    for row in body.get('redirects') or []:
+        if not isinstance(row,dict) or any(not isinstance(row.get(key),str) or not ITEM.fullmatch(row[key]) for key in ('from','to')):
+            raise ProviderError('bad_response')
+        if row['from'] in redirects and redirects[row['from']]!=row['to']:
+            raise ProviderError('identity_conflict')
+        redirects[row['from']]=row['to']
+    result={}
+    for requested in ids:
+        target=requested;seen=set()
+        while target in redirects:
+            if target in seen or len(seen)>=8:raise ProviderError('identity_conflict')
+            seen.add(target);target=redirects[target]
+        raw=body['entities'].get(target,body['entities'].get(requested))
+        if isinstance(raw,dict) and 'missing' not in raw:
+            if not isinstance(raw.get('id'),str) or not ITEM.fullmatch(raw['id']):raise ProviderError('bad_response')
+            if target!=requested and raw['id']!=target:raise ProviderError('identity_conflict')
+            result[requested]=raw
+    return result
 
 
 def project(game,items,igdb_id,slug):
@@ -156,17 +147,18 @@ class GameCreditSources:
         if not isinstance(ids,(list,tuple,set)) or not ids or len(ids)>50 or any(not isinstance(q,str) or not ITEM.fullmatch(q) for q in ids):
             raise ProviderError('invalid_request')
         ids=sorted(set(ids))
-        key=hashlib.sha256(json.dumps(ids).encode()).hexdigest()
+        key=hashlib.sha256(json.dumps(['identity-v2',ids]).encode()).hexdigest()
         async def load():
             body=await self.sources.request('wikidata','https://www.wikidata.org/w/api.php',params={
                 'action':'wbgetentities','ids':'|'.join(ids),'props':'labels|descriptions|aliases|claims|info',
-                'languages':'en|mul','languagefallback':1,'format':'json','maxlag':5})
+                'languages':'en|mul','languagefallback':1,'format':'json','maxlag':5,'redirects':'yes'})
             if not isinstance(body,dict) or body.get('error') or not isinstance(body.get('entities'),dict):
                 raise ProviderError('bad_response')
             result={}
+            resolved=entity_redirects(body,ids)
             for q in ids:
-                raw=body['entities'].get(q)
-                if isinstance(raw,dict) and raw.get('id')==q and 'missing' not in raw:
+                raw=resolved.get(q)
+                if raw:
                     if not isinstance(raw.get('claims'),dict):raise ProviderError('bad_response')
                     if any(not isinstance(rows,list) or any(not isinstance(row,dict) for row in rows)
                            for prop,rows in raw['claims'].items() if prop in PROPERTIES):raise ProviderError('bad_response')
@@ -179,11 +171,18 @@ class GameCreditSources:
     async def game_item(self,igdb_id,slug):
         if not positive(igdb_id) or not isinstance(slug,str) or not SLUG.fullmatch(slug):
             raise ProviderError('invalid_request')
-        key=hashlib.sha256(json.dumps([igdb_id,slug]).encode()).hexdigest()
+        key=hashlib.sha256(json.dumps(['identity-v2',igdb_id,slug]).encode()).hexdigest()
         async def load():
-            query='''SELECT ?item ?id WHERE { ?item p:P5794 ?statement. ?statement ps:P5794 '''+json.dumps(slug)+'''.
-                FILTER NOT EXISTS {?statement wikibase:rank wikibase:DeprecatedRank}
-                OPTIONAL { ?statement pq:P9043 ?id } } LIMIT 20'''
+            query='''SELECT DISTINCT ?item ?id WHERE {
+                { ?item p:P5794 ?statement. ?statement ps:P5794 '''+json.dumps(slug)+'''.
+                    FILTER NOT EXISTS {?statement wikibase:rank wikibase:DeprecatedRank}
+                    OPTIONAL { ?statement pq:P9043 ?id } }
+                UNION { ?item p:P5794 ?statement. ?statement pq:P9043 '''+json.dumps(str(igdb_id))+'''.
+                    FILTER NOT EXISTS {?statement wikibase:rank wikibase:DeprecatedRank}
+                    BIND('''+json.dumps(str(igdb_id))+''' AS ?id) }
+                UNION { ?item p:P9043 ?numeric. ?numeric ps:P9043 '''+json.dumps(str(igdb_id))+'''.
+                    FILTER NOT EXISTS {?numeric wikibase:rank wikibase:DeprecatedRank}
+                    BIND('''+json.dumps(str(igdb_id))+''' AS ?id) } } LIMIT 20'''
             body=await self.sources.request('wikidata','https://query.wikidata.org/sparql',
                 params={'query':query,'format':'json'})
             rows=(body.get('results') or {}).get('bindings') if isinstance(body,dict) else None
@@ -193,9 +192,16 @@ class GameCreditSources:
                 q=(row.get('item') or {}).get('value','').rsplit('/',1)[-1]
                 if not ITEM.fullmatch(q):raise ProviderError('bad_response')
                 matches.setdefault(q,set()).add((row.get('id') or {}).get('value'))
-            if len(matches)>1 or any(any(v is not None and v!=str(igdb_id) for v in ids) for ids in matches.values()):
+            if any(any(v is not None and v!=str(igdb_id) for v in ids) for ids in matches.values()):
                 raise ProviderError('identity_conflict')
-            return {'item':next(iter(matches),None)}
+            if not matches:return {'item':None}
+            fetched=await self.entities(list(matches))
+            items=fetched['data']['entities']
+            if set(items)!=set(matches):raise ProviderError('bad_response')
+            if any(not verify_game(raw,igdb_id,slug) for raw in items.values()):raise ProviderError('identity_conflict')
+            canonical={raw['id'] for raw in items.values()}
+            if len(canonical)!=1:raise ProviderError('identity_conflict')
+            return {'item':next(iter(canonical))}
         return await self.sources.cache.get('wikidata','game_credit_bridge',key,load,
             ttl=timedelta(days=7),max_stale=timedelta(days=30))
 

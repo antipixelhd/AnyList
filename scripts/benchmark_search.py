@@ -145,6 +145,7 @@ async def main(args):
         if not args.case or 'game_credits' in args.case:
             from routers.catalogue import router as catalogue_router
             fixture.app.include_router(catalogue_router,prefix='/tracking')
+        fixture.viewer = viewer  # Optional-auth catalogue routes use the same approved fixture.
         fixture.app.dependency_overrides[get_current_user] = lambda: viewer
         fixture.app.dependency_overrides[get_current_user_or_api_key] = lambda: viewer
 

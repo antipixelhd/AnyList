@@ -117,3 +117,22 @@ class SourceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['data'],{'entities':{},'missing':['Q200']})
         for bad in ([],['invalid'],['Q0'],[{}]):
             with self.assertRaisesRegex(ProviderError,'invalid_request'):await self.api.entities(bad)
+
+    async def test_numeric_mapping_and_redirect_aliases_resolve_one_verified_game(self):
+        canonical=item('Q300','Renamed game',{'P9043':[claim('10')]})
+        async def request(provider,url,params):
+            if 'query' in params:
+                self.assertIn('p:P9043 ?numeric',params['query'])
+                return {'results':{'bindings':[{'item':{'value':f'http://www.wikidata.org/entity/{q}'},
+                    'id':{'value':'10'}} for q in ['Q100','Q200']]}}
+            return {'entities':{'Q300':canonical},'redirects':[
+                {'from':q,'to':'Q300'} for q in params['ids'].split('|') if q!='Q300']}
+        self.public.request.side_effect=request
+        result=await self.api.game(10,'old-slug')
+        self.assertEqual(result['document']['work']['identities'],[
+            {'namespace':'igdb.game','external_id':'10'},
+            {'namespace':'wikidata.item','external_id':'Q300'}])
+        self.assertEqual(result['coverage'],'unknown')
+        self.assertEqual(self.public.request.await_count,3)
+        self.assertEqual(await self.api.game(10,'old-slug'),result)
+        self.assertEqual(self.public.request.await_count,3)
