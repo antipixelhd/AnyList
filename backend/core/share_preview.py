@@ -106,6 +106,8 @@ async def card_data(db, path):
 
     kind, key = target(path)
     game_contributor = kind.startswith('game_')
+    if kind == 'games' or game_contributor or re.fullmatch(r'/user/[^/?#\\]{1,100}/games/?', unquote(path)):
+        raise HTTPException(403, 'Games access requires approval')
     if game_contributor:
         kind = kind.removeprefix('game_')
     # This check deliberately runs before every cache lookup, even with a cookie.

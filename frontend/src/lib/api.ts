@@ -156,6 +156,7 @@ export interface ShowSeasonOverride {
 export type MediaType = "movie" | "series" | "episode" | "person" | "collection" | "network" | "studio";
 
 export interface UserProfile {
+  can_access_games: boolean;
   id: number;
   email: string;
   username: string;
@@ -170,6 +171,7 @@ export interface UserProfile {
 }
 
 export interface AdminUser {
+  games_access: boolean;
   id: number;
   username: string;
   email: string;

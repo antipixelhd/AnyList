@@ -85,6 +85,51 @@ async def _local_matches(db, term, kind):
     return groups
 
 
+async def game_matches(db, term, kind):
+    """Read fresh verified game summaries; never scan careers per keystroke."""
+    from core.game_contributor_works import ACTING, COMPANIES
+    summary = ContributorSearch
+    pattern = '%' + term.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_') + '%'
+    count = summary.game_actor_count if kind == 'actor' else summary.game_staff_count if kind == 'staff' else summary.game_work_count
+    async with _local_search_slots:
+        rows = (await db.execute(select(summary.entity_id, summary.kind, summary.name, summary.image_url,
+            summary.game_work_count, summary.game_actor_count, summary.game_staff_count, summary.game_roles).where(
+            summary.kind.in_(('organization',) if kind == 'studio' else ('person',) if kind != 'all' else ('person','organization')),
+            summary.game_work_count > 0, count > 0, summary.search_text.ilike(pattern, escape='\\'),
+        ).order_by(case((func.lower(summary.name) == term.casefold(), 0), else_=1),
+            count.desc(), func.lower(summary.name), summary.entity_id).limit(80))).all()
+    groups = {section: [] for section in KINDS}
+    for row in rows:
+        person = SimpleNamespace(id=row.entity_id, kind=row.kind, name=row.name, image_url=row.image_url)
+        roles = defaultdict(set)
+        for role, label in row.game_roles:
+            section = ('studio' if role in COMPANIES else None) if row.kind == 'organization' else 'actor' if role in ACTING else 'staff'
+            if section and kind in ('all','people',section):
+                roles[section].add(label or role.replace('_',' ').title())
+        for section, labels in roles.items():
+            works = row.game_actor_count if section == 'actor' else row.game_staff_count if section == 'staff' else row.game_work_count
+            item = result(person, section, labels)
+            groups[section].append({**item, 'url': item['url'] + '?media_type=game', '_works': works})
+    return groups
+
+
+def merge_game_matches(groups, games):
+    """Only canonical identity combines domains; namesakes remain separate."""
+    for section in KINDS:
+        known = {row['key']: row for row in groups[section]}
+        for row in games[section]:
+            if row['key'] not in known:
+                groups[section].append(row)
+                known[row['key']] = row
+            else:
+                item = known[row['key']]
+                item['name'] = row['name']
+                item['roles'] = sorted(set(item.get('roles', ())) | set(row['roles']), key=lambda label:(role_order(label),label))[:2]
+                item['_works'] = item.get('_works', 0) + row['_works']
+                item['image'] = row.get('image')
+    return groups
+
+
 def ranked_results(groups, term):
     query = term.casefold()
     def rank(item, section):
@@ -210,7 +255,16 @@ async def _discover_candidates(db, viewer, term, kind, key):
 _candidate_cache = tmdb._TTLCache(maxsize=128)
 
 
-async def search_contributors(db, viewer, term, kind='all'):
+async def search_contributors(db, viewer, term, kind='all', work_domain='all'):
+    from core.game_access import allowed, require
+    if work_domain == 'game':
+        require(viewer)
+    elif not allowed(viewer):
+        work_domain = 'movies_series'
+    if work_domain == 'game':
+        groups = await game_matches(db, term, kind)
+        return {'results': ranked_results(groups, term), 'partial': False, 'verification_pending': False,
+            'game_coverage': 'saved_credits'}
     key = await settings_store.get_user_tmdb_key(db, viewer.id)
     identity = (viewer.id, term.strip().casefold(), kind, hashlib.sha256(str(key).encode()).digest())
     cached = _candidate_cache.get(identity)
@@ -220,6 +274,8 @@ async def search_contributors(db, viewer, term, kind='all'):
             _candidate_cache.set(identity, {'groups': groups}, 60)
     else:
         groups, failed = cached['groups'], False
+    # _TTLCache already isolates the shortlist with copies on set/get. Merge
+    # fresh game evidence only after movie/series verification, outside it.
     # Re-evaluate current saved filters on every poll. Only name/identity discovery
     # is cached; shared work evidence is independently versioned and leased.
     for row in groups['studio']:
@@ -228,5 +284,8 @@ async def search_contributors(db, viewer, term, kind='all'):
         row['_match'] = 0 if name == query else 1 if name.startswith(query) else 2
     groups['studio'], studios_pending = await verified_studios(db, viewer, groups['studio'], key)
     people_pending = await verified_people(db, viewer, groups, key)
+    if work_domain == 'all':
+        groups = merge_game_matches(groups, await game_matches(db, term, kind))
     return {'results': ranked_results(groups, term), 'partial': failed,
-            'verification_pending':studios_pending or people_pending}
+            'verification_pending':studios_pending or people_pending,
+            **({'game_coverage':'saved_credits'} if work_domain == 'all' else {})}

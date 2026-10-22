@@ -262,6 +262,9 @@ async def resolve_contributor(db, kind, key):
 
 
 async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scope="all", status="", page=1, cursor=None, source="", sharing=False):
+    from core.game_access import allowed, require
+    if media_type == 'game':
+        require(viewer)
     resolved = await resolve_contributor(db, kind, key)
     if resolved is None:
         return None
@@ -270,6 +273,8 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
     if cursor and not games and (kind != 'studio' or source == 'local'):
         raise ValueError('Invalid timeline cursor')
     local = [] if games else await known_works(db, entity, native, kind, viewer)
+    if not games and entity and not native and not local and not allowed(viewer):
+        return None
     if not games and kind == 'studio' and entity and not native and not local:
         from core.game_contributor_works import game_credits
         if not await db.scalar(select(select(game_credits(entity.id, kind).c.id).exists())):

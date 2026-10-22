@@ -3,11 +3,12 @@ from core import security
 from core import arr_settings
 from core import settings_store
 from core.account_defaults import initialize_account_defaults
+from pydantic import BaseModel
 import gzip
 import io
 import json
 import struct
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
@@ -94,12 +95,32 @@ async def list_users(
             username=u.username,
             email=u.email,
             is_admin=u.is_admin,
+            games_access=u.games_access,
             api_key=u.api_key,
             created_at=u.created_at,
             avatar_url=f"/profile/avatar/{u.id}" if (p and p.avatar_path) else None,
         )
         for u, p in result.all()
     ]
+
+
+class GamesAccessPatch(BaseModel):
+    approved: bool
+
+
+@router.patch('/users/{user_id}/games-access')
+async def approve_games(user_id: int, body: GamesAccessPatch,
+    db: AsyncSession = Depends(get_db), current_user: User = Depends(require_admin)):
+    target = await db.get(User, user_id)
+    if not target:
+        raise HTTPException(404, 'User not found')
+    if target.is_admin:
+        raise HTTPException(422, 'Admins already have Games access')
+    target.games_access = body.approved
+    target.games_approved_by = current_user.id if body.approved else None
+    target.games_approved_at = datetime.now(timezone.utc).replace(tzinfo=None) if body.approved else None
+    await db.commit()
+    return {'id': target.id, 'games_access': target.games_access}
 
 
 @router.post("/users", response_model=schemas.AdminUser, status_code=status.HTTP_201_CREATED)
@@ -151,6 +172,7 @@ async def create_user(
         username=user.username,
         email=user.email,
         is_admin=user.is_admin,
+        games_access=user.games_access,
         api_key=user.api_key,
         created_at=user.created_at,
         avatar_url=None,

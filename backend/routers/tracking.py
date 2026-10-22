@@ -721,12 +721,13 @@ async def quick_search_contributors(
     viewer: Annotated[User, Depends(get_current_user)],
     q: Annotated[str, Query(max_length=100)] = '',
     kind: Literal['all', 'people', 'actor', 'staff', 'studio'] = 'all',
+    work_domain: Literal['all', 'movies_series', 'game'] = 'all',
 ) -> dict:
     term = q.strip()
     if len(term) < 2:
         return {'results': {'actor': [], 'staff': [], 'studio': []}}
     from core.contributor_search import search_contributors
-    return await search_contributors(db, viewer, term, kind)
+    return await search_contributors(db, viewer, term, kind, work_domain)
 
 
 @router.get('/people-search')

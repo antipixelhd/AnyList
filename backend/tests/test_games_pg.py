@@ -59,8 +59,8 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
             await conn.run_sync(setup)
         self.Session = async_sessionmaker(self.engine, expire_on_commit=False)
         async with self.Session() as db:
-            user = User(username='player', email='player@example.test', api_key='player-key')
-            other = User(username='other', email='other@example.test', api_key='other-key')
+            user = User(username='player', email='player@example.test', api_key='player-key', games_access=True)
+            other = User(username='other', email='other@example.test', api_key='other-key', games_access=True)
             base = CatalogueEntity(kind='game', name='Elden fixture', attributes={'game_class': 'game',
                 'achievement_catalogue': {'status': 'complete', 'total': 3, 'definitions_complete': True}})
             child = CatalogueEntity(kind='game', name='Expansion fixture', attributes={'game_class': 'expansion'})
@@ -197,7 +197,7 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(other.json()['results'][0]['list_status'])
             self.viewer=None
             anonymous=await self.client.get('/tracking/games/browse')
-            self.assertIsNone(anonymous.json()['results'][0]['score'])
+            self.assertEqual(anonymous.status_code,401)
             async with self.Session() as db:
                 global_settings=await db.get(GlobalSettings,1);global_settings.enable_logged_out_navigation=False;await db.commit()
             self.assertEqual((await self.client.get('/tracking/games/browse')).status_code,401)
@@ -230,14 +230,15 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.client.get('/tracking/games/search?q=%20%20')).status_code, 422)
         self.viewer = None
         with patch.object(catalogue,'refresh_metadata',AsyncMock(return_value={'entity_id':self.base})) as refresh:
-            self.assertEqual((await self.client.post('/tracking/games/resolve/900')).json(),{'id':self.base})
+            self.assertEqual((await self.client.post('/tracking/games/resolve/900')).status_code,401)
+            refresh.assert_not_awaited()
             async with self.Session() as db:
                 self.assertEqual(await db.scalar(select(func.count()).select_from(GameEntry)),0)
                 global_settings=await db.get(GlobalSettings,1)
                 global_settings.enable_logged_out_navigation=False
                 await db.commit()
             self.assertEqual((await self.client.post('/tracking/games/resolve/900')).status_code,401)
-            self.assertEqual(refresh.await_count,1)
+            self.assertEqual(refresh.await_count,0)
 
     async def test_completion_snapshot_cumulative_time_replays_and_unknown_dates(self):
         row = await self.save(status='completed', total_seconds=36000, replay_count=3)
@@ -389,48 +390,24 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(child['base_game']['id'], self.base)
         self.assertIsNone(child['entry'])
 
-    async def test_game_and_expansion_share_cards_are_anonymous_and_recheck_access(self):
-        from core.share_preview import card_data, description
-        await self.save(notes='Never in a preview', score=9)
+    async def test_game_and_expansion_share_cards_require_approval(self):
+        from core.share_preview import card_data
+        await self.save(notes='Never in a preview',score=9)
         async with self.Session() as db:
-            base, _ = await card_data(db, f'/games/{self.base}')
-            child, _ = await card_data(db, f'/games/{self.child}')
-            self.assertEqual(base['title'], 'Elden fixture')
-            self.assertEqual(child['title'], 'Expansion fixture')
-            self.assertIn('Expansion', description(child))
-            self.assertNotIn('Base game:', description(child))
-            self.assertNotIn('Never in a preview', str(base))
-            with self.assertRaises(HTTPException) as excluded:
-                await card_data(db, f'/games/{self.pack}')
-            self.assertEqual(excluded.exception.status_code, 404)
-            global_settings = await db.get(GlobalSettings, 1)
-            global_settings.enable_logged_out_navigation = False
-            await db.commit()
-            with self.assertRaises(HTTPException) as denied:
-                await card_data(db, f'/games/{self.base}')
-            self.assertEqual(denied.exception.status_code, 401)
+            for identifier in (self.base,self.child,self.pack):
+                with self.assertRaises(HTTPException) as denied:
+                    await card_data(db,f'/games/{identifier}')
+                self.assertEqual(denied.exception.status_code,403)
 
-    async def test_anonymous_game_details_follow_navigation_policy_without_private_state(self):
-        await self.save(notes='Private game note', status='playing')
-        self.viewer = None
-        access = await self.client.get('/profile/public-access-status')
-        self.assertEqual(access.status_code, 200, access.text)
+    async def test_anonymous_game_details_are_restricted_without_changing_public_navigation(self):
+        await self.save(notes='Private game note',status='playing')
+        self.viewer=None
+        access=await self.client.get('/profile/public-access-status')
         self.assertTrue(access.json()['enable_logged_out_navigation'])
-        response = await self.client.get(f'/catalogue/entities/{self.base}/details')
-        self.assertEqual(response.status_code, 200, response.text)
-        data = response.json()
-        self.assertIsNone(data['entry'])
-        self.assertIsNone(data['game_state'])
-        self.assertNotIn('Private game note', response.text)
-        denied = await self.client.patch(f'/tracking/games/entries/{self.base}', json={'status': 'completed'})
-        self.assertEqual(denied.status_code, 401)
-        async with self.Session() as db:
-            settings = await db.get(GlobalSettings, 1)
-            settings.enable_logged_out_navigation = False
-            await db.commit()
-        denied = await self.client.get(f'/catalogue/entities/{self.base}/details')
-        self.assertEqual(denied.status_code, 401)
-        self.assertFalse((await self.client.get('/profile/public-access-status')).json()['enable_logged_out_navigation'])
+        response=await self.client.get(f'/catalogue/entities/{self.base}/details')
+        self.assertEqual(response.status_code,403,response.text)
+        self.assertNotIn('Private game note',response.text)
+        self.assertEqual((await self.client.get('/tracking/people/player/header')).status_code,200)
 
     async def test_game_list_pages_filter_the_whole_collection_and_exclude_retained_expansions(self):
         await self.save(status='completed', score=9)
@@ -521,12 +498,12 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.viewer = None
         self.assertEqual((await self.client.get('/tracking/people/player/header')).status_code, 200)
         self.assertEqual((await self.client.get('/tracking/people/player')).status_code, 200)
-        self.assertEqual((await self.client.get('/tracking/games/users/player/favorites')).status_code, 200)
+        self.assertEqual((await self.client.get('/tracking/games/users/player/favorites')).status_code, 401)
         async with self.Session() as db:
             profile = await db.scalar(select(UserProfileData).where(UserProfileData.user_id == self.user.id))
             profile.privacy_level = PrivacyLevel.private
             await db.commit()
-        self.assertEqual((await self.client.get('/tracking/games/users/player/favorites')).status_code, 403)
+        self.assertEqual((await self.client.get('/tracking/games/users/player/favorites')).status_code, 401)
         self.assertEqual((await self.client.get('/tracking/people/player/header')).status_code, 403)
         keyed = await self.client.get('/tracking/games/users/player/favorites', headers={'X-Api-Key': self.user.api_key})
         self.assertEqual(keyed.status_code, 200, keyed.text)
@@ -629,7 +606,7 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
             await db.commit()
         self.assertEqual((await self.client.get('/tracking/games/users/player/list')).status_code, 403)
         self.viewer = None
-        self.assertEqual((await self.client.get('/tracking/games/users/player/list')).status_code, 403)
+        self.assertEqual((await self.client.get('/tracking/games/users/player/list')).status_code, 401)
 
     async def test_database_rejects_cross_owner_or_wrong_work_children_and_independent_packs(self):
         await self.save()

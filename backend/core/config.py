@@ -57,6 +57,7 @@ class Settings(BaseSettings):
     oidc_disable_password_login: bool = False
 
     enable_registrations: bool = False
+    new_accounts_games_access: bool = False
     registration_max_allowed_users: int = 0
 
     # Server defaults survive database resets; account/global DB overrides win.

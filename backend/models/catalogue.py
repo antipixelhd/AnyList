@@ -93,6 +93,10 @@ class ContributorSearch(Base):
     staff_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default='0')
     screen_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default='0')
     roles: Mapped[list] = mapped_column(JSONB, nullable=False, server_default='[]')
+    game_work_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default='0')
+    game_actor_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default='0')
+    game_staff_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default='0')
+    game_roles: Mapped[list] = mapped_column(JSONB, nullable=False, server_default='[]')
 
 
 class CatalogueIdentity(Base):

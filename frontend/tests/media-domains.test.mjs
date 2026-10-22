@@ -13,3 +13,9 @@ test('viewer visibility never removes another users public profile sections',()=
   assert.equal(domainListLinks('/user/sam',profileMediaDomains(false,viewer)).length,2);
   assert.equal(profileMediaDomains(false,viewer).show_game_achievements,true);
 });
+
+test('another profile never grants a viewer Games access',()=>{
+  const viewer=mediaDomains({show_games:false,can_access_games:false});
+  assert.equal(profileMediaDomains(false,viewer).show_games,false);
+  assert.deepEqual(domainListLinks('/user/sam',profileMediaDomains(false,viewer)).map(row=>row.href),['/user/sam/list']);
+});

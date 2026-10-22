@@ -35,6 +35,7 @@ from models.catalogue import (
 )
 from schemas_characters import ScreenCharacterDetail, ScreenCharacterList
 from core.screen_characters import character_detail
+from core.game_access import require as require_games, allowed as games_allowed
 
 router = APIRouter(prefix="/catalogue", tags=["catalogue"])
 DB = Annotated[AsyncSession, Depends(get_db)]
@@ -74,6 +75,29 @@ class ManualCorrection(BaseModel):
     image_url: str | None = Field(default=None, max_length=2000)
 
 
+async def authorize_entity(db, entity, viewer):
+    if games_allowed(viewer):
+        return
+    if entity.kind in ('game', 'release', 'game_collection'):
+        require_games(viewer)
+    if entity.kind in ('person', 'organization', 'character'):
+        from sqlalchemy import or_
+        games = select(CatalogueEntity.id).where(CatalogueEntity.kind == 'game')
+        others = select(CatalogueEntity.id).where(CatalogueEntity.kind != 'game')
+        credit = CatalogueCredit.contributor_id == entity.id
+        character = CharacterAppearance.character_id == entity.id
+        restricted, public = (await db.execute(select(
+            or_(select(CatalogueCredit.id).where(credit, CatalogueCredit.work_id.in_(games)).exists(),
+                select(CharacterAppearance.id).where(character, CharacterAppearance.work_id.in_(games)).exists()),
+            or_(select(CatalogueCredit.id).where(credit, CatalogueCredit.work_id.in_(others)).exists(),
+                select(CharacterAppearance.id).where(character, CharacterAppearance.work_id.in_(others)).exists(),
+                select(CatalogueIdentity.id).where(CatalogueIdentity.entity_id == entity.id,
+                    CatalogueIdentity.namespace.in_(('tmdb.person', 'tmdb.company', 'tmdb.network'))).exists())
+        ))).one()
+        if restricted and not public:
+            require_games(viewer)
+
+
 async def providers(db, user):
     return CatalogueProviders(
         ProviderHTTP(session_factory=AsyncSessionLocal),
@@ -109,6 +133,8 @@ async def search(
     limit: Annotated[int, Query(ge=1, le=50)] = 20,
 ) -> dict:
     try:
+        if kind == 'game':
+            require_games(current_user)
         provider = provider or ("openlibrary" if kind == "book" else PRIMARY[kind])
         client = await providers(db, current_user)
         rows = await client.search(provider, kind, q, page, limit)
@@ -121,6 +147,8 @@ async def search(
         }
     except ProviderError as e:
         raise safe_error(e) from None
+    except HTTPException:
+        raise
     except Exception:
         raise HTTPException(503, detail={"code": "unavailable"}) from None
 
@@ -184,6 +212,8 @@ async def refresh(
     current_user: Caller,
     edition_page: Annotated[int | None, Query(ge=1, le=10000)] = None,
 ) -> dict:
+    if kind == 'game':
+        require_games(current_user)
     try:
         return await catalogue.refresh_metadata(
             db,
@@ -202,6 +232,7 @@ async def detail(entity_id: int, db: DB, current_user: Caller):
     row = await db.get(CatalogueEntity, entity_id)
     if not row:
         raise HTTPException(404, "Catalogue entity not found")
+    await authorize_entity(db, row, current_user)
     out = EntityOut.model_validate(row)
     if row.kind in ("edition", "release"):
         item = await db.get(
@@ -268,6 +299,7 @@ async def media_detail(entity_id: Annotated[int, Path(gt=0)], db: DB, current_us
     work = await db.get(CatalogueEntity, entity_id)
     if not work or work.kind not in ('game', 'book'):
         raise HTTPException(404, "Game or book not found")
+    await authorize_entity(db, work, current_user)
     return await catalogue_title(db, work, current_user.id if current_user else None)
 
 
@@ -290,8 +322,10 @@ async def related(
     page: Annotated[int, Query(ge=1, le=10000)] = 1,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
 ) -> dict:
-    if not await db.get(CatalogueEntity, entity_id):
+    entity = await db.get(CatalogueEntity, entity_id)
+    if not entity:
         raise HTTPException(404, "Catalogue entity not found")
+    await authorize_entity(db, entity, current_user)
     models = {
         "identities": (
             CatalogueIdentity,
@@ -384,6 +418,12 @@ async def related(
         ),
     }
     model, condition, fields = models[section]
+    if not games_allowed(current_user):
+        if section == 'relationships':
+            permitted = select(CatalogueEntity.id).where(CatalogueEntity.kind.not_in(('game', 'release', 'game_collection')))
+            condition = condition & model.source_id.in_(permitted) & model.target_id.in_(permitted)
+        elif section == 'sources':
+            condition = condition & (model.provider != 'imdb')
     pk = list(model.__table__.primary_key)[0]
     rows = (
         (

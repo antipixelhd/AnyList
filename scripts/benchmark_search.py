@@ -89,6 +89,7 @@ async def main(args):
     try:
         async with fixture.Session() as db:
             viewer = await db.get(User, fixture.user_id)
+            viewer.games_access = True
             settings = UserSettings(user_id=viewer.id, tmdb_api_key='fixture-provider-key', preferences={})
             db.add(settings)
             global_settings = await db.get(GlobalSettings, 1)
@@ -99,7 +100,7 @@ async def main(args):
                     tmdb_data=title(900000 + index)))
             first_game=None
             game_contributor_id=None
-            if not args.case or any(name.startswith('game_contributor') for name in args.case):
+            if not args.case or any(name.startswith(('game_contributor','game_people')) for name in args.case):
                 performer=CatalogueEntity(kind='person',name='Game works performer')
                 db.add(performer);await db.flush();game_contributor_id=performer.id
             for index in range(args.local_titles):
@@ -173,6 +174,8 @@ async def main(args):
             params = params or {}
             page = int(params.get('page', 1))
             if path[0] == 'search' and path[1] in ('person', 'company'):
+                if current_case.startswith('game_people'):
+                    return {'total_pages':1,'results':[]}
                 return {'total_pages': 1, 'results': [
                     {'id': 700000 + i, 'name': f'Benchmark {i}', 'known_for_department': 'Directing' if current_case == 'crew' or (current_case in ('people_combined', 'all_contributors') and i % 2) else 'Acting',
                      'popularity': 80, 'known_for': [title(1000 + i, search=True)], 'logo_path': '/logo.jpg'} for i in range(8)]}
@@ -293,6 +296,8 @@ async def main(args):
             cases += [('game_contributor',path,{'media_type':'game'}),
                 ('game_contributor_listed',path,{'media_type':'game','list_scope':'in','status':'completed'}),
                 ('game_contributor_pages',path,{'media_type':'game'})]
+            cases += [('game_people_search','quick-search/contributors',{'q':'Game works performer','kind':'actor','work_domain':'game'}),
+                ('game_people_shared','quick-search/contributors',{'q':'Game works performer','kind':'actor'})]
         cases += [
             ('game_search', 'games/search', {'q': 'Benchmark'}),
             ('game_browse_preview','games/browse',{'limit':6}),
@@ -392,6 +397,13 @@ async def main(args):
                         params['unfiltered'] = 'true'
 
                     async def operation(path=path, params=params, label=label, mode=mode):
+                        if label.startswith('game_people'):
+                            result=await request(path,params)
+                            rows=result['results']['actor']
+                            if len(rows)!=1 or rows[0]['key']!=f'catalogue:{game_contributor_id}' or not rows[0]['url'].endswith('?media_type=game'):
+                                raise RuntimeError('Verified game-only actor did not survive contributor search')
+                            if 'statement' in json.dumps(result):raise RuntimeError('Game search exposed raw source evidence')
+                            return result
                         if label.startswith('game_contributor'):
                             first=await request(path,params)
                             if first['known_works']!=args.local_titles or first['list_count']!=args.local_titles:

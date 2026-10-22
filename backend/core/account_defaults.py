@@ -10,5 +10,7 @@ from models.users import User
 
 def initialize_account_defaults(db: AsyncSession, user: User) -> None:
     """Call after flushing a new user, within its creation transaction."""
+    from core.config import settings
+    user.games_access = settings.new_accounts_games_access
     user.profile = UserProfileData(user_id=user.id, privacy_level=PrivacyLevel.public)
     db.add(TrackingPreferences(user_id=user.id, default_sort="score"))

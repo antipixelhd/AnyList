@@ -501,6 +501,12 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
                     <div class="space-y-3">
                       <div class="md:hidden text-xs text-zinc-400">{u.email}</div>
                       <div>
+                        <button type="button" class="games-access-btn px-3 py-1.5 text-xs font-semibold rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors cursor-pointer disabled:opacity-50"
+                          data-approved={u.games_access} disabled={u.is_admin}>
+                          {u.is_admin ? 'Games access · Admin' : u.games_access ? 'Revoke Games access' : 'Grant Games access'}
+                        </button>
+                      </div>
+                      <div>
                         <div class="text-xs text-zinc-500 mb-1">API Key</div>
                         <div class="flex items-center gap-2">
                           <code class="user-api-key flex-1 block bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-300 font-mono break-all">{u.api_key}</code>
@@ -1300,6 +1306,11 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     const userClass = 'toggle-admin-btn px-3 py-1.5 text-xs font-semibold rounded-lg transition-all active:scale-95 cursor-pointer border bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border-amber-500/20';
     const userId = row.dataset.userId!;
     const detailRow = document.querySelector<HTMLTableRowElement>(`tr.user-detail-row[data-detail-for="${userId}"]`);
+    const gamesButton=detailRow?.querySelector<HTMLButtonElement>('.games-access-btn');
+    if(gamesButton){
+      gamesButton.disabled=isAdmin;
+      gamesButton.textContent=isAdmin?'Games access · Admin':gamesButton.dataset.approved==='true'?'Revoke Games access':'Grant Games access';
+    }
     [row, detailRow].forEach(r => {
       const btn = r?.querySelector<HTMLButtonElement>('.toggle-admin-btn');
       if (!btn) return;
@@ -1548,6 +1559,30 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     }
     if (!mainRow) return;
     const userId = parseInt(mainRow.dataset.userId!);
+
+    const gamesButton = target.closest<HTMLButtonElement>('.games-access-btn');
+    if (gamesButton) {
+      if (gamesButton.disabled) return;
+      const previous=gamesButton.dataset.approved==='true';
+      const paint=(approved:boolean)=>{
+        gamesButton.dataset.approved=String(approved);
+        gamesButton.textContent=approved?'Revoke Games access':'Grant Games access';
+      };
+      gamesButton.disabled=true;
+      paint(!previous);
+      try {
+        const response=await fetch(`/api/proxy/admin/users/${userId}/games-access`,{
+          method:'PATCH',headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
+          body:JSON.stringify({approved:!previous}),
+        });
+        if(!response.ok)throw new Error((await response.json()).detail||'Could not update Games access');
+        paint((await response.json()).games_access===true);
+      } catch(error) {
+        paint(previous);
+        showMessage(error instanceof Error?error.message:'Could not update Games access','error');
+      } finally {gamesButton.disabled=false;}
+      return;
+    }
 
     if (target.closest('.toggle-admin-btn')) {
       const btn = target.closest('.toggle-admin-btn') as HTMLButtonElement;

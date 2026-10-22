@@ -6,7 +6,7 @@ import { isSameOrigin, requiresSameOrigin } from "./lib/request-security";
 import { crawlerShareResponse, shareLoginPath } from "./lib/share-preview";
 import { legalConfig } from './lib/legal';
 import { publicLegalPage } from './lib/legal-routes';
-import {anonymousGameDiscoveryRoute} from './lib/game-public-routes';
+import {anonymousGameDiscoveryRoute,approvedGamesPage} from './lib/game-public-routes';
 
 const PUBLIC_ROUTES = ["/login", "/register", "/logout", "/oidc-callback", "/oidc-start", "/link", "/site.webmanifest", "/favicon-96x96.png", "/apple-touch-icon.png", "/sw.js", "/offline.html"];
 // /api/proxy/auth/device/code and /device/token are the RFC 8628 endpoints a
@@ -193,6 +193,10 @@ export const onRequest = defineMiddleware(async (context, next) => {
     if (!isPublicRoute && !(await isAllowedAnonymousPublicPage())) {
       return context.redirect(shareLoginPath(pathname, context.url.search), 302);
     }
+  }
+
+  if (approvedGamesPage(context.url) && context.locals.user?.can_access_games!==true) {
+    return context.rewrite('/games-access');
   }
 
   // Resolve the viewer's settings once per page (reused by the layout and the

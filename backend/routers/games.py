@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core import game_tracking as tracking
 from core.game_types import capabilities
+from core.game_access import approved_games_viewer
 from core.tracking_access import profile_access, profile_header
 from core.tracking_access import catalog_access
 from db import get_db
@@ -20,7 +21,7 @@ from sqlalchemy import or_, and_
 from schemas_games import (AchievementOut, AchievementPage, ChildPatch, FavoritePatch,
                            GameEntryOut, GameListOut, GameListProfile, GamePlayingOut, GamePatch, GameStateBatch, GameStatus, GameFavoriteOrder)
 
-router = APIRouter(prefix='/tracking/games', tags=['games'])
+router = APIRouter(prefix='/tracking/games', tags=['games'], dependencies=[Depends(approved_games_viewer)])
 DB = Annotated[AsyncSession, Depends(get_db)]
 Reader = Annotated[User, Depends(get_current_user_or_api_key)]
 Writer = Annotated[User, Depends(get_current_user)]

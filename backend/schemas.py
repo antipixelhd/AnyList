@@ -28,6 +28,7 @@ class User(UserBase):
     api_key: str
     display_name: str
     is_admin: bool = False
+    can_access_games: bool = False
     totp_enabled: bool = False
     email_confirmed: bool = True
     has_password: bool = True
@@ -565,6 +566,7 @@ class AdminUser(BaseModel):
     username   : str
     email      : str
     is_admin   : bool
+    games_access: bool = False
     api_key    : str
     created_at : datetime
     avatar_url : Optional[str] = None

@@ -13,7 +13,13 @@ from models.games import GameChildState, GameEntry
 
 @unittest.skipUnless(fixture.fixture.URL, 'Requires explicit disposable statistics PostgreSQL')
 class GameContributorTests(unittest.IsolatedAsyncioTestCase):
-    asyncSetUp = fixture.ContributorDetailsTests.asyncSetUp
+    async def asyncSetUp(self):
+        await fixture.ContributorDetailsTests.asyncSetUp(self)
+        async with self.Session() as db:
+            viewer = await db.get(User, self.user_id)
+            viewer.games_access = True
+            await db.commit()
+            self.viewer = viewer
     asyncTearDown = fixture.ContributorDetailsTests.asyncTearDown
     request = fixture.ContributorDetailsTests.request
 
@@ -71,7 +77,7 @@ class GameContributorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((listed['total'], listed['list_count'], len(listed['works'])), (1, 1, 1))
         self.assertEqual((await self.request(media_type='game', status='playing')).json()['total'], 0)
         async with self.Session() as db:
-            other = User(email='other-game@example.test', username='other-game', api_key='other-game-key')
+            other = User(email='other-game@example.test', username='other-game', api_key='other-game-key', games_access=True)
             db.add(other); await db.commit(); self.viewer = other
         other = (await self.request(media_type='game')).json()
         self.assertEqual(other['list_count'], 0)
@@ -79,9 +85,7 @@ class GameContributorTests(unittest.IsolatedAsyncioTestCase):
         self.viewer = None
         self.app.dependency_overrides[get_current_user_or_api_key] = lambda: self.viewer
         response = await self.request(media_type='game')
-        self.assertEqual(response.status_code, 200, response.text)
-        self.assertIsNone(response.json()['list_count'])
-        self.assertTrue(all(row['entry'] is None and row['score'] is None for row in response.json()['works']))
+        self.assertEqual(response.status_code, 403, response.text)
         self.assertEqual((await self.request(media_type='game', list_scope='in')).status_code, 401)
 
     async def test_verified_expansion_membership_retained_data_and_ports(self):
@@ -152,23 +156,15 @@ class GameContributorTests(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as db:
             self.assertEqual(await db.scalar(select(func.count()).select_from(CatalogueEntity)), before)
 
-    async def test_game_contributor_previews_count_all_known_works_and_obey_global_gate(self):
-        from models import GlobalSettings
+    async def test_game_contributor_previews_do_not_expose_restricted_works(self):
         from routers.sharing import router
         from core import share_preview
         await self.seed()
         self.app.include_router(router)
         path=f'/actors/catalogue:{self.person_id}?media_type=game'
-        response=await self.client.get('/sharing/metadata',params={'path':path})
-        self.assertEqual(response.status_code,200,response.text)
-        self.assertIn('30 Known games',response.json()['description'])
-        self.assertNotIn('Movies',response.json()['description'])
-        with patch.object(share_preview,'fetch_image',AsyncMock(return_value=None)):
-            response=await self.client.get('/sharing/image',params={'path':path})
-        self.assertEqual(response.status_code,200)
-        self.assertEqual(response.headers['content-type'],'image/jpeg')
-        async with self.Session() as db:
-            settings=await db.get(GlobalSettings,1);settings.enable_logged_out_navigation=False
-            await db.commit()
-        for endpoint in ('metadata','image'):
-            self.assertEqual((await self.client.get(f'/sharing/{endpoint}',params={'path':path})).status_code,401)
+        with patch.object(share_preview,'fetch_image',AsyncMock()) as fetch:
+            for endpoint in ('metadata','image'):
+                response=await self.client.get(f'/sharing/{endpoint}',params={'path':path})
+                self.assertEqual(response.status_code,403,response.text)
+                self.assertNotIn('Known games',response.text)
+            fetch.assert_not_awaited()

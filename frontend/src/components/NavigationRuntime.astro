@@ -5,6 +5,7 @@
   import { mutationFetch } from '../lib/mutation-fetch';
   import { showToast as notify } from '../lib/toasts';
   import {createPrediction,bindPredictionIntent,predictionManifest,predictivePage,predictionAllowed,type PredictionArtwork} from '../lib/predictive-loading';
+  import {approvedGamesPage} from '../lib/game-public-routes';
   import {editorStore,type EditorTitle} from '../lib/editor-store';
   import {responsiveArtwork} from '../lib/responsive-artwork';
   wirePasswordToggles();
@@ -34,7 +35,7 @@
   }
 
   const currentUser = () => document.body.dataset.cacheUser || 'anonymous';
-  const cacheable = (url: URL) => url.origin === location.origin && (
+  const cacheable = (url: URL) => url.origin === location.origin && !approvedGamesPage(url) && (
     ['/home','/browse','/recent-events','/connections'].includes(url.pathname)
     || predictivePage(url,location.origin)
     || /^\/user\/[^/]+(?:\/(?:movies|series|list|games|library|social|stats))?$/.test(url.pathname)
@@ -134,6 +135,7 @@
   function remember(url: URL, doc: Document) {
     resetForIdentity();
     if (!cacheable(url) || doc.body.dataset.cacheUser !== state.user) return;
+    if(doc.querySelector('a[href^="/games/"]'))return;
     const html = sanitizedHtml(doc, url);
     if (!html) return;
     const bytes = new Blob([html]).size;
@@ -233,7 +235,7 @@
     },lifetime.signal);
     bindPredictionIntent(document,lifetime.signal,link=>{
       const url=new URL(link.href);
-      if(url.origin!==location.origin||link.target||link.hasAttribute('download')||link.hasAttribute('data-astro-reload'))return;
+      if(url.origin!==location.origin||approvedGamesPage(url)||link.target||link.hasAttribute('download')||link.hasAttribute('data-astro-reload'))return;
       if(url.pathname==='/discover-title'){
         const type=url.searchParams.get('type'),id=url.searchParams.get('id');
         if(!['movie','series'].includes(type||'')||!id||!/^\d+$/.test(id))return;
@@ -283,7 +285,7 @@
       state.predictionNavigation=undefined;
       let predicted=state.pages.get(key);
       if(predicted?.predicted&&Date.now()-predicted.storedAt>=30_000){state.pages.delete(key);state.bytes-=predicted.bytes;predicted=undefined;}
-      if(!event.formData&&(predicted?.predicted||state.prediction?.has(event.to.href))){
+      if(!event.formData&&!approvedGamesPage(event.to)&&(predicted?.predicted||state.prediction?.has(event.to.href))){
         state.predictionNavigation={key,signal:event.signal,generation:state.generation||0};startProgress();return;
       }
       state.prediction?.cancel();

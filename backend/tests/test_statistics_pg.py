@@ -63,6 +63,7 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 importlib.import_module("migrations.versions.mt041_actor_role_artwork").upgrade()
                 importlib.import_module("migrations.versions.mt042_screen_characters").upgrade()
                 importlib.import_module("migrations.versions.mt050_contributor_search").upgrade()
+                importlib.import_module("migrations.versions.mt061_game_contributor_search").upgrade()
             self.assertEqual(conn.scalar(text("SELECT count(*) FROM user_stats_state")), 1)
             self.assertEqual(tuple(conn.execute(text(
                 "SELECT condeferrable, condeferred FROM pg_constraint "

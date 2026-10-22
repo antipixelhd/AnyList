@@ -1,0 +1,11 @@
+---
+import Tracker from '../layouts/Tracker.astro';
+Astro.response.status=403;
+Astro.response.headers.set('Cache-Control','private, no-store');
+---
+<Tracker title="Games access">
+  <div class="max-w-3xl mx-auto px-4 py-12">
+    <h1 class="text-2xl font-bold text-zinc-100">Games access requires approval</h1>
+    <p class="mt-3 text-zinc-400">An admin can enable Games for your account.</p>
+  </div>
+</Tracker>
