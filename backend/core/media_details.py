@@ -166,7 +166,10 @@ async def work_details(db, work, *, extras=True):
         MetadataSnapshot.payload['budget'].label('budget'),
         MetadataSnapshot.payload['revenue'].label('revenue'),
         MetadataSnapshot.payload['url'].astext.label('url')).where(MetadataSnapshot.entity_id == work.id,
-            MetadataSnapshot.kind.not_like('game_credit%'),MetadataSnapshot.kind!='game_binding_review')
+            MetadataSnapshot.kind.not_like('game_credit%'),MetadataSnapshot.kind!='game_binding_review',
+            # Auxiliary metadata/job components must not consume the six
+            # image/source slots and evict usable provider artwork or links.
+            or_(*(MetadataSnapshot.payload[field].is_not(None) for field in ('images','homepage','url','budget','revenue'))))
         .order_by(MetadataSnapshot.fetched_at.desc().nullslast()).limit(6))).all()
     sources = []
     for snapshot in snapshots:
@@ -212,6 +215,7 @@ async def catalogue_title(db, work, viewer_id=None):
             'base_work_id': base.id if base else None,
             'base_game': {'id': base.id, 'title': base.name, 'image_url': image(base.image_url)} if base else None,
             'game_state': state.model_dump(mode='json') if state else None,
+            'completion_estimates':attrs.get('completion_estimates'),
             'entry': state.model_dump(mode='json') if state and state.listed else None,
             'favorite': bool(state and state.favorite),
             'tracking_available': caps.independent or (caps.expansion_page and base is not None)}

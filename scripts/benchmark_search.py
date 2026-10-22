@@ -185,6 +185,15 @@ async def main(args):
                 db.add_all([CharacterPerformance(work_id=credit_work.id,credit_id=credits[i//3].id,
                     appearance_id=appearances[i].id,language='en',source='wikidata') for i in range(90)])
                 game_credits_id=credit_work.id
+            if args.case and 'game_time_to_beat' in args.case:
+                game=first_game
+                game.attributes={**game.attributes,'igdb_id':'9000000','completion_estimates':{'source':'igdb',
+                    'source_game_id':'9000000','samples':25,'main_story_seconds':3600,'main_sides_seconds':7200,'completionist_seconds':10800}}
+                db.add(CatalogueIdentity(entity_id=first_game.id,namespace='igdb.game',external_id='9000000',source='igdb'))
+                stamp=datetime.now(timezone.utc).replace(tzinfo=None)
+                db.add(MetadataSnapshot(provider='igdb',kind='game_estimate_job',external_id=str(first_game.id),entity_id=first_game.id,
+                    coverage={'state':'complete','complete':True,'source_game_id':'9000000'},
+                    payload={'raw_estimates':'TIME_EVIDENCE_SENTINEL '*50000},expires_at=stamp+timedelta(days=30)))
             if args.case and 'game_person_availability' in args.case:
                 from core.contributor_availability import movie_job
                 from core.game_imdb_bindings import revision
@@ -308,6 +317,9 @@ async def main(args):
                 if label in ('game_company_availability','game_person_availability'):
                     row['result_identity']=hashlib.sha256(json.dumps(result['domains'],sort_keys=True).encode()).hexdigest()
                     row['pending']=result['pending']
+                if label=='game_time_to_beat':
+                    row['result_identity']=hashlib.sha256(json.dumps(result['estimates'],sort_keys=True).encode()).hexdigest()
+                    row['pending']=result['status']['pending']
             samples.append(row)
             return result
 
@@ -380,6 +392,7 @@ async def main(args):
             *([('game_company_cached',f'contributors/studio/catalogue:{game_company_id}',{'media_type':'game'})] if game_company_id else []),
             *([('game_company_availability',f'contributors/studio/catalogue:{game_company_id}/availability',{})] if game_company_id else []),
             ('game_search', 'games/search', {'q': 'Benchmark'}),
+            *([('game_time_to_beat',f'games/works/{first_game.id}/time-to-beat',{})] if args.case and 'game_time_to_beat' in args.case else []),
             ('game_search_prefix','games/search',{'q':'Elden R'}),
             *([('game_children',f'games/works/{children_base}/children',{'limit':24})] if children_base else []),
             ('game_browse_preview','games/browse',{'limit':6}),
@@ -486,6 +499,17 @@ async def main(args):
                         params['unfiltered'] = 'true'
 
                     async def operation(path=path, params=params, label=label, mode=mode):
+                        if label=='game_time_to_beat':
+                            result=await request(path,params)
+                            if result['estimates']['main_sides_seconds']!=7200 or not result['status']['complete']:
+                                raise RuntimeError('Cached game estimates changed identity or units')
+                            if counters['provider_requests'] or counters['db_writes']:raise RuntimeError('Cached estimate read performed work')
+                            if 'TIME_EVIDENCE_SENTINEL' in json.dumps(result):raise RuntimeError('Raw estimate evidence exposed')
+                            for identity in counters:
+                                sql=sql_patterns.get(identity.removeprefix('sql:'),'') if identity.startswith('sql:') else ''
+                                if 'catalogue_metadata_snapshots.payload,' in sql or 'catalogue_metadata_snapshots.payload FROM' in sql:
+                                    raise RuntimeError('Estimate read hydrated raw source evidence')
+                            return result
                         if label in ('game_company_availability','game_person_availability'):
                             result=await request(path,params)
                             expected={'movie':'unknown','series':'unknown','game':'available'} if label=='game_company_availability' else {'movie':'available','series':'empty','game':'available'}

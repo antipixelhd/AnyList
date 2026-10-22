@@ -14,6 +14,7 @@ import {observeDeferredArtwork} from './visible-artwork';
 import {responsiveArtwork} from './responsive-artwork';
 import {gameProgress} from './game-progress';
 import {mountDetailDlc} from './media-detail-dlc';
+import {mountGameTimeToBeat} from './game-time-to-beat';
 
 let pageListeners: AbortController | undefined;
 let mountedRoot: HTMLElement | null = null;
@@ -33,6 +34,7 @@ export function mountMediaDetail() {
   const loadDlc=mountDetailDlc(root,info.id,signal);
   const deferArtwork=observeDeferredArtwork(root,signal);
   mountDetailCast(root,signal,info);
+  if(root.dataset.mediaKind==='game')mountGameTimeToBeat(root,info.id,signal);
   if(info.backgroundAvailable){
     const scoreStatus=root.querySelector<HTMLElement>('[data-detail-score-status]');
     const scores=detailBackground<Record<string,any>>(`/api/proxy/tracking/title/${info.id}/scores`,signal,data=>{

@@ -32,9 +32,10 @@
 .media-detail .media-cover-empty { display:grid; place-items:center; background:var(--panel); color:var(--blue); font-size:5rem; }
 .media-detail .media-original-title { font-size:1.3rem; color:var(--lab-muted); margin-bottom:8px; }
 .media-detail .lab-genres a { font-size:1.1rem; padding:4px 10px; background:rgb(21 31 46 / 75%); border-radius:4px; color:var(--text); }
-.media-detail :is(.lab-facts,.lab-inline-facts) :is(dt,dd) { font-family:var(--font-body); }
-.media-detail :is(.lab-facts,.lab-inline-facts) dt { color:var(--text); font-size:13px; font-weight:500; line-height:1.15; }
-.media-detail :is(.lab-facts,.lab-inline-facts) dd { color:var(--muted); font-size:12px; font-weight:400; line-height:1.3; margin:5px 0 0; }
+.media-detail :is(.lab-facts,.lab-inline-facts,.lab-game-times) :is(dt,dd) { font-family:var(--font-body); }
+.media-detail :is(.lab-facts,.lab-inline-facts,.lab-game-times) dt { color:var(--text); font-size:13px; font-weight:500; line-height:1.15; }
+.media-detail :is(.lab-facts,.lab-inline-facts,.lab-game-times) dd { color:var(--muted); font-size:12px; font-weight:400; line-height:1.3; margin:5px 0 0; }
+.media-detail .lab-game-times dl { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; margin:0; }
 .media-detail .media-tracking { display:flex; flex-direction:column; gap:17px; }
 .media-action-row { display:flex; align-items:stretch; gap:6px; min-width:0; }
 @media (min-width:651px) {

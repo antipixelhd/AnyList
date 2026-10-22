@@ -841,6 +841,7 @@ async def background_jobs():
     from core.game_imdb_enrichment import scheduler as game_credit_enrichment
     from core.game_imdb_person import scheduler as game_person_enrichment
     from core.game_company_works import scheduler as game_company_enrichment
+    from core.game_time_to_beat import scheduler as game_time_estimates
 
     jobs = (
         statistics_scheduler,
@@ -848,6 +849,7 @@ async def background_jobs():
         game_credit_enrichment,
         game_person_enrichment,
         game_company_enrichment,
+        game_time_estimates,
         _auto_sync_scheduler,
         _stream_action_retry_scheduler,
         _rating_push_scheduler,

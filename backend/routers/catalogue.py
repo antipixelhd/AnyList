@@ -314,6 +314,11 @@ async def media_detail(entity_id: Annotated[int, Path(gt=0)], db: DB, current_us
         state=await request_credits(db,work.id)
         await db.commit()
         data['game_credit_status']=state
+        from core.game_time_to_beat import view as time_estimates
+        times=await time_estimates(db,work,enqueue=True)
+        await db.commit()
+        data['completion_estimates']=times['estimates']
+        data['game_estimate_status']=times['status']
     return data
 
 

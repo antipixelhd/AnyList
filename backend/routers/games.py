@@ -75,18 +75,30 @@ async def imdb_person_title(native: Annotated[str,Path(pattern=r'^nm[0-9]+$',max
     return {'person':result['person'],'generation':result['generation'],'title':result['results'][0]}
 
 
-async def request_game_credits(work_id,engine):
+async def request_game_metadata(work_id,engine):
     import logging
     from sqlalchemy.ext.asyncio import async_sessionmaker
     from core.game_imdb_enrichment import request
     try:
         async with async_sessionmaker(engine,expire_on_commit=False)() as db:
             await request(db,work_id)
+            from core.game_time_to_beat import view as estimates
+            work=await db.get(CatalogueEntity,work_id)
+            if work:await estimates(db,work,enqueue=True)
             await db.commit()
     except Exception:
         # Tracking already committed. Metadata admission must not turn a
         # successful personal write into a misleading optimistic rollback.
-        logging.getLogger(__name__).warning('Game credits could not be queued')
+        logging.getLogger(__name__).warning('Game metadata could not be queued')
+
+
+@router.get('/works/{work_id}/time-to-beat')
+async def game_completion_estimates(work_id:WorkId,db:DB,viewer:Reader) -> dict:
+    from core.game_time_to_beat import view
+    work=await tracking.work(db,work_id)
+    result=await view(db,work,enqueue=True)
+    await db.commit()
+    return result
 
 
 @router.get('/works/{work_id}/credits')
@@ -273,7 +285,7 @@ async def game_children(work_id:WorkId,db:DB,viewer:Reader,
 @router.patch('/entries/{work_id}')
 async def save_entry(work_id: WorkId, body: GamePatch, db: DB, viewer: Writer,background:BackgroundTasks) -> GameEntryOut:
     result=await tracking.save_entry(db, viewer.id, work_id, body)
-    background.add_task(request_game_credits,work_id,db.bind)
+    background.add_task(request_game_metadata,work_id,db.bind)
     return result
 
 

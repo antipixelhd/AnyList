@@ -443,8 +443,8 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
     async def test_game_details_use_stored_releases_relations_prices_and_safe_artwork(self):
         async with self.Session() as db:
             game = CatalogueEntity(kind='game', name='Fixture game', attributes={
-                'release_date':'2020-01-01', 'artwork':['javascript:alert(1)', 'https://example.test/game.jpg']})
-            other = CatalogueEntity(kind='game', name='Expansion', attributes={})
+                'game_class':'game','release_date':'2020-01-01', 'artwork':['javascript:alert(1)', 'https://example.test/game.jpg']})
+            other = CatalogueEntity(kind='game', name='Expansion', attributes={'game_class':'expansion'})
             release = CatalogueEntity(kind='release', name='PC edition', attributes={})
             db.add_all([game, other, release]); await db.flush()
             db.add(CatalogueIdentity(entity_id=game.id, namespace='steam.app', external_id='123', source='igdb'))
@@ -456,18 +456,26 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
             db.add(MetadataSnapshot(provider='igdb', kind='game', external_id='99', entity_id=game.id,
                 payload={'url':'javascript:alert(1)'}, coverage={}))
             await db.commit(); game_id, other_id = game.id, other.id
-        self.assertEqual((await self.client.get(f'/catalogue/entities/{game_id}/details')).status_code, 401)
+        self.assertEqual((await self.client.get(f'/catalogue/entities/{game_id}/details')).status_code, 403)
         await self.login()
+        self.assertEqual((await self.client.get(f'/catalogue/entities/{game_id}/details')).status_code,403)
+        async with self.Session() as db:
+            user=await db.get(User,self.user_id);user.games_access=True
+            await db.commit();self.viewer=user
         response = await self.client.get(f'/catalogue/entities/{game_id}/details')
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertEqual(data['artwork'], ['https://example.test/game.jpg'])
         self.assertEqual(data['releases'][0]['platform'], 'PC')
-        self.assertEqual(data['relations'][0]['url'], f'/games/{other_id}')
-        self.assertTrue(data['relations'][0]['reverse'])
+        # Expansion relationships remain stored but belong to the lazy DLC
+        # tab, rather than a duplicate generic Relations card.
+        self.assertEqual(data['relations'],[])
+        async with self.Session() as db:
+            self.assertIsNotNone(await db.scalar(select(CatalogueRelationship).where(
+                CatalogueRelationship.source_id==other_id,CatalogueRelationship.target_id==game_id)))
         self.assertEqual(data['prices'][0]['country'], 'DE')
         self.assertEqual(data['sources'], [{'name':'Steam','url':'https://store.steampowered.com/app/123/'}])
-        self.assertFalse(data['tracking_available'])
+        self.assertTrue(data['tracking_available'])
 
     async def test_following_ratings_respect_privacy_and_country_falls_back_to_screen_metadata(self):
         async with self.Session() as db:

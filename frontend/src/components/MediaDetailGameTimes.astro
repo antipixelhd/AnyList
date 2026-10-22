@@ -1,0 +1,10 @@
+---
+import {completionCategories,estimatedHours,type CompletionEstimates} from '../lib/game-time-to-beat';
+interface Props {estimates?:CompletionEstimates|null}
+const {estimates}=Astro.props;
+const rows=completionCategories.map(([field,label])=>({field,label,value:estimatedHours(estimates?.[field])}));
+---
+<section class="lab-module lab-game-times" data-game-time-to-beat hidden={!rows.some(row=>row.value)}>
+  <div class="lab-section-title"><h2>Time to beat</h2><span data-time-estimate-source title={estimates?.samples!=null?`${estimates.samples} IGDB submissions`:undefined}>IGDB</span></div>
+  <dl>{rows.map(row=><div data-time-estimate={row.field} hidden={!row.value}><dt>{row.label}</dt><dd>{row.value}</dd></div>)}</dl>
+</section>

@@ -27,6 +27,7 @@ export type DetailMedia = EditorTitle & {
   people: DetailPerson[]; organizations: DetailPerson[]; posters: string[]; artwork: string[]; relations: any[]; similar: any[]; related_pending?: boolean;
   character_status?: {state:string;pending?:boolean;error?:string|null;retry_after?:number};
   game_credit_status?: {state:string;pending?:boolean;error?:string|null;retry_after?:number;complete?:boolean;coverage?:string};
+  completion_estimates?:import('./game-time-to-beat').CompletionEstimates|null;
   image_status?: {state:string;error?:string|null;retry_after?:number};
   background_status?: {state:string;error?:string|null;retry_after?:number};
   backdrop_fallback?:string;
