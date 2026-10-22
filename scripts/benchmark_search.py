@@ -564,7 +564,10 @@ async def main(args):
                                 if result['data']['totals']['listed_games']!=args.local_titles or result['data']['totals']['played_games']!=played:
                                     raise RuntimeError('Statistics lost parent counts or included Planned games in played totals')
                             else:
-                                if result['total']!=played or len(result['data'])!=min(24,max(0,played-(24 if params.get('page')==2 else 0))):
+                                # Combined/default matrices also seed one
+                                # shared portfolio actor across these games.
+                                groups=played+int(bool(game_contributor_id and played))
+                                if result['total']!=groups or len(result['data'])!=min(24,max(0,groups-(24 if params.get('page')==2 else 0))):
                                     raise RuntimeError('Statistics lost full contributor coverage or bounded paging')
                                 times=[row['recorded_seconds'] for row in result['data']]
                                 if times!=sorted(times,reverse=True):raise RuntimeError('Statistics sorted only a truncated subset')
