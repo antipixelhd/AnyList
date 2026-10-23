@@ -2,7 +2,8 @@ import Chart from 'chart.js/auto';
 import type { ChartOptions } from 'chart.js';
 import type { ChartMetric, MediaScope, MetricGroup, Overview, OverviewResponse } from './stats-overview-data';
 import { barChartRows, displayNumber, distributionRows, headlineValues, knownRows, metricLabels, metricValue, watchYearRows } from './stats-overview-data';
-import { createOverviewLoader } from './stats-overview-request';
+import { createOverviewLoader, overviewPollDelay } from './stats-overview-request';
+import { refreshStatistics } from './statistics-refresh-request';
 import { mountGenres, mountStudios } from './stats-genres';
 import { genreSort } from './stats-genres-data';
 import { actorArtwork } from './stats-actors-data';
@@ -25,6 +26,7 @@ function mount(root: HTMLElement) {
   let media: MediaScope = root.dataset.media as MediaScope;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let stopped = false;
+  let refreshing = false;
   const events = new AbortController();
   const switchPanel = createContentTransition(node('.overview-results'), events.signal);
   initializeScrollMotion(root, events.signal, '.stats-genre-card,.overview-chart,.overview-distribution', 'stats-scroll-reveal', {animateInitial:false, downwardOnly:true, once:true});
@@ -197,13 +199,13 @@ function mount(root: HTMLElement) {
     const wasPending = node('.overview-results').hidden;
     node('.overview-results').hidden = !ready;
     node('.overview-pending').hidden = ready;
+    clearTimeout(timer);
+    const pollDelay = overviewPollDelay(next);
+    if (pollDelay !== null) timer = setTimeout(() => { if (!stopped) void loader.load(media); }, pollDelay);
     if (!ready) {
       node('[data-overview-state]').textContent = next.status === 'error' ? 'Statistics are unavailable. A retry is scheduled.' : 'Preparing statistics…';
-      clearTimeout(timer);
-      timer = setTimeout(() => { if (!stopped) void loader.load(media); }, next.status === 'error' ? 30000 : 5000);
       return;
     }
-    clearTimeout(timer);
     const data = next.overview!;
     root.dataset.media = data.media_type;
     headlineValues(data).forEach((metric, index) => {
@@ -305,13 +307,34 @@ function mount(root: HTMLElement) {
       const key = target.dataset.chart as typeof chartKeys[number]; metrics.set(key, target.dataset.metric as ChartMetric);
       root.querySelectorAll(`[data-chart="${key}"]`).forEach(button => button.setAttribute('aria-pressed', String((button as HTMLElement).dataset.metric === target.dataset.metric)));
       if (response.overview) drawMetric(response.overview, key);
-    } else if (target.hasAttribute('data-overview-retry')) void loader.load(media);
+    } else if (target.hasAttribute('data-overview-retry')) void refreshMissing();
     else if (target.dataset.pie && response.overview) {
       const key = target.dataset.pie as 'statuses' | 'formats' | 'countries';
       const index = distributionRows(response.overview, key).findIndex(row => row.key === target.dataset.category);
       const chart = pies.get(key); chart?.setActiveElements([{ datasetIndex: 0, index }]); chart?.render();
     }
   }, { signal: events.signal });
+  async function refreshMissing() {
+    if (!response.owner) { await loader.load(media); return; }
+    if (refreshing) return;
+    refreshing = true;
+    const button = node<HTMLButtonElement>('[data-overview-retry]');
+    button.disabled = true;
+    button.textContent = 'Refreshing…';
+    try {
+      await refreshStatistics(events.signal);
+      if (!stopped) await loader.load(media);
+    } catch (error) {
+      if (!stopped) {
+        node('.overview-error').hidden = false;
+        node('.overview-error').textContent = error instanceof Error ? error.message : 'Could not refresh statistics. Try again.';
+      }
+    } finally {
+      refreshing = false;
+      button.disabled = false;
+      button.textContent = 'Refresh statistics';
+    }
+  }
   function highlightLegend(event: Event) {
     const target = (event.target as HTMLElement).closest<HTMLElement>('[data-pie]');
     if (!target || !response.overview) return;

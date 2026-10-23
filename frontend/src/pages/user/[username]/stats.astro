@@ -57,7 +57,7 @@ const actorTemplate = { key: '', label: '', image: null, href: '#', titles: 0, m
         {[['all', 'All'], ['movie', 'Movies'], ['series', 'Series']].map(([value, label]) => <a href={`?${new URLSearchParams({media: value, section, sort, actor_sort: actorSort, studio_sort: studioSort, staff_sort: staffSort, artwork})}`} data-overview-media={value} aria-current={value === media ? 'page' : undefined}>{label}</a>)}
       </nav></header>
       <p class="overview-error error-message" role="alert" hidden></p>
-      <div class="overview-pending" role="status" hidden={ready}><p data-overview-state>{data.status === 'error' ? 'Statistics are unavailable. A retry is scheduled.' : 'Preparing statistics…'}</p><button type="button" data-overview-retry>Check again</button></div>
+      <div class="overview-pending" role="status" hidden={ready}><p data-overview-state>{data.status === 'error' ? 'Statistics are unavailable. A retry is scheduled.' : 'Preparing statistics…'}</p><button type="button" data-overview-retry>{data.owner ? 'Refresh statistics' : 'Check again'}</button></div>
       <span class="overview-sr-only" data-overview-announcement role="status" aria-live="polite"></span>
       <div class="overview-results" hidden={!ready}>
         <div data-stats-panel="overview" hidden={section !== 'overview'}>

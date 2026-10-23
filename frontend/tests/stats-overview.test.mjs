@@ -1,7 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { barChartRows, headlineValues, distributionRows, knownRows, metricValue, watchYearRows } from '../src/lib/stats-overview-data.ts';
-import { createOverviewLoader } from '../src/lib/stats-overview-request.ts';
+import { createOverviewLoader, overviewPollDelay } from '../src/lib/stats-overview-request.ts';
+
+test('upgrade and initial generation polling respect durable retry backoff', () => {
+  const now = Date.parse('2026-10-23T12:00:00Z');
+  const backedOff = {status:'ready', overview:{}, refreshing:true, next_update_at:'2026-10-23T13:00:00Z'};
+  assert.equal(overviewPollDelay(backedOff, now), 3_600_000);
+  assert.equal(overviewPollDelay({...backedOff, status:'error', overview:null}, now), 3_600_000);
+  assert.equal(overviewPollDelay({...backedOff, next_update_at:'2026-10-23T11:59:00Z'}, now), 5_000);
+  assert.equal(overviewPollDelay({...backedOff, status:'error', overview:null, next_update_at:'2026-10-23T11:59:00Z'}, now), 30_000);
+  assert.equal(overviewPollDelay({...backedOff, refreshing:false}, now), null);
+});
 
 test('incomplete runtime is a lower bound and unavailable means remain absent', () => {
   const data = { media_type: 'all', totals: { listed_titles: 2, watched_titles: 2, episode_plays: 3, distinct_episodes: 1, watch_minutes: 1440, watch_days: 1, planned_minutes: 0, planned_days: 0, mean_score: null, standard_deviation: null, rated_titles: 0 }, coverage: { runtime_known_plays: 1, runtime_estimated_plays: 0, runtime_missing_plays: 2, planned_unknown_titles: 1 } };

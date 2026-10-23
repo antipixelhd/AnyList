@@ -5,12 +5,14 @@ import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import delete, or_, select
+from pydantic import ValidationError
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from core.statistics_facts import build_overviews, load_facts
 from db import AsyncSessionLocal
 from models.statistics import StatsMetadataRevision, UserStatsSnapshot, UserStatsState
+from schemas_statistics import Overview
 
 CONTRACT_VERSION = 13
 LEASE_TIME = timedelta(minutes=10)
@@ -24,6 +26,17 @@ def utcnow():
 
 async def ensure_state(db, user_id):
     await db.execute(insert(UserStatsState).values(user_id=user_id).on_conflict_do_nothing())
+
+
+async def prepare_startup(factory=AsyncSessionLocal):
+    """Queue deployment upgrades without resetting healthy accounts' daily clocks."""
+    now = utcnow()
+    outdated = select(UserStatsSnapshot.id).where(UserStatsSnapshot.contract_version != CONTRACT_VERSION)
+    async with factory() as db, db.begin():
+        await db.execute(update(UserStatsState).where(
+            UserStatsState.active_snapshot_id.in_(outdated),
+            UserStatsState.next_due_at > now,
+        ).values(dirty=True, next_due_at=now))
 
 
 async def claim_next(factory=AsyncSessionLocal, now=None, *, user_ids=None):
@@ -126,9 +139,18 @@ async def run_due(factory=AsyncSessionLocal, limit=4, *, user_ids=None):
 
 
 async def scheduler():
+    prepared = False
     while True:
         try:
-            await run_due()
+            if not prepared:
+                await prepare_startup()
+                prepared = True
+            completed = await run_due()
+            if completed == 4:
+                # Drain deployment backlogs in bounded batches without a 30s
+                # pause between every four accounts.
+                await asyncio.sleep(0)
+                continue
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -140,15 +162,23 @@ async def read_overview(db, user_id, media_type):
     await ensure_state(db, user_id)
     state = await db.get(UserStatsState, user_id)
     snapshot = await db.get(UserStatsSnapshot, state.active_snapshot_id) if state.active_snapshot_id else None
-    if snapshot and snapshot.contract_version != CONTRACT_VERSION:
-        # Old shapes cannot be mistaken for current data after a deployment.
-        state.active_snapshot_id = None
-        state.dirty, state.next_due_at = True, utcnow()
-        snapshot = None
+    outdated = bool(snapshot and snapshot.contract_version != CONTRACT_VERSION)
+    overview = snapshot.payload.get(media_type) if snapshot else None
+    if outdated:
+        # Calculation revisions can retain a readable shape. Keep the durable
+        # pointer until atomic publication; never discard the last good result
+        # merely because a deployment changed the calculation version.
+        try:
+            overview = Overview.model_validate(overview).model_dump()
+        except ValidationError:
+            overview = None
+        state.dirty = True
+        if not state.lease_token and not state.error_code:
+            state.next_due_at = min(state.next_due_at, utcnow())
     await db.commit()
-    return {"status": "ready" if snapshot else "error" if state.error_code else "pending",
+    return {"status": "ready" if overview is not None else "error" if state.error_code else "pending",
             "generation": snapshot.id if snapshot else None,
             "computed_at": snapshot.computed_at.replace(tzinfo=timezone.utc) if snapshot else None,
             "next_update_at": state.next_due_at.replace(tzinfo=timezone.utc),
-            "refreshing": bool(state.lease_token),
-            "overview": snapshot.payload[media_type] if snapshot else None}
+            "refreshing": outdated or bool(state.lease_token and state.lease_until and state.lease_until > utcnow()),
+            "overview": overview}

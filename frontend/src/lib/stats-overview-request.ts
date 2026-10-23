@@ -6,6 +6,15 @@ interface Callbacks {
   onBusy: (busy: boolean) => void;
 }
 
+export function overviewPollDelay(data: OverviewResponse, now = Date.now()): number | null {
+  if (data.status === 'ready' && data.overview !== null && !data.refreshing) return null;
+  const minimum = data.status === 'error' ? 30_000 : 5_000;
+  const due = Date.parse(data.next_update_at);
+  // Failed rebuilds retain their last generation while the worker backs off.
+  // Wake at the durable retry deadline instead of polling throughout that wait.
+  return Math.min(2_147_483_647, Math.max(minimum, Number.isFinite(due) ? due - now : 0));
+}
+
 export function createOverviewLoader(username: string, callbacks: Callbacks) {
   let active: AbortController | undefined;
   let stopped = false;
