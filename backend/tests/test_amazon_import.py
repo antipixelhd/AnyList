@@ -64,8 +64,10 @@ class AmazonImportTests(unittest.TestCase):
         self.assertEqual(len(parsed.errors), 1)
 
     def test_duplicated_movie_title_is_normalized_before_matching(self):
-        parsed = parse_amazon_zip(archive([session(title="Movie-Movie")]))
-        self.assertEqual(parsed.rows[0].source_title, "Movie")
+        for title in ("Movie", "Spider-Man", "Spider-Man: Far From Home"):
+            with self.subTest(title=title):
+                parsed = parse_amazon_zip(archive([session(title=f"{title}-{title}")]))
+                self.assertEqual(parsed.rows[0].source_title, title)
 
     def test_export_locale_is_inferred_and_explicit_choice_wins(self):
         data = archive([session(**{"Preferred Language Code": '"de"'})])

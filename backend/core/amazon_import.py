@@ -46,10 +46,12 @@ def _identity(title):
     if match:
         episode, show, season = match.groups()
         return _text(episode), _text(show), int(season)
-    if "-" in title:
-        left, right = title.split("-", 1)
+    parts = title.split("-")
+    if len(parts) % 2 == 0:
+        middle = len(parts) // 2
+        left, right = "-".join(parts[:middle]), "-".join(parts[middle:])
         if _norm_text(left) == _norm_text(right):
-            return left, None, None
+            return left.strip(), None, None
     return title, None, None
 
 
