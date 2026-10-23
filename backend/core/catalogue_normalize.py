@@ -373,6 +373,7 @@ def normalize_tvdb(raw, kind="series"):
 
 
 def normalize_igdb(raw):
+    from core.game_store_source import igdb_age_ratings
     from core.game_types import igdb_game_class, platform_group, game_platforms
     doc = document(
         entity(
@@ -383,6 +384,7 @@ def normalize_igdb(raw):
             artwork=raw.get("cover"),
             attributes={
                 "game_class": igdb_game_class(raw),
+                "age_ratings": igdb_age_ratings(raw.get('age_ratings')),
                 "igdb_id": str(raw['id']),
                 "igdb_slug": raw.get('slug'),
                 "game_type": raw.get("game_type"),

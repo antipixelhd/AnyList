@@ -451,6 +451,10 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
             db.add(GameRelease(entity_id=release.id, work_id=game.id, platform_namespace='igdb.platform',
                 platform_id='6', platform_name='PC', region='Worldwide', release_date='2020-01-01'))
             db.add(CatalogueRelationship(source_id=other.id, target_id=game.id, relation='expansion', provider='igdb'))
+            collection=CatalogueEntity(kind='game_collection',name='Shared game collection')
+            db.add(collection);await db.flush()
+            db.add_all([CatalogueRelationship(source_id=member.id,target_id=collection.id,relation='series_member',provider='igdb')
+                for member in (game,other)])
             db.add(SteamPriceSnapshot(work_id=game.id, steam_app_id='123', country='DE',
                 current={'currency':'EUR','amount':7.99,'amountInt':799}, url='https://store.steampowered.com/app/123/', payload={}))
             db.add(MetadataSnapshot(provider='igdb', kind='game', external_id='99', entity_id=game.id,
@@ -523,8 +527,8 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
             book = CatalogueEntity(kind='book', name='Original novel', attributes={})
             movie = CatalogueEntity(kind='movie', name='Similar movie', attributes={'genres':[{'name':'Drama'}, 'Mystery']})
             series = CatalogueEntity(kind='series', name='Related series', attributes={})
-            game = CatalogueEntity(kind='game', name='A game', attributes={})
-            other_game = CatalogueEntity(kind='game', name='Similar game', attributes={})
+            game = CatalogueEntity(kind='game', name='A game', attributes={'game_class':'game'})
+            other_game = CatalogueEntity(kind='game', name='Similar game', attributes={'game_class':'game'})
             db.add_all([book,movie,series,game,other_game]); await db.flush()
             db.add_all([CatalogueIdentity(entity_id=movie.id, namespace='tmdb.movie', external_id='55', source='tmdb'),
                 CatalogueIdentity(entity_id=series.id, namespace='tmdb.series', external_id='66', source='tmdb'),

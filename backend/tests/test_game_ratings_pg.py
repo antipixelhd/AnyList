@@ -92,7 +92,7 @@ class GameRatingsDatabaseTests(unittest.IsolatedAsyncioTestCase):
         async def wait(app,part,stamp):entered.set();await asyncio.Event().wait()
         self.source.fetch.side_effect=wait
         call=asyncio.create_task(self.service.run(self.base));await asyncio.wait_for(entered.wait(),5)
-        _flights[(id(self.Session),self.base)].cancel()
+        _flights[(id(self.Session),JOB,self.base)].cancel()
         with self.assertRaises(asyncio.CancelledError):await call
         async with self.Session() as db:
             job=await db.scalar(snapshot(JOB,self.base));self.assertIsNone(job.lease_token);self.assertIsNotNone(job.next_attempt_at)

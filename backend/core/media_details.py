@@ -190,7 +190,7 @@ async def work_details(db, work, *, extras=True):
         'sources': list({source['url']: source for source in sources}.values()), 'countries': attrs.get('countries') or []}
 
 
-async def catalogue_title(db, work, viewer_id=None, *, store_country=None, enqueue_offers=False,enqueue_ratings=False):
+async def catalogue_title(db, work, viewer_id=None, *, store_country=None, enqueue_offers=False,enqueue_ratings=False,enqueue_info=False):
     details = await work_details(db, work)
     attrs = work.attributes or {}
     editions = []
@@ -245,6 +245,9 @@ async def catalogue_title(db, work, viewer_id=None, *, store_country=None, enque
         from core.game_offers import view as offers_view
         offers=await offers_view(db,work,viewer_id,hint=store_country,identities=identities,enqueue=enqueue_offers)
         prices=offers['offers'];personal['game_offer_context']={key:value for key,value in offers.items() if key!='offers'}
+        from core.game_info import view as info_view
+        info=await info_view(db,work,identities=identities,enqueue=enqueue_info)
+        personal['game_info']=info['info'];personal['game_info_status']=info['status']
     for identity in identities:
         native = identity.external_id
         if identity.namespace == 'openlibrary.book' and re.fullmatch(r'OL[1-9][0-9]*W', native):

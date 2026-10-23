@@ -30,6 +30,7 @@ export type DetailMedia = EditorTitle & {
   completion_estimates?:import('./game-time-to-beat').CompletionEstimates|null;
   game_offer_context?:Omit<import('./game-offer-data').GameOffers,'offers'>;
   game_ratings?:import('./game-ratings-data').GameRatings|null;
+  game_info?:import('./game-info-data').GameInfo|null;
   image_status?: {state:string;error?:string|null;retry_after?:number};
   background_status?: {state:string;error?:string|null;retry_after?:number};
   backdrop_fallback?:string;

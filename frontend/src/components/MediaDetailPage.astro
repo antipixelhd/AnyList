@@ -6,6 +6,7 @@ import GameProgress from './GameProgress.astro';
 import MediaDetailGameTimes from './MediaDetailGameTimes.astro';
 import MediaDetailGameOffer from './MediaDetailGameOffer.astro';
 import MediaDetailRatings from './MediaDetailRatings.astro';
+import MediaDetailGameRequirements from './MediaDetailGameRequirements.astro';
 import {gameRatingRows,gameRatingFields} from '../lib/game-ratings-data';
 import {viewerMediaPreferences} from '../lib/viewer-media-preferences';
 import Icon from './Icon.astro';
@@ -112,6 +113,7 @@ const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
               {!!title.friends.length&&<section class="lab-friends lab-module"><div class="lab-section-title"><h2>People you follow</h2><span><Icon name="star"/>{scoreLabel(title.friends_average??null)}</span></div><div class="lab-friends-grid">{title.friends.map(friend=><a class="lab-friend" href={`/user/${encodeURIComponent(friend.username)}/${title.type==='movie'?'movies':'series'}`}><span class="lab-friend-avatar friend-one" aria-hidden="true">{friend.id&&friend.has_avatar?<img src={`/api/proxy/profile/avatar/${friend.id}`} alt="" loading="lazy"/>:friend.username.slice(0,1).toUpperCase()}</span><div><h3>{friend.display_name||friend.username}</h3><p>{statuses.find(([id])=>id===friend.status)?.[1]||friend.status}</p></div><strong>{scoreLabel(friend.score)}</strong></a>)}</div></section>}
               {signedIn&&trackable&&!gameChild&&<section class="lab-note lab-module"><div class="lab-section-title"><h2><label for="detail-note">Personal note</label></h2><Icon name="comment"/></div><textarea id="detail-note" rows="3" placeholder="Something worth remembering…">{title.entry?.notes||''}</textarea><div class="lab-note-footer"><button class="lab-text-button" type="button" data-detail-save-note>Save <Icon name="check"/></button></div></section>}
             </div>
+            {gameTitle&&<MediaDetailGameRequirements info={title.game_info}/>}
             <section class="lab-related lab-module" data-detail-related hidden={!title.relations.length}><div class="lab-section-title"><h2>Relations</h2></div><div class="lab-related-grid" data-detail-related-grid>{title.relations.map(work=><MediaDetailWork work={work}/>)}</div></section>
             <section class="lab-similar lab-module" data-detail-similar hidden={!title.similar.length}><div class="lab-section-title"><h2>Similar {title.type==='series'?'series':`${title.type}s`}</h2></div><div class="lab-similar-grid" data-detail-similar-grid>{title.similar.map(work=><MediaDetailWork work={work} similar/>)}</div></section>
           </div>
@@ -125,7 +127,7 @@ const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
     </div>
   </div>
   <ImageLightbox id="detail-lightbox" gallery/>
-  <script id="media-detail-data" type="application/json" set:html={encode({id:title.id,type:title.type,relatedPending:signedIn&&screenTitle&&title.related_pending,imagesAvailable:signedIn&&screenTitle,heroAvailable:screenTitle,backgroundAvailable:signedIn&&screenTitle,gameCredits:signedIn&&gameTitle&&!!title.game_credit_status,characterStatus:gameTitle?title.game_credit_status:title.character_status,imageStatus:title.image_status,posters:title.posters,artwork,artworkPreview:title.artwork_preview,previewStatus:title.preview_status,backgroundStatus:title.background_status,artworkThumbnails:title.artwork_thumbnails,backdropFallback:title.backdrop_fallback,backdropFallbacks:title.backdrop_fallbacks})}/>
+  <script id="media-detail-data" type="application/json" set:html={encode({id:title.id,type:title.type,gameInfo:gameTitle?{info:title.game_info,country:title.game_offer_context?.country||'US',country_source:title.game_offer_context?.country_source||'fallback'}:undefined,relatedPending:signedIn&&screenTitle&&title.related_pending,imagesAvailable:signedIn&&screenTitle,heroAvailable:screenTitle,backgroundAvailable:signedIn&&screenTitle,gameCredits:signedIn&&gameTitle&&!!title.game_credit_status,characterStatus:gameTitle?title.game_credit_status:title.character_status,imageStatus:title.image_status,posters:title.posters,artwork,artworkPreview:title.artwork_preview,previewStatus:title.preview_status,backgroundStatus:title.background_status,artworkThumbnails:title.artwork_thumbnails,backdropFallback:title.backdrop_fallback,backdropFallbacks:title.backdrop_fallbacks})}/>
   <template data-detail-person-template><MediaDetailPerson person={{id:0,kind:'actor',name:'',image:null,url:'#',roles:[],characters:[]}}/></template>
   <template data-detail-work-icons><span class="media-work-placeholder" aria-hidden="true"><Icon name="film"/></span><Icon name="arrow-right"/></template>
 </article>:<div class="page-width"><p class="error-message" role="alert">{error||'Media not found.'}</p><a class="button-secondary" href="/browse">Browse</a></div>}

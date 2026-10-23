@@ -5,6 +5,7 @@ from datetime import timedelta
 from urllib.parse import urlsplit
 
 from core.catalogue_providers import ProviderError,ProviderHTTP
+from core.game_store_source import store_data,store_request
 
 PARTS=('all_time','recent','critic')
 
@@ -33,13 +34,9 @@ def summary(raw):
 
 
 def critic(raw,app):
-    if not isinstance(raw,dict) or not isinstance(raw.get(app),dict):raise ProviderError('bad_response')
-    response=raw[app]
     # Region restriction, removal or Store failure is unavailable evidence,
     # never a successful assertion that this game has no critic score.
-    if response.get('success') is not True:raise ProviderError('unavailable')
-    data=response.get('data')
-    if not isinstance(data,dict) or type(data.get('steam_appid')) is not int or data['steam_appid']!=int(app):raise ProviderError('bad_response')
+    data=store_data(raw,app)
     value=data.get('metacritic')
     if value is None:return {'score':None,'url':None,'source':'steam_store','platform':'PC'}
     if not isinstance(value,dict) or type(value.get('score')) is not int or not 0<=value['score']<=100:raise ProviderError('bad_response')
@@ -58,8 +55,7 @@ class GameRatingSource:
 
     async def fetch(self,app,part,stamp):
         if part=='critic':
-            raw=await self.http.request('steam','GET','https://store.steampowered.com/api/appdetails',
-                params={'appids':app,'l':'english','cc':'US'})
+            raw=await store_request(self.http,app)
             return {**critic(raw,app),'store_country':'US'}
         request=review_query(app,part,stamp)
         # Only this first-page summary is retained. No review paging, author

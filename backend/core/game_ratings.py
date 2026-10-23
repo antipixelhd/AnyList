@@ -62,10 +62,23 @@ async def view(db,work,*,enqueue=False,identities=None):
 
 
 class GameRatings:
-    def __init__(self,factory,source=None):self.factory=factory;self.source=source or GameRatingSource(factory)
+    job=JOB
+    parts=PARTS
+    component_prefix='game_rating_'
+    source_type=GameRatingSource
+
+    def __init__(self,factory,source=None):self.factory=factory;self.source=source or self.source_type(factory)
+
+    def component_kind(self,part):return self.component_prefix+part
+
+    def retention(self,part):return timedelta(days=30) if part=='critic' else timedelta(hours=6)
+
+    def publish(self,work,app,part,value):
+        previous=projection(work,app) or {'steam_app_id':app}
+        catalogue.merge_fields(work,{'attributes':{'game_ratings':{**previous,part:value}}},'steam')
 
     async def run(self,work_id):
-        key=(id(self.factory),work_id);task=_flights.get(key)
+        key=(id(self.factory),self.job,work_id);task=_flights.get(key)
         if task is None:
             if len(_flights)>=64:return 'busy'
             task=asyncio.create_task(self.bounded(work_id));_flights[key]=task
@@ -81,17 +94,17 @@ class GameRatings:
     async def _run(self,work_id):
         token=uuid.uuid4().hex
         async with self.factory() as db:
-            job=await db.scalar(snapshot(JOB,work_id).with_for_update())
+            job=await db.scalar(snapshot(self.job,work_id).with_for_update())
             if not job or not job.next_attempt_at or job.next_attempt_at>now() or job.lease_until and job.lease_until>now():return 'cached'
             work=await db.get(CatalogueEntity,work_id);app=await app_id(db,work)
             if not app:
                 job.error_code='identity_conflict';job.next_attempt_at=None;job.expires_at=now()+timedelta(days=1)
                 job.coverage={'state':'unavailable','complete':False};await db.commit();return 'unavailable'
-            components={row.kind.removeprefix('game_rating_'):row for row in await db.scalars(select(MetadataSnapshot).where(
+            components={row.kind.removeprefix(self.component_prefix):row for row in await db.scalars(select(MetadataSnapshot).where(
                 MetadataSnapshot.provider=='steam',MetadataSnapshot.entity_id==work_id,
-                MetadataSnapshot.kind.in_([f'game_rating_{part}' for part in PARTS])))}
+                MetadataSnapshot.kind.in_([self.component_kind(part) for part in self.parts])))}
             # A failed component can retry without fetching successful siblings.
-            due=[part for part in PARTS if part not in components or not components[part].expires_at or
+            due=[part for part in self.parts if part not in components or not components[part].expires_at or
                 components[part].expires_at<=now() or (components[part].coverage or {}).get('steam_app_id')!=app]
             job.lease_token=token;job.lease_until=now()+timedelta(minutes=3);await db.commit()
         failures=[]
@@ -103,27 +116,26 @@ class GameRatings:
                     value={**value,'fetched_at':stamp.isoformat()}
                     async with self.factory() as db:
                         await catalogue.write_lock(db)
-                        job=await db.scalar(snapshot(JOB,work_id).with_for_update())
+                        job=await db.scalar(snapshot(self.job,work_id).with_for_update())
                         if not job or job.lease_token!=token or job.lease_until<=now():return 'superseded'
                         work=await db.get(CatalogueEntity,work_id)
                         if await app_id(db,work)!=app:raise catalogue.IdentityConflict('Game Steam identity changed')
-                        record=await db.scalar(snapshot(f'game_rating_{part}',work_id))
+                        record=await db.scalar(snapshot(self.component_kind(part),work_id))
                         if not record:
-                            record=MetadataSnapshot(provider='steam',kind=f'game_rating_{part}',external_id=str(work_id),entity_id=work_id);db.add(record)
+                            record=MetadataSnapshot(provider='steam',kind=self.component_kind(part),external_id=str(work_id),entity_id=work_id);db.add(record)
                         record.payload=value;record.coverage={'state':'complete','complete':True,'steam_app_id':app}
-                        record.fetched_at=now();record.expires_at=now()+timedelta(days=30) if part=='critic' else now()+timedelta(hours=6)
-                        previous=projection(work,app) or {'steam_app_id':app}
-                        catalogue.merge_fields(work,{'attributes':{'game_ratings':{**previous,part:value}}},'steam')
+                        record.fetched_at=now();record.expires_at=now()+self.retention(part)
+                        self.publish(work,app,part,value)
                         await db.commit()
                 except catalogue.IdentityConflict:raise
                 except Exception as error:failures.append(error)
             async with self.factory() as db:
-                job=await db.scalar(snapshot(JOB,work_id).with_for_update())
+                job=await db.scalar(snapshot(self.job,work_id).with_for_update())
                 if not job or job.lease_token!=token:return 'superseded'
                 if failures:self.fail(job,failures[0])
                 else:
                     expiry=await db.scalar(select(MetadataSnapshot.expires_at).where(MetadataSnapshot.provider=='steam',
-                        MetadataSnapshot.entity_id==work_id,MetadataSnapshot.kind.in_([f'game_rating_{part}' for part in PARTS]))
+                        MetadataSnapshot.entity_id==work_id,MetadataSnapshot.kind.in_([self.component_kind(part) for part in self.parts]))
                         .order_by(MetadataSnapshot.expires_at).limit(1))
                     job.coverage={'state':'complete','complete':True,'steam_app_id':app}
                     job.fetched_at=now();job.expires_at=expiry or now()+timedelta(hours=6)
@@ -134,7 +146,7 @@ class GameRatings:
             await self.release(work_id,token);raise
         except Exception as error:
             async with self.factory() as db:
-                job=await db.scalar(snapshot(JOB,work_id).with_for_update())
+                job=await db.scalar(snapshot(self.job,work_id).with_for_update())
                 if job and job.lease_token==token:
                     self.fail(job,error);job.lease_token=job.lease_until=None;await db.commit()
             return 'retry'
@@ -148,14 +160,14 @@ class GameRatings:
 
     async def release(self,work_id,token):
         async with self.factory() as db:
-            job=await db.scalar(snapshot(JOB,work_id).with_for_update())
+            job=await db.scalar(snapshot(self.job,work_id).with_for_update())
             if job and job.lease_token==token:
                 job.lease_token=job.lease_until=None;job.next_attempt_at=now();await db.commit()
 
     async def tick(self):
         async with self.factory() as db:
             ids=list(await db.scalars(select(MetadataSnapshot.entity_id).where(MetadataSnapshot.provider=='steam',
-                MetadataSnapshot.kind==JOB,MetadataSnapshot.next_attempt_at<=now(),
+                MetadataSnapshot.kind==self.job,MetadataSnapshot.next_attempt_at<=now(),
                 or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=now()))
                 .order_by(MetadataSnapshot.next_attempt_at,MetadataSnapshot.id).limit(2)))
         if ids:await asyncio.gather(*(self.run(work_id) for work_id in ids))
@@ -163,7 +175,10 @@ class GameRatings:
 
 async def scheduler():
     from db import AsyncSessionLocal
-    service=GameRatings(AsyncSessionLocal)
+    await run_scheduler(GameRatings(AsyncSessionLocal))
+
+
+async def run_scheduler(service):
     try:
         while True:
             delay=5
@@ -172,6 +187,6 @@ async def scheduler():
             except Exception:delay=30
             await asyncio.sleep(delay)
     finally:
-        tasks=[task for (scope,_),task in list(_flights.items()) if scope==id(AsyncSessionLocal)]
+        tasks=[task for (scope,job,_),task in list(_flights.items()) if scope==id(service.factory) and job==service.job]
         for task in tasks:task.cancel()
         if tasks:await asyncio.gather(*tasks,return_exceptions=True)

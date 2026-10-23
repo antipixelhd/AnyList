@@ -136,6 +136,18 @@ async def game_completion_estimates(work_id:WorkId,db:DB,viewer:Reader) -> dict:
     return result
 
 
+@router.get('/works/{work_id}/info')
+async def game_store_info(work_id:WorkId,db:DB,viewer:Reader,country:Annotated[str|None,Query(min_length=2,max_length=2)]=None) -> dict:
+    from core.game_info import view
+    from core.game_offers import country as effective_country
+    from core.catalogue_providers import ProviderError
+    work=await tracking.work(db,work_id)
+    try:region=await effective_country(db,viewer.id,country)
+    except ProviderError:raise HTTPException(422,'Invalid country') from None
+    result=await view(db,work,enqueue=True);await db.commit()
+    return {**result,'country':region['country'],'country_source':region['source']}
+
+
 @router.get('/works/{work_id}/credits')
 async def game_credits(work_id: WorkId, db: DB, viewer: Reader) -> dict:
     from core.media_details import work_details

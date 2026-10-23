@@ -226,6 +226,18 @@ async def main(args):
                     db.add(MetadataSnapshot(provider='steam',kind=f'game_{part}',external_id=str(first_game.id),entity_id=first_game.id,
                         coverage={'state':'complete','complete':True,'steam_app_id':'9000000'},
                         payload={'raw':'RATING_EVIDENCE_SENTINEL '*50000},expires_at=stamp+timedelta(hours=6)))
+            if args.case and 'game_info' in args.case:
+                if not await db.scalar(select(CatalogueIdentity.id).where(CatalogueIdentity.entity_id==first_game.id,
+                        CatalogueIdentity.namespace=='steam.app')):
+                    db.add(CatalogueIdentity(entity_id=first_game.id,namespace='steam.app',external_id='9000000',source='igdb'))
+                first_game.attributes={**first_game.attributes,'game_info':{'steam_app_id':'9000000','age_ratings':[
+                    {'board':'USK','region':'Germany','rating':'16','source':'steam','descriptors':[]}],
+                    'requirements':{'platform':'PC','source':'steam','minimum':[{'label':'Memory','value':'12 GB RAM'}],'recommended':[]}}}
+                stamp=datetime.now(timezone.utc).replace(tzinfo=None)
+                for kind in ('game_info_job','game_store_info'):
+                    db.add(MetadataSnapshot(provider='steam',kind=kind,external_id=str(first_game.id),entity_id=first_game.id,
+                        coverage={'state':'complete','complete':True,'steam_app_id':'9000000'},
+                        payload={'raw':'STORE_INFO_SENTINEL '*50000},expires_at=stamp+timedelta(days=7)))
             if args.case and 'game_person_availability' in args.case:
                 from core.contributor_availability import movie_job
                 from core.game_imdb_bindings import revision
@@ -362,6 +374,9 @@ async def main(args):
                 if label=='game_ratings':
                     row['result_identity']=hashlib.sha256(json.dumps(result['ratings'],sort_keys=True).encode()).hexdigest()
                     row['rows']=len(result['ratings'])-1;row['pending']=result['status']['pending']
+                if label=='game_info':
+                    row['result_identity']=hashlib.sha256(json.dumps(result['info'],sort_keys=True).encode()).hexdigest()
+                    row['rows']=len(result['info']['age_ratings']);row['pending']=result['status']['pending']
             samples.append(row)
             return result
 
@@ -437,6 +452,7 @@ async def main(args):
             *([('game_time_to_beat',f'games/works/{first_game.id}/time-to-beat',{})] if args.case and 'game_time_to_beat' in args.case else []),
             *([('game_offers',f'games/works/{first_game.id}/offers',{'country':'DE'})] if args.case and 'game_offers' in args.case else []),
             *([('game_ratings',f'games/works/{first_game.id}/ratings',{})] if args.case and 'game_ratings' in args.case else []),
+            *([('game_info',f'games/works/{first_game.id}/info',{'country':'DE'})] if args.case and 'game_info' in args.case else []),
             ('game_search_prefix','games/search',{'q':'Elden R'}),
             *([('game_children',f'games/works/{children_base}/children',{'limit':24})] if children_base else []),
             ('game_browse_preview','games/browse',{'limit':6}),
@@ -549,6 +565,18 @@ async def main(args):
                         params['unfiltered'] = 'true'
 
                     async def operation(path=path, params=params, label=label, mode=mode):
+                        if label=='game_info':
+                            result=await request(path,params)
+                            if result['info']['steam_app_id']!='9000000' or result['info']['requirements']['minimum'][0]['value']!='12 GB RAM':
+                                raise RuntimeError('Cached game requirements lost identity or minimum tier')
+                            if result['country']!='DE' or result['status']['pending'] or not result['status']['complete']:
+                                raise RuntimeError('Cached game info lost country or queued fresh data')
+                            if counters['provider_requests'] or counters['db_writes']:raise RuntimeError('Warm game info performed provider work or writes')
+                            if 'SENTINEL' in json.dumps(result):raise RuntimeError('Game info exposed raw source evidence')
+                            for identity in counters:
+                                sql=sql_patterns.get(identity.removeprefix('sql:'),'') if identity.startswith('sql:') else ''
+                                if 'catalogue_metadata_snapshots.payload' in sql:raise RuntimeError('Game info hydrated raw provider evidence')
+                            return result
                         if label=='game_ratings':
                             result=await request(path,params)
                             ratings=result['ratings']
