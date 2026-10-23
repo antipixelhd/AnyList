@@ -1813,6 +1813,7 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
     was_new_entry = entry is None
     previous = entry.status if entry else None
     old_start_date = entry.start_date if entry else None
+    old_finish_date = entry.finish_date if entry else None
     old_progress = entry.progress if entry else 0
     old_score = effective_score(entry.rating_mode, entry.manual_score, entry.season_scores) if entry else None
     old_season_scores = dict(entry.season_scores or {}) if entry else {}
@@ -1930,10 +1931,13 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
                 row.rating, row.rated_at = value, datetime.now(timezone.utc).replace(tzinfo=None)
         else:
             db.add(Rating(user_id=viewer.id, media_id=media_id, season_number=season, rating=value))
-    if fields & {"start_date", "finish_date"}:
+    changed_dates = {name for name, before, after in (
+        ('start_date', old_start_date, entry.start_date), ('finish_date', old_finish_date, entry.finish_date),
+    ) if name in fields and before != after}
+    if changed_dates:
         from core.streaming_activity import reschedule_date_activity
         await reschedule_date_activity(db, viewer.id, media_id, start_date=entry.start_date,
-                                       finish_date=entry.finish_date, changed=fields)
+                                       finish_date=entry.finish_date, changed=changed_dates)
     progress_changed = entry.progress != old_progress
     if old_score != score and score is None:
         from core.activity import clear_recent_rating_activity

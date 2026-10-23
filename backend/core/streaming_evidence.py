@@ -94,6 +94,13 @@ def completion_evidence(item):
     return result
 
 
+def activity_event_order(event):
+    # Final status must win over episode/season actions on the same day.
+    return event['date'], (3 if event['key'] in ('finish', 'status') else
+                           2 if event['key'].startswith('season:') else
+                           0 if event['key'] == 'start' else 1)
+
+
 def activity_plan(item, finish_date=None):
     outcome = item.get('outcome') or {}
     episodes = [ep for ep in item.get('episodes', []) if ep.get('resolution') in ('exact', 'guessed')]
@@ -123,4 +130,4 @@ def activity_plan(item, finish_date=None):
     season_days = {(event['finished_seasons'][0], event['date']) for event in events if event.get('finished_seasons')}
     events = [event for event in events if not (event['key'].startswith('episode:') and
               (int(event['key'].split(':')[1]), event['date']) in season_days)]
-    return sorted(events, key=lambda event: (event['date'], event['key'] == 'finish', event['key'].startswith('season:')))
+    return sorted(events, key=activity_event_order)

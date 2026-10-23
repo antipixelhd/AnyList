@@ -114,6 +114,42 @@ class MemoryDb:
 
 
 class ActivityTests(unittest.IsolatedAsyncioTestCase):
+    async def test_same_day_season_card_preserves_final_dropped_status(self):
+        db = MemoryDb()
+        item = show()
+        item['outcome'].update(status='partial', tracking_status='dropped', latest_episode=8)
+        item['episodes'][-1]['episode_number'] = 8
+        events = activity_plan(item)
+        self.assertEqual(events[-1]['key'], 'status')
+        latest = await record_streaming_activity(db, 1, 2, events, score=7)
+        self.assertEqual(latest.status, 'dropped')
+        self.assertEqual(latest.payload['finished_seasons'], [1])
+        self.assertTrue(latest.payload['status_changed'])
+        self.assertEqual(latest.score, 7)
+
+    async def test_existing_card_keeps_its_timestamp_status_and_fixed_window(self):
+        from models.tracking import TrackingActivity
+        from core.activity import activity_window_start
+        db = MemoryDb()
+        row = TrackingActivity(user_id=1, media_id=2, status='paused',
+                               created_at=datetime(2020, 1, 3, 12), payload={
+                                   'window_started_at': '2020-01-02T20:00:00',
+                                   'status_changed': True, 'position': 'S1E4', 'episodes_watched': 1,
+                               })
+        db.rows.append(row)
+        await record_streaming_activity(db, 1, 2, [
+            {'key': 'episode:1:3', 'date': '2020-01-03', 'status': 'watching', 'episodes_watched': 1, 'position': 'S1E3'},
+        ])
+        self.assertEqual(len(db.rows), 1)
+        self.assertEqual(row.created_at, datetime(2020, 1, 3, 12))
+        self.assertEqual(row.status, 'paused')
+        self.assertEqual(row.payload['position'], 'S1E4')
+        self.assertEqual(activity_window_start(row), datetime(2020, 1, 2, 20))
+        await record_streaming_activity(db, 1, 2, [
+            {'key': 'episode:1:5', 'date': '2020-01-04', 'status': 'watching', 'episodes_watched': 1, 'position': 'S1E5'},
+        ])
+        self.assertEqual(len(db.rows), 2)
+
     async def test_historical_windows_repeat_import_and_rating_attachment(self):
         db = MemoryDb(); events = activity_plan(show(), '2020-01-03')
         latest = await record_streaming_activity(db, 1, 2, events, score=8)

@@ -2,15 +2,19 @@ from datetime import datetime, timedelta
 from sqlalchemy import select
 from models.tracking import TrackingActivity
 from core.activity import activity_window_start, has_activity_event, _record_rating_details, RATING_ACTIVITY_FIELDS
+from core.streaming_evidence import activity_event_order
 
 
 def _rebuild(row):
     details = dict(row.payload or {})
     events = details.get('streaming_events', {})
     base = dict(details.get('streaming_base', {}))
-    values = sorted(events.values(), key=lambda event: (event['date'], event['key'] == 'finish', event['key'].startswith('season:')))
+    values = sorted(events.values(), key=activity_event_order)
     base['streaming_events'] = events
     base['streaming_base'] = details.get('streaming_base', {})
+    for key in ('streaming_base_at', 'streaming_base_status'):
+        if key in details:
+            base[key] = details[key]
     base['episodes_watched'] = max(int(base.get('episodes_watched') or 0), sum(e.get('episodes_watched', 0) for e in values))
     base['finished_seasons'] = sorted(set(base.get('finished_seasons', [])) | {s for e in values for s in e.get('finished_seasons', [])})
     for event in values:
@@ -18,9 +22,19 @@ def _rebuild(row):
             if event.get(key) is not None:
                 base[key] = event[key]
         row.status = event['status']
-    if values:
-        row.created_at = datetime.fromisoformat(max(e['date'] for e in values))
-        base['window_started_at'] = min(e['date'] for e in values) + 'T00:00:00'
+    base_at = datetime.fromisoformat(details['streaming_base_at']) if details.get('streaming_base_at') else None
+    if base_at and (not values or base_at >= datetime.fromisoformat(values[-1]['date'])):
+        row.status = details['streaming_base_status']
+        if details['streaming_base'].get('position'):
+            base['position'] = details['streaming_base']['position']
+    times = [datetime.fromisoformat(event['date']) for event in values]
+    if base_at:
+        times.append(base_at)
+    if times:
+        row.created_at = max(times)
+    # A card's grouping window stays fixed even when its first action moves.
+    if details.get('window_started_at'):
+        base['window_started_at'] = details['window_started_at']
     for key in RATING_ACTIVITY_FIELDS:
         if key in details:
             base[key] = details[key]
@@ -54,6 +68,9 @@ async def record_streaming_activity(db, user_id, media_id, events, *, score=None
         details = dict(row.payload or {})
         if 'streaming_base' not in details:
             details['streaming_base'] = dict(details)
+            details['streaming_base_at'] = row.created_at.isoformat()
+            details['streaming_base_status'] = row.status
+            details['window_started_at'] = activity_window_start(row).isoformat()
         details['streaming_events'] = {**details.get('streaming_events', {}), event['key']: event}
         row.payload = details
         _rebuild(row)
