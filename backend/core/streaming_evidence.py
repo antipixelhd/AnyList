@@ -82,8 +82,14 @@ def prepare_evidence(items, observations):
         else:
             catalog = {(ep.get('season_number'), ep.get('episode_number')): ep for ep in item.get('catalog_episodes', [])}
             for episode in item.get('episodes', []):
-                names = [episode.get('source_title'), episode.get('source_episode_title')]
-                rows = next((by_title[_norm_text(name)] for name in names if name and _norm_text(name) in by_title), [])
+                names = [episode.get('source_title'), *(episode.get('source_titles') or [])]
+                indexed = {}
+                for name in names:
+                    for row in by_title.get(_norm_text(name), []) if name else []:
+                        indexed[row['row']] = row
+                rows = list(indexed.values())
+                if not rows and episode.get('source_episode_title'):
+                    rows = by_title.get(_norm_text(episode['source_episode_title']), [])
                 rows = [row for row in rows if (not row.get('show_title') or _norm_text(row['show_title']) == _norm_text(item['source_title']))
                         and (row.get('season_number') is None or row['season_number'] == episode.get('season_number'))]
                 runtime = (catalog.get((episode.get('season_number'), episode.get('episode_number'))) or {}).get('runtime')

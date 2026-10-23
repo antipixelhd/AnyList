@@ -1922,6 +1922,9 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
         if rollback:
             removed_watched_ids = removing
             await db.execute(delete(WatchEvent).where(WatchEvent.user_id == viewer.id, WatchEvent.media_id.in_(removing if episode_change else ids[target:])))
+            from core.activity import reconcile_unwatched_activity
+            await reconcile_unwatched_activity(db, user_id=viewer.id, media=media,
+                                               episodes=episodes, watched_ids=desired, removed_ids=removing)
         entry.progress = target
         if episode_change and previous == 'completed' and removing:
             entry.status = 'watching' if target else 'planning'

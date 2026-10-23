@@ -2692,7 +2692,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         res=await self.client.delete(f'/tracking/entry/{self.movie.id}?confirmed=true')
         self.assertEqual(res.status_code,200,res.text)
         self.assertTrue(res.json()['library_preserved'])
-        for model in (TrackedEntry,Rating,WatchEvent):
+        for model in (TrackedEntry,Rating,WatchEvent,TrackingActivity):
             self.assertEqual((await self.db.execute(select(model).where(model.user_id==self.owner.id,model.media_id==self.movie.id))).scalars().all(),[])
         self.assertIsNotNone((await self.db.execute(select(Collection).where(Collection.user_id==self.owner.id,Collection.media_id==self.movie.id))).scalar_one_or_none())
         self.assertIsNotNone((await self.db.execute(select(TrackingDeletion).where(TrackingDeletion.user_id==self.owner.id,TrackingDeletion.media_id==self.movie.id))).scalar_one_or_none())

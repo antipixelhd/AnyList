@@ -277,6 +277,66 @@ def _retain_local_activity(row, details, status, score, now):
     return True
 
 
+async def reconcile_unwatched_activity(db, *, user_id, media, episodes, watched_ids, removed_ids):
+    """Remove invalidated watch milestones across all historical card windows."""
+    from core.streaming_activity import _rebuild
+    rows = (await db.execute(select(TrackingActivity).where(
+        TrackingActivity.user_id == user_id, TrackingActivity.media_id == media.id,
+    ))).scalars().all()
+    positions = [f'S{episode.season_number}E{episode.episode_number}' for episode in episodes]
+    watched_positions = {position for position, episode in zip(positions, episodes) if episode.id in watched_ids}
+    invalid_seasons = {ep.season_number for ep in episodes if ep.id in removed_ids}
+    complete = bool(episodes) and all(ep.id in watched_ids for ep in episodes)
+
+    def trim(payload, status):
+        details = dict(payload)
+        recorded = details.get('episode_positions')
+        if recorded is None and details.get('episodes_watched'):
+            first, last = details.get('position_start') or details.get('position'), details.get('position')
+            if first in positions and last in positions:
+                recorded = positions[positions.index(first):positions.index(last)+1]
+            elif details.get('progress') is not None:
+                end = int(details['progress'])
+                recorded = positions[max(0, end-int(details['episodes_watched'])):end]
+        if recorded is not None:
+            remaining = [position for position in recorded if position in watched_positions]
+            details.update(episode_positions=remaining,
+                           episodes_watched=min(len(remaining), int(details.get('episodes_watched') or 0)),
+                           position_start=remaining[0] if remaining else None, position=remaining[-1] if remaining else None)
+        elif not watched_ids:
+            details['episodes_watched'] = 0
+        details['finished_seasons'] = [number for number in details.get('finished_seasons', []) if number not in invalid_seasons]
+        if not complete and status == 'completed':
+            details['status_changed'] = False
+        if not watched_ids:
+            details['started_watching'] = False
+            if status == 'watching':
+                details['status_changed'] = False
+        return details
+
+    for row in rows:
+        details = dict(row.payload or {})
+        if 'streaming_events' in details:
+            details['streaming_base'] = trim(details.get('streaming_base', {}), details.get('streaming_base_status', row.status))
+            details['streaming_events'] = {
+                key: event for key, event in details['streaming_events'].items()
+                if (not event.get('episodes_watched') or event.get('position') in watched_positions)
+                and (not event.get('finished_seasons') or all(sn not in invalid_seasons for sn in event['finished_seasons']))
+                and (key != 'finish' or complete) and (key != 'start' or watched_ids)
+            }
+            if not complete and details.get('streaming_base_status') == 'completed':
+                details['streaming_base_status'] = 'watching'
+            row.payload = details
+            if row.status == 'completed' and not complete:
+                row.status = 'watching'
+            _rebuild(row)
+        else:
+            row.payload = trim(details, row.status)
+        if not has_activity_event(row.status, row.payload):
+            await db.delete(row)
+    await db.flush()
+
+
 async def record_progress_activity(db, *, user_id: int, media: Media, previous_progress: int,
                                    progress: int, status: str, score: float | None,
                                    status_changed: bool = False, rating_changed: bool = False,
@@ -327,8 +387,7 @@ async def record_progress_activity(db, *, user_id: int, media: Media, previous_p
             return f'S{episode.season_number}E{episode.episode_number}'
         details['position_start'] = position(new[0]) if new and details['episodes_watched'] else None
         details['position'] = position(new[-1]) if new and details['episodes_watched'] else None
-        if row and 'streaming_base' in (row.payload or {}):
-            details['episode_positions'] = [position(episode) for episode in new]
+        details['episode_positions'] = [position(episode) for episode in new]
         before = _finished_watched_seasons(episodes, expected, [episode for episode in episodes if episode.id in start_ids])
         after = _finished_watched_seasons(episodes, expected, [episode for episode in episodes if episode.id in current_ids])
         details['finished_seasons'] = sorted(set(after) - set(before))

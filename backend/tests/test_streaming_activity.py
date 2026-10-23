@@ -18,6 +18,23 @@ def show():
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_merged_source_aliases_keep_the_earliest_equal_strength_episode_watch(self):
+        from core.streaming_evidence import prepare_evidence
+        from core.streaming_history import WatchObservation
+        item = show()
+        item['source_title'] = 'Show'
+        item['episodes'] = [{'source_title': 'Show: Season 1: Pilot', 'source_episode_title': 'Pilot',
+                             'source_titles': ['Show: Season 1: Pilot', 'Show: Staffel 1: Pilot'],
+                             'season_number': 1, 'episode_number': 1, 'resolution': 'exact',
+                             'dates': ['2020-01-01', '2022-01-01']}]
+        rows = [WatchObservation(row=1, source_title='Show: Season 1: Pilot', show_title='Show',
+                                 season_number=1, watched_at='2022-01-01'),
+                WatchObservation(row=2, source_title='Show: Staffel 1: Pilot', show_title='Show',
+                                 season_number=1, watched_at='2020-01-01')]
+        prepare_evidence([item], rows)
+        self.assertEqual(item['episodes'][0]['dates'], ['2020-01-01'])
+        self.assertEqual(len(item['episodes'][0]['viewings']), 2)
+
     def test_movie_and_same_name_series_keep_separate_evidence(self):
         from core.streaming_evidence import prepare_evidence
         from core.streaming_history import WatchObservation
@@ -145,6 +162,39 @@ class MemoryDb:
 
 
 class ActivityTests(unittest.IsolatedAsyncioTestCase):
+    async def test_rollback_removes_imported_and_older_local_milestones_without_losing_ratings(self):
+        from core.activity import reconcile_unwatched_activity
+        from models.tracking import TrackingActivity
+        db = MemoryDb()
+        episodes = [SimpleNamespace(id=i, season_number=1, episode_number=i) for i in (1, 2, 3)]
+        media = SimpleNamespace(id=2)
+        await record_streaming_activity(db, 1, 2, [
+            {'key': 'episode:1:1', 'date': '2020-01-01', 'status': 'watching', 'episodes_watched': 1, 'position': 'S1E1'},
+            {'key': 'episode:1:2', 'date': '2020-01-01', 'status': 'watching', 'episodes_watched': 1, 'position': 'S1E2'},
+            {'key': 'season:1', 'date': '2020-01-03', 'status': 'watching', 'finished_seasons': [1]},
+            {'key': 'finish', 'date': '2020-01-03', 'status': 'completed', 'status_changed': True},
+        ], score=8)
+        local = TrackingActivity(user_id=1, media_id=2, status='watching', created_at=datetime(2020, 2, 1),
+                                 payload={'episodes_watched': 3, 'position_start': 'S1E1', 'position': 'S1E3',
+                                          'finished_seasons': [1]})
+        db.add(local)
+        await reconcile_unwatched_activity(db, user_id=1, media=media, episodes=episodes,
+                                           watched_ids={1}, removed_ids={2, 3})
+        self.assertEqual(local.payload['episodes_watched'], 1)
+        self.assertEqual(local.payload['position'], 'S1E1')
+        self.assertEqual(local.payload['finished_seasons'], [])
+        self.assertFalse(any((row.payload or {}).get('finished_seasons') for row in db.rows))
+        rated = next(row for row in db.rows if row.score == 8)
+        self.assertTrue(rated.payload['rating_changed'])
+        self.assertFalse(rated.payload.get('status_changed'))
+        self.assertEqual(rated.created_at, datetime(2020, 1, 3))
+        imported = next(row for row in db.rows if row.payload.get('streaming_events', {}).get('episode:1:1'))
+        self.assertEqual(imported.payload['episodes_watched'], 1)
+        self.assertNotIn('episode:1:2', imported.payload['streaming_events'])
+        await reconcile_unwatched_activity(db, user_id=1, media=media, episodes=episodes,
+                                           watched_ids=set(), removed_ids={1})
+        self.assertEqual(db.rows, [rated])
+
     async def test_local_pause_survives_rescheduling_imported_start(self):
         from unittest.mock import AsyncMock, patch
         from datetime import date
