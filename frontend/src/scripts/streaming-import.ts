@@ -301,10 +301,10 @@ function mountStreamingImport(app: HTMLElement) {
     if (item.outcome.status !== "partial") return "";
     const seasons = (item.seasons ?? []).filter((season) => season.season_number > 0 && (season.total_released ?? 0) > 0).sort((a, b) => a.season_number - b.season_number);
     if (!seasons.length) return `<p class="mt-3 text-xs text-amber-200">Episode details are not available for this show yet. Choose Skip or wait for the catalogue to finish loading.</p>`;
-    const currentSeason = seasons.find((season) => season.season_number === item.outcome.latest_season) ?? seasons[seasons.length - 1];
+    const currentSeason = seasons.find((season) => season.season_number === item.outcome.latest_season) ?? seasons[0];
     const season = currentSeason.season_number;
     const total = currentSeason.total_released ?? 0;
-    const episode = Math.max(1, Math.min(total, item.outcome.latest_episode ?? total));
+    const episode = Math.max(1, Math.min(total, item.outcome.latest_episode ?? 1));
     const seasonOptions = seasons.map((meta) => `<option value="${meta.season_number}" ${meta.season_number === season ? "selected" : ""}>Season ${meta.season_number}</option>`).join("");
     const episodeOptions = Array.from({ length: Math.min(total, 100) }, (_, i) => i + 1).map((n) => `<option value="${n}" ${n === episode ? "selected" : ""}>Episode ${n}</option>`).join("");
     const tracking = item.outcome.tracking_status ?? "watching";
@@ -770,6 +770,14 @@ function mountStreamingImport(app: HTMLElement) {
     if (action === "outcome") {
       const status = button.dataset.status as StreamingItem["outcome"]["status"];
       if (status === "completed") await confirmFinishDate(item);
+      if (status === 'partial' && (!item.outcome.latest_season || !item.outcome.latest_episode)) {
+        const firstSeason = (item.seasons ?? []).filter(season => season.season_number > 0 && (season.total_released ?? 0) > 0)
+          .sort((a, b) => a.season_number - b.season_number)[0];
+        if (firstSeason) {
+          await saveItem(item, {status, latest_season: firstSeason.season_number, latest_episode: 1});
+          return;
+        }
+      }
       await saveItem(item, { status });
     }
   });
