@@ -1,11 +1,5 @@
-import { icon } from "@fortawesome/fontawesome-svg-core";
-import { faChevronDown } from "@fortawesome/free-solid-svg-icons";
 import { showDialog, closeDialog } from '../lib/ui-motion';
 import { showMessage } from '../lib/settings-feedback';
-
-const disclosureArrow = icon(faChevronDown, {
-  classes: ["streaming-disclosure-arrow"], attributes: { "aria-hidden": "true", "data-dropdown-arrow": "" },
-})!.html.join("");
 
 type MatchCandidate = {
   media_type: "movie" | "show";
@@ -71,6 +65,7 @@ type SearchResult = MatchCandidate & { id?: number | null };
 function mountStreamingImport(app: HTMLElement) {
   if (!app || app.dataset.streamingInitialized === "true") return;
   app.dataset.streamingInitialized = "true";
+  const disclosureArrow = app.querySelector<HTMLTemplateElement>('[data-role="streaming-disclosure-arrow"]')!.innerHTML;
   const upload = app.querySelector<HTMLElement>('[data-role="streaming-import-upload"]') as HTMLDivElement;
   const uploadControls = app.querySelector<HTMLElement>('[data-role="streaming-import-upload-controls"]') as HTMLElement;
   const fileInput = app.querySelector<HTMLElement>('[data-role="streaming-import-file"]') as HTMLInputElement;

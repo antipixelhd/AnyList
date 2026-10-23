@@ -1,10 +1,12 @@
 ---
+import Icon from "../Icon.astro";
 interface Props { hasTmdbKey: boolean; service: "netflix" | "amazon" }
 const { hasTmdbKey, service } = Astro.props;
 const serviceName = service === "amazon" ? "Amazon Prime Video" : "Netflix";
 const extension = service === "amazon" ? ".zip" : ".csv";
 ---
     <div data-streaming-import data-service={service} data-service-name={serviceName} data-extension={extension} data-has-tmdb-key={String(hasTmdbKey)}>
+      <template data-role="streaming-disclosure-arrow"><Icon name="chevron-down" class="streaming-disclosure-arrow" /></template>
       <input type="file" id={`${service}-streaming-import-file`} data-role="streaming-import-file" accept={extension} class="hidden" disabled={!hasTmdbKey} />
       <div id={`${service}-streaming-import-upload-controls`} data-role="streaming-import-upload-controls">
       <div id={`${service}-streaming-import-upload`} data-role="streaming-import-upload" class:list={[
