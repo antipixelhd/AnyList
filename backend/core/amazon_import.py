@@ -9,7 +9,7 @@ import csv
 import io
 import math
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from zipfile import ZipFile, BadZipFile
 from core.archive_reader import BoundedZipReader
@@ -83,6 +83,10 @@ def parse_amazon_zip(content: bytes, language: str | None = None) -> ParsedHisto
     sessions = tables.get("Viewing History.csv")
     if sessions is None:
         raise ValueError("The ZIP must contain Prime Video Viewing History.csv.")
+    if not parsed.language:
+        locales = Counter(_text(row.get("Preferred Language Code")).lower() for row in sessions
+                          if re.fullmatch(r"[a-zA-Z]{2}(?:-[a-zA-Z]{2})?", _text(row.get("Preferred Language Code"))))
+        parsed.language = locales.most_common(1)[0][0] if locales else None
     # Summary records can corroborate meaningful viewing but only when they map
     # to exactly one detailed identity. Never guess between same-name episodes.
     identities = defaultdict(set)

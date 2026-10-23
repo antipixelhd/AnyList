@@ -363,6 +363,7 @@ async def _prepare_session(session_id: str, user_id: int, language: str | None) 
             history = await asyncio.to_thread(parse_amazon_zip, content, language=resolved_language)
         else:
             history = parse_netflix_csv(content, language=resolved_language)
+        resolved_language = resolved_language or getattr(history, "language", None)
         history_dict = history.to_dict() if hasattr(history, "to_dict") else {}
         row_count = len(getattr(history, "rows", []) or history_dict.get("rows", []))
         await _set_progress(session_id, user_id, 1, 1, "Viewing history parsed", phase="match")

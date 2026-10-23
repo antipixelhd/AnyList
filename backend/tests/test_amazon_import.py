@@ -9,7 +9,7 @@ def archive(rows, summaries=()):
     result = io.BytesIO()
     with ZipFile(result, "w") as z:
         for name, data, fields in [
-            ("Viewing History.csv", rows, ["Title", "Seconds Viewed", "Playback Start Datetime (UTC)", "Material Type Description", "Is Deleted"]),
+            ("Viewing History.csv", rows, ["Title", "Seconds Viewed", "Playback Start Datetime (UTC)", "Material Type Description", "Is Deleted", "Preferred Language Code"]),
             ("Watch Events.csv", summaries, ["Title Name", "Seconds Watched", "Most Recent Watch Date", "Deleted from Watch History"])]:
             text = io.StringIO(); writer = csv.DictWriter(text, fieldnames=fields)
             writer.writeheader(); writer.writerows(data)
@@ -66,3 +66,8 @@ class AmazonImportTests(unittest.TestCase):
     def test_duplicated_movie_title_is_normalized_before_matching(self):
         parsed = parse_amazon_zip(archive([session(title="Movie-Movie")]))
         self.assertEqual(parsed.rows[0].source_title, "Movie")
+
+    def test_export_locale_is_inferred_and_explicit_choice_wins(self):
+        data = archive([session(**{"Preferred Language Code": '"de"'})])
+        self.assertEqual(parse_amazon_zip(data).language, "de")
+        self.assertEqual(parse_amazon_zip(data, language="en").language, "en")
