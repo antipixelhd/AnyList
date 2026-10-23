@@ -106,6 +106,16 @@ class NetflixAutomaticEpisodeImportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(movie["outcome"]["status"], "skip")
         self.assertTrue(movie["requires_watch_confirmation"])
 
+    def test_playback_sessions_do_not_become_multiple_completed_rewatches(self):
+        movie = {"kind": "movie", "source_dates": ["2020-01-01", "2020-01-02"],
+                 "match": {}, "outcome": {}}
+        show = _show_item()
+        show["episodes"][0]["dates"] = ["2020-01-01", "2020-01-02"]
+        netflix_sessions._require_playback_review([movie, show])
+        self.assertEqual(movie["source_dates"], ["2020-01-02"])
+        self.assertEqual(movie["source_evidence"]["playback_dates"], ["2020-01-01", "2020-01-02"])
+        self.assertEqual(show["episodes"][0]["dates"], ["2020-01-02"])
+
     async def _apply_with_memory_db(self, item):
         db = _MemoryDb()
         show = SimpleNamespace(canonical_source="tmdb")

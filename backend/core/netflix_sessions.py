@@ -327,6 +327,20 @@ def _require_playback_review(items: list[dict]) -> None:
     for item in items:
         if item.get("is_anime"):
             continue
+        # Playback on multiple dates may be one viewing resumed in parts.
+        # A title/progress decision confirms one watch, never all sessions as rewatches.
+        evidence = item.setdefault("source_evidence", {})
+        if item["kind"] == "movie":
+            dates = sorted(set(item.get("source_dates") or []))
+            evidence["playback_dates"] = dates
+            item["source_dates"] = dates[-1:]
+        else:
+            evidence["episode_playback_dates"] = [
+                {"source_id": episode.get("source_id"), "dates": list(episode.get("dates") or [])}
+                for episode in item.get("episodes") or []
+            ]
+            for episode in item.get("episodes") or []:
+                episode["dates"] = sorted(set(episode.get("dates") or []))[-1:]
         item["requires_watch_confirmation"] = True
         item["outcome"]["status"] = "skip"
         item["outcome"]["status_overridden"] = True

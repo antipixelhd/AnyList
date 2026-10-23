@@ -360,6 +360,8 @@ async def update_netflix_import_item(
             raise HTTPException(status_code=400, detail="A TMDB API key is required to remap titles.")
         try:
             remapped_item = await _prepare_remapped_item(old_item, media_type, tmdb_id, api_key, language)
+            if old_item.get("requires_watch_confirmation"):
+                netflix_sessions._require_playback_review([remapped_item])
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
         except Exception:
