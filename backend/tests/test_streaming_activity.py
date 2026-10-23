@@ -55,6 +55,16 @@ class EvidenceTests(unittest.TestCase):
         prepare_evidence([item], rows)
         self.assertEqual([ep['dates'] for ep in item['episodes']], [['2021-01-01'], ['2022-01-01']])
 
+    def test_sparse_skip_is_preserved_while_preparing_a_partial_status_suggestion(self):
+        from core.streaming_evidence import prepare_evidence
+        from core.streaming_history import WatchObservation
+        item = show(); item['source_title'] = 'Show'; item['outcome']['status'] = 'skip'
+        item['episodes'] = [{'season_number': 1, 'episode_number': 1, 'source_title': 'Pilot', 'dates': ['2020-01-01']}]
+        prepare_evidence([item], [WatchObservation(row=2, source_title='Pilot', episode_title='Pilot', show_title='Show',
+                                                 season_number=1, watched_at='2020-01-01')])
+        self.assertEqual(item['outcome']['status'], 'skip')
+        self.assertEqual(item['outcome']['tracking_status'], 'dropped')
+
     def test_seventy_percent_boundary(self):
         rows = [viewing('2020-01-01', 2520), viewing('2020-01-02', 3600)]
         self.assertEqual(choose_viewing(rows, 60)['watched_at'], '2020-01-01')
@@ -162,3 +172,15 @@ class ActivityTests(unittest.IsolatedAsyncioTestCase):
                                                      [date(2020, 1, 1)], 8, False)
         self.assertFalse(is_new)
         self.assertEqual(tracked.finish_date, date(2020, 2, 1))
+
+    async def test_clearing_manual_completion_keeps_an_existing_rating_event(self):
+        from models.tracking import TrackingActivity
+        db = MemoryDb()
+        row = TrackingActivity(user_id=1, media_id=2, status='completed', score=8,
+                               created_at=datetime(2020, 1, 3), payload={'status_changed': True, 'rating_changed': True})
+        db.rows.append(row)
+        await reschedule_date_activity(db, 1, 2, start_date=None, finish_date=None, changed={'finish_date'})
+        self.assertIn(row, db.rows)
+        self.assertFalse(row.payload['status_changed'])
+        self.assertTrue(row.payload['rating_changed'])
+        self.assertEqual(row.score, 8)

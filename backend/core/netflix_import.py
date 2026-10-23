@@ -396,7 +396,7 @@ def _episodes_from_season(data: dict[str, Any], season_number: int) -> list[dict
             "alternate_titles": [value for value in [raw.get("original_name")] if value and value != raw.get("name")],
             "air_date": raw.get("air_date"),
             "tmdb_episode_id": raw.get("id"),
-            "runtime": raw.get("runtime"),
+            **({"runtime": raw["runtime"]} if raw.get("runtime") is not None else {}),
         })
     return result
 
@@ -1293,7 +1293,7 @@ async def prepare_netflix_import(
                         "title": episode.get("title"),
                         "release_date": release_date,
                         "tmdb_episode_id": episode.get("tmdb_episode_id"),
-                        "runtime": episode.get("runtime"),
+                        **({"runtime": episode["runtime"]} if episode.get("runtime") is not None else {}),
                     })
             catalog_episodes.sort(key=lambda episode: (episode["season_number"], episode["episode_number"]))
             resolve_netflix_episodes(final_episodes, catalog_episodes)

@@ -52,7 +52,7 @@ def prepare_evidence(items, observations):
                     episode['viewings'] = rows
                     episode['dates'] = [chosen['watched_at']]
             item['source_dates'] = sorted({day for ep in item.get('episodes', []) for day in ep.get('dates', [])})
-        if item['kind'] == 'show' and item['outcome']['status'] == 'partial' and not item['outcome'].get('status_overridden'):
+        if item['kind'] == 'show' and item['outcome']['status'] in ('partial', 'skip') and not item['outcome'].get('status_overridden'):
             item['outcome']['tracking_status'] = partial_tracking_status(item)
         item['completion_evidence'] = completion_evidence(item)
 

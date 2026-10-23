@@ -96,7 +96,7 @@ async def reschedule_date_activity(db, user_id, media_id, *, start_date, finish_
                 details.pop('started_watching', None)
             # A start-date edit must not steal a rating from a combined finish card.
             if row.score is not None and details.get('rating_changed') and (key == 'finish' or row.status == 'watching'):
-                ratings.append((event, row.score, {name: item for name, item in details.items() if name in RATING_ACTIVITY_FIELDS}))
+                ratings.append((event, row.score, {name: item for name, item in details.items() if name in RATING_ACTIVITY_FIELDS}, row if row not in tagged else None))
                 details = {name: item for name, item in details.items() if name not in RATING_ACTIVITY_FIELDS}
                 if 'streaming_base' in details:
                     details['streaming_base'] = {name: item for name, item in details['streaming_base'].items() if name not in RATING_ACTIVITY_FIELDS}
@@ -109,12 +109,14 @@ async def reschedule_date_activity(db, user_id, media_id, *, start_date, finish_
                 moved.append(event)
     await db.flush()
     latest = await record_streaming_activity(db, user_id, media_id, moved)
-    for event, score, metadata in ratings:
+    for event, score, metadata, legacy in ratings:
         if event.get('date') and event in moved:
             target = await record_streaming_activity(db, user_id, media_id, [event])
         else:
             target = max((row for row in rows if has_activity_event(row.status, row.payload or {}) and row.score is None),
                          key=lambda row: row.created_at, default=None)
+        if target is None and legacy is not None:
+            target = legacy
         if target is not None:
             target.score = score
             target.payload = {**target.payload, **metadata}

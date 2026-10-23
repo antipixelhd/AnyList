@@ -699,6 +699,7 @@ async def _reconcile_first_watch(db, user_id, media_id, watched_at):
     existing = (await db.execute(select(WatchEventModel).where(
         WatchEventModel.user_id == user_id, WatchEventModel.media_id == media_id,
         WatchEventModel.completed.is_(True),
+        WatchEventModel.date_inferred.is_(False), WatchEventModel.date_shared.is_(False),
     ).order_by(WatchEventModel.watched_at.asc().nulls_last()).limit(1))).scalar_one_or_none()
     if existing is None:
         return False
@@ -857,7 +858,7 @@ async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSe
             watched_dates = sorted({_to_date(d) for d in item.get("source_dates", []) if _to_date(d) is not None})
             for watched_date in watched_dates[:1] if outcome.get("status") == "completed" else []:
                 watched_at = datetime.combine(watched_date, datetime.min.time())
-                if await _reconcile_first_watch(db, user_id, movie.id, watched_at) or await reconcile_inferred_watch_date(db, user_id, movie.id, watched_at) or await _has_completed_event(db, user_id, movie.id, watched_at):
+                if await reconcile_inferred_watch_date(db, user_id, movie.id, watched_at, authoritative=True) or await _reconcile_first_watch(db, user_id, movie.id, watched_at) or await _has_completed_event(db, user_id, movie.id, watched_at):
                     stats["duplicates"] += 1
                     continue
                 db.add(WatchEvent(user_id=user_id, media_id=movie.id, watched_at=watched_at, completed=True, play_count=1, provisional=False))
@@ -935,7 +936,7 @@ async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSe
             # Only source rows through the reviewed endpoint are imported.
             for watched_date in sorted(set(dates_for_position))[:1]:
                 watched_at = datetime.combine(watched_date, datetime.min.time())
-                if await _reconcile_first_watch(db, user_id, media.id, watched_at) or await reconcile_inferred_watch_date(db, user_id, media.id, watched_at) or await _has_completed_event(db, user_id, media.id, watched_at):
+                if await reconcile_inferred_watch_date(db, user_id, media.id, watched_at, authoritative=True) or await _reconcile_first_watch(db, user_id, media.id, watched_at) or await _has_completed_event(db, user_id, media.id, watched_at):
                     stats["duplicates"] += 1
                 else:
                     db.add(WatchEvent(user_id=user_id, media_id=media.id, watched_at=watched_at, completed=True, play_count=1, provisional=False))

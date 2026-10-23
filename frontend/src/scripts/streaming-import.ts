@@ -329,7 +329,7 @@ function mountStreamingImport(app: HTMLElement) {
         </div>
       </div>
       <div class="flex rounded-xl border border-zinc-800 bg-zinc-950 p-1" role="group" aria-label="Import progress for ${esc(candidate?.title ?? item.source_title)}">${outcomeButtons(item)}</div>
-      <div>${item.outcome.status === "skip" ? `<p class="text-xs text-zinc-500">Skip leaves this show and any existing AnyList progress untouched.</p>` : partialControls(item)}</div>
+      <div>${item.outcome.status === "skip" ? `<p class="text-xs text-zinc-500">Skip leaves this title and any existing AnyList progress untouched.</p>` : partialControls(item)}</div>
     </article>`;
   }
 
@@ -401,7 +401,7 @@ function mountStreamingImport(app: HTMLElement) {
   }
 
   function stepHeader(): string {
-    const labels = ["Upload", "Review matches", "Show progress", "Ratings", "Import"];
+    const labels = ["Upload", "Review matches", "Watch progress", "Ratings", "Import"];
     return `<div class="mb-5 flex flex-wrap items-center gap-2">${labels.map((label, index) => `<div class="flex items-center gap-2"><span class="flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold ${step === index + 1 ? "bg-blue-600 text-white" : step > index + 1 ? "bg-emerald-500/20 text-emerald-300" : "bg-zinc-800 text-zinc-500"}">${step > index + 1 ? "✓" : index + 1}</span><span class="text-xs ${step === index + 1 ? "font-semibold text-zinc-200" : "text-zinc-500"}">${label}</span></div>${index < labels.length - 1 ? `<span class="h-px min-w-4 flex-1 bg-zinc-800"></span>` : ""}`).join("")}</div>`;
   }
 
