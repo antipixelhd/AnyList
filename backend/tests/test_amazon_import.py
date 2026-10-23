@@ -52,6 +52,18 @@ class AmazonImportTests(unittest.TestCase):
                          ("The Instant White-Hot Wild", "The Boys", 3))
         self.assertEqual(_identity("Title-Lucifer - Staffel 4 [dt./OV]"), ("Title", "Lucifer", 4))
 
+    def test_standalone_summary_preserves_hyphenated_series_and_episode_names(self):
+        for episode, show in (("Pilot", "Spider-Man"), ("White-Hot Wild", "The Boys"),
+                              ("White-Hot Wild", "Spider-Man")):
+            with self.subTest(episode=episode, show=show):
+                summary = {"Title Name": episode, "Seconds Watched": "1800",
+                           "Most Recent Watch Date": "2022-01-01T13:00:00Z"}
+                parsed = parse_amazon_zip(archive([session(title=f"{episode}-{show} - Season 1")], [summary]))
+                self.assertEqual(len(parsed.rows), 1)
+                self.assertEqual(parsed.rows[0].episode_title, episode)
+                self.assertEqual(parsed.rows[0].show_title, show)
+                self.assertEqual(parsed.duplicate_rows, 1)
+
     def test_invalid_archive_and_missing_history_rejected(self):
         with self.assertRaises(ValueError): parse_amazon_zip(b"bad zip")
         out = io.BytesIO()

@@ -40,11 +40,20 @@ def _date(value):
     return parsed.astimezone(timezone.utc).date().isoformat()
 
 
-def _identity(title):
+def _identity(title, episode_titles=()):
     # Episode-show suffixes contain hyphens themselves; anchor the season end.
     match = re.match(r"^(.*)-(.+?)[, \u2013\ufffd-]+(?:season|staffel)\s*(\d+)(?:\s*\[.*\])?$", title, re.I)
     if match:
         episode, show, season = match.groups()
+        # Watch Events supplies the standalone episode name. Use that boundary
+        # when either the episode or the series name contains hyphens.
+        combined = title[:match.start(3)]
+        known = [position for position, char in enumerate(title)
+                 if char == "-" and title[:position].casefold() in episode_titles]
+        if len(known) == 1:
+            boundary = known[0]
+            suffix = re.sub(r"[, \u2013\ufffd-]+(?:season|staffel)\s*$", "", combined[boundary + 1:], flags=re.I)
+            return _text(title[:boundary]), _text(suffix), int(season)
         return _text(episode), _text(show), int(season)
     parts = title.split("-")
     if len(parts) % 2 == 0:
@@ -91,11 +100,12 @@ def parse_amazon_zip(content: bytes, language: str | None = None) -> ParsedHisto
         parsed.language = locales.most_common(1)[0][0] if locales else None
     # Summary records can corroborate meaningful viewing but only when they map
     # to exactly one detailed identity. Never guess between same-name episodes.
+    episode_titles = {_text(row.get("Title Name")).casefold() for row in tables.get("Watch Events.csv", []) if _text(row.get("Title Name"))}
     identities = defaultdict(set)
     eligible_titles = set()
     for row in sessions:
         title = _text(row.get("Title"))
-        episode, show, season = _identity(title)
+        episode, show, season = _identity(title, episode_titles)
         identities[_norm_text(episode)].add(title)
         if (_text(row.get("Material Type Description")).lower() in {"full", "feature"}
             and _text(row.get("Is Deleted")).lower() != "yes"):
@@ -106,7 +116,7 @@ def parse_amazon_zip(content: bytes, language: str | None = None) -> ParsedHisto
         if key in observations:
             parsed.duplicate_rows += 1
             return
-        episode, show, season = _identity(title)
+        episode, show, season = _identity(title, episode_titles)
         observations[key] = WatchObservation(row=row_number, source_title=title if show else episode,
             watched_at=watched_date, show_title=show, season_number=season,
             season_label=f"Season {season}" if season else None,
