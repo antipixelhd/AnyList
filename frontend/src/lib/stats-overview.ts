@@ -2,7 +2,7 @@ import Chart from 'chart.js/auto';
 import type { ChartOptions } from 'chart.js';
 import type { ChartMetric, MediaScope, MetricGroup, Overview, OverviewResponse } from './stats-overview-data';
 import { barChartRows, displayNumber, distributionRows, headlineValues, knownRows, metricLabels, metricValue, watchYearRows } from './stats-overview-data';
-import { createOverviewLoader } from './stats-overview-request';
+import { createOverviewLoader, overviewPollDelay } from './stats-overview-request';
 import { refreshStatistics } from './statistics-refresh-request';
 import { mountGenres, mountStudios } from './stats-genres';
 import { genreSort } from './stats-genres-data';
@@ -199,14 +199,13 @@ function mount(root: HTMLElement) {
     const wasPending = node('.overview-results').hidden;
     node('.overview-results').hidden = !ready;
     node('.overview-pending').hidden = ready;
+    clearTimeout(timer);
+    const pollDelay = overviewPollDelay(next);
+    if (pollDelay !== null) timer = setTimeout(() => { if (!stopped) void loader.load(media); }, pollDelay);
     if (!ready) {
       node('[data-overview-state]').textContent = next.status === 'error' ? 'Statistics are unavailable. A retry is scheduled.' : 'Preparing statistics…';
-      clearTimeout(timer);
-      timer = setTimeout(() => { if (!stopped) void loader.load(media); }, next.status === 'error' ? 30000 : 5000);
       return;
     }
-    clearTimeout(timer);
-    if (next.refreshing) timer = setTimeout(() => { if (!stopped) void loader.load(media); }, 5000);
     const data = next.overview!;
     root.dataset.media = data.media_type;
     headlineValues(data).forEach((metric, index) => {
