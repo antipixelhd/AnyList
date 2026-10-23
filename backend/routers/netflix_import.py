@@ -1,10 +1,9 @@
 """Private, resumable Netflix viewing-history import drafts."""
 
 from __future__ import annotations
+from typing import Annotated, Literal
 from core import netflix_sessions
 
-import csv
-import io
 import uuid
 from copy import deepcopy
 from datetime import date, timedelta
@@ -31,7 +30,7 @@ async def _prepare_remapped_item(item: dict, media_type: str, tmdb_id: int, api_
     episode positions are reloaded from TMDB so a stale candidate cannot carry
     another show's episode IDs into the final transaction.
     """
-    from core.netflix_import import is_anime_candidate, parse_netflix_csv, prepare_netflix_import
+    from core.netflix_import import is_anime_candidate, NetflixWatch, ParsedNetflixHistory, prepare_netflix_import
 
     if media_type == "movie":
         source_episodes = item.get("episodes") or []
@@ -80,30 +79,24 @@ async def _prepare_remapped_item(item: dict, media_type: str, tmdb_id: int, api_
     if int(details.get("id") or 0) != tmdb_id:
         raise ValueError("TMDB returned a different show than the selected result.")
     title = details.get("name") or item.get("source_title")
-    csv_buffer = io.StringIO(newline="")
-    writer = csv.writer(csv_buffer)
-    writer.writerow(["Title", "Date"])
-    remapped_rows: list[tuple[str, int, str]] = []
+    observations = []
     for episode in source_episodes:
-        original = episode.get("source_title") or ""
-        if ":" in original:
-            suffix = original.split(":", 1)[1].strip()
-            remapped_title = f"{title}: {suffix}"
-        elif episode.get("source_episode_title"):
-            season_label = episode.get("season_label") or (f"Season {episode['season_number']}" if episode.get("season_number") else "")
-            remapped_title = ": ".join(part for part in (title, season_label, episode["source_episode_title"]) if part)
-        else:
-            continue
-        dates = sorted(episode.get("dates") or [])
-        row_numbers = sorted((int(row) for row in episode.get("source_row_numbers") or []), reverse=True)
-        for index, watched_date in enumerate(dates):
-            original_row = row_numbers[min(index, len(row_numbers) - 1)] if row_numbers else 0
-            remapped_rows.append((watched_date, original_row, remapped_title))
-    for watched_date, _original_row, remapped_title in sorted(
-        remapped_rows, key=lambda row: (row[0], -row[1]), reverse=True,
-    ):
-        writer.writerow([remapped_title, watched_date])
-    history = parse_netflix_csv(csv_buffer.getvalue(), language=language)
+        episode_title = episode.get("source_episode_title") or episode.get("source_title") or ""
+        for watched_date in sorted(episode.get("dates") or []):
+            row_numbers = episode.get("source_row_numbers") or []
+            observations.append(NetflixWatch(
+                row=max(row_numbers, default=0),
+                source_title=f"{title}: {episode_title}",
+                watched_at=watched_date, show_title=title,
+                season_label=episode.get("season_label"),
+                season_number=episode.get("season_number"),
+                episode_title=episode_title, source_rows=list(row_numbers),
+            ))
+    observations.sort(key=lambda row: (row.watched_at, -row.row), reverse=True)
+    for index, observation in enumerate(observations, 2):
+        observation.row = index
+        observation.source_rows = [index]
+    history = ParsedNetflixHistory(rows=observations, total_rows=len(observations), language=language)
 
     async def forced_search(query: str, **kwargs):
         return {"results": [{
@@ -128,7 +121,7 @@ async def _prepare_remapped_item(item: dict, media_type: str, tmdb_id: int, api_
     groups = netflix_sessions._normalise_groups(prepared)
     refreshed = next((group for group in groups if group.get("kind") == "show"), None)
     if refreshed is None or not refreshed.get("match", {}).get("candidate"):
-        raise ValueError("The selected show could not be matched to the Netflix episode names.")
+        raise ValueError("The selected show could not be matched to the source episode names.")
     refreshed["id"] = item["id"]
     refreshed["source_title"] = item.get("source_title")
     refreshed["source_dates"] = item.get("source_dates", [])
@@ -252,6 +245,7 @@ def _public_session(session: NetflixImportSession) -> dict:
         errors = [{"message": session.error_message}]
     return {
         "id": session.id,
+        "source": payload.get("source", "netflix"),
         "status": session.status,
         "phase": session.phase,
         "progress": session.progress or {"current": 0, "total": 0, "message": ""},
@@ -275,16 +269,18 @@ def _schedule(background_tasks: BackgroundTasks, session_id: str, user_id: int, 
         background_tasks.add_task(netflix_sessions._prepare_session, session_id, user_id, language)
 
 
-@router.post("/netflix", status_code=202)
+@router.post("/{source}", status_code=202)
 async def upload_netflix_history(
+    source: Literal["netflix", "amazon"],
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     language: str | None = Form(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if not (file.filename or "").lower().endswith(".csv"):
-        raise HTTPException(status_code=400, detail="Choose a Netflix viewing-history CSV file.")
+    extension = ".zip" if source == "amazon" else ".csv"
+    if not (file.filename or "").lower().endswith(extension):
+        raise HTTPException(status_code=400, detail=f"Choose a viewing-history {extension} file.")
     chunks: list[bytes] = []
     total = 0
     while True:
@@ -293,11 +289,11 @@ async def upload_netflix_history(
             break
         total += len(chunk)
         if total > MAX_UPLOAD_BYTES:
-            raise HTTPException(status_code=413, detail="The Netflix CSV is too large to import.")
+            raise HTTPException(status_code=413, detail="The export is too large to import.")
         chunks.append(chunk)
     content = b"".join(chunks)
     if not content:
-        raise HTTPException(status_code=400, detail="The uploaded CSV is empty.")
+        raise HTTPException(status_code=400, detail="The uploaded export is empty.")
     now = netflix_sessions._now()
     await db.execute(delete(NetflixImportSession).where(
         NetflixImportSession.user_id == current_user.id,
@@ -305,11 +301,11 @@ async def upload_netflix_history(
         NetflixImportSession.expires_at <= now,
     ))
     if not await settings_store.get_user_tmdb_key(db, current_user.id, cached=False):
-        raise HTTPException(status_code=400, detail="Add a TMDB API key in Settings before importing Netflix history.")
+        raise HTTPException(status_code=400, detail="Add a TMDB API key in Settings before importing streaming history.")
     session = NetflixImportSession(
         id=str(uuid.uuid4()), user_id=current_user.id, status="preparing", phase="parse",
         progress={"current": 0, "total": 1, "message": "Upload received"}, revision=0,
-        source_csv=content, payload={"language": language}, created_at=now, updated_at=now,
+        source_csv=content, payload={"language": language, "source": source}, created_at=now, updated_at=now,
         expires_at=now + timedelta(days=DRAFT_DAYS),
     )
     db.add(session)

@@ -330,22 +330,27 @@ async def _prepare_session(session_id: str, user_id: int, language: str | None) 
             ))).scalar_one_or_none()
             if session is None or session.status != "preparing":
                 return
+            source = (session.payload or {}).get("source", "netflix")
             content = session.source_csv
             api_key = await settings_store.get_user_tmdb_key(db, user_id, cached=False)
             resolved_language = language or (session.payload or {}).get("language")
             if not content:
                 raise ValueError("The uploaded CSV is no longer available for preparation.")
             if not api_key:
-                raise ValueError("A TMDB API key is required to match Netflix titles.")
+                raise ValueError("A TMDB API key is required to match streaming titles.")
             session.phase = "parse"
-            session.progress = {"current": 0, "total": 1, "message": "Reading Netflix viewing history"}
+            session.progress = {"current": 0, "total": 1, "message": "Reading streaming viewing history"}
             await db.commit()
 
         from core.netflix_import import parse_netflix_csv, prepare_netflix_import
-        history = parse_netflix_csv(content, language=resolved_language)
+        if source == "amazon":
+            from core.amazon_import import parse_amazon_zip
+            history = await asyncio.to_thread(parse_amazon_zip, content, language=resolved_language)
+        else:
+            history = parse_netflix_csv(content, language=resolved_language)
         history_dict = history.to_dict() if hasattr(history, "to_dict") else {}
         row_count = len(getattr(history, "rows", []) or history_dict.get("rows", []))
-        await _set_progress(session_id, user_id, 1, 1, "Netflix CSV parsed", phase="match")
+        await _set_progress(session_id, user_id, 1, 1, "Viewing history parsed", phase="match")
 
         async def progress_fn(current: int, total: int, message: str = "Matching titles"):
             alive = await _set_progress(session_id, user_id, current, total, message, phase="match")
@@ -363,6 +368,12 @@ async def _prepare_session(session_id: str, user_id: int, language: str | None) 
         if not isinstance(prepared, dict):
             prepared = prepared.to_dict() if hasattr(prepared, "to_dict") else {}
         items = _normalise_groups(prepared)
+        if source == "amazon":
+            # Meaningful playback is evidence, not a claim of completion.
+            for item in items:
+                item["match"]["state"] = "review"
+                item["match"]["reason"] = "Playback recorded. Confirm the title and review watched progress."
+                item["decision"] = {"action": None}
         errors = prepared.get("errors") or history_dict.get("errors") or []
         counts = prepared.get("counts") or history_dict.get("counts") or {}
         if row_count and not counts:
@@ -398,7 +409,7 @@ async def _prepare_session(session_id: str, user_id: int, language: str | None) 
                             item["match"]["state"] = "review"
                             item["match"]["reason"] = "This existing show uses TVDB episode order; confirm an episode order before importing."
                             item["decision"]["action"] = None
-            session.payload = {"language": resolved_language, "items": items, "errors": errors, "counts": counts}
+            session.payload = {"source": source, "language": resolved_language, "items": items, "errors": errors, "counts": counts}
             session.source_csv = None
             session.status = "review"
             session.phase = "review"
@@ -590,7 +601,7 @@ async def _get_or_create_episode(
         "show_id": show.id,
         "season_number": local_season,
         "episode_number": local_number,
-        "tmdb_data": {"runtime": details.get("runtime"), "source": "netflix-import"},
+        "tmdb_data": {"runtime": details.get("runtime"), "source": "streaming-import"},
     }
     if episode.get("released_for_import"):
         fields["tmdb_data"]["tracking_import_released"] = True
@@ -688,10 +699,10 @@ async def _track_imported_root(
     desired_status = "completed" if is_movie or outcome.get("status") == "completed" else outcome.get("tracking_status") or "watching"
     if is_new:
         entry.status = desired_status
-        mark_status_change(entry, "netflix-import", datetime.combine(max(accepted_dates), datetime.min.time()) if accepted_dates else None)
+        mark_status_change(entry, "streaming-import", datetime.combine(max(accepted_dates), datetime.min.time()) if accepted_dates else None)
     elif outcome.get("status_overridden") and entry.status != desired_status:
         entry.status = desired_status
-        mark_status_change(entry, "netflix-import")
+        mark_status_change(entry, "streaming-import")
     if (is_new or previous_status != entry.status) and entry.status in {"planning", "paused", "dropped", "completed"}:
         from core.stream_actions import queue_local_dismissals
         await queue_local_dismissals(db, user_id, root)
