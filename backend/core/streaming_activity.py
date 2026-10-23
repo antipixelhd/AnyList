@@ -84,7 +84,7 @@ async def record_streaming_activity(db, user_id, media_id, events, *, score=None
         touched.append(row)
     active = [row for row in touched if has_activity_event(row.status, row.payload or {})]
     latest = max(active, key=lambda row: row.created_at, default=None)
-    if latest is not None and score is not None:
+    if latest is not None and score is not None and score != previous_score:
         details = dict(latest.payload)
         _record_rating_details(details, rating_changed=True, previous_score=previous_score, score=score, now=latest.created_at)
         latest.payload, latest.score = details, score

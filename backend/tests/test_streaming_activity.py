@@ -18,6 +18,19 @@ def show():
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_movie_and_same_name_series_keep_separate_evidence(self):
+        from core.streaming_evidence import prepare_evidence
+        from core.streaming_history import WatchObservation
+        movie = {'kind': 'movie', 'source_title': 'Fargo', 'source_dates': ['2022-01-01'],
+                 'outcome': {'status': 'completed'}}
+        prepare_evidence([movie], [
+            WatchObservation(row=1, source_title='Fargo', watched_at='2022-01-01'),
+            WatchObservation(row=2, source_title='Fargo: Season 1: Pilot', show_title='Fargo',
+                             episode_title='Pilot', season_number=1, watched_at='2020-01-01'),
+        ])
+        self.assertEqual(movie['source_dates'], ['2022-01-01'])
+        self.assertEqual([row['row'] for row in movie['source_evidence']['observations']], [1])
+
     def test_stronger_incomplete_viewing_wins_but_first_completed_viewing_beats_rewatch(self):
         rows = [viewing('2020-01-01', 600), viewing('2020-01-03', 2700)]
         self.assertEqual(choose_viewing(rows, 60)['watched_at'], '2020-01-03')
@@ -265,6 +278,10 @@ class ActivityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(latest.score, 8)
         self.assertTrue(latest.payload['rating_changed'])
         self.assertEqual(db.rows[0].payload['episodes_watched'], 1)
+        original_payload = dict(latest.payload)
+        await record_streaming_activity(db, 1, 2, events, score=8, previous_score=8)
+        self.assertEqual(latest.payload, original_payload)
+        self.assertEqual(latest.score, 8)
 
     async def test_finish_date_moves_card_and_keeps_rating_attached(self):
         from datetime import date

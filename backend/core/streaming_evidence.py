@@ -66,6 +66,11 @@ def prepare_evidence(items, observations):
         evidence['observations'] = by_title.get(_norm_text(item['source_title']), evidence.get('observations', []))
         if item['kind'] == 'movie':
             rows = by_title.get(_norm_text(item['source_title']), []) or evidence.get('observations', [])
+            remapped = item.get('decision', {}).get('action') == 'remap'
+            rows = [row for row in rows if _norm_text(row.get('source_title') or '') == _norm_text(item['source_title'])
+                    and (remapped or not any(row.get(key) is not None for key in
+                                            ('show_title', 'episode_title', 'season_number', 'season_label')))]
+            evidence['observations'] = rows
             runtime = details.get('runtime') or candidate.get('runtime')
             chosen = choose_viewing(rows, runtime)
             if chosen:
