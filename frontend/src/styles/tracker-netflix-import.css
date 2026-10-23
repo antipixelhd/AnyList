@@ -86,3 +86,11 @@
   background:var(--dropdown-hover)!important;
   color:var(--bright);
 }
+
+.connections-settings-page .streaming-disclosure > summary > .ui-icon {
+  margin-left:auto;
+  flex-shrink:0;
+}
+.connections-settings-page .streaming-disclosure[open] > summary .streaming-disclosure-arrow {
+  transform:rotate(-180deg);
+}
