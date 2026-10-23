@@ -133,9 +133,9 @@ class NetflixAutomaticEpisodeImportTests(unittest.IsolatedAsyncioTestCase):
         show = _show_item()
         show["episodes"][0]["dates"] = ["2020-01-01", "2020-01-02"]
         netflix_sessions._require_playback_review([movie, show])
-        self.assertEqual(movie["source_dates"], ["2020-01-02"])
+        self.assertEqual(movie["source_dates"], ["2020-01-01"])
         self.assertEqual(movie["source_evidence"]["playback_dates"], ["2020-01-01", "2020-01-02"])
-        self.assertEqual(show["episodes"][0]["dates"], ["2020-01-02"])
+        self.assertEqual(show["episodes"][0]["dates"], ["2020-01-01"])
 
     async def _apply_with_memory_db(self, item):
         db = _MemoryDb()
@@ -156,6 +156,7 @@ class NetflixAutomaticEpisodeImportTests(unittest.IsolatedAsyncioTestCase):
             patch("core.netflix_sessions._get_or_create_show_root", new=AsyncMock(return_value=(show, root))),
             patch("core.netflix_sessions._get_or_create_episode", new=AsyncMock(side_effect=get_episode)),
             patch("core.netflix_sessions._has_completed_event", new=AsyncMock(return_value=False)),
+            patch("core.netflix_sessions._record_import_activity", new=AsyncMock()),
             patch("core.netflix_sessions._track_imported_root", new=AsyncMock(return_value=(SimpleNamespace(), True))),
         ):
             stats = await netflix_sessions._apply_import(db, 7, session, no_progress)
@@ -362,7 +363,7 @@ class NetflixAutomaticEpisodeImportTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(movie["decision"]["action"])
         self.assertEqual(movie["outcome"]["status"], "skip")
         self.assertTrue(movie["requires_watch_confirmation"])
-        self.assertEqual(movie["source_dates"], ["2024-01-02"])
+        self.assertEqual(movie["source_dates"], ["2024-01-01"])
 
     async def test_movie_shaped_entry_can_be_manually_remapped_to_show(self):
         item = {

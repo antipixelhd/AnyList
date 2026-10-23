@@ -333,14 +333,14 @@ def _require_playback_review(items: list[dict]) -> None:
         if item["kind"] == "movie":
             dates = sorted(set(item.get("source_dates") or []))
             evidence["playback_dates"] = dates
-            item["source_dates"] = dates[-1:]
+            item["source_dates"] = dates[:1]
         else:
             evidence["episode_playback_dates"] = [
                 {"source_id": episode.get("source_id"), "dates": list(episode.get("dates") or [])}
                 for episode in item.get("episodes") or []
             ]
             for episode in item.get("episodes") or []:
-                episode["dates"] = sorted(set(episode.get("dates") or []))[-1:]
+                episode["dates"] = sorted(set(episode.get("dates") or []))[:1]
             # Series use the same evidence-derived progress defaults as Netflix.
             continue
         item["requires_watch_confirmation"] = True
@@ -402,6 +402,8 @@ async def _prepare_session(session_id: str, user_id: int, language: str | None) 
         items = _normalise_groups(prepared)
         if source == "amazon":
             _require_playback_review(items)
+        from core.streaming_evidence import prepare_evidence
+        prepare_evidence(items, history.rows)
         errors = prepared.get("errors") or history_dict.get("errors") or []
         counts = prepared.get("counts") or history_dict.get("counts") or {}
         if row_count and not counts:
@@ -693,6 +695,19 @@ def _show_import_positions(item: dict, outcome: dict, today: date) -> tuple[dict
     return source_positions, chosen_positions, cutoff_exclusions
 
 
+async def _reconcile_first_watch(db, user_id, media_id, watched_at):
+    existing = (await db.execute(select(WatchEventModel).where(
+        WatchEventModel.user_id == user_id, WatchEventModel.media_id == media_id,
+        WatchEventModel.completed.is_(True),
+    ).order_by(WatchEventModel.watched_at.asc().nulls_last()).limit(1))).scalar_one_or_none()
+    if existing is None:
+        return False
+    if existing.watched_at is None or watched_at < existing.watched_at:
+        existing.watched_at = watched_at
+        existing.date_inferred = False
+    return True
+
+
 async def _has_completed_event(db: AsyncSession, user_id: int, media_id: int, watched_at: datetime | None) -> bool:
     query = select(WatchEventModel.id).where(
         WatchEventModel.user_id == user_id,
@@ -719,12 +734,13 @@ async def _track_imported_root(
         TrackedEntry.user_id == user_id, TrackedEntry.media_id == root.id,
     ).with_for_update())).scalar_one_or_none()
     is_new = entry is None
+    previous_dates = (entry.start_date, entry.finish_date) if entry else (None, None)
     previous_status = entry.status if entry is not None else None
     if entry is None:
-        initial_status = "completed" if is_movie or outcome.get("status") == "completed" else outcome.get("tracking_status") or "watching"
+        initial_status = "completed" if outcome.get("status") == "completed" else outcome.get("tracking_status") or "watching"
         entry = TrackedEntry(user_id=user_id, media_id=root.id, status=initial_status, progress=0)
         db.add(entry)
-    desired_status = "completed" if is_movie or outcome.get("status") == "completed" else outcome.get("tracking_status") or "watching"
+    desired_status = "completed" if outcome.get("status") == "completed" else outcome.get("tracking_status") or "watching"
     if is_new:
         entry.status = desired_status
         mark_status_change(entry, "streaming-import", datetime.combine(max(accepted_dates), datetime.min.time()) if accepted_dates else None)
@@ -735,10 +751,20 @@ async def _track_imported_root(
         from core.stream_actions import queue_local_dismissals
         await queue_local_dismissals(db, user_id, root)
     entry.progress = max(int(entry.progress or 0), progress_count)
-    if not is_movie and entry.start_date is None and accepted_dates:
-        entry.start_date = min(accepted_dates)
-    if (is_movie or outcome.get("status") == "completed") and entry.finish_date is None and accepted_dates:
-        entry.finish_date = max(accepted_dates)
+    if accepted_dates:
+        first = min(accepted_dates)
+        entry.start_date = min(entry.start_date, first) if entry.start_date else first
+    if "finish_date" in outcome and outcome["finish_date"] is None:
+        entry.finish_date = None
+    if outcome.get("status") == "completed":
+        finish = _to_date(outcome.get("finish_date"))
+        if finish:
+            entry.finish_date = min(entry.finish_date, finish) if entry.finish_date else finish
+    changed_dates = {name for name, before, after in zip(("start_date", "finish_date"), previous_dates, (entry.start_date, entry.finish_date)) if before != after}
+    if not is_new and changed_dates:
+        from core.streaming_activity import reschedule_date_activity
+        await reschedule_date_activity(db, user_id, root.id, start_date=entry.start_date,
+                                       finish_date=entry.finish_date, changed=changed_dates)
     entry.initial_import_completed_at = _now() if is_new and entry.status == "completed" else entry.initial_import_completed_at
     # A final, explicit import can restore an entry the owner previously deleted.
     await db.execute(delete(TrackingDeletion).where(
@@ -751,7 +777,6 @@ async def _apply_staged_rating(db: AsyncSession, user_id: int, root: Media, entr
     """Apply an explicitly chosen import rating to the tracked root only."""
     if not outcome.get("manual_score_staged"):
         return
-    from core.activity import record_daily_activity
     from core.tracking_rules import effective_score
 
     old_score = effective_score(entry.rating_mode, entry.manual_score, entry.season_scores)
@@ -767,11 +792,20 @@ async def _apply_staged_rating(db: AsyncSession, user_id: int, root: Media, entr
     elif row.rating != score:
         row.rating = score
         row.rated_at = _now()
-    if old_score != score:
-        await record_daily_activity(
-            db, user_id=user_id, media_id=root.id, status=entry.status,
-            score=score, rating_changed=True, previous_score=old_score,
-        )
+    outcome["rating_previous_score"] = old_score
+
+
+async def _record_import_activity(db, user_id, root, entry, item):
+    from core.streaming_evidence import activity_plan
+    from core.streaming_activity import record_streaming_activity
+    outcome = item["outcome"]
+    events = activity_plan(item, entry.finish_date)
+    for event in events:
+        if event["key"] == "start" and entry.start_date:
+            event["date"] = entry.start_date.isoformat()
+    await record_streaming_activity(db, user_id, root.id, events,
+        score=outcome.get("manual_score") if outcome.get("manual_score_staged") else None,
+        previous_score=outcome.get("rating_previous_score"))
 
 
 async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSession, progress_callback) -> dict:
@@ -813,19 +847,23 @@ async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSe
             stats["skipped"] += 1
             continue
         outcome = item.get("outcome") or {}
+        from core.streaming_evidence import completion_evidence
+        if "finish_date" not in outcome:
+            outcome["finish_date"] = completion_evidence(item)["finish_date"]
         date_values = [d for d in (_to_date(x) for x in item.get("source_dates", [])) if d is not None]
         if item["kind"] == "movie":
             movie = await _get_or_create_movie(db, candidate)
             watched_dates = sorted({_to_date(d) for d in item.get("source_dates", []) if _to_date(d) is not None})
-            for watched_date in watched_dates:
+            for watched_date in watched_dates[:1] if outcome.get("status") == "completed" else []:
                 watched_at = datetime.combine(watched_date, datetime.min.time())
-                if await reconcile_inferred_watch_date(db, user_id, movie.id, watched_at) or await _has_completed_event(db, user_id, movie.id, watched_at):
+                if await _reconcile_first_watch(db, user_id, movie.id, watched_at) or await reconcile_inferred_watch_date(db, user_id, movie.id, watched_at) or await _has_completed_event(db, user_id, movie.id, watched_at):
                     stats["duplicates"] += 1
                     continue
                 db.add(WatchEvent(user_id=user_id, media_id=movie.id, watched_at=watched_at, completed=True, play_count=1, provisional=False))
                 stats["source_watches"] += 1
             entry, is_new = await _track_imported_root(db, user_id, movie, outcome, date_values, 1, True)
             await _apply_staged_rating(db, user_id, movie, entry, outcome)
+            await _record_import_activity(db, user_id, movie, entry, item)
             stats["movies"] += 1
             stats["new_entries" if is_new else "existing_entries"] += 1
             continue
@@ -894,9 +932,9 @@ async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSe
                 for source_ep in source_positions[position]:
                     dates_for_position.extend(_to_date(d) for d in source_ep.get("dates", []) if _to_date(d) is not None)
             # Only source rows through the reviewed endpoint are imported.
-            for watched_date in sorted(set(dates_for_position)):
+            for watched_date in sorted(set(dates_for_position))[:1]:
                 watched_at = datetime.combine(watched_date, datetime.min.time())
-                if await reconcile_inferred_watch_date(db, user_id, media.id, watched_at) or await _has_completed_event(db, user_id, media.id, watched_at):
+                if await _reconcile_first_watch(db, user_id, media.id, watched_at) or await reconcile_inferred_watch_date(db, user_id, media.id, watched_at) or await _has_completed_event(db, user_id, media.id, watched_at):
                     stats["duplicates"] += 1
                 else:
                     db.add(WatchEvent(user_id=user_id, media_id=media.id, watched_at=watched_at, completed=True, play_count=1, provisional=False))
@@ -935,6 +973,7 @@ async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSe
         root.tmdb_data = root_data
         entry, is_new = await _track_imported_root(db, user_id, root, outcome, accepted_dates, progress_count, False)
         await _apply_staged_rating(db, user_id, root, entry, outcome)
+        await _record_import_activity(db, user_id, root, entry, item)
         stats["shows"] += 1
         stats["new_entries" if is_new else "existing_entries"] += 1
         if any(s.get("total_released") is None or s.get("represented", 0) < s["total_released"] for s in item.get("seasons", [])):

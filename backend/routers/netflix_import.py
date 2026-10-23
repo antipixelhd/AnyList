@@ -172,7 +172,7 @@ def _summary(items: list[dict], parsed_counts: dict | None = None, errors: list 
     partial_coverage = [i for i in shows if not i.get("seasons") or any(
         s.get("total_released") is None or s["represented"] < s["total_released"] for s in i.get("seasons", [])
     )]
-    source_watches = sum(len(set(i.get("source_dates", []))) for i in movies)
+    source_watches = sum(bool(i.get("source_dates")) for i in movies if i.get("outcome", {}).get("status") == "completed")
     unmatched = [i for i in items if (
         i.get("match", {}).get("state") in ("review", "unmatched") and not i.get("decision", {}).get("action")
     )]
@@ -240,6 +240,9 @@ def _public_session(session: NetflixImportSession) -> dict:
     result = session.result or {}
     items = deepcopy(payload.get("items", [])) if session.status not in ("committed", "cancelled", "failed") else []
     netflix_sessions._resolve_draft_items(items)
+    from core.streaming_evidence import completion_evidence
+    for item in items:
+        item["completion_evidence"] = completion_evidence(item)
     errors = payload.get("errors", []) if session.status != "committed" else []
     summary = result.get("summary") if session.status == "committed" else _summary(items, payload.get("counts"), errors)
     if session.error_message and not errors:
@@ -362,6 +365,12 @@ async def update_netflix_import_item(
             remapped_item = await _prepare_remapped_item(old_item, media_type, tmdb_id, api_key, language)
             if (before.payload or {}).get("source") == "amazon" or old_item.get("requires_watch_confirmation"):
                 netflix_sessions._require_playback_review([remapped_item])
+            from core.streaming_evidence import prepare_evidence
+            from core.streaming_history import WatchObservation
+            observations = (old_item.get("source_evidence") or {}).get("observations", [])
+            if observations:
+                remapped_item.setdefault("source_evidence", {})["observations"] = observations
+                prepare_evidence([remapped_item], [WatchObservation(**row) for row in observations])
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
         except Exception:
@@ -396,7 +405,9 @@ async def update_netflix_import_item(
             raise HTTPException(status_code=422, detail="Choose a suggested title or use Remap before confirming.")
         item["decision"] = {"action": "confirm"}
         if item["kind"] == "movie":
-            item["outcome"]["status"] = "completed"
+            item["outcome"]["status"] = item.get("suggested_movie_status", "completed")
+            if item["outcome"]["status"] == "dropped":
+                item["outcome"]["tracking_status"] = "dropped"
     if action == "remap" and item["kind"] == "movie" and item.get("requires_watch_confirmation") and not item.get("is_anime"):
         if item["kind"] == "movie":
             item["decision"] = {"action": None}
@@ -407,13 +418,23 @@ async def update_netflix_import_item(
     if outcome_status is not None:
         if item.get("is_anime") and outcome_status != "skip":
             raise HTTPException(status_code=422, detail="Anime imports are currently unavailable.")
-        if outcome_status not in ("completed", "partial", "skip"):
+        if outcome_status not in ("completed", "partial", "skip", "dropped") or (outcome_status == "dropped" and item["kind"] != "movie"):
             raise HTTPException(status_code=422, detail="Progress must be completed, partial, or skip.")
         if item["kind"] == "movie" and outcome_status == "partial":
             raise HTTPException(status_code=422, detail="Movies can only be completed or skipped.")
+        if outcome_status == "dropped":
+            item["outcome"]["tracking_status"] = "dropped"
         item["progress_reviewed"] = True
         item["outcome"]["status"] = outcome_status
         item["outcome"]["status_overridden"] = True
+    if "finish_date" in patch:
+        value = patch["finish_date"]
+        try:
+            if value is not None:
+                date.fromisoformat(value)
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=422, detail="Finish date must be an ISO date or null.")
+        item["outcome"]["finish_date"] = value
     for key in ("latest_season", "latest_episode"):
         if key in patch:
             value = patch[key]
@@ -440,7 +461,7 @@ async def update_netflix_import_item(
             item["outcome"]["manual_score_staged"] = True
     if patch.get("episode_mappings"):
         raise HTTPException(status_code=422, detail="Episode matches are resolved automatically and cannot be edited.")
-    if action is None and outcome_status is None and tracking_status is None and "manual_score" not in patch and not any(
+    if action is None and outcome_status is None and tracking_status is None and "manual_score" not in patch and "finish_date" not in patch and not any(
         key in patch for key in ("latest_season", "latest_episode")
     ):
         raise HTTPException(status_code=422, detail="Include a title decision or progress change.")

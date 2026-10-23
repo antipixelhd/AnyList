@@ -14,6 +14,8 @@ class WatchObservation:
     season_number: int | None = None
     episode_title: str | None = None
     source_rows: list[int] = field(default_factory=list)
+    watched_seconds: float | None = None
+    completed_evidence: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

@@ -111,16 +111,18 @@ def parse_amazon_zip(content: bytes, language: str | None = None) -> ParsedHisto
             and _text(row.get("Is Deleted")).lower() != "yes"):
             eligible_titles.add(title)
     observations = {}
-    def add(title, watched_date, row_number):
+    def add(title, watched_date, row_number, watched_seconds, completed_evidence=False):
         key = (title, watched_date)
         if key in observations:
+            observations[key].completed_evidence |= completed_evidence
+            observations[key].watched_seconds = max(observations[key].watched_seconds or 0, watched_seconds)
             parsed.duplicate_rows += 1
             return
         episode, show, season = _identity(title, episode_titles)
         observations[key] = WatchObservation(row=row_number, source_title=title if show else episode,
             watched_at=watched_date, show_title=show, season_number=season,
             season_label=f"Season {season}" if season else None,
-            episode_title=episode if show else None, source_rows=[row_number])
+            episode_title=episode if show else None, source_rows=[row_number], watched_seconds=watched_seconds, completed_evidence=completed_evidence)
     def promotional(title):
         return bool(re.search(r"\b(trailer|teaser|preview|behind the scenes)\b", title, re.I))
     for index, row in enumerate(sessions, 2):
@@ -132,7 +134,7 @@ def parse_amazon_zip(content: bytes, language: str | None = None) -> ParsedHisto
             parsed.excluded_rows += 1
             continue
         try:
-            add(title, _date(row.get("Playback Start Datetime (UTC)")), index)
+            add(title, _date(row.get("Playback Start Datetime (UTC)")), index, _seconds(row.get("Seconds Viewed")))
         except (ValueError, TypeError):
             parsed.errors.append({"row": index, "message": "Invalid playback date"})
     for index, row in enumerate(tables.get("Watch Events.csv", []), len(sessions) + 2):
@@ -150,7 +152,8 @@ def parse_amazon_zip(content: bytes, language: str | None = None) -> ParsedHisto
             parsed.excluded_rows += 1
             continue
         try:
-            add(resolved, _date(row.get("Most Recent Watch Date")), index)
+            add(resolved, _date(row.get("Most Recent Watch Date")), index, _seconds(row.get("Seconds Watched")),
+                _text(row.get("Latest Watch Progress")).casefold() in {"completed", "complete", "finished", "100%"})
         except (ValueError, TypeError):
             parsed.errors.append({"row": index, "message": "Invalid viewing date"})
     parsed.rows = sorted(observations.values(), key=lambda r: r.watched_at, reverse=True)

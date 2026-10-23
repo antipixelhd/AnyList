@@ -1,5 +1,6 @@
 ---
 import Icon from "../Icon.astro";
+import CalendarDateInput from "../CalendarDateInput.astro";
 interface Props { hasTmdbKey: boolean; service: "netflix" | "amazon" }
 const { hasTmdbKey, service } = Astro.props;
 const serviceName = service === "amazon" ? "Amazon Prime Video" : "Netflix";
@@ -21,6 +22,13 @@ const extension = service === "amazon" ? ".zip" : ".csv";
       <label class="mt-3 flex items-start gap-2 text-xs text-zinc-300"><input id={`${service}-streaming-skip-anime`} data-role="streaming-skip-anime" type="checkbox" checked disabled class="mt-0.5 h-4 w-4 accent-blue-500" /><span>Skip anime automatically <span class="block text-zinc-500">Required until AniList import or connection is supported.</span></span></label>
       </div>
       <section id={`${service}-streaming-import-workflow`} data-role="streaming-import-workflow" class="mt-5 hidden" aria-live="polite"></section>
+      <dialog data-role="streaming-finish-dialog" class="editor-confirmation" aria-labelledby={`${service}-finish-title`} data-motion-static>
+        <form method="dialog" class="p-5 space-y-4">
+          <h2 id={`${service}-finish-title`}>When did you finish this series?</h2>
+          <CalendarDateInput id={`${service}-finish-date`} name="finish_date" label="Finish date" />
+          <div class="flex justify-end gap-3"><button type="submit" value="skip" class="button-quiet">Skip</button><button type="submit" value="confirm" class="button-primary">Confirm date</button></div>
+        </form>
+      </dialog>
       <dialog id={`${service}-streaming-remap-dialog`} data-role="streaming-remap-dialog" aria-labelledby={`${service}-streaming-remap-title`} class="quick-search-dialog streaming-remap-dialog">
         <h2 id={`${service}-streaming-remap-title`} data-role="streaming-remap-title" class="sr-only">Select a movie or series</h2>
         <div class="quick-search-bar">

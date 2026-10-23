@@ -1930,6 +1930,10 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
                 row.rating, row.rated_at = value, datetime.now(timezone.utc).replace(tzinfo=None)
         else:
             db.add(Rating(user_id=viewer.id, media_id=media_id, season_number=season, rating=value))
+    if fields & {"start_date", "finish_date"}:
+        from core.streaming_activity import reschedule_date_activity
+        await reschedule_date_activity(db, viewer.id, media_id, start_date=entry.start_date,
+                                       finish_date=entry.finish_date, changed=fields)
     progress_changed = entry.progress != old_progress
     if old_score != score and score is None:
         from core.activity import clear_recent_rating_activity
