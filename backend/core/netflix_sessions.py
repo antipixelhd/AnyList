@@ -204,6 +204,40 @@ def _resolve_draft_items(items: list[dict]) -> None:
             item["outcome"]["status"] = _default_show_status(item.get("seasons") or [])
 
 
+async def _prepare_movie_runtime(items: list[dict], observations, api_key: str, language: str | None) -> None:
+    """Load base runtimes only when duration evidence needs a completion ratio."""
+    if not any(row.watched_seconds is not None for row in observations):
+        return
+    semaphore = asyncio.Semaphore(4)
+    tasks = {}
+
+    async def load(tmdb_id):
+        async with semaphore:
+            try:
+                return await tmdb.get_movie_light(tmdb_id, api_key=api_key, language=language)
+            except Exception:
+                logger.warning("Could not load streaming movie runtime for TMDB %s", tmdb_id)
+                return {}
+
+    pending = []
+    for item in items:
+        candidate = item.get('match', {}).get('candidate') or {}
+        if item.get('kind') != 'movie' or item.get('is_anime') or not candidate.get('tmdb_id'):
+            continue
+        if candidate.get('runtime') or (candidate.get('details') or {}).get('runtime'):
+            continue
+        identity = candidate['tmdb_id']
+        if identity not in tasks:
+            tasks[identity] = asyncio.create_task(load(identity))
+        pending.append((candidate, identity))
+    if tasks:
+        await asyncio.gather(*tasks.values())
+    for candidate, identity in pending:
+        details = tasks[identity].result()
+        if details.get('id') == identity and details.get('runtime'):
+            candidate['details'] = {**(candidate.get('details') or {}), **details}
+
+
 def _normalise_groups(prepared: dict) -> list[dict]:
     result: list[dict] = []
     for collection_key, kind in (("movies", "movie"), ("shows", "show"), ("unmatched", "show")):
@@ -402,6 +436,7 @@ async def _prepare_session(session_id: str, user_id: int, language: str | None) 
         items = _normalise_groups(prepared)
         if source == "amazon":
             _require_playback_review(items)
+        await _prepare_movie_runtime(items, history.rows, api_key, resolved_language)
         from core.streaming_evidence import prepare_evidence
         prepare_evidence(items, history.rows)
         errors = prepared.get("errors") or history_dict.get("errors") or []

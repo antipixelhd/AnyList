@@ -114,6 +114,36 @@ class MemoryDb:
 
 
 class ActivityTests(unittest.IsolatedAsyncioTestCase):
+    async def test_movie_runtime_enrichment_is_shared_and_used_for_seventy_percent(self):
+        from unittest.mock import AsyncMock, patch
+        from core.netflix_sessions import _prepare_movie_runtime
+        from core.streaming_history import WatchObservation
+        from core.streaming_evidence import prepare_evidence
+        items = [{'kind': 'movie', 'source_title': 'Movie', 'match': {'candidate': {'tmdb_id': 1}},
+                  'outcome': {'status': 'skip'}} for _ in range(2)]
+        observations = [WatchObservation(row=2, source_title='Movie', watched_at='2020-01-01', watched_seconds=2520)]
+        with patch('core.netflix_sessions.tmdb.get_movie_light', new=AsyncMock(return_value={'id': 1, 'runtime': 60})) as fetch:
+            await _prepare_movie_runtime(items, observations, 'test-key', 'en-US')
+        fetch.assert_awaited_once_with(1, api_key='test-key', language='en-US')
+        prepare_evidence(items, observations)
+        self.assertTrue(all(item['suggested_movie_status'] == 'completed' for item in items))
+        with patch('core.netflix_sessions.tmdb.get_movie_light', new=AsyncMock()) as fetch:
+            await _prepare_movie_runtime(items, [WatchObservation(row=2, source_title='Movie', watched_at='2020-01-01')], 'test-key', None)
+        fetch.assert_not_awaited()
+
+    async def test_runtime_failure_retains_movie_for_dropped_review(self):
+        from unittest.mock import AsyncMock, patch
+        from core.netflix_sessions import _prepare_movie_runtime
+        from core.streaming_history import WatchObservation
+        from core.streaming_evidence import prepare_evidence
+        items = [{'kind': 'movie', 'source_title': 'Movie', 'match': {'candidate': {'tmdb_id': 1}}, 'outcome': {'status': 'skip'}}]
+        observations = [WatchObservation(row=2, source_title='Movie', watched_at='2020-01-01', watched_seconds=600)]
+        with patch('core.netflix_sessions.tmdb.get_movie_light', new=AsyncMock(side_effect=RuntimeError('offline'))):
+            await _prepare_movie_runtime(items, observations, 'test-key', None)
+        prepare_evidence(items, observations)
+        self.assertEqual(items[0]['suggested_movie_status'], 'dropped')
+        self.assertEqual(items[0]['source_dates'], ['2020-01-01'])
+
     async def test_same_day_season_card_preserves_final_dropped_status(self):
         db = MemoryDb()
         item = show()
