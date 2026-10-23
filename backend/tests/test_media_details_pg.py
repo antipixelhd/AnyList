@@ -440,6 +440,22 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.json()['entry']['status'], 'completed')
         self.assertEqual(len(response.json()['people']), 1)
 
+    async def test_game_characters_include_unvoiced_roles_and_use_compact_source_completeness(self):
+        from models.catalogue import CharacterAppearance
+        async with self.Session() as db:
+            work=CatalogueEntity(kind='game',name='Unvoiced fixture',attributes={'game_class':'game'})
+            character=CatalogueEntity(kind='character',name='The Knight',image_url='https://images.igdb.com/igdb/image/upload/t_cover_big/knight.jpg')
+            db.add_all([work,character]);await db.flush()
+            db.add(CharacterAppearance(work_id=work.id,character_id=character.id,provider='igdb'))
+            db.add(MetadataSnapshot(provider='igdb',kind='game',external_id='42',entity_id=work.id,
+                coverage={'characters_complete':False},payload={'raw':'CHARACTER_EVIDENCE_SENTINEL '*5000}))
+            await db.commit()
+            data=await work_details(db,work,extras=False)
+            self.assertEqual(data['game_characters'][0]['name'],'The Knight');self.assertEqual(data['game_characters'][0]['performers'],[])
+            self.assertFalse(data['game_character_status']['complete']);self.assertNotIn('SENTINEL',str(data))
+            record=await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.entity_id==work.id));record.coverage={'characters_complete':True};await db.commit()
+            self.assertTrue((await work_details(db,work,extras=False))['game_character_status']['complete'])
+
     async def test_game_details_use_stored_releases_relations_prices_and_safe_artwork(self):
         async with self.Session() as db:
             game = CatalogueEntity(kind='game', name='Fixture game', attributes={

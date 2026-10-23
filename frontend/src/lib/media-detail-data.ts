@@ -3,7 +3,7 @@ import {countryLabel} from './stats-overview-data.ts';
 import {formatDate,localToday} from './date-time.ts';
 
 export type MediaKind = 'movie' | 'series' | 'game' | 'book';
-export type DetailPerson = {id: number; kind: 'actor' | 'staff' | 'studio'; name: string; image?: string | null; character_image?: string | null; character_images?: string[]; url: string | null; roles: string[]; role_codes?: string[]; position?: number | null; credit_order?:number; episode_count?:number; producer_episode_count?:number; episode_total?:number; characters: string[]};
+export type DetailPerson = {id: number; kind: 'actor' | 'staff' | 'studio' | 'character'; card_key?:string; performances?:{id:number;name:string;image?:string|null}[]; name: string; image?: string | null; character_image?: string | null; character_images?: string[]; url: string | null; roles: string[]; role_codes?: string[]; position?: number | null; credit_order?:number; episode_count?:number; producer_episode_count?:number; episode_total?:number; characters: string[]};
 export function detailCreditEpisodes(person:DetailPerson) {
   const count=person.producer_episode_count,total=person.episode_total;
   if(person.kind!=='staff'||!person.roles.some(role=>/^(executive )?producer$/i.test(role))||
@@ -26,6 +26,8 @@ export type DetailMedia = EditorTitle & {
   genres: string[]; seasons: any[]; friends: any[]; friends_average?: number | null;
   people: DetailPerson[]; organizations: DetailPerson[]; posters: string[]; artwork: string[]; relations: any[]; similar: any[]; related_pending?: boolean;
   character_status?: {state:string;pending?:boolean;error?:string|null;retry_after?:number};
+  game_characters?:import('./game-cast-data').GameCharacter[];
+  game_character_status?:{complete?:boolean;source?:string};
   game_credit_status?: {state:string;pending?:boolean;error?:string|null;retry_after?:number;complete?:boolean;coverage?:string};
   completion_estimates?:import('./game-time-to-beat').CompletionEstimates|null;
   game_offer_context?:Omit<import('./game-offer-data').GameOffers,'offers'>;

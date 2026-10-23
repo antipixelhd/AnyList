@@ -70,9 +70,16 @@ async def work_details(db, work, *, extras=True):
     from core.person_identities import canonical_people
     canonical = await canonical_people(db, [person for _, person in credits])
     game_performances,game_characters={},[]
+    game_character_status=None
     if work.kind=='game':
         from core.game_credit_projection import character_projection
         game_performances,game_characters=await character_projection(db,work.id,[(credit,canonical[person.id]) for credit,person in credits])
+        character_header=(await db.execute(select(MetadataSnapshot.coverage['characters_complete'].as_boolean(),
+            MetadataSnapshot.fetched_at).where(MetadataSnapshot.entity_id==work.id,
+                MetadataSnapshot.provider=='igdb',MetadataSnapshot.kind=='game')
+            .order_by(MetadataSnapshot.fetched_at.desc().nullslast(),MetadataSnapshot.id.desc()).limit(1))).one_or_none()
+        game_character_status={'complete':bool(character_header and character_header[0]),'source':'igdb',
+            'coverage':'retrieved_connection','fetched_at':character_header[1] if character_header else None}
     studio_ids = {canonical[person.id].id for c, person in credits if c.role == 'producer'}
     from core.screen_cast import complete_cast_works, preferred_cast
     if work.kind in ('movie', 'series'):
@@ -151,7 +158,7 @@ async def work_details(db, work, *, extras=True):
                 row['episode_total'] = total
     if not extras:
         return {'catalogue_id':work.id, 'people':list(people.values()), 'organizations':list(organizations.values()),
-            **({'game_characters':game_characters} if work.kind=='game' else {})}
+            **({'game_characters':game_characters,'game_character_status':game_character_status} if work.kind=='game' else {})}
     attrs = work.attributes or {}
     artwork = [url for value in attrs.get('artwork') or [] if (url := image(value))]
     posters = [work.image_url, *(attrs.get('posters') or [])]
@@ -183,7 +190,7 @@ async def work_details(db, work, *, extras=True):
     from core.media_related import catalogue_related
     related = await catalogue_related(db, work)
     return {'catalogue_id': work.id, 'people': list(people.values()), 'organizations': list(organizations.values()),
-        **({'game_characters':game_characters} if work.kind=='game' else {}),
+        **({'game_characters':game_characters,'game_character_status':game_character_status} if work.kind=='game' else {}),
         'posters': unique_images(posters), 'artwork': unique_images(artwork), **related,
         **(movie_financials(attrs, *({'budget': row.budget, 'revenue': row.revenue}
             for row in snapshots if row.provider == 'tmdb')) if work.kind == 'movie' else {}),

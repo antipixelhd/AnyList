@@ -4,12 +4,12 @@ import {detailCreditEpisodes,type DetailPerson} from '../lib/media-detail-data';
 import {responsiveArtwork} from '../lib/responsive-artwork';
 const {person,primary=false} = Astro.props as {person:DetailPerson;primary?:boolean};
 const Tag = person.url ? 'a' : 'div';
-const actor = person.kind === 'actor';
+const actor = person.kind === 'actor'||person.kind==='character';
 const portrait=responsiveArtwork(person.image,{size:'w185',sizes:'57px',route:'direct'});
 const sources=primary?portrait:{'data-deferred-src':portrait?.src,'data-deferred-srcset':portrait?.srcset,'data-deferred-sizes':portrait?.sizes};
 const episodes=detailCreditEpisodes(person);
 ---
-<Tag class="lab-person" href={person.url || undefined} data-person-id={person.id} data-person-kind={person.kind} data-cast-person={actor ? JSON.stringify(person) : undefined}>
+<Tag class="lab-person" href={person.url || undefined} data-person-id={person.id} data-person-kind={person.kind} data-card-key={person.card_key||`${person.kind}:${person.id}`} data-cast-person={person.kind==='actor' ? JSON.stringify(person) : undefined}>
   {actor ? <span class="media-person-art" aria-hidden="true">{portrait&&<img {...sources} alt="" loading="lazy" fetchpriority="low"/>}<span class="lab-person-initials" hidden={!!portrait}><Icon name="user"/></span></span>
     : person.image ? <img {...sources} alt="" loading="lazy" fetchpriority="low"/> : <span class="lab-person-initials" aria-hidden="true"><Icon name={person.kind === 'studio' ? 'film' : 'user'}/></span>}
   <div><h3 data-cast-primary={actor ? '' : undefined}>{person.name}</h3><p data-cast-secondary={actor ? '' : undefined}>{person.characters.length ? person.characters.join(' / ') : person.roles.join(', ')}</p>{episodes&&<span class="media-credit-episodes" data-credit-episodes>{episodes}</span>}</div>

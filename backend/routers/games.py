@@ -157,7 +157,7 @@ async def game_credits(work_id: WorkId, db: DB, viewer: Reader) -> dict:
     await db.commit()
     details=await work_details(db,work,extras=False)
     return {'people':details['people'],'organizations':details['organizations'],
-        'game_characters':details.get('game_characters',[]),'character_status':state,
+        'game_characters':details.get('game_characters',[]),'game_character_status':details.get('game_character_status'),'character_status':state,
         'game_credit_status':state}
 
 
