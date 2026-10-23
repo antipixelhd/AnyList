@@ -182,7 +182,7 @@ def _default_show_status(seasons: list[dict]) -> str:
         and season.get("represented", 0) >= season["total_released"] for season in seasons
     ):
         return "completed"
-    if all(int(season.get("represented") or 0) <= 2 for season in seasons):
+    if not any(int(season.get("represented") or 0) > 0 for season in seasons):
         return "skip"
     return "partial"
 

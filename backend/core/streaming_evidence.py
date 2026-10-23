@@ -1,4 +1,6 @@
 """Evidence selection and historical activity plans shared by streaming imports."""
+from datetime import date
+from calendar import monthrange
 from core.netflix_import import _norm_text
 
 
@@ -49,7 +51,29 @@ def prepare_evidence(items, observations):
                     episode['viewings'] = rows
                     episode['dates'] = [chosen['watched_at']]
             item['source_dates'] = sorted({day for ep in item.get('episodes', []) for day in ep.get('dates', [])})
+        if item['kind'] == 'show' and item['outcome']['status'] == 'partial' and not item['outcome'].get('status_overridden'):
+            item['outcome']['tracking_status'] = partial_tracking_status(item)
         item['completion_evidence'] = completion_evidence(item)
+
+
+def partial_tracking_status(item, today=None):
+    today = today or date.today()
+    month = today.year * 12 + today.month - 1 - 4
+    year, month = divmod(month, 12)
+    month += 1
+    cutoff = date(year, month, min(today.day, monthrange(year, month)[1]))
+    dated = [(ep, day) for ep in item.get('episodes', []) if ep.get('season_number') and ep.get('episode_number')
+             for day in ep.get('dates', [])]
+    if not dated:
+        return 'dropped'
+    episode, day = max(dated, key=lambda value: (value[1], value[0]['season_number'], value[0]['episode_number']))
+    season = next((s for s in item.get('seasons', []) if s['season_number'] == episode['season_number']), {})
+    try:
+        recent = cutoff <= date.fromisoformat(day) <= today
+    except (ValueError, TypeError):
+        recent = False
+    finished = bool(season.get('total_released')) and episode['episode_number'] >= season['total_released']
+    return 'watching' if finished and recent else 'dropped'
 
 
 def completion_evidence(item):

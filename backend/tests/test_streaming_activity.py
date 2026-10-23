@@ -28,6 +28,17 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(choose_viewing([viewing('2020-01-03'), viewing('2020-01-01')])['watched_at'], '2020-01-01')
         self.assertEqual(choose_viewing([viewing('2020-01-01', 600, True), viewing('2020-01-03', 3600)], 60)['watched_at'], '2020-01-01')
 
+    def test_partial_status_requires_both_recent_evidence_and_season_finished(self):
+        from datetime import date
+        from core.streaming_evidence import partial_tracking_status
+        item = show()
+        item['episodes'] = [{'season_number': 1, 'episode_number': 8, 'dates': ['2026-06-23']}]
+        self.assertEqual(partial_tracking_status(item, date(2026, 10, 23)), 'watching')
+        item['episodes'][0]['dates'] = ['2026-06-22']
+        self.assertEqual(partial_tracking_status(item, date(2026, 10, 23)), 'dropped')
+        item['episodes'][0].update(episode_number=4, dates=['2026-10-22'])
+        self.assertEqual(partial_tracking_status(item, date(2026, 10, 23)), 'dropped')
+
     def test_seventy_percent_boundary(self):
         rows = [viewing('2020-01-01', 2520), viewing('2020-01-02', 3600)]
         self.assertEqual(choose_viewing(rows, 60)['watched_at'], '2020-01-01')
