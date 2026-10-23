@@ -75,8 +75,8 @@
   display:none;
 }
 .connections-settings-page .streaming-disclosure-arrow {
-  width:.8rem;
-  height:.8rem;
+  width:14px;
+  height:14px;
   flex-shrink:0;
   margin-left:auto;
 }
