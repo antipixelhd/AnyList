@@ -64,3 +64,25 @@
     max-height:calc(100dvh - 105px)
   }
 }
+
+.connections-settings-page .streaming-disclosure > summary {
+  display:flex;
+  align-items:center;
+  gap:.5rem;
+  list-style:none;
+}
+.connections-settings-page .streaming-disclosure > summary::-webkit-details-marker {
+  display:none;
+}
+.connections-settings-page .streaming-disclosure-arrow {
+  width:.8rem;
+  height:.8rem;
+  flex-shrink:0;
+  margin-left:auto;
+}
+.connections-settings-page .streaming-disclosure-trigger:focus-visible,
+.connections-settings-page [data-streaming-import] .tracker-select-trigger:focus-visible {
+  outline:0;
+  background:var(--dropdown-hover)!important;
+  color:var(--bright);
+}

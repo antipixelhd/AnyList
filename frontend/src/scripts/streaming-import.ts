@@ -1,5 +1,11 @@
+import { icon } from "@fortawesome/fontawesome-svg-core";
+import { faChevronDown } from "@fortawesome/free-solid-svg-icons";
 import { showDialog, closeDialog } from '../lib/ui-motion';
 import { showMessage } from '../lib/settings-feedback';
+
+const disclosureArrow = icon(faChevronDown, {
+  classes: ["streaming-disclosure-arrow"], attributes: { "aria-hidden": "true", "data-dropdown-arrow": "" },
+})!.html.join("");
 
 type MatchCandidate = {
   media_type: "movie" | "show";
@@ -196,7 +202,7 @@ function mountStreamingImport(app: HTMLElement) {
       return `<li class="flex flex-col gap-1 rounded-lg bg-zinc-900/60 px-2.5 py-2 sm:flex-row sm:items-center sm:justify-between"><div class="min-w-0"><p class="break-words text-xs font-medium text-zinc-200">${esc(title)}</p><p class="text-[11px] text-zinc-500">${esc(dateLabel)}</p></div><div class="flex shrink-0 items-center gap-2 text-[11px]"><span class="rounded-full px-2 py-0.5 font-semibold ${styles[resolution]}">${labels[resolution]}</span>${assignment}</div></li>`;
     }).join("");
 
-    return `<details class="mt-3 rounded-lg border border-zinc-800 bg-zinc-950/40"><summary class="cursor-pointer px-3 py-2 text-xs font-semibold text-zinc-300">Episode resolution · ${esc(counts)}</summary><ul class="max-h-64 space-y-1.5 overflow-auto border-t border-zinc-800 p-2">${rows}</ul></details>`;
+    return `<details data-motion-details class="streaming-disclosure mt-3 rounded-lg border border-zinc-800 bg-zinc-950/40"><summary class="streaming-disclosure-trigger cursor-pointer px-3 py-2 text-xs font-semibold text-zinc-300">Episode resolution · ${esc(counts)}${disclosureArrow}</summary><ul class="max-h-64 space-y-1.5 overflow-auto border-t border-zinc-800 p-2">${rows}</ul></details>`;
   }
 
   function isIncomplete(item: StreamingItem): boolean {
@@ -372,7 +378,7 @@ function mountStreamingImport(app: HTMLElement) {
     return `<div class="space-y-4"><div><p class="text-xs font-bold uppercase tracking-[0.16em] text-blue-300">Step 4 of 5 · Optional ratings</p><h2 class="mt-1 text-xl font-bold text-zinc-100">Rate shows and movies</h2><p class="mt-1 text-sm text-zinc-400">This is an optional step. You can still rate anything later in your own list.</p></div>
       ${groups.map((group) => {
         const items = eligible.filter((item) => groupFor(item) === group).sort((a, b) => (a.match.candidate?.title ?? a.source_title).localeCompare(b.match.candidate?.title ?? b.source_title));
-        return `<details data-rating-group="${group}" ${openRatingGroups.has(group) ? "open" : ""} class="rounded-xl border border-zinc-800 bg-zinc-900/30"><summary class="cursor-pointer px-4 py-3 text-sm font-semibold text-zinc-200">${group} <span class="ml-1 text-zinc-500">${items.length}</span></summary><div class="grid gap-2 border-t border-zinc-800 p-3 sm:grid-cols-2">${items.length ? items.map(card).join("") : `<p class="text-sm text-zinc-500">No titles in this group.</p>`}</div></details>`;
+        return `<details data-motion-details data-rating-group="${group}" ${openRatingGroups.has(group) ? "open" : ""} class="streaming-disclosure rounded-xl border border-zinc-800 bg-zinc-900/30"><summary class="streaming-disclosure-trigger cursor-pointer px-4 py-3 text-sm font-semibold text-zinc-200">${group} <span class="ml-1 text-zinc-500">${items.length}</span>${disclosureArrow}</summary><div class="grid gap-2 border-t border-zinc-800 p-3 sm:grid-cols-2">${items.length ? items.map(card).join("") : `<p class="text-sm text-zinc-500">No titles in this group.</p>`}</div></details>`;
       }).join("")}
     </div>`;
   }
@@ -411,8 +417,8 @@ function mountStreamingImport(app: HTMLElement) {
       const skipped = visibleItems().filter((item) => item.decision?.action === "skip");
       content = `<div class="space-y-4"><div><p class="text-xs font-bold uppercase tracking-[0.16em] text-blue-300">Step 2 of 5 · Review title matches</p><h2 class="mt-1 text-xl font-bold text-zinc-100">Confirm anything uncertain</h2><p class="mt-1 text-sm text-zinc-400">Confirm watched movies and show matches. Remap incorrect titles or skip them.</p></div>
         ${reviewQueue.length ? `<div class="space-y-3">${reviewQueue.map((item) => itemCard(item, needing.includes(item))).join("")}</div>` : `<div class="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3 text-sm text-emerald-200">All show and movie titles are resolved. Episode positions will be assigned automatically where the catalogue permits.</div>`}
-        ${auto.length ? `<details class="rounded-xl border border-zinc-800 bg-zinc-900/30"><summary class="cursor-pointer px-4 py-3 text-sm font-semibold text-zinc-300">${auto.length} high confidence match${auto.length === 1 ? "" : "es"} accepted automatically</summary><div class="space-y-3 border-t border-zinc-800 p-3">${auto.map((item) => itemCard(item, false)).join("")}</div></details>` : ""}
-        ${skipped.length ? `<details class="rounded-xl border border-zinc-800 bg-zinc-900/30"><summary class="cursor-pointer px-4 py-3 text-sm font-semibold text-zinc-400">${skipped.length} title${skipped.length === 1 ? "" : "s"} skipped · reopen to change</summary><div class="space-y-3 border-t border-zinc-800 p-3">${skipped.map((item) => itemCard(item, false)).join("")}</div></details>` : ""}
+        ${auto.length ? `<details data-motion-details class="streaming-disclosure rounded-xl border border-zinc-800 bg-zinc-900/30"><summary class="streaming-disclosure-trigger cursor-pointer px-4 py-3 text-sm font-semibold text-zinc-300">${auto.length} high confidence match${auto.length === 1 ? "" : "es"} accepted automatically${disclosureArrow}</summary><div class="space-y-3 border-t border-zinc-800 p-3">${auto.map((item) => itemCard(item, false)).join("")}</div></details>` : ""}
+        ${skipped.length ? `<details data-motion-details class="streaming-disclosure rounded-xl border border-zinc-800 bg-zinc-900/30"><summary class="streaming-disclosure-trigger cursor-pointer px-4 py-3 text-sm font-semibold text-zinc-400">${skipped.length} title${skipped.length === 1 ? "" : "s"} skipped · reopen to change${disclosureArrow}</summary><div class="space-y-3 border-t border-zinc-800 p-3">${skipped.map((item) => itemCard(item, false)).join("")}</div></details>` : ""}
       </div>`;
     } else if (step === 3) {
       content = progressView();
