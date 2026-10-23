@@ -1,6 +1,6 @@
 import type { EditorTitle } from './editor-store';
-import {countryLabel} from './stats-overview-data';
-import {formatDate,localToday} from './date-time';
+import {countryLabel} from './stats-overview-data.ts';
+import {formatDate,localToday} from './date-time.ts';
 
 export type MediaKind = 'movie' | 'series' | 'game' | 'book';
 export type DetailPerson = {id: number; kind: 'actor' | 'staff' | 'studio'; name: string; image?: string | null; character_image?: string | null; character_images?: string[]; url: string | null; roles: string[]; role_codes?: string[]; position?: number | null; credit_order?:number; episode_count?:number; producer_episode_count?:number; episode_total?:number; characters: string[]};
@@ -28,6 +28,7 @@ export type DetailMedia = EditorTitle & {
   character_status?: {state:string;pending?:boolean;error?:string|null;retry_after?:number};
   game_credit_status?: {state:string;pending?:boolean;error?:string|null;retry_after?:number;complete?:boolean;coverage?:string};
   completion_estimates?:import('./game-time-to-beat').CompletionEstimates|null;
+  game_offer_context?:Omit<import('./game-offer-data').GameOffers,'offers'>;
   image_status?: {state:string;error?:string|null;retry_after?:number};
   background_status?: {state:string;error?:string|null;retry_after?:number};
   backdrop_fallback?:string;

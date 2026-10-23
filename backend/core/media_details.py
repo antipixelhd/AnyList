@@ -13,7 +13,7 @@ from core.movie_financials import movie_financials
 from core.principal_credits import principal_clause, select_credits, evidence, positive, label
 from models.catalogue import (
     BookEdition, CatalogueCredit, CatalogueEntity, CatalogueIdentity,
-    CatalogueLegacyLink, GameRelease, MetadataSnapshot, SteamPriceSnapshot,
+    CatalogueLegacyLink, GameRelease, MetadataSnapshot,
 )
 
 
@@ -190,13 +190,14 @@ async def work_details(db, work, *, extras=True):
         'sources': list({source['url']: source for source in sources}.values()), 'countries': attrs.get('countries') or []}
 
 
-async def catalogue_title(db, work, viewer_id=None):
+async def catalogue_title(db, work, viewer_id=None, *, store_country=None, enqueue_offers=False):
     details = await work_details(db, work)
     attrs = work.attributes or {}
     editions = []
     releases = []
     prices = []
     personal = {}
+    identities = list(await db.scalars(select(CatalogueIdentity).where(CatalogueIdentity.entity_id == work.id)))
     if work.kind == 'game':
         from core.game_types import capabilities
         from core import game_tracking
@@ -238,12 +239,9 @@ async def catalogue_title(db, work, viewer_id=None):
                 continue
             seen_platforms.add(platform)
             releases.append({'platform': platform, 'region': release.region, 'release_date': release.release_date})
-        prices = [{'steam_app_id': row.steam_app_id, 'country': row.country, 'current': row.current,
-            'historical_low': row.historical_low, 'historical_low_at': row.historical_low_at,
-            'url': public_url(row.url), 'fetched_at': row.fetched_at}
-            for row in await db.scalars(select(SteamPriceSnapshot).where(SteamPriceSnapshot.work_id == work.id)
-                .order_by(SteamPriceSnapshot.fetched_at.desc()).limit(8))]
-    identities = list(await db.scalars(select(CatalogueIdentity).where(CatalogueIdentity.entity_id == work.id)))
+        from core.game_offers import view as offers_view
+        offers=await offers_view(db,work,viewer_id,hint=store_country,identities=identities,enqueue=enqueue_offers)
+        prices=offers['offers'];personal['game_offer_context']={key:value for key,value in offers.items() if key!='offers'}
     for identity in identities:
         native = identity.external_id
         if identity.namespace == 'openlibrary.book' and re.fullmatch(r'OL[1-9][0-9]*W', native):

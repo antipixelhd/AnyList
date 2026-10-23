@@ -47,6 +47,18 @@ async def game_statistics(username:str,response:Response,db:DB,viewer:Reader,sec
         'follows_you':header['follows_you'],'combine_lists':header['combine_lists'],**result})
 
 
+@router.get('/works/{work_id}/offers')
+async def game_offers(work_id:WorkId,db:DB,viewer:Reader,
+    country:Annotated[str|None,Query(pattern=r'^[A-Za-z]{2}$')]=None) -> dict:
+    from core.game_offers import view
+    from core.catalogue_providers import ProviderError
+    work=await tracking.work(db,work_id)
+    try:result=await view(db,work,viewer.id,hint=country,enqueue=True)
+    except ProviderError:raise HTTPException(422,'Invalid store country') from None
+    await db.commit()
+    return result
+
+
 @router.get('/people/{native}/imdb')
 async def imdb_person_status(native: Annotated[str,Path(pattern=r'^nm[0-9]+$',max_length=30)],db:DB,viewer:Reader) -> dict:
     from core.game_imdb_person import view

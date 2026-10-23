@@ -766,12 +766,14 @@ async def refresh_metadata(
 
 
 async def refresh_prices(db, providers, work_id, appid, country):
+    from core.countries import country_code
+    country=country_code(country) if isinstance(country,str) else None
+    if not country:raise ProviderError('invalid_request')
     appid = validate_identity("steam.app", appid, "game")
     mapping = await resolve_identity(db, "steam.app", appid)
     work = await db.get(CatalogueEntity, work_id)
     if not mapping or mapping.entity_id != work_id or not work or work.kind != "game":
         raise IdentityConflict("Prices require a verified Steam AppID for this game")
-    country = country.upper()
     # The same durable lease/cache machinery bounds price refreshes across users.
     key = f"{appid}:{country}"
     await write_lock(db)
@@ -811,6 +813,9 @@ async def refresh_prices(db, providers, work_id, appid, country):
             return result
         async with db.begin_nested():
             await write_lock(db)
+            mapping=await resolve_identity(db,'steam.app',appid)
+            if not mapping or mapping.entity_id!=work_id:
+                raise IdentityConflict('Steam identity changed during offer refresh')
             await bind_identity(
                 db,
                 work_id,
@@ -848,12 +853,22 @@ async def refresh_prices(db, providers, work_id, appid, country):
             )
             state.entity_id = work_id
             state.payload = prices["payload"]
+            state.coverage={'state':'complete','complete':True,'steam_app_id':appid,'country':country}
             state.fetched_at = datetime.now(timezone.utc).replace(tzinfo=None)
             state.expires_at = state.fetched_at + timedelta(hours=6)
             state.error_code = None
             state.next_attempt_at = None
             state.attempts = 0
         status = "updated"
+    except asyncio.CancelledError:
+        await db.rollback()
+        await write_lock(db)
+        await db.refresh(state,with_for_update=True)
+        if state.lease_token==token:
+            state.lease_token=state.lease_until=None
+            state.next_attempt_at=datetime.now(timezone.utc).replace(tzinfo=None)+timedelta(seconds=5)
+            await db.commit()
+        raise
     except (ProviderError, IdentityConflict, asyncio.TimeoutError) as e:
         status, owned = await record_refresh_failure(db, state, token, e, 120)
         if not owned:

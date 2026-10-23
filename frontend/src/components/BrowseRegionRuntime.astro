@@ -1,8 +1,12 @@
 <script>
   import { rememberDeviceRegion } from '../lib/streaming-region';
+  import {rememberDeviceCountry} from '../lib/store-country';
   // Learn the device hint on ordinary visits, before the next browse request.
   // A manual override is never replaced by an automatic hint.
   rememberDeviceRegion();
+  rememberDeviceCountry();
   document.addEventListener('astro:page-load', () => rememberDeviceRegion());
+  document.addEventListener('astro:page-load',()=>rememberDeviceCountry());
   window.addEventListener('languagechange', () => rememberDeviceRegion());
+  window.addEventListener('languagechange',()=>rememberDeviceCountry());
 </script>

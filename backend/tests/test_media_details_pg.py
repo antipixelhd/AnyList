@@ -462,7 +462,7 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as db:
             user=await db.get(User,self.user_id);user.games_access=True
             await db.commit();self.viewer=user
-        response = await self.client.get(f'/catalogue/entities/{game_id}/details')
+        response = await self.client.get(f'/catalogue/entities/{game_id}/details?country=DE')
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertEqual(data['artwork'], ['https://example.test/game.jpg'])

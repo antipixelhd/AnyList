@@ -2,11 +2,13 @@
 import MediaDetailPage from '../../components/MediaDetailPage.astro';
 import {catalogueDetail} from '../../lib/catalogue-detail';
 import {localMediaId} from '../../lib/media-detail-data';
+import {DEVICE_COUNTRY_COOKIE} from '../../lib/store-country';
+import {streamingCountry} from '../../lib/streaming-region';
 const id=localMediaId(Astro.params.id);
 let media=null,error='';
 if (!id) { Astro.response.status=404; error='Game not found.'; }
 else {
-  try { media=await catalogueDetail(id,'game',Astro.locals.token); }
+  try { media=await catalogueDetail(id,'game',Astro.locals.token,streamingCountry(Astro.cookies.get(DEVICE_COUNTRY_COOKIE)?.value)); }
   catch (cause) { error=(cause as Error).message; Astro.response.status=error==='Not found.'?404:503; }
 }
 ---

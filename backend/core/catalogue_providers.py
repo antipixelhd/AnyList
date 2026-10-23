@@ -898,7 +898,10 @@ class CatalogueProviders:
                 return out, True
         return out, False
 
-    async def steam_prices(self, appid, country="DE"):
+    async def steam_prices(self, appid, country):
+        from core.countries import country_code
+        country=country_code(country) if isinstance(country,str) else None
+        if not country:raise ProviderError('invalid_request')
         return await asyncio.wait_for(self._steam_prices(appid, country), timeout=120)
 
     async def _steam_prices(self, appid, country):
@@ -907,6 +910,7 @@ class CatalogueProviders:
         if (
             not str(appid).isdigit()
             or int(appid) <= 0
+            or not isinstance(country,str)
             or len(country) != 2
             or not country.isalpha()
         ):
@@ -918,9 +922,8 @@ class CatalogueProviders:
             "https://api.isthereanydeal.com/games/lookup/v1",
             params={**params, "appid": str(appid)},
         )
-        if not lookup.get("found") or not lookup.get("game"):
-            raise ProviderError("not_found")
-        gid = lookup["game"]["id"]
+        from core.itad_prices import game_id,normalized
+        gid = game_id(lookup)
         # Steam is shop 61 in the current official catalogue, verified live.
         params.update(country=country.upper(), shops="61")
         prices = await self.http.request(
@@ -937,27 +940,7 @@ class CatalogueProviders:
             params=params,
             json=[gid],
         )
-        deals = [
-            d
-            for row in prices
-            if row.get("id") == gid
-            for d in row.get("deals", [])
-            if d.get("shop", {}).get("id") == 61
-        ]
-        low = [
-            d
-            for row in lows
-            if row.get("id") == gid
-            for d in row.get("lows", [])
-            if d.get("shop", {}).get("id") == 61
-        ]
-        current = deals[0] if deals else {}
-        historical = low[0] if low else {}
         return {
-            "itad_id": gid,
-            "current": current.get("price"),
-            "historical_low": historical.get("price"),
-            "historical_low_at": historical.get("timestamp"),
-            "url": current.get("url"),
+            **normalized(gid,prices,lows),
             "payload": {"lookup": lookup, "prices": prices, "storelow": lows},
         }

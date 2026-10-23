@@ -43,6 +43,7 @@ from models.catalogue import (
     CharacterPerformance,
     ContributorEvidence,
     MetadataSnapshot,
+    SteamPriceSnapshot,
 )
 from models.games import GameActivity, GameEntry, GameFavorite
 from models.users import UserSettings
@@ -200,6 +201,18 @@ async def main(args):
                 db.add(MetadataSnapshot(provider='igdb',kind='game_estimate_job',external_id=str(first_game.id),entity_id=first_game.id,
                     coverage={'state':'complete','complete':True,'source_game_id':'9000000'},
                     payload={'raw_estimates':'TIME_EVIDENCE_SENTINEL '*50000},expires_at=stamp+timedelta(days=30)))
+            if args.case and 'game_offers' in args.case:
+                from core.config import settings as provider_settings
+                profile=await db.scalar(select(UserProfileData).where(UserProfileData.user_id==viewer.id));profile.country='GB'
+                db.add(CatalogueIdentity(entity_id=first_game.id,namespace='steam.app',external_id='9000000',source='igdb'))
+                stamp=datetime.now(timezone.utc).replace(tzinfo=None)
+                db.add(MetadataSnapshot(provider='itad',kind='price',external_id='9000000:GB',entity_id=first_game.id,
+                    fetched_at=stamp,expires_at=stamp+timedelta(hours=6),payload={'raw':'OFFER_JOB_SENTINEL '*50000}))
+                for country,currency in [('GB','GBP'),('DE','EUR'),('US','USD')]:
+                    db.add(SteamPriceSnapshot(work_id=first_game.id,steam_app_id='9000000',country=country,
+                        current={'currency':currency,'amountInt':599},historical_low={'currency':currency,'amountInt':299},
+                        historical_low_at='2024-01-01',url='https://store.steampowered.com/app/9000000/',
+                        payload={'raw':'OFFER_PRICE_SENTINEL '*50000}))
             if args.case and 'game_person_availability' in args.case:
                 from core.contributor_availability import movie_job
                 from core.game_imdb_bindings import revision
@@ -330,6 +343,9 @@ async def main(args):
                 if label=='game_time_to_beat':
                     row['result_identity']=hashlib.sha256(json.dumps(result['estimates'],sort_keys=True).encode()).hexdigest()
                     row['pending']=result['status']['pending']
+                if label=='game_offers':
+                    row['result_identity']=hashlib.sha256(json.dumps({key:result[key] for key in ('country','country_source','steam_app_id')},sort_keys=True).encode()).hexdigest()
+                    row['rows']=len(result['offers']);row['pending']=result['status']['pending']
             samples.append(row)
             return result
 
@@ -403,6 +419,7 @@ async def main(args):
             *([('game_company_availability',f'contributors/studio/catalogue:{game_company_id}/availability',{})] if game_company_id else []),
             ('game_search', 'games/search', {'q': 'Benchmark'}),
             *([('game_time_to_beat',f'games/works/{first_game.id}/time-to-beat',{})] if args.case and 'game_time_to_beat' in args.case else []),
+            *([('game_offers',f'games/works/{first_game.id}/offers',{'country':'DE'})] if args.case and 'game_offers' in args.case else []),
             ('game_search_prefix','games/search',{'q':'Elden R'}),
             *([('game_children',f'games/works/{children_base}/children',{'limit':24})] if children_base else []),
             ('game_browse_preview','games/browse',{'limit':6}),
@@ -473,6 +490,8 @@ async def main(args):
                 raise ValueError('Unknown case for the selected matrix')
             cases = [case for case in cases if case[0] in selected]
         with ExitStack() as stack:
+            if args.case and 'game_offers' in args.case:
+                stack.enter_context(patch.object(provider_settings,'itad_api_key','fixture-itad-key'))
             stack.enter_context(patch.object(tmdb, '_request', side_effect=provider))
             stack.enter_context(patch('core.game_discovery.candidates', side_effect=game_candidates))
             stack.enter_context(patch.object(game_browse,'GameBrowseSources',return_value=game_sources))
@@ -547,6 +566,19 @@ async def main(args):
                                 sql=sql_patterns.get(identity.removeprefix('sql:'),'') if identity.startswith('sql:') else ''
                                 if 'catalogue_metadata_snapshots.payload,' in sql or 'catalogue_metadata_snapshots.payload FROM' in sql:
                                     raise RuntimeError('Company read hydrated a full provider snapshot')
+                            return result
+                        if label=='game_offers':
+                            result=await request(path,params)
+                            if (result['country'],result['country_source'],result['steam_app_id'])!=('GB','account','9000000'):
+                                raise RuntimeError('Offer hint replaced the saved account country')
+                            if len(result['offers'])!=1 or result['offers'][0]['current']['currency']!='GBP' or result['status']['pending']:
+                                raise RuntimeError('Cached offer selected another country or requeued a fresh price')
+                            if counters['provider_requests'] or counters['db_writes']:raise RuntimeError('Warm offers performed provider work or writes')
+                            if 'SENTINEL' in json.dumps(result):raise RuntimeError('Offer exposed source evidence')
+                            for identity in counters:
+                                sql=sql_patterns.get(identity.removeprefix('sql:'),'') if identity.startswith('sql:') else ''
+                                if 'catalogue_steam_prices.payload' in sql or 'catalogue_metadata_snapshots.payload' in sql:
+                                    raise RuntimeError('Offer hydrated raw provider evidence')
                             return result
                         if label.startswith('game_statistics'):
                             if label=='game_statistics_rebuild':

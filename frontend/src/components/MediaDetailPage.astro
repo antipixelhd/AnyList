@@ -4,6 +4,7 @@ import Tracker from '../layouts/Tracker.astro';
 import StatusControl from './StatusControl.astro';
 import GameProgress from './GameProgress.astro';
 import MediaDetailGameTimes from './MediaDetailGameTimes.astro';
+import MediaDetailGameOffer from './MediaDetailGameOffer.astro';
 import {viewerMediaPreferences} from '../lib/viewer-media-preferences';
 import Icon from './Icon.astro';
 import ImageLightbox from './ImageLightbox.astro';
@@ -19,7 +20,7 @@ import {scoreLabel,statuses,tracker} from '../lib/tracker';
 import {responsiveArtwork} from '../lib/responsive-artwork';
 import {detailSceneArtwork} from '../lib/detail-artwork';
 import {mediaShareDescription} from '../lib/share-preview';
-import {prepareDetail,kindLabel,detailCredits,detailFacts,detailSynopsis,moneyLabel,detailBrowseHref,detailCreators} from '../lib/media-detail-data';
+import {prepareDetail,kindLabel,detailCredits,detailFacts,detailSynopsis,detailBrowseHref,detailCreators} from '../lib/media-detail-data';
 import '../styles/dev-details.css';
 import '../styles/dev-marquee.css';
 import '../styles/dev-marquee-25.css';
@@ -58,7 +59,7 @@ const initialArtwork=[poster,backdrop].filter(Boolean).map(image=>({...image,pri
 const sources=[...(title?.sources||[]),...(title?.tmdb_id?[{name:'TMDB',url:`https://www.themoviedb.org/${title.type==='series'?'tv':'movie'}/${title.tmdb_id}`}]:[]),...(title?.imdb_id?[{name:'IMDb',url:`https://www.imdb.com/title/${title.imdb_id}/`}]:[])];
 const ratings=[{name:'TMDB',field:'tmdb_score',value:title?.tmdb_score},{name:'IMDb',field:'imdb_score',value:title?.imdb_score},
   {name:'RT Critics',field:'rt_critic_score',value:title?.rt_critic_score},{name:'RT Audience',field:'rt_audience_score',value:title?.rt_audience_score}].filter(rating=>rating.value!=null||title?.scores_pending);
-const price=title?.prices.find(row=>moneyLabel(row.current));
+const offers=title?.game_offer_context?{...title.game_offer_context,offers:title.prices}:null;
 const login=`/login?next=${encodeURIComponent(Astro.url.pathname+Astro.url.search)}`;
 const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
 ---
@@ -102,7 +103,7 @@ const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
             </div>
             <div class="lab-secondary-column">
               {!!ratings.length&&<section class="lab-public-score lab-module" aria-labelledby="detail-audience-heading"><div class="lab-section-title"><h2 id="detail-audience-heading">Audience score</h2></div><div class="media-provider-ratings">{ratings.map(({name,field,value})=><p><span>{name}</span><strong data-detail-score={field} class:list={{'detail-value-skeleton':value==null}}>{value==null?'':name.startsWith('RT')?`${Math.round(Number(value))}%`:scoreLabel(Number(value))}</strong></p>)}</div><p class="detail-load-status" data-detail-score-status hidden></p></section>}
-              {price&&<section class="lab-game-offer lab-module"><div class="lab-offer-edition"><h2>Steam · {price.country}</h2><p>Updated <LocalDateTime value={price.fetched_at} style="timestamp-date"/></p></div><div class="lab-offer-pricing"><strong>{moneyLabel(price.current)}</strong></div>{moneyLabel(price.historical_low)&&<p class="media-price-low">Lowest {moneyLabel(price.historical_low)}{price.historical_low_at&&<> · <LocalDateTime value={price.historical_low_at}/></>}</p>}{price.url&&<a class="lab-primary-button" href={price.url} target="_blank" rel="noreferrer">View on Steam <Icon name="external"/></a>}</section>}
+              {gameTitle&&<MediaDetailGameOffer data={offers}/>}
               {!!title.friends.length&&<section class="lab-friends lab-module"><div class="lab-section-title"><h2>People you follow</h2><span><Icon name="star"/>{scoreLabel(title.friends_average??null)}</span></div><div class="lab-friends-grid">{title.friends.map(friend=><a class="lab-friend" href={`/user/${encodeURIComponent(friend.username)}/${title.type==='movie'?'movies':'series'}`}><span class="lab-friend-avatar friend-one" aria-hidden="true">{friend.id&&friend.has_avatar?<img src={`/api/proxy/profile/avatar/${friend.id}`} alt="" loading="lazy"/>:friend.username.slice(0,1).toUpperCase()}</span><div><h3>{friend.display_name||friend.username}</h3><p>{statuses.find(([id])=>id===friend.status)?.[1]||friend.status}</p></div><strong>{scoreLabel(friend.score)}</strong></a>)}</div></section>}
               {signedIn&&trackable&&!gameChild&&<section class="lab-note lab-module"><div class="lab-section-title"><h2><label for="detail-note">Personal note</label></h2><Icon name="comment"/></div><textarea id="detail-note" rows="3" placeholder="Something worth remembering…">{title.entry?.notes||''}</textarea><div class="lab-note-footer"><button class="lab-text-button" type="button" data-detail-save-note>Save <Icon name="check"/></button></div></section>}
             </div>

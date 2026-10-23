@@ -42,9 +42,9 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.rate.stop()
         await self.client.aclose()
 
-    def login(self, admin=False):
+    def login(self, admin=False,approved=False):
         self.app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
-            id=1, is_admin=admin
+            id=1, is_admin=admin,games_access=approved
         )
 
     async def test_anonymous_requests_need_authentication(self):
@@ -154,6 +154,10 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             search=AsyncMock(side_effect=ProviderError("unauthorized"))
         )
         with patch.object(catalogue, "providers", AsyncMock(return_value=adapter)):
+            response=await self.client.get('/catalogue/search?provider=igdb&kind=game&q=x')
+            self.assertEqual(response.status_code,403)
+            adapter.search.assert_not_awaited()
+            self.login(approved=True)
             response = await self.client.get(
                 "/catalogue/search?provider=igdb&kind=game&q=x"
             )

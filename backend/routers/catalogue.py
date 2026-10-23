@@ -2,7 +2,7 @@
 
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -300,7 +300,8 @@ async def screen_character(character_id: Annotated[int, Path(gt=0)], db: DB, cur
 
 
 @router.get("/entities/{entity_id}/details")
-async def media_detail(entity_id: Annotated[int, Path(gt=0)], db: DB, current_user: OptionalCaller) -> dict:
+async def media_detail(entity_id: Annotated[int, Path(gt=0)], db: DB, current_user: OptionalCaller, response:Response,
+    country:Annotated[str|None,Query(pattern=r'^[A-Za-z]{2}$')]=None) -> dict:
     from core.media_details import catalogue_title
     from core.tracking_access import catalog_access
     await catalog_access(db, current_user)
@@ -308,7 +309,9 @@ async def media_detail(entity_id: Annotated[int, Path(gt=0)], db: DB, current_us
     if not work or work.kind not in ('game', 'book'):
         raise HTTPException(404, "Game or book not found")
     await authorize_entity(db, work, current_user)
-    data=await catalogue_title(db, work, current_user.id if current_user else None)
+    response.headers['Cache-Control']='private, no-store'
+    try:data=await catalogue_title(db, work, current_user.id if current_user else None,store_country=country,enqueue_offers=True)
+    except ProviderError as error:raise safe_error(error) from None
     if work.kind=='game':
         from core.game_imdb_enrichment import request as request_credits
         state=await request_credits(db,work.id)
@@ -551,15 +554,17 @@ async def prices(
     appid: Annotated[str, Path(pattern=r"^[1-9][0-9]{0,18}$")],
     db: DB,
     current_user: Caller,
-    country: Annotated[str, Query(pattern=r"^[A-Za-z]{2}$")] = "DE",
+    country: Annotated[str|None, Query(pattern=r"^[A-Za-z]{2}$")] = None,
 ) -> dict:
     entity = await db.get(CatalogueEntity, entity_id)
     if not entity:
         raise HTTPException(404, "Catalogue entity not found")
     await authorize_entity(db, entity, current_user)
     try:
+        from core.game_offers import country as effective_country
+        selected=await effective_country(db,current_user.id,country)
         return await catalogue.refresh_prices(
-            db, await providers(db, current_user), entity_id, appid, country
+            db, await providers(db, current_user), entity_id, appid, selected['country']
         )
     except (ProviderError, catalogue.IdentityConflict) as e:
         raise safe_error(e) from None
