@@ -182,3 +182,48 @@ def activity_data(rows, *, include_user=False, limit=12):
         for item in grouped.values()
         if has_activity_event(item["status"], item["payload"])
     ][:limit]
+
+
+def following_title_activity(rows, media, *, today=None, limit=30):
+    """One latest major milestone per person, without altering timeline history."""
+    from datetime import date
+    today = today or date.today()
+    premieres = {
+        int(season['season_number']): str(season['air_date'])[:10]
+        for season in (media.tmdb_data or {}).get('seasons', [])
+        if isinstance(season, dict) and (season.get('season_number') or 0) > 0
+        and season.get('air_date') and str(season['air_date'])[:10] <= today.isoformat()
+    } if media.media_type.value == 'series' else {}
+    latest = {}
+    for activity, user, profile in rows:
+        details = activity.payload or {}
+        status_event = details.get('status_changed') and (
+            activity.status in ('completed', 'dropped', 'paused', 'planning')
+            or (activity.status == 'watching' and details.get('started_watching') is True)
+        )
+        if not status_event and not details.get('finished_seasons'):
+            continue
+        prior = latest.get(user.id)
+        if prior and (prior[0].created_at, prior[0].id) >= (activity.created_at, activity.id):
+            continue
+        latest[user.id] = (activity, user, profile)
+    ordered = sorted(latest.values(), key=lambda row: (row[0].created_at, row[0].id), reverse=True)
+    cards = activity_data([(activity, media, user, profile) for activity, user, profile in ordered],
+                          include_user=True, limit=limit)
+    for card in cards:
+        details = card['payload']
+        # A combined first-watch card may also contain episodes. The details
+        # summary exposes its milestone, while timelines retain every action.
+        for key in ('episodes_watched', 'position_start', 'position', 'progress'):
+            details.pop(key, None)
+        completed_on = card['created_at'].date().isoformat()
+        if card['status'] == 'completed' and details.get('status_changed') and any(
+            premiere > completed_on for premiere in premieres.values()
+        ):
+            finished = [number for number, premiere in premieres.items() if premiere <= completed_on]
+            finished.extend(details.get('finished_seasons') or [])
+            if finished:
+                card['status'] = 'watching'
+                details['status_changed'] = False
+                details['finished_seasons'] = [max(finished)]
+    return cards

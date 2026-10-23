@@ -22,6 +22,40 @@ from routers.catalogue import router
 
 @unittest.skipUnless(fixture.URL, 'Requires explicit disposable statistics PostgreSQL')
 class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_title_social_separates_self_and_latest_public_following_milestones(self):
+        from datetime import datetime, timedelta
+        async with self.Session() as db:
+            media = await db.get(Media, self.media_id)
+            media.media_type = MediaType.series
+            media.tmdb_data = {'seasons': [{'season_number': 1, 'air_date': '2020-01-01'},
+                                           {'season_number': 2, 'air_date': '2022-01-01'}]}
+            moment = datetime(2021, 1, 1)
+            db.add(TrackingActivity(user_id=self.user_id, media_id=media.id, status='watching',
+                                   payload={'episodes_watched': 1}, created_at=moment))
+            for username, privacy, followed in [('public', PrivacyLevel.public, True),
+                                               ('private', PrivacyLevel.private, True),
+                                               ('stranger', PrivacyLevel.public, False)]:
+                friend = User(username='social-'+username, email=username+'@example.test', api_key=username+'-fixture')
+                db.add(friend); await db.flush()
+                db.add(UserProfileData(user_id=friend.id, privacy_level=privacy))
+                if followed:
+                    db.add(Follow(follower_id=self.user_id, following_id=friend.id))
+                db.add(TrackingActivity(user_id=friend.id, media_id=media.id, status='completed',
+                                       payload={'status_changed': True}, created_at=moment))
+                for day in range(1, 65):
+                    db.add(TrackingActivity(user_id=friend.id, media_id=media.id, status='watching',
+                                           payload={'episodes_watched': 1}, created_at=moment+timedelta(days=day)))
+            await db.commit()
+        await self.login()
+        response = await self.client.get(f'/tracking/title/{self.media_id}/social')
+        self.assertEqual(response.status_code, 200, response.text)
+        data = response.json()
+        self.assertEqual([card['user_id'] for card in data['activities']], [self.user_id])
+        self.assertEqual([card['username'] for card in data['following_activities']], ['social-public'])
+        self.assertEqual(data['following_activities'][0]['payload']['finished_seasons'], [1])
+        self.assertEqual(data['following_activities'][0]['status'], 'watching')
+        self.assertTrue(data['activities'][0]['payload']['episodes_watched'])
+
     async def test_preview_is_cached_without_gallery_downloads_and_preserves_existing_data(self):
         await self.login()
         raw={'backdrops':[

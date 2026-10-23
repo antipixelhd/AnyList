@@ -9,7 +9,7 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query, Response
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import select, delete, or_
+from sqlalchemy import select, delete, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db import get_db
@@ -1613,10 +1613,33 @@ async def title_social(media_id: Annotated[int, Path(gt=0)],
         .join(Media, Media.id == TrackingActivity.media_id)
         .join(User, User.id == TrackingActivity.user_id)
         .outerjoin(UserProfileData, UserProfileData.user_id == User.id)
-        .where(TrackingActivity.media_id == media_id, visible)
+        .where(TrackingActivity.media_id == media_id, TrackingActivity.user_id == viewer.id)
         .order_by(TrackingActivity.created_at.desc(), TrackingActivity.id.desc()).limit(60))).all()
+    # Reduce before limiting: episode/rating traffic must not hide a followed
+    # person's last major milestone, even when it is years old.
+    allowed = select(User.id).outerjoin(UserProfileData, UserProfileData.user_id == User.id).where(
+        User.id.in_(followed), User.id != viewer.id, UserProfileData.privacy_level == PrivacyLevel.public,
+    )
+    payload = TrackingActivity.payload
+    status_event = payload['status_changed'].as_boolean().is_(True) & (
+        TrackingActivity.status.in_(('completed', 'dropped', 'paused', 'planning')) |
+        ((TrackingActivity.status == 'watching') & payload['started_watching'].as_boolean().is_(True))
+    )
+    ranked = select(TrackingActivity.id, func.row_number().over(
+        partition_by=TrackingActivity.user_id,
+        order_by=(TrackingActivity.created_at.desc(), TrackingActivity.id.desc()),
+    ).label('rank')).where(
+        TrackingActivity.media_id == media_id, TrackingActivity.user_id.in_(allowed),
+        or_(status_event, func.jsonb_array_length(payload['finished_seasons']) > 0),
+    ).subquery()
+    following_rows = (await db.execute(select(TrackingActivity, User, UserProfileData)
+        .join(ranked, (ranked.c.id == TrackingActivity.id) & (ranked.c.rank == 1))
+        .join(User, User.id == TrackingActivity.user_id)
+        .outerjoin(UserProfileData, UserProfileData.user_id == User.id)
+        .order_by(TrackingActivity.created_at.desc(), TrackingActivity.id.desc()).limit(30))).all()
     return {'type': media.media_type.value, 'people': people,
-            'activities': tracking_projection.activity_data(activity_rows, include_user=True, limit=30)}
+            'activities': tracking_projection.activity_data(activity_rows, include_user=True, limit=30),
+            'following_activities': tracking_projection.following_title_activity(following_rows, media)}
 
 
 @router.get('/title/{media_id}/people')
