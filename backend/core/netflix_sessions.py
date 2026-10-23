@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from core import settings_store, tmdb
 from core.enrichment import create_media_safely
 from core.status_provenance import mark_status_change
+from core.streaming_evidence import default_show_status as _default_show_status
 from core.tracking_rules import effective_score
 from core.watch_dates import inferred_watch_datetime, reconcile_inferred_watch_date
 from db import engine
@@ -174,17 +175,6 @@ def _resolve_item_episodes(item: dict) -> None:
         current_endpoint == (None, None) or current_endpoint == original_latest
     ):
         item["outcome"]["latest_season"], item["outcome"]["latest_episode"] = latest
-
-
-def _default_show_status(seasons: list[dict]) -> str:
-    if seasons and all(
-        season.get("catalogue_complete") and season.get("total_released") is not None
-        and season.get("represented", 0) >= season["total_released"] for season in seasons
-    ):
-        return "completed"
-    if all(int(season.get("represented") or 0) <= 2 for season in seasons):
-        return "skip"
-    return "partial"
 
 
 def _existing_state(media: Media | None, tracked: TrackedEntry | None) -> dict:
@@ -710,6 +700,10 @@ def _show_import_positions(item: dict, outcome: dict, today: date) -> tuple[dict
     endpoint = (outcome.get("latest_season"), outcome.get("latest_episode"))
     cutoff_exclusions = 0
     status = outcome.get("status")
+    if status == "partial" and (endpoint[0] is None or endpoint[1] is None) and any(
+        ep.get('watch_qualified') is False for ep in item.get('episodes', [])
+    ):
+        raise ValueError(f"{item.get('source_title')}: choose a latest watched episode.")
     if status == "partial" and endpoint[0] is not None and endpoint[1] is not None:
         endpoint = (int(endpoint[0]), int(endpoint[1]))
         endpoint_episode = catalog.get(endpoint)
@@ -932,6 +926,8 @@ async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSe
         stats["guessed_episodes"] += sum(ep.get("resolution") == "guessed" for episodes in source_positions.values() for ep in episodes)
         stats["discarded_episodes"] += sum(ep.get("resolution") == "discarded" for ep in item.get("episodes", []))
         stats["covered_episodes"] += sum(ep.get("resolution") == "covered" for ep in item.get("episodes", []))
+        inference_dates = [value for episodes in source_positions.values() for ep in episodes
+                           for raw in ep.get('dates', []) if (value := _to_date(raw)) is not None]
         # A TVDB-canonical existing catalogue must have a proven mapping for
         # every source or inferred TMDB position. Never write TMDB numbers into
         # TVDB-native Media rows.
@@ -986,7 +982,7 @@ async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSe
                     WatchEventModel.completed.is_(True),
                 ).limit(1))).scalar_one_or_none()
                 if any_existing is None:
-                    evidence_date = min(date_values) if date_values else today
+                    evidence_date = min(inference_dates) if inference_dates else today
                     db.add(WatchEvent(user_id=user_id, media_id=media.id,
                         watched_at=inferred_watch_datetime(datetime.combine(evidence_date, datetime.min.time())),
                         date_inferred=True, completed=True, play_count=1, provisional=True))

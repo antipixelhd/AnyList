@@ -71,6 +71,24 @@ class EvidenceTests(unittest.TestCase):
         rows[0]['watched_seconds'] = 2519
         self.assertEqual(choose_viewing(rows, 60)['watched_at'], '2020-01-02')
 
+    def test_duration_needs_known_runtime_but_explicit_file_completion_is_enough(self):
+        from core.streaming_evidence import completed_viewing
+        self.assertTrue(completed_viewing(viewing('2020-01-01', 2520), 60))
+        self.assertFalse(completed_viewing(viewing('2020-01-01', 2519), 60))
+        self.assertFalse(completed_viewing(viewing('2020-01-01', 7200)))
+        self.assertTrue(completed_viewing(viewing('2020-01-01', 600, completed=True)))
+        self.assertTrue(completed_viewing(viewing('2020-01-01')))
+
+    def test_weak_season_finale_does_not_suggest_watching(self):
+        from datetime import date
+        from core.streaming_evidence import partial_tracking_status
+        item = show()
+        item['episodes'] = [
+            {'season_number': 1, 'episode_number': 7, 'dates': ['2026-10-22'], 'watch_qualified': True},
+            {'season_number': 1, 'episode_number': 8, 'dates': ['2026-10-23'], 'watch_qualified': False},
+        ]
+        self.assertEqual(partial_tracking_status(item, date(2026, 10, 23)), 'dropped')
+
     def test_finish_requires_tail_of_final_released_season(self):
         item = show()
         self.assertIsNone(completion_evidence(item)['finish_date'])

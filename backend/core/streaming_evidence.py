@@ -4,16 +4,50 @@ from calendar import monthrange
 from core.netflix_import import _norm_text
 
 
+def default_show_status(seasons):
+    if seasons and all(
+        season.get('catalogue_complete') and season.get('total_released') is not None
+        and season.get('represented', 0) >= season['total_released'] for season in seasons
+    ):
+        return 'completed'
+    if all(int(season.get('represented') or 0) <= 2 for season in seasons):
+        return 'skip'
+    return 'partial'
+
+
 def choose_viewing(rows, runtime_minutes=None):
     rows = [row for row in rows if row.get('watched_at')]
     if not rows:
         return None
-    runtime = float(runtime_minutes or 0) * 60
-    completed = [row for row in rows if row.get('completed_evidence') or
-                 (runtime > 0 and row.get('watched_seconds') is not None and row['watched_seconds'] >= runtime * .7)]
+    completed = [row for row in rows if completed_viewing(row, runtime_minutes)]
     if completed:
         return min(completed, key=lambda row: row['watched_at'])
     return min(rows, key=lambda row: (-(row.get('watched_seconds') or 0), row['watched_at']))
+
+
+def completed_viewing(row, runtime_minutes=None):
+    # Files without duration evidence (Netflix) already assert a watch.
+    if row.get('completed_evidence') or row.get('watched_seconds') is None:
+        return True
+    runtime = float(runtime_minutes or 0)
+    return runtime > 0 and row['watched_seconds'] >= runtime * 60 * .7
+
+
+def _prepare_show_progress(item):
+    episodes = item.get('episodes', [])
+    if not any('watch_qualified' in ep for ep in episodes):
+        return
+    qualified = [ep for ep in episodes if ep.get('watch_qualified', True)
+                 and ep.get('matched', ep.get('resolution') in ('exact', 'guessed'))
+                 and ep.get('season_number') and ep.get('episode_number')]
+    for season in item.get('seasons', []):
+        season['represented'] = len({ep['episode_number'] for ep in qualified if ep['season_number'] == season['season_number']})
+    outcome = item['outcome']
+    if not outcome.get('endpoint_overridden'):
+        latest = max(((ep['season_number'], ep['episode_number']) for ep in qualified), default=(None, None))
+        outcome['latest_season'], outcome['latest_episode'] = latest
+    if not outcome.get('status_overridden'):
+        outcome['status'] = default_show_status(item.get('seasons', []))
 
 
 def prepare_evidence(items, observations):
@@ -37,7 +71,7 @@ def prepare_evidence(items, observations):
                 item.setdefault('source_evidence', {})['viewings'] = rows
                 item['source_dates'] = [chosen['watched_at']]
                 if chosen.get('watched_seconds') is not None:
-                    enough = chosen.get('completed_evidence') or (runtime and chosen['watched_seconds'] >= runtime * 60 * .7)
+                    enough = completed_viewing(chosen, runtime)
                     item['suggested_movie_status'] = 'completed' if enough else 'dropped'
         else:
             catalog = {(ep.get('season_number'), ep.get('episode_number')): ep for ep in item.get('catalog_episodes', [])}
@@ -51,7 +85,9 @@ def prepare_evidence(items, observations):
                 if chosen:
                     episode['viewings'] = rows
                     episode['dates'] = [chosen['watched_at']]
+                    episode['watch_qualified'] = completed_viewing(chosen, runtime)
             item['source_dates'] = sorted({day for ep in item.get('episodes', []) for day in ep.get('dates', [])})
+            _prepare_show_progress(item)
         if item['kind'] == 'show' and item['outcome']['status'] in ('partial', 'skip') and not item['outcome'].get('status_overridden'):
             item['outcome']['tracking_status'] = partial_tracking_status(item)
         item['completion_evidence'] = completion_evidence(item)
@@ -64,6 +100,7 @@ def partial_tracking_status(item, today=None):
     month += 1
     cutoff = date(year, month, min(today.day, monthrange(year, month)[1]))
     dated = [(ep, day) for ep in item.get('episodes', []) if ep.get('season_number') and ep.get('episode_number')
+             and ep.get('watch_qualified', True)
              for day in ep.get('dates', [])]
     if not dated:
         return 'dropped'

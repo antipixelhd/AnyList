@@ -468,6 +468,16 @@ async def update_netflix_import_item(
     if item["kind"] == "show" and item["outcome"]["status"] != "skip" and (
         outcome_status is not None or "latest_season" in patch or "latest_episode" in patch
     ):
+        if outcome_status == 'partial' and any(ep.get('watch_qualified') is False for ep in item.get('episodes', [])) and any(
+            item['outcome'].get(key) is None for key in ('latest_season', 'latest_episode')
+        ):
+            # With only weak playback there is no automatically watched endpoint.
+            # Choosing Partial explicitly confirms at least the first episode.
+            released = sorted(position for position, episode in netflix_sessions._all_catalog_episodes(item).items()
+                              if netflix_sessions._episode_is_released(episode, date.today()))
+            if released:
+                item['outcome']['latest_season'], item['outcome']['latest_episode'] = released[0]
+                item['outcome']['endpoint_overridden'] = True
         try:
             netflix_sessions._show_import_positions(item, item["outcome"], date.today())
         except ValueError as exc:
