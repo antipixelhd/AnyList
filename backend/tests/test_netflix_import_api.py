@@ -106,6 +106,28 @@ class _MemoryDb:
 
 
 class NetflixAutomaticEpisodeImportTests(unittest.IsolatedAsyncioTestCase):
+    async def test_movie_progress_requires_completed_outcome(self):
+        for status, expected in [('dropped', 0), ('completed', 1)]:
+            with self.subTest(status=status):
+                db = _MemoryDb()
+                session = SimpleNamespace(id='movie-progress', payload={'items': [{
+                    'kind': 'movie', 'match': {'candidate': {'tmdb_id': 1}},
+                    'source_dates': ['2020-01-01'], 'outcome': {'status': status},
+                }]})
+                track = AsyncMock(return_value=(SimpleNamespace(), True))
+                with (
+                    patch('core.netflix_sessions._get_or_create_movie', new=AsyncMock(return_value=SimpleNamespace(id=1))),
+                    patch('core.netflix_sessions._track_imported_root', new=track),
+                    patch('core.netflix_sessions._apply_staged_rating', new=AsyncMock()),
+                    patch('core.netflix_sessions._record_import_activity', new=AsyncMock()),
+                    patch('core.netflix_sessions.reconcile_inferred_watch_date', new=AsyncMock(return_value=False)),
+                    patch('core.netflix_sessions._reconcile_first_watch', new=AsyncMock(return_value=False)),
+                    patch('core.netflix_sessions._has_completed_event', new=AsyncMock(return_value=False)),
+                ):
+                    await netflix_sessions._apply_import(db, 7, session, AsyncMock())
+                self.assertEqual(track.await_args.args[5], expected)
+                self.assertEqual(sum(isinstance(row, WatchEvent) for row in db.added), expected)
+
     async def test_weak_episodes_do_not_advance_suggestion_or_write_watches(self):
         item = _duration_show()
         self.assertEqual(item['outcome']['status'], 'partial')

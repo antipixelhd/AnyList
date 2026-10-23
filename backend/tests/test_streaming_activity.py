@@ -132,6 +132,49 @@ class MemoryDb:
 
 
 class ActivityTests(unittest.IsolatedAsyncioTestCase):
+    async def test_local_pause_survives_rescheduling_imported_start(self):
+        from unittest.mock import AsyncMock, patch
+        from datetime import date
+        from core.activity import record_daily_activity
+        db = MemoryDb()
+        await record_streaming_activity(db, 1, 2, [
+            {'key': 'start', 'date': '2020-01-01', 'status': 'watching', 'started_watching': True, 'status_changed': True},
+            {'key': 'episode:1:1', 'date': '2020-01-01', 'status': 'watching', 'episodes_watched': 1, 'position': 'S1E1'},
+        ])
+        original = db.rows[0]
+        with patch('core.activity._active_activity_card', new=AsyncMock(return_value=original)):
+            await record_daily_activity(db, user_id=1, media_id=2, status='paused', score=None,
+                                        status_changed=True, previous_status='watching', now=datetime(2020, 1, 1, 12))
+        await reschedule_date_activity(db, 1, 2, start_date=date(2019, 12, 1), finish_date=None, changed={'start_date'})
+        self.assertEqual(original.status, 'paused')
+        self.assertEqual(original.created_at, datetime(2020, 1, 1, 12))
+        self.assertEqual(original.payload['episodes_watched'], 1)
+        self.assertNotIn('started_watching', original.payload)
+
+    async def test_local_episode_progress_survives_rescheduling_imported_start(self):
+        from unittest.mock import AsyncMock, patch
+        from datetime import date
+        from core.activity import record_progress_activity, clear_recent_rating_activity
+        db = MemoryDb()
+        await record_streaming_activity(db, 1, 2, [
+            {'key': 'start', 'date': '2020-01-01', 'status': 'watching', 'started_watching': True, 'status_changed': True},
+            {'key': 'episode:1:1', 'date': '2020-01-01', 'status': 'watching', 'episodes_watched': 1, 'position': 'S1E1'},
+        ])
+        original = db.rows[0]
+        episodes = [SimpleNamespace(id=i, season_number=1, episode_number=i) for i in (1, 2, 3)]
+        with (patch('core.activity._active_activity_card', new=AsyncMock(return_value=original)),
+              patch('core.activity._series_activity_catalog', new=AsyncMock(return_value=(episodes, {1: 3})))):
+            await record_progress_activity(db, user_id=1, media=SimpleNamespace(id=2), previous_progress=1,
+                                           progress=2, status='watching', score=8, rating_changed=True,
+                                           watched_ids={1, 2}, previous_watched_ids={1}, now=datetime(2020, 1, 1, 12))
+        await clear_recent_rating_activity(db, user_id=1, media_id=2, now=datetime(2020, 1, 1, 13))
+        await reschedule_date_activity(db, 1, 2, start_date=date(2019, 12, 1), finish_date=None, changed={'start_date'})
+        self.assertEqual(original.created_at, datetime(2020, 1, 1, 12))
+        self.assertEqual(original.payload['episodes_watched'], 2)
+        self.assertEqual((original.payload['position_start'], original.payload['position']), ('S1E1', 'S1E2'))
+        self.assertEqual(original.payload['progress'], 2)
+        self.assertFalse(original.payload.get('rating_changed'))
+
     async def test_imported_episode_cards_keep_numbered_ranges_in_fixed_windows(self):
         db = MemoryDb()
         await record_streaming_activity(db, 1, 2, [

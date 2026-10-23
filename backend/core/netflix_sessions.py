@@ -892,7 +892,8 @@ async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSe
                     continue
                 db.add(WatchEvent(user_id=user_id, media_id=movie.id, watched_at=watched_at, completed=True, play_count=1, provisional=False))
                 stats["source_watches"] += 1
-            entry, is_new = await _track_imported_root(db, user_id, movie, outcome, date_values, 1, True)
+            progress = 1 if outcome.get("status") == "completed" else 0
+            entry, is_new = await _track_imported_root(db, user_id, movie, outcome, date_values, progress, True)
             await _apply_staged_rating(db, user_id, movie, entry, outcome)
             await _record_import_activity(db, user_id, movie, entry, item)
             stats["movies"] += 1

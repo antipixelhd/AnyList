@@ -8,7 +8,8 @@ from core.streaming_evidence import activity_event_order, streaming_episode_span
 def _rebuild(row):
     details = dict(row.payload or {})
     events = details.get('streaming_events', {})
-    base = dict(details.get('streaming_base', {}))
+    base = {key: value for key, value in details.get('streaming_base', {}).items()
+            if key not in RATING_ACTIVITY_FIELDS}
     values = sorted(events.values(), key=activity_event_order)
     base['streaming_events'] = events
     base['streaming_base'] = details.get('streaming_base', {})
@@ -16,6 +17,11 @@ def _rebuild(row):
         if key in details:
             base[key] = details[key]
     base['episodes_watched'] = max(int(base.get('episodes_watched') or 0), sum(e.get('episodes_watched', 0) for e in values))
+    local_positions = base.get('episode_positions')
+    if local_positions is not None:
+        base['episodes_watched'] = len(set(local_positions) | {
+            event['position'] for event in values if event.get('episodes_watched') and event.get('position')
+        })
     base['finished_seasons'] = sorted(set(base.get('finished_seasons', [])) | {s for e in values for s in e.get('finished_seasons', [])})
     for event in values:
         for key in ('position', 'status_changed', 'started_watching'):
@@ -28,8 +34,6 @@ def _rebuild(row):
     base_at = datetime.fromisoformat(details['streaming_base_at']) if details.get('streaming_base_at') else None
     if base_at and (not values or base_at >= datetime.fromisoformat(values[-1]['date'])):
         row.status = details['streaming_base_status']
-        if details['streaming_base'].get('position'):
-            base['position'] = details['streaming_base']['position']
     times = [datetime.fromisoformat(event['date']) for event in values]
     if base_at:
         times.append(base_at)
