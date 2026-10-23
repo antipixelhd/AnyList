@@ -86,7 +86,7 @@ async def record_streaming_activity(db, user_id, media_id, events, *, score=None
             await db.delete(row)
     return latest
 
-async def reschedule_date_activity(db, user_id, media_id, *, start_date, finish_date, changed):
+async def reschedule_date_activity(db, user_id, media_id, *, start_date, finish_date, changed, status=None):
     """Move date actions and their attached rating, preserving unrelated history."""
     rows = list((await db.execute(select(TrackingActivity).where(
         TrackingActivity.user_id == user_id, TrackingActivity.media_id == media_id,
@@ -100,6 +100,24 @@ async def reschedule_date_activity(db, user_id, media_id, *, start_date, finish_
         legacy = next((row for row in rows if 'streaming_events' not in (row.payload or {}) and
                        (row.payload or {}).get('status_changed') and
                        (row.status == 'completed' if key == 'finish' else (row.payload or {}).get('started_watching'))), None)
+        if not tagged and legacy is None and value and (
+            status == 'completed' if key == 'finish' else status in ('watching', 'paused', 'dropped', 'completed')
+        ):
+            event = {'key': key, 'date': value.isoformat(), 'status': 'completed' if key == 'finish' else 'watching',
+                     'status_changed': True}
+            if key == 'start':
+                event['started_watching'] = True
+            # A restored completion inherits a rating previously attached to
+            # its earlier imported history, without moving later rating edits.
+            latest = max(rows, key=lambda row: row.created_at, default=None)
+            if key == 'finish' and latest is not None and latest.created_at.date() <= value:
+                details = dict(latest.payload or {})
+                if details.get('streaming_events') and details.get('rating_changed') and latest.score is not None:
+                    ratings.append((event, latest.score, {name: item for name, item in details.items() if name in RATING_ACTIVITY_FIELDS}, None))
+                    details = {name: item for name, item in details.items() if name not in RATING_ACTIVITY_FIELDS}
+                    details['streaming_base'] = {name: item for name, item in details.get('streaming_base', {}).items() if name not in RATING_ACTIVITY_FIELDS}
+                    latest.payload, latest.score = details, None
+            moved.append(event)
         for row in tagged or ([legacy] if legacy is not None else []):
             details = dict(row.payload or {})
             if row in tagged:

@@ -1937,7 +1937,7 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
     if changed_dates:
         from core.streaming_activity import reschedule_date_activity
         await reschedule_date_activity(db, viewer.id, media_id, start_date=entry.start_date,
-                                       finish_date=entry.finish_date, changed=changed_dates)
+                                       finish_date=entry.finish_date, changed=changed_dates, status=entry.status)
     progress_changed = entry.progress != old_progress
     if old_score != score and score is None:
         from core.activity import clear_recent_rating_activity

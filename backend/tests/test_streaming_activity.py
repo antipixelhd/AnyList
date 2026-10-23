@@ -212,6 +212,30 @@ class ActivityTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any(r.payload.get('finished_seasons') == [1] for r in db.rows))
         self.assertEqual(sum(r.score == 8 for r in db.rows), 1)
 
+    async def test_restoring_a_cleared_finish_date_recreates_card_and_moves_rating(self):
+        from datetime import date
+        db = MemoryDb()
+        await record_streaming_activity(db, 1, 2, activity_plan(show(), '2020-01-03'), score=8)
+        await reschedule_date_activity(db, 1, 2, start_date=date(2020, 1, 1), finish_date=None,
+                                       changed={'finish_date'}, status='completed')
+        await reschedule_date_activity(db, 1, 2, start_date=date(2020, 1, 1), finish_date=date(2020, 2, 1),
+                                       changed={'finish_date'}, status='completed')
+        completed = [row for row in db.rows if row.status == 'completed' and row.payload.get('status_changed')]
+        self.assertEqual(len(completed), 1)
+        self.assertEqual(completed[0].created_at, datetime(2020, 2, 1))
+        self.assertEqual(completed[0].score, 8)
+        self.assertEqual(sum(bool(row.payload.get('rating_changed')) for row in db.rows), 1)
+
+    async def test_adding_start_date_creates_history_but_finish_on_partial_does_not(self):
+        from datetime import date
+        db = MemoryDb()
+        await reschedule_date_activity(db, 1, 2, start_date=date(2020, 1, 1), finish_date=date(2020, 2, 1),
+                                       changed={'start_date', 'finish_date'}, status='watching')
+        self.assertEqual(len(db.rows), 1)
+        self.assertEqual(db.rows[0].status, 'watching')
+        self.assertTrue(db.rows[0].payload['started_watching'])
+        self.assertEqual(db.rows[0].created_at, datetime(2020, 1, 1))
+
     async def test_date_correction_preserves_unrelated_rating_cards(self):
         from datetime import date
         from models.tracking import TrackingActivity

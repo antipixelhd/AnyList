@@ -800,7 +800,7 @@ async def _track_imported_root(
     if not is_new and changed_dates:
         from core.streaming_activity import reschedule_date_activity
         await reschedule_date_activity(db, user_id, root.id, start_date=entry.start_date,
-                                       finish_date=entry.finish_date, changed=changed_dates)
+                                       finish_date=entry.finish_date, changed=changed_dates, status=entry.status)
     entry.initial_import_completed_at = _now() if is_new and entry.status == "completed" else entry.initial_import_completed_at
     # A final, explicit import can restore an entry the owner previously deleted.
     await db.execute(delete(TrackingDeletion).where(
