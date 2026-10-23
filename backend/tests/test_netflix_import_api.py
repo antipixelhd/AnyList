@@ -335,6 +335,35 @@ class NetflixAutomaticEpisodeImportTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError, "unconfirmed episode"):
             await _prepare_remapped_item(item, "movie", 559969, "test-key", "en-US")
 
+    async def test_amazon_show_to_movie_remap_requires_one_reviewed_movie_watch(self):
+        item = {
+            "id": "film-as-show", "kind": "show", "source_title": "El Camino",
+            "source_dates": ["2024-01-01", "2024-01-02"], "source_rows": 2,
+            "episodes": [{"source_title": "El Camino: A Breaking Bad Movie", "resolution": "guessed",
+                          "dates": ["2024-01-01", "2024-01-02"], "source_row_numbers": [2, 3]}],
+            "outcome": {"status": "skip"},
+        }
+        details = {"id": 559969, "title": "El Camino: A Breaking Bad Movie", "release_date": "2019-10-11",
+                   "genres": [{"id": 18}], "original_language": "en"}
+        draft = SimpleNamespace(id="draft", status="review", revision=1, phase="review", progress={},
+                                result={}, error_message=None, payload={"source": "amazon", "items": [item]})
+        db = SimpleNamespace(commit=AsyncMock(), refresh=AsyncMock(), execute=AsyncMock(return_value=_MemoryResult()))
+        with (
+            patch("routers.netflix_import._load_owned", new=AsyncMock(return_value=draft)),
+            patch("routers.netflix_import.settings_store.get_user_tmdb_key", new=AsyncMock(return_value="test-key")),
+            patch("core.netflix_sessions.tmdb.get_movie_light", new=AsyncMock(return_value=details)),
+        ):
+            updated = await update_netflix_import_item(
+                draft.id, item["id"], {"revision": 1, "action": "remap", "media_type": "movie", "tmdb_id": 559969},
+                db, SimpleNamespace(id=7),
+            )
+        movie = updated["items"][0]
+        self.assertEqual(movie["kind"], "movie")
+        self.assertIsNone(movie["decision"]["action"])
+        self.assertEqual(movie["outcome"]["status"], "skip")
+        self.assertTrue(movie["requires_watch_confirmation"])
+        self.assertEqual(movie["source_dates"], ["2024-01-02"])
+
     async def test_movie_shaped_entry_can_be_manually_remapped_to_show(self):
         item = {
             "id": "ambiguous-title", "kind": "movie", "source_title": "Ambiguous Title",

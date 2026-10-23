@@ -807,6 +807,7 @@ function mountStreamingImport(app: HTMLElement) {
     if (!await flushDraft()) { button.disabled = false; return; }
     if (!session) return;
     saving = true;
+    render();
     try {
       session = await request<StreamingSession>(`/imports/${encodeURIComponent(session.id)}/items/${encodeURIComponent(String(item.id))}`, {
         method: 'PATCH', body: JSON.stringify({revision: session.revision, action: 'remap', media_type: mediaType, tmdb_id: tmdbId}),
