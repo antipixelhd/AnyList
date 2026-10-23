@@ -97,14 +97,35 @@ class NetflixAutomaticEpisodeImportTests(unittest.IsolatedAsyncioTestCase):
                  "decision": {"action": "confirm"}, "outcome": {"status": "completed"}}
         show = _show_item()
         netflix_sessions._require_playback_review([anime, movie, show])
-        self.assertTrue(show["requires_watch_confirmation"])
+        self.assertFalse(show.get("requires_watch_confirmation", False))
         netflix_sessions._resolve_draft_items([show])
         self.assertEqual(show["outcome"]["status"], "skip")
-        self.assertFalse(show["progress_reviewed"])
+        self.assertFalse(show["outcome"]["status_overridden"])
         self.assertEqual(anime["decision"], {"action": "skip"})
         self.assertIsNone(movie["decision"]["action"])
         self.assertEqual(movie["outcome"]["status"], "skip")
         self.assertTrue(movie["requires_watch_confirmation"])
+
+    def test_amazon_full_first_season_uses_shared_partial_progress_default(self):
+        from copy import deepcopy
+        show = _show_item()
+        show["episodes"] = [_episode(n, watched=True) for n in range(1, 9)]
+        show["catalog_episodes"] = [_episode(n) for n in range(1, 9)] + [
+            {**_episode(n), "season_number": 2} for n in range(1, 9)
+        ]
+        show["seasons"] = [
+            {"season_number": 1, "represented": 8, "total_released": 8, "catalogue_complete": True},
+            {"season_number": 2, "represented": 0, "total_released": 8, "catalogue_complete": True},
+        ]
+        show["outcome"].update(latest_season=1, latest_episode=8)
+        netflix = deepcopy(show)
+        netflix_sessions._resolve_draft_items([netflix])
+        netflix_sessions._require_playback_review([show])
+        netflix_sessions._resolve_draft_items([show])
+        self.assertEqual(show["outcome"], netflix["outcome"])
+        self.assertEqual(show["outcome"]["status"], "partial")
+        self.assertEqual((show["outcome"]["latest_season"], show["outcome"]["latest_episode"]), (1, 8))
+        self.assertEqual(show["decision"], netflix["decision"])
 
     def test_playback_sessions_do_not_become_multiple_completed_rewatches(self):
         movie = {"kind": "movie", "source_dates": ["2020-01-01", "2020-01-02"],

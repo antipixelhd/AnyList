@@ -341,6 +341,8 @@ def _require_playback_review(items: list[dict]) -> None:
             ]
             for episode in item.get("episodes") or []:
                 episode["dates"] = sorted(set(episode.get("dates") or []))[-1:]
+            # Series use the same evidence-derived progress defaults as Netflix.
+            continue
         item["requires_watch_confirmation"] = True
         item["outcome"]["status"] = "skip"
         item["outcome"]["status_overridden"] = True

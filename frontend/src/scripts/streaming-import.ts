@@ -1,5 +1,6 @@
 import { showDialog, closeDialog } from '../lib/ui-motion';
 import { showMessage } from '../lib/settings-feedback';
+import { createImportDraft } from '../lib/import-draft';
 
 type MatchCandidate = {
   media_type: "movie" | "show";
@@ -93,7 +94,24 @@ function mountStreamingImport(app: HTMLElement) {
   let remappingItemId: string | number | null = null;
   let searchController: AbortController | null = null;
   let searchTimer = 0;
-  let saveQueue: Promise<void> = Promise.resolve();
+  const draft = createImportDraft<StreamingSession>({
+    getSession: () => session,
+    setSession: updated => { session = updated; },
+    apply: (current, {itemId, changes}) => {
+      const target = current.items.find(value => String(value.id) === String(itemId));
+      if (!target) return;
+      if (changes.action != null) {
+        target.decision.action = changes.action as StreamingItem['decision']['action'];
+        if (changes.action === 'confirm' && target.kind === 'movie') target.outcome.status = 'completed';
+      }
+      const {action, media_type, tmdb_id, ...outcome} = changes;
+      Object.assign(target.outcome, outcome);
+      if (changes.status != null) target.progress_reviewed = true;
+    },
+    save: (current, {itemId, changes}) => request<StreamingSession>(`/imports/${encodeURIComponent(current.id)}/items/${encodeURIComponent(String(itemId))}`, {
+      method: 'PATCH', body: JSON.stringify({revision: current.revision, ...changes}),
+    }),
+  });
   let idempotencyKey = "";
   let busy = false;
   let uploadController: AbortController | null = null;
@@ -429,37 +447,39 @@ function mountStreamingImport(app: HTMLElement) {
       ? `<button type="button" data-streaming-action="cancel" class="rounded-lg px-3 py-2 text-sm font-semibold text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">Cancel</button>`
       : `<div class="flex w-full flex-col-reverse gap-2 sm:w-auto sm:flex-row"><button type="button" data-streaming-action="cancel" class="rounded-lg px-3 py-2 text-sm font-semibold text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">Cancel import</button>${step > 2 ? `<button type="button" data-streaming-action="back" class="rounded-lg border border-zinc-700 px-4 py-2 text-sm font-semibold text-zinc-200 hover:bg-zinc-800">Back</button>` : ""}${step < 5 ? `<button type="button" data-streaming-action="next" ${step === 2 && !titleReviewComplete() ? "disabled" : ""} class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40">Continue</button>` : `<button type="button" data-streaming-action="commit" ${busy || saving ? "disabled" : ""} class="rounded-lg bg-emerald-600 px-5 py-2 text-sm font-bold text-white transition-colors hover:bg-emerald-500 disabled:cursor-wait disabled:opacity-50">${busy ? "Importing…" : "Import"}</button>`}</div>`;
     workflow.innerHTML = `${!isCommitted ? stepHeader() : ""}<div class="space-y-5">${content}<div class="flex flex-col-reverse items-stretch justify-between gap-3 border-t border-zinc-800 pt-4 sm:flex-row sm:items-center">${isPreparing ? `<span class="text-xs text-zinc-500">Matching in progress</span>` : ""}${!isCommitted ? nav : `<button type="button" data-streaming-action="restart" class="self-start rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-500 sm:self-auto">Import another file</button>`}</div></div>`;
+    if (saving) workflow.querySelectorAll<HTMLButtonElement | HTMLInputElement | HTMLSelectElement>('button, input, select').forEach(control => { control.disabled = true; });
   }
 
   function byId(id: string | number): StreamingItem | undefined {
     return session?.items.find((item) => String(item.id) === String(id));
   }
 
-  function saveItem(item: StreamingItem, changes: Record<string, unknown>, decision = false, propagateError = false): Promise<void> {
-    if (!session) return Promise.resolve();
-    Object.assign(decision ? item.decision : item.outcome, changes);
+  function saveItem(item: StreamingItem, changes: Record<string, unknown>): Promise<void> {
+    if (!session || saving) return Promise.resolve();
+    draft.stage({itemId: item.id, changes});
     render();
+    return Promise.resolve();
+  }
+
+  async function flushDraft(): Promise<boolean> {
+    if (!session || saving) return false;
+    const id = session.id;
     saving = true;
     render();
-    const operation = saveQueue.then(async () => {
-      if (!session) return;
-      const body = { revision: session.revision, ...changes };
-      const updated = await request<StreamingSession>(`/imports/${encodeURIComponent(session.id)}/items/${encodeURIComponent(String(item.id))}`, {
-        method: "PATCH", body: JSON.stringify(body),
-      });
-      if (updated?.id) session = updated;
-    });
-    saveQueue = operation.catch(async (error) => {
-      if (session) {
-        try { session = await request<StreamingSession>(`/imports/${encodeURIComponent(session.id)}`); }
-        catch { /* Keep the current draft visible if refresh also fails. */ }
+    try {
+      await draft.flush();
+      return session?.id === id;
+    } catch (error) {
+      if (session?.id === id) {
+        try { draft.rebase(await request<StreamingSession>(`/imports/${encodeURIComponent(id)}`)); }
+        catch { /* Retain local choices for retry even if the server is unavailable. */ }
+        showError(error instanceof Error ? error.message : 'Could not save your choices. Please try Continue again.');
       }
-      showError(error instanceof Error ? error.message : "Could not save this choice. Please try again.");
-    }).finally(() => {
+      return false;
+    } finally {
       saving = false;
       render();
-    });
-    return propagateError ? operation : saveQueue;
+    }
   }
 
   async function poll() {
@@ -646,7 +666,7 @@ function mountStreamingImport(app: HTMLElement) {
 
   async function commit() {
     if (!session || busy) return;
-    await saveQueue;
+    if (!await flushDraft()) return;
     busy = true;
     clearError();
     render();
@@ -698,18 +718,14 @@ function mountStreamingImport(app: HTMLElement) {
     if (action === "cancel-upload") { cancelUpload(); return; }
     if (action === "cancel") { await cancelSession(); return; }
     if (action === "restart") { session = null; step = 1; openRatingGroups.clear(); clearError(); render(); return; }
+    if (saving) return;
     if (action === "back") { step = Math.max(2, step - 1); render(); workflow.scrollIntoView({ block: "start" }); return; }
     if (action === "next") {
-      if (step === 2) {
-        if (!titleReviewComplete()) { showError("Resolve each uncertain show or movie title before continuing."); return; }
-        step = 3;
-      } else if (step === 3) {
-        await saveQueue;
-        step = 4;
-      } else if (step === 4) {
-        await saveQueue;
-        step = 5;
+      if (step === 2 && !titleReviewComplete()) {
+        showError("Resolve each uncertain show or movie title before continuing."); return;
       }
+      if (!await flushDraft()) return;
+      step++;
       render();
       workflow.scrollIntoView({ block: "start" });
       return;
@@ -722,12 +738,12 @@ function mountStreamingImport(app: HTMLElement) {
       const candidate = item.match.candidate;
       if (!candidate) return;
       quickRate({ title: candidate.title, poster: posterSrc(candidate.poster_path), score: item.outcome.manual_score,
-        onScore: async (score) => { await saveItem(item, { manual_score: score }, false, true); },
+        onScore: async (score) => { await saveItem(item, { manual_score: score }); },
       });
       return;
     }
-    if (action === "confirm") { await saveItem(item, { action: "confirm" }, true); return; }
-    if (action === "skip-match") { await saveItem(item, { action: "skip" }, true); return; }
+    if (action === "confirm") { await saveItem(item, { action: "confirm" }); return; }
+    if (action === "skip-match") { await saveItem(item, { action: "skip" }); return; }
     if (action === "open-search") { openRemap(item); return; }
     if (action === "outcome") {
       const status = button.dataset.status as StreamingItem["outcome"]["status"];
@@ -750,7 +766,7 @@ function mountStreamingImport(app: HTMLElement) {
     const id = input.dataset.itemId;
     if (action === "show-completed") { showingCompleted = (input as HTMLInputElement).checked; render(); return; }
     const item = id ? byId(id) : undefined;
-    if (!item) return;
+    if (!item || saving) return;
     if (action === "latest-season") {
       const latestSeason = Number(input.value);
       const selectedSeason = (item.seasons ?? []).find((season) => season.season_number === latestSeason);
@@ -787,11 +803,19 @@ function mountStreamingImport(app: HTMLElement) {
     const tmdbId = Number(button.dataset.tmdbId);
     const mediaType = button.dataset.mediaType === "movie" ? "movie" : "show";
     if (!item || !tmdbId || !canRemap(item, { tmdb_id: tmdbId, media_type: mediaType, title: "" })) return;
-    const previousRevision = session?.revision;
     button.disabled = true;
-    await saveItem(item, { action: "remap", media_type: mediaType, tmdb_id: tmdbId }, true);
-    if (session?.revision !== previousRevision) closeRemap();
-    else button.disabled = false;
+    if (!await flushDraft()) { button.disabled = false; return; }
+    if (!session) return;
+    saving = true;
+    try {
+      session = await request<StreamingSession>(`/imports/${encodeURIComponent(session.id)}/items/${encodeURIComponent(String(item.id))}`, {
+        method: 'PATCH', body: JSON.stringify({revision: session.revision, action: 'remap', media_type: mediaType, tmdb_id: tmdbId}),
+      });
+      closeRemap();
+    } catch (error) {
+      button.disabled = false;
+      showError(error instanceof Error ? error.message : 'Could not remap this title. Please try again.');
+    } finally { saving = false; render(); }
   });
 
   upload.addEventListener("click", (event) => {

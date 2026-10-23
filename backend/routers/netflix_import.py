@@ -397,7 +397,7 @@ async def update_netflix_import_item(
         item["decision"] = {"action": "confirm"}
         if item["kind"] == "movie":
             item["outcome"]["status"] = "completed"
-    if action == "remap" and item.get("requires_watch_confirmation") and not item.get("is_anime"):
+    if action == "remap" and item["kind"] == "movie" and item.get("requires_watch_confirmation") and not item.get("is_anime"):
         if item["kind"] == "movie":
             item["decision"] = {"action": None}
         item["outcome"]["status"] = "skip"
