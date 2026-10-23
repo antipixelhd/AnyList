@@ -72,11 +72,12 @@ const upcomingSeasonCards=upcomingSeasons.map((entry:any)=>({
 <script>
 import {localToday} from '../lib/date-time';
 import {startVisibleRefresh, type VisibleRefreshHandle} from '../lib/visible-refresh';
+import {createHomePanelRefresh} from '../lib/home-panel-refresh';
 
 let homeProgressListeners: AbortController | undefined;
 let homeSeriesRefresh: VisibleRefreshHandle | undefined;
 let homeUpcomingRefresh: VisibleRefreshHandle | undefined;
-document.addEventListener('astro:page-load', () => {
+function initializeHomeProgress() {
   homeSeriesRefresh?.stop();
   homeSeriesRefresh = undefined;
   homeUpcomingRefresh?.stop();
@@ -84,6 +85,22 @@ document.addEventListener('astro:page-load', () => {
   homeProgressListeners?.abort();
   homeProgressListeners = new AbortController();
   const {signal} = homeProgressListeners;
+  const refreshPanels = createHomePanelRefresh({
+    signal,
+    isBusy: () => !!document.querySelector('.home-dashboard [data-updating="true"]'),
+    replace: fresh => {
+      const current = document.querySelector('.home-dashboard .series-progress');
+      const next = fresh.querySelector('.home-dashboard .series-progress');
+      const freshDashboard = fresh.querySelector<HTMLElement>('.home-dashboard');
+      const dashboard = document.querySelector<HTMLElement>('.home-dashboard');
+      if (!current || !next || !dashboard || !freshDashboard || dashboard.dataset.username !== freshDashboard.dataset.username) return;
+      current.replaceWith(next);
+      dashboard.dataset.watchingCount = freshDashboard.dataset.watchingCount || '0';
+      const browse = dashboard.querySelector<HTMLElement>('[data-find-title]');
+      if (browse) browse.hidden = Number(dashboard.dataset.watchingCount) !== 0;
+      initializeHomeProgress();
+    },
+  });
   const grid = document.querySelector<HTMLElement>('[data-progress-grid]') || document.createElement('div');
   const upcomingGrid = document.querySelector<HTMLElement>('[data-upcoming-grid]');
 
@@ -217,13 +234,13 @@ document.addEventListener('astro:page-load', () => {
     const cards = Array.from(grid.querySelectorAll<HTMLElement>('[data-progress-card]'));
     const byId = new Map(series.map((entry:any) => [String(entry.id), entry]));
     if (cards.length !== series.length || cards.some(card => !byId.has(card.dataset.mediaId || ''))) {
-      window.location.reload();
+      await refreshPanels();
       return;
     }
     for (const card of cards) {
       const entry = byId.get(card.dataset.mediaId || '') as any;
       if (card.classList.contains('airing') !== (entry.currently_airing === true)) {
-        window.location.reload();
+        await refreshPanels();
         return;
       }
       syncCardProgress(card,entry);
@@ -243,13 +260,14 @@ document.addEventListener('astro:page-load', () => {
       String(entry.id), String(entry.season_number), String(entry.release_date || ''), String(entry.season_poster_path || ''),
       String(entry.season_artwork_fallback === true), String(entry.artwork_retry === true),
     ].join('|')).sort();
-    if (actual.length !== expected.length || actual.some((signature,index) => signature !== expected[index])) window.location.reload();
+    if (actual.length !== expected.length || actual.some((signature,index) => signature !== expected[index])) await refreshPanels();
   }});
   document.addEventListener('anylist:data-changed', () => {
     void homeSeriesRefresh?.refresh();
     void homeUpcomingRefresh?.refresh();
   }, {signal});
-});
+}
+document.addEventListener('astro:page-load', initializeHomeProgress);
 </script>
 <script>
 import {activityAction,activityRating,activityTime,scoreLabel} from '../lib/tracker';
