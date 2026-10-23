@@ -99,7 +99,7 @@ class NetflixAutomaticEpisodeImportTests(unittest.IsolatedAsyncioTestCase):
         netflix_sessions._require_playback_review([anime, movie, show])
         self.assertFalse(show.get("requires_watch_confirmation", False))
         netflix_sessions._resolve_draft_items([show])
-        self.assertEqual(show["outcome"]["status"], "partial")
+        self.assertEqual(show["outcome"]["status"], "skip")
         self.assertFalse(show["outcome"]["status_overridden"])
         self.assertEqual(anime["decision"], {"action": "skip"})
         self.assertIsNone(movie["decision"]["action"])
@@ -393,12 +393,12 @@ class NetflixAutomaticEpisodeImportTests(unittest.IsolatedAsyncioTestCase):
 
 
 class NetflixDecisionTests(unittest.TestCase):
-    def test_any_represented_season_defaults_to_partial(self):
+    def test_sparse_seasons_default_to_skip_and_any_dense_season_defaults_to_partial(self):
         sparse = [
             {"season_number": 1, "represented": 2, "total_released": 8},
             {"season_number": 2, "represented": 1, "total_released": 6},
         ]
-        self.assertEqual(netflix_sessions._default_show_status(sparse), "partial")
+        self.assertEqual(netflix_sessions._default_show_status(sparse), "skip")
         self.assertEqual(netflix_sessions._default_show_status([sparse[0], {**sparse[1], "represented": 3}]), "partial")
         self.assertEqual(netflix_sessions._default_show_status([{"season_number": 1, "represented": 2, "total_released": 2, "catalogue_complete": True}]), "completed")
 
@@ -406,7 +406,7 @@ class NetflixDecisionTests(unittest.TestCase):
         item["seasons"] = sparse
         item["episodes"] = [{"resolution": "exact"}, {"resolution": "guessed"}]
         netflix_sessions._resolve_draft_items([item])
-        self.assertEqual(item["outcome"]["status"], "partial")
+        self.assertEqual(item["outcome"]["status"], "skip")
         item["outcome"].update(status="partial", status_overridden=True)
         netflix_sessions._resolve_draft_items([item])
         self.assertEqual(item["outcome"]["status"], "partial")
@@ -494,7 +494,7 @@ class NetflixDecisionTests(unittest.TestCase):
         self.assertIsNone(item["match"]["candidate"])
         self.assertEqual(item["match"]["state"], "unmatched")
 
-    def test_sparse_show_retains_partial_progress_at_latest_released_episode(self):
+    def test_sparse_show_defaults_to_skip_at_latest_released_episode(self):
         raw = {"shows": [{
             "kind": "show", "source_title": "Fixture Show", "tmdb_id": 990001,
             "title": "Fixture Show", "status": "matched", "confidence": "high",
@@ -504,7 +504,7 @@ class NetflixDecisionTests(unittest.TestCase):
                          "total_released": 3, "catalogue_complete": True}],
         }]}
         item = netflix_sessions._normalise_groups(raw)[0]
-        self.assertEqual(item["outcome"]["status"], "partial")
+        self.assertEqual(item["outcome"]["status"], "skip")
         self.assertEqual((item["outcome"]["latest_season"], item["outcome"]["latest_episode"]), (1, 3))
 
     def test_normalization_guesses_positions_recalculates_represented_count_endpoint_and_summary(self):
