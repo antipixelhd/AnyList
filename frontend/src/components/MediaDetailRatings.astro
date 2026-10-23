@@ -1,0 +1,13 @@
+---
+interface Row {name:string;field:string;value:string|number|null|undefined;detail?:string;url?:string|null;hidden?:boolean}
+interface Props {rows:Row[];game?:boolean;pending?:boolean}
+const {rows,game=false,pending=false}=Astro.props;
+---
+<section class="lab-public-score lab-module" aria-labelledby="detail-audience-heading" data-game-ratings={game?true:undefined} hidden={game&&!rows.some(row=>!row.hidden&&row.value!=null)}>
+  <div class="lab-section-title"><h2 id="detail-audience-heading">Audience score</h2></div>
+  <div class="media-provider-ratings">{rows.map(({name,field,value,detail,url,hidden})=><p title={detail} data-game-rating-row={game?field:undefined} hidden={hidden}>
+    {game||url?<a href={url||undefined} target="_blank" rel="noreferrer" data-rating-source>{name}</a>:<span>{name}</span>}
+    <strong data-detail-score={field} class:list={{'detail-value-skeleton':!game&&value==null&&pending}}>{value==null?'':value}</strong>
+  </p>)}</div>
+  <p class="detail-load-status" data-detail-score-status hidden></p>
+</section>

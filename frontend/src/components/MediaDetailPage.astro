@@ -5,6 +5,8 @@ import StatusControl from './StatusControl.astro';
 import GameProgress from './GameProgress.astro';
 import MediaDetailGameTimes from './MediaDetailGameTimes.astro';
 import MediaDetailGameOffer from './MediaDetailGameOffer.astro';
+import MediaDetailRatings from './MediaDetailRatings.astro';
+import {gameRatingRows,gameRatingFields} from '../lib/game-ratings-data';
 import {viewerMediaPreferences} from '../lib/viewer-media-preferences';
 import Icon from './Icon.astro';
 import ImageLightbox from './ImageLightbox.astro';
@@ -58,7 +60,10 @@ const initialTab=tabs.find(tab=>tab.id===Astro.url.searchParams.get('tab'))?.id|
 const initialArtwork=[poster,backdrop].filter(Boolean).map(image=>({...image,priority:'high'}));
 const sources=[...(title?.sources||[]),...(title?.tmdb_id?[{name:'TMDB',url:`https://www.themoviedb.org/${title.type==='series'?'tv':'movie'}/${title.tmdb_id}`}]:[]),...(title?.imdb_id?[{name:'IMDb',url:`https://www.imdb.com/title/${title.imdb_id}/`}]:[])];
 const ratings=[{name:'TMDB',field:'tmdb_score',value:title?.tmdb_score},{name:'IMDb',field:'imdb_score',value:title?.imdb_score},
-  {name:'RT Critics',field:'rt_critic_score',value:title?.rt_critic_score},{name:'RT Audience',field:'rt_audience_score',value:title?.rt_audience_score}].filter(rating=>rating.value!=null||title?.scores_pending);
+  {name:'RT Critics',field:'rt_critic_score',value:title?.rt_critic_score},{name:'RT Audience',field:'rt_audience_score',value:title?.rt_audience_score}].filter(rating=>rating.value!=null||title?.scores_pending)
+  .map(row=>({...row,value:row.value==null?null:row.name.startsWith('RT')?`${Math.round(Number(row.value))}%`:scoreLabel(Number(row.value))}));
+const gameRatingValues=gameRatingRows(title?.game_ratings);
+const gameRatings=gameRatingFields.map(([field,name])=>{const value=gameRatingValues.find(row=>row.field===field);return value?{...value,hidden:false}:{field,name,value:null,url:'#',hidden:true};});
 const offers=title?.game_offer_context?{...title.game_offer_context,offers:title.prices}:null;
 const login=`/login?next=${encodeURIComponent(Astro.url.pathname+Astro.url.search)}`;
 const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
@@ -102,7 +107,7 @@ const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
               {!!title.releases.length&&<section class="lab-module"><div class="lab-section-title"><h2>Releases</h2></div><div class="media-releases">{title.releases.map(release=><p><strong>{release.platform}</strong><span>{release.region}{release.region&&release.release_date?' · ':''}{release.release_date&&<LocalDateTime value={release.release_date}/>}</span></p>)}</div></section>}
             </div>
             <div class="lab-secondary-column">
-              {!!ratings.length&&<section class="lab-public-score lab-module" aria-labelledby="detail-audience-heading"><div class="lab-section-title"><h2 id="detail-audience-heading">Audience score</h2></div><div class="media-provider-ratings">{ratings.map(({name,field,value})=><p><span>{name}</span><strong data-detail-score={field} class:list={{'detail-value-skeleton':value==null}}>{value==null?'':name.startsWith('RT')?`${Math.round(Number(value))}%`:scoreLabel(Number(value))}</strong></p>)}</div><p class="detail-load-status" data-detail-score-status hidden></p></section>}
+              {(gameTitle||!!ratings.length)&&<MediaDetailRatings rows={gameTitle?gameRatings:ratings} game={gameTitle} pending={title.scores_pending}/>}
               {gameTitle&&<MediaDetailGameOffer data={offers}/>}
               {!!title.friends.length&&<section class="lab-friends lab-module"><div class="lab-section-title"><h2>People you follow</h2><span><Icon name="star"/>{scoreLabel(title.friends_average??null)}</span></div><div class="lab-friends-grid">{title.friends.map(friend=><a class="lab-friend" href={`/user/${encodeURIComponent(friend.username)}/${title.type==='movie'?'movies':'series'}`}><span class="lab-friend-avatar friend-one" aria-hidden="true">{friend.id&&friend.has_avatar?<img src={`/api/proxy/profile/avatar/${friend.id}`} alt="" loading="lazy"/>:friend.username.slice(0,1).toUpperCase()}</span><div><h3>{friend.display_name||friend.username}</h3><p>{statuses.find(([id])=>id===friend.status)?.[1]||friend.status}</p></div><strong>{scoreLabel(friend.score)}</strong></a>)}</div></section>}
               {signedIn&&trackable&&!gameChild&&<section class="lab-note lab-module"><div class="lab-section-title"><h2><label for="detail-note">Personal note</label></h2><Icon name="comment"/></div><textarea id="detail-note" rows="3" placeholder="Something worth remembering…">{title.entry?.notes||''}</textarea><div class="lab-note-footer"><button class="lab-text-button" type="button" data-detail-save-note>Save <Icon name="check"/></button></div></section>}

@@ -213,6 +213,19 @@ async def main(args):
                         current={'currency':currency,'amountInt':599},historical_low={'currency':currency,'amountInt':299},
                         historical_low_at='2024-01-01',url='https://store.steampowered.com/app/9000000/',
                         payload={'raw':'OFFER_PRICE_SENTINEL '*50000}))
+            if args.case and 'game_ratings' in args.case:
+                if not await db.scalar(select(CatalogueIdentity.id).where(CatalogueIdentity.entity_id==first_game.id,
+                        CatalogueIdentity.namespace=='steam.app')):
+                    db.add(CatalogueIdentity(entity_id=first_game.id,namespace='steam.app',external_id='9000000',source='igdb'))
+                first_game.attributes={**first_game.attributes,'game_ratings':{'steam_app_id':'9000000',
+                    'all_time':{'positive':900,'negative':100,'total':1000,'percentage':90},
+                    'recent':{'positive':80,'negative':20,'total':100,'percentage':80},
+                    'critic':{'score':94,'source':'steam_store','platform':'PC','url':None}}}
+                stamp=datetime.now(timezone.utc).replace(tzinfo=None)
+                for part in ('ratings_job','rating_all_time','rating_recent','rating_critic'):
+                    db.add(MetadataSnapshot(provider='steam',kind=f'game_{part}',external_id=str(first_game.id),entity_id=first_game.id,
+                        coverage={'state':'complete','complete':True,'steam_app_id':'9000000'},
+                        payload={'raw':'RATING_EVIDENCE_SENTINEL '*50000},expires_at=stamp+timedelta(hours=6)))
             if args.case and 'game_person_availability' in args.case:
                 from core.contributor_availability import movie_job
                 from core.game_imdb_bindings import revision
@@ -346,6 +359,9 @@ async def main(args):
                 if label=='game_offers':
                     row['result_identity']=hashlib.sha256(json.dumps({key:result[key] for key in ('country','country_source','steam_app_id')},sort_keys=True).encode()).hexdigest()
                     row['rows']=len(result['offers']);row['pending']=result['status']['pending']
+                if label=='game_ratings':
+                    row['result_identity']=hashlib.sha256(json.dumps(result['ratings'],sort_keys=True).encode()).hexdigest()
+                    row['rows']=len(result['ratings'])-1;row['pending']=result['status']['pending']
             samples.append(row)
             return result
 
@@ -420,6 +436,7 @@ async def main(args):
             ('game_search', 'games/search', {'q': 'Benchmark'}),
             *([('game_time_to_beat',f'games/works/{first_game.id}/time-to-beat',{})] if args.case and 'game_time_to_beat' in args.case else []),
             *([('game_offers',f'games/works/{first_game.id}/offers',{'country':'DE'})] if args.case and 'game_offers' in args.case else []),
+            *([('game_ratings',f'games/works/{first_game.id}/ratings',{})] if args.case and 'game_ratings' in args.case else []),
             ('game_search_prefix','games/search',{'q':'Elden R'}),
             *([('game_children',f'games/works/{children_base}/children',{'limit':24})] if children_base else []),
             ('game_browse_preview','games/browse',{'limit':6}),
@@ -532,6 +549,19 @@ async def main(args):
                         params['unfiltered'] = 'true'
 
                     async def operation(path=path, params=params, label=label, mode=mode):
+                        if label=='game_ratings':
+                            result=await request(path,params)
+                            ratings=result['ratings']
+                            if ratings['steam_app_id']!='9000000' or ratings['all_time']['total']!=1000 or ratings['recent']['total']!=100 or ratings['critic']['score']!=94:
+                                raise RuntimeError('Cached game ratings lost identity or independent components')
+                            if not result['status']['complete'] or result['status']['pending']:
+                                raise RuntimeError('Cached game ratings were requeued')
+                            if counters['provider_requests'] or counters['db_writes']:raise RuntimeError('Warm ratings performed provider work or writes')
+                            if 'SENTINEL' in json.dumps(result):raise RuntimeError('Ratings exposed raw evidence')
+                            for identity in counters:
+                                sql=sql_patterns.get(identity.removeprefix('sql:'),'') if identity.startswith('sql:') else ''
+                                if 'catalogue_metadata_snapshots.payload' in sql:raise RuntimeError('Ratings hydrated raw provider evidence')
+                            return result
                         if label=='game_time_to_beat':
                             result=await request(path,params)
                             if result['estimates']['main_sides_seconds']!=7200 or not result['status']['complete']:

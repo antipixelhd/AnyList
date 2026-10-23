@@ -190,7 +190,7 @@ async def work_details(db, work, *, extras=True):
         'sources': list({source['url']: source for source in sources}.values()), 'countries': attrs.get('countries') or []}
 
 
-async def catalogue_title(db, work, viewer_id=None, *, store_country=None, enqueue_offers=False):
+async def catalogue_title(db, work, viewer_id=None, *, store_country=None, enqueue_offers=False,enqueue_ratings=False):
     details = await work_details(db, work)
     attrs = work.attributes or {}
     editions = []
@@ -220,6 +220,9 @@ async def catalogue_title(db, work, viewer_id=None, *, store_country=None, enque
             'entry': state.model_dump(mode='json') if state and state.listed else None,
             'favorite': bool(state and state.favorite),
             'tracking_available': caps.independent or (caps.expansion_page and base is not None)}
+        from core.game_ratings import view as ratings_view
+        ratings=await ratings_view(db,work,identities=identities,enqueue=enqueue_ratings)
+        personal['game_ratings']=ratings['ratings'];personal['game_rating_status']=ratings['status']
     if work.kind == 'book':
         rows = (await db.execute(select(BookEdition, CatalogueEntity).join(CatalogueEntity,
             CatalogueEntity.id == BookEdition.entity_id).where(BookEdition.work_id == work.id)

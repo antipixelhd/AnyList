@@ -59,6 +59,14 @@ async def game_offers(work_id:WorkId,db:DB,viewer:Reader,
     return result
 
 
+@router.get('/works/{work_id}/ratings')
+async def game_ratings(work_id:WorkId,db:DB,viewer:Reader) -> dict:
+    from core.game_ratings import view
+    result=await view(db,await tracking.work(db,work_id),enqueue=True)
+    await db.commit()
+    return result
+
+
 @router.get('/people/{native}/imdb')
 async def imdb_person_status(native: Annotated[str,Path(pattern=r'^nm[0-9]+$',max_length=30)],db:DB,viewer:Reader) -> dict:
     from core.game_imdb_person import view

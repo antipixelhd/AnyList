@@ -310,7 +310,7 @@ async def media_detail(entity_id: Annotated[int, Path(gt=0)], db: DB, current_us
         raise HTTPException(404, "Game or book not found")
     await authorize_entity(db, work, current_user)
     response.headers['Cache-Control']='private, no-store'
-    try:data=await catalogue_title(db, work, current_user.id if current_user else None,store_country=country,enqueue_offers=True)
+    try:data=await catalogue_title(db, work, current_user.id if current_user else None,store_country=country,enqueue_offers=True,enqueue_ratings=True)
     except ProviderError as error:raise safe_error(error) from None
     if work.kind=='game':
         from core.game_imdb_enrichment import request as request_credits
