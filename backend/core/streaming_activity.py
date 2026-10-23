@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import select
 from models.tracking import TrackingActivity
 from core.activity import activity_window_start, has_activity_event, _record_rating_details, RATING_ACTIVITY_FIELDS
-from core.streaming_evidence import activity_event_order
+from core.streaming_evidence import activity_event_order, streaming_episode_span
 
 
 def _rebuild(row):
@@ -22,6 +22,9 @@ def _rebuild(row):
             if event.get(key) is not None:
                 base[key] = event[key]
         row.status = event['status']
+    span = streaming_episode_span(base)
+    if span:
+        base['position_start'], base['position'] = span
     base_at = datetime.fromisoformat(details['streaming_base_at']) if details.get('streaming_base_at') else None
     if base_at and (not values or base_at >= datetime.fromisoformat(values[-1]['date'])):
         row.status = details['streaming_base_status']

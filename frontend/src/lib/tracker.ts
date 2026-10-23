@@ -53,8 +53,13 @@ export function activityAction(activity: any) {
   if (details.status_changed && ['completed', 'dropped', 'paused', 'planning'].includes(activity.status)) {
     return activity.status === 'planning' ? 'Plans to watch' : statuses.find(([status]) => status === activity.status)?.[1] || 'Updated';
   }
-  if (activity.media?.type === 'series' && details.episodes_watched && details.position_start && details.position) {
-    const first = /^S(\d+)E(\d+)$/.exec(details.position_start);
+  if (activity.media?.type === 'series' && finished.length) {
+    const seasons = finished.join(finished.length > 1 ? ' and ' : '');
+    return `Watched ${finished.length === 1 ? 'season' : 'seasons'} ${seasons} of`;
+  }
+  const startPosition = details.position_start || (details.episodes_watched === 1 ? details.position : null);
+  if (activity.media?.type === 'series' && details.episodes_watched && startPosition && details.position) {
+    const first = /^S(\d+)E(\d+)$/.exec(startPosition);
     const last = /^S(\d+)E(\d+)$/.exec(details.position);
     if (first && last) {
       if (first[1] === last[1]) {
@@ -62,10 +67,6 @@ export function activityAction(activity: any) {
       }
       return `Watched Season ${first[1]} Episode ${first[2]} through Season ${last[1]} Episode ${last[2]} of`;
     }
-  }
-  if (activity.media?.type === 'series' && finished.length) {
-    const seasons = finished.join(finished.length > 1 ? ' and ' : '');
-    return `Watched ${finished.length === 1 ? 'season' : 'seasons'} ${seasons} of`;
   }
   if (activity.media?.type === 'series' && details.episodes_watched) {
     const count = Number(details.episodes_watched);

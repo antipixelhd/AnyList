@@ -132,6 +132,18 @@ class MemoryDb:
 
 
 class ActivityTests(unittest.IsolatedAsyncioTestCase):
+    async def test_imported_episode_cards_keep_numbered_ranges_in_fixed_windows(self):
+        db = MemoryDb()
+        await record_streaming_activity(db, 1, 2, [
+            {'key': 'episode:3:6', 'date': '2020-01-01', 'status': 'watching', 'episodes_watched': 1, 'position': 'S3E6'},
+            {'key': 'episode:3:5', 'date': '2020-01-01', 'status': 'watching', 'episodes_watched': 1, 'position': 'S3E5'},
+            {'key': 'episode:3:7', 'date': '2020-01-02', 'status': 'watching', 'episodes_watched': 1, 'position': 'S3E7'},
+        ])
+        self.assertEqual(len(db.rows), 2)
+        self.assertEqual((db.rows[0].payload['position_start'], db.rows[0].payload['position']), ('S3E5', 'S3E6'))
+        self.assertEqual(db.rows[0].payload['episodes_watched'], 2)
+        self.assertEqual((db.rows[1].payload['position_start'], db.rows[1].payload['position']), ('S3E7', 'S3E7'))
+
     async def test_movie_runtime_enrichment_is_shared_and_used_for_seventy_percent(self):
         from unittest.mock import AsyncMock, patch
         from core.netflix_sessions import _prepare_movie_runtime

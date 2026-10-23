@@ -129,6 +129,7 @@ def entry_data(entry, media, owner=False, *, favorite=None):
 def activity_data(rows, *, include_user=False, limit=12):
     """Present fixed-window cards, retaining UTC-day grouping for legacy rows."""
     from core.activity import has_activity_event, merge_activity_payload
+    from core.streaming_evidence import streaming_episode_span
 
     grouped = {}
     for row in rows:
@@ -166,6 +167,10 @@ def activity_data(rows, *, include_user=False, limit=12):
                 grouped[key]["payload"], activity.payload
             )
     for activity in grouped.values():
+        if not activity['payload'].get('position_start'):
+            span = streaming_episode_span(activity['payload'])
+            if span:
+                activity['payload']['position_start'], activity['payload']['position'] = span
         if activity["score"] is None:
             # A known previous score means the rating was cleared. A legacy row
             # with no old or new score cannot establish that an edit occurred.

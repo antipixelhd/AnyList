@@ -265,7 +265,6 @@ function mountStreamingImport(app: HTMLElement) {
     const candidate = item.match?.candidate;
     const poster = posterSrc(candidate?.poster_path);
     const candidateTitle = candidate ? `${candidate.title}${candidate.year ? ` (${candidate.year})` : ""}` : "No confident match found";
-    const reasons = item.match?.reason || (item.match?.state === "unmatched" ? "No matching title was found." : "This match needs a quick check.");
     const badge = item.is_anime ? "Anime skipped" : item.decision?.action === "skip" ? "Skipped" : item.decision?.action === "remap" ? "Remapped" : item.decision?.action === "confirm" ? "Confirmed" : needsReview ? "Review needed" : "High confidence";
     const badgeStyle = item.decision?.action === "skip" ? "border-zinc-700 bg-zinc-800 text-zinc-300" : needsReview ? "border-amber-400/30 bg-amber-400/10 text-amber-200" : "border-emerald-400/20 bg-emerald-400/5 text-emerald-300";
     return `<article class="rounded-xl border ${needsReview ? "border-amber-500/25 bg-amber-500/[0.035]" : "border-zinc-800 bg-zinc-900/35"} p-3 sm:p-4" data-streaming-item="${esc(item.id)}">
@@ -279,7 +278,6 @@ function mountStreamingImport(app: HTMLElement) {
             <p class="mt-2 text-xs text-zinc-400">${item.decision?.action === "remap" ? "Selected" : "Suggested"} catalogue match: <span class="font-semibold text-zinc-200">${esc(candidateTitle)}</span></p>
             <div class="mt-2 flex flex-wrap items-center gap-2">
               <span class="rounded-full border px-2 py-0.5 text-xs ${badgeStyle}">${badge}</span>
-              <span class="text-xs text-zinc-500">${esc(item.is_anime ? "Anime is excluded until AniList import or connection is supported." : reasons)}</span>
             </div>
             ${item.kind === "show" ? `<p class="mt-2 text-xs text-zinc-400">${esc(seasonSummary(item))}</p>` : ""}
           </div>

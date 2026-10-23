@@ -161,6 +161,18 @@ class TrackingProjectionTests(unittest.TestCase):
         self.assertNotEqual(cards[0]['key'], cards[1]['key'])
         self.assertEqual(cards[1]['created_at'], datetime(2026, 10, 2, 9))
 
+    def test_existing_streaming_cards_recover_ranges_without_reimport_or_storage_changes(self):
+        payload = {'episodes_watched': 2, 'position': 'S3E6', 'streaming_events': {
+            'episode:3:6': {'position': 'S3E6', 'episodes_watched': 1},
+            'episode:3:5': {'position': 'S3E5', 'episodes_watched': 1},
+        }}
+        row = SimpleNamespace(user_id=7, status='watching', score=8, created_at=datetime(2022, 6, 17), payload=payload)
+        before = copy.deepcopy(payload)
+        cards = tracking_projection.activity_data([(row, _media())])
+        self.assertEqual((cards[0]['payload']['position_start'], cards[0]['payload']['position']), ('S3E5', 'S3E6'))
+        self.assertEqual(cards[0]['created_at'], row.created_at)
+        self.assertEqual(row.payload, before)
+
     def test_upgraded_legacy_window_keeps_its_original_daily_key(self):
         row = SimpleNamespace(user_id=7, status='completed', score=8,
                               created_at=datetime(2026, 10, 2, 10),

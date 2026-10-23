@@ -1,6 +1,7 @@
 """Evidence selection and historical activity plans shared by streaming imports."""
 from datetime import date
 from calendar import monthrange
+import re
 from core.netflix_import import _norm_text
 
 
@@ -136,6 +137,25 @@ def activity_event_order(event):
     return event['date'], (3 if event['key'] in ('finish', 'status') else
                            2 if event['key'].startswith('season:') else
                            0 if event['key'] == 'start' else 1)
+
+
+def streaming_episode_span(details):
+    """Recover the numbered range from the card's retained episode actions."""
+    positions = [event.get('position') for event in details.get('streaming_events', {}).values()
+                 if event.get('episodes_watched')]
+    original = details.get('streaming_base') or {}
+    if original.get('episodes_watched'):
+        positions.extend([original.get('position_start'), original.get('position')])
+    numbered = []
+    for position in positions:
+        match = re.fullmatch(r'S(\d+)E(\d+)', position) if isinstance(position, str) else None
+        if match:
+            numbered.append(tuple(map(int, match.groups())))
+    if not numbered:
+        return None
+    def label(position):
+        return f'S{position[0]}E{position[1]}'
+    return label(min(numbered)), label(max(numbered))
 
 
 def activity_plan(item, finish_date=None):
