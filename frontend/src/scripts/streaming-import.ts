@@ -24,6 +24,8 @@ type StreamingItem = {
   id: string | number;
   kind: "movie" | "show";
   is_anime?: boolean;
+  requires_watch_confirmation?: boolean;
+  progress_reviewed?: boolean;
   source_title: string;
   source_dates?: string[];
   source_rows?: number;
@@ -198,6 +200,7 @@ function mountStreamingImport(app: HTMLElement) {
   }
 
   function isIncomplete(item: StreamingItem): boolean {
+    if (item.requires_watch_confirmation && !item.progress_reviewed) return true;
     const seasons = (item.seasons ?? []).filter((season) => season.season_number > 0 && (season.total_released ?? 0) > 0);
     const unknownSeasons = (item.seasons ?? []).filter((season) => season.season_number > 0 && season.total_released == null);
     if (unknownSeasons.length) return true;

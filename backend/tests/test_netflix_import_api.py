@@ -95,7 +95,12 @@ class NetflixAutomaticEpisodeImportTests(unittest.IsolatedAsyncioTestCase):
         anime = {"is_anime": True, "decision": {"action": "skip"}}
         movie = {"kind": "movie", "match": {"state": "matched"},
                  "decision": {"action": "confirm"}, "outcome": {"status": "completed"}}
-        netflix_sessions._require_playback_review([anime, movie])
+        show = _show_item()
+        netflix_sessions._require_playback_review([anime, movie, show])
+        self.assertTrue(show["requires_watch_confirmation"])
+        netflix_sessions._resolve_draft_items([show])
+        self.assertEqual(show["outcome"]["status"], "skip")
+        self.assertFalse(show["progress_reviewed"])
         self.assertEqual(anime["decision"], {"action": "skip"})
         self.assertIsNone(movie["decision"]["action"])
         self.assertEqual(movie["outcome"]["status"], "skip")

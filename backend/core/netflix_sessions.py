@@ -327,9 +327,10 @@ def _require_playback_review(items: list[dict]) -> None:
     for item in items:
         if item.get("is_anime"):
             continue
-        if item["kind"] == "movie":
-            item["requires_watch_confirmation"] = True
-            item["outcome"]["status"] = "skip"
+        item["requires_watch_confirmation"] = True
+        item["outcome"]["status"] = "skip"
+        item["outcome"]["status_overridden"] = True
+        item["progress_reviewed"] = False
         item["match"]["state"] = "review"
         item["match"]["reason"] = "Playback recorded. Confirm the title and review watched progress."
         item["decision"] = {"action": None}

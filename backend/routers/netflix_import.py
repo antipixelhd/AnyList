@@ -122,6 +122,7 @@ async def _prepare_remapped_item(item: dict, media_type: str, tmdb_id: int, api_
     refreshed = next((group for group in groups if group.get("kind") == "show"), None)
     if refreshed is None or not refreshed.get("match", {}).get("candidate"):
         raise ValueError("The selected show could not be matched to the source episode names.")
+    refreshed["requires_watch_confirmation"] = item.get("requires_watch_confirmation", False)
     refreshed["id"] = item["id"]
     refreshed["source_title"] = item.get("source_title")
     refreshed["source_dates"] = item.get("source_dates", [])
@@ -394,9 +395,12 @@ async def update_netflix_import_item(
         item["decision"] = {"action": "confirm"}
         if item["kind"] == "movie":
             item["outcome"]["status"] = "completed"
-    if action == "remap" and item.get("requires_watch_confirmation") and item["kind"] == "movie" and not item.get("is_anime"):
-        item["decision"] = {"action": None}
+    if action == "remap" and item.get("requires_watch_confirmation") and not item.get("is_anime"):
+        if item["kind"] == "movie":
+            item["decision"] = {"action": None}
         item["outcome"]["status"] = "skip"
+        item["outcome"]["status_overridden"] = True
+        item["progress_reviewed"] = False
     outcome_status = patch.get("status")
     if outcome_status is not None:
         if item.get("is_anime") and outcome_status != "skip":
@@ -405,6 +409,7 @@ async def update_netflix_import_item(
             raise HTTPException(status_code=422, detail="Progress must be completed, partial, or skip.")
         if item["kind"] == "movie" and outcome_status == "partial":
             raise HTTPException(status_code=422, detail="Movies can only be completed or skipped.")
+        item["progress_reviewed"] = True
         item["outcome"]["status"] = outcome_status
         item["outcome"]["status_overridden"] = True
     for key in ("latest_season", "latest_episode"):
