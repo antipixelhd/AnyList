@@ -185,7 +185,7 @@ def activity_data(rows, *, include_user=False, limit=12):
 
 
 def following_title_activity(rows, media, *, today=None, limit=30):
-    """One latest major milestone per person, without altering timeline history."""
+    """Retain season milestones while ordinary statuses follow the latest action."""
     from datetime import date
     today = today or date.today()
     premieres = {
@@ -194,7 +194,7 @@ def following_title_activity(rows, media, *, today=None, limit=30):
         if isinstance(season, dict) and (season.get('season_number') or 0) > 0
         and season.get('air_date') and str(season['air_date'])[:10] <= today.isoformat()
     } if media.media_type.value == 'series' else {}
-    latest = {}
+    candidates = []
     for activity, user, profile in rows:
         details = activity.payload or {}
         status_event = details.get('status_changed') and (
@@ -203,13 +203,11 @@ def following_title_activity(rows, media, *, today=None, limit=30):
         )
         if not status_event and not details.get('finished_seasons'):
             continue
-        prior = latest.get(user.id)
-        if prior and (prior[0].created_at, prior[0].id) >= (activity.created_at, activity.id):
-            continue
-        latest[user.id] = (activity, user, profile)
-    ordered = sorted(latest.values(), key=lambda row: (row[0].created_at, row[0].id), reverse=True)
+        candidates.append((activity, user, profile))
+    ordered = sorted(candidates, key=lambda row: (row[0].created_at, row[0].id), reverse=True)
     cards = activity_data([(activity, media, user, profile) for activity, user, profile in ordered],
-                          include_user=True, limit=limit)
+                          include_user=True, limit=len(ordered))
+    by_user = {}
     for card in cards:
         details = card['payload']
         # A combined first-watch card may also contain episodes. The details
@@ -226,4 +224,19 @@ def following_title_activity(rows, media, *, today=None, limit=30):
                 card['status'] = 'watching'
                 details['status_changed'] = False
                 details['finished_seasons'] = [max(finished)]
-    return cards
+        choices = by_user.setdefault(card['user_id'], {})
+        if details.get('status_changed'):
+            choices.setdefault('status', card)
+        if details.get('finished_seasons'):
+            choices.setdefault('season', card)
+    result = []
+    for choices in by_user.values():
+        status = choices.get('status')
+        card = status if status and status['status'] == 'completed' else choices.get('season') or status
+        if card is None:
+            continue
+        if card is choices.get('season') and not (card['status'] == 'completed' and card['payload'].get('status_changed')):
+            card['status'] = 'watching'
+            card['payload']['status_changed'] = False
+        result.append(card)
+    return sorted(result, key=lambda card: card['created_at'], reverse=True)[:limit]

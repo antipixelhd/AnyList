@@ -45,6 +45,8 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
                 for day in range(1, 65):
                     db.add(TrackingActivity(user_id=friend.id, media_id=media.id, status='watching',
                                            payload={'episodes_watched': 1}, created_at=moment+timedelta(days=day)))
+                db.add(TrackingActivity(user_id=friend.id, media_id=media.id, status='dropped',
+                                       payload={'status_changed': True}, created_at=moment+timedelta(days=65)))
             await db.commit()
         await self.login()
         response = await self.client.get(f'/tracking/title/{self.media_id}/social')

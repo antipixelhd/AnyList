@@ -42,8 +42,15 @@ class TrackingProjectionTests(unittest.TestCase):
         self.assertEqual(rows[1][0].payload, before)
         rows.append(row(6, 6, 'dropped', {'status_changed': True}, other))
         cards = tracking_projection.following_title_activity(rows, _media())
-        self.assertEqual(cards[0]['status'], 'dropped')
+        self.assertEqual(cards[0]['payload']['finished_seasons'], [1])
+        self.assertEqual(cards[0]['status'], 'watching')
         self.assertEqual(len(cards), 2)
+        rows.append(row(7, 7, 'dropped', {'status_changed': True}))
+        rows.append(row(8, 8, 'watching', {'status_changed': True, 'started_watching': True}))
+        cards = tracking_projection.following_title_activity(rows, _media())
+        self.assertEqual(cards[0]['created_at'], datetime(2026, 1, 8))
+        self.assertTrue(cards[0]['payload']['started_watching'])
+        self.assertEqual(cards[1]['payload']['finished_seasons'], [1])
 
     def test_following_series_completion_expires_only_when_a_new_season_is_released(self):
         from datetime import date
