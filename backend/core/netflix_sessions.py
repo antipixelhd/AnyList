@@ -848,8 +848,9 @@ async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSe
             continue
         outcome = item.get("outcome") or {}
         from core.streaming_evidence import completion_evidence
-        if "finish_date" not in outcome:
-            outcome["finish_date"] = completion_evidence(item)["finish_date"]
+        inferred_finish = completion_evidence(item)["finish_date"]
+        if "finish_date" not in outcome and inferred_finish is not None:
+            outcome["finish_date"] = inferred_finish
         date_values = [d for d in (_to_date(x) for x in item.get("source_dates", [])) if d is not None]
         if item["kind"] == "movie":
             movie = await _get_or_create_movie(db, candidate)

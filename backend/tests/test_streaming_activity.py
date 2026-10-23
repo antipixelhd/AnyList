@@ -39,6 +39,22 @@ class EvidenceTests(unittest.TestCase):
         item['episodes'][0].update(episode_number=4, dates=['2026-10-22'])
         self.assertEqual(partial_tracking_status(item, date(2026, 10, 23)), 'dropped')
 
+    def test_repeated_episode_names_keep_their_season_identity(self):
+        from core.streaming_evidence import prepare_evidence
+        from core.streaming_history import WatchObservation
+        item = show()
+        item['source_title'] = 'Show'
+        item['episodes'] = [
+            {'season_number': sn, 'episode_number': 1, 'source_title': f'Show: Season {sn}: Episode 1',
+             'source_episode_title': 'Episode 1', 'resolution': 'exact', 'dates': []}
+            for sn in (1, 2)
+        ]
+        rows = [WatchObservation(row=sn, source_title=f'Show: Season {sn}: Episode 1',
+                                 episode_title='Episode 1', show_title='Show', season_number=sn,
+                                 watched_at=f'202{sn}-01-01') for sn in (1, 2)]
+        prepare_evidence([item], rows)
+        self.assertEqual([ep['dates'] for ep in item['episodes']], [['2021-01-01'], ['2022-01-01']])
+
     def test_seventy_percent_boundary(self):
         rows = [viewing('2020-01-01', 2520), viewing('2020-01-02', 3600)]
         self.assertEqual(choose_viewing(rows, 60)['watched_at'], '2020-01-01')
@@ -119,3 +135,30 @@ class ActivityTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(any(r.status == 'completed' and r.payload.get('status_changed') for r in db.rows))
         self.assertTrue(any(r.payload.get('finished_seasons') == [1] for r in db.rows))
         self.assertEqual(sum(r.score == 8 for r in db.rows), 1)
+
+    async def test_date_correction_preserves_unrelated_rating_cards(self):
+        from datetime import date
+        from models.tracking import TrackingActivity
+        db = MemoryDb()
+        old_rating = TrackingActivity(user_id=1, media_id=2, status='watching', score=6,
+                                      created_at=datetime(2019, 1, 1), payload={'rating_changed': True, 'rating_first': True})
+        db.rows.append(old_rating)
+        await record_streaming_activity(db, 1, 2, activity_plan(show(), '2020-01-03'), score=8)
+        await reschedule_date_activity(db, 1, 2, start_date=date(2020, 1, 1), finish_date=date(2020, 2, 1), changed={'finish_date'})
+        self.assertIn(old_rating, db.rows)
+        self.assertEqual(old_rating.score, 6)
+        self.assertTrue(old_rating.payload['rating_changed'])
+        self.assertEqual(old_rating.created_at, datetime(2019, 1, 1))
+
+    async def test_missing_finish_evidence_preserves_existing_date(self):
+        from datetime import date
+        from core.netflix_sessions import _track_imported_root
+        entry = SimpleNamespace(status='completed', progress=8, start_date=date(2020, 1, 1),
+                                finish_date=date(2020, 2, 1), initial_import_completed_at=None)
+        class Db:
+            async def execute(self, query):
+                return SimpleNamespace(scalar_one_or_none=lambda: entry)
+        tracked, is_new = await _track_imported_root(Db(), 1, SimpleNamespace(id=2), {'status': 'completed'},
+                                                     [date(2020, 1, 1)], 8, False)
+        self.assertFalse(is_new)
+        self.assertEqual(tracked.finish_date, date(2020, 2, 1))
