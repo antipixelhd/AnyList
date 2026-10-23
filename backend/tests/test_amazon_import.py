@@ -62,3 +62,7 @@ class AmazonImportTests(unittest.TestCase):
         parsed = parse_amazon_zip(archive([session(), session(**{"Playback Start Datetime (UTC)": "bad"})]))
         self.assertEqual(len(parsed.rows), 1)
         self.assertEqual(len(parsed.errors), 1)
+
+    def test_duplicated_movie_title_is_normalized_before_matching(self):
+        parsed = parse_amazon_zip(archive([session(title="Movie-Movie")]))
+        self.assertEqual(parsed.rows[0].source_title, "Movie")

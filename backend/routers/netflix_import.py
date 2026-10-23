@@ -1,7 +1,7 @@
 """Private, resumable Netflix viewing-history import drafts."""
 
 from __future__ import annotations
-from typing import Annotated, Literal
+from typing import Literal
 from core import netflix_sessions
 
 import uuid
@@ -392,6 +392,11 @@ async def update_netflix_import_item(
         if not item.get("match", {}).get("candidate"):
             raise HTTPException(status_code=422, detail="Choose a suggested title or use Remap before confirming.")
         item["decision"] = {"action": "confirm"}
+        if item["kind"] == "movie":
+            item["outcome"]["status"] = "completed"
+    if action == "remap" and item.get("requires_watch_confirmation") and item["kind"] == "movie" and not item.get("is_anime"):
+        item["decision"] = {"action": None}
+        item["outcome"]["status"] = "skip"
     outcome_status = patch.get("status")
     if outcome_status is not None:
         if item.get("is_anime") and outcome_status != "skip":

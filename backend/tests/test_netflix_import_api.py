@@ -91,6 +91,16 @@ class _MemoryDb:
 
 
 class NetflixAutomaticEpisodeImportTests(unittest.IsolatedAsyncioTestCase):
+    def test_playback_review_preserves_hidden_skips_and_requires_movie_confirmation(self):
+        anime = {"is_anime": True, "decision": {"action": "skip"}}
+        movie = {"kind": "movie", "match": {"state": "matched"},
+                 "decision": {"action": "confirm"}, "outcome": {"status": "completed"}}
+        netflix_sessions._require_playback_review([anime, movie])
+        self.assertEqual(anime["decision"], {"action": "skip"})
+        self.assertIsNone(movie["decision"]["action"])
+        self.assertEqual(movie["outcome"]["status"], "skip")
+        self.assertTrue(movie["requires_watch_confirmation"])
+
     async def _apply_with_memory_db(self, item):
         db = _MemoryDb()
         show = SimpleNamespace(canonical_source="tmdb")

@@ -321,6 +321,20 @@ async def _set_progress(session_id: str, user_id: int, current: int, total: int,
         return True
 
 
+def _require_playback_review(items: list[dict]) -> None:
+    """Admit evidence for review without claiming a completed movie watch."""
+    # Meaningful playback is evidence, not a claim of completion.
+    for item in items:
+        if item.get("is_anime"):
+            continue
+        if item["kind"] == "movie":
+            item["requires_watch_confirmation"] = True
+            item["outcome"]["status"] = "skip"
+        item["match"]["state"] = "review"
+        item["match"]["reason"] = "Playback recorded. Confirm the title and review watched progress."
+        item["decision"] = {"action": None}
+
+
 async def _prepare_session(session_id: str, user_id: int, language: str | None) -> None:
     maker = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     try:
@@ -369,11 +383,7 @@ async def _prepare_session(session_id: str, user_id: int, language: str | None) 
             prepared = prepared.to_dict() if hasattr(prepared, "to_dict") else {}
         items = _normalise_groups(prepared)
         if source == "amazon":
-            # Meaningful playback is evidence, not a claim of completion.
-            for item in items:
-                item["match"]["state"] = "review"
-                item["match"]["reason"] = "Playback recorded. Confirm the title and review watched progress."
-                item["decision"] = {"action": None}
+            _require_playback_review(items)
         errors = prepared.get("errors") or history_dict.get("errors") or []
         counts = prepared.get("counts") or history_dict.get("counts") or {}
         if row_count and not counts:

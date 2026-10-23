@@ -101,7 +101,7 @@ def parse_amazon_zip(content: bytes, language: str | None = None) -> ParsedHisto
             parsed.duplicate_rows += 1
             return
         episode, show, season = _identity(title)
-        observations[key] = WatchObservation(row=row_number, source_title=title,
+        observations[key] = WatchObservation(row=row_number, source_title=title if show else episode,
             watched_at=watched_date, show_title=show, season_number=season,
             season_label=f"Season {season}" if season else None,
             episode_title=episode if show else None, source_rows=[row_number])
