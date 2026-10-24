@@ -18,11 +18,11 @@ Use a verified Git-ignored output folder. `.local-design/search-browse/` was use
 | Dates, timeline, country release evidence | `movie_newest`, `movie_upcoming`, `series_upcoming`, `timeline_text`, `cinema_rereleases`, `details_then_timeline` |
 | Contributor discovery/eligibility | `actor`, `crew`, `studio`, `negative_studio`, `people_combined`, `all_contributors` |
 | Pagination/refill/options/failure | `page_two`, `sparse_viewport`, `filter_options`, `provider_failure` |
-| Automatic empty-search expansion | `auto_combined_empty`, `auto_separate_empty`, `auto_browse_empty` |
+| Automatic empty-search expansion | `auto_combined_empty`, `auto_combined_established`, `auto_separate_empty`, `auto_browse_empty` |
 
 Repeat `--case` for several cases. Group selectors are alternatives: `--filters-only`, `--contributors-only`, `--edge-cases-only`, `--stress-only`. Read the case list before combining a selector with `--case`, because named cases must belong to that selection.
 
-The `auto_*` cases model the frontend's curated-then-broader HTTP sequence against real ASGI routes, using a low-popularity exact title. Combined mode expands only when both title scopes are empty; separate mode expands only its empty scope. Browse retains explicit genre/score filters. `fallback_requests` counts broader retries; title discovery should reuse provider responses. These cases measure backend cost, not rendering or browser cancellation, which require frontend/UI verification.
+The `auto_*` cases model the frontend's curated-then-broader HTTP sequence against real ASGI routes. Empty workloads use a low-popularity, zero-vote exact title; `auto_combined_established` uses a low-popularity movie with 10,000 votes and an empty series scope, so the movie must prevent both retries. Combined mode expands only when both title scopes are empty; separate mode expands only its empty scope. Browse retains explicit genre/score filters. `fallback_requests` counts broader retries; title discovery should reuse provider responses. These cases measure backend cost, not rendering or browser cancellation, which require frontend/UI verification.
 
 ```powershell
 # Focused change: same cases and provider delay in both arms.
@@ -49,8 +49,8 @@ For frontend loading/view changes, use these backend cases where relevant and ve
 
 The harness runs three profiles automatically:
 
-- `curated`: popularity 25, movie runtime 30, documentary exclusion.
-- `floor_disabled`: popularity 0; runtime/category restrictions remain.
+- `curated`: votes 250 OR popularity 25, movie runtime 30, documentary exclusion.
+- `floor_disabled`: popularity 0, votes 250; runtime/category restrictions remain.
 - `show_all`: personal popularity/runtime/category curation bypassed; explicit filters remain. Quick-search contributors use permissive preferences for this comparison, not a product Show all control.
 
 `--skip-contributor-relevance` separately bypasses bounded contributor work eligibility **for the benchmark only**. It changes result quality and does not disable acquisition limits or add an account setting. Use it for explicit relevance-cost investigations, not as the normal performance target. Popularity-off and eligibility-off are different controls.

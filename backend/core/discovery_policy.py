@@ -1,4 +1,4 @@
-"""Pure discovery policy: tuning never performs provider work or changes budgets."""
+"""Shared discovery eligibility; tuning never performs provider work."""
 from dataclasses import dataclass
 import math
 
@@ -16,24 +16,42 @@ class DiscoveryPolicy:
     min_votes: int = 0
     min_popularity: float = 0
 
+    def _thresholds(self):
+        return [(field, minimum) for field, minimum in (
+            ('vote_count', self.min_votes), ('popularity', self.min_popularity)) if minimum > 0]
+
     def accepts(self, item):
         # These are explicitly TMDB counts, never IMDb's different population.
-        return ((not self.min_votes or (numeric(item.get('vote_count')) or 0) >= self.min_votes)
-                and (not self.min_popularity or (numeric(item.get('popularity')) or 0) >= self.min_popularity))
+        thresholds = self._thresholds()
+        return not thresholds or any((numeric(item.get(field)) or 0) >= minimum
+                                     for field, minimum in thresholds)
+
+    def could_accept(self, item):
+        """Unknown summary evidence can still qualify after detail enrichment."""
+        thresholds = self._thresholds()
+        return not thresholds or any(numeric(item.get(field)) is None
+                                     or numeric(item.get(field)) >= minimum
+                                     for field, minimum in thresholds)
+
+    def sql_clause(self, data):
+        from sqlalchemy import Float, func, or_, true
+        clauses = [func.coalesce(data[field].astext.cast(Float), 0) >= minimum
+                   for field, minimum in self._thresholds()]
+        return or_(*clauses) if clauses else true()
 
 
-def tuning(preferences, media_type, surface, minimum_votes=0):
-    """Account popularity floor applies to every surface; internal knobs tune votes.
+def tuning(preferences, media_type, surface, minimum_votes=250):
+    """Votes OR popularity qualify on every surface; zero disables that threshold.
 
-    discovery_tuning: {newest: {series: {min_popularity: 25, min_votes: 0}}}
-    Set a value to zero to disable it. Missing popularity fails an enabled floor.
+    discovery_tuning: {newest: {series: {min_votes: 0}}}
+    Missing evidence cannot satisfy an enabled threshold. Both disabled allows all.
     """
     config = preferences.get('discovery_tuning', {}) if isinstance(preferences, dict) else {}
     config = config.get(surface, {}) if isinstance(config, dict) else {}
     config = config.get(media_type, {}) if isinstance(config, dict) else {}
     if not isinstance(config, dict):
         config = {}
-    votes = numeric(config.get('min_votes', 0 if surface == 'search' else minimum_votes)) or 0
+    votes = numeric(config.get('min_votes', minimum_votes)) or 0
     popularity = numeric(preferences.get('minimum_popularity', 25) if isinstance(preferences, dict) else 25)
     if popularity is None:
         popularity = 25
@@ -51,11 +69,11 @@ async def viewer_policies(db, viewer, media_type, surfaces, *, unfiltered=False)
     from sqlalchemy import select
     from models.profile import UserProfileData
     from models.users import User, UserSettings
-    votes, preferences = 0, {}
+    votes, preferences = 250, {}
     if viewer:
         row = (await db.execute(select(UserProfileData.minimum_votes, UserSettings.preferences)
             .select_from(User).outerjoin(UserProfileData, UserProfileData.user_id == User.id)
             .outerjoin(UserSettings, UserSettings.user_id == User.id).where(User.id == viewer.id))).first()
         if row:
-            votes, preferences = row[0] or 0, row[1] or {}
+            votes, preferences = row[0] if row[0] is not None else 250, row[1] or {}
     return {surface: tuning(preferences, media_type, surface, votes) for surface in surfaces}

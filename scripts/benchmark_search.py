@@ -125,9 +125,12 @@ async def main(args):
                     return {'page': page, 'total_pages': 0, 'results': []}
                 kind = 'tv' if path[1] == 'tv' else 'movie'
                 if current_case.startswith('auto_'):
+                    if current_case == 'auto_combined_established' and kind == 'tv':
+                        return {'page': page, 'total_pages': 1, 'results': []}
                     row = title(880001, kind, search=True)
                     row['title' if kind == 'movie' else 'name'] = 'Fallback Target'
                     row['popularity'] = 80 if current_case == 'auto_separate_empty' and kind == 'tv' else 1
+                    row['vote_count'] = 10000 if current_case == 'auto_combined_established' else 0
                     return {'page': page, 'total_pages': 1, 'results': [row]}
                 future = str(params.get('primary_release_date.gte') or params.get('first_air_date.gte') or params.get('air_date.gte') or params.get('release_date.gte') or '') > '2026-12-31'
                 count = 500 if 'sparse' in str(params.get('query', '')) else 8
@@ -231,6 +234,7 @@ async def main(args):
             ('cinema_rereleases', 'browse', {'sort': 'newest', 'cinema': 'true', 'include_rereleases': 'true'}),
             ('filter_options', 'browse/facets', {'genres': '18'}),
             ('auto_combined_empty', None, {}),
+            ('auto_combined_established', None, {}),
             ('auto_separate_empty', None, {}),
             ('auto_browse_empty', None, {}),
         ]
@@ -262,6 +266,7 @@ async def main(args):
                     saved = await db.scalar(select(UserSettings).where(UserSettings.user_id == viewer.id))
                     saved.preferences = {'minimum_popularity': 25 if mode == 'curated' else 0}
                     profile = await db.scalar(select(UserProfileData).where(UserProfileData.user_id == viewer.id))
+                    profile.minimum_votes = 0 if mode == 'show_all' else 250
                     profile.minimum_movie_runtime = 0 if mode == 'show_all' else 30
                     profile.excluded_categories = [] if mode == 'show_all' else [99]
                     await db.commit()
@@ -297,7 +302,7 @@ async def main(args):
                             }) for kind in scopes))
                             combined_empty = all(empty(row) for row in rows)
                             indices = [index for index in range(2) if (
-                                combined_empty if label == 'auto_combined_empty' else empty(rows[index]))]
+                                combined_empty if label.startswith('auto_combined_') else empty(rows[index]))]
                             counters['fallback_requests'] += len(indices)
                             broad = await asyncio.gather(*(request('catalog', {
                                 'q': 'Fallback Target', 'media_type': scopes[index], 'scan_empty': 'true', 'unfiltered': 'true',

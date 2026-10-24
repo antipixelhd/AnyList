@@ -227,7 +227,8 @@ def remote_params(
 ):
     params = {"page": page, "include_adult": "false", "sort_by": SORTS[sort]}
     params["vote_average.gte"] = min_score
-    if min_votes:
+    # TMDB cannot express votes OR popularity. Do not eliminate the popular arm.
+    if min_votes and not min_popularity:
         params["vote_count.gte"] = min_votes
     if media_type == "series":
         params["sort_by"] = (
@@ -307,11 +308,9 @@ def local_query(
     data = Media.tmdb_data
     if require_release:
         query = query.where(release_clause(data, media_type))
-    if min_votes and not term:
-        votes = func.coalesce(data['vote_count'].astext.cast(Float), 0)
-        query = query.where(votes >= min_votes)
-    if min_popularity:
-        query = query.where(func.coalesce(data['popularity'].astext.cast(Float), 0) >= min_popularity)
+    from core.discovery_policy import DiscoveryPolicy
+    if min_votes or min_popularity:
+        query = query.where(DiscoveryPolicy(min_votes, min_popularity).sql_clause(data))
     if sort == 'upcoming':
         query = query.where(Media.release_date > date.today().isoformat())
     elif sort == 'newest' and not end:
@@ -622,9 +621,7 @@ async def imdb_page(
 async def remote_page(
     term, media_type, key, filters, page, *, mdblist_key=None, show_anime=True, feed_offset=None
 ):
-    if term:
-        filters = {**filters, 'min_votes': 0}
-    elif filters['sort'] in ('newest', 'upcoming') or filters.get('status') == 'upcoming':
+    if not term and (filters['sort'] in ('newest', 'upcoming') or filters.get('status') == 'upcoming'):
         from core.chronological_discovery import page as release_page
         return await release_page(media_type, key, filters,
             offset=feed_offset if feed_offset is not None and feed_offset >= 0 else (page - 1) * PAGE_SIZE,
@@ -704,14 +701,13 @@ async def remote_page(
     if needs_details:
         # Reject only known violations before paying for details. Missing fields
         # remain eligible for enrichment; explicit filters still run afterwards.
-        from core.discovery_policy import DiscoveryPolicy, numeric
+        from core.discovery_policy import DiscoveryPolicy
         from core.catalog_search import media_search_rank
         selected = [item for item in items if not item.get('adult')
             and matches_result_filters(item, media_type, min_runtime=filters.get('min_runtime', 0),
                 excluded_genres=filters.get('excluded_genres', ()))
             and anime_visible(item, show_anime)
-            and (numeric(item.get('popularity')) is None or
-                 DiscoveryPolicy(min_popularity=filters.get('min_popularity', 0)).accepts(item))]
+            and DiscoveryPolicy(filters.get('min_votes', 0), filters.get('min_popularity', 0)).could_accept(item)]
         # Corrections can append stronger matches beyond the original provider
         # page. Spend the detail budget on ranked, cheaply eligible candidates.
         selected = sorted(selected, key=lambda item: media_search_rank(term, item, media_type), reverse=True)[:20]
@@ -746,7 +742,7 @@ async def browse_page(
     if filters['sort'] == 'upcoming':
         filters = {**filters, 'status': 'upcoming'}
     if term:
-        filters = {**filters, 'min_votes': 0, 'require_release': False, 'require_poster': False}
+        filters = {**filters, 'require_release': False, 'require_poster': False}
     if (not term and filters['sort'] in ('newest', 'upcoming')) or filters.get('status') == 'upcoming' or (term and event_view):
         from core.release_browse import page as release_page
         if term:

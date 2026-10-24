@@ -16,9 +16,23 @@ class PolicyTests(unittest.TestCase):
     def test_surface_and_kind_tuning_are_independent_and_zero_disables(self):
         preferences = {'discovery_tuning': {'newest': {'movie': {'min_votes': 10, 'min_popularity': 30}}}}
         self.assertEqual(tuning(preferences, 'movie', 'newest'), DiscoveryPolicy(10, 25))
-        self.assertEqual(tuning(preferences, 'series', 'newest'), DiscoveryPolicy(0, 25))
-        self.assertEqual(tuning(preferences, 'movie', 'search', 250), DiscoveryPolicy(0, 25))
-        self.assertEqual(tuning({'minimum_popularity': 0}, 'movie', 'upcoming'), DiscoveryPolicy())
+        self.assertEqual(tuning(preferences, 'series', 'newest'), DiscoveryPolicy(250, 25))
+        self.assertEqual(tuning(preferences, 'movie', 'search', 250), DiscoveryPolicy(250, 25))
+        self.assertEqual(tuning({'minimum_popularity': 0}, 'movie', 'upcoming', 0), DiscoveryPolicy())
+
+    def test_votes_or_popularity_qualify_inclusive_boundaries_and_disabled_thresholds(self):
+        policy = DiscoveryPolicy(250, 25)
+        for item in ({'vote_count': 250, 'popularity': 1}, {'vote_count': 0, 'popularity': 25},
+                     {'vote_count': 10000, 'popularity': 21.886}):
+            self.assertTrue(policy.accepts(item), item)
+        for item in ({}, {'vote_count': 249, 'popularity': 24.9},
+                     {'imdb_votes': 100000, 'vote_count': 249, 'popularity': 1}):
+            self.assertFalse(policy.accepts(item), item)
+        self.assertFalse(DiscoveryPolicy(0, 25).accepts({'vote_count': 10000, 'popularity': 1}))
+        self.assertFalse(DiscoveryPolicy(250, 0).accepts({'vote_count': 249, 'popularity': 100}))
+        self.assertTrue(DiscoveryPolicy().accepts({}))
+        self.assertTrue(policy.could_accept({'popularity': 1}))
+        self.assertFalse(policy.could_accept({'vote_count': 249, 'popularity': 1}))
 
     def test_account_popularity_applies_to_search_and_browse_and_zero_disables(self):
         for kind in ('movie', 'series'):
@@ -26,6 +40,7 @@ class PolicyTests(unittest.TestCase):
                 self.assertEqual(tuning({}, kind, surface).min_popularity, 25)
                 self.assertEqual(tuning({'minimum_popularity': 30}, kind, surface).min_popularity, 30)
                 self.assertEqual(tuning({'minimum_popularity': 0}, kind, surface).min_popularity, 0)
+                self.assertEqual(tuning({}, kind, surface).min_votes, 250)
 
     def test_provider_counts_missing_values_and_popularity_thresholds(self):
         self.assertFalse(DiscoveryPolicy(250).accepts({'imdb_votes': 100_000, 'vote_count': 249}))
