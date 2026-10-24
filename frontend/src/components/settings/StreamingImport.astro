@@ -10,7 +10,7 @@ const extension = service === "amazon" ? ".zip" : ".csv";
       <template data-role="streaming-disclosure-arrow"><Icon name="chevron-down" class="streaming-disclosure-arrow" /></template>
       <template data-role="streaming-poster-placeholder"><Icon name="film" /></template>
       <template data-role="streaming-match-arrow"><Icon name="arrow-right" /></template>
-      <template data-role="streaming-check"><Icon name="check" /></template>
+      <template data-role="streaming-star"><Icon name="star" /></template>
       <input type="file" id={`${service}-streaming-import-file`} data-role="streaming-import-file" accept={extension} class="hidden" disabled={!hasTmdbKey} />
       <div id={`${service}-streaming-import-upload-controls`} data-role="streaming-import-upload-controls">
       <div id={`${service}-streaming-import-upload`} data-role="streaming-import-upload" class:list={[
@@ -22,7 +22,7 @@ const extension = service === "amazon" ? ".zip" : ".csv";
         {hasTmdbKey && <p class="text-sm text-zinc-400">Drop your {extension} file here or choose a file</p>}
         <p class="text-xs text-zinc-500">{service === "amazon" ? <>Request your Prime Video data from <a href="https://www.amazon.de/hz/privacy-central/data-requests/preview.html" target="_blank" rel="noopener noreferrer" class="text-blue-400 hover:text-blue-300">Amazon</a>, then upload the ZIP. It may take a couple of days.</> : <>Download all your <a href="https://www.netflix.com/settings/viewing-history" target="_blank" rel="noopener noreferrer" class="text-blue-400 hover:text-blue-300">Netflix viewing activity</a>.</>}</p>
       </div>
-      <div class="streaming-upload-options"><label for={`${service}-streaming-import-language`}><span>File language</span><select id={`${service}-streaming-import-language`} data-role="streaming-import-language" aria-label="File language"><option value="auto">Detect automatically</option><option value="en">English</option><option value="de">Deutsch</option></select></label><p>Anime imports are not supported yet.</p></div>
+      <div class="streaming-upload-options"><label for={`${service}-streaming-import-language`}><span>File language</span><select id={`${service}-streaming-import-language`} data-role="streaming-import-language" aria-label="File language" class="streaming-language-select"><option value="auto">Detect automatically</option><option value="en">English</option><option value="de">Deutsch</option></select></label><p>Anime imports are not supported yet.</p></div>
       <input id={`${service}-streaming-skip-anime`} data-role="streaming-skip-anime" type="checkbox" checked disabled hidden />
       </div>
       <section id={`${service}-streaming-import-workflow`} data-role="streaming-import-workflow" class="mt-5 hidden" aria-live="polite"></section>
