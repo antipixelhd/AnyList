@@ -22,6 +22,42 @@ from routers.catalogue import router
 
 @unittest.skipUnless(fixture.URL, 'Requires explicit disposable statistics PostgreSQL')
 class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_title_social_separates_self_and_latest_public_following_milestones(self):
+        from datetime import datetime, timedelta
+        async with self.Session() as db:
+            media = await db.get(Media, self.media_id)
+            media.media_type = MediaType.series
+            media.tmdb_data = {'seasons': [{'season_number': 1, 'air_date': '2020-01-01'},
+                                           {'season_number': 2, 'air_date': '2022-01-01'}]}
+            moment = datetime(2021, 1, 1)
+            db.add(TrackingActivity(user_id=self.user_id, media_id=media.id, status='watching',
+                                   payload={'episodes_watched': 1}, created_at=moment))
+            for username, privacy, followed in [('public', PrivacyLevel.public, True),
+                                               ('private', PrivacyLevel.private, True),
+                                               ('stranger', PrivacyLevel.public, False)]:
+                friend = User(username='social-'+username, email=username+'@example.test', api_key=username+'-fixture')
+                db.add(friend); await db.flush()
+                db.add(UserProfileData(user_id=friend.id, privacy_level=privacy))
+                if followed:
+                    db.add(Follow(follower_id=self.user_id, following_id=friend.id))
+                db.add(TrackingActivity(user_id=friend.id, media_id=media.id, status='completed',
+                                       payload={'status_changed': True}, created_at=moment))
+                for day in range(1, 65):
+                    db.add(TrackingActivity(user_id=friend.id, media_id=media.id, status='watching',
+                                           payload={'episodes_watched': 1}, created_at=moment+timedelta(days=day)))
+                db.add(TrackingActivity(user_id=friend.id, media_id=media.id, status='dropped',
+                                       payload={'status_changed': True}, created_at=moment+timedelta(days=65)))
+            await db.commit()
+        await self.login()
+        response = await self.client.get(f'/tracking/title/{self.media_id}/social')
+        self.assertEqual(response.status_code, 200, response.text)
+        data = response.json()
+        self.assertEqual([card['user_id'] for card in data['activities']], [self.user_id])
+        self.assertEqual([card['username'] for card in data['following_activities']], ['social-public'])
+        self.assertEqual(data['following_activities'][0]['payload']['finished_seasons'], [1])
+        self.assertEqual(data['following_activities'][0]['status'], 'watching')
+        self.assertTrue(data['activities'][0]['payload']['episodes_watched'])
+
     async def test_preview_is_cached_without_gallery_downloads_and_preserves_existing_data(self):
         await self.login()
         raw={'backdrops':[
@@ -324,7 +360,7 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
         self.viewer=None
         self.assertEqual((await self.client.get(f'/tracking/title/{media_id}')).status_code,401)
 
-    async def test_individual_episode_edits_preserve_gaps_and_later_history(self):
+    async def test_individual_episode_edits_use_contiguous_progress_and_preserve_status(self):
         await self.login()
         async with self.Session() as db:
             show=Show(title='Exact episode fixture',tmdb_id=987)
@@ -341,37 +377,45 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
                 async with self.Session() as db:
                     card=await db.scalar(select(TrackingActivity).where(
                         TrackingActivity.user_id==self.user_id,TrackingActivity.media_id==series_id))
+                    if not count:
+                        self.assertIsNone(card)
+                        return
                     self.assertEqual(card.payload['episodes_watched'],count)
                     self.assertEqual(card.payload['position_start'],first)
                     self.assertEqual(card.payload['position'],last)
                     self.assertEqual(card.payload['finished_seasons'],[])
             response=await self.client.patch(url+str(ids[2]),json={'watched':True})
             self.assertEqual(response.status_code,200,response.text)
-            self.assertEqual(response.json()['status'],'watching')
-            self.assertEqual(response.json()['progress'],1)
+            self.assertEqual(response.json()['status'],'completed')
+            self.assertEqual(response.json()['progress'],3)
             self.assertEqual(response.json()['season_position'],'S1E3')
-            await check_activity(1,'S1E3','S1E3')
+            await check_activity(3,'S1E1','S1E3')
             data=(await self.client.get(f'/tracking/title/{series_id}')).json()
-            self.assertEqual([row['watched'] for row in data['seasons'][0]['episodes']],[False,False,True,False])
+            self.assertEqual([row['watched'] for row in data['seasons'][0]['episodes']],[True,True,True,False])
             await self.client.patch(url+str(ids[2]),json={'watched':True})
-            await check_activity(1,'S1E3','S1E3')
+            await check_activity(3,'S1E1','S1E3')
             async with self.Session() as db:
                 self.assertEqual(len(list(await db.scalars(select(WatchEvent).where(WatchEvent.user_id==self.user_id,WatchEvent.media_id==ids[2])))),1)
                 self.assertEqual((await db.scalar(select(TrackedEntry).where(
-                    TrackedEntry.user_id==self.user_id,TrackedEntry.media_id==series_id))).progress,1)
+                    TrackedEntry.user_id==self.user_id,TrackedEntry.media_id==series_id))).progress,3)
             for identifier in ids[:2]:
                 response=await self.client.patch(url+str(identifier),json={'watched':True})
             self.assertEqual(response.json()['status'],'completed')
             self.assertEqual(response.json()['progress'],3)
             await check_activity(3,'S1E1','S1E3')
             response=await self.client.patch(url+str(ids[0]),json={'watched':False})
-            self.assertEqual(response.json()['status'],'watching')
-            self.assertEqual(response.json()['progress'],2)
-            self.assertEqual(response.json()['season_position'],'S1E3')
-            await check_activity(2,'S1E2','S1E3')
+            self.assertEqual(response.status_code,409,response.text)
+            self.assertEqual(response.json()['detail']['code'],'watch_rollback_required')
+            await check_activity(3,'S1E1','S1E3')
+            response=await self.client.patch(url+str(ids[0]),json={'watched':False,'confirm_rollback':True})
+            self.assertEqual(response.status_code,200,response.text)
+            self.assertEqual(response.json()['status'],'completed')
+            self.assertEqual(response.json()['progress'],0)
+            self.assertIsNone(response.json()['season_position'])
+            await check_activity(0,None,None)
             data=(await self.client.get(f'/tracking/title/{series_id}')).json()
-            self.assertEqual(data['seasons'][0]['watched_count'],2)
-            self.assertEqual([row['watched'] for row in data['seasons'][0]['episodes']],[False,True,True,False])
+            self.assertEqual(data['seasons'][0]['watched_count'],0)
+            self.assertEqual([row['watched'] for row in data['seasons'][0]['episodes']],[False,False,False,False])
             self.assertEqual((await self.client.patch(url+str(ids[3]),json={'watched':True})).status_code,409)
             self.assertEqual((await self.client.patch(url+str(self.media_id),json={'watched':True})).status_code,409)
 

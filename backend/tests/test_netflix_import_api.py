@@ -66,6 +66,21 @@ def _show_item():
     }
 
 
+def _duration_show(seconds=(2520, 2520, 2520, 2519, 600)):
+    from core.streaming_evidence import prepare_evidence
+    from core.streaming_history import WatchObservation
+    item = _show_item()
+    item['episodes'] = [{**_episode(n, watched=True, watched_date=f'2020-01-0{n}'), 'resolution': 'exact'} for n in range(1, 6)]
+    item['catalog_episodes'] = [{**_episode(n), 'runtime': 60} for n in range(1, 6)]
+    item['seasons'][0].update(represented=5, total_released=5)
+    item['outcome'].update(status='completed', latest_episode=5)
+    observations = [WatchObservation(row=n, source_title=ep['source_title'], show_title=item['source_title'],
+                                     season_number=1, episode_title=ep['title'], watched_at=ep['dates'][0],
+                                     watched_seconds=seconds[n - 1]) for n, ep in enumerate(item['episodes'], 1)]
+    prepare_evidence([item], observations)
+    return item
+
+
 class _MemoryResult:
     def scalar_one_or_none(self):
         return None
@@ -91,6 +106,139 @@ class _MemoryDb:
 
 
 class NetflixAutomaticEpisodeImportTests(unittest.IsolatedAsyncioTestCase):
+    async def test_movie_progress_requires_completed_outcome(self):
+        for status, expected in [('dropped', 0), ('completed', 1)]:
+            with self.subTest(status=status):
+                db = _MemoryDb()
+                session = SimpleNamespace(id='movie-progress', payload={'items': [{
+                    'kind': 'movie', 'match': {'candidate': {'tmdb_id': 1}},
+                    'source_dates': ['2020-01-01'], 'outcome': {'status': status},
+                }]})
+                track = AsyncMock(return_value=(SimpleNamespace(), True))
+                with (
+                    patch('core.netflix_sessions._get_or_create_movie', new=AsyncMock(return_value=SimpleNamespace(id=1))),
+                    patch('core.netflix_sessions._track_imported_root', new=track),
+                    patch('core.netflix_sessions._apply_staged_rating', new=AsyncMock()),
+                    patch('core.netflix_sessions._record_import_activity', new=AsyncMock()),
+                    patch('core.netflix_sessions.reconcile_inferred_watch_date', new=AsyncMock(return_value=False)),
+                    patch('core.netflix_sessions._reconcile_first_watch', new=AsyncMock(return_value=False)),
+                    patch('core.netflix_sessions._has_completed_event', new=AsyncMock(return_value=False)),
+                ):
+                    await netflix_sessions._apply_import(db, 7, session, AsyncMock())
+                self.assertEqual(track.await_args.args[5], expected)
+                self.assertEqual(sum(isinstance(row, WatchEvent) for row in db.added), expected)
+
+    async def test_weak_episodes_do_not_advance_suggestion_or_write_watches(self):
+        item = _duration_show()
+        self.assertEqual(item['outcome']['status'], 'partial')
+        self.assertEqual((item['outcome']['latest_season'], item['outcome']['latest_episode']), (1, 3))
+        self.assertEqual(item['seasons'][0]['represented'], 3)
+        self.assertEqual([ep['watch_qualified'] for ep in item['episodes']], [True, True, True, False, False])
+        self.assertEqual(item['episodes'][3]['dates'], ['2020-01-04'])
+        self.assertEqual(item['episodes'][4]['viewings'][0]['watched_seconds'], 600)
+        stats, db = await self._apply_with_memory_db(item)
+        self.assertEqual({event.media_id % 100 for event in db.added}, {1, 2, 3})
+        self.assertEqual((stats['source_watches'], stats['episodes'], stats['inferred_episodes']), (3, 3, 0))
+        from core.streaming_evidence import activity_plan
+        plan = activity_plan(item)
+        self.assertFalse(any(event['key'] in ('episode:1:4', 'episode:1:5', 'season:1') for event in plan))
+        self.assertEqual(next(event['date'] for event in plan if event['key'] == 'status'), '2020-01-03')
+
+    async def test_reviewed_endpoint_uses_retained_weak_episode_dates(self):
+        from core.streaming_evidence import activity_plan, prepare_evidence
+        from core.streaming_history import WatchObservation
+        item = _duration_show()
+        item['outcome'].update(latest_episode=5, endpoint_overridden=True, status_overridden=True)
+        prepare_evidence([item], [WatchObservation(**row) for row in item['source_evidence']['observations']])
+        self.assertEqual(item['outcome']['latest_episode'], 5)
+        stats, db = await self._apply_with_memory_db(item)
+        watches = {event.media_id % 100: event for event in db.added}
+        self.assertEqual(set(watches), {1, 2, 3, 4, 5})
+        for number in (4, 5):
+            self.assertEqual(watches[number].watched_at.date(), date(2020, 1, number))
+            self.assertFalse(watches[number].date_inferred)
+            self.assertFalse(watches[number].provisional)
+        self.assertEqual((stats['source_watches'], stats['inferred_episodes']), (5, 0))
+        plan = activity_plan(item)
+        self.assertEqual(next(event['date'] for event in plan if event['key'] == 'episode:1:4'), '2020-01-04')
+        self.assertEqual(next(event['date'] for event in plan if event['key'] == 'season:1'), '2020-01-05')
+
+    def test_sparse_skip_uses_qualified_episodes_and_retains_weak_evidence(self):
+        item = _duration_show((2520, 2520, 2519, 1000, 600))
+        self.assertEqual(item['outcome']['status'], 'skip')
+        self.assertEqual(item['seasons'][0]['represented'], 2)
+        self.assertEqual(item['outcome']['latest_episode'], 2)
+        self.assertEqual(len(item['episodes']), 5)
+        netflix_sessions._resolve_draft_items([item])
+        self.assertEqual(item['outcome']['status'], 'skip')
+
+    def test_netflix_completed_evidence_keeps_existing_progress_defaults(self):
+        item = _duration_show((None,) * 5)
+        self.assertEqual(item['outcome']['status'], 'completed')
+        self.assertEqual(item['outcome']['latest_episode'], 5)
+        self.assertEqual(item['seasons'][0]['represented'], 5)
+
+    async def test_only_weak_evidence_stays_skipped_until_user_selects_partial(self):
+        item = _duration_show((600,) * 5)
+        self.assertEqual(item['outcome']['status'], 'skip')
+        self.assertIsNone(item['outcome']['latest_episode'])
+        draft = SimpleNamespace(id='draft', status='review', revision=1, phase='review', progress={},
+                                result={}, error_message=None, payload={'source': 'amazon', 'items': [item]})
+        db = SimpleNamespace(commit=AsyncMock(), refresh=AsyncMock(), execute=AsyncMock(return_value=_MemoryResult()))
+        with patch('routers.netflix_import._load_owned', new=AsyncMock(return_value=draft)):
+            updated = await update_netflix_import_item(draft.id, item['id'], {'revision': 1, 'status': 'partial'}, db, SimpleNamespace(id=7))
+        chosen = updated['items'][0]
+        self.assertEqual((chosen['outcome']['latest_season'], chosen['outcome']['latest_episode']), (1, 1))
+        stats, applied = await self._apply_with_memory_db(chosen)
+        self.assertEqual({event.media_id % 100 for event in applied.added}, {1})
+        self.assertEqual(stats['source_watches'], 1)
+
+    def test_playback_review_preserves_hidden_skips_and_requires_movie_confirmation(self):
+        anime = {"is_anime": True, "decision": {"action": "skip"}}
+        movie = {"kind": "movie", "match": {"state": "matched"},
+                 "decision": {"action": "confirm"}, "outcome": {"status": "completed"}}
+        show = _show_item()
+        netflix_sessions._require_playback_review([anime, movie, show])
+        self.assertFalse(show.get("requires_watch_confirmation", False))
+        netflix_sessions._resolve_draft_items([show])
+        self.assertEqual(show["outcome"]["status"], "skip")
+        self.assertFalse(show["outcome"]["status_overridden"])
+        self.assertEqual(anime["decision"], {"action": "skip"})
+        self.assertIsNone(movie["decision"]["action"])
+        self.assertEqual(movie["outcome"]["status"], "skip")
+        self.assertTrue(movie["requires_watch_confirmation"])
+
+    def test_amazon_full_first_season_uses_shared_partial_progress_default(self):
+        from copy import deepcopy
+        show = _show_item()
+        show["episodes"] = [_episode(n, watched=True) for n in range(1, 9)]
+        show["catalog_episodes"] = [_episode(n) for n in range(1, 9)] + [
+            {**_episode(n), "season_number": 2} for n in range(1, 9)
+        ]
+        show["seasons"] = [
+            {"season_number": 1, "represented": 8, "total_released": 8, "catalogue_complete": True},
+            {"season_number": 2, "represented": 0, "total_released": 8, "catalogue_complete": True},
+        ]
+        show["outcome"].update(latest_season=1, latest_episode=8)
+        netflix = deepcopy(show)
+        netflix_sessions._resolve_draft_items([netflix])
+        netflix_sessions._require_playback_review([show])
+        netflix_sessions._resolve_draft_items([show])
+        self.assertEqual(show["outcome"], netflix["outcome"])
+        self.assertEqual(show["outcome"]["status"], "partial")
+        self.assertEqual((show["outcome"]["latest_season"], show["outcome"]["latest_episode"]), (1, 8))
+        self.assertEqual(show["decision"], netflix["decision"])
+
+    def test_playback_sessions_do_not_become_multiple_completed_rewatches(self):
+        movie = {"kind": "movie", "source_dates": ["2020-01-01", "2020-01-02"],
+                 "match": {}, "outcome": {}}
+        show = _show_item()
+        show["episodes"][0]["dates"] = ["2020-01-01", "2020-01-02"]
+        netflix_sessions._require_playback_review([movie, show])
+        self.assertEqual(movie["source_dates"], ["2020-01-01"])
+        self.assertEqual(movie["source_evidence"]["playback_dates"], ["2020-01-01", "2020-01-02"])
+        self.assertEqual(show["episodes"][0]["dates"], ["2020-01-01"])
+
     async def _apply_with_memory_db(self, item):
         db = _MemoryDb()
         show = SimpleNamespace(canonical_source="tmdb")
@@ -110,6 +258,7 @@ class NetflixAutomaticEpisodeImportTests(unittest.IsolatedAsyncioTestCase):
             patch("core.netflix_sessions._get_or_create_show_root", new=AsyncMock(return_value=(show, root))),
             patch("core.netflix_sessions._get_or_create_episode", new=AsyncMock(side_effect=get_episode)),
             patch("core.netflix_sessions._has_completed_event", new=AsyncMock(return_value=False)),
+            patch("core.netflix_sessions._record_import_activity", new=AsyncMock()),
             patch("core.netflix_sessions._track_imported_root", new=AsyncMock(return_value=(SimpleNamespace(), True))),
         ):
             stats = await netflix_sessions._apply_import(db, 7, session, no_progress)
@@ -289,6 +438,35 @@ class NetflixAutomaticEpisodeImportTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError, "unconfirmed episode"):
             await _prepare_remapped_item(item, "movie", 559969, "test-key", "en-US")
 
+    async def test_amazon_show_to_movie_remap_requires_one_reviewed_movie_watch(self):
+        item = {
+            "id": "film-as-show", "kind": "show", "source_title": "El Camino",
+            "source_dates": ["2024-01-01", "2024-01-02"], "source_rows": 2,
+            "episodes": [{"source_title": "El Camino: A Breaking Bad Movie", "resolution": "guessed",
+                          "dates": ["2024-01-01", "2024-01-02"], "source_row_numbers": [2, 3]}],
+            "outcome": {"status": "skip"},
+        }
+        details = {"id": 559969, "title": "El Camino: A Breaking Bad Movie", "release_date": "2019-10-11",
+                   "genres": [{"id": 18}], "original_language": "en"}
+        draft = SimpleNamespace(id="draft", status="review", revision=1, phase="review", progress={},
+                                result={}, error_message=None, payload={"source": "amazon", "items": [item]})
+        db = SimpleNamespace(commit=AsyncMock(), refresh=AsyncMock(), execute=AsyncMock(return_value=_MemoryResult()))
+        with (
+            patch("routers.netflix_import._load_owned", new=AsyncMock(return_value=draft)),
+            patch("routers.netflix_import.settings_store.get_user_tmdb_key", new=AsyncMock(return_value="test-key")),
+            patch("core.netflix_sessions.tmdb.get_movie_light", new=AsyncMock(return_value=details)),
+        ):
+            updated = await update_netflix_import_item(
+                draft.id, item["id"], {"revision": 1, "action": "remap", "media_type": "movie", "tmdb_id": 559969},
+                db, SimpleNamespace(id=7),
+            )
+        movie = updated["items"][0]
+        self.assertEqual(movie["kind"], "movie")
+        self.assertIsNone(movie["decision"]["action"])
+        self.assertEqual(movie["outcome"]["status"], "skip")
+        self.assertTrue(movie["requires_watch_confirmation"])
+        self.assertEqual(movie["source_dates"], ["2024-01-01"])
+
     async def test_movie_shaped_entry_can_be_manually_remapped_to_show(self):
         item = {
             "id": "ambiguous-title", "kind": "movie", "source_title": "Ambiguous Title",
@@ -418,7 +596,7 @@ class NetflixDecisionTests(unittest.TestCase):
         self.assertIsNone(item["match"]["candidate"])
         self.assertEqual(item["match"]["state"], "unmatched")
 
-    def test_sparse_show_defaults_to_skip_even_at_latest_released_episode(self):
+    def test_sparse_show_defaults_to_skip_at_latest_released_episode(self):
         raw = {"shows": [{
             "kind": "show", "source_title": "Fixture Show", "tmdb_id": 990001,
             "title": "Fixture Show", "status": "matched", "confidence": "high",
@@ -526,6 +704,40 @@ class NetflixCommitTests(unittest.IsolatedAsyncioTestCase):
         await self.transaction.rollback()
         await self.connection.close()
         await self.engine.dispose()
+
+    async def test_review_suppresses_saved_evidence_but_keeps_new_and_rolled_back_episodes(self):
+        from core.streaming_duplicates import remove_covered_items
+        from copy import deepcopy
+        item = _show_item()
+        item['outcome'].update(status='completed', status_overridden=True)
+        session = SimpleNamespace(id='dedup', payload={'items': [item]})
+        await netflix_sessions._apply_import(self.db, self.user.id, session, AsyncMock())
+        await self.db.flush()
+        self.assertEqual(await remove_covered_items(self.db, self.user.id, [item]), ([], 1))
+        # Another viewer's history cannot suppress this account's review.
+        self.assertEqual(await remove_covered_items(self.db, -1, [item]), ([item], 0))
+        earlier = deepcopy(item)
+        earlier['episodes'][0]['dates'] = ['2019-01-01']
+        self.assertEqual(await remove_covered_items(self.db, self.user.id, [earlier]), ([earlier], 0))
+        event = (await self.db.execute(select(WatchEvent).join(Media).where(
+            WatchEvent.user_id == self.user.id, Media.episode_number == 3,
+        ))).scalar_one()
+        await self.db.delete(event)
+        await self.db.flush()
+        self.assertEqual(await remove_covered_items(self.db, self.user.id, [item]), ([item], 0))
+
+    async def test_amazon_review_flag_does_not_resurface_already_imported_movie(self):
+        from core.streaming_duplicates import remove_covered_items
+        item = {'id': 'movie-dedup', 'kind': 'movie', 'source_title': 'Movie',
+                'match': {'state': 'matched', 'candidate': {'tmdb_id': 880099, 'title': 'Movie'}},
+                'source_dates': ['2020-01-01'], 'outcome': {'status': 'completed'},
+                'decision': {'action': 'confirm'}}
+        await netflix_sessions._apply_import(self.db, self.user.id,
+                                            SimpleNamespace(id='dedup-movie', payload={'items': [item]}), AsyncMock())
+        await self.db.flush()
+        netflix_sessions._require_playback_review([item])
+        self.assertEqual(item['match']['state'], 'review')
+        self.assertEqual(await remove_covered_items(self.db, self.user.id, [item]), ([], 1))
 
     async def test_partial_cutoff_creates_only_earlier_history_and_is_idempotent(self):
         item = _show_item()

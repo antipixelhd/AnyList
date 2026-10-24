@@ -16,7 +16,7 @@ import hashlib
 import io
 import re
 import unicodedata
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import replace
 from datetime import date, datetime
 from difflib import SequenceMatcher
 from typing import Any, Awaitable, Callable
@@ -37,41 +37,8 @@ _DIGITS = re.compile(r"\b(\d+)\b")
 _ID_DIGEST_LENGTH = 18
 
 
-@dataclass(slots=True)
-class NetflixWatch:
-    """One distinct source title/date observation after duplicate removal."""
-
-    row: int
-    source_title: str
-    watched_at: str
-    show_title: str | None = None
-    season_label: str | None = None
-    season_number: int | None = None
-    episode_title: str | None = None
-    source_rows: list[int] = field(default_factory=list)
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
-@dataclass(slots=True)
-class ParsedNetflixHistory:
-    rows: list[NetflixWatch] = field(default_factory=list)
-    errors: list[dict[str, Any]] = field(default_factory=list)
-    total_rows: int = 0
-    duplicate_rows: int = 0
-    excluded_rows: int = 0
-    language: str | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "rows": [row.to_dict() for row in self.rows],
-            "errors": [dict(error) for error in self.errors],
-            "total_rows": self.total_rows,
-            "duplicate_rows": self.duplicate_rows,
-            "excluded_rows": self.excluded_rows,
-            "language": self.language,
-        }
+# Compatibility names for existing callers and saved draft fixtures.
+from core.streaming_history import WatchObservation as NetflixWatch, ParsedHistory as ParsedNetflixHistory
 
 
 def _norm_text(value: str | None) -> str:
@@ -429,6 +396,7 @@ def _episodes_from_season(data: dict[str, Any], season_number: int) -> list[dict
             "alternate_titles": [value for value in [raw.get("original_name")] if value and value != raw.get("name")],
             "air_date": raw.get("air_date"),
             "tmdb_episode_id": raw.get("id"),
+            **({"runtime": raw["runtime"]} if raw.get("runtime") is not None else {}),
         })
     return result
 
@@ -1325,6 +1293,7 @@ async def prepare_netflix_import(
                         "title": episode.get("title"),
                         "release_date": release_date,
                         "tmdb_episode_id": episode.get("tmdb_episode_id"),
+                        **({"runtime": episode["runtime"]} if episode.get("runtime") is not None else {}),
                     })
             catalog_episodes.sort(key=lambda episode: (episode["season_number"], episode["episode_number"]))
             resolve_netflix_episodes(final_episodes, catalog_episodes)

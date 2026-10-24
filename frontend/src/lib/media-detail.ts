@@ -12,6 +12,8 @@ import {detailWorkArtwork} from './detail-artwork';
 import {currentDetailSeason,detailSeasonState,type DetailSeason} from './season-detail-data';
 import {observeDeferredArtwork} from './visible-artwork';
 import {responsiveArtwork} from './responsive-artwork';
+import {localizeDateTimes} from './date-time-dom';
+import {confirmEntryAction,episodeRollbackWarning} from './entry-confirmation';
 
 let pageListeners: AbortController | undefined;
 let mountedRoot: HTMLElement | null = null;
@@ -145,6 +147,24 @@ export function mountMediaDetail() {
   };
   let socialPending:Promise<void>|undefined;
   let socialLoaded=false;
+  root.addEventListener('click',event=>{
+    const tab=(event.target as Element).closest<HTMLButtonElement>('[data-social-scope]');
+    const host=tab?.closest<HTMLElement>('.media-social-activity');
+    const panels=host?.querySelector<HTMLElement>('[data-social-panels]');
+    if(!tab||!host||!panels)return;
+    host.querySelectorAll<HTMLButtonElement>('[data-social-scope]').forEach(button=>{
+      const selected=button===tab;button.setAttribute('aria-selected',String(selected));button.tabIndex=selected?0:-1;
+    });
+    host.querySelectorAll<HTMLElement>('[data-social-panel]').forEach(panel=>{panel.hidden=panel.dataset.socialPanel!==tab.dataset.socialScope;});
+    reveal(panels);
+  },{signal});
+  root.addEventListener('keydown',event=>{
+    const tab=(event.target as Element).closest<HTMLButtonElement>('[data-social-scope]');
+    if(!tab||!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;
+    const tabs=[...tab.parentElement!.querySelectorAll<HTMLButtonElement>('[data-social-scope]')];
+    const next=event.key==='Home'?0:event.key==='End'?tabs.length-1:(tabs.indexOf(tab)+1)%tabs.length;
+    event.preventDefault();tabs[next].focus();tabs[next].click();
+  },{signal});
   const loadSocial=()=>{
     const host=root.querySelector<HTMLElement>('[data-detail-social]');
     if(!host||socialLoaded||socialPending)return;
@@ -155,7 +175,7 @@ export function mountMediaDetail() {
       const content=html.querySelector('.media-social-grid');
       if(!content)throw new Error('Unable to load social activity.');
       if(signal.aborted)return;
-      host.replaceChildren(document.importNode(content,true));socialLoaded=true;
+      host.replaceChildren(document.importNode(content,true));localizeDateTimes(host);socialLoaded=true;
     })().catch(error=>{if(!signal.aborted)host.textContent=error instanceof Error?error.message:'Unable to load social activity.';}).finally(()=>{socialPending=undefined;});
   };
   const tabs = [...root.querySelectorAll<HTMLButtonElement>('[data-detail-tab]')];
@@ -311,7 +331,15 @@ export function mountMediaDetail() {
     const watched=button.getAttribute('aria-pressed')!=='true';button.disabled=true;button.setAttribute('aria-busy','true');
     try{
       const id=Number(button.dataset.watchEpisode);
-      const response=await fetch(`/api/proxy/tracking/entry/${info.id}/episode/${id}`,{signal,method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({watched})});
+      const save=(confirmed=false)=>fetch(`/api/proxy/tracking/entry/${info.id}/episode/${id}`,{signal,method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({watched,confirm_rollback:confirmed})});
+      let response=await save();
+      if(response.status===409&&!watched){
+        const error=await response.clone().json().catch(()=>({}));
+        if(error.detail?.code==='watch_rollback_required'){
+          if(!await confirmEntryAction(episodeRollbackWarning,signal)||signal.aborted)return;
+          response=await save(true);
+        }
+      }
       const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(typeof result.detail==='string'?result.detail:'Unable to update this episode.');
       await refreshSeasonState();
     }catch(error){if(!signal.aborted)showToast((error as Error).message,'error');}

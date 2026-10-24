@@ -1,10 +1,9 @@
 """Private, resumable Netflix viewing-history import drafts."""
 
 from __future__ import annotations
+from typing import Literal
 from core import netflix_sessions
 
-import csv
-import io
 import uuid
 from copy import deepcopy
 from datetime import date, timedelta
@@ -31,7 +30,7 @@ async def _prepare_remapped_item(item: dict, media_type: str, tmdb_id: int, api_
     episode positions are reloaded from TMDB so a stale candidate cannot carry
     another show's episode IDs into the final transaction.
     """
-    from core.netflix_import import is_anime_candidate, parse_netflix_csv, prepare_netflix_import
+    from core.netflix_import import is_anime_candidate, NetflixWatch, ParsedNetflixHistory, prepare_netflix_import
 
     if media_type == "movie":
         source_episodes = item.get("episodes") or []
@@ -80,30 +79,24 @@ async def _prepare_remapped_item(item: dict, media_type: str, tmdb_id: int, api_
     if int(details.get("id") or 0) != tmdb_id:
         raise ValueError("TMDB returned a different show than the selected result.")
     title = details.get("name") or item.get("source_title")
-    csv_buffer = io.StringIO(newline="")
-    writer = csv.writer(csv_buffer)
-    writer.writerow(["Title", "Date"])
-    remapped_rows: list[tuple[str, int, str]] = []
+    observations = []
     for episode in source_episodes:
-        original = episode.get("source_title") or ""
-        if ":" in original:
-            suffix = original.split(":", 1)[1].strip()
-            remapped_title = f"{title}: {suffix}"
-        elif episode.get("source_episode_title"):
-            season_label = episode.get("season_label") or (f"Season {episode['season_number']}" if episode.get("season_number") else "")
-            remapped_title = ": ".join(part for part in (title, season_label, episode["source_episode_title"]) if part)
-        else:
-            continue
-        dates = sorted(episode.get("dates") or [])
-        row_numbers = sorted((int(row) for row in episode.get("source_row_numbers") or []), reverse=True)
-        for index, watched_date in enumerate(dates):
-            original_row = row_numbers[min(index, len(row_numbers) - 1)] if row_numbers else 0
-            remapped_rows.append((watched_date, original_row, remapped_title))
-    for watched_date, _original_row, remapped_title in sorted(
-        remapped_rows, key=lambda row: (row[0], -row[1]), reverse=True,
-    ):
-        writer.writerow([remapped_title, watched_date])
-    history = parse_netflix_csv(csv_buffer.getvalue(), language=language)
+        episode_title = episode.get("source_episode_title") or episode.get("source_title") or ""
+        for watched_date in sorted(episode.get("dates") or []):
+            row_numbers = episode.get("source_row_numbers") or []
+            observations.append(NetflixWatch(
+                row=max(row_numbers, default=0),
+                source_title=f"{title}: {episode_title}",
+                watched_at=watched_date, show_title=title,
+                season_label=episode.get("season_label"),
+                season_number=episode.get("season_number"),
+                episode_title=episode_title, source_rows=list(row_numbers),
+            ))
+    observations.sort(key=lambda row: (row.watched_at, -row.row), reverse=True)
+    for index, observation in enumerate(observations, 2):
+        observation.row = index
+        observation.source_rows = [index]
+    history = ParsedNetflixHistory(rows=observations, total_rows=len(observations), language=language)
 
     async def forced_search(query: str, **kwargs):
         return {"results": [{
@@ -128,7 +121,8 @@ async def _prepare_remapped_item(item: dict, media_type: str, tmdb_id: int, api_
     groups = netflix_sessions._normalise_groups(prepared)
     refreshed = next((group for group in groups if group.get("kind") == "show"), None)
     if refreshed is None or not refreshed.get("match", {}).get("candidate"):
-        raise ValueError("The selected show could not be matched to the Netflix episode names.")
+        raise ValueError("The selected show could not be matched to the source episode names.")
+    refreshed["requires_watch_confirmation"] = item.get("requires_watch_confirmation", False)
     refreshed["id"] = item["id"]
     refreshed["source_title"] = item.get("source_title")
     refreshed["source_dates"] = item.get("source_dates", [])
@@ -178,7 +172,7 @@ def _summary(items: list[dict], parsed_counts: dict | None = None, errors: list 
     partial_coverage = [i for i in shows if not i.get("seasons") or any(
         s.get("total_released") is None or s["represented"] < s["total_released"] for s in i.get("seasons", [])
     )]
-    source_watches = sum(len(set(i.get("source_dates", []))) for i in movies)
+    source_watches = sum(bool(i.get("source_dates")) for i in movies if i.get("outcome", {}).get("status") == "completed")
     unmatched = [i for i in items if (
         i.get("match", {}).get("state") in ("review", "unmatched") and not i.get("decision", {}).get("action")
     )]
@@ -246,12 +240,16 @@ def _public_session(session: NetflixImportSession) -> dict:
     result = session.result or {}
     items = deepcopy(payload.get("items", [])) if session.status not in ("committed", "cancelled", "failed") else []
     netflix_sessions._resolve_draft_items(items)
+    from core.streaming_evidence import completion_evidence
+    for item in items:
+        item["completion_evidence"] = completion_evidence(item)
     errors = payload.get("errors", []) if session.status != "committed" else []
     summary = result.get("summary") if session.status == "committed" else _summary(items, payload.get("counts"), errors)
     if session.error_message and not errors:
         errors = [{"message": session.error_message}]
     return {
         "id": session.id,
+        "source": payload.get("source", "netflix"),
         "status": session.status,
         "phase": session.phase,
         "progress": session.progress or {"current": 0, "total": 0, "message": ""},
@@ -275,16 +273,18 @@ def _schedule(background_tasks: BackgroundTasks, session_id: str, user_id: int, 
         background_tasks.add_task(netflix_sessions._prepare_session, session_id, user_id, language)
 
 
-@router.post("/netflix", status_code=202)
+@router.post("/{source}", status_code=202)
 async def upload_netflix_history(
+    source: Literal["netflix", "amazon"],
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     language: str | None = Form(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if not (file.filename or "").lower().endswith(".csv"):
-        raise HTTPException(status_code=400, detail="Choose a Netflix viewing-history CSV file.")
+    extension = ".zip" if source == "amazon" else ".csv"
+    if not (file.filename or "").lower().endswith(extension):
+        raise HTTPException(status_code=400, detail=f"Choose a viewing-history {extension} file.")
     chunks: list[bytes] = []
     total = 0
     while True:
@@ -293,11 +293,11 @@ async def upload_netflix_history(
             break
         total += len(chunk)
         if total > MAX_UPLOAD_BYTES:
-            raise HTTPException(status_code=413, detail="The Netflix CSV is too large to import.")
+            raise HTTPException(status_code=413, detail="The export is too large to import.")
         chunks.append(chunk)
     content = b"".join(chunks)
     if not content:
-        raise HTTPException(status_code=400, detail="The uploaded CSV is empty.")
+        raise HTTPException(status_code=400, detail="The uploaded export is empty.")
     now = netflix_sessions._now()
     await db.execute(delete(NetflixImportSession).where(
         NetflixImportSession.user_id == current_user.id,
@@ -305,11 +305,11 @@ async def upload_netflix_history(
         NetflixImportSession.expires_at <= now,
     ))
     if not await settings_store.get_user_tmdb_key(db, current_user.id, cached=False):
-        raise HTTPException(status_code=400, detail="Add a TMDB API key in Settings before importing Netflix history.")
+        raise HTTPException(status_code=400, detail="Add a TMDB API key in Settings before importing streaming history.")
     session = NetflixImportSession(
         id=str(uuid.uuid4()), user_id=current_user.id, status="preparing", phase="parse",
         progress={"current": 0, "total": 1, "message": "Upload received"}, revision=0,
-        source_csv=content, payload={"language": language}, created_at=now, updated_at=now,
+        source_csv=content, payload={"language": language, "source": source}, created_at=now, updated_at=now,
         expires_at=now + timedelta(days=DRAFT_DAYS),
     )
     db.add(session)
@@ -363,6 +363,14 @@ async def update_netflix_import_item(
             raise HTTPException(status_code=400, detail="A TMDB API key is required to remap titles.")
         try:
             remapped_item = await _prepare_remapped_item(old_item, media_type, tmdb_id, api_key, language)
+            if (before.payload or {}).get("source") == "amazon" or old_item.get("requires_watch_confirmation"):
+                netflix_sessions._require_playback_review([remapped_item])
+            from core.streaming_evidence import prepare_evidence
+            from core.streaming_history import WatchObservation
+            observations = (old_item.get("source_evidence") or {}).get("observations", [])
+            if observations:
+                remapped_item.setdefault("source_evidence", {})["observations"] = observations
+                prepare_evidence([remapped_item], [WatchObservation(**row) for row in observations])
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
         except Exception:
@@ -396,16 +404,37 @@ async def update_netflix_import_item(
         if not item.get("match", {}).get("candidate"):
             raise HTTPException(status_code=422, detail="Choose a suggested title or use Remap before confirming.")
         item["decision"] = {"action": "confirm"}
+        if item["kind"] == "movie":
+            item["outcome"]["status"] = item.get("suggested_movie_status", "completed")
+            if item["outcome"]["status"] == "dropped":
+                item["outcome"]["tracking_status"] = "dropped"
+    if action == "remap" and item["kind"] == "movie" and item.get("requires_watch_confirmation") and not item.get("is_anime"):
+        if item["kind"] == "movie":
+            item["decision"] = {"action": None}
+        item["outcome"]["status"] = "skip"
+        item["outcome"]["status_overridden"] = True
+        item["progress_reviewed"] = False
     outcome_status = patch.get("status")
     if outcome_status is not None:
         if item.get("is_anime") and outcome_status != "skip":
             raise HTTPException(status_code=422, detail="Anime imports are currently unavailable.")
-        if outcome_status not in ("completed", "partial", "skip"):
+        if outcome_status not in ("completed", "partial", "skip", "dropped") or (outcome_status == "dropped" and item["kind"] != "movie"):
             raise HTTPException(status_code=422, detail="Progress must be completed, partial, or skip.")
         if item["kind"] == "movie" and outcome_status == "partial":
             raise HTTPException(status_code=422, detail="Movies can only be completed or skipped.")
+        if outcome_status == "dropped":
+            item["outcome"]["tracking_status"] = "dropped"
+        item["progress_reviewed"] = True
         item["outcome"]["status"] = outcome_status
         item["outcome"]["status_overridden"] = True
+    if "finish_date" in patch:
+        value = patch["finish_date"]
+        try:
+            if value is not None:
+                date.fromisoformat(value)
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=422, detail="Finish date must be an ISO date or null.")
+        item["outcome"]["finish_date"] = value
     for key in ("latest_season", "latest_episode"):
         if key in patch:
             value = patch[key]
@@ -432,13 +461,23 @@ async def update_netflix_import_item(
             item["outcome"]["manual_score_staged"] = True
     if patch.get("episode_mappings"):
         raise HTTPException(status_code=422, detail="Episode matches are resolved automatically and cannot be edited.")
-    if action is None and outcome_status is None and tracking_status is None and "manual_score" not in patch and not any(
+    if action is None and outcome_status is None and tracking_status is None and "manual_score" not in patch and "finish_date" not in patch and not any(
         key in patch for key in ("latest_season", "latest_episode")
     ):
         raise HTTPException(status_code=422, detail="Include a title decision or progress change.")
     if item["kind"] == "show" and item["outcome"]["status"] != "skip" and (
         outcome_status is not None or "latest_season" in patch or "latest_episode" in patch
     ):
+        if outcome_status == 'partial' and any(ep.get('watch_qualified') is False for ep in item.get('episodes', [])) and any(
+            item['outcome'].get(key) is None for key in ('latest_season', 'latest_episode')
+        ):
+            # With only weak playback there is no automatically watched endpoint.
+            # Choosing Partial explicitly confirms at least the first episode.
+            released = sorted(position for position, episode in netflix_sessions._all_catalog_episodes(item).items()
+                              if netflix_sessions._episode_is_released(episode, date.today()))
+            if released:
+                item['outcome']['latest_season'], item['outcome']['latest_episode'] = released[0]
+                item['outcome']['endpoint_overridden'] = True
         try:
             netflix_sessions._show_import_positions(item, item["outcome"], date.today())
         except ValueError as exc:
