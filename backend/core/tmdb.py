@@ -433,6 +433,14 @@ async def get_movie_light(tmdb_id: int, api_key: str = None, language: str | Non
     return await _get(f"{TMDB_BASE}/movie/{tmdb_id}", headers=get_headers(api_key), params=params or None)
 
 
+async def get_title_aliases(kind: str, tmdb_id: int, api_key: str = None) -> dict:
+    """Small, cached alias component shared across importer languages."""
+    if kind not in ('movie', 'show'):
+        raise ValueError('Expected movie or show')
+    path = 'movie' if kind == 'movie' else 'tv'
+    return await _get(f"{TMDB_BASE}/{path}/{tmdb_id}/alternative_titles", headers=get_headers(api_key))
+
+
 async def get_on_air_today(page: int = 1, api_key: str = None, timezone: str = "UTC") -> dict:
     return await _get(f"{TMDB_BASE}/tv/airing_today", headers=get_headers(api_key), params={"page": page, "timezone": timezone})
 
