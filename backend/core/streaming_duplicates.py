@@ -37,14 +37,14 @@ async def remove_covered_items(db, user_id, items):
     candidate_ids.discard(None)
     if not candidate_ids:
         return items, 0
-    roots = (await db.execute(select(Media, Show.canonical_source).join(
+    roots = (await db.execute(select(Media, Show.id, Show.canonical_source).join(
         TrackedEntry, (TrackedEntry.media_id == Media.id) & (TrackedEntry.user_id == user_id),
-    ).outerjoin(Show, Show.id == Media.show_id).where(
+    ).outerjoin(Show, (Show.tmdb_id == Media.tmdb_id) & (Media.media_type == 'series')).where(
         Media.tmdb_id.in_(candidate_ids), Media.media_type.in_(['movie', 'series']),
     ))).all()
-    by_identity = {(media.media_type.value, media.tmdb_id): (media, order) for media, order in roots}
-    root_ids = [media.id for media, _ in roots]
-    show_ids = [media.show_id for media, order in roots if media.show_id and order != 'tvdb']
+    by_identity = {(media.media_type.value, media.tmdb_id): (media, show_id, order) for media, show_id, order in roots}
+    root_ids = [media.id for media, _, _ in roots]
+    show_ids = [show_id for _, show_id, order in roots if show_id and order != 'tvdb']
     if not root_ids:
         return items, 0
     rows = (await db.execute(select(Media.id, Media.show_id, Media.season_number,
@@ -77,12 +77,12 @@ async def remove_covered_items(db, user_id, items):
         root = by_identity.get(identity)
         # Uncertain matches and alternate episode order still require a decision.
         match_state = item.get('title_match_state', item.get('match', {}).get('state'))
-        if not root or match_state != 'matched' or root[1] == 'tvdb':
+        if not root or match_state != 'matched' or root[2] == 'tvdb':
             retained.append(item)
             continue
         media = root[0]
         positions = ({None: watches.get(('movie', media.id))} if item['kind'] == 'movie'
-                     else show_watches.get(media.show_id, {}))
+                     else show_watches.get(root[1], {}))
         if not evidence_covered(item, positions, events.get(media.id, [])):
             retained.append(item)
     return retained, len(items) - len(retained)
