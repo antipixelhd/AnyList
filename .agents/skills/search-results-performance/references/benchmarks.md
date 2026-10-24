@@ -18,8 +18,11 @@ Use a verified Git-ignored output folder. `.local-design/search-browse/` was use
 | Dates, timeline, country release evidence | `movie_newest`, `movie_upcoming`, `series_upcoming`, `timeline_text`, `cinema_rereleases`, `details_then_timeline` |
 | Contributor discovery/eligibility | `actor`, `crew`, `studio`, `negative_studio`, `people_combined`, `all_contributors` |
 | Pagination/refill/options/failure | `page_two`, `sparse_viewport`, `filter_options`, `provider_failure` |
+| Automatic empty-search expansion | `auto_combined_empty`, `auto_separate_empty`, `auto_browse_empty` |
 
 Repeat `--case` for several cases. Group selectors are alternatives: `--filters-only`, `--contributors-only`, `--edge-cases-only`, `--stress-only`. Read the case list before combining a selector with `--case`, because named cases must belong to that selection.
+
+The `auto_*` cases model the frontend's curated-then-broader HTTP sequence against real ASGI routes, using a low-popularity exact title. Combined mode expands only when both title scopes are empty; separate mode expands only its empty scope. Browse retains explicit genre/score filters. `fallback_requests` counts broader retries; title discovery should reuse provider responses. These cases measure backend cost, not rendering or browser cancellation, which require frontend/UI verification.
 
 ```powershell
 # Focused change: same cases and provider delay in both arms.

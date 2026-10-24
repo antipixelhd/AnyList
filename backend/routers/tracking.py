@@ -1357,16 +1357,28 @@ async def browse(q: str = Query('', max_length=200), media_type: Literal['movie'
 @router.get("/catalog")
 async def catalog(q: str = "", media_type: Literal["movie", "series"] = "movie",
                   region: str | None = Query(None, pattern='^[A-Z]{2}$'),
+                  unfiltered: Annotated[bool, Query()] = False,
+                  scan_empty: Annotated[bool, Query()] = False,
                   db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user_or_api_key)):
     from core.browse import browse_page
     await catalog_access(db, viewer)
     term = q.strip()[:200]
     key = await settings_store.get_user_tmdb_key(db, viewer.id)
-    result = await browse_page(db, viewer, term=term, media_type=media_type, page=1,
-        source='' if term else 'local', show_anime=await anime_is_visible(db), key=key,
+    filters = dict(term=term, media_type=media_type, show_anime=await anime_is_visible(db), key=key,
         genres=[], start=None, end=None, status='', provider=None, region=region or 'US',
-        sort='popular' if term else 'title', **(await result_filters(db, viewer)),
-        **(await browse_preferences(db, viewer, media_type, 'search')))
+        sort='popular' if term else 'title', audience_curation=not unfiltered,
+        **({'min_runtime': 0, 'excluded_genres': []} if unfiltered else await result_filters(db, viewer)),
+        **(await browse_preferences(db, viewer, media_type, 'search', unfiltered=unfiltered)))
+    result = await browse_page(db, viewer, page=1, source='' if term else 'local', **filters)
+    if scan_empty and term:
+        from core.browse_cursor import decode_search_cursor
+        # Empty early provider pages are not proof of an empty curated search.
+        # Match the bounded six-page selection used by curated title search.
+        for _ in range(5):
+            if result['results'] or not result['has_more'] or result.get('notice'):
+                break
+            result = await browse_page(db, viewer, page=result['page'] + 1, source=result['source'],
+                                       cursor=decode_search_cursor(result.get('cursor')), **filters)
     return result
 
 

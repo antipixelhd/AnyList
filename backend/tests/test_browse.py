@@ -472,6 +472,42 @@ class BrowseFilterApiTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         await self.client.aclose()
 
+    async def test_quick_search_broadening_only_relaxes_personal_curation(self):
+        with patch('core.browse.browse_page', AsyncMock(return_value={'results': [], 'has_more': False})) as browse, \
+             patch('routers.tracking.result_filters', AsyncMock(return_value={'min_runtime': 30, 'excluded_genres': [99]})), \
+             patch('routers.tracking.browse_preferences', AsyncMock(side_effect=lambda *args, unfiltered=False: {
+                 'min_votes': 0, 'min_popularity': 0 if unfiltered else 25,
+             })), patch('routers.tracking.anime_is_visible', AsyncMock(return_value=False)):
+            await self.client.get('/tracking/catalog', params={'q': 'Specific', 'region': 'DE'})
+            curated = browse.await_args.kwargs
+            await self.client.get('/tracking/catalog', params={'q': 'Specific', 'region': 'DE', 'unfiltered': 'true'})
+            broad = browse.await_args.kwargs
+        self.assertEqual((curated['min_runtime'], curated['excluded_genres'], curated['min_popularity']), (30, [99], 25))
+        self.assertEqual((broad['min_runtime'], broad['excluded_genres'], broad['min_popularity']), (0, [], 0))
+        self.assertFalse(broad['audience_curation'])
+        self.assertFalse(broad['show_anime'])
+        self.assertEqual((broad['region'], broad['term'], broad['media_type']), ('DE', 'Specific', 'movie'))
+
+    async def test_quick_search_scans_empty_curated_pages_before_deciding_no_matches(self):
+        from core.browse_cursor import encode_search_cursor
+        cursor = encode_search_cursor(2, -1, -1)
+        with patch('core.browse.browse_page', AsyncMock(side_effect=[
+            {'results': [], 'has_more': True, 'page': 1, 'source': 'remote', 'cursor': cursor},
+            {'results': [{'title': 'Later curated hit'}], 'has_more': False, 'page': 2, 'source': 'remote'},
+        ])) as browse:
+            response = await self.client.get('/tracking/catalog', params={'q': 'Specific', 'scan_empty': 'true'})
+        self.assertEqual(response.json()['results'], [{'title': 'Later curated hit'}])
+        self.assertEqual(browse.await_count, 2)
+        self.assertEqual(browse.await_args.kwargs['cursor'], (2, -1, -1))
+
+    async def test_quick_empty_scanning_is_bounded_and_stops_on_degraded_results(self):
+        for notice, expected in [(None, 6), ('Provider unavailable', 1)]:
+            async def page(*args, **kwargs):
+                return {'results': [], 'has_more': True, 'page': kwargs['page'], 'source': 'remote', 'notice': notice}
+            with patch('core.browse.browse_page', AsyncMock(side_effect=page)) as browse:
+                await self.client.get('/tracking/catalog', params={'q': 'Specific', 'scan_empty': 'true'})
+            self.assertEqual(browse.await_count, expected)
+
     async def test_browse_score_validation_and_forwarding(self):
         for endpoint, target in [("browse", "core.browse.browse_page"), ("browse/sections", "core.browse.browse_sections")]:
             with patch(target, AsyncMock(return_value={"results": []})) as browse:
