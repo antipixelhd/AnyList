@@ -310,10 +310,19 @@ async def media_detail(entity_id: Annotated[int, Path(gt=0)], db: DB, current_us
         raise HTTPException(404, "Game or book not found")
     await authorize_entity(db, work, current_user)
     response.headers['Cache-Control']='private, no-store'
-    try:data=await catalogue_title(db, work, current_user.id if current_user else None,store_country=country,enqueue_offers=True,enqueue_ratings=True,enqueue_info=True)
+    identities=None;metadata_status=None
+    if work.kind=='game':
+        from core.game_metadata import GameMetadata
+        from sqlalchemy.ext.asyncio import async_sessionmaker
+        identities=list(await db.scalars(select(CatalogueIdentity).where(CatalogueIdentity.entity_id==work.id)))
+        service=GameMetadata(async_sessionmaker(db.bind,expire_on_commit=False),scope=db.bind)
+        metadata_status,changed=await service.ensure(db,work,identities=identities)
+        if changed:await db.refresh(work);identities=None
+    try:data=await catalogue_title(db, work, current_user.id if current_user else None,store_country=country,enqueue_offers=True,enqueue_ratings=True,enqueue_info=True,identities=identities)
     except ProviderError as error:raise safe_error(error) from None
     if work.kind=='game':
         from core.game_imdb_enrichment import request as request_credits
+        data['game_metadata_status']=metadata_status
         state=await request_credits(db,work.id)
         await db.commit()
         data['game_credit_status']=state

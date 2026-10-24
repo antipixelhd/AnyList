@@ -156,9 +156,25 @@ async def game_credits(work_id: WorkId, db: DB, viewer: Reader) -> dict:
     state=await request(db,work_id)
     await db.commit()
     details=await work_details(db,work,extras=False)
+    character_state=details.get('game_character_status') or {}
+    combined={**state}
+    if character_state.get('pending'):
+        combined.update(pending=True,retry_after=max(state.get('retry_after',2),character_state.get('retry_after',2)),
+            error=state.get('error') or character_state.get('error'))
     return {'people':details['people'],'organizations':details['organizations'],
-        'game_characters':details.get('game_characters',[]),'game_character_status':details.get('game_character_status'),'character_status':state,
+        'game_characters':details.get('game_characters',[]),'game_character_status':character_state,'character_status':combined,
         'game_credit_status':state}
+
+
+@router.get('/works/{work_id}/metadata')
+async def game_metadata_status(work_id:WorkId,db:DB,viewer:Reader) -> dict:
+    from core.game_metadata import request,GameMetadata
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    work=await tracking.work(db,work_id)
+    native,state=await request(db,work);await db.commit()
+    if native and not state['primary_ready'] and state['pending'] and not state.get('error'):
+        GameMetadata(async_sessionmaker(db.bind,expire_on_commit=False),scope=db.bind).start(native,work.id)
+    return state
 
 
 class IMDbBindingReview(BaseModel):
@@ -246,18 +262,13 @@ async def search_games(db: DB, viewer: Viewer, q: Annotated[str, Query(min_lengt
 
 @router.post('/resolve/{igdb_id}')
 async def resolve_game(igdb_id: WorkId, db: DB, viewer: Viewer) -> dict:
-    from core import catalogue
-    from core.catalogue_providers import CatalogueProviders, ProviderHTTP, ProviderError
+    from core.game_metadata import GameMetadata
+    from core.catalogue_providers import ProviderError
     from sqlalchemy.ext.asyncio import async_sessionmaker
     await catalog_access(db, viewer)
     sessions=async_sessionmaker(db.bind,expire_on_commit=False)
-    await db.close()
-    try:
-        result = await catalogue.refresh_metadata(db, CatalogueProviders(ProviderHTTP(session_factory=sessions)),
-            'igdb', 'game', str(igdb_id))
-    except ProviderError:
-        raise HTTPException(503, 'Game details are temporarily unavailable') from None
-    identifier = result.get('entity_id')
+    try:identifier=await GameMetadata(sessions,scope=db.bind).resolve(db,str(igdb_id))
+    except ProviderError:raise HTTPException(503,'Game details are temporarily unavailable') from None
     if not identifier:
         raise HTTPException(503, 'Game details are still loading. Please try again.')
     entity = await tracking.work(db, identifier)

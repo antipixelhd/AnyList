@@ -1,0 +1,9 @@
+---
+interface Props {status?:{primary_ready?:boolean;error?:string|null;pending?:boolean}|null}
+const {status}=Astro.props;
+---
+<p class="detail-load-status" data-game-metadata data-game-metadata-ready={String(!!status?.primary_ready)} hidden={status?.primary_ready} role="status">
+  <span data-game-metadata-message>{status?.error?'Some game details are unavailable.':'Loading game details…'}</span>
+  <button class="lab-text-button" type="button" data-game-metadata-retry hidden={!status?.error}>Retry</button>
+  <button class="lab-text-button" type="button" data-game-metadata-refresh hidden>Refresh details</button>
+</p>

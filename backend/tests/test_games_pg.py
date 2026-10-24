@@ -207,7 +207,7 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((await self.client.get('/tracking/games/browse')).status_code,status)
 
     async def test_game_search_maps_identities_without_creating_entries_and_resolution_rechecks_type(self):
-        from core import game_discovery, catalogue
+        from core import game_discovery,game_metadata
         from core.catalogue_providers import ProviderError
         async with self.Session() as db:
             db.add(CatalogueIdentity(entity_id=self.base, namespace='igdb.game', external_id='119133', source='igdb'))
@@ -218,27 +218,27 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
             result = await self.client.get('/tracking/games/search?q=Elden')
         self.assertEqual(result.status_code, 200, result.text)
         self.assertEqual([(row['id'], row['igdb_id']) for row in result.json()['results']], [(self.base, 119133), (None, 240009)])
-        with patch.object(catalogue, 'refresh_metadata', AsyncMock(return_value={'entity_id': self.base})) as refresh:
+        with patch.object(game_metadata.GameMetadata, 'resolve', AsyncMock(return_value=self.base)) as resolve:
             result = await self.client.post('/tracking/games/resolve/900')
             self.assertEqual(result.json(), {'id': self.base})
-            self.assertEqual(refresh.call_args.args[2:], ('igdb', 'game', '900'))
+            self.assertEqual(resolve.call_args.args[-1], '900')
         self.assertFalse((await self.client.get(f'/tracking/games/works/{self.base}')).json()['listed'])
-        with patch.object(catalogue, 'refresh_metadata', AsyncMock(return_value={'entity_id': self.pack})):
+        with patch.object(game_metadata.GameMetadata, 'resolve', AsyncMock(return_value=self.pack)):
             self.assertEqual((await self.client.post('/tracking/games/resolve/901')).status_code, 422)
-        with patch.object(catalogue, 'refresh_metadata', AsyncMock(side_effect=ProviderError('not_configured'))):
+        with patch.object(game_metadata.GameMetadata, 'resolve', AsyncMock(side_effect=ProviderError('not_configured'))):
             self.assertEqual((await self.client.post('/tracking/games/resolve/902')).status_code, 503)
         self.assertEqual((await self.client.get('/tracking/games/search?q=%20%20')).status_code, 422)
         self.viewer = None
-        with patch.object(catalogue,'refresh_metadata',AsyncMock(return_value={'entity_id':self.base})) as refresh:
+        with patch.object(game_metadata.GameMetadata,'resolve',AsyncMock(return_value=self.base)) as resolve:
             self.assertEqual((await self.client.post('/tracking/games/resolve/900')).status_code,401)
-            refresh.assert_not_awaited()
+            resolve.assert_not_awaited()
             async with self.Session() as db:
                 self.assertEqual(await db.scalar(select(func.count()).select_from(GameEntry)),0)
                 global_settings=await db.get(GlobalSettings,1)
                 global_settings.enable_logged_out_navigation=False
                 await db.commit()
             self.assertEqual((await self.client.post('/tracking/games/resolve/900')).status_code,401)
-            self.assertEqual(refresh.await_count,0)
+            self.assertEqual(resolve.await_count,0)
 
     async def test_completion_snapshot_cumulative_time_replays_and_unknown_dates(self):
         row = await self.save(status='completed', total_seconds=36000, replay_count=3)

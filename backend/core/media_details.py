@@ -75,11 +75,17 @@ async def work_details(db, work, *, extras=True):
         from core.game_credit_projection import character_projection
         game_performances,game_characters=await character_projection(db,work.id,[(credit,canonical[person.id]) for credit,person in credits])
         character_header=(await db.execute(select(MetadataSnapshot.coverage['characters_complete'].as_boolean(),
-            MetadataSnapshot.fetched_at).where(MetadataSnapshot.entity_id==work.id,
+            MetadataSnapshot.fetched_at,MetadataSnapshot.lease_until,MetadataSnapshot.next_attempt_at,MetadataSnapshot.error_code).where(MetadataSnapshot.entity_id==work.id,
                 MetadataSnapshot.provider=='igdb',MetadataSnapshot.kind=='game')
             .order_by(MetadataSnapshot.fetched_at.desc().nullslast(),MetadataSnapshot.id.desc()).limit(1))).one_or_none()
         game_character_status={'complete':bool(character_header and character_header[0]),'source':'igdb',
             'coverage':'retrieved_connection','fetched_at':character_header[1] if character_header else None}
+        if character_header:
+            from core.game_imdb_enrichment import now
+            active=bool(character_header[2] and character_header[2]>now())
+            game_character_status.update(pending=not game_character_status['complete'] and bool(active or character_header[3]),
+                retry_after=max(2,min(3600,int((character_header[3]-now()).total_seconds())+1)) if character_header[3] else 2,
+                error=character_header[4])
     studio_ids = {canonical[person.id].id for c, person in credits if c.role == 'producer'}
     from core.screen_cast import complete_cast_works, preferred_cast
     if work.kind in ('movie', 'series'):
@@ -197,14 +203,14 @@ async def work_details(db, work, *, extras=True):
         'sources': list({source['url']: source for source in sources}.values()), 'countries': attrs.get('countries') or []}
 
 
-async def catalogue_title(db, work, viewer_id=None, *, store_country=None, enqueue_offers=False,enqueue_ratings=False,enqueue_info=False):
+async def catalogue_title(db, work, viewer_id=None, *, store_country=None, enqueue_offers=False,enqueue_ratings=False,enqueue_info=False,identities=None):
     details = await work_details(db, work)
     attrs = work.attributes or {}
     editions = []
     releases = []
     prices = []
     personal = {}
-    identities = list(await db.scalars(select(CatalogueIdentity).where(CatalogueIdentity.entity_id == work.id)))
+    if identities is None:identities = list(await db.scalars(select(CatalogueIdentity).where(CatalogueIdentity.entity_id == work.id)))
     if work.kind == 'game':
         from core.game_types import capabilities
         from core import game_tracking

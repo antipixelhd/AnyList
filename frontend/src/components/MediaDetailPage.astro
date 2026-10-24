@@ -6,6 +6,7 @@ import GameProgress from './GameProgress.astro';
 import MediaDetailGameTimes from './MediaDetailGameTimes.astro';
 import MediaDetailGameOffer from './MediaDetailGameOffer.astro';
 import MediaDetailRatings from './MediaDetailRatings.astro';
+import MediaDetailGameMetadata from './MediaDetailGameMetadata.astro';
 import MediaDetailGameRequirements from './MediaDetailGameRequirements.astro';
 import {gameRatingRows,gameRatingFields} from '../lib/game-ratings-data';
 import {viewerMediaPreferences} from '../lib/viewer-media-preferences';
@@ -102,6 +103,7 @@ const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
         <div class="lab-panel" id="detail-panel-overview" role="tabpanel" aria-labelledby="detail-tab-overview" data-detail-panel="overview" hidden={initialTab!=='overview'}>
           <div class="lab-overview-grid">
             <div class="lab-primary-column">
+              {gameTitle&&<MediaDetailGameMetadata status={title.game_metadata_status}/>}
               <section class="lab-story lab-module" data-detail-synopsis><div class="lab-section-title"><h2>Overview</h2></div><p id="detail-synopsis" data-biography-text>{synopsis.lead||'No synopsis available yet.'}<span data-biography-ellipsis hidden={!synopsis.shortened}>…</span><span data-biography-rest hidden>{synopsis.rest}</span></p>{synopsis.expandable&&<button class="lab-text-button" type="button" data-biography-toggle aria-expanded="false" aria-controls="detail-synopsis">Read more</button>}<noscript><style>{`.media-detail [data-biography-rest][hidden] { display:inline!important; } .media-detail [data-biography-toggle],.media-detail [data-biography-ellipsis] { display:none!important; }`}</style></noscript></section>
               <section class="lab-inline-facts lab-module"><h2>Information</h2><MediaDetailFacts facts={facts} title={title}/></section>
               {gameTitle&&<MediaDetailGameTimes estimates={title.completion_estimates}/>}

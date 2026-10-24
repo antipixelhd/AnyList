@@ -551,7 +551,7 @@ class CatalogueProviders:
             for r in rows[(page - 1) * limit : page * limit]
         ]
 
-    async def detail(self, provider, kind, external_id, *, credit_groups=None):
+    async def detail(self, provider, kind, external_id, *, credit_groups=None,on_primary=None):
         self.validate(provider, kind)
         if provider == "openlibrary":
             from .openlibrary import detail
@@ -560,7 +560,7 @@ class CatalogueProviders:
         if not str(external_id).isdigit() or int(external_id) <= 0:
             raise ProviderError("invalid_request")
         return await asyncio.wait_for(
-            self._detail(provider, kind, int(external_id), credit_groups=credit_groups), timeout=120
+            self._detail(provider, kind, int(external_id), credit_groups=credit_groups,on_primary=on_primary), timeout=120
         )
 
     async def openlibrary_isbn(self, value):
@@ -573,7 +573,7 @@ class CatalogueProviders:
 
         return await asyncio.wait_for(detail(self.http, external_id, page), timeout=120)
 
-    async def _detail(self, provider, kind, id, *, credit_groups=None):
+    async def _detail(self, provider, kind, id, *, credit_groups=None,on_primary=None):
         if provider == "igdb":
             from core.game_types import igdb_game_class
             rows = await self.igdb(
@@ -594,37 +594,27 @@ class CatalogueProviders:
                 raw = rows[0]
                 if raw.get("version_parent"):
                     raise ProviderError("identity_conflict")
+            def document():
+                doc=normalize_igdb(raw)
+                if version:
+                    from .catalogue_normalize import entity
+                    doc['releases'].append({'entity':entity('release','igdb.game_version',version),
+                        'platform_namespace':'igdb.version','platform_id':str(version['id'])})
+                    doc['work']['identities'].extend(x for x in normalize_igdb(version)['work']['identities']
+                        if x not in doc['work']['identities'])
+                return doc
+            raw['_coverage']={'primary_complete':True,'source_game_id':str(raw['id']),
+                'characters_complete':False,'release_dates':'provider_projection','contributors':'companies_only',
+                'children_complete':all(isinstance(raw.get(field,[]),list) and all(
+                    isinstance(child,dict) and child.get('id') and child.get('name') and igdb_game_class(child)!='unknown'
+                    for child in raw.get(field,[])) for field in ('dlcs','expansions'))}
+            if on_primary:await on_primary(document(),{'game':raw,'version':version})
             raw["_characters"], complete = await self._igdb_pages(
                 "characters",
                 f"fields id,name,description,mug_shot.url; where games = ({raw['id']}); sort id asc;",
             )
-            raw["_coverage"] = {
-                "characters_complete": complete,
-                "children_complete": all(isinstance(raw.get(field,[]),list) and all(
-                    isinstance(child,dict) and child.get('id') and child.get('name') and igdb_game_class(child)!='unknown'
-                    for child in raw.get(field,[])) for field in ('dlcs','expansions')),
-                "release_dates": "provider_projection",
-                "contributors": "companies_only",
-            }
-            doc = normalize_igdb(raw)
-            if version:
-                from .catalogue_normalize import entity
-
-                doc["releases"].append(
-                    {
-                        "entity": entity("release", "igdb.game_version", version),
-                        "platform_namespace": "igdb.version",
-                        "platform_id": str(version["id"]),
-                    }
-                )
-                # Provider search/detail IDs and verified Steam IDs of an
-                # edition resolve to the work, while its release stays distinct.
-                doc["work"]["identities"].extend(
-                    x
-                    for x in normalize_igdb(version)["work"]["identities"]
-                    if x not in doc["work"]["identities"]
-                )
-            return doc, {"game": raw, "version": version}
+            raw['_coverage']['characters_complete']=complete
+            return document(), {"game": raw, "version": version}
         if provider == "hardcover":
             d = await self.hardcover(
                 "query($id:Int!){books(where:{id:{_eq:$id}},limit:1){id canonical_id title description release_date pages cached_image}}",

@@ -238,6 +238,13 @@ async def main(args):
                     db.add(MetadataSnapshot(provider='steam',kind=kind,external_id=str(first_game.id),entity_id=first_game.id,
                         coverage={'state':'complete','complete':True,'steam_app_id':'9000000'},
                         payload={'raw':'STORE_INFO_SENTINEL '*50000},expires_at=stamp+timedelta(days=7)))
+            if args.case and 'game_metadata' in args.case:
+                first_game.attributes={**first_game.attributes,'igdb_id':'9000000'}
+                db.add(CatalogueIdentity(entity_id=first_game.id,namespace='igdb.game',external_id='9000000',source='igdb'))
+                stamp=datetime.now(timezone.utc).replace(tzinfo=None)
+                db.add(MetadataSnapshot(provider='igdb',kind='game',external_id='9000000',entity_id=first_game.id,
+                    fetched_at=stamp,expires_at=stamp+timedelta(days=7),coverage={'primary_complete':True,'characters_complete':True},
+                    payload={'raw':'PRIMARY_METADATA_SENTINEL '*50000}))
             if args.case and 'game_person_availability' in args.case:
                 from core.contributor_availability import movie_job
                 from core.game_imdb_bindings import revision
@@ -377,6 +384,9 @@ async def main(args):
                 if label=='game_info':
                     row['result_identity']=hashlib.sha256(json.dumps(result['info'],sort_keys=True).encode()).hexdigest()
                     row['rows']=len(result['info']['age_ratings']);row['pending']=result['status']['pending']
+                if label=='game_metadata':
+                    row['result_identity']=hashlib.sha256(json.dumps({key:result[key] for key in ('primary_ready','entity_id','complete')},sort_keys=True).encode()).hexdigest()
+                    row['rows']=int(result['primary_ready']);row['pending']=result['pending']
             samples.append(row)
             return result
 
@@ -453,6 +463,7 @@ async def main(args):
             *([('game_offers',f'games/works/{first_game.id}/offers',{'country':'DE'})] if args.case and 'game_offers' in args.case else []),
             *([('game_ratings',f'games/works/{first_game.id}/ratings',{})] if args.case and 'game_ratings' in args.case else []),
             *([('game_info',f'games/works/{first_game.id}/info',{'country':'DE'})] if args.case and 'game_info' in args.case else []),
+            *([('game_metadata',f'games/works/{first_game.id}/metadata',{})] if args.case and 'game_metadata' in args.case else []),
             ('game_search_prefix','games/search',{'q':'Elden R'}),
             *([('game_children',f'games/works/{children_base}/children',{'limit':24})] if children_base else []),
             ('game_browse_preview','games/browse',{'limit':6}),
@@ -565,6 +576,16 @@ async def main(args):
                         params['unfiltered'] = 'true'
 
                     async def operation(path=path, params=params, label=label, mode=mode):
+                        if label=='game_metadata':
+                            result=await request(path,params)
+                            if not result['primary_ready'] or not result['complete'] or result['pending'] or result['entity_id']!=first_game.id:
+                                raise RuntimeError('Warm primary metadata lost canonical identity or requeued a fresh snapshot')
+                            if counters['provider_requests'] or counters['db_writes']:raise RuntimeError('Warm metadata performed provider work or writes')
+                            if 'SENTINEL' in json.dumps(result):raise RuntimeError('Metadata exposed raw source evidence')
+                            for identity in counters:
+                                sql=sql_patterns.get(identity.removeprefix('sql:'),'') if identity.startswith('sql:') else ''
+                                if 'catalogue_metadata_snapshots.payload' in sql:raise RuntimeError('Metadata status hydrated raw provider evidence')
+                            return result
                         if label=='game_info':
                             result=await request(path,params)
                             if result['info']['steam_app_id']!='9000000' or result['info']['requirements']['minimum'][0]['value']!='12 GB RAM':

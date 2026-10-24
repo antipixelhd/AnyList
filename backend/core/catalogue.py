@@ -657,7 +657,7 @@ async def record_refresh_failure(db, row, token, error, base_delay):
 
 async def refresh_metadata(
     db, providers, provider, kind, external_id, edition_page=None, *, additive=False, expected_entity_id=None,
-    credit_groups=None
+    credit_groups=None,on_primary=None
 ):
     providers.validate(provider, kind)
     namespace = f"{provider}.{kind}"
@@ -702,7 +702,32 @@ async def refresh_metadata(
         return result
     row.lease_token = token
     row.lease_until = now + timedelta(minutes=3)
+    snapshot_row_id=row.id
     await db.commit()
+    async def verify_game(doc):
+        if provider!='igdb':return
+        if not any(x['namespace']==namespace and x['external_id']==external_id for x in doc['work']['identities']):
+            raise IdentityConflict('Provider reply identity mismatch')
+        if expected_entity_id:
+            identity=await resolve_identity(db,namespace,external_id)
+            if not identity or identity.entity_id!=expected_entity_id:raise IdentityConflict('Game identity changed during retrieval')
+
+    async def primary(doc,payload):
+        # Commit the next interaction before fetching optional characters.
+        # Established content remains intact until its full refresh succeeds.
+        await write_lock(db)
+        await db.refresh(row,with_for_update=True)
+        if row.lease_token!=token:raise IdentityConflict('Metadata lease changed')
+        await verify_game(doc)
+        if not row.fetched_at:
+            async with db.begin_nested():
+                entity=await ingest_document(db,doc,provider)
+                if expected_entity_id and entity.id!=expected_entity_id:raise IdentityConflict('Existing title bridge requires review')
+                row.entity_id=entity.id;row.payload=payload;row.coverage={**doc.get('coverage',{}),'primary_complete':True}
+                row.fetched_at=datetime.now(timezone.utc).replace(tzinfo=None);row.expires_at=None
+                row.error_code=None
+        await db.commit()
+        await on_primary(row.entity_id)
     try:
         if edition_page and provider == "openlibrary":
             doc, payload = await providers.openlibrary_editions_page(
@@ -714,6 +739,7 @@ async def refresh_metadata(
             )
         else:
             options = {'credit_groups': credit_groups} if credit_groups is not None else {}
+            if on_primary and provider=='igdb':options['on_primary']=primary
             doc, payload = await providers.detail(provider, kind, external_id, **options)
         # Recheck ownership before publishing. Late workers cannot overwrite.
         await write_lock(db)
@@ -723,6 +749,7 @@ async def refresh_metadata(
             await db.commit()
             return result
         async with db.begin_nested():
+            await verify_game(doc)
             if additive:
                 if not any(x['namespace'] == namespace and x['external_id'] == external_id
                            for x in doc['work']['identities']):
@@ -744,6 +771,14 @@ async def refresh_metadata(
             row.error_code = None
             row.next_attempt_at = None
         status = "updated"
+    except asyncio.CancelledError:
+        await db.rollback()
+        await write_lock(db)
+        owned=await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.id==snapshot_row_id).with_for_update())
+        if owned and owned.lease_token==token:
+            owned.lease_token=owned.lease_until=None;owned.next_attempt_at=datetime.now(timezone.utc).replace(tzinfo=None)
+        await db.commit()
+        raise
     except (ProviderError, IdentityConflict, asyncio.TimeoutError) as e:
         status, owned = await record_refresh_failure(db, row, token, e, 60)
         if not owned:
