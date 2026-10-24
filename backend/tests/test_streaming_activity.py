@@ -162,6 +162,31 @@ class MemoryDb:
 
 
 class ActivityTests(unittest.IsolatedAsyncioTestCase):
+    async def test_moving_one_date_preserves_the_other_action_on_a_combined_legacy_card(self):
+        from datetime import date
+        from models.tracking import TrackingActivity
+        for changed in ('start_date', 'finish_date'):
+            with self.subTest(changed=changed):
+                db = MemoryDb()
+                original = TrackingActivity(user_id=1, media_id=2, status='completed', score=8,
+                    created_at=datetime(2020, 1, 3), payload={'status_changed': True, 'started_watching': True,
+                                                            'rating_changed': True, 'rating_first': True})
+                db.add(original)
+                await reschedule_date_activity(db, 1, 2, start_date=date(2019, 12, 1),
+                                               finish_date=date(2020, 2, 1), changed={changed})
+                self.assertIn(original, db.rows)
+                self.assertTrue(original.payload['status_changed'])
+                self.assertEqual(original.status, 'completed' if changed == 'start_date' else 'watching')
+                if changed == 'start_date':
+                    self.assertEqual(original.score, 8)
+                    self.assertTrue(original.payload['rating_changed'])
+                    self.assertNotIn('started_watching', original.payload)
+                else:
+                    self.assertTrue(original.payload['started_watching'])
+                    completion = next(row for row in db.rows if row is not original)
+                    self.assertEqual(completion.score, 8)
+                    self.assertEqual(completion.status, 'completed')
+
     async def test_rollback_removes_imported_and_older_local_milestones_without_losing_ratings(self):
         from core.activity import reconcile_unwatched_activity
         from models.tracking import TrackingActivity

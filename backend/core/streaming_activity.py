@@ -134,8 +134,12 @@ async def reschedule_date_activity(db, user_id, media_id, *, start_date, finish_
                 event = {'key': key, 'status': 'completed' if key == 'finish' else 'watching', 'status_changed': True}
                 if key == 'start':
                     event['started_watching'] = True
-                details['status_changed'] = False
-                details.pop('started_watching', None)
+                    details.pop('started_watching', None)
+                    details['status_changed'] = bool(details.get('status_changed') and row.status != 'watching')
+                else:
+                    details['status_changed'] = bool(details.get('started_watching'))
+                    if details.get('started_watching'):
+                        row.status = 'watching'
             # A start-date edit must not steal a rating from a combined finish card.
             if row.score is not None and details.get('rating_changed') and (key == 'finish' or row.status == 'watching'):
                 ratings.append((event, row.score, {name: item for name, item in details.items() if name in RATING_ACTIVITY_FIELDS}, row if row not in tagged else None))
