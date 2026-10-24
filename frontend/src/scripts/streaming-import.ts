@@ -5,6 +5,7 @@ import { createImportDraft } from '../lib/import-draft';
 import { importDecisionStep } from '../lib/import-steps';
 import { readRemapTitles } from '../lib/streaming-remap-search';
 import { formatDate } from '../lib/date-time';
+import { needsImportFinishDate, importFinishDateSuggestion } from '../lib/import-completion';
 
 type MatchCandidate = {
   media_type: "movie" | "show";
@@ -74,6 +75,7 @@ function mountStreamingImport(app: HTMLElement) {
   if (!app || app.dataset.streamingInitialized === "true") return;
   app.dataset.streamingInitialized = "true";
   const disclosureArrow = app.querySelector<HTMLTemplateElement>('[data-role="streaming-disclosure-arrow"]')!.innerHTML;
+  const checkIcon = app.querySelector<HTMLTemplateElement>('[data-role="streaming-check"]')!.innerHTML;
   const upload = app.querySelector<HTMLElement>('[data-role="streaming-import-upload"]') as HTMLDivElement;
   const uploadControls = app.querySelector<HTMLElement>('[data-role="streaming-import-upload-controls"]') as HTMLElement;
   const fileInput = app.querySelector<HTMLElement>('[data-role="streaming-import-file"]') as HTMLInputElement;
@@ -259,7 +261,7 @@ function mountStreamingImport(app: HTMLElement) {
   }
 
   function outcomeButtons(item: StreamingItem): string {
-    return (item.kind === "movie" ? [["completed", "Completed"], ["dropped", "Dropped"], ["skip", "Skip"]] : [["completed", "Completed"], ["partial", "Partly watched"], ["skip", "Skip"]]).map(([value, label]) => `<button type="button" data-streaming-action="outcome" data-item-id="${esc(item.id)}" data-status="${value}" aria-pressed="${item.outcome.status === value}" class="streaming-outcome ${item.outcome.status === value ? "is-selected" : ""}">${label}</button>`).join("");
+    return (item.kind === "movie" ? [["completed", "Completed"], ["dropped", "Dropped"], ["skip", "Skip"]] : [["completed", "Completed"], ["partial", "Partly watched"], ["skip", "Skip"]]).map(([value, label]) => `<button type="button" data-streaming-action="outcome" data-item-id="${esc(item.id)}" data-status="${value}" aria-pressed="${item.outcome.status === value}" class="streaming-outcome ${item.outcome.status === value ? "is-selected" : ""}"><span class="streaming-choice-check" aria-hidden="true">${checkIcon}</span><span>${label}</span></button>`).join("");
   }
 
   function partialControls(item: StreamingItem): string {
@@ -356,7 +358,15 @@ function mountStreamingImport(app: HTMLElement) {
     });
   }
 
+  function updateImportActivity() {
+    const active = busy || !!session && !['committed', 'cancelled', 'failed'].includes(session.status);
+    app.dataset.importActive = String(active);
+    if (active) document.querySelectorAll<HTMLElement>('[data-mobile-navigation] [popover]:popover-open')
+      .forEach(panel => panel.hidePopover());
+  }
+
   function render() {
+    updateImportActivity();
     if (!session) {
       workflow.classList.add("hidden");
       uploadControls.classList.remove("hidden");
@@ -467,6 +477,7 @@ function mountStreamingImport(app: HTMLElement) {
     clearError();
     openRatingGroups.clear();
     busy = true;
+    updateImportActivity();
     uploadControls.classList.add("hidden");
     workflow.classList.remove("hidden");
     step = 1;
@@ -489,6 +500,7 @@ function mountStreamingImport(app: HTMLElement) {
     } finally {
       uploadController = null;
       busy = false;
+      updateImportActivity();
       fileInput.value = "";
     }
   }
@@ -498,6 +510,7 @@ function mountStreamingImport(app: HTMLElement) {
     uploadController.abort();
     uploadController = null;
     busy = false;
+    updateImportActivity();
     workflow.classList.add("hidden");
     workflow.innerHTML = "";
     uploadControls.classList.remove("hidden");
@@ -606,14 +619,15 @@ function mountStreamingImport(app: HTMLElement) {
   const finishDialog = app.querySelector<HTMLDialogElement>('[data-role="streaming-finish-dialog"]')!;
   const dateSignal = new AbortController();
   document.addEventListener('astro:before-swap', () => dateSignal.abort(), {once: true});
-  const refreshFinishDate = setupCalendarDateInputs(finishDialog, dateSignal.signal);
-  async function confirmFinishDate(item: StreamingItem) {
-    if (item.kind !== 'show' || item.completion_evidence?.finish_date || 'finish_date' in item.outcome) return;
+  const refreshFinishDate = setupCalendarDateInputs(finishDialog, dateSignal.signal, {returnFocus: 'trigger'});
+  async function confirmFinishDate(item: StreamingItem, reselectingCompleted = false) {
+    if (!needsImportFinishDate(item, reselectingCompleted)) return;
     const input = finishDialog.querySelector<HTMLInputElement>('[data-date-iso]')!;
-    input.value = item.completion_evidence?.suggested_date || '';
+    input.value = importFinishDateSuggestion(item);
     refreshFinishDate();
     finishDialog.returnValue = '';
     showDialog(finishDialog);
+    finishDialog.querySelector<HTMLElement>('h2')!.focus({preventScroll: true});
     await new Promise<void>(resolve => finishDialog.addEventListener('close', () => resolve(), {once: true}));
     await saveItem(item, {finish_date: finishDialog.returnValue === 'confirm' && input.value ? input.value : null});
   }
@@ -718,7 +732,7 @@ function mountStreamingImport(app: HTMLElement) {
     if (action === "open-search") { openRemap(item); return; }
     if (action === "outcome") {
       const status = button.dataset.status as StreamingItem["outcome"]["status"];
-      if (status === "completed") await confirmFinishDate(item);
+      if (status === "completed") await confirmFinishDate(item, item.outcome.status !== 'completed');
       if (status === 'partial' && (!item.outcome.latest_season || !item.outcome.latest_episode)) {
         const firstSeason = (item.seasons ?? []).filter(season => season.season_number > 0 && (season.total_released ?? 0) > 0)
           .sort((a, b) => a.season_number - b.season_number)[0];

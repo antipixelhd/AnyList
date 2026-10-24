@@ -10,6 +10,7 @@ const extension = service === "amazon" ? ".zip" : ".csv";
       <template data-role="streaming-disclosure-arrow"><Icon name="chevron-down" class="streaming-disclosure-arrow" /></template>
       <template data-role="streaming-poster-placeholder"><Icon name="film" /></template>
       <template data-role="streaming-match-arrow"><Icon name="arrow-right" /></template>
+      <template data-role="streaming-check"><Icon name="check" /></template>
       <input type="file" id={`${service}-streaming-import-file`} data-role="streaming-import-file" accept={extension} class="hidden" disabled={!hasTmdbKey} />
       <div id={`${service}-streaming-import-upload-controls`} data-role="streaming-import-upload-controls">
       <div id={`${service}-streaming-import-upload`} data-role="streaming-import-upload" class:list={[
@@ -25,11 +26,11 @@ const extension = service === "amazon" ? ".zip" : ".csv";
       <input id={`${service}-streaming-skip-anime`} data-role="streaming-skip-anime" type="checkbox" checked disabled hidden />
       </div>
       <section id={`${service}-streaming-import-workflow`} data-role="streaming-import-workflow" class="mt-5 hidden" aria-live="polite"></section>
-      <dialog data-role="streaming-finish-dialog" class="editor-confirmation" aria-labelledby={`${service}-finish-title`} data-motion-static>
-        <form method="dialog" class="p-5 space-y-4">
-          <h2 id={`${service}-finish-title`}>When did you finish this series?</h2>
+      <dialog data-role="streaming-finish-dialog" class="streaming-finish-dialog" aria-labelledby={`${service}-finish-title`} data-motion-static>
+        <form method="dialog">
+          <h2 id={`${service}-finish-title`} tabindex="-1" autofocus>When did you finish this series?</h2>
           <CalendarDateInput id={`${service}-finish-date`} name="finish_date" label="Finish date" />
-          <div class="flex justify-end gap-3"><button type="submit" value="skip" class="button-quiet">Skip</button><button type="submit" value="confirm" class="button-primary">Confirm date</button></div>
+          <div class="streaming-finish-actions"><button type="submit" value="skip" class="streaming-text-action streaming-muted">Skip</button><button type="submit" value="confirm" class="streaming-button streaming-primary">Confirm date</button></div>
         </form>
       </dialog>
       <dialog id={`${service}-streaming-remap-dialog`} data-role="streaming-remap-dialog" aria-labelledby={`${service}-streaming-remap-title`} class="quick-search-dialog streaming-remap-dialog">

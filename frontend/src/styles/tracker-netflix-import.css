@@ -143,8 +143,8 @@
 .connections-settings-page [data-streaming-import] .streaming-secondary { background:transparent; color:var(--text); }
 .connections-settings-page [data-streaming-import] .streaming-secondary:hover { background:var(--dropdown-hover); color:var(--blue); }
 .connections-settings-page [data-streaming-import] .streaming-button:disabled { cursor:default; background:transparent; color:var(--muted); }
-.connections-settings-page [data-streaming-import] .streaming-match-actions .streaming-primary { background:color-mix(in srgb,var(--blue) 10%,transparent); color:var(--blue); }
-.connections-settings-page [data-streaming-import] .streaming-match-actions .streaming-primary:hover { background:color-mix(in srgb,var(--blue) 16%,transparent); }
+.connections-settings-page [data-streaming-import] .streaming-match-actions .streaming-primary { background:var(--field); color:var(--text); }
+.connections-settings-page [data-streaming-import] .streaming-match-actions .streaming-primary:hover { background:var(--dropdown-hover); color:var(--blue); }
 .connections-settings-page [data-streaming-import] .streaming-match-actions .streaming-primary.is-confirmed { background:transparent; color:var(--muted); }
 .connections-settings-page [data-streaming-import] .streaming-text-action { padding:10px 0; min-height:40px; border:0; background:transparent; color:var(--text); font-family:inherit; font-size:13px; cursor:pointer; transition:color 140ms; }
 .connections-settings-page [data-streaming-import] .streaming-text-action:hover { color:var(--import-accent-hover); }
@@ -160,13 +160,19 @@
 .connections-settings-page .streaming-nav-actions .streaming-button { min-width:106px; }
 .connections-settings-page .streaming-progress-toolbar { display:flex; justify-content:flex-end; margin-bottom:16px; font-size:13px; color:var(--muted); }
 .connections-settings-page .streaming-progress-toolbar label { display:flex; align-items:center; gap:9px; cursor:pointer; }
-.connections-settings-page .streaming-progress-toolbar input { accent-color:var(--import-accent); }
+.connections-settings-page .streaming-progress-toolbar input { accent-color:var(--text); }
+.connections-settings-page .streaming-progress-toolbar input:focus-visible { outline:0; filter:brightness(1.3); }
+.connections-settings-page .streaming-progress-toolbar label:focus-within { color:var(--text); }
 .connections-settings-page .streaming-progress-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:28px; align-items:start; }
 .connections-settings-page .streaming-progress-card { display:grid; gap:20px; padding:20px 0; border-top:1px solid var(--import-divider); background:transparent; min-width:0; }
 .connections-settings-page .streaming-outcomes { display:flex; padding:0; gap:4px; background:transparent; }
-.connections-settings-page [data-streaming-import] .streaming-outcome { flex:1; padding:10px 5px; border:0; border-radius:4px; background:transparent; color:var(--muted); font-size:12px; cursor:pointer; transition:background-color 140ms,color 140ms; }
+.connections-settings-page [data-streaming-import] .streaming-outcome { flex:1; display:flex; align-items:center; justify-content:center; gap:6px; padding:10px 5px; border:0; border-radius:4px; background:transparent; color:var(--muted); font-size:12px; cursor:pointer; transition:background-color 140ms,color 140ms; }
 .connections-settings-page [data-streaming-import] .streaming-outcome:hover { background:var(--dropdown-hover); color:var(--text); }
-.connections-settings-page [data-streaming-import] .streaming-outcome.is-selected { background:color-mix(in srgb,var(--blue) 12%,transparent); color:var(--blue); }
+.connections-settings-page [data-streaming-import] .streaming-outcome.is-selected { background:transparent; color:var(--text); font-weight:600; }
+.connections-settings-page [data-streaming-import] .streaming-outcome:focus-visible { background:var(--dropdown-hover); }
+.connections-settings-page .streaming-choice-check { width:12px; flex:0 0 12px; visibility:hidden; }
+.connections-settings-page .is-selected .streaming-choice-check { visibility:visible; }
+.connections-settings-page .streaming-choice-check .ui-icon { width:12px; height:12px; }
 .connections-settings-page .streaming-progress-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
 .connections-settings-page .streaming-progress-fields > label:last-child { grid-column:1/-1; }
 .connections-settings-page .streaming-field-heading { grid-column:1/-1; margin:0; font-size:13px; font-weight:500; color:var(--text); }
@@ -205,6 +211,18 @@
 .connections-settings-page .streaming-failure { display:grid; justify-items:start; gap:18px; padding:24px 0; }
 .connections-settings-page .streaming-failure h2 { margin:0; font-size:23px; color:var(--text); }
 .connections-settings-page .streaming-failure p { margin:0; font-size:14px; line-height:1.5; color:var(--muted); overflow-wrap:anywhere; }
+.connections-settings-page .streaming-finish-dialog {
+  position:fixed; inset:0; margin:auto; width:min(420px,calc(100vw - 32px)); height:fit-content;
+  max-height:calc(100dvh - 32px); overflow:auto; padding:24px; border:0; border-radius:6px;
+  background:var(--panel); color:var(--text); box-shadow:0 20px 65px #02071199;
+}
+.connections-settings-page .streaming-finish-dialog::backdrop { background:#03091299; }
+.connections-settings-page .streaming-finish-dialog form { display:grid; gap:22px; margin:0; }
+.connections-settings-page .streaming-finish-dialog h2 { margin:0; font-size:20px; line-height:1.4; font-weight:600; outline:0; }
+.connections-settings-page .streaming-finish-actions { display:flex; justify-content:flex-end; align-items:center; gap:24px; }
+.connections-settings-page [data-streaming-import] .streaming-finish-dialog :is(input,button):focus-visible { outline:0; box-shadow:none; }
+.connections-settings-page .streaming-finish-dialog [data-date-display]:focus-visible { background:var(--dropdown-hover); }
+.connections-settings-page .streaming-finish-dialog .calendar-popover .air-datepicker-cell.-selected- { background:var(--field); color:var(--text); font-weight:700; }
 @media(min-width:1250px) {
   .connections-settings-page .streaming-match-columns,
   .connections-settings-page .streaming-match-row { grid-template-columns:minmax(0,.8fr) 18px minmax(0,1fr) 215px; gap:14px; }
@@ -229,7 +247,7 @@
   .connections-settings-page .streaming-match-actions > .streaming-primary:only-of-type { grid-column:auto; }
   .connections-settings-page .streaming-match-actions > .streaming-text-action:last-child { grid-column:2; }
   .connections-settings-page .streaming-match-actions:not(:has(:nth-child(3))) > .streaming-primary { grid-column:1; }
-  .connections-settings-page .streaming-footer { position:sticky; bottom:0; z-index:2; flex-wrap:wrap; gap:10px; padding:14px 46px max(12px,env(safe-area-inset-bottom)) 0; }
+  .connections-settings-page .streaming-footer { position:sticky; bottom:0; z-index:2; flex-wrap:wrap; gap:10px; padding:14px 0 max(12px,env(safe-area-inset-bottom)); }
   .connections-settings-page .streaming-nav-actions { width:100%; justify-content:stretch; gap:12px; order:-1; }
   .connections-settings-page .streaming-nav-actions .streaming-button { flex:1; }
   .connections-settings-page [data-streaming-import] .streaming-cancel { display:none; }
@@ -237,6 +255,9 @@
   .connections-settings-page .streaming-progress-card { padding:20px 0; }
   .connections-settings-page .streaming-summary { gap:8px; }
   .connections-settings-page .streaming-summary strong { font-size:25px; }
+}
+@media(max-width:1040px) {
+  .connections-settings-page:has(.streaming-service[open] [data-streaming-import][data-import-active="true"]) [data-mobile-navigation] { display:none; }
 }
 @media(prefers-reduced-motion:reduce) {
   .connections-settings-page [data-streaming-import] * { transition:none!important; }
