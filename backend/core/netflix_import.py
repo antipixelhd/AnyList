@@ -37,6 +37,21 @@ _DIGITS = re.compile(r"\b(\d+)\b")
 _ID_DIGEST_LENGTH = 18
 
 
+def _titleless_netflix_row(title: str) -> bool:
+    return bool(re.fullmatch(r'[\s:;]+', title) or re.fullmatch(
+        r'[:;\s]+(?:Episode|Folge)\s*#?\s*(?:\d+|X)[:;\s]*', title, re.IGNORECASE,
+    ))
+
+
+def _netflix_title_language(text: str, title_column: str) -> str | None:
+    """Infer from export structure, never from how a film's name sounds."""
+    for row in csv.DictReader(io.StringIO(text, newline=''), strict=True):
+        title = row.get(title_column) or ''
+        if re.search(r':\s*(?:Staffel|Folge)\s*#?\s*\d+\b', title, re.IGNORECASE):
+            return 'de-DE'
+    return None
+
+
 # Compatibility names for existing callers and saved draft fixtures.
 from core.streaming_history import WatchObservation as NetflixWatch, ParsedHistory as ParsedNetflixHistory
 
@@ -207,6 +222,11 @@ def parse_netflix_csv(content: bytes | str, language: str | None = None) -> Pars
             "titolo": "it-IT",
         }
         inferred_language = locale_by_header.get(title_header) or locale_by_header.get(date_header)
+        if inferred_language is None:
+            try:
+                inferred_language = _netflix_title_language(text, title_col)
+            except csv.Error as exc:
+                raise ValueError(f"This Netflix CSV is malformed and couldn't be read: {exc}") from exc
     parsed = ParsedNetflixHistory(language=inferred_language)
     seen: dict[tuple[str, str], NetflixWatch] = {}
     try:
@@ -222,7 +242,7 @@ def parse_netflix_csv(content: bytes | str, language: str | None = None) -> Pars
             if not raw_title:
                 parsed.errors.append({"row": row_number, "message": "Missing title"})
                 continue
-            if re.fullmatch(r":\s*Episode\s+\d+", raw_title, re.IGNORECASE):
+            if _titleless_netflix_row(raw_title):
                 parsed.excluded_rows += 1
                 continue
             try:
@@ -838,6 +858,7 @@ async def prepare_netflix_import(
     search_shows_fn: Callable[..., Any] | None = None,
     show_details_fn: Callable[..., Any] | None = None,
     season_fn: Callable[..., Any] | None = None,
+    title_aliases_fn: Callable[..., Any] | None = None,
     max_concurrency: int = 4,
     progress_fn: Callable[[int, int, str], Any] | None = None,
 ) -> dict[str, Any]:
@@ -870,6 +891,7 @@ async def prepare_netflix_import(
 
     from core import tmdb
 
+    custom_search_kinds = {kind for kind, fn in (('movie', search_movies_fn), ('show', search_shows_fn)) if fn is not None}
     search_movies_fn = search_movies_fn or tmdb.search_movies
     search_shows_fn = search_shows_fn or tmdb.search_shows
     show_details_fn = show_details_fn or tmdb.get_show_light
@@ -878,6 +900,7 @@ async def prepare_netflix_import(
     requested_language = language or history.language or "en-US"
     search_cache: dict[tuple[str, str], list[dict[str, Any]]] = {}
     search_tasks: dict[tuple[str, str], asyncio.Task[list[dict[str, Any]]]] = {}
+    alias_tasks: dict[tuple[str, int], asyncio.Task[dict]] = {}
     details_cache: dict[int, dict[str, Any]] = {}
     details_tasks: dict[int, asyncio.Task[dict[str, Any]]] = {}
     season_cache: dict[tuple[int, int, str], dict[str, Any]] = {}
@@ -905,11 +928,41 @@ async def prepare_netflix_import(
             async with semaphore:
                 raw = await _await_call(fn, query, api_key=api_key, language=requested_language)
             candidates = [_media_candidate(result, kind, query) for result in _result_list(raw)]
+            # Search knows aliases, but its response only names the requested
+            # locale and original title. Verify a bounded fallback by identity;
+            # similar wording alone must never become an automatic match.
+            if candidates and not any(candidate['_exact'] for candidate in candidates):
+                if title_aliases_fn is not None or kind not in custom_search_kinds:
+                    await asyncio.gather(*(verify_alias(kind, query, candidate) for candidate in candidates[:5]))
             search_cache[key] = _dedupe_candidates(candidates)
             async with progress_lock:
                 search_progress += 1
                 await report_progress(search_progress, search_total, f"Searching distinct {kind} titles")
         return search_cache[key]
+
+    async def load_aliases(kind: str, tmdb_id: int) -> dict:
+        async with semaphore:
+            return await _await_call(title_aliases_fn or tmdb.get_title_aliases, kind, tmdb_id, api_key=api_key)
+
+    async def verify_alias(kind: str, query: str, candidate: dict) -> None:
+        tmdb_id = candidate.get('tmdb_id')
+        query_key = _norm_text(query)
+        if not tmdb_id or not query_key:
+            return
+        key = kind, tmdb_id
+        if key not in alias_tasks:
+            alias_tasks[key] = asyncio.create_task(load_aliases(kind, tmdb_id))
+        try:
+            raw = await alias_tasks[key]
+        except (httpx.HTTPError, ValueError, tmdb.TMDBUnavailable):
+            # Metadata failure leaves the existing conservative review result.
+            return
+        if not isinstance(raw, dict):
+            return
+        aliases = raw.get('titles') or raw.get('results') or []
+        if any(_norm_text(alias.get('title')) == query_key for alias in aliases if isinstance(alias, dict)):
+            candidate['_exact'] = True
+            candidate['_similarity'] = 1.0
 
     async def show_details(tmdb_id: int) -> dict[str, Any]:
         if tmdb_id not in details_tasks:

@@ -24,6 +24,18 @@ class SharedTransportTests(TransportTestCase):
         tmdb._cache._store.clear()
         tmdb._breaker_record_success()
 
+    async def test_title_alias_components_reuse_cached_provider_reads(self):
+        with patch.object(tmdb, '_request', AsyncMock(return_value={'titles': [{'title': 'Miss Undercover'}]})) as request:
+            first = await tmdb.get_title_aliases('movie', 1493, api_key='key')
+            await tmdb.get_title_aliases('movie', 1493, api_key='key')
+            self.assertEqual(request.await_count, 1)
+            self.assertTrue(request.await_args.args[1].endswith('/movie/1493/alternative_titles'))
+            first['titles'].clear()
+            self.assertTrue((await tmdb.get_title_aliases('movie', 1493, api_key='key'))['titles'])
+            await tmdb.get_title_aliases('show', 1493, api_key='key')
+            self.assertEqual(request.await_count, 2)
+            self.assertTrue(request.await_args.args[1].endswith('/tv/1493/alternative_titles'))
+
     async def test_detail_payload_seeds_lightweight_and_release_reads(self):
         payload = {'id': 42, 'title': 'Example', 'runtime': 110,
                    'release_dates': {'results': [{'iso_3166_1': 'DE'}]},

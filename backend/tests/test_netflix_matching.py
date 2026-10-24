@@ -2,7 +2,7 @@ import os
 import subprocess
 import sys
 import unittest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import httpx
 
@@ -83,6 +83,27 @@ class NetflixCsvParserTests(unittest.TestCase):
         self.assertEqual(history.excluded_rows, 2)
         self.assertEqual([row.source_title for row in history.rows], ["Show: Episode 2", ": Episode 2: Extra"])
         self.assertEqual(history.errors, [])
+
+    def test_punctuation_and_localized_anonymous_rows_are_excluded(self):
+        history = parse_netflix_csv('Titel,Datum\n":",01.02.2024\n";",01.02.2024\n'
+                                    '":Folge 8",01.02.2024\n":Episode 9",01.02.2024\n'
+                                    '": Folge X",01.02.2024\n";; : ;",01.02.2024\n'
+                                    '"Show: Folge 8",01.02.2024\n"Episode 2",01.02.2024\n')
+        self.assertEqual(history.excluded_rows, 6)
+        self.assertEqual([row.source_title for row in history.rows], ['Show: Folge 8', 'Episode 2'])
+        self.assertEqual(history.errors, [])
+
+    def test_german_structure_sets_whole_file_language_even_with_english_headers(self):
+        source = 'Title,Date\nMiss Undercover,02/03/2024\n"Dark: Staffel 1: Geheimnisse",02/03/2024\n'
+        history = parse_netflix_csv(source)
+        self.assertEqual(history.language, 'de-DE')
+        self.assertEqual({row.watched_at for row in history.rows}, {'2024-03-02'})
+        explicit = parse_netflix_csv(source, language='en-US')
+        self.assertEqual(explicit.language, 'en-US')
+        self.assertEqual(explicit.rows[0].watched_at, '2024-02-03')
+
+    def test_english_looking_localized_movie_alone_does_not_guess_language(self):
+        self.assertIsNone(parse_netflix_csv('Title,Date\nMiss Undercover,2024-02-03\n').language)
 
     def test_rejects_wrong_headers_bad_encoding_and_malformed_csv(self) -> None:
         with self.assertRaisesRegex(ValueError, "Title and Date"):
@@ -329,6 +350,87 @@ class NetflixTitleReviewTests(unittest.TestCase):
 
 
 class NetflixMatchingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_all_anonymous_variants_are_excluded_before_provider_calls(self):
+        movies, shows, aliases = AsyncMock(), AsyncMock(), AsyncMock()
+        result = await prepare_netflix_import(
+            'Title,Date\n":",2024-01-01\n";",2024-01-01\n":Folge 2",2024-01-01\n":Episode 3",2024-01-01\n',
+            search_movies_fn=movies, search_shows_fn=shows, title_aliases_fn=aliases,
+        )
+        self.assertEqual(result['counts']['excluded_rows'], 4)
+        for callback in (movies, shows, aliases):
+            callback.assert_not_awaited()
+
+    async def test_german_alias_matches_english_catalogue_identity_without_translation(self):
+        search = AsyncMock(return_value={'results': [{'id': 1493, 'title': 'Miss Congeniality',
+                                                    'original_title': 'Miss Congeniality', 'release_date': '2000-12-22'}]})
+        aliases = AsyncMock(return_value={'titles': [{'iso_3166_1': 'DE', 'title': 'Miss Undercover'}]})
+        result = await prepare_netflix_import(
+            'Title,Date\nMiss Undercover,2024-01-01\n',
+            search_movies_fn=search, title_aliases_fn=aliases,
+        )
+        self.assertEqual((result['movies'][0]['tmdb_id'], result['movies'][0]['status']), (1493, 'matched'))
+        self.assertEqual(result['movies'][0]['title'], 'Miss Congeniality')
+        search.assert_awaited_once_with('Miss Undercover', api_key=None, language='en-US')
+        aliases.assert_awaited_once_with('movie', 1493, api_key=None)
+
+    async def test_german_header_uses_localized_search_without_extra_alias_request(self):
+        search = AsyncMock(return_value={'results': [{'id': 1493, 'title': 'Miss Undercover',
+                                                    'original_title': 'Miss Congeniality'}]})
+        aliases = AsyncMock()
+        result = await prepare_netflix_import('Titel,Datum\nMiss Undercover,01.02.2024\n',
+                                             search_movies_fn=search, title_aliases_fn=aliases)
+        self.assertEqual(result['movies'][0]['tmdb_id'], 1493)
+        self.assertEqual(search.await_args.kwargs['language'], 'de-DE')
+        aliases.assert_not_awaited()
+
+    async def test_default_provider_path_verifies_aliases(self):
+        from core import tmdb
+        with patch.object(tmdb, 'search_movies', AsyncMock(return_value={'results': [
+            {'id': 1493, 'title': 'Miss Congeniality'},
+        ]})), patch.object(tmdb, 'get_title_aliases', AsyncMock(return_value={
+            'titles': [{'title': 'Miss Undercover'}],
+        })) as aliases:
+            result = await prepare_netflix_import('Title,Date\nMiss Undercover,2024-01-01\n')
+        self.assertEqual(result['movies'][0]['status'], 'matched')
+        aliases.assert_awaited_once_with('movie', 1493, api_key=None)
+
+    async def test_localized_series_alias_preserves_canonical_episode_matching(self):
+        aliases = AsyncMock(return_value={'results': [{'title': 'Haus des Geldes'}]})
+        result = await prepare_netflix_import(
+            'Title,Date\n"Haus des Geldes: Staffel 1: Pilot",2024-01-01\n',
+            search_shows_fn=AsyncMock(return_value={'results': [{'id': 71446, 'name': 'Money Heist'}]}),
+            title_aliases_fn=aliases,
+            show_details_fn=AsyncMock(return_value={'id': 71446, 'name': 'Money Heist',
+                                                    'seasons': [{'season_number': 1, 'episode_count': 1}]}),
+            season_fn=AsyncMock(return_value={'episodes': [{'id': 1, 'episode_number': 1, 'name': 'Pilot',
+                                                          'air_date': '2020-01-01'}]}),
+        )
+        self.assertEqual(result['shows'][0]['tmdb_id'], 71446)
+        self.assertTrue(result['shows'][0]['episodes'][0]['matched'])
+        aliases.assert_awaited_once_with('show', 71446, api_key=None)
+
+    async def test_unverified_alias_stays_in_review_and_alias_failure_is_nonfatal(self):
+        for response in ({'titles': [{'title': 'Undercover'}]}, httpx.ConnectError('offline')):
+            aliases = AsyncMock(side_effect=response) if isinstance(response, Exception) else AsyncMock(return_value=response)
+            result = await prepare_netflix_import(
+                'Title,Date\nMiss Undercover,2024-01-01\n',
+                search_movies_fn=AsyncMock(return_value={'results': [{'id': 1493, 'title': 'Miss Congeniality'}]}),
+                title_aliases_fn=aliases,
+            )
+            self.assertNotEqual(result['movies'][0]['status'], 'matched')
+
+    async def test_alias_fallback_is_bounded_and_shared_across_title_queries(self):
+        aliases = AsyncMock(return_value={'titles': [{'title': 'Miss Undercover'}, {'title': 'Other Local Title'}]})
+        result = await prepare_netflix_import(
+            'Title,Date\nMiss Undercover,2024-01-01\nOther Local Title,2024-01-01\n',
+            search_movies_fn=AsyncMock(return_value={'results': [
+                {'id': n, 'title': f'Unrelated {n}'} for n in range(1, 10)
+            ]}), title_aliases_fn=aliases,
+        )
+        self.assertEqual(aliases.await_count, 5)
+        # Multiple verified aliases are ambiguous, not an automatic top hit.
+        self.assertTrue(all(item['status'] == 'review' for item in result['movies']))
+
     async def test_episode_without_show_title_is_excluded_before_matching(self) -> None:
         movie_search = AsyncMock(return_value={"results": []})
         result = await prepare_netflix_import(
