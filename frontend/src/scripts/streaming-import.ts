@@ -202,7 +202,7 @@ function mountStreamingImport(app: HTMLElement) {
   }
 
   function heading(title: string, description = '', remaining?: number, position = ''): string {
-    return `<header class="streaming-heading"><div><div class="streaming-heading-top">${step > 2 && decisionStep(step - 1, -1) !== null ? '<button type="button" data-streaming-action="back" class="streaming-header-back">Back</button>' : ''}<p class="streaming-step">Step ${step} of 5</p>${step > 1 ? '<button type="button" data-streaming-action="cancel" class="streaming-text-action streaming-muted streaming-mobile-cancel">Cancel</button>' : ''}</div><h2>${title}</h2>${description ? `<p class="streaming-description">${description}</p>` : ''}${position ? `<p class="streaming-position">${esc(position)}</p>` : ''}</div><div class="streaming-step-progress">${remaining != null ? `<span role="status">${remaining ? `${remaining} title${remaining === 1 ? '' : 's'} left` : 'All matches checked'}</span>` : ''}<div class="streaming-step-bars" role="img" aria-label="Step ${step} of 5">${Array.from({length: 5}, (_, index) => `<span class="${index < step ? 'is-reached' : ''}"></span>`).join('')}</div></div></header>`;
+    return `<header class="streaming-heading"><div><div class="streaming-heading-top"><p class="streaming-step">Step ${step} of 5</p>${step > 1 ? '<button type="button" data-streaming-action="cancel" class="streaming-text-action streaming-muted streaming-mobile-cancel">Cancel</button>' : ''}</div><h2>${title}</h2>${description ? `<p class="streaming-description">${description}</p>` : ''}${position ? `<p class="streaming-position">${esc(position)}</p>` : ''}</div><div class="streaming-step-progress">${remaining != null ? `<span role="status">${remaining ? `${remaining} title${remaining === 1 ? '' : 's'} left` : 'All matches checked'}</span>` : ''}<div class="streaming-step-bars" role="img" aria-label="Step ${step} of 5">${Array.from({length: 5}, (_, index) => `<span class="${index < step ? 'is-reached' : ''}"></span>`).join('')}</div></div></header>`;
   }
 
   function artwork(path?: string | null): string {
@@ -299,7 +299,7 @@ function mountStreamingImport(app: HTMLElement) {
     return id ? byId(id) : undefined;
   }
 
-  function itemCard(item: StreamingItem, editing = false): string {
+  function itemCard(item: StreamingItem, editing = false, automatic = false): string {
     const candidate = item.match?.candidate;
     const accepted = !editing && (item.decision.action === 'confirm' || item.decision.action === 'remap');
     const skipped = item.decision.action === 'skip';
@@ -309,9 +309,9 @@ function mountStreamingImport(app: HTMLElement) {
       <span class="streaming-match-arrow" aria-hidden="true">${arrow}</span>
       <div class="streaming-found"><span class="streaming-mobile-label">We found</span><div class="streaming-title">${artwork(candidate?.poster_path)}<div>${candidate ? `<h3>${esc(candidate.title)}</h3><p>${[candidate.year, candidate.media_type === 'show' ? 'Series' : 'Movie'].filter(Boolean).map(esc).join(' · ')}</p>` : '<p>No match found</p>'}</div></div></div>
       <div class="streaming-match-actions">
-        ${candidate && !item.is_anime ? `<button type="button" data-streaming-action="confirm" data-item-id="${esc(item.id)}" class="streaming-button streaming-primary ${accepted ? 'is-confirmed' : ''}" ${accepted ? 'disabled' : ''}>${accepted ? 'Confirmed' : 'Confirm'}</button>` : `<button type="button" data-streaming-action="open-search" data-item-id="${esc(item.id)}" class="streaming-button streaming-primary">Find title</button>`}
-        ${candidate ? `<button type="button" data-streaming-action="open-search" data-item-id="${esc(item.id)}" class="streaming-button streaming-secondary">Choose another</button>` : ''}
-        <button type="button" data-streaming-action="skip-match" data-item-id="${esc(item.id)}" class="streaming-text-action streaming-muted" ${skipped ? 'disabled' : ''}>${skipped ? 'Skipped' : 'Skip'}</button>
+        ${automatic ? '' : candidate && !item.is_anime ? `<button type="button" data-streaming-action="confirm" data-item-id="${esc(item.id)}" class="streaming-button streaming-primary ${accepted ? 'is-confirmed' : ''}" ${accepted ? 'disabled' : ''}>${accepted ? 'Confirmed' : 'Confirm'}</button>` : `<button type="button" data-streaming-action="open-search" data-item-id="${esc(item.id)}" class="streaming-button streaming-primary">Find title</button>`}
+        ${candidate ? `<button type="button" data-streaming-action="open-search" data-item-id="${esc(item.id)}" class="streaming-button ${automatic ? 'streaming-primary' : 'streaming-secondary'}">Choose another</button>` : ''}
+        ${automatic ? '' : `<button type="button" data-streaming-action="skip-match" data-item-id="${esc(item.id)}" class="streaming-button streaming-secondary" ${skipped ? 'disabled' : ''}>${skipped ? 'Skipped' : 'Skip'}</button>`}
       </div>
     </article>`;
   }
@@ -359,12 +359,12 @@ function mountStreamingImport(app: HTMLElement) {
       const current = matchCurrent();
       const index = current ? matchSequence.ids.indexOf(String(current.id)) : -1;
       const position = current ? index >= 0 ? `Title ${index + 1} of ${matchSequence.ids.length}` : 'Reviewing an earlier choice' : '';
-      const body = current ? `<div class="streaming-mobile-focus">${itemCard(current, true)}</div>`
+      const body = current ? `<div class="streaming-mobile-focus">${itemCard(current, true, automaticSet.has(current))}</div>`
         : matchSequence.overview ? reviewOverview(visibleItems(), 'matches')
         : '<div class="streaming-review-done"><h3>All matches checked</h3></div>';
       return `${heading('Check your matches', '', undefined, position)}${body}${!matchSequence.overview || current ? reviewHistory([...confirmed, ...skipped, ...automatic], 'matches') : ''}`;
     }
-    const group = (label: string, items: StreamingItem[]) => items.length ? `<details data-motion-details ${matchSequence.overview ? 'open' : ''} class="streaming-disclosure streaming-review-group"><summary class="streaming-disclosure-trigger">${label} <span>${items.length}</span>${disclosureArrow}</summary><div>${items.map(item => itemCard(item, true)).join('')}</div></details>` : '';
+    const group = (label: string, items: StreamingItem[]) => items.length ? `<details data-motion-details ${matchSequence.overview ? 'open' : ''} class="streaming-disclosure streaming-review-group"><summary class="streaming-disclosure-trigger">${label} <span>${items.length}</span>${disclosureArrow}</summary><div>${items.map(item => itemCard(item, true, automaticSet.has(item))).join('')}</div></details>` : '';
     return `${heading('Check your matches', 'Confirm the title, choose another, or skip it.', pending.length)}
       <div class="streaming-match-table"><div class="streaming-match-columns" aria-hidden="true"><span>In your file</span><span></span><span>We found</span><span></span></div>${pending.length ? pending.map(item => itemCard(item)).join('') : '<p class="streaming-empty">All matches checked.</p>'}</div>
       ${group('Confirmed', confirmed)}${group('Skipped', skipped)}${group('Already matched', automatic)}`;
@@ -405,7 +405,7 @@ function mountStreamingImport(app: HTMLElement) {
       return status === "paused" ? "Paused" : status === "dropped" ? "Dropped" : "Watching";
     };
     if (!ratingsInitialized) {
-      for (const group of ['Watching', 'Completed']) if (eligible.some(item => groupFor(item) === group)) openRatingGroups.add(group);
+      for (const group of groups) openRatingGroups.add(group);
       ratingsInitialized = true;
     }
     const displayProgress = (item: StreamingItem) => {
@@ -453,13 +453,11 @@ function mountStreamingImport(app: HTMLElement) {
     if (!mobileReview.matches || ![2, 3].includes(step)) return null;
     const sequence = step === 2 ? matchSequence : progressSequence;
     const current = step === 2 ? matchCurrent() : progressCurrent();
-    const index = current ? sequence.ids.indexOf(String(current.id)) : sequence.ids.length;
-    const previous = sequence.ids[index - 1];
-    const left = sequence.selected
-      ? '<button type="button" data-streaming-action="return-review" class="streaming-button streaming-secondary">Back to review</button>'
-      : `<button type="button" data-streaming-action="previous-title" ${previous ? '' : 'disabled'} class="streaming-button streaming-secondary">Previous title</button>`;
-    const label = step === 3 && current ? sequence.selected ? 'Save changes' : progressPending().length > 1 ? 'Next title' : 'Continue' : 'Continue';
-    return `<div class="streaming-nav-actions">${left}<button type="button" data-streaming-action="next" ${step === 2 && !titleReviewComplete() ? 'disabled' : ''} class="streaming-button streaming-primary">${label}</button></div>`;
+    const left = decisionStep(step - 1, -1) !== null
+      ? '<button type="button" data-streaming-action="back" class="streaming-button streaming-secondary">Back</button>' : '';
+    const label = step === 3 && current && sequence.selected ? 'Save changes' : 'Continue';
+    const returnToPending = step === 2 && !!sequence.selected && !titleReviewComplete();
+    return `<div class="streaming-nav-actions">${left}<button type="button" data-streaming-action="${returnToPending ? 'return-review' : 'next'}" ${step === 2 && !titleReviewComplete() && !returnToPending ? 'disabled' : ''} class="streaming-button streaming-primary">${label}</button></div>`;
   }
 
   function updateImportActivity() {
@@ -542,6 +540,13 @@ function mountStreamingImport(app: HTMLElement) {
       saving = false;
       render();
     }
+  }
+
+  async function advanceAfterLastMatch() {
+    if (step !== 2 || !titleReviewComplete() || !await flushDraft()) return;
+    step = decisionStep(3, 1)!;
+    render();
+    workflow.scrollIntoView({block: 'start'});
   }
 
   async function poll() {
@@ -712,6 +717,8 @@ function mountStreamingImport(app: HTMLElement) {
     remapResults.hidden = true;
     showDialog(remapDialog);
     remapInput.focus();
+    // Opening a dialog can select its prefilled search text. Keep the caret at the end.
+    remapInput.setSelectionRange(remapInput.value.length, remapInput.value.length);
     void searchTitles();
   }
 
@@ -802,7 +809,9 @@ function mountStreamingImport(app: HTMLElement) {
     if (action === "restart") { session = null; step = 1; openRatingGroups.clear(); clearError(); render(); return; }
     if (saving) return;
     if (action === "back") {
-      step = decisionStep(step - 1, -1) ?? step;
+      const previousStep = decisionStep(step - 1, -1);
+      if (previousStep === null) return;
+      step = previousStep;
       if (step === 2) matchSequence.showOverview();
       if (step === 3) { progressSequence.showOverview(); showingCompleted = true; }
       render(); workflow.scrollIntoView({block: 'start'}); return;
@@ -813,14 +822,6 @@ function mountStreamingImport(app: HTMLElement) {
     }
     if (action === 'return-review') {
       (step === 2 ? matchSequence : progressSequence).resume(); render(); return;
-    }
-    if (action === 'previous-title') {
-      const sequence = step === 2 ? matchSequence : progressSequence;
-      const current = step === 2 ? matchCurrent() : progressCurrent();
-      const index = current ? sequence.ids.indexOf(String(current.id)) : sequence.ids.length;
-      const previous = sequence.ids[index - 1];
-      if (previous) { sequence.visit(previous); render(); }
-      return;
     }
     if (action === "next") {
       if (step === 2 && !titleReviewComplete()) {
@@ -861,9 +862,11 @@ function mountStreamingImport(app: HTMLElement) {
       return;
     }
     if (action === "confirm" || action === 'skip-match') {
+      const wasPending = reviewItems().some(pending => pending.id === item.id);
       matchSequence.complete(item.id);
       progressSequence.invalidate(item.id);
       await saveItem(item, {action: action === 'confirm' ? 'confirm' : 'skip'});
+      if (wasPending) await advanceAfterLastMatch();
       if (mobileReview.matches) workflow.scrollIntoView({block: 'start'});
       return;
     }
@@ -940,6 +943,8 @@ function mountStreamingImport(app: HTMLElement) {
     if (!session) return;
     saving = true;
     render();
+    const wasPending = reviewItems().some(pending => pending.id === item.id);
+    let remapped = false;
     try {
       session = await request<StreamingSession>(`/imports/${encodeURIComponent(session.id)}/items/${encodeURIComponent(String(item.id))}`, {
         method: 'PATCH', body: JSON.stringify({revision: session.revision, action: 'remap', media_type: mediaType, tmdb_id: tmdbId}),
@@ -947,10 +952,12 @@ function mountStreamingImport(app: HTMLElement) {
       matchSequence.complete(item.id);
       progressSequence.invalidate(item.id);
       closeRemap();
+      remapped = true;
     } catch (error) {
       button.disabled = false;
       showError(error instanceof Error ? error.message : 'Could not remap this title. Please try again.');
     } finally { saving = false; render(); }
+    if (remapped && wasPending) await advanceAfterLastMatch();
   });
 
   upload.addEventListener("click", (event) => {

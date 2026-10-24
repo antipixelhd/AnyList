@@ -30,7 +30,7 @@ const extension = service === "amazon" ? ".zip" : ".csv";
         <form method="dialog">
           <h2 id={`${service}-finish-title`} tabindex="-1" autofocus>When did you finish this series?</h2>
           <CalendarDateInput id={`${service}-finish-date`} name="finish_date" label="Finish date" />
-          <div class="streaming-finish-actions"><button type="submit" value="skip" class="streaming-text-action streaming-muted">Skip</button><button type="submit" value="confirm" class="streaming-button streaming-primary">Confirm date</button></div>
+          <div class="streaming-finish-actions"><button type="submit" value="skip" class="streaming-button streaming-secondary">Skip</button><button type="submit" value="confirm" class="streaming-button streaming-primary">Confirm date</button></div>
         </form>
       </dialog>
       <dialog id={`${service}-streaming-remap-dialog`} data-role="streaming-remap-dialog" aria-labelledby={`${service}-streaming-remap-title`} class="quick-search-dialog streaming-remap-dialog">
