@@ -201,9 +201,10 @@
 .connections-settings-page .streaming-summary span { font-size:13px; color:var(--muted); }
 .connections-settings-page .streaming-rating-row { display:flex; align-items:center; gap:12px; padding:14px 0; min-width:0; }
 .connections-settings-page .streaming-rating-title { margin:0; font-size:14px; font-weight:600; line-height:1.4; overflow-wrap:anywhere; color:var(--text); }
-.connections-settings-page [data-streaming-import] .streaming-rate { display:inline-flex; align-items:center; justify-content:center; gap:8px; min-width:86px; color:#241b07; background:#f7b731; white-space:nowrap; padding-inline:14px; }
-.connections-settings-page [data-streaming-import] .streaming-rate:is(:hover,:focus-visible) { background:#ffd174; color:#241b07; }
-.connections-settings-page [data-streaming-import] .streaming-rate.is-rated { background:transparent; color:#f7b731; padding-inline:0; min-width:100px; font-size:16px; }
+.connections-settings-page [data-streaming-import] .streaming-rate { display:inline-flex; align-items:center; justify-content:center; gap:8px; min-width:86px; color:#fff; background:#f7b731; box-shadow:inset 0 1px 0 #fff3,0 2px 5px #0004; white-space:nowrap; padding-inline:14px; transition:background-color 140ms,color 140ms,box-shadow 140ms; }
+.connections-settings-page [data-streaming-import] .streaming-rate:is(:hover,:focus-visible) { background:#ffd166; color:#fff; }
+.connections-settings-page [data-streaming-import] .streaming-rate:not(.is-rated):active { box-shadow:inset 0 1px 3px #0003; }
+.connections-settings-page [data-streaming-import] .streaming-rate.is-rated { background:transparent; color:#f7b731; box-shadow:none; padding-inline:0; min-width:100px; font-size:16px; }
 .connections-settings-page [data-streaming-import] .streaming-rate.is-rated:hover { color:#ffd174; }
 .connections-settings-page .streaming-rate.is-rated .ui-icon { font-size:19px; }
 .connections-settings-page .streaming-rate.is-rated small { font-size:12px; font-weight:400; }
