@@ -3,6 +3,7 @@ import { showMessage } from '../lib/settings-feedback';
 import { setupCalendarDateInputs } from '../lib/calendar-date-input';
 import { createImportDraft } from '../lib/import-draft';
 import { importDecisionStep } from '../lib/import-steps';
+import { readRemapTitles } from '../lib/streaming-remap-search';
 
 type MatchCandidate = {
   media_type: "movie" | "show";
@@ -618,13 +619,13 @@ function mountStreamingImport(app: HTMLElement) {
     remapProgress.classList.add("visible");
     remapState.hidden = true;
     try {
-      const search = (media_type: "movie" | "series") => request<{ results: Array<{ id?: number | null; tmdb_id?: number; type: string; title: string; poster?: string | null; year?: string | null }> }>(
-        `/tracking/catalog?${new URLSearchParams({ media_type, q: query })}`, { signal: controller.signal },
+      const seriesOnly = item.kind === "show" && !canRemapShowToMovie(item);
+      const responses = await readRemapTitles<{tmdb_id?: number; title: string; poster?: string | null; year?: string | null}>(
+        query, seriesOnly, controller.signal, (path, signal) => request(path, {signal}),
       );
-      const mediaTypes = item.kind === "show" && !canRemapShowToMovie(item) ? ["series"] as const : ["movie", "series"] as const;
-      const responses = await Promise.all(mediaTypes.map(search));
-      if (searchController !== controller) return;
-      const buckets = responses.map((response) => response.results ?? []);
+      if (controller.signal.aborted || searchController !== controller) return;
+      const mediaTypes = seriesOnly ? ["series"] as const : ["movie", "series"] as const;
+      const buckets = mediaTypes.map(type => responses[type]);
       const combined: SearchResult[] = [];
       const seen = new Set<string>();
       for (let index = 0; index < Math.max(...buckets.map((bucket) => bucket.length)); index++) {
