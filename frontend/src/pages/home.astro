@@ -85,8 +85,11 @@ function initializeHomeProgress() {
   homeProgressListeners?.abort();
   homeProgressListeners = new AbortController();
   const {signal} = homeProgressListeners;
+  let progressRevision=0;
+  document.addEventListener('anylist:editor-state',()=>{progressRevision++;},{signal});
   const refreshPanels = createHomePanelRefresh({
     signal,
+    getRevision:()=>progressRevision,
     isBusy: () => !!document.querySelector('.home-dashboard [data-updating="true"]'),
     replace: fresh => {
       const current = document.querySelector('.home-dashboard .series-progress');
@@ -178,6 +181,7 @@ function initializeHomeProgress() {
   grid.querySelectorAll<HTMLButtonElement>('[data-progress-action]').forEach(button => button.addEventListener('click', async () => {
     const card = button.closest<HTMLElement>('[data-progress-card]');
     if (!card || button.disabled) return;
+    progressRevision++;
     button.dataset.updating = 'true';
     button.disabled = true;
     button.title = 'Updating episode progress…';
@@ -222,9 +226,11 @@ function initializeHomeProgress() {
   if (!dashboard || !username) return;
   homeSeriesRefresh = startVisibleRefresh({intervalMs:60_000, refresh:async refreshSignal => {
     if (grid.querySelector('[data-updating="true"]')) return;
+    const revision=progressRevision;
     const response = await fetch(`/api/proxy/tracking/profile/${encodeURIComponent(username)}/all`, {cache:'no-store',signal:refreshSignal});
     if (!response.ok) return;
     const entries = (await response.json()).entries;
+    if(signal.aborted||refreshSignal.aborted||revision!==progressRevision||grid.querySelector('[data-updating="true"]'))return;
     if (!Array.isArray(entries)) return;
     const watching = entries.filter((entry:any) => entry.status === 'watching');
     dashboard.dataset.watchingCount = String(watching.length);
@@ -263,6 +269,7 @@ function initializeHomeProgress() {
     if (actual.length !== expected.length || actual.some((signature,index) => signature !== expected[index])) await refreshPanels();
   }});
   document.addEventListener('anylist:data-changed', () => {
+    progressRevision++;
     void homeSeriesRefresh?.refresh();
     void homeUpcomingRefresh?.refresh();
   }, {signal});
