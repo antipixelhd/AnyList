@@ -2,6 +2,7 @@ import { showDialog, closeDialog } from '../lib/ui-motion';
 import { showMessage } from '../lib/settings-feedback';
 import { setupCalendarDateInputs } from '../lib/calendar-date-input';
 import { createImportDraft } from '../lib/import-draft';
+import { importDecisionStep } from '../lib/import-steps';
 
 type MatchCandidate = {
   media_type: "movie" | "show";
@@ -368,7 +369,7 @@ function mountStreamingImport(app: HTMLElement) {
 
   function ratingView(): string {
     const groups = ["Watching", "Completed", "Paused", "Dropped"] as const;
-    const eligible = visibleItems().filter((item) => item.decision?.action !== "skip" && item.outcome.status !== "skip" && !!item.match?.candidate && !item.existing?.rated);
+    const eligible = ratingItems();
     const groupFor = (item: StreamingItem): typeof groups[number] => {
       if (item.outcome.status === "completed") return "Completed";
       const status = item.outcome.tracking_status ?? "watching";
@@ -401,6 +402,21 @@ function mountStreamingImport(app: HTMLElement) {
   function stepHeader(): string {
     const labels = ["Upload", "Review matches", "Watch progress", "Ratings", "Import"];
     return `<div class="mb-5 flex flex-wrap items-center gap-2">${labels.map((label, index) => `<div class="flex items-center gap-2"><span class="flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold ${step === index + 1 ? "bg-blue-600 text-white" : step > index + 1 ? "bg-emerald-500/20 text-emerald-300" : "bg-zinc-800 text-zinc-500"}">${step > index + 1 ? "✓" : index + 1}</span><span class="text-xs ${step === index + 1 ? "font-semibold text-zinc-200" : "text-zinc-500"}">${label}</span></div>${index < labels.length - 1 ? `<span class="h-px min-w-4 flex-1 bg-zinc-800"></span>` : ""}`).join("")}</div>`;
+  }
+
+  function ratingItems(): StreamingItem[] {
+    return visibleItems().filter(item => item.decision?.action !== 'skip' && item.outcome.status !== 'skip'
+      && !!item.match?.candidate && !item.existing?.rated);
+  }
+
+  function decisionStep(start: number, direction: 1 | -1): number | null {
+    return importDecisionStep(start, direction, {
+      matches: reviewQueueItems().length > 0,
+      progress: visibleItems().some(item => item.decision?.action !== 'skip' && (isIncomplete(item)
+        || (item.outcome.status === 'completed' && item.kind === 'show' && item.completion_evidence
+          && !item.completion_evidence.finish_date && !('finish_date' in item.outcome)))),
+      ratings: ratingItems().length > 0,
+    });
   }
 
   function render() {
@@ -447,7 +463,7 @@ function mountStreamingImport(app: HTMLElement) {
       ? `<button type="button" data-streaming-action="cancel" class="rounded-lg px-3 py-2 text-sm font-semibold text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">Cancel</button>`
       : isFailed
       ? `<button type="button" data-streaming-action="cancel" class="rounded-lg px-3 py-2 text-sm font-semibold text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">Cancel</button>`
-      : `<div class="flex w-full flex-col-reverse gap-2 sm:w-auto sm:flex-row"><button type="button" data-streaming-action="cancel" class="rounded-lg px-3 py-2 text-sm font-semibold text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">Cancel import</button>${step > 2 ? `<button type="button" data-streaming-action="back" class="rounded-lg border border-zinc-700 px-4 py-2 text-sm font-semibold text-zinc-200 hover:bg-zinc-800">Back</button>` : ""}${step < 5 ? `<button type="button" data-streaming-action="next" ${step === 2 && !titleReviewComplete() ? "disabled" : ""} class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40">Continue</button>` : `<button type="button" data-streaming-action="commit" ${busy || saving ? "disabled" : ""} class="rounded-lg bg-emerald-600 px-5 py-2 text-sm font-bold text-white transition-colors hover:bg-emerald-500 disabled:cursor-wait disabled:opacity-50">${busy ? "Importing…" : "Import"}</button>`}</div>`;
+      : `<div class="flex w-full flex-col-reverse gap-2 sm:w-auto sm:flex-row"><button type="button" data-streaming-action="cancel" class="rounded-lg px-3 py-2 text-sm font-semibold text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">Cancel import</button>${decisionStep(step - 1, -1) !== null ? `<button type="button" data-streaming-action="back" class="rounded-lg border border-zinc-700 px-4 py-2 text-sm font-semibold text-zinc-200 hover:bg-zinc-800">Back</button>` : ""}${step < 5 ? `<button type="button" data-streaming-action="next" ${step === 2 && !titleReviewComplete() ? "disabled" : ""} class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40">Continue</button>` : `<button type="button" data-streaming-action="commit" ${busy || saving ? "disabled" : ""} class="rounded-lg bg-emerald-600 px-5 py-2 text-sm font-bold text-white transition-colors hover:bg-emerald-500 disabled:cursor-wait disabled:opacity-50">${busy ? "Importing…" : "Import"}</button>`}</div>`;
     workflow.innerHTML = `${!isCommitted ? stepHeader() : ""}<div class="space-y-5">${content}<div class="flex flex-col-reverse items-stretch justify-between gap-3 border-t border-zinc-800 pt-4 sm:flex-row sm:items-center">${isPreparing ? `<span class="text-xs text-zinc-500">Matching in progress</span>` : ""}${!isCommitted ? nav : `<button type="button" data-streaming-action="restart" class="self-start rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-500 sm:self-auto">Import another file</button>`}</div></div>`;
     if (saving) workflow.querySelectorAll<HTMLButtonElement | HTMLInputElement | HTMLSelectElement>('button, input, select').forEach(control => { control.disabled = true; });
   }
@@ -495,7 +511,7 @@ function mountStreamingImport(app: HTMLElement) {
         return;
       }
       if (session.status === "review" || session.status === "ready") {
-        step = 2;
+        step = decisionStep(2, 1)!;
         render();
         return;
       }
@@ -529,7 +545,7 @@ function mountStreamingImport(app: HTMLElement) {
       step = 1;
       render();
       if (session.status === "preparing") pollTimer = window.setTimeout(poll, 250);
-      else if (session.status === "review" || session.status === "ready") { step = 2; render(); }
+      else if (session.status === "review" || session.status === "ready") { step = decisionStep(2, 1)!; render(); }
       else render();
     } catch (error) {
       uploadControls.classList.remove("hidden");
@@ -736,7 +752,7 @@ function mountStreamingImport(app: HTMLElement) {
     if (action === "cancel") { await cancelSession(); return; }
     if (action === "restart") { session = null; step = 1; openRatingGroups.clear(); clearError(); render(); return; }
     if (saving) return;
-    if (action === "back") { step = Math.max(2, step - 1); render(); workflow.scrollIntoView({ block: "start" }); return; }
+    if (action === "back") { step = decisionStep(step - 1, -1) ?? step; render(); workflow.scrollIntoView({ block: "start" }); return; }
     if (action === "next") {
       if (step === 2 && !titleReviewComplete()) {
         showError("Resolve each uncertain show or movie title before continuing."); return;
@@ -745,7 +761,7 @@ function mountStreamingImport(app: HTMLElement) {
         if (item.decision.action !== 'skip' && item.outcome.status === 'completed') await confirmFinishDate(item);
       }
       if (!await flushDraft()) return;
-      step++;
+      step = decisionStep(step + 1, 1)!;
       render();
       workflow.scrollIntoView({ block: "start" });
       return;
