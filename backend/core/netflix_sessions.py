@@ -368,6 +368,7 @@ def _require_playback_review(items: list[dict]) -> None:
             # Series use the same evidence-derived progress defaults as Netflix.
             continue
         item["requires_watch_confirmation"] = True
+        item.setdefault("title_match_state", item["match"].get("state"))
         item["outcome"]["status"] = "skip"
         item["outcome"]["status_overridden"] = True
         item["progress_reviewed"] = False
@@ -464,6 +465,9 @@ async def _prepare_session(session_id: str, user_id: int, language: str | None) 
                             item["match"]["state"] = "review"
                             item["match"]["reason"] = "This existing show uses TVDB episode order; confirm an episode order before importing."
                             item["decision"]["action"] = None
+            from core.streaming_duplicates import remove_covered_items
+            items, already_imported = await remove_covered_items(db, user_id, items)
+            counts = {**counts, "already_imported": already_imported}
             session.payload = {"source": source, "language": resolved_language, "items": items, "errors": errors, "counts": counts}
             session.source_csv = None
             session.status = "review"

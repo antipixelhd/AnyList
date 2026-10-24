@@ -22,7 +22,7 @@ const {data,type}=Astro.props as {data:{people:any[];activities:any[];following_
     </div>
   </section>
   <section class="media-social-people" aria-labelledby="media-social-people-heading">
-    <h2 id="media-social-people-heading">People you follow</h2>
+    <div class="media-social-heading"><h2 id="media-social-people-heading">People you follow</h2></div>
     {data.people.length?<div class="media-social-list">{data.people.map(person=><a class="lab-friend media-social-person" href={`/user/${encodeURIComponent(person.username)}/${type==='movie'?'movies':'series'}`}>
       <span class="lab-friend-avatar" aria-hidden="true">{person.has_avatar?<img src={`/api/proxy/profile/avatar/${person.id}`} alt="" loading="lazy"/>:(person.display_name||person.username).slice(0,1).toUpperCase()}</span>
       <strong class="media-social-person-name">{person.display_name||person.username}</strong>

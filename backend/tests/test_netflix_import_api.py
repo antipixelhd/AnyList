@@ -705,6 +705,40 @@ class NetflixCommitTests(unittest.IsolatedAsyncioTestCase):
         await self.connection.close()
         await self.engine.dispose()
 
+    async def test_review_suppresses_saved_evidence_but_keeps_new_and_rolled_back_episodes(self):
+        from core.streaming_duplicates import remove_covered_items
+        from copy import deepcopy
+        item = _show_item()
+        item['outcome'].update(status='completed', status_overridden=True)
+        session = SimpleNamespace(id='dedup', payload={'items': [item]})
+        await netflix_sessions._apply_import(self.db, self.user.id, session, AsyncMock())
+        await self.db.flush()
+        self.assertEqual(await remove_covered_items(self.db, self.user.id, [item]), ([], 1))
+        # Another viewer's history cannot suppress this account's review.
+        self.assertEqual(await remove_covered_items(self.db, -1, [item]), ([item], 0))
+        earlier = deepcopy(item)
+        earlier['episodes'][0]['dates'] = ['2019-01-01']
+        self.assertEqual(await remove_covered_items(self.db, self.user.id, [earlier]), ([earlier], 0))
+        event = (await self.db.execute(select(WatchEvent).join(Media).where(
+            WatchEvent.user_id == self.user.id, Media.episode_number == 3,
+        ))).scalar_one()
+        await self.db.delete(event)
+        await self.db.flush()
+        self.assertEqual(await remove_covered_items(self.db, self.user.id, [item]), ([item], 0))
+
+    async def test_amazon_review_flag_does_not_resurface_already_imported_movie(self):
+        from core.streaming_duplicates import remove_covered_items
+        item = {'id': 'movie-dedup', 'kind': 'movie', 'source_title': 'Movie',
+                'match': {'state': 'matched', 'candidate': {'tmdb_id': 880099, 'title': 'Movie'}},
+                'source_dates': ['2020-01-01'], 'outcome': {'status': 'completed'},
+                'decision': {'action': 'confirm'}}
+        await netflix_sessions._apply_import(self.db, self.user.id,
+                                            SimpleNamespace(id='dedup-movie', payload={'items': [item]}), AsyncMock())
+        await self.db.flush()
+        netflix_sessions._require_playback_review([item])
+        self.assertEqual(item['match']['state'], 'review')
+        self.assertEqual(await remove_covered_items(self.db, self.user.id, [item]), ([], 1))
+
     async def test_partial_cutoff_creates_only_earlier_history_and_is_idempotent(self):
         item = _show_item()
         item["outcome"]["status_overridden"] = True
