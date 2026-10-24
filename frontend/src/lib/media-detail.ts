@@ -13,6 +13,7 @@ import {currentDetailSeason,detailSeasonState,type DetailSeason} from './season-
 import {observeDeferredArtwork} from './visible-artwork';
 import {responsiveArtwork} from './responsive-artwork';
 import {localizeDateTimes} from './date-time-dom';
+import {confirmEntryAction,episodeRollbackWarning} from './entry-confirmation';
 
 let pageListeners: AbortController | undefined;
 let mountedRoot: HTMLElement | null = null;
@@ -330,7 +331,15 @@ export function mountMediaDetail() {
     const watched=button.getAttribute('aria-pressed')!=='true';button.disabled=true;button.setAttribute('aria-busy','true');
     try{
       const id=Number(button.dataset.watchEpisode);
-      const response=await fetch(`/api/proxy/tracking/entry/${info.id}/episode/${id}`,{signal,method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({watched})});
+      const save=(confirmed=false)=>fetch(`/api/proxy/tracking/entry/${info.id}/episode/${id}`,{signal,method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({watched,confirm_rollback:confirmed})});
+      let response=await save();
+      if(response.status===409&&!watched){
+        const error=await response.clone().json().catch(()=>({}));
+        if(error.detail?.code==='watch_rollback_required'){
+          if(!await confirmEntryAction(episodeRollbackWarning,signal)||signal.aborted)return;
+          response=await save(true);
+        }
+      }
       const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(typeof result.detail==='string'?result.detail:'Unable to update this episode.');
       await refreshSeasonState();
     }catch(error){if(!signal.aborted)showToast((error as Error).message,'error');}
