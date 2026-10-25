@@ -1,6 +1,6 @@
 import {cancelImportNotification, confirmImportCancellation} from './import-cancel';
 
-type ActiveImport = {import_id: string | null; connection_id: number | null; title: string; resolve_url: string};
+export type ActiveImport = {import_id: string | null; connection_id: number | null; title: string; resolve_url: string};
 let active: ActiveImport | null = null;
 let generation = 0;
 
@@ -13,28 +13,39 @@ async function refresh(signal?: AbortSignal) {
   const updated = (await response.json()).active;
   if (requestGeneration !== generation || signal?.aborted) return active;
   active = updated;
-  const banner = document.querySelector<HTMLElement>('[data-import-admission]');
-  if (banner) {
-    banner.hidden = !active;
-    const title = banner.querySelector('[data-import-admission-title]');
-    const resume = banner.querySelector<HTMLAnchorElement>('[data-import-admission-resume]');
+  paint();
+  return active;
+}
+
+function paint() {
+  const params = new URL(location.href).searchParams;
+  const resumed = !!active?.import_id && (params.get('import') === active.import_id ||
+    Array.from(document.querySelectorAll<HTMLElement>('[data-streaming-import][data-import-session]'))
+      .some(app => app.dataset.importSession === active!.import_id && !app.hidden));
+  document.querySelectorAll<HTMLElement>('[data-import-admission]').forEach(notice => {
+    notice.hidden = !active || resumed;
+    const title = notice.querySelector('[data-import-admission-title]');
+    const resume = notice.querySelector<HTMLAnchorElement>('[data-import-admission-resume]');
     if (title) title.textContent = active?.title || '';
     if (resume) resume.href = active?.resolve_url || '#';
-  }
-  const add = document.querySelector<HTMLButtonElement>('#add-connection-btn');
-  if (add) { add.disabled = !!active; add.classList.toggle('opacity-50', !!active); }
-  document.querySelectorAll<HTMLElement>('[data-role="streaming-import-upload-controls"]').forEach(control => {
-    control.inert = !!active;
-    control.classList.toggle('opacity-50', !!active);
   });
-  return active;
+  document.querySelectorAll<HTMLElement>('[data-import-start-connection]').forEach(control => {
+    control.hidden = !!active;
+  });
+  document.querySelectorAll<HTMLElement>('[data-import-start-service]').forEach(control => {
+    const app = control.querySelector<HTMLElement>('[data-streaming-import]');
+    const ownsReview = !!active?.import_id && (app?.dataset.importSession === active.import_id ||
+      (resumed && params.get('source') === control.dataset.service && !params.has('connection')));
+    control.hidden = !!active && !ownsReview;
+  });
 }
 
 export async function canStartImport() {
   try {
     const current = await refresh();
     if (!current) return true;
-    document.querySelector('[data-import-admission]')?.scrollIntoView({behavior: 'smooth', block: 'center'});
+    Array.from(document.querySelectorAll<HTMLElement>('[data-import-admission]'))
+      .find(notice => !notice.closest('[hidden]'))?.scrollIntoView({behavior: 'smooth', block: 'center'});
   } catch (error) {
     const {showMessage} = await import('./settings-feedback');
     showMessage(error instanceof Error ? error.message : 'Could not check your import.', 'error');
@@ -53,7 +64,8 @@ export function mountImportAdmission() {
   window.addEventListener('focus', update, {signal});
   document.addEventListener('media-tracker:notifications-changed', update, {signal});
   document.addEventListener('streaming:session-changed', update, {signal});
-  banner.querySelector<HTMLButtonElement>('[data-import-admission-cancel]')?.addEventListener('click', async event => {
+  document.addEventListener('streaming:activity-changed', () => { queueMicrotask(() => { if (!signal.aborted) paint(); }); }, {signal});
+  document.querySelectorAll<HTMLButtonElement>('[data-import-admission-cancel]').forEach(cancel => cancel.addEventListener('click', async event => {
     const button = event.currentTarget as HTMLButtonElement;
     button.disabled = true;
     try {
@@ -73,6 +85,6 @@ export function mountImportAdmission() {
       const {showMessage} = await import('./settings-feedback');
       showMessage(error instanceof Error ? error.message : 'Could not cancel the import.', 'error');
     } finally { button.disabled = false; }
-  }, {signal});
+  }, {signal}));
   update();
 }
