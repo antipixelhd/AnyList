@@ -119,8 +119,11 @@ class ConnectionDraftDatabaseTests(unittest.IsolatedAsyncioTestCase):
         with patch('core.connection_imports.prepare_items', AsyncMock()) as prepare:
             self.assertFalse(await self.stage(progress=[movie()]))
         prepare.assert_not_awaited()
-        self.assertIsNone(await self.db.get(StreamBaseline, self.conn.id))
+        self.assertTrue((await self.db.get(StreamBaseline, self.conn.id)).approved)
+        self.assertEqual((await self.db.scalars(select(SyncReview).where(SyncReview.user_id == self.user.id))).all(), [])
         self.assertFalse(await onboarding_pending(self.db, self.conn, require_snapshot=True))
+        from core.tracking_snapshot import require_stream_reconciliation
+        await require_stream_reconciliation(self.db, self.conn)
 
     async def test_turning_watched_off_does_not_release_existing_review(self):
         from core.connection_imports import onboarding_pending
@@ -631,7 +634,7 @@ class ConnectionDraftDatabaseTests(unittest.IsolatedAsyncioTestCase):
         await self.db.flush()
         self.assertEqual((await self.db.scalars(select(PlaybackProgress))).one().progress_seconds, 600)
 
-    async def _assert_first_pull_stages_history(self, provider, *, metadata_error=False, watched_enabled=True):
+    async def _assert_first_pull_stages_history(self, provider, *, metadata_error=False, watched_enabled=True, playback_enabled=True):
         from contextlib import asynccontextmanager, ExitStack
         from datetime import datetime, timezone
         from core import server_sync
@@ -640,8 +643,8 @@ class ConnectionDraftDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.conn.type = provider
         self.conn.server_user_id = '1'
         self.conn.sync_watched = watched_enabled
-        self.conn.sync_playback = True
-        self.conn.sync_collection = False
+        self.conn.sync_playback = playback_enabled
+        self.conn.sync_collection = not playback_enabled and not watched_enabled
         job = SyncJob(user_id=self.user.id, connection_id=self.conn.id,
                       source=CollectionSource(provider), status=SyncStatus.pending, job_type='pull')
         self.db.add(job)
@@ -685,11 +688,28 @@ class ConnectionDraftDatabaseTests(unittest.IsolatedAsyncioTestCase):
             else:
                 self.assertEqual((await self.db.scalars(select(NetflixImportSession)
                     .where(NetflixImportSession.user_id == self.user.id))).all(), [])
-                playback.assert_awaited_once()
-                snapshot.assert_awaited_once()
+                if playback_enabled:
+                    playback.assert_awaited_once()
+                    snapshot.assert_awaited_once()
+                else:
+                    playback.assert_not_awaited()
+                    snapshot.assert_not_awaited()
+                self.assertTrue((await self.db.get(StreamBaseline, self.conn.id)).approved)
             history.assert_not_awaited()
             self.assertEqual((await self.db.scalars(select(WatchEvent))).all(), [])
             self.assertEqual((await self.db.scalars(select(SyncReview))).all(), [])
+
+    async def test_nuvio_library_only_first_pull_is_approved_without_importer(self):
+        await self._assert_first_pull_stages_history('nuvio', watched_enabled=False, playback_enabled=False)
+
+    async def test_stremio_library_only_first_pull_is_approved_without_importer(self):
+        await self._assert_first_pull_stages_history('stremio', watched_enabled=False, playback_enabled=False)
+
+    async def test_incomplete_non_watch_snapshot_does_not_approve_outgoing_sync(self):
+        self.conn.sync_watched = False
+        await self.db.flush()
+        self.assertFalse(await stage_first_snapshot(self.db, self.conn, [], [], [], {}, 'fixture', complete=False))
+        self.assertIsNone(await self.db.get(StreamBaseline, self.conn.id))
 
     async def test_nuvio_playback_only_first_pull_does_not_open_importer(self):
         await self._assert_first_pull_stages_history('nuvio', watched_enabled=False)

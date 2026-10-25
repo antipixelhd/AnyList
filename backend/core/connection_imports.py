@@ -15,7 +15,7 @@ from sqlalchemy import select
 from core import netflix_sessions, tmdb
 from core.streaming_evidence import prepare_evidence
 from core.streaming_history import WatchObservation, MIN_WATCH_SECONDS
-from models import Media, MediaServerConnection, NetflixImportSession, Show, WatchEvent
+from models import Media, MediaServerConnection, NetflixImportSession, Show, User, WatchEvent
 from models.tracking import StreamBaseline, TrackedEntry
 
 
@@ -182,7 +182,7 @@ async def remove_covered_items(db, user_id, items):
 
 
 async def stage_first_snapshot(db, conn, library, watched, progress, mappings, api_key, *, full_resync=False,
-                               source_started_at=None):
+                               source_started_at=None, complete=True):
     """Return True when the watch snapshot belongs to onboarding, not live sync."""
     if full_resync:
         return False  # Existing explicit repair semantics are separate from connection onboarding.
@@ -194,7 +194,24 @@ async def stage_first_snapshot(db, conn, library, watched, progress, mappings, a
         # Abandoned/expired reviews never silently approve a connection.
         return True
     if not conn.sync_watched:
-        return False
+        # No watch review is required. Establish an empty approved baseline so
+        # normal playback/library reconciliation handles the fetched changes,
+        # without the legacy initial-import notification or outbound deadlock.
+        if not complete:
+            return False
+        identity_version = conn.identity_version
+        await db.execute(select(User.id).where(User.id == conn.user_id).with_for_update())
+        await db.refresh(conn)
+        if conn.identity_version != identity_version:
+            raise ValueError('Connection account changed while preparing history; sync again.')
+        existing = await db.get(StreamBaseline, conn.id, populate_existing=True)
+        if existing:
+            return bool((existing.snapshot or {}).get('import_session_id'))
+        if not conn.sync_watched:
+            db.add(StreamBaseline(connection_id=conn.id, user_id=conn.user_id, approved=True,
+                snapshot={}, observed_at=source_started_at or netflix_sessions._now()))
+            await db.commit()
+            return False
     identity_version = conn.identity_version
     unresolved = {str(row.get('content_id')) for row, _ in observations(watched, progress)
                   if re.fullmatch(r'tt\d+|tmdb:\d+', str(row.get('content_id') or ''), re.IGNORECASE)
@@ -210,6 +227,9 @@ async def stage_first_snapshot(db, conn, library, watched, progress, mappings, a
     await db.refresh(conn)
     if conn.identity_version != identity_version:
         raise ValueError('Connection account changed while preparing history; sync again.')
+    if not conn.sync_watched:
+        return await stage_first_snapshot(db, conn, library, watched, progress, mappings, api_key,
+            source_started_at=source_started_at, complete=complete)
     if await db.get(StreamBaseline, conn.id, populate_existing=True):
         return True
     items = await remove_covered_items(db, conn.user_id, items)

@@ -3104,7 +3104,7 @@ async def _run_nuvio_sync(
             from core.connection_imports import stage_first_snapshot
             reviewing_import = await stage_first_snapshot(
                 db, conn, library_records, watched_records, progress_records, tmdb_ids,
-                tmdb_api_key, full_resync=full_resync, source_started_at=pull_started_at,
+                tmdb_api_key, full_resync=full_resync, source_started_at=pull_started_at, complete=complete_snapshot,
             )
             if reviewing_import:
                 await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(
@@ -3710,7 +3710,7 @@ async def _run_stremio_sync(
             from core.connection_imports import stage_first_snapshot
             reviewing_import = await stage_first_snapshot(
                 db, conn, library_records, watched_records, progress_records, tmdb_ids,
-                tmdb_api_key, full_resync=full_resync, source_started_at=pull_started_at,
+                tmdb_api_key, full_resync=full_resync, source_started_at=pull_started_at, complete=complete_snapshot,
             )
             if reviewing_import:
                 await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(
