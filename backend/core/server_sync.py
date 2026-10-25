@@ -3116,12 +3116,10 @@ async def _run_nuvio_sync(
                 )
 
             from core.connection_imports import stage_first_snapshot
-            reviewing_import = False
-            if not stats['errors']:
-                reviewing_import = await stage_first_snapshot(
-                    db, conn, library_records, watched_records, progress_records, tmdb_ids,
-                    tmdb_api_key, full_resync=full_resync, source_started_at=pull_started_at,
-                )
+            reviewing_import = await stage_first_snapshot(
+                db, conn, library_records, watched_records, progress_records, tmdb_ids,
+                tmdb_api_key, full_resync=full_resync, source_started_at=pull_started_at,
+            )
             if not reviewing_import and conn.sync_watched and watched_records:
                 from core.streaming_clear import assert_pull_snapshot_current
                 await assert_pull_snapshot_current(
@@ -3693,12 +3691,10 @@ async def _run_stremio_sync(
                 await sync_group(normalized_progress, media_type, sync_collection=False)
 
             from core.connection_imports import stage_first_snapshot
-            reviewing_import = False
-            if not stats['errors']:
-                reviewing_import = await stage_first_snapshot(
-                    db, conn, library_records, watched_records, progress_records, tmdb_ids,
-                    tmdb_api_key, full_resync=full_resync, source_started_at=pull_started_at,
-                )
+            reviewing_import = await stage_first_snapshot(
+                db, conn, library_records, watched_records, progress_records, tmdb_ids,
+                tmdb_api_key, full_resync=full_resync, source_started_at=pull_started_at,
+            )
             if not reviewing_import and conn.sync_watched and watched_records:
                 from core.streaming_clear import assert_pull_snapshot_current
                 await assert_pull_snapshot_current(

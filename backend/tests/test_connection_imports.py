@@ -211,7 +211,7 @@ class ConnectionDraftDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.db.scalars(select(TrackedEntry))).one().status, 'completed')
         handoff.assert_awaited_once()
 
-    async def _assert_first_pull_stages_history(self, provider):
+    async def _assert_first_pull_stages_history(self, provider, *, metadata_error=False):
         from contextlib import asynccontextmanager, ExitStack
         from datetime import datetime, timezone
         from core import server_sync
@@ -231,10 +231,15 @@ class ConnectionDraftDatabaseTests(unittest.IsolatedAsyncioTestCase):
         async def session():
             yield self.db
 
+        async def metadata(*args, **kwargs):
+            if metadata_error:
+                args[4]['errors'] += 1
+            return []
+
         with ExitStack() as stack:
             stack.enter_context(patch.object(server_sync, 'async_sessionmaker', return_value=session))
             stack.enter_context(patch('core.settings_store.get_effective_tmdb_key', AsyncMock(return_value='fixture')))
-            stack.enter_context(patch.object(server_sync, 'sync_items', AsyncMock(return_value=[])))
+            stack.enter_context(patch.object(server_sync, 'sync_items', AsyncMock(side_effect=metadata)))
             stack.enter_context(patch.object(server_sync, 'pre_cache_all_collected_bg', AsyncMock()))
             stack.enter_context(patch('core.streaming_library.retry_pending_library_deliveries', AsyncMock()))
             history = stack.enter_context(patch.object(server_sync, '_apply_nuvio_watch_history', AsyncMock()))
@@ -265,3 +270,9 @@ class ConnectionDraftDatabaseTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_stremio_first_pull_stages_instead_of_applying_or_notifying(self):
         await self._assert_first_pull_stages_history('stremio')
+
+    async def test_nuvio_metadata_error_cannot_bypass_first_import_review(self):
+        await self._assert_first_pull_stages_history('nuvio', metadata_error=True)
+
+    async def test_stremio_metadata_error_cannot_bypass_first_import_review(self):
+        await self._assert_first_pull_stages_history('stremio', metadata_error=True)
