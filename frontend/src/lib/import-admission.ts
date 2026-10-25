@@ -2,13 +2,17 @@ import {cancelImportNotification, confirmImportCancellation} from './import-canc
 
 type ActiveImport = {import_id: string | null; connection_id: number | null; title: string; resolve_url: string};
 let active: ActiveImport | null = null;
+let generation = 0;
 
 async function refresh(signal?: AbortSignal) {
+  const requestGeneration = ++generation;
   const response = await fetch('/api/proxy/imports/active', {signal: AbortSignal.any([
     AbortSignal.timeout(30000), ...(signal ? [signal] : []),
   ])});
   if (!response.ok) throw new Error('Could not check your current import. Please try again.');
-  active = (await response.json()).active;
+  const updated = (await response.json()).active;
+  if (requestGeneration !== generation || signal?.aborted) return active;
+  active = updated;
   const banner = document.querySelector<HTMLElement>('[data-import-admission]');
   if (banner) {
     banner.hidden = !active;
@@ -48,6 +52,7 @@ export function mountImportAdmission() {
   document.addEventListener('astro:before-swap', () => controller.abort(), {once: true, signal});
   window.addEventListener('focus', update, {signal});
   document.addEventListener('media-tracker:notifications-changed', update, {signal});
+  document.addEventListener('streaming:session-changed', update, {signal});
   banner.querySelector<HTMLButtonElement>('[data-import-admission-cancel]')?.addEventListener('click', async event => {
     const button = event.currentTarget as HTMLButtonElement;
     button.disabled = true;

@@ -111,6 +111,7 @@ function mountStreamingImport(app: HTMLElement) {
   const hasTmdbKey = app.getAttribute("data-has-tmdb-key") === "true";
 
   let session: StreamingSession | null = null;
+  let admissionState = "";
   let step = 1;
   let pollTimer: number | undefined;
   let saving = false;
@@ -513,6 +514,11 @@ function mountStreamingImport(app: HTMLElement) {
   function render() {
     syncReviewSequences();
     checkpoint();
+    const nextAdmissionState = session ? `${session.id}:${session.status}` : "";
+    if (nextAdmissionState !== admissionState) {
+      admissionState = nextAdmissionState;
+      document.dispatchEvent(new CustomEvent('streaming:session-changed'));
+    }
     app.dataset.reviewLayout = mobileReview.matches ? 'single' : 'list';
     app.dataset.importStep = String(step);
     if (session && !['cancelled', 'committed'].includes(session.status)) app.dataset.importSession = session.id;
