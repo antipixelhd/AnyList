@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from core import settings_store, tmdb
 from core.enrichment import create_media_safely
 from core.status_provenance import mark_status_change
+from core.streaming_evidence import default_show_status as _default_show_status
 from core.tracking_rules import effective_score
 from core.watch_dates import inferred_watch_datetime, reconcile_inferred_watch_date
 from db import engine
@@ -176,17 +177,6 @@ def _resolve_item_episodes(item: dict) -> None:
         item["outcome"]["latest_season"], item["outcome"]["latest_episode"] = latest
 
 
-def _default_show_status(seasons: list[dict]) -> str:
-    if seasons and all(
-        season.get("catalogue_complete") and season.get("total_released") is not None
-        and season.get("represented", 0) >= season["total_released"] for season in seasons
-    ):
-        return "completed"
-    if all(int(season.get("represented") or 0) <= 2 for season in seasons):
-        return "skip"
-    return "partial"
-
-
 def _existing_state(media: Media | None, tracked: TrackedEntry | None) -> dict:
     return {
         "catalog": media is not None,
@@ -202,6 +192,40 @@ def _resolve_draft_items(items: list[dict]) -> None:
         _resolve_item_episodes(item)
         if item.get("kind") == "show" and not item.get("is_anime") and not item.get("outcome", {}).get("status_overridden"):
             item["outcome"]["status"] = _default_show_status(item.get("seasons") or [])
+
+
+async def _prepare_movie_runtime(items: list[dict], observations, api_key: str, language: str | None) -> None:
+    """Load base runtimes only when duration evidence needs a completion ratio."""
+    if not any(row.watched_seconds is not None for row in observations):
+        return
+    semaphore = asyncio.Semaphore(4)
+    tasks = {}
+
+    async def load(tmdb_id):
+        async with semaphore:
+            try:
+                return await tmdb.get_movie_light(tmdb_id, api_key=api_key, language=language)
+            except Exception:
+                logger.warning("Could not load streaming movie runtime for TMDB %s", tmdb_id)
+                return {}
+
+    pending = []
+    for item in items:
+        candidate = item.get('match', {}).get('candidate') or {}
+        if item.get('kind') != 'movie' or item.get('is_anime') or not candidate.get('tmdb_id'):
+            continue
+        if candidate.get('runtime') or (candidate.get('details') or {}).get('runtime'):
+            continue
+        identity = candidate['tmdb_id']
+        if identity not in tasks:
+            tasks[identity] = asyncio.create_task(load(identity))
+        pending.append((candidate, identity))
+    if tasks:
+        await asyncio.gather(*tasks.values())
+    for candidate, identity in pending:
+        details = tasks[identity].result()
+        if details.get('id') == identity and details.get('runtime'):
+            candidate['details'] = {**(candidate.get('details') or {}), **details}
 
 
 def _normalise_groups(prepared: dict) -> list[dict]:
@@ -321,6 +345,42 @@ async def _set_progress(session_id: str, user_id: int, current: int, total: int,
         return True
 
 
+def _require_playback_review(items: list[dict]) -> None:
+    """Only unqualified playback needs a separate watch-progress decision."""
+    # Meaningful playback is evidence, not a claim of completion.
+    for item in items:
+        if item.get("is_anime"):
+            continue
+        # Playback on multiple dates may be one viewing resumed in parts.
+        # A title/progress decision confirms one watch, never all sessions as rewatches.
+        evidence = item.setdefault("source_evidence", {})
+        if item["kind"] == "movie":
+            dates = sorted(set(item.get("source_dates") or []))
+            evidence["playback_dates"] = sorted(set(dates) | {
+                row['watched_at'] for row in evidence.get('viewings', []) if row.get('watched_at')})
+            item["source_dates"] = dates[:1]
+        else:
+            evidence["episode_playback_dates"] = [
+                {"source_id": episode.get("source_id"), "dates": sorted(set(episode.get("dates") or []) | {
+                    row['watched_at'] for row in episode.get('viewings', []) if row.get('watched_at')})}
+                for episode in item.get("episodes") or []
+            ]
+            for episode in item.get("episodes") or []:
+                episode["dates"] = sorted(set(episode.get("dates") or []))[:1]
+            # Series use the same evidence-derived progress defaults as Netflix.
+            continue
+        if item.get("progress_reviewed") and item.get("requires_watch_confirmation") is False:
+            continue
+        item["requires_watch_confirmation"] = True
+        item.setdefault("title_match_state", item["match"].get("state"))
+        item["outcome"]["status"] = "skip"
+        item["outcome"]["status_overridden"] = True
+        item["progress_reviewed"] = False
+        item["match"]["state"] = "review"
+        item["match"]["reason"] = "Playback recorded. Confirm the title and review watched progress."
+        item["decision"] = {"action": None}
+
+
 async def _prepare_session(session_id: str, user_id: int, language: str | None) -> None:
     maker = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     try:
@@ -330,22 +390,28 @@ async def _prepare_session(session_id: str, user_id: int, language: str | None) 
             ))).scalar_one_or_none()
             if session is None or session.status != "preparing":
                 return
+            source = (session.payload or {}).get("source", "netflix")
             content = session.source_csv
             api_key = await settings_store.get_user_tmdb_key(db, user_id, cached=False)
             resolved_language = language or (session.payload or {}).get("language")
             if not content:
                 raise ValueError("The uploaded CSV is no longer available for preparation.")
             if not api_key:
-                raise ValueError("A TMDB API key is required to match Netflix titles.")
+                raise ValueError("A TMDB API key is required to match streaming titles.")
             session.phase = "parse"
-            session.progress = {"current": 0, "total": 1, "message": "Reading Netflix viewing history"}
+            session.progress = {"current": 0, "total": 1, "message": "Reading streaming viewing history"}
             await db.commit()
 
         from core.netflix_import import parse_netflix_csv, prepare_netflix_import
-        history = parse_netflix_csv(content, language=resolved_language)
+        if source == "amazon":
+            from core.amazon_import import parse_amazon_zip
+            history = await asyncio.to_thread(parse_amazon_zip, content, language=resolved_language)
+        else:
+            history = parse_netflix_csv(content, language=resolved_language)
+        resolved_language = resolved_language or getattr(history, "language", None)
         history_dict = history.to_dict() if hasattr(history, "to_dict") else {}
         row_count = len(getattr(history, "rows", []) or history_dict.get("rows", []))
-        await _set_progress(session_id, user_id, 1, 1, "Netflix CSV parsed", phase="match")
+        await _set_progress(session_id, user_id, 1, 1, "Viewing history parsed", phase="match")
 
         async def progress_fn(current: int, total: int, message: str = "Matching titles"):
             alive = await _set_progress(session_id, user_id, current, total, message, phase="match")
@@ -363,6 +429,11 @@ async def _prepare_session(session_id: str, user_id: int, language: str | None) 
         if not isinstance(prepared, dict):
             prepared = prepared.to_dict() if hasattr(prepared, "to_dict") else {}
         items = _normalise_groups(prepared)
+        await _prepare_movie_runtime(items, history.rows, api_key, resolved_language)
+        from core.streaming_evidence import prepare_evidence
+        prepare_evidence(items, history.rows)
+        if source == "amazon":
+            _require_playback_review(items)
         errors = prepared.get("errors") or history_dict.get("errors") or []
         counts = prepared.get("counts") or history_dict.get("counts") or {}
         if row_count and not counts:
@@ -398,7 +469,10 @@ async def _prepare_session(session_id: str, user_id: int, language: str | None) 
                             item["match"]["state"] = "review"
                             item["match"]["reason"] = "This existing show uses TVDB episode order; confirm an episode order before importing."
                             item["decision"]["action"] = None
-            session.payload = {"language": resolved_language, "items": items, "errors": errors, "counts": counts}
+            from core.streaming_duplicates import remove_covered_items
+            items, already_imported = await remove_covered_items(db, user_id, items)
+            counts = {**counts, "already_imported": already_imported}
+            session.payload = {"source": source, "language": resolved_language, "items": items, "errors": errors, "counts": counts}
             session.source_csv = None
             session.status = "review"
             session.phase = "review"
@@ -590,7 +664,7 @@ async def _get_or_create_episode(
         "show_id": show.id,
         "season_number": local_season,
         "episode_number": local_number,
-        "tmdb_data": {"runtime": details.get("runtime"), "source": "netflix-import"},
+        "tmdb_data": {"runtime": details.get("runtime"), "source": "streaming-import"},
     }
     if episode.get("released_for_import"):
         fields["tmdb_data"]["tracking_import_released"] = True
@@ -634,6 +708,10 @@ def _show_import_positions(item: dict, outcome: dict, today: date) -> tuple[dict
     endpoint = (outcome.get("latest_season"), outcome.get("latest_episode"))
     cutoff_exclusions = 0
     status = outcome.get("status")
+    if status == "partial" and (endpoint[0] is None or endpoint[1] is None) and any(
+        ep.get('watch_qualified') is False for ep in item.get('episodes', [])
+    ):
+        raise ValueError(f"{item.get('source_title')}: choose a latest watched episode.")
     if status == "partial" and endpoint[0] is not None and endpoint[1] is not None:
         endpoint = (int(endpoint[0]), int(endpoint[1]))
         endpoint_episode = catalog.get(endpoint)
@@ -652,6 +730,20 @@ def _show_import_positions(item: dict, outcome: dict, today: date) -> tuple[dict
             if position <= endpoint and _episode_is_released(episode, today)
         )
     return source_positions, chosen_positions, cutoff_exclusions
+
+
+async def _reconcile_first_watch(db, user_id, media_id, watched_at):
+    existing = (await db.execute(select(WatchEventModel).where(
+        WatchEventModel.user_id == user_id, WatchEventModel.media_id == media_id,
+        WatchEventModel.completed.is_(True),
+        WatchEventModel.date_inferred.is_(False), WatchEventModel.date_shared.is_(False),
+    ).order_by(WatchEventModel.watched_at.asc().nulls_last()).limit(1))).scalar_one_or_none()
+    if existing is None:
+        return False
+    if existing.watched_at is None or watched_at < existing.watched_at:
+        existing.watched_at = watched_at
+        existing.date_inferred = False
+    return True
 
 
 async def _has_completed_event(db: AsyncSession, user_id: int, media_id: int, watched_at: datetime | None) -> bool:
@@ -680,26 +772,37 @@ async def _track_imported_root(
         TrackedEntry.user_id == user_id, TrackedEntry.media_id == root.id,
     ).with_for_update())).scalar_one_or_none()
     is_new = entry is None
+    previous_dates = (entry.start_date, entry.finish_date) if entry else (None, None)
     previous_status = entry.status if entry is not None else None
     if entry is None:
-        initial_status = "completed" if is_movie or outcome.get("status") == "completed" else outcome.get("tracking_status") or "watching"
+        initial_status = "completed" if outcome.get("status") == "completed" else outcome.get("tracking_status") or "watching"
         entry = TrackedEntry(user_id=user_id, media_id=root.id, status=initial_status, progress=0)
         db.add(entry)
-    desired_status = "completed" if is_movie or outcome.get("status") == "completed" else outcome.get("tracking_status") or "watching"
+    desired_status = "completed" if outcome.get("status") == "completed" else outcome.get("tracking_status") or "watching"
     if is_new:
         entry.status = desired_status
-        mark_status_change(entry, "netflix-import", datetime.combine(max(accepted_dates), datetime.min.time()) if accepted_dates else None)
+        mark_status_change(entry, "streaming-import", datetime.combine(max(accepted_dates), datetime.min.time()) if accepted_dates else None)
     elif outcome.get("status_overridden") and entry.status != desired_status:
         entry.status = desired_status
-        mark_status_change(entry, "netflix-import")
+        mark_status_change(entry, "streaming-import")
     if (is_new or previous_status != entry.status) and entry.status in {"planning", "paused", "dropped", "completed"}:
         from core.stream_actions import queue_local_dismissals
         await queue_local_dismissals(db, user_id, root)
     entry.progress = max(int(entry.progress or 0), progress_count)
-    if not is_movie and entry.start_date is None and accepted_dates:
-        entry.start_date = min(accepted_dates)
-    if (is_movie or outcome.get("status") == "completed") and entry.finish_date is None and accepted_dates:
-        entry.finish_date = max(accepted_dates)
+    if accepted_dates:
+        first = min(accepted_dates)
+        entry.start_date = min(entry.start_date, first) if entry.start_date else first
+    if "finish_date" in outcome and outcome["finish_date"] is None:
+        entry.finish_date = None
+    if outcome.get("status") == "completed":
+        finish = _to_date(outcome.get("finish_date"))
+        if finish:
+            entry.finish_date = min(entry.finish_date, finish) if entry.finish_date else finish
+    changed_dates = {name for name, before, after in zip(("start_date", "finish_date"), previous_dates, (entry.start_date, entry.finish_date)) if before != after}
+    if not is_new and changed_dates:
+        from core.streaming_activity import reschedule_date_activity
+        await reschedule_date_activity(db, user_id, root.id, start_date=entry.start_date,
+                                       finish_date=entry.finish_date, changed=changed_dates, status=entry.status)
     entry.initial_import_completed_at = _now() if is_new and entry.status == "completed" else entry.initial_import_completed_at
     # A final, explicit import can restore an entry the owner previously deleted.
     await db.execute(delete(TrackingDeletion).where(
@@ -712,7 +815,6 @@ async def _apply_staged_rating(db: AsyncSession, user_id: int, root: Media, entr
     """Apply an explicitly chosen import rating to the tracked root only."""
     if not outcome.get("manual_score_staged"):
         return
-    from core.activity import record_daily_activity
     from core.tracking_rules import effective_score
 
     old_score = effective_score(entry.rating_mode, entry.manual_score, entry.season_scores)
@@ -728,11 +830,20 @@ async def _apply_staged_rating(db: AsyncSession, user_id: int, root: Media, entr
     elif row.rating != score:
         row.rating = score
         row.rated_at = _now()
-    if old_score != score:
-        await record_daily_activity(
-            db, user_id=user_id, media_id=root.id, status=entry.status,
-            score=score, rating_changed=True, previous_score=old_score,
-        )
+    outcome["rating_previous_score"] = old_score
+
+
+async def _record_import_activity(db, user_id, root, entry, item):
+    from core.streaming_evidence import activity_plan
+    from core.streaming_activity import record_streaming_activity
+    outcome = item["outcome"]
+    events = activity_plan(item, entry.finish_date)
+    for event in events:
+        if event["key"] == "start" and entry.start_date:
+            event["date"] = entry.start_date.isoformat()
+    await record_streaming_activity(db, user_id, root.id, events,
+        score=outcome.get("manual_score") if outcome.get("manual_score_staged") else None,
+        previous_score=outcome.get("rating_previous_score"))
 
 
 async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSession, progress_callback) -> dict:
@@ -774,19 +885,25 @@ async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSe
             stats["skipped"] += 1
             continue
         outcome = item.get("outcome") or {}
+        from core.streaming_evidence import completion_evidence
+        inferred_finish = completion_evidence(item)["finish_date"]
+        if "finish_date" not in outcome and inferred_finish is not None:
+            outcome["finish_date"] = inferred_finish
         date_values = [d for d in (_to_date(x) for x in item.get("source_dates", [])) if d is not None]
         if item["kind"] == "movie":
             movie = await _get_or_create_movie(db, candidate)
             watched_dates = sorted({_to_date(d) for d in item.get("source_dates", []) if _to_date(d) is not None})
-            for watched_date in watched_dates:
+            for watched_date in watched_dates[:1] if outcome.get("status") == "completed" else []:
                 watched_at = datetime.combine(watched_date, datetime.min.time())
-                if await reconcile_inferred_watch_date(db, user_id, movie.id, watched_at) or await _has_completed_event(db, user_id, movie.id, watched_at):
+                if await reconcile_inferred_watch_date(db, user_id, movie.id, watched_at, authoritative=True) or await _reconcile_first_watch(db, user_id, movie.id, watched_at) or await _has_completed_event(db, user_id, movie.id, watched_at):
                     stats["duplicates"] += 1
                     continue
                 db.add(WatchEvent(user_id=user_id, media_id=movie.id, watched_at=watched_at, completed=True, play_count=1, provisional=False))
                 stats["source_watches"] += 1
-            entry, is_new = await _track_imported_root(db, user_id, movie, outcome, date_values, 1, True)
+            progress = 1 if outcome.get("status") == "completed" else 0
+            entry, is_new = await _track_imported_root(db, user_id, movie, outcome, date_values, progress, True)
             await _apply_staged_rating(db, user_id, movie, entry, outcome)
+            await _record_import_activity(db, user_id, movie, entry, item)
             stats["movies"] += 1
             stats["new_entries" if is_new else "existing_entries"] += 1
             continue
@@ -818,6 +935,8 @@ async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSe
         stats["guessed_episodes"] += sum(ep.get("resolution") == "guessed" for episodes in source_positions.values() for ep in episodes)
         stats["discarded_episodes"] += sum(ep.get("resolution") == "discarded" for ep in item.get("episodes", []))
         stats["covered_episodes"] += sum(ep.get("resolution") == "covered" for ep in item.get("episodes", []))
+        inference_dates = [value for episodes in source_positions.values() for ep in episodes
+                           for raw in ep.get('dates', []) if (value := _to_date(raw)) is not None]
         # A TVDB-canonical existing catalogue must have a proven mapping for
         # every source or inferred TMDB position. Never write TMDB numbers into
         # TVDB-native Media rows.
@@ -855,9 +974,9 @@ async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSe
                 for source_ep in source_positions[position]:
                     dates_for_position.extend(_to_date(d) for d in source_ep.get("dates", []) if _to_date(d) is not None)
             # Only source rows through the reviewed endpoint are imported.
-            for watched_date in sorted(set(dates_for_position)):
+            for watched_date in sorted(set(dates_for_position))[:1]:
                 watched_at = datetime.combine(watched_date, datetime.min.time())
-                if await reconcile_inferred_watch_date(db, user_id, media.id, watched_at) or await _has_completed_event(db, user_id, media.id, watched_at):
+                if await reconcile_inferred_watch_date(db, user_id, media.id, watched_at, authoritative=True) or await _reconcile_first_watch(db, user_id, media.id, watched_at) or await _has_completed_event(db, user_id, media.id, watched_at):
                     stats["duplicates"] += 1
                 else:
                     db.add(WatchEvent(user_id=user_id, media_id=media.id, watched_at=watched_at, completed=True, play_count=1, provisional=False))
@@ -872,7 +991,7 @@ async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSe
                     WatchEventModel.completed.is_(True),
                 ).limit(1))).scalar_one_or_none()
                 if any_existing is None:
-                    evidence_date = min(date_values) if date_values else today
+                    evidence_date = min(inference_dates) if inference_dates else today
                     db.add(WatchEvent(user_id=user_id, media_id=media.id,
                         watched_at=inferred_watch_datetime(datetime.combine(evidence_date, datetime.min.time())),
                         date_inferred=True, completed=True, play_count=1, provisional=True))
@@ -896,6 +1015,7 @@ async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSe
         root.tmdb_data = root_data
         entry, is_new = await _track_imported_root(db, user_id, root, outcome, accepted_dates, progress_count, False)
         await _apply_staged_rating(db, user_id, root, entry, outcome)
+        await _record_import_activity(db, user_id, root, entry, item)
         stats["shows"] += 1
         stats["new_entries" if is_new else "existing_entries"] += 1
         if any(s.get("total_released") is None or s.get("represented", 0) < s["total_released"] for s in item.get("seasons", [])):

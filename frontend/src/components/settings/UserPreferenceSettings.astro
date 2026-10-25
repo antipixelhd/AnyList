@@ -26,7 +26,7 @@ const prefs: UserPreferences = {
   bio: null,
   country: null,
   minimum_movie_runtime: 30,
-  minimum_votes: 0,
+  minimum_votes: 250,
   excluded_categories: RESULT_CATEGORIES.map(([id]) => id),
   streaming_services: [],
   metadata_language: null,
@@ -261,12 +261,13 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
       </section>
       <section>
         <h2 class="section-headline mb-4 border-b border-zinc-800 pb-2">Results filters</h2>
+        <p class="text-sm text-zinc-400">Titles qualify with enough votes or enough popularity.</p>
         <div class="space-y-2 max-w-xs mt-5">
           <div class="setting-label-line"><label for="minimum_movie_runtime" class="block text-sm font-medium text-zinc-400">Minimum movie runtime (minutes)</label></div>
           <input id="minimum_movie_runtime" name="minimum_movie_runtime" type="number" min="0" max="1440" step="1" value={prefs.minimum_movie_runtime} class="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:bg-zinc-800 transition-colors" />
         </div>
         <div class="space-y-2 max-w-xs mt-5">
-          <label for="minimum_votes" class="block text-sm font-medium text-zinc-400">Minimum votes for browsing</label>
+          <label for="minimum_votes" class="block text-sm font-medium text-zinc-400">Minimum votes</label>
           <input id="minimum_votes" name="minimum_votes" type="number" min="0" max="10000000" step="1" value={prefs.minimum_votes} class="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:bg-zinc-800 transition-colors" />
         </div>
         <div class="space-y-2 max-w-xs mt-5">
@@ -621,7 +622,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
       saveAppearance();
     });
     siteWideToggle?.addEventListener('change', saveAppearance);
-    for (const [field, fallback] of [['minimum_movie_runtime', 30], ['minimum_votes', 0]] as const) {
+    for (const [field, fallback] of [['minimum_movie_runtime', 30], ['minimum_votes', 250]] as const) {
       const input = document.getElementById(field) as HTMLInputElement | null;
       if (!input) continue;
       committed.set(field, { [field]: Number(input.value) });

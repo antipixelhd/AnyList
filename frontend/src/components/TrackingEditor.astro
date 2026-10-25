@@ -72,6 +72,7 @@ import {setupEditorSelect} from '../lib/editor-select';
 import {gameDatePatch,gameStatuses} from '../lib/game-editor-data';
 import {localToday} from '../lib/date-time';
 import {artworkIdentity} from '../lib/responsive-artwork';
+import {confirmEntryAction as confirmAction,watchRollbackWarning} from '../lib/entry-confirmation';
 let pageListeners: AbortController;
 document.addEventListener('astro:before-swap', () => pageListeners?.abort());
 document.addEventListener('astro:page-load', () => {
@@ -80,26 +81,7 @@ document.addEventListener('astro:page-load', () => {
   const sessionSignal = pageListeners.signal;
   if (!document.querySelector('#tracking-editor')) return;
   const dialog = document.querySelector<HTMLDialogElement>('#tracking-editor')!;
-  const actionConfirmation = document.querySelector<HTMLDialogElement>('#editor-confirmation')!;
-  actionConfirmation.addEventListener('click', event => {
-    if (event.target === actionConfirmation) void closeDialog(actionConfirmation, 'cancel');
-  });
-  const confirmEntryAction = (message: string,options:{confirmLabel?:string}={}) => new Promise<boolean>(resolve => {
-    if (sessionSignal.aborted || actionConfirmation.open) { resolve(false); return; }
-    actionConfirmation.querySelector('#editor-confirmation-body')!.textContent = message;
-    actionConfirmation.querySelector<HTMLButtonElement>('[value="confirm"]')!.textContent=options.confirmLabel||'Confirm';
-    actionConfirmation.returnValue = 'cancel';
-    const finish = (accepted: boolean) => {
-      actionConfirmation.removeEventListener('close', closed);
-      sessionSignal.removeEventListener('abort', aborted);
-      resolve(accepted);
-    };
-    const closed = () => finish(actionConfirmation.returnValue === 'confirm');
-    const aborted = () => { finish(false); if (actionConfirmation.open) actionConfirmation.close('cancel'); };
-    actionConfirmation.addEventListener('close', closed, {once:true});
-    sessionSignal.addEventListener('abort', aborted, {once:true});
-    showDialog(actionConfirmation);
-  });
+  const confirmEntryAction = (message:string,options:{confirmLabel?:string}={}) => confirmAction(message,sessionSignal,options);
   setupScoreSteppers(dialog, sessionSignal);
   const refreshDateInputs = setupCalendarDateInputs(dialog, sessionSignal);
   const form = document.querySelector<HTMLFormElement>('#tracking-form')!;
@@ -400,7 +382,7 @@ document.addEventListener('astro:page-load', () => {
     if (!field('progress').disabled && Number(field('progress').value) !== current.progress) {
       body.progress = Number(field('progress').value);
       if (body.progress < current.progress) {
-        if (!await confirmEntryAction('Mark the later episodes unwatched?') || sessionSignal.aborted || !current) return;
+        if (!await confirmEntryAction(watchRollbackWarning) || sessionSignal.aborted || !current) return;
         body.confirm_rollback = true;
       }
     }

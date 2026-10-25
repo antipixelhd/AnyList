@@ -2,7 +2,7 @@
 import { editorStore, type EditorTitle } from './editor-store';
   import { showDialog, closeDialog } from './ui-motion';
 import { responsiveArtwork } from './responsive-artwork';
-import {quickSearchRequests,rankCombinedMedia,createQuickTitleBatch,createQuickSearchReader,visibleQuickSearchSections,availableQuickSearchTabs,resolvedQuickSearchTab,steppedQuickSearchTab,mergeContributorResults,type SearchSection} from './quick-search-data';
+import {quickSearchRequests,rankCombinedMedia,readQuickTitles,createQuickSearchReader,visibleQuickSearchSections,availableQuickSearchTabs,resolvedQuickSearchTab,steppedQuickSearchTab,mergeContributorResults,type SearchSection} from './quick-search-data';
 import { animate } from 'motion/mini';
 import {gameResultHref,resolveGameId,type GameSearchResult} from './game-discovery';
 
@@ -77,7 +77,7 @@ export function mountQuickSearch() {
   updatePlaceholder();
 
   const resultUrl = (item: SearchResult) => item.type==='game'?gameResultHref(item):item.id ? `/title/${item.id}` : `/discover-title?type=${item.type}&id=${item.tmdb_id}`;
-  function unique(items: SearchResult[]) {
+  function unique<T extends SearchResult>(items: T[]):T[] {
     const seen = new Set<string>();
     return items.filter(item => {
       const key = item.type==='game'?`game:${item.igdb_id}`:`${item.type}:${item.title.toLocaleLowerCase()}:${item.year || ''}`;
@@ -210,29 +210,33 @@ export function mountQuickSearch() {
     progressTimer=window.setTimeout(()=>{if(controller===current)progress?.classList.add('visible');},150);
     try {
       const requests=quickSearchRequests(query,undefined,showMoviesSeries(),showGames());pending=requests.length;
-      const settleTitles = createQuickTitleBatch<MediaSearchResult>();
       updateTabs();
-      await Promise.all(requests.map(async request=>{
-        let titleRows: SearchResult[] = [];
+      const titles = (async () => {
+        try {
+          const result = await readQuickTitles<MediaSearchResult>(requests, current.signal, searchReader.read, combined());
+          if (controller !== current || current.signal.aborted) return;
+          latest = {...latest, movie: unique(result.movie), series: unique(result.series)};
+          failed += result.failed;
+        } catch { if (controller === current && !current.signal.aborted) failed++; }
+        finally { if (controller === current && !current.signal.aborted) {
+          pending -= requests.filter(request=>request.kind==='movie'||request.kind==='series').length; mediaPending = 0; render('titles');
+        } }
+      })();
+      await Promise.all([titles, ...requests.filter(request => request.kind === 'contributors'||request.kind==='game').map(async request=>{
+        let gameRows:GameSearchResult[]=[];
         try{
           await searchReader.read(request,current.signal,data=>{
             if(controller!==current||current.signal.aborted)return;
-            if(request.kind==='contributors'){contributors=mergeContributorResults(contributors,data.results||{},request.scope);if(data.partial)failed++;}
-            else titleRows=unique(data.results||[]);
-            if(request.kind==='contributors')render('contributors');
+            if(request.kind==='game')gameRows=unique(data.results||[]) as GameSearchResult[];
+            else{contributors=mergeContributorResults(contributors,data.results||{},request.scope);if(data.partial)failed++;render('contributors');}
           });
         }catch(cause){if(controller!==current||current.signal.aborted)return;failed++;}
         finally{if(controller===current&&!current.signal.aborted){
           pending--;
-          if(request.kind==='movie'||request.kind==='series'){
-            mediaPending--;
-            const batch=settleTitles(request.kind,titleRows as MediaSearchResult[]);
-            if(batch){latest={...latest,...batch};render('titles');}
-          }
-          if(request.kind==='game'){gamePending=false;latest.game=titleRows as GameSearchResult[];render('games');}
+          if(request.kind==='game'){gamePending=false;latest.game=gameRows;render('games');}
           render();
         }}
-      }));
+      })]);
     } catch (cause) {
       if (controller === current && (cause as Error).name !== 'AbortError') showState('Search is unavailable. Try again.');
     } finally { if (controller === current) { clearTimeout(progressTimer);progress?.classList.remove('visible');resultShell?.setAttribute('aria-busy','false'); } }
@@ -338,7 +342,7 @@ export function mountQuickSearch() {
   mobile.addEventListener('change',()=>{updatePlaceholder();if(dialog.open&&(input?.value.trim().length||0)>=2)render();},{signal:pageListeners.signal});
   document.addEventListener('anylist:combine-lists-changed',event=>{
     dialog.dataset.combined=(event as CustomEvent<{combineLists:boolean}>).detail.combineLists?'yes':'no';
-    if((input?.value.trim().length||0)>=2)render();
+    if(dialog.open&&(input?.value.trim().length||0)>=2)void search();
     else updateTabs();
   },{signal:pageListeners.signal});
   pageListeners.signal.addEventListener('abort',()=>{clearTimeout(timer);clearTimeout(progressTimer);controller?.abort();tabAnimations.forEach(control=>control.cancel());},{once:true});

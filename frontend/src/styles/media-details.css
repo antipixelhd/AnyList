@@ -92,6 +92,11 @@
 .media-detail .media-social-grid>section { min-width:0; }
 .media-detail .media-social-grid h2 { margin:0 0 18px; font:600 1.6rem var(--font-navigation); color:var(--bright); }
 .media-detail .media-social-activity .activity-stream { min-width:0; }
+.media-detail .media-social-heading { display:flex; align-items:center; justify-content:space-between; gap:10px; min-height:32px; margin-bottom:18px; flex-wrap:wrap; }
+.media-detail .media-social-heading h2 { margin:0; }
+.media-detail .media-social-switch { display:flex; gap:2px; padding:2px; border-radius:18px; background:var(--panel); }
+.media-detail .media-social-switch button { border:0; border-radius:16px; min-height:28px; padding:4px 9px; font-size:12px; line-height:20px; color:var(--muted); background:transparent; cursor:pointer; transition:background-color .18s ease,color .18s ease; }
+.media-detail .media-social-switch button[aria-selected=true] { color:#fff; background:var(--blue); }
 .media-detail .media-social-list { display:grid; grid-template-columns:max-content minmax(0,2fr) minmax(0,1fr) max-content; gap:8px 13px; container-type:inline-size; }
 .media-detail .media-social-person { display:grid; grid-column:1 / -1; grid-template-columns:subgrid; align-items:center; gap:13px; min-width:0; padding:11px 13px; border:0; border-radius:7px; background:var(--panel); transition:background-color .18s ease; }
 .media-detail .media-social-person .lab-friend-avatar { flex:none; background:color-mix(in srgb,var(--blue) 18%,var(--panel)); color:var(--bright); }

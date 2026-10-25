@@ -1,4 +1,5 @@
 import {createBrowseCache} from './browse-cache.ts';
+import {verifiedEmptySearch, broadSearchParams, type SearchPage} from './search-fallback.ts';
 export type SearchSection = 'all' | 'movie' | 'series' | 'game' | 'actor' | 'staff' | 'studio';
 export type ResultSection = SearchSection;
 export type ContributorScope = 'people'|'actor'|'staff'|'studio';
@@ -54,10 +55,43 @@ export function createQuickSearchReader(lifetime: AbortSignal, fetcher: typeof f
   };
 }
 export function quickSearchRequests(query:string,region?:string,showMoviesSeries=true,showGames=true): SearchRequest[] {
-  const requests:SearchRequest[] = (showMoviesSeries?['movie','series'] as const:[]).map(kind=>({kind,url:`/api/proxy/tracking/catalog?${new URLSearchParams({media_type:kind,q:query,...(region?{region}:{})})}`}));
+  const requests:SearchRequest[] = (showMoviesSeries?['movie','series'] as const:[]).map(kind=>({kind,url:`/api/proxy/tracking/catalog?${new URLSearchParams({media_type:kind,q:query,scan_empty:'true',...(region?{region}:{})})}`}));
   if(showGames)requests.push({kind:'game',url:`/api/proxy/tracking/games/search?${new URLSearchParams({q:query})}`});
   for(const scope of ['people','studio'] as const)requests.push({kind:'contributors',scope,url:`/api/proxy/tracking/quick-search/contributors?${new URLSearchParams({q:query,kind:scope})}`});
   return requests;
+}
+
+/** Keep the curated pair atomic. Only two verified empty title scopes broaden. */
+export async function readQuickTitles<T>(requests: SearchRequest[], signal: AbortSignal,
+  read: (request: SearchRequest, signal: AbortSignal, onResult: (data: any) => void) => Promise<void>, combined = true) {
+  const titles = requests.filter(request => request.kind === 'movie' || request.kind === 'series');
+  async function batch(values: SearchRequest[]) {
+    let failed = 0;
+    const pages = await Promise.all(values.map(async request => {
+      let page: SearchPage | undefined;
+      try { await read(request, signal, data => { page = data; }); }
+      catch (error) { if (signal.aborted) throw error; failed++; }
+      signal.throwIfAborted();
+      return page;
+    }));
+    return {pages, failed};
+  }
+  let result = await batch(titles);
+  const expandable = result.pages.map(page => !!page && verifiedEmptySearch(page));
+  const expand = titles.filter((_, index) => combined
+    ? !result.failed && titles.length === 2 && expandable.every(Boolean)
+    : expandable[index]);
+  if (expand.length) {
+    const broad = await batch(expand.map(request => {
+      const [path, query] = request.url.split('?');
+      return {...request, url: `${path}?${broadSearchParams(new URLSearchParams(query))}`};
+    }));
+    result.failed += broad.failed;
+    expand.forEach((request, index) => { result.pages[titles.indexOf(request)] = broad.pages[index]; });
+  }
+  const rows = {movie: [] as T[], series: [] as T[], failed: result.failed};
+  titles.forEach((request, index) => { rows[request.kind as 'movie'|'series'] = result.pages[index]?.results as T[] || []; });
+  return rows;
 }
 export function rankCombinedMedia<T extends {search_rank?:number}>(movies:T[],series:T[]):T[] {
   return [...movies,...series].sort((left,right)=>(right.search_rank??0)-(left.search_rank??0));

@@ -156,6 +156,16 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(payload['all']['totals']['mean_score'], 9)
             self.assertEqual(await db.scalar(select(func.count()).select_from(WatchEvent)), 1)
 
+    async def test_manual_refresh_creates_first_statistics_for_owner(self):
+        self.app.dependency_overrides[get_current_user] = lambda: self.viewer
+        with patch.object(snapshots, 'AsyncSessionLocal', self.Session):
+            response = await self.client.post('/tracking/stats/refresh')
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()['status'], 'ready')
+        overview = await self.client.get('/tracking/profile/statistics-fixture/stats/overview')
+        self.assertEqual(overview.json()['generation'], response.json()['generation'])
+        self.assertEqual(overview.json()['overview']['totals']['watched_titles'], 1)
+
     async def test_manual_refresh_and_scheduler_share_one_lease(self):
         started, release = asyncio.Event(), asyncio.Event()
         original = snapshots.compute
@@ -603,6 +613,49 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
         await self.force_due()
         self.assertEqual(await snapshots.claim_next(self.Session), {"skipped": True})
         self.assertEqual((await self.state()).active_snapshot_id, previous)
+
+    async def test_startup_preserves_current_snapshot_and_daily_deadline(self):
+        await self.build()
+        before = await self.state()
+        await snapshots.prepare_startup(self.Session)
+        after = await self.state()
+        self.assertEqual(after.active_snapshot_id, before.active_snapshot_id)
+        self.assertEqual(after.next_due_at, before.next_due_at)
+        self.assertIsNone(await snapshots.claim_next(self.Session))
+
+    async def test_deployment_queues_upgrade_and_keeps_readable_statistics(self):
+        await self.build()
+        previous = (await self.state()).active_snapshot_id
+        async with self.Session() as db:
+            await db.execute(update(UserStatsSnapshot).values(contract_version=snapshots.CONTRACT_VERSION - 1))
+            await db.commit()
+        await snapshots.prepare_startup(self.Session)
+        self.assertLessEqual((await self.state()).next_due_at, snapshots.utcnow())
+        response = await self.client.get('/tracking/profile/statistics-fixture/stats/overview')
+        self.assertEqual(response.json()['status'], 'ready')
+        self.assertTrue(response.json()['refreshing'])
+        self.assertEqual(response.json()['generation'], previous)
+        self.assertEqual((await self.state()).active_snapshot_id, previous)
+        self.assertEqual(await snapshots.run_due(self.Session), 1)
+        state = await self.state()
+        self.assertNotEqual(state.active_snapshot_id, previous)
+        self.assertGreater(state.next_due_at, snapshots.utcnow() + timedelta(hours=23))
+
+    async def test_incompatible_snapshot_retained_without_serving_invalid_shape(self):
+        await self.build()
+        previous = (await self.state()).active_snapshot_id
+        async with self.Session() as db:
+            await db.execute(update(UserStatsSnapshot).values(contract_version=0, payload={'all': {}}))
+            await db.commit()
+        response = await self.client.get('/tracking/profile/statistics-fixture/stats/overview')
+        self.assertEqual(response.json()['status'], 'pending')
+        self.assertIsNone(response.json()['overview'])
+        self.assertEqual((await self.state()).active_snapshot_id, previous)
+        claim = await snapshots.claim_next(self.Session)
+        await snapshots.record_failure(claim, self.Session)
+        retry_at = (await self.state()).next_due_at
+        await self.client.get('/tracking/profile/statistics-fixture/stats/overview')
+        self.assertEqual((await self.state()).next_due_at, retry_at)
 
     async def test_bulk_sensitive_removal_purges_snapshot_immediately(self):
         await self.build()

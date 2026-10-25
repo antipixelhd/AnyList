@@ -82,6 +82,9 @@ async def clear_recent_rating_activity(db, *, user_id: int, media_id: int,
     for row in rows:
         details = {key: value for key, value in (row.payload or {}).items()
                    if key not in RATING_ACTIVITY_FIELDS}
+        if 'streaming_base' in details:
+            details['streaming_base'] = {key: value for key, value in details['streaming_base'].items()
+                                         if key not in RATING_ACTIVITY_FIELDS}
         row.score, row.payload = None, details
         if not has_activity_event(row.status, details):
             await db.delete(row)
@@ -252,6 +255,88 @@ def _set_activity_window(details: dict, row: TrackingActivity | None, now: datet
     details["window_key"] = start.date().isoformat() if row else start.isoformat()
 
 
+def _local_activity_details(row):
+    details = dict(row.payload or {}) if row else {}
+    if 'streaming_base' not in details:
+        return details
+    base = {key: value for key, value in details['streaming_base'].items()
+            if key not in RATING_ACTIVITY_FIELDS}
+    base.update({key: value for key, value in details.items() if key in RATING_ACTIVITY_FIELDS})
+    return base
+
+
+def _retain_local_activity(row, details, status, score, now):
+    if row is None or 'streaming_base' not in (row.payload or {}):
+        return False
+    from core.streaming_activity import _rebuild
+    payload = {key: value for key, value in row.payload.items() if key not in RATING_ACTIVITY_FIELDS}
+    payload.update({key: value for key, value in details.items() if key in RATING_ACTIVITY_FIELDS})
+    payload.update(streaming_base=details, streaming_base_at=now.isoformat(), streaming_base_status=status)
+    row.payload, row.score = payload, score
+    _rebuild(row)
+    return True
+
+
+async def reconcile_unwatched_activity(db, *, user_id, media, episodes, watched_ids, removed_ids):
+    """Remove invalidated watch milestones across all historical card windows."""
+    from core.streaming_activity import _rebuild
+    rows = (await db.execute(select(TrackingActivity).where(
+        TrackingActivity.user_id == user_id, TrackingActivity.media_id == media.id,
+    ))).scalars().all()
+    positions = [f'S{episode.season_number}E{episode.episode_number}' for episode in episodes]
+    watched_positions = {position for position, episode in zip(positions, episodes) if episode.id in watched_ids}
+    invalid_seasons = {ep.season_number for ep in episodes if ep.id in removed_ids}
+    complete = bool(episodes) and all(ep.id in watched_ids for ep in episodes)
+
+    def trim(payload, status):
+        details = dict(payload)
+        recorded = details.get('episode_positions')
+        if recorded is None and details.get('episodes_watched'):
+            first, last = details.get('position_start') or details.get('position'), details.get('position')
+            if first in positions and last in positions:
+                recorded = positions[positions.index(first):positions.index(last)+1]
+            elif details.get('progress') is not None:
+                end = int(details['progress'])
+                recorded = positions[max(0, end-int(details['episodes_watched'])):end]
+        if recorded is not None:
+            remaining = [position for position in recorded if position in watched_positions]
+            details.update(episode_positions=remaining,
+                           episodes_watched=min(len(remaining), int(details.get('episodes_watched') or 0)),
+                           position_start=remaining[0] if remaining else None, position=remaining[-1] if remaining else None)
+        elif not watched_ids:
+            details['episodes_watched'] = 0
+        details['finished_seasons'] = [number for number in details.get('finished_seasons', []) if number not in invalid_seasons]
+        if not complete and status == 'completed':
+            details['status_changed'] = False
+        if not watched_ids:
+            details['started_watching'] = False
+            if status == 'watching':
+                details['status_changed'] = False
+        return details
+
+    for row in rows:
+        details = dict(row.payload or {})
+        if 'streaming_events' in details:
+            details['streaming_base'] = trim(details.get('streaming_base', {}), details.get('streaming_base_status', row.status))
+            details['streaming_events'] = {
+                key: event for key, event in details['streaming_events'].items()
+                if (not event.get('episodes_watched') or event.get('position') in watched_positions)
+                and (not event.get('finished_seasons') or all(sn not in invalid_seasons for sn in event['finished_seasons']))
+                and (key != 'finish' or complete) and (key != 'start' or watched_ids)
+            }
+            if not complete and details.get('streaming_base_status') == 'completed':
+                details['streaming_base_status'] = 'watching'
+            row.payload = details
+            if row.status == 'completed' and not complete:
+                row.status = 'watching'
+            _rebuild(row)
+        else:
+            row.payload = trim(details, row.status)
+        if not has_activity_event(row.status, row.payload):
+            await db.delete(row)
+    await db.flush()
+
+
 async def record_progress_activity(db, *, user_id: int, media: Media, previous_progress: int,
                                    progress: int, status: str, score: float | None,
                                    status_changed: bool = False, rating_changed: bool = False,
@@ -267,7 +352,7 @@ async def record_progress_activity(db, *, user_id: int, media: Media, previous_p
         previous_score=previous_score, rating_changed=rating_changed, now=now,
     )
     row = await _active_activity_card(db, user_id=user_id, media_id=media.id, now=now)
-    details = dict(row.payload or {}) if row else {}
+    details = _local_activity_details(row)
     _set_activity_window(details, row, now)
     baseline = details.get("progress_start")
     if baseline is None:
@@ -302,6 +387,7 @@ async def record_progress_activity(db, *, user_id: int, media: Media, previous_p
             return f'S{episode.season_number}E{episode.episode_number}'
         details['position_start'] = position(new[0]) if new and details['episodes_watched'] else None
         details['position'] = position(new[-1]) if new and details['episodes_watched'] else None
+        details['episode_positions'] = [position(episode) for episode in new]
         before = _finished_watched_seasons(episodes, expected, [episode for episode in episodes if episode.id in start_ids])
         after = _finished_watched_seasons(episodes, expected, [episode for episode in episodes if episode.id in current_ids])
         details['finished_seasons'] = sorted(set(after) - set(before))
@@ -313,11 +399,14 @@ async def record_progress_activity(db, *, user_id: int, media: Media, previous_p
                            previous_status=previous_status, first_watching=first_watching)
     _record_rating_details(details, rating_changed=rating_changed,
                            previous_score=previous_score, score=score, now=now)
-    if not has_activity_event(status, details):
+    retained = _retain_local_activity(row, details, status, score, now)
+    if not has_activity_event(row.status if retained else status, row.payload if retained else details):
         if row:
             await db.delete(row)
         return None
-    if row:
+    if retained:
+        pass
+    elif row:
         row.status, row.score, row.payload, row.created_at = status, score, details, now
     else:
         row = TrackingActivity(user_id=user_id, media_id=media.id, status=status, score=score,
@@ -349,7 +438,7 @@ async def record_daily_activity(db, *, user_id: int, media_id: int, status: str,
     if had_rating_change and not rating_changed and not status_changed and not episodes_watched and not finished_seasons:
         return rating_card
     row = await _active_activity_card(db, user_id=user_id, media_id=media_id, now=now)
-    details = merge_activity_payload(row.payload if row else None, {"episodes_watched": max(0, episodes_watched)})
+    details = merge_activity_payload(_local_activity_details(row), {"episodes_watched": max(0, episodes_watched)})
     _set_activity_window(details, row, now)
     if progress is not None: details["progress"] = progress
     if position is not None: details["position"] = position
@@ -358,11 +447,14 @@ async def record_daily_activity(db, *, user_id: int, media_id: int, status: str,
                            previous_status=previous_status, first_watching=first_watching)
     _record_rating_details(details, rating_changed=rating_changed,
                            previous_score=previous_score, score=score, now=now)
-    if not has_activity_event(status, details):
+    retained = _retain_local_activity(row, details, status, score, now)
+    if not has_activity_event(row.status if retained else status, row.payload if retained else details):
         if row:
             await db.delete(row)
         return None
-    if row:
+    if retained:
+        pass
+    elif row:
         row.status, row.score, row.payload, row.created_at = status, score, details, now
     else:
         row = TrackingActivity(user_id=user_id, media_id=media_id, status=status, score=score,

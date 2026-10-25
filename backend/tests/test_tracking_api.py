@@ -2693,7 +2693,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         res=await self.client.delete(f'/tracking/entry/{self.movie.id}?confirmed=true')
         self.assertEqual(res.status_code,200,res.text)
         self.assertTrue(res.json()['library_preserved'])
-        for model in (TrackedEntry,Rating,WatchEvent):
+        for model in (TrackedEntry,Rating,WatchEvent,TrackingActivity):
             self.assertEqual((await self.db.execute(select(model).where(model.user_id==self.owner.id,model.media_id==self.movie.id))).scalars().all(),[])
         self.assertIsNotNone((await self.db.execute(select(Collection).where(Collection.user_id==self.owner.id,Collection.media_id==self.movie.id))).scalar_one_or_none())
         self.assertIsNotNone((await self.db.execute(select(TrackingDeletion).where(TrackingDeletion.user_id==self.owner.id,TrackingDeletion.media_id==self.movie.id))).scalar_one_or_none())
@@ -2772,6 +2772,73 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(res.json()['status'],'completed')
         ids=(await self.db.execute(select(WatchEvent.id).where(WatchEvent.user_id==self.owner.id))).scalars().all()
         self.assertEqual(ids,[])
+
+    async def test_episode_controls_confirm_prefix_rollback_and_keep_dropped_status(self):
+        self.show.tmdb_id = 987654322
+        canonical = Show(title='Contiguous progress', tmdb_id=self.show.tmdb_id)
+        self.db.add(canonical); await self.db.flush()
+        episodes = [Media(title=f'S{sn}E{en}', media_type=MediaType.episode, show_id=canonical.id,
+                          season_number=sn, episode_number=en, release_date='2020-01-01')
+                    for sn in (1, 2, 3) for en in (1, 2)]
+        self.db.add_all(episodes)
+        self.show.tmdb_data = {'tracking_catalogue_refreshed_at': datetime.now().isoformat(),
+                              'seasons': [{'season_number': sn, 'episode_count': 2} for sn in (1, 2, 3)]}
+        await self.db.commit()
+        self.assertEqual((await self.save(self.show, status='dropped', progress=6)).status_code, 200)
+        events = (await self.db.execute(select(WatchEvent).where(WatchEvent.user_id == self.owner.id,
+            WatchEvent.media_id.in_([ep.id for ep in episodes])))).scalars().all()
+        for event in events:
+            event.watched_at = datetime(2021, 1, 1)
+        await self.db.commit()
+        url = f'/tracking/entry/{self.show.id}/episode/'
+        denied = await self.client.patch(url+str(episodes[1].id), json={'watched': False})
+        self.assertEqual(denied.status_code, 409, denied.text)
+        self.assertEqual(denied.json()['detail']['code'], 'watch_rollback_required')
+        self.assertEqual(len((await self.db.execute(select(WatchEvent).where(
+            WatchEvent.user_id == self.owner.id))).scalars().all()), 6)
+        response = await self.client.patch(url+str(episodes[1].id), json={'watched': False, 'confirm_rollback': True})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual((response.json()['status'], response.json()['progress']), ('dropped', 1))
+        self.assertEqual(self.local_outbound.await_args.kwargs['removed_watched_ids'], {ep.id for ep in episodes[1:]})
+        kept = (await self.db.execute(select(WatchEvent).where(WatchEvent.user_id == self.owner.id))).scalars().all()
+        self.assertEqual([event.media_id for event in kept], [episodes[0].id])
+        self.assertEqual(kept[0].watched_at, datetime(2021, 1, 1))
+        forward = await self.client.patch(url+str(episodes[4].id), json={'watched': True})
+        self.assertEqual(forward.status_code, 200, forward.text)
+        self.assertEqual((forward.json()['status'], forward.json()['progress']), ('dropped', 5))
+        ids = set((await self.db.execute(select(WatchEvent.media_id).where(WatchEvent.user_id == self.owner.id))).scalars())
+        self.assertEqual(ids, {ep.id for ep in episodes[:5]})
+        full = await self.client.patch(url+str(episodes[5].id), json={'watched': True})
+        self.assertEqual((full.json()['status'], full.json()['progress']), ('dropped', 6))
+        # Repair an older isolated hole without truncating later real watches.
+        await self.db.execute(delete(WatchEvent).where(WatchEvent.user_id == self.owner.id,
+                                                       WatchEvent.media_id == episodes[1].id))
+        await self.db.commit()
+        repaired = await self.client.patch(url+str(episodes[1].id), json={'watched': True})
+        self.assertEqual((repaired.json()['status'], repaired.json()['progress']), ('dropped', 6))
+        ids = set((await self.db.execute(select(WatchEvent.media_id).where(WatchEvent.user_id == self.owner.id))).scalars())
+        self.assertEqual(ids, {ep.id for ep in episodes})
+        # Season buttons share the same status-preserving prefix path.
+        season = await self.client.patch(f'/tracking/entry/{self.show.id}/season/2',
+                                         json={'watched': False, 'confirm_rollback': True})
+        self.assertEqual((season.json()['status'], season.json()['progress']), ('dropped', 2))
+
+    async def test_episode_control_keeps_completed_status_and_explicit_finish_date(self):
+        self.show.tmdb_id = 987654323
+        canonical = Show(title='Completed history correction', tmdb_id=self.show.tmdb_id)
+        self.db.add(canonical); await self.db.flush()
+        episodes = [Media(title=f'E{en}', media_type=MediaType.episode, show_id=canonical.id,
+                          season_number=1, episode_number=en, release_date='2020-01-01') for en in (1, 2, 3)]
+        self.db.add_all(episodes)
+        self.show.tmdb_data = {'tracking_catalogue_refreshed_at': datetime.now().isoformat(),
+                              'seasons': [{'season_number': 1, 'episode_count': 3}]}
+        await self.db.commit()
+        self.assertEqual((await self.save(self.show, status='completed', finish_date='2021-01-01')).status_code, 200)
+        response = await self.client.patch(f'/tracking/entry/{self.show.id}/episode/{episodes[1].id}',
+                                           json={'watched': False, 'confirm_rollback': True})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual((response.json()['status'], response.json()['progress']), ('completed', 1))
+        self.assertEqual(response.json()['finish_date'], '2021-01-01')
 
     async def test_movie_progress_works_without_release_metadata_and_stops_at_one(self):
         self.movie.release_date=None
@@ -3204,8 +3271,17 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         # A newly released episode appears as unwatched without moving the
         # completed entry back into Watching.
         future=(await self.db.execute(select(Media).where(Media.tmdb_id==987654311))).scalar_one()
-        future.season_number=2
         future.release_date=date.today().isoformat()
+        await self.db.commit()
+        result=(await self.client.get(f'/tracking/profile/{self.owner.username}/series')).json()['entries'][0]
+        self.assertEqual(result['status'],'completed')
+        self.assertEqual(result['new_seasons'],0)
+        self.assertEqual(result['new_episodes'],1)
+        # Progress responses use the same classification as a fresh profile read.
+        result=(await self.save(self.show,progress=1)).json()
+        self.assertEqual(result['new_seasons'],0)
+        self.assertEqual(result['new_episodes'],1)
+        future.season_number=2
         await self.db.commit()
         res=await self.client.get(f'/tracking/profile/{self.owner.username}/series')
         result=res.json()['entries'][0]
@@ -3214,6 +3290,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['released_episodes'],2)
         self.assertEqual(result['season_position'],'S1E1')
         self.assertEqual(result['new_seasons'],1)
+        self.assertEqual(result['new_episodes'],0)
         entry=(await self.db.execute(select(TrackedEntry).where(
             TrackedEntry.user_id==self.owner.id,TrackedEntry.media_id==self.show.id))).scalar_one()
         entry.progress=8

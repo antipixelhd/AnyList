@@ -11,6 +11,7 @@ import BrowseSelect from "../components/BrowseSelect.astro";
 import Icon from "../components/Icon.astro";
 import {timelineGroups} from '../lib/browse-timeline-data';
 import { tracker } from "../lib/tracker";
+import {shouldBroadenSearch, broadSearchParams} from '../lib/search-fallback';
 import "../styles/browse.css";
 import BrowseSearchField from "../components/BrowseSearchField.astro";
 import BrowseGenreFilter from "../components/BrowseGenreFilter.astro";
@@ -52,12 +53,17 @@ let payload: any = { results: [], has_more: false, page: 1, source: "" },
   facets: any = { genres: [], providers: [] },
   error = "";
 const responses = await Promise.allSettled([
-  tracker(
-    categories
+  (async () => {
+    const path = categories
       ? `browse/sections?${new URLSearchParams({ media_type: type, region: params.get("region") || "US", min_score: params.get("min_score") || "0" })}`
-      : `browse?${browseRequestParams(params)}`,
-    Astro.locals.token,
-  ),
+      : `browse?${browseRequestParams(params)}`;
+    const first = await tracker(path, Astro.locals.token);
+    if (!categories && shouldBroadenSearch(params, first)) {
+      const broad = await tracker(`browse?${browseRequestParams(broadSearchParams(params))}`, Astro.locals.token);
+      return {...broad, curation_expanded: true};
+    }
+    return first;
+  })(),
   tracker(
     `browse/facets?${new URLSearchParams({ media_type: type, region: params.get("region") || "US", genres: params.get("genres") || "" })}`,
     Astro.locals.token,

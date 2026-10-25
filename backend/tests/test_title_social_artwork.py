@@ -47,13 +47,14 @@ class DetailOptionalReadsTests(unittest.IsolatedAsyncioTestCase):
         rows = [(own_entry, me, SimpleNamespace(display_name='My name', avatar_path=None)),
                 (friend_entry, friend, SimpleNamespace(display_name='Friend', avatar_path=None))]
         db = SimpleNamespace(get=AsyncMock(return_value=movie),
-            execute=AsyncMock(side_effect=[Result(rows), Result([])]))
+            execute=AsyncMock(side_effect=[Result(rows), Result([]), Result([])]))
         result = await title_social(1, db, me)
         self.assertEqual([person['username'] for person in result['people']], ['me', 'friend'])
         self.assertTrue(result['people'][0]['self'])
         self.assertEqual(result['people'][0]['score'], 7)
         self.assertIsNone(result['people'][1]['score'])
         self.assertEqual(result['activities'], [])
+        self.assertEqual(result['following_activities'], [])
 
     async def test_social_people_sort_by_status_then_descending_score(self):
         movie = SimpleNamespace(media_type=MediaType.movie, tmdb_data={})
@@ -64,7 +65,7 @@ class DetailOptionalReadsTests(unittest.IsolatedAsyncioTestCase):
                  SimpleNamespace(id=i, username=str(i)), None)
                 for i, (status, score) in enumerate(cases)]
         db = SimpleNamespace(get=AsyncMock(return_value=movie),
-            execute=AsyncMock(side_effect=[Result(rows), Result([])]))
+            execute=AsyncMock(side_effect=[Result(rows), Result([]), Result([])]))
         result = await title_social(1, db, viewer)
         self.assertEqual([(person['status'], person['score']) for person in result['people']],
             [('completed', 9), ('completed', 4), ('completed', None),

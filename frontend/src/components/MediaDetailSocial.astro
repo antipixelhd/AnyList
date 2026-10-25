@@ -2,16 +2,31 @@
 import ActivityCard from './ActivityCard.astro';
 import {scoreLabel,statuses} from '../lib/tracker';
 import {gameStatuses} from '../lib/game-editor-data';
-const {data,type}=Astro.props as {data:{people:any[];activities:any[]};type:'movie'|'series'|'game'};
+const {data,type}=Astro.props as {data:{people:any[];activities:any[];following_activities?:any[]};type:'movie'|'series'|'game'};
 const choices=type==='game'?gameStatuses:statuses;
+const followingActivities=data.following_activities||[];
+const followingSelected=type==='game'&&!data.activities.length&&!!followingActivities.length;
 ---
 <div class="media-social-grid">
   <section class="media-social-activity" aria-labelledby="media-social-activity-heading">
-    <h2 id="media-social-activity-heading">Recent Activity</h2>
-    {data.activities.length?<div class="activity-stream">{data.activities.map(activity=><ActivityCard activity={activity} showUser/>)}</div>:<p class="section-empty">No recent activity for this title.</p>}
+    <div class="media-social-heading">
+      <h2 id="media-social-activity-heading">Recent Activity</h2>
+      <div class="media-social-switch app-tabs" role="tablist" aria-label="Activity from" hidden={type==='game'&&!data.activities.length&&!followingActivities.length}>
+        <button type="button" role="tab" id="social-self-tab" aria-controls="social-self" aria-selected={!followingSelected} tabindex={followingSelected?-1:0} disabled={type==='game'&&!data.activities.length} data-social-scope="self">Self</button>
+        <button type="button" role="tab" id="social-following-tab" aria-controls="social-following" aria-selected={followingSelected} tabindex={followingSelected?0:-1} disabled={type==='game'&&!followingActivities.length} data-social-scope="following">Following</button>
+      </div>
+    </div>
+    <div data-social-panels>
+      <div id="social-self" role="tabpanel" aria-labelledby="social-self-tab" data-social-panel="self" hidden={followingSelected}>
+        {data.activities.length?<div class="activity-stream">{data.activities.map(activity=><ActivityCard activity={activity}/>)}</div>:<p class="section-empty">No activity for this title yet.</p>}
+      </div>
+      <div id="social-following" role="tabpanel" aria-labelledby="social-following-tab" data-social-panel="following" hidden={!followingSelected}>
+        {followingActivities.length?<div class="activity-stream">{followingActivities.map(activity=><ActivityCard activity={activity} showUser/>)}</div>:<p class="section-empty">No activity from people you follow yet.</p>}
+      </div>
+    </div>
   </section>
   <section class="media-social-people" aria-labelledby="media-social-people-heading">
-    <h2 id="media-social-people-heading">People you follow</h2>
+    <div class="media-social-heading"><h2 id="media-social-people-heading">People you follow</h2></div>
     {data.people.length?<div class="media-social-list">{data.people.map(person=><a class="lab-friend media-social-person" href={`/user/${encodeURIComponent(person.username)}/${type==='game'?'games':type==='movie'?'movies':'series'}`}>
       <span class="lab-friend-avatar" aria-hidden="true">{person.has_avatar?<img src={`/api/proxy/profile/avatar/${person.id}`} alt="" loading="lazy"/>:(person.display_name||person.username).slice(0,1).toUpperCase()}</span>
       <strong class="media-social-person-name">{person.display_name||person.username}</strong>

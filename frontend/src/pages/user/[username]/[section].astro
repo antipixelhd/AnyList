@@ -44,7 +44,7 @@ const availabilityLabel=(reason:string|undefined)=>reason==='airing'?'Currently 
       {statuses.map(([status,label]) => {const group = entries.filter((e:any)=>e.status===status); return <section class="status-section" data-group={status} hidden={group.length===0 || initialStatus !== 'all' && initialStatus !== status}><h2>{label}</h2><div class="entry-table">
         <div class:list={['entry-head',{'combined-row':isCombined}]}><span class="entry-cover-column" aria-hidden="true"></span><span class="entry-title-column">Title</span><span class="entry-score-column">Score</span><span class="entry-progress-column">Progress</span>{isCombined&&<span class="entry-type-column">Type</span>}</div>
         {group.map((entry:any)=><article class:list={['entry-row',{'combined-row':isCombined}]} data-title={entry.title.toLowerCase()} data-score={entry.score ?? -1} data-progress={entry.progress} data-media-type={entry.type} data-year={entry.year} data-genres={JSON.stringify(entry.genres)} data-favorite={entry.favorite?'yes':'no'} data-updated={entry.updated_at}>
-          <div class="entry-thumbnail" data-preview-src={entry.poster||undefined} data-artwork-path={entry.poster||undefined}><span class="entry-availability" role="img" aria-label={availabilityLabel(entry.availability_reason)} title={availabilityLabel(entry.availability_reason)} hidden={!entry.availability_dot}></span>{(() => {const image=responsiveArtwork(entry.poster,{size:'w342',sizes:compactImageSizes,route:imageRoute}); return image?.src ? <img class="entry-cover" src={image.src} srcset={image.srcset} sizes={image.sizes} alt="" loading="lazy"/> : <span class="entry-cover"/>})()}{data.owner&&<button class="row-menu" data-motion-static data-edit-entry={entry.id} aria-label={`Edit ${entry.title}`}><Icon name="ellipsis"/></button>}</div><div class="entry-title"><a class="entry-title-link" href={`/title/${entry.id}`}>{entry.title}{entry.favorite&&<span class="row-favorite" aria-label="Favorite"><Icon name="heart"/></span>}</a><EntryAnnotations rewatchCount={entry.rewatch_count} notes={entry.notes} newSeasons={entry.status==='completed'?entry.new_seasons:0}/></div>
+          <div class="entry-thumbnail" data-preview-src={entry.poster||undefined} data-artwork-path={entry.poster||undefined}><span class="entry-availability" role="img" aria-label={availabilityLabel(entry.availability_reason)} title={availabilityLabel(entry.availability_reason)} hidden={!entry.availability_dot}></span>{(() => {const image=responsiveArtwork(entry.poster,{size:'w342',sizes:compactImageSizes,route:imageRoute}); return image?.src ? <img class="entry-cover" src={image.src} srcset={image.srcset} sizes={image.sizes} alt="" loading="lazy"/> : <span class="entry-cover"/>})()}{data.owner&&<button class="row-menu" data-motion-static data-edit-entry={entry.id} aria-label={`Edit ${entry.title}`}><Icon name="ellipsis"/></button>}</div><div class="entry-title"><a class="entry-title-link" href={`/title/${entry.id}`}>{entry.title}{entry.favorite&&<span class="row-favorite" aria-label="Favorite"><Icon name="heart"/></span>}</a><EntryAnnotations rewatchCount={entry.rewatch_count} notes={entry.notes} newSeasons={entry.status==='completed'?entry.new_seasons:0} newEpisodes={entry.status==='completed'?entry.new_episodes:0}/></div>
           <span class="entry-score">{data.owner?<button class="entry-score-button" data-quick-rate-id={entry.id} data-quick-rate-title={entry.title} data-quick-rate-poster={quickRatePoster(entry.poster)} data-quick-rate-score={entry.score??''} data-quick-rate-mode={entry.rating_mode??'manual'} aria-label={`Rate ${entry.title}`}><span data-score-label>{scoreLabel(entry.score)}</span></button>:scoreLabel(entry.score)}</span>
           <span class="entry-progress">
             <span data-progress-label>{entry.type==='movie' ? entry.progress : entry.released_episodes===undefined?entry.progress:(entry.season_position||'—')}</span>
@@ -70,6 +70,7 @@ const availabilityLabel=(reason:string|undefined)=>reason==='airing'?'Currently 
   </> : <div class="page-width"><p class="error-message" role="alert">{error}</p></div>}
 </Tracker>
 <script>
+import {releaseAnnotation} from '../../../lib/release-annotation';
 import {applyResponsiveArtwork} from '../../../lib/responsive-artwork';
 import {mountListCoverPreview} from '../../../lib/list-cover-preview';
 import {compactListProgress} from '../../../lib/tracker';
@@ -114,9 +115,10 @@ document.addEventListener('astro:page-load', () => {
       row.querySelector<HTMLElement>('[data-mobile-progress-label]')!.textContent=compactListProgress({...updated,type:row.dataset.mediaType});
       const indicator=row.querySelector<HTMLElement>('.unwatched-indicator');
       if(indicator) indicator.remove();
-      if(updated.status==='completed'&&updated.new_seasons>0){
+      const releaseLabel=updated.status==='completed'?releaseAnnotation(updated.new_seasons,updated.new_episodes):null;
+      if(releaseLabel){
         const notice=document.createElement('small');notice.className='unwatched-indicator';
-        notice.textContent=updated.new_seasons===1?'new season':`${updated.new_seasons} new seasons`;
+        notice.textContent=releaseLabel;
         let annotations=row.querySelector<HTMLElement>('.entry-annotations');
         if(!annotations){annotations=document.createElement('span');annotations.className='entry-annotations';row.querySelector('.entry-title')!.append(annotations);}
         annotations.prepend(notice);

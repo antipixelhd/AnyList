@@ -67,6 +67,9 @@
   min-height:18px;
   pointer-events:none;
 }
+.activity-stream .following-event .event-meta time {
+  pointer-events:auto;
+}
 .activity-stream .following-event .event-cover {
   position:relative;
   width:65px;

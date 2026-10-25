@@ -569,16 +569,22 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({row['media']['id'] for row in feed}, {self.base, self.child})
         social = (await self.client.get(f'/tracking/games/works/{self.base}/social')).json()
         self.assertEqual([person['username'] for person in social['people']], ['player'])
+        self.assertEqual(social['activities'], [])
+        self.assertEqual([row['user_id'] for row in social['following_activities']], [self.user.id])
         async with self.Session() as db:
             profile = await db.scalar(select(UserProfileData).where(UserProfileData.user_id == self.user.id))
             profile.privacy_level = PrivacyLevel.private
             await db.commit()
         self.assertEqual((await self.client.get('/tracking/games/activity')).json()['results'], [])
-        self.assertEqual((await self.client.get(f'/tracking/games/works/{self.base}/social')).json()['people'], [])
+        private_social = (await self.client.get(f'/tracking/games/works/{self.base}/social')).json()
+        self.assertEqual(private_social['people'], [])
+        self.assertEqual(private_social['following_activities'], [])
         self.assertEqual((await self.client.get('/tracking/games/users/player/activity')).status_code, 403)
         self.viewer = self.user
         own = (await self.client.get(f'/tracking/games/works/{self.base}/social')).json()
         self.assertEqual(own['people'][0]['self'], True)
+        self.assertEqual([row['user_id'] for row in own['activities']], [self.user.id])
+        self.assertEqual(own['following_activities'], [])
         removed = await self.client.delete(f'/tracking/games/children/{self.child}?revision={child.json()["revision"]}')
         self.assertEqual(removed.status_code, 200)
         visible = (await self.client.get('/tracking/games/users/player/activity')).json()['results']

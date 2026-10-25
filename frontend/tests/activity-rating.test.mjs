@@ -37,6 +37,22 @@ test('post-cooldown changes show the previous score while absent ratings stay hi
   assert.equal(activityRating({...activity, payload: {}}), null);
 });
 
+test('episode cards use season and episode identities for single watches and ranges', () => {
+  const activity = {status: 'watching', media: {type: 'series'}};
+  assert.equal(activityAction({...activity, payload: {episodes_watched: 1, position: 'S3E7'}}), 'Watched Season 3 Episode 7 of');
+  assert.equal(activityAction({...activity, payload: {episodes_watched: 2, position_start: 'S3E5', position: 'S3E6'}}), 'Watched Season 3 Episode 5–6 of');
+  assert.equal(activityAction({...activity, payload: {episodes_watched: 2, position_start: 'S2E8', position: 'S3E1'}}), 'Watched Season 2 Episode 8 through Season 3 Episode 1 of');
+});
+
+test('season completion takes priority over episode ranges in the combined card', () => {
+  const activity = {status: 'watching', media: {type: 'series'}, payload: {
+    episodes_watched: 2, position_start: 'S3E7', position: 'S3E8', finished_seasons: [3],
+  }};
+  assert.equal(activityAction(activity), 'Watched season 3 of');
+  assert.equal(activityAction({...activity, payload: {...activity.payload, finished_seasons: [2, 3]}}), 'Watched seasons 2 and 3 of');
+  assert.equal(activityAction({...activity, status: 'completed', payload: {...activity.payload, status_changed: true}}), 'Completed');
+});
+
 test('feed refresh updates scores without changing timestamps or order and removes deleted cards', () => {
   const source = readFileSync(new URL('../src/pages/home.astro', import.meta.url), 'utf8');
   const reconcileSource = source.slice(source.indexOf('  const reconcile='), source.indexOf('  const refresh=async'));

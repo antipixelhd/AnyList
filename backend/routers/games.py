@@ -17,9 +17,6 @@ from dependencies import get_current_user, get_current_user_or_api_key, get_opti
 from models import User
 from models.catalogue import CatalogueEntity
 from models.games import GameAchievement, GameAchievementUnlock, GameChildState, GameEntry, GameFavorite
-from models import UserProfileData
-from models.base import PrivacyLevel
-from sqlalchemy import or_, and_
 from schemas_games import (AchievementOut, AchievementPage, ChildPatch, FavoritePatch,
                            GameEntryOut, GameListOut, GameListProfile, GamePlayingOut, GamePatch, GameStateBatch, GameStatus, GameFavoriteOrder)
 from schemas_game_statistics import GameStatsResponse,GameStatsSection
@@ -507,6 +504,7 @@ async def game_social(work_id: WorkId, db: DB, viewer: Reader) -> dict:
     from core import game_activity
     await tracking.work(db, work_id)
     people = await game_activity.social_people(db, viewer.id, work_id)
-    visible = select(User.id).outerjoin(UserProfileData, UserProfileData.user_id == User.id).where(or_(
-        User.id == viewer.id, and_(User.id.in_(game_activity.following_ids(viewer.id)), UserProfileData.privacy_level == PrivacyLevel.public)))
-    return {'people': people, 'activities': await game_activity.rows(db, visible, limit=30, work_id=work_id)}
+    return {'people': people,
+        'activities': await game_activity.rows(db, [viewer.id], limit=30, work_id=work_id),
+        'following_activities': await game_activity.rows(db, game_activity.following_ids(viewer.id),
+            limit=30, work_id=work_id, public_only=True)}

@@ -91,6 +91,19 @@ def media_data(media):
     }
 
 
+def release_annotations(episodes, watched_ids, status):
+    """Classify released, unwatched episodes using actual season history."""
+    if status != 'completed':
+        return {'new_seasons': 0, 'new_episodes': 0}
+    watched_seasons = {episode.season_number for episode in episodes if episode.id in watched_ids}
+    unwatched = [episode for episode in episodes if episode.id not in watched_ids]
+    return {
+        'new_seasons': len({episode.season_number for episode in unwatched
+                            if episode.season_number not in watched_seasons}),
+        'new_episodes': sum(episode.season_number in watched_seasons for episode in unwatched),
+    }
+
+
 def entry_data(entry, media, owner=False, *, favorite=None):
     result = {
         **media_data(media),
@@ -116,6 +129,7 @@ def entry_data(entry, media, owner=False, *, favorite=None):
 def activity_data(rows, *, include_user=False, limit=12):
     """Present fixed-window cards, retaining UTC-day grouping for legacy rows."""
     from core.activity import has_activity_event, merge_activity_payload
+    from core.streaming_evidence import streaming_episode_span
 
     grouped = {}
     for row in rows:
@@ -153,6 +167,10 @@ def activity_data(rows, *, include_user=False, limit=12):
                 grouped[key]["payload"], activity.payload
             )
     for activity in grouped.values():
+        if not activity['payload'].get('position_start'):
+            span = streaming_episode_span(activity['payload'])
+            if span:
+                activity['payload']['position_start'], activity['payload']['position'] = span
         if activity["score"] is None:
             # A known previous score means the rating was cleared. A legacy row
             # with no old or new score cannot establish that an edit occurred.
@@ -164,3 +182,61 @@ def activity_data(rows, *, include_user=False, limit=12):
         for item in grouped.values()
         if has_activity_event(item["status"], item["payload"])
     ][:limit]
+
+
+def following_title_activity(rows, media, *, today=None, limit=30):
+    """Retain season milestones while ordinary statuses follow the latest action."""
+    from datetime import date
+    today = today or date.today()
+    premieres = {
+        int(season['season_number']): str(season['air_date'])[:10]
+        for season in (media.tmdb_data or {}).get('seasons', [])
+        if isinstance(season, dict) and (season.get('season_number') or 0) > 0
+        and season.get('air_date') and str(season['air_date'])[:10] <= today.isoformat()
+    } if media.media_type.value == 'series' else {}
+    candidates = []
+    for activity, user, profile in rows:
+        details = activity.payload or {}
+        status_event = details.get('status_changed') and (
+            activity.status in ('completed', 'dropped', 'paused', 'planning')
+            or (activity.status == 'watching' and details.get('started_watching') is True)
+        )
+        if not status_event and not details.get('finished_seasons'):
+            continue
+        candidates.append((activity, user, profile))
+    ordered = sorted(candidates, key=lambda row: (row[0].created_at, row[0].id), reverse=True)
+    cards = activity_data([(activity, media, user, profile) for activity, user, profile in ordered],
+                          include_user=True, limit=len(ordered))
+    by_user = {}
+    for card in cards:
+        details = card['payload']
+        # A combined first-watch card may also contain episodes. The details
+        # summary exposes its milestone, while timelines retain every action.
+        for key in ('episodes_watched', 'position_start', 'position', 'progress'):
+            details.pop(key, None)
+        completed_on = card['created_at'].date().isoformat()
+        if card['status'] == 'completed' and details.get('status_changed') and any(
+            premiere > completed_on for premiere in premieres.values()
+        ):
+            finished = [number for number, premiere in premieres.items() if premiere <= completed_on]
+            finished.extend(details.get('finished_seasons') or [])
+            if finished:
+                card['status'] = 'watching'
+                details['status_changed'] = False
+                details['finished_seasons'] = [max(finished)]
+        choices = by_user.setdefault(card['user_id'], {})
+        if details.get('status_changed'):
+            choices.setdefault('status', card)
+        if details.get('finished_seasons'):
+            choices.setdefault('season', card)
+    result = []
+    for choices in by_user.values():
+        status = choices.get('status')
+        card = status if status and status['status'] == 'completed' else choices.get('season') or status
+        if card is None:
+            continue
+        if card is choices.get('season') and not (card['status'] == 'completed' and card['payload'].get('status_changed')):
+            card['status'] = 'watching'
+            card['payload']['status_changed'] = False
+        result.append(card)
+    return sorted(result, key=lambda card: card['created_at'], reverse=True)[:limit]

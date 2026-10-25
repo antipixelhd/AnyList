@@ -68,6 +68,9 @@ const activities = [
             {title:'Note only',rewatchCount:0,notes:'A personal note with <script>literal text</script> & punctuation.'},
             {title:'Rewatches only',rewatchCount:3,notes:null},
             {title:'No annotations',rewatchCount:0,notes:'   '},
+            {title:'New episode in watched season',newEpisodes:1},
+            {title:'Multiple new episodes',newEpisodes:3},
+            {title:'New season takes priority',newSeasons:1,newEpisodes:2},
             {title:'Long note',rewatchCount:1,notes:'A longer review with line breaks.\n\n'+ 'Beautiful cinematography and a memorable soundtrack. '.repeat(30)},
           ].map(entry => <article class="entry-row"><div class="entry-title"><span class="entry-title-link">{entry.title}</span><EntryAnnotations {...entry}/></div><span class="entry-score">8.5</span><span class="entry-progress">1</span></article>)}
         </div></section>

@@ -10,13 +10,14 @@ const pickerDate = (iso: string) => new Date(`${iso}T12:00:00`);
 const localeEn: AirDatepickerLocale = 'default' in englishLocale
   ? (englishLocale as unknown as {default:AirDatepickerLocale}).default : englishLocale;
 
-export function setupCalendarDateInputs(root: ParentNode, signal: AbortSignal) {
+export function setupCalendarDateInputs(root: ParentNode, signal: AbortSignal, options: {returnFocus?: 'display' | 'trigger'} = {}) {
   const refreshers: Array<() => void> = [];
   const android = /Android/i.test(navigator.userAgent);
   root.querySelectorAll<HTMLElement>('[data-calendar-input]').forEach(control => {
     const input = control.querySelector<HTMLInputElement>('[data-date-iso]')!;
     const display = control.querySelector<HTMLInputElement>('[data-date-display]')!;
     const trigger = control.querySelector<HTMLButtonElement>('[data-date-picker]')!;
+    const returnFocus = () => (options.returnFocus === 'trigger' ? trigger : display).focus({preventScroll:true});
     let picker: AirDatepicker<HTMLElement> | undefined;
     let panel: HTMLDivElement | undefined;
     let header: HTMLElement | undefined;
@@ -104,7 +105,7 @@ export function setupCalendarDateInputs(root: ParentNode, signal: AbortSignal) {
             valid();
             input.dispatchEvent(new Event('change', {bubbles:true}));
             void close();
-            display.focus({preventScroll:true});
+            returnFocus();
           },
         });
         header.addEventListener('click', event => {
@@ -185,7 +186,7 @@ export function setupCalendarDateInputs(root: ParentNode, signal: AbortSignal) {
     document.addEventListener('keydown', event => {
       if (opened && event.key === 'Escape') {
         event.preventDefault(); event.stopImmediatePropagation();
-        void close(); display.focus({preventScroll:true});
+        void close(); returnFocus();
       }
     }, {signal, capture:true});
     document.addEventListener('focusin', event => {

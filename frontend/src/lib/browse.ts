@@ -17,6 +17,7 @@ import { createBrowseCache, waitForBrowseRequest } from "./browse-cache";
 import {createPrediction, paginationPosition} from "./predictive-loading";
 import { initializeBrowseSort } from "./browse-sort";
 import { createBrowseOverride } from './browse-override';
+import {createSearchExpansion, shouldBroadenSearch, broadSearchParams} from './search-fallback';
 import { appendBrowseTimeline } from './browse-timeline';
 import { initializeScrollMotion } from "./scroll-motion";
 import { editorStore, type EditorTitle } from "./editor-store";
@@ -32,6 +33,7 @@ type Payload = {
   cursor?: string | null;
   notice?: string;
   partial?: boolean;
+  curation_expanded?: boolean;
 };
 type Section = {
   title: string;
@@ -73,6 +75,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   const showAll = find<HTMLButtonElement>('[data-browse-show-all]');
   const curated = find<HTMLButtonElement>('[data-browse-curated]');
   const resultOverride = createBrowseOverride(field('q').value);
+  const automaticExpansion = createSearchExpansion();
   const end = find<HTMLElement>("[data-browse-end]");
   const sort = find<HTMLSelectElement>("[data-browse-sort]");
   const syncSort = initializeBrowseSort(root, signal, changed);
@@ -125,9 +128,11 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     if(field('type').value==='movie'&&(field('cinema') as HTMLInputElement).checked)values.set('cinema','1');
     values.set("sort", sort.value);
     if(field('view').value==='timeline')values.set('view','timeline');
-    if(resultOverride.forQuery(field('q').value))values.set('unfiltered','true');
+    const automaticallyExpanded = automaticExpansion.forSearch(values);
+    if(resultOverride.forQuery(field('q').value)||automaticallyExpanded)values.set('unfiltered','true');
     return values;
   };
+  if (payload.curation_expanded) automaticExpansion.activate(params());
   const categoryMode = (values: URLSearchParams) => !values.has('unfiltered') && isCategoryView(values);
   const requestPath = (values: URLSearchParams) => categoryMode(values)
     ? `browse/sections?${new URLSearchParams({media_type: values.get('media_type')!, region: values.get('region')!, min_score: values.get('min_score')!})}`
@@ -333,10 +338,11 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     find("[id=browse-genres-value]").textContent = genreSelectionLabel(field("genres").value, facets.genres);
   };
   const updateFooter = () => {
-    const overridden = resultOverride.forQuery(field('q').value);
+    const manualOverride = resultOverride.forQuery(field('q').value);
+    const overridden = manualOverride || automaticExpansion.forSearch(params());
     root.toggleAttribute('data-browse-override', overridden);
     showAll.hidden = overridden || displayedCategories || loading || suspended || payload.has_more || !error.hidden;
-    curated.hidden = !overridden;
+    curated.hidden = !manualOverride;
     curated.disabled = loading;
     find("[data-browse-sentinel]").hidden = displayedCategories;
     more.hidden = !payload.has_more;
@@ -382,6 +388,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     suspended = false;
     error.hidden = true;
     const cached = responseCache.get(path);
+    let expanded = false;
     empty.hidden = true;
     region.setAttribute("aria-busy", "true");
     updateFooter();
@@ -408,26 +415,42 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
         response = await prediction.consume(path,current.signal) ?? await json(path, {signal: current.signal}) as Payload | SectionsPayload;
         if (current.signal.aborted || signal.aborted || request !== current) return;
       }
-      if (!append && response && 'results' in response) {
+      async function fillViewport(first: Payload, requestValues: URLSearchParams): Promise<Payload> {
+        let response = first;
         const merged = new Map(response.results.map(item => [key(item), item]));
         const columns = Math.max(3, Math.floor(region.clientWidth / 160));
         const target = Math.max(24, columns * (Math.ceil(innerHeight / 260) + 1));
         for (let pages = 0; response.has_more && merged.size < target && pages < 5; pages++) {
-          const next = new URLSearchParams(values);
+          const next = new URLSearchParams(requestValues);
           next.set('page', String(response.page + 1)); next.set('source', response.source);
           if (response.cursor) next.set('cursor', response.cursor);
           const nextPath = requestPath(next);
           const batch = responseCache.get(nextPath) as Payload | undefined ?? await json(nextPath, {signal: current.signal}) as Payload;
-          if (current.signal.aborted || signal.aborted || request !== current) return;
+          if (current.signal.aborted || signal.aborted || request !== current) throw new DOMException('Search changed', 'AbortError');
           responseCache.set(nextPath, batch);
           batch.results.forEach(item => merged.set(key(item), item));
           response = {...batch, results: [...merged.values()]};
         }
         if (field('q').value.trim()) response.results.sort((a,b) => (b.search_rank || 0) - (a.search_rank || 0));
+        return response;
       }
-      responseCache.set(path, response!);
+      if (!append && response && 'results' in response) {
+        response = await fillViewport(response, values);
+        responseCache.set(path, response);
+        if (shouldBroadenSearch(values, response) && automaticExpansion.allowed(values)) {
+          const broad = broadSearchParams(values);
+          const broadPath = requestPath(broad);
+          const first = responseCache.get(broadPath) as Payload | undefined ?? await json(broadPath, {signal: current.signal}) as Payload;
+          if (current.signal.aborted || signal.aborted || request !== current) return;
+          response = await fillViewport(first, broad);
+          responseCache.set(broadPath, response);
+          expanded = true;
+        }
+      }
+      if (!expanded) responseCache.set(path, response!);
       if (!cached) await loadingView.settle(current.signal);
       if (request !== current || epoch !== generation || signal.aborted) return;
+      if (expanded) automaticExpansion.activate(values);
       if (!append) {
         cancelUiMotion(region);
         grid.replaceChildren();
@@ -572,6 +595,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   }, {signal});
   curated.addEventListener('click', () => {
     resultOverride.set(false);
+    automaticExpansion.suppress(params());
     void load();
   }, {signal});
   form.addEventListener(

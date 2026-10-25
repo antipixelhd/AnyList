@@ -2,7 +2,7 @@
 from alembic import op
 
 revision = 'mt059'
-down_revision = 'mt058'
+down_revision = 'mt058_games'
 branch_labels = None
 depends_on = None
 

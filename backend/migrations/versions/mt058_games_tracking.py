@@ -1,7 +1,9 @@
 """Catalogue-rooted games and parent-dependent expansion tracking."""
 from alembic import op
 
-revision = 'mt058'
+# Main deployed mt058 for vote eligibility while beta had already advanced to
+# mt066. Distinguish the Games branch; mt059+ retain their deployed identities.
+revision = 'mt058_games'
 down_revision = 'mt057'
 branch_labels = None
 depends_on = None

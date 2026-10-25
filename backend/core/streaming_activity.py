@@ -1,0 +1,172 @@
+from datetime import datetime, timedelta
+from sqlalchemy import select
+from models.tracking import TrackingActivity
+from core.activity import activity_window_start, has_activity_event, _record_rating_details, RATING_ACTIVITY_FIELDS
+from core.streaming_evidence import activity_event_order, streaming_episode_span
+
+
+def _rebuild(row):
+    details = dict(row.payload or {})
+    events = details.get('streaming_events', {})
+    base = {key: value for key, value in details.get('streaming_base', {}).items()
+            if key not in RATING_ACTIVITY_FIELDS}
+    values = sorted(events.values(), key=activity_event_order)
+    base['streaming_events'] = events
+    base['streaming_base'] = details.get('streaming_base', {})
+    for key in ('streaming_base_at', 'streaming_base_status'):
+        if key in details:
+            base[key] = details[key]
+    base['episodes_watched'] = max(int(base.get('episodes_watched') or 0), sum(e.get('episodes_watched', 0) for e in values))
+    local_positions = base.get('episode_positions')
+    if local_positions is not None:
+        base['episodes_watched'] = len(set(local_positions) | {
+            event['position'] for event in values if event.get('episodes_watched') and event.get('position')
+        })
+    base['finished_seasons'] = sorted(set(base.get('finished_seasons', [])) | {s for e in values for s in e.get('finished_seasons', [])})
+    for event in values:
+        for key in ('position', 'status_changed', 'started_watching'):
+            if event.get(key) is not None:
+                base[key] = event[key]
+        row.status = event['status']
+    span = streaming_episode_span(base)
+    if span:
+        base['position_start'], base['position'] = span
+    base_at = datetime.fromisoformat(details['streaming_base_at']) if details.get('streaming_base_at') else None
+    if base_at and (not values or base_at >= datetime.fromisoformat(values[-1]['date'])):
+        row.status = details['streaming_base_status']
+    times = [datetime.fromisoformat(event['date']) for event in values]
+    if base_at:
+        times.append(base_at)
+    if times:
+        row.created_at = max(times)
+    # A card's grouping window stays fixed even when its first action moves.
+    if details.get('window_started_at'):
+        base['window_started_at'] = details['window_started_at']
+    for key in RATING_ACTIVITY_FIELDS:
+        if key in details:
+            base[key] = details[key]
+    row.payload = base
+
+
+async def record_streaming_activity(db, user_id, media_id, events, *, score=None, previous_score=None):
+    rows = list((await db.execute(select(TrackingActivity).where(
+        TrackingActivity.user_id == user_id, TrackingActivity.media_id == media_id,
+    ).order_by(TrackingActivity.created_at, TrackingActivity.id))).scalars().all())
+    touched = []
+    for event in events:
+        # Stable evidence keys make a repeated import idempotent.
+        existing = next((row for row in rows if event['key'] in (row.payload or {}).get('streaming_events', {})), None)
+        if existing:
+            old = existing.payload['streaming_events'][event['key']]
+            if old['date'] <= event['date']:
+                touched.append(existing)
+                continue
+            details = dict(existing.payload)
+            details['streaming_events'] = {key: value for key, value in details['streaming_events'].items() if key != event['key']}
+            existing.payload = details
+            _rebuild(existing)
+        now = datetime.fromisoformat(event['date'])
+        row = next((r for r in reversed(rows) if activity_window_start(r) <= now < activity_window_start(r) + timedelta(hours=24)), None)
+        if row is None:
+            row = TrackingActivity(user_id=user_id, media_id=media_id, status=event['status'], created_at=now,
+                                   payload={'window_started_at': now.isoformat(), 'streaming_base': {}})
+            db.add(row)
+            rows.append(row)
+        details = dict(row.payload or {})
+        if 'streaming_base' not in details:
+            details['streaming_base'] = dict(details)
+            details['streaming_base_at'] = row.created_at.isoformat()
+            details['streaming_base_status'] = row.status
+            details['window_started_at'] = activity_window_start(row).isoformat()
+        details['streaming_events'] = {**details.get('streaming_events', {}), event['key']: event}
+        row.payload = details
+        _rebuild(row)
+        touched.append(row)
+    active = [row for row in touched if has_activity_event(row.status, row.payload or {})]
+    latest = max(active, key=lambda row: row.created_at, default=None)
+    if latest is not None and score is not None and score != previous_score:
+        details = dict(latest.payload)
+        _record_rating_details(details, rating_changed=True, previous_score=previous_score, score=score, now=latest.created_at)
+        latest.payload, latest.score = details, score
+    for row in rows:
+        if 'streaming_events' in (row.payload or {}) and not has_activity_event(row.status, row.payload):
+            await db.delete(row)
+    return latest
+
+async def reschedule_date_activity(db, user_id, media_id, *, start_date, finish_date, changed, status=None):
+    """Move date actions and their attached rating, preserving unrelated history."""
+    rows = list((await db.execute(select(TrackingActivity).where(
+        TrackingActivity.user_id == user_id, TrackingActivity.media_id == media_id,
+    ).order_by(TrackingActivity.created_at.desc(), TrackingActivity.id.desc()))).scalars().all())
+    moved = []
+    ratings = []
+    for key, value in (('start', start_date), ('finish', finish_date)):
+        if ('start_date' if key == 'start' else 'finish_date') not in changed:
+            continue
+        tagged = [row for row in rows if key in (row.payload or {}).get('streaming_events', {})]
+        legacy = next((row for row in rows if 'streaming_events' not in (row.payload or {}) and
+                       (row.payload or {}).get('status_changed') and
+                       (row.status == 'completed' if key == 'finish' else (row.payload or {}).get('started_watching'))), None)
+        if not tagged and legacy is None and value and (
+            status == 'completed' if key == 'finish' else status in ('watching', 'paused', 'dropped', 'completed')
+        ):
+            event = {'key': key, 'date': value.isoformat(), 'status': 'completed' if key == 'finish' else 'watching',
+                     'status_changed': True}
+            if key == 'start':
+                event['started_watching'] = True
+            # A restored completion inherits a rating previously attached to
+            # its earlier imported history, without moving later rating edits.
+            latest = max(rows, key=lambda row: row.created_at, default=None)
+            if key == 'finish' and latest is not None and latest.created_at.date() <= value:
+                details = dict(latest.payload or {})
+                if details.get('streaming_events') and details.get('rating_changed') and latest.score is not None:
+                    ratings.append((event, latest.score, {name: item for name, item in details.items() if name in RATING_ACTIVITY_FIELDS}, None))
+                    details = {name: item for name, item in details.items() if name not in RATING_ACTIVITY_FIELDS}
+                    details['streaming_base'] = {name: item for name, item in details.get('streaming_base', {}).items() if name not in RATING_ACTIVITY_FIELDS}
+                    latest.payload, latest.score = details, None
+            moved.append(event)
+        for row in tagged or ([legacy] if legacy is not None else []):
+            details = dict(row.payload or {})
+            if row in tagged:
+                event = dict(details['streaming_events'][key])
+                details['streaming_events'] = {name: item for name, item in details['streaming_events'].items() if name != key}
+            else:
+                event = {'key': key, 'status': 'completed' if key == 'finish' else 'watching', 'status_changed': True}
+                if key == 'start':
+                    event['started_watching'] = True
+                    details.pop('started_watching', None)
+                    details['status_changed'] = bool(details.get('status_changed') and row.status != 'watching')
+                else:
+                    details['status_changed'] = bool(details.get('started_watching'))
+                    if details.get('started_watching'):
+                        row.status = 'watching'
+            # A start-date edit must not steal a rating from a combined finish card.
+            if row.score is not None and details.get('rating_changed') and (key == 'finish' or row.status == 'watching'):
+                ratings.append((event, row.score, {name: item for name, item in details.items() if name in RATING_ACTIVITY_FIELDS}, row if row not in tagged else None))
+                details = {name: item for name, item in details.items() if name not in RATING_ACTIVITY_FIELDS}
+                if 'streaming_base' in details:
+                    details['streaming_base'] = {name: item for name, item in details['streaming_base'].items() if name not in RATING_ACTIVITY_FIELDS}
+                row.score = None
+            row.payload = details
+            if row in tagged:
+                _rebuild(row)
+            if value:
+                event['date'] = value.isoformat()
+                moved.append(event)
+    await db.flush()
+    latest = await record_streaming_activity(db, user_id, media_id, moved)
+    for event, score, metadata, legacy in ratings:
+        if event.get('date') and event in moved:
+            target = await record_streaming_activity(db, user_id, media_id, [event])
+        else:
+            target = max((row for row in rows if has_activity_event(row.status, row.payload or {}) and row.score is None),
+                         key=lambda row: row.created_at, default=None)
+        if target is None and legacy is not None:
+            target = legacy
+        if target is not None:
+            target.score = score
+            target.payload = {**target.payload, **metadata}
+    for row in rows:
+        if not has_activity_event(row.status, row.payload or {}):
+            await db.delete(row)
+    return latest
