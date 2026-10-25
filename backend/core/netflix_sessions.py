@@ -1028,6 +1028,8 @@ async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSe
         entry, is_new = await _track_imported_root(db, user_id, root, outcome, accepted_dates, progress_count, False)
         await _apply_staged_rating(db, user_id, root, entry, outcome)
         await _record_import_activity(db, user_id, root, entry, item)
+        from core.connection_imports import apply_resume
+        await apply_resume(db, session, item, root, entry, show, episode_mappings)
         stats["shows"] += 1
         stats["new_entries" if is_new else "existing_entries"] += 1
         if any(s.get("total_released") is None or s.get("represented", 0) < s["total_released"] for s in item.get("seasons", [])):

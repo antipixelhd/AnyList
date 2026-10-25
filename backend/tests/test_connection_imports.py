@@ -211,6 +211,77 @@ class ConnectionDraftDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.db.scalars(select(TrackedEntry))).one().status, 'completed')
         handoff.assert_awaited_once()
 
+    async def test_unresolved_first_history_is_retryable_instead_of_baselined(self):
+        row = movie(content_id='tt1234567')
+        with self.assertRaisesRegex(ValueError, 'Sync again'):
+            await stage_first_snapshot(self.db, self.conn, [], [], [row], {}, 'fixture')
+        self.assertIsNone(await self.db.get(StreamBaseline, self.conn.id))
+        self.assertEqual((await self.db.scalars(select(NetflixImportSession))).all(), [])
+        await stage_first_snapshot(self.db, self.conn, [], [], [row], {'tt1234567': 42}, 'fixture')
+        self.assertEqual((await self.draft()).status, 'review')
+        self.assertEqual((await self.db.scalars(select(WatchEvent))).all(), [])
+
+    async def _stage_series_resume(self):
+        show = {'id': 99, 'name': 'Show', 'first_air_date': '2019-01-01',
+                'seasons': [{'season_number': 1, 'episode_count': 8}]}
+        catalog = {'episodes': [{'id': 90000 + n, 'name': f'Episode {n}', 'season_number': 1,
+            'episode_number': n, 'air_date': '2019-01-01', 'runtime': 60} for n in range(1, 9)]}
+        watched = [{'content_id': 'tmdb:99', 'content_type': 'series', 'title': 'Show',
+                    'season': 1, 'episode': n, 'watched_at': 1578009600000} for n in range(1, 4)]
+        progress = [{**movie(), 'content_id': 'tmdb:99', 'content_type': 'series', 'title': 'Show',
+                     'season': 1, 'episode': 4, 'position': 1200000}]
+        with patch('core.connection_imports.tmdb.get_show_light', AsyncMock(return_value=show)), \
+             patch('core.connection_imports.tmdb.get_season', AsyncMock(return_value=catalog)):
+            await stage_first_snapshot(self.db, self.conn, [], watched, progress, {'tmdb:99': 99}, 'fixture')
+        return await self.draft()
+
+    async def test_accepted_watching_import_restores_resume_without_marking_episode_watched(self):
+        from models import Media, PlaybackProgress
+        draft = await self._stage_series_resume()
+        item = draft.payload['items'][0]
+        item['outcome'].update(status='partial', tracking_status='watching', status_overridden=True)
+        await _apply_import(self.db, self.user.id, draft, AsyncMock())
+        await self.db.flush()
+        playback = (await self.db.scalars(select(PlaybackProgress))).one()
+        episode = await self.db.get(Media, playback.media_id)
+        self.assertEqual((episode.season_number, episode.episode_number), (1, 4))
+        self.assertEqual(playback.progress_seconds, 1200)
+        self.assertAlmostEqual(playback.progress_percent, 1 / 3)
+        self.assertEqual((await self.db.scalars(select(TrackedEntry))).one().progress, 3)
+        self.assertFalse(await self.db.scalar(select(WatchEvent.id).where(WatchEvent.media_id == episode.id)))
+        from routers.history import get_continue_watching
+        with patch('routers.history.media_presentation.enrich_with_state', AsyncMock()), \
+             patch('routers.history.get_user_metadata_language', AsyncMock(return_value=None)):
+            response = await get_continue_watching(20, False, self.db, self.user)
+        self.assertEqual([(row['media']['episode_number'], row['progress_seconds'])
+                          for row in response['continue_watching']], [(4, 1200)])
+
+    async def test_skipped_paused_dropped_or_completed_series_does_not_restore_resume(self):
+        from models import PlaybackProgress
+        from copy import deepcopy
+        draft = await self._stage_series_resume()
+        for choice, status in (('skip', 'watching'), ('partial', 'dropped'), ('partial', 'paused'), ('completed', 'watching')):
+            with self.subTest(choice=choice, status=status):
+                payload = deepcopy(draft.payload)
+                payload['items'][0]['outcome'].update(status=choice, tracking_status=status, status_overridden=True)
+                await _apply_import(self.db, self.user.id, SimpleNamespace(id=draft.id, user_id=self.user.id, payload=payload), AsyncMock())
+                await self.db.flush()
+                self.assertEqual((await self.db.scalars(select(PlaybackProgress))).all(), [])
+
+    async def test_new_connection_import_preserves_existing_local_resume(self):
+        from models import PlaybackProgress
+        draft = await self._stage_series_resume()
+        item = draft.payload['items'][0]
+        item['outcome'].update(status='partial', tracking_status='watching', status_overridden=True)
+        await _apply_import(self.db, self.user.id, draft, AsyncMock())
+        await self.db.flush()
+        playback = (await self.db.scalars(select(PlaybackProgress))).one()
+        playback.progress_seconds = 600
+        await self.db.flush()
+        await _apply_import(self.db, self.user.id, draft, AsyncMock())
+        await self.db.flush()
+        self.assertEqual((await self.db.scalars(select(PlaybackProgress))).one().progress_seconds, 600)
+
     async def _assert_first_pull_stages_history(self, provider, *, metadata_error=False):
         from contextlib import asynccontextmanager, ExitStack
         from datetime import datetime, timezone

@@ -6,6 +6,7 @@ the same import transaction and review UI used by file imports do that later.
 import asyncio
 from datetime import date, timedelta
 from math import isfinite
+import re
 import uuid
 
 from sqlalchemy import select
@@ -195,6 +196,13 @@ async def stage_first_snapshot(db, conn, library, watched, progress, mappings, a
             baseline.snapshot = {key: value for key, value in baseline.snapshot.items() if key != 'import_session_id'}
         return True
     identity_version = conn.identity_version
+    unresolved = {str(row.get('content_id')) for row, _ in observations(watched, progress)
+                  if re.fullmatch(r'tt\d+|tmdb:\d+', str(row.get('content_id') or ''), re.IGNORECASE)
+                  and str(row['content_id']) not in mappings}
+    if unresolved:
+        # A failed lookup is unknown evidence, not a reviewed skip. Do not
+        # establish a baseline that would suppress these rows on a retry.
+        raise ValueError(f'{len(unresolved)} watched title(s) could not be verified. Sync again to retry their identities.')
     items = await prepare_items(watched, progress, mappings, api_key)
     # Serialize competing first pulls after network work, before creating a draft.
     await db.execute(select(User.id).where(User.id == conn.user_id).with_for_update())
@@ -224,6 +232,52 @@ async def stage_first_snapshot(db, conn, library, watched, progress, mappings, a
                           snapshot=snapshot, observed_at=source_started_at or now))
     await db.commit()
     return True
+
+
+async def apply_resume(db, session, item, root, entry, show, episode_mappings):
+    """Restore only accepted, unwatched resume offsets inside the import transaction."""
+    connection_id = (session.payload or {}).get('connection_id')
+    if connection_id is None or item['outcome'].get('status') != 'partial' or entry.status != 'watching':
+        return
+    from core.streaming_evidence import completed_viewing
+    from core.watch_dates import normalize_watch_datetime
+    from models import PlaybackProgress
+    baseline = await db.get(StreamBaseline, connection_id)
+    snapshot = (baseline.snapshot or {}) if baseline else {}
+    mappings = snapshot.get('mappings') or {}
+    rows = [row for row in snapshot.get('records', {}).get('progress', [])
+            if row.get('content_type') == ('series' if show else 'movie')
+            and mappings.get(str(row.get('content_id'))) == item['match']['candidate']['tmdb_id']]
+    observed_at = (baseline.observed_at or netflix_sessions._now()) if baseline else netflix_sessions._now()
+    rows.sort(key=lambda row: normalize_watch_datetime(row.get('last_watched')) or observed_at, reverse=True)
+    for row in rows:
+        try:
+            seconds, duration = float(row.get('position') or 0) / 1000, float(row.get('duration') or 0) / 1000
+            position = int(row.get('season') or 0), int(row.get('episode') or 0)
+        except (ValueError, TypeError, OverflowError):
+            continue
+        if not isfinite(seconds) or not isfinite(duration) or seconds < MIN_WATCH_SECONDS or duration <= 0:
+            continue
+        if completed_viewing({'watched_seconds': seconds, 'duration_seconds': duration}):
+            continue
+        media = root
+        if show:
+            episode = netflix_sessions._all_catalog_episodes(item).get(position)
+            if episode is None:
+                continue
+            media = await netflix_sessions._get_or_create_episode(db, show, item['match']['candidate'], episode, episode_mappings)
+        if media is None:
+            continue
+        watched = await db.scalar(select(WatchEvent.id).where(WatchEvent.user_id == session.user_id,
+            WatchEvent.media_id == media.id, WatchEvent.completed.is_(True)).limit(1))
+        current = await db.scalar(select(PlaybackProgress.id).where(PlaybackProgress.user_id == session.user_id,
+            PlaybackProgress.media_id == media.id))
+        if watched is not None or current is not None:
+            continue
+        db.add(PlaybackProgress(user_id=session.user_id, media_id=media.id, progress_seconds=int(seconds),
+            progress_percent=seconds / duration,
+            updated_at=normalize_watch_datetime(row.get('last_watched')) or baseline.observed_at or netflix_sessions._now()))
+        await db.flush()
 
 
 async def finish_import(db, session, *, validate=False):
