@@ -77,6 +77,9 @@ class GameRatings:
         previous=projection(work,app) or {'steam_app_id':app}
         catalogue.merge_fields(work,{'attributes':{'game_ratings':{**previous,part:value}}},'steam')
 
+    async def publish_component(self,db,work,app,part,value):
+        self.publish(work,app,part,value)
+
     async def run(self,work_id):
         key=(id(self.factory),self.job,work_id);task=_flights.get(key)
         if task is None:
@@ -125,7 +128,7 @@ class GameRatings:
                             record=MetadataSnapshot(provider='steam',kind=self.component_kind(part),external_id=str(work_id),entity_id=work_id);db.add(record)
                         record.payload=value;record.coverage={'state':'complete','complete':True,'steam_app_id':app}
                         record.fetched_at=now();record.expires_at=now()+self.retention(part)
-                        self.publish(work,app,part,value)
+                        await self.publish_component(db,work,app,part,value)
                         await db.commit()
                 except catalogue.IdentityConflict:raise
                 except Exception as error:failures.append(error)

@@ -144,7 +144,8 @@ async def states(db, user_id, work_ids, *, owner=True):
         GameChildState.user_id == user_id, GameChildState.work_id.in_(ids)))).all()}
     favorites = set((await db.scalars(select(GameFavorite.work_id).where(
         GameFavorite.user_id == user_id, GameFavorite.work_id.in_(ids)))).all())
-    exact = dict((await db.execute(select(GameAchievementUnlock.work_id, func.count()).where(
+    exact = dict((await db.execute(select(GameAchievementUnlock.work_id, func.count()).join(
+        GameAchievement,GameAchievement.id==GameAchievementUnlock.achievement_id).where(GameAchievement.active.is_(True),
         GameAchievementUnlock.user_id == user_id, GameAchievementUnlock.work_id.in_(ids)
     ).group_by(GameAchievementUnlock.work_id))).all())
     return [present(e, entries.get(e.id) or children.get(e.id), owner=owner,
@@ -200,13 +201,14 @@ async def apply_achievements(db, entity, row, patch):
                 raise HTTPException(422, 'Choose achievement replacements or individual updates')
             selected = set(patch.unlocked_ids)
             valid = set((await db.scalars(select(GameAchievement.id).where(
-                GameAchievement.work_id == entity.id, GameAchievement.id.in_(selected)))).all())
+                GameAchievement.work_id == entity.id, GameAchievement.active.is_(True),GameAchievement.id.in_(selected)))).all())
             if selected != valid:
                 raise HTTPException(422, 'Achievements must belong to this game')
             # Future imported evidence is not discarded by a manual mode switch.
             await db.execute(delete(GameAchievementUnlock).where(
                 GameAchievementUnlock.user_id == row.user_id, GameAchievementUnlock.work_id == entity.id,
-                GameAchievementUnlock.source == 'manual', GameAchievementUnlock.achievement_id.not_in(selected)))
+                GameAchievementUnlock.source == 'manual', GameAchievementUnlock.achievement_id.not_in(selected),
+                GameAchievementUnlock.achievement_id.in_(select(GameAchievement.id).where(GameAchievement.active.is_(True)))))
             existing = set((await db.scalars(select(GameAchievementUnlock.achievement_id).where(
                 GameAchievementUnlock.user_id == row.user_id, GameAchievementUnlock.work_id == entity.id))).all())
             db.add_all([GameAchievementUnlock(user_id=row.user_id, work_id=entity.id, achievement_id=i)
@@ -214,7 +216,7 @@ async def apply_achievements(db, entity, row, patch):
         elif patch.unlock_updates is not None:
             updates = patch.unlock_updates
             valid = set((await db.scalars(select(GameAchievement.id).where(
-                GameAchievement.work_id == entity.id, GameAchievement.id.in_(updates)))).all())
+                GameAchievement.work_id == entity.id, GameAchievement.active.is_(True),GameAchievement.id.in_(updates)))).all())
             if valid != set(updates):
                 raise HTTPException(422, 'Achievements must belong to this game')
             await db.execute(delete(GameAchievementUnlock).where(

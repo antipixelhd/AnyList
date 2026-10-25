@@ -237,6 +237,7 @@ body.tracker .media-detail :is(.lab-public-score,.lab-game-offer) h2 { font-size
   .media-detail .media-tracking .media-library { grid-area:library; }
   .media-detail .media-tracking .media-favorite { grid-area:favorite; }
   .media-detail .media-tracking > .error-message { grid-column:1/-1; }
+  .media-detail.concept-marquee .media-tracking > .game-tracking-progress { grid-column:1/-1; min-width:0; margin-top:0; }
   @container (min-width:430px) {
     .media-detail .media-tracking:has(.media-library) { grid-template-columns:minmax(180px,260px) minmax(132px,180px) var(--media-control-height) var(--media-control-height); grid-template-areas:'status rating library favorite'; }
   }

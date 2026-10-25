@@ -127,6 +127,9 @@ async def request_game_metadata(work_id,engine):
             from core.game_time_to_beat import view as estimates
             work=await db.get(CatalogueEntity,work_id)
             if work:await estimates(db,work,enqueue=True)
+            if work:
+                from core.game_achievements import view as achievement_catalogue
+                await achievement_catalogue(db,work,enqueue=True)
             await db.commit()
     except Exception:
         # Tracking already committed. Metadata admission must not turn a
@@ -406,14 +409,26 @@ async def set_favorite(work_id: WorkId, body: FavoritePatch, db: DB, viewer: Wri
 async def achievement_page(work_id: WorkId, db: DB, viewer: Reader,
                             offset: Annotated[int, Query(ge=0)] = 0,
                             limit: Annotated[int, Query(ge=1, le=200)] = 50) -> AchievementPage:
-    await tracking.work(db, work_id)
+    work=await tracking.work(db, work_id)
+    from core.game_ratings import app_id
+    app=await app_id(db,work)
     query = select(GameAchievement, GameAchievementUnlock.achievement_id).outerjoin(
         GameAchievementUnlock, (GameAchievementUnlock.achievement_id == GameAchievement.id)
-        & (GameAchievementUnlock.user_id == viewer.id)).where(GameAchievement.work_id == work_id)
-    total = await db.scalar(select(func.count()).select_from(GameAchievement).where(GameAchievement.work_id == work_id))
+        & (GameAchievementUnlock.user_id == viewer.id)).where(GameAchievement.work_id == work_id,
+            GameAchievement.active.is_(True),GameAchievement.app_id==app)
+    total = await db.scalar(select(func.count()).select_from(GameAchievement).where(GameAchievement.work_id==work_id,
+        GameAchievement.active.is_(True),GameAchievement.app_id==app))
     rows = (await db.execute(query.order_by(GameAchievement.id).offset(offset).limit(limit))).all()
     return AchievementPage(results=[AchievementOut.model_validate(row).model_copy(update={'unlocked': unlocked is not None})
         for row, unlocked in rows], total=total, offset=offset, limit=limit)
+
+
+@router.get('/works/{work_id}/achievement-catalogue')
+async def achievement_catalogue(work_id:WorkId,db:DB,viewer:Reader) -> dict:
+    from core.game_achievements import view
+    result=await view(db,await tracking.work(db,work_id),enqueue=True)
+    await db.commit()
+    return result
 
 
 @router.get('/users/{username}/list')

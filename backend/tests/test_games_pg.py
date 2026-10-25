@@ -54,6 +54,8 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
             with Operations.context(MigrationContext.configure(conn)):
                 importlib.import_module('migrations.versions.mt058_games_tracking').upgrade()
                 importlib.import_module('migrations.versions.mt059_game_favorite_order').upgrade()
+                importlib.import_module('migrations.versions.mt066_game_statistics').upgrade()
+                importlib.import_module('migrations.versions.mt069_game_achievement_catalogue').upgrade()
 
         async with self.engine.begin() as conn:
             await conn.run_sync(setup)
@@ -654,12 +656,18 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
     async def test_migration_round_trip(self):
         migration = importlib.import_module('migrations.versions.mt058_games_tracking')
         favorites = importlib.import_module('migrations.versions.mt059_game_favorite_order')
+        statistics = importlib.import_module('migrations.versions.mt066_game_statistics')
+        achievements = importlib.import_module('migrations.versions.mt069_game_achievement_catalogue')
         def round_trip(conn):
             with Operations.context(MigrationContext.configure(conn)):
+                achievements.downgrade()
+                statistics.downgrade()
                 favorites.downgrade()
                 migration.downgrade()
                 migration.upgrade()
                 favorites.upgrade()
+                statistics.upgrade()
+                achievements.upgrade()
         async with self.engine.begin() as conn:
             await conn.run_sync(round_trip)
         self.assertEqual((await self.client.get('/tracking/preferences')).status_code, 200)

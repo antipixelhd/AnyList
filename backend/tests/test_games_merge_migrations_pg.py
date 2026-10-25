@@ -51,7 +51,7 @@ class GamesMergeMigrationTests(unittest.IsolatedAsyncioTestCase):
 
     async def assert_head(self):
         self.assertEqual([dict(row) for row in await self.connection.fetch('SELECT version_num FROM alembic_version')],
-            [dict(version_num='mt068')])
+            [dict(version_num='mt069_game_achievements')])
         for table in ('game_entries', 'game_child_states', 'game_stats_state', 'catalogue_identities'):
             self.assertEqual(await self.connection.fetchval('SELECT to_regclass($1)::text', table), table)
         default = await self.connection.fetchval('''SELECT column_default FROM information_schema.columns
@@ -59,10 +59,35 @@ class GamesMergeMigrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(default, '250')
         self.assertEqual(await self.connection.fetchval('''SELECT datetime_precision FROM information_schema.columns
             WHERE table_schema='public' AND table_name='users' AND column_name='games_approved_at' '''), 3)
+        self.assertEqual(await self.connection.fetchval('''SELECT column_default FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='game_achievements' AND column_name='active' '''),'true')
 
     async def test_fresh_database_has_one_head_and_both_features(self):
         await self.upgrade('head')
         await self.assert_head()
+
+    async def test_achievement_upgrade_keeps_existing_definitions_unlocks_and_personal_facts(self):
+        await self.upgrade('mt068')
+        await self.seed_profiles()
+        user_id=await self.connection.fetchval("SELECT id FROM users WHERE username='migration0'")
+        work_id=await self.connection.fetchval('''INSERT INTO catalogue_entities(kind,name,attributes)
+            VALUES ('game','Existing achievement game','{"game_class":"game"}') RETURNING id''')
+        await self.connection.execute('''INSERT INTO catalogue_identities(entity_id,namespace,external_id,source)
+            VALUES ($1,'steam.app','10','igdb')''',work_id)
+        await self.connection.execute('''INSERT INTO game_entries(user_id,work_id,status,total_seconds,achievement_mode)
+            VALUES ($1,$2,'completed',7200,'targeted')''',user_id,work_id)
+        achievement_id=await self.connection.fetchval('''INSERT INTO game_achievements(work_id,namespace,app_id,api_name,name)
+            VALUES ($1,'steam.app','10','A0','Existing definition') RETURNING id''',work_id)
+        await self.connection.execute('''INSERT INTO game_achievement_unlocks(user_id,work_id,achievement_id)
+            VALUES ($1,$2,$3)''',user_id,work_id,achievement_id)
+        revision=await self.connection.fetchval('SELECT source_revision FROM game_stats_state WHERE user_id=$1',user_id)
+        await self.upgrade('head')
+        await self.assert_head()
+        self.assertEqual(await self.connection.fetchval('SELECT active FROM game_achievements WHERE id=$1',achievement_id),True)
+        self.assertEqual(await self.connection.fetchval('SELECT count(*) FROM game_achievement_unlocks WHERE user_id=$1',user_id),1)
+        self.assertEqual(dict(await self.connection.fetchrow('SELECT status,total_seconds,achievement_mode FROM game_entries WHERE user_id=$1',user_id)),
+            dict(status='completed',total_seconds=7200,achievement_mode='targeted'))
+        self.assertEqual(await self.connection.fetchval('SELECT source_revision FROM game_stats_state WHERE user_id=$1',user_id),revision)
         # A repeated deployment has no pending/repeated schema work.
         await self.upgrade('head')
         await self.assert_head()

@@ -7,7 +7,7 @@ from core.catalogue_normalize import image
 from models import User, UserProfileData, Follow
 from models.base import PrivacyLevel
 from models.catalogue import CatalogueEntity
-from models.games import GameActivity, GameEntry, GameChildState, GameAchievementUnlock
+from models.games import GameActivity, GameEntry, GameChildState, GameAchievement, GameAchievementUnlock
 
 PUBLIC_FLAGS = ('status_changed', 'rating_changed', 'hours_changed', 'achievements_changed', 'added_to_list')
 PUBLIC_FIELDS = (*PUBLIC_FLAGS, 'previous_score', 'rating_first', 'total_seconds', 'achievement_percentage')
@@ -17,7 +17,8 @@ async def snapshot(db, entity, row, *, achievements=False):
     from core.game_tracking import achievement_summary
     exact = 0
     if achievements and isinstance(row, GameEntry):
-        exact = await db.scalar(select(func.count()).select_from(GameAchievementUnlock).where(
+        exact = await db.scalar(select(func.count()).select_from(GameAchievementUnlock).join(
+            GameAchievement,GameAchievement.id==GameAchievementUnlock.achievement_id).where(GameAchievement.active.is_(True),
             GameAchievementUnlock.user_id == row.user_id, GameAchievementUnlock.work_id == row.work_id))
     progress = achievement_summary(entity, row, exact)
     return dict(status=row.status if row else None, score=row.score if row else None,

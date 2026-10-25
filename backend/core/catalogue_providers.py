@@ -85,6 +85,8 @@ class _PrivateRequests(logging.Filter):
                 "query.wikidata.org",
                 "caching.graphql.imdb.com",
                 "v3.sg.media-imdb.com",
+                "api.steampowered.com",
+                "partner.steam-api.com",
             )
         )
 

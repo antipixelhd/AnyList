@@ -14,7 +14,7 @@ from core.game_types import INDEPENDENT
 from core.game_contributor_works import ACTING
 from core.catalogue_normalize import image
 from models.catalogue import CatalogueEntity,CatalogueCredit,MetadataSnapshot
-from models.games import GameEntry,GameAchievementUnlock
+from models.games import GameEntry,GameAchievement,GameAchievementUnlock
 
 STATUSES=('planning','playing','paused','completed','dropped')
 BASELINES=(('main_story_seconds','Main Story'),('main_sides_seconds','Main + Sides'),('completionist_seconds','Completionist'))
@@ -42,7 +42,8 @@ async def load_facts(db,user_id):
         for row in facts:row['genre_filters']={**genres,**(row.get('genre_filters') or {})}
     if not any(row['status']!='planning' for row in facts):return facts,[]
     ids=query.with_only_columns(entry.work_id).where(entry.status!='planning')
-    unlocked=dict((await db.execute(select(GameAchievementUnlock.work_id,func.count()).where(
+    unlocked=dict((await db.execute(select(GameAchievementUnlock.work_id,func.count()).join(
+        GameAchievement,GameAchievement.id==GameAchievementUnlock.achievement_id).where(GameAchievement.active.is_(True),
         GameAchievementUnlock.user_id==user_id,GameAchievementUnlock.work_id.in_(ids)).group_by(GameAchievementUnlock.work_id))).all())
     for fact in facts:fact['exact_count']=unlocked.get(fact['id'],0)
     person,root=aliased(work),aliased(work)

@@ -2,6 +2,7 @@ import type {EditorTitle} from './editor-store';
 import {gameTimePatch,hoursInput} from './game-editor-data';
 import {localToday} from './date-time';
 import {setupEditorSelect} from './editor-select';
+import {watchAchievementCatalogue,type AchievementCatalogue} from './game-achievement-catalogue';
 
 /** Game progress controls mounted inside the existing shared tracking form. */
 export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,signal:AbortSignal,confirm:(message:string)=>Promise<boolean>) {
@@ -23,6 +24,8 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
   const loadStatus=dialog.querySelector<HTMLElement>('[data-game-achievement-status]')!;
   let current:Record<string,any>={},title:EditorTitle|null=null,child=false,totalTouched=false,firstTouched=false,confirmed=false;
   let loaded=0,loadedTotal=0,busy=false,generation=0,controller:AbortController|undefined;
+  let catalogueController:AbortController|undefined;
+  let pendingCatalogue:AchievementCatalogue|undefined;
   let shownMode='',initialMode='',status='planning';
   const updates=new Map<number,boolean>(),originals=new Map<number,boolean>();
   const datesTouched=new Set<string>();
@@ -87,6 +90,10 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
   }
   function renderMode() {
     const selected=mode.value;
+    if(selected==='count'&&!count.value)count.value='0';
+    if(selected==='percentage'&&!percentage.value)percentage.value='0';
+    if(title?.type==='game'&&!child)dialog.querySelector<HTMLElement>('.game-achievement-editor')!.hidden=
+      summary().total===0&&!selected&&!initialMode;
     setVisible('[data-game-achievement-controls]',!!selected&&!child);
     add.hidden=!!selected;remove.hidden=!selected;
     dialog.querySelector<HTMLElement>('[data-game-achievement-mode-field]')!.hidden=mode.options.length<=2;
@@ -101,6 +108,26 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
     renderProgress();
     shownMode=selected;
   }
+  function modeOptions(selected:string){
+    mode.replaceChildren(new Option('Not tracked',''));
+    const known=summary().total!=null;
+    if(!known||initialMode==='percentage'||selected==='percentage')mode.add(new Option('Percentage','percentage'));
+    if(known)mode.add(new Option('Count','count'));
+    if(summary().definitions_available||initialMode==='targeted')mode.add(new Option('Individual','targeted'));
+    mode.value=selected;
+  }
+  function applyCatalogue(data:AchievementCatalogue){
+    if(data.total==null)return; // Missing source evidence cannot erase known capabilities.
+    if(progressPending||document.activeElement===number||document.activeElement===slider){pendingCatalogue=data;return;}
+    pendingCatalogue=undefined;
+    const previous=summary(),selected=mode.value;
+    if(data.total===previous.total&&data.definitions_available===previous.definitions_available)return;
+    current={...current,achievements:{...previous,total:data.total,availability:data.availability,
+      definitions_available:data.definitions_available}};
+    modeOptions(selected);renderMode();
+  }
+  const flushCatalogue=()=>{if(pendingCatalogue)applyCatalogue(pendingCatalogue);};
+  form.addEventListener('focusout',()=>queueMicrotask(flushCatalogue),{signal});
   add.addEventListener('click',async()=>{
     const active=generation;
     if(initialMode==='targeted'&&!confirmed) {
@@ -134,6 +161,7 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
       const accepted=await confirm('Switch to simplified tracking to change the count? Your saved individual achievements will be kept.');
       if(active!==generation)return;
       progressPending=false;
+      flushCatalogue();
       if(!accepted||signal.aborted)return;
       confirmed=true;mode.value='count';renderMode();
     }
@@ -171,7 +199,7 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
     const name=(event.target as HTMLInputElement).name;
     if(title?.type==='game'&&['start_date','finish_date'].includes(name)){datesTouched.add(name);syncFirst();}
   },{signal});
-  signal.addEventListener('abort',()=>controller?.abort(),{once:true});
+  signal.addEventListener('abort',()=>{controller?.abort();catalogueController?.abort();},{once:true});
   return {
     datesTouched,
     snapshot() {
@@ -185,7 +213,7 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
         totalTouched=touchedTotal;firstTouched=touchedFirst;confirmed=simplifiedConfirmed;renderMode();renderFirst();
       };
     },
-    reset(){modeControl.close();generation++;controller?.abort();title=null;list.replaceChildren();updates.clear();originals.clear();datesTouched.clear();loaded=loadedTotal=0;busy=false;progressPending=false;},
+    reset(){modeControl.close();generation++;controller?.abort();catalogueController?.abort();pendingCatalogue=undefined;title=null;list.replaceChildren();updates.clear();originals.clear();datesTouched.clear();loaded=loadedTotal=0;busy=false;progressPending=false;},
     populate(next:EditorTitle) {
       this.reset();title=next;current=next.game_state||next.entry||{};
       child=['expansion','dlc'].includes(next.game_class||'');totalTouched=false;firstTouched=false;confirmed=false;
@@ -197,15 +225,17 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
       total.value=hoursInput(current.total_seconds);first.value=hoursInput(current.completion_seconds);replays.value=current.replay_count==null?'':String(current.replay_count);
       firstInput.hidden=true;firstEdit.hidden=false;renderFirst();
       initialMode=shownMode=summary().mode||'';
-      mode.replaceChildren(new Option('Not tracked',''));
-      const known=summary().total!=null;
-      if(!known||initialMode==='percentage')mode.add(new Option('Percentage','percentage'));
-      if(known)mode.add(new Option('Count','count'));
-      if(summary().definitions_available||initialMode==='targeted')mode.add(new Option('Individual','targeted'));
-      mode.value=initialMode;
+      modeOptions(initialMode);
       count.value=summary().count==null?'':String(summary().count);
       percentage.value=summary().percentage==null?'':String(summary().percentage);
       renderMode();this.statusChanged(input('status').value);
+      if(!child&&next.id){
+        const active=generation;catalogueController=new AbortController();
+        watchAchievementCatalogue(next.id,catalogueController.signal,data=>{
+          if(signal.aborted||generation!==active)return;
+          applyCatalogue(data);
+        });
+      }
     },
     statusChanged(next:string) {
       status=next;
