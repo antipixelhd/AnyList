@@ -2909,7 +2909,7 @@ async def _run_nuvio_sync(
             if not conn or not tmdb_api_key:
                 raise RuntimeError("Missing Nuvio connection or TMDB API key")
             from core.connection_imports import onboarding_pending
-            if await onboarding_pending(db, conn):
+            if await onboarding_pending(db, conn, require_snapshot=full_resync):
                 await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(
                     status=SyncStatus.completed, current_step="Waiting for first import",
                     stats={"import_pending": True}, updated_at=datetime.utcnow()))
@@ -3568,7 +3568,7 @@ async def _run_stremio_sync(
             if not conn or not tmdb_api_key:
                 raise RuntimeError("Missing Stremio connection or TMDB API key")
             from core.connection_imports import onboarding_pending
-            if await onboarding_pending(db, conn):
+            if await onboarding_pending(db, conn, require_snapshot=full_resync):
                 await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(
                     status=SyncStatus.completed, current_step="Waiting for first import",
                     stats={"import_pending": True}, updated_at=datetime.utcnow()))

@@ -336,7 +336,7 @@ async def sync_connection(
 ):
     conn = await _get_connection_or_404(db, connection_id, current_user.id)
     from core.connection_imports import onboarding_pending
-    if await onboarding_pending(db, conn):
+    if await onboarding_pending(db, conn, require_snapshot=full):
         raise HTTPException(409, "Complete the first import before syncing this connection")
     if not full and not movie_limit and not show_limit:
         return await sync_account(background_tasks, db, current_user)

@@ -292,6 +292,18 @@ class ConnectionDraftDatabaseTests(unittest.IsolatedAsyncioTestCase):
         finally:
             handoff_connection.reset(token)
 
+    async def test_full_resync_cannot_bypass_onboarding_before_first_snapshot(self):
+        from fastapi import BackgroundTasks, HTTPException
+        from routers.sync import sync_connection
+        from core.connection_imports import onboarding_pending
+        self.assertIsNone(await self.db.get(StreamBaseline, self.conn.id))
+        self.assertTrue(await onboarding_pending(self.db, self.conn, require_snapshot=True))
+        with self.assertRaises(HTTPException) as blocked:
+            await sync_connection(self.conn.id, BackgroundTasks(), movie_limit=0, show_limit=0,
+                full=True, db=self.db, current_user=self.user)
+        self.assertEqual(blocked.exception.status_code, 409)
+        self.assertIsNone(await self.db.get(StreamBaseline, self.conn.id))
+
     async def test_routine_account_pull_does_not_admit_provisional_connection(self):
         from fastapi import HTTPException
         from core.account_sync import queue_account_pull
