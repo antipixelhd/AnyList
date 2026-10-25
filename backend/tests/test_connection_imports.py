@@ -204,6 +204,33 @@ class ConnectionDraftDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue((await self.db.scalars(select(WatchEvent).where(WatchEvent.user_id == self.user.id))).all())
         self.assertNotIn(draft.id, netflix_sessions._cancelled)
 
+    async def test_commit_worker_cancellation_removes_provisional_connection(self):
+        from contextlib import asynccontextmanager
+        from core import netflix_sessions
+        await self.stage(progress=[movie()])
+        draft = await self.draft()
+        draft.status = 'committing'
+        draft.idempotency_key = 'cancel-before-api-lock'
+        await self.db.commit()
+        connection_id, session_id, user_id = self.conn.id, draft.id, self.user.id
+
+        @asynccontextmanager
+        async def session():
+            try:
+                yield self.db
+            except BaseException:
+                await self.db.rollback()
+                raise
+
+        with patch.object(netflix_sessions, 'async_sessionmaker', return_value=session), \
+             patch.object(netflix_sessions, '_apply_import', AsyncMock(side_effect=netflix_sessions.ImportCancelled)):
+            await netflix_sessions._commit_session(session_id, user_id, 'cancel-before-api-lock')
+        refreshed = await self.db.get(NetflixImportSession, session_id, populate_existing=True)
+        self.assertEqual(refreshed.status, 'cancelled')
+        self.assertEqual(refreshed.payload, {})
+        self.assertIsNone(await self.db.get(MediaServerConnection, connection_id, populate_existing=True))
+        self.assertIsNone(await self.db.get(StreamBaseline, connection_id, populate_existing=True))
+
     async def test_expiry_refreshes_cached_state_before_erasing_committed_import(self):
         from datetime import datetime, timedelta
         from sqlalchemy import update
@@ -303,6 +330,14 @@ class ConnectionDraftDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 full=True, db=self.db, current_user=self.user)
         self.assertEqual(blocked.exception.status_code, 409)
         self.assertIsNone(await self.db.get(StreamBaseline, self.conn.id))
+
+    async def test_established_connection_can_still_repair_an_incomplete_clear(self):
+        from core.connection_imports import onboarding_pending
+        self.db.add(StreamBaseline(connection_id=self.conn.id, user_id=self.user.id,
+            approved=False, snapshot={'clear_guard': {'pending': True}}))
+        await self.db.flush()
+        self.assertFalse(await onboarding_pending(self.db, self.conn, require_snapshot=True))
+        self.assertTrue(await onboarding_pending(self.db, self.conn, require_approval=True))
 
     async def test_routine_account_pull_does_not_admit_provisional_connection(self):
         from fastapi import HTTPException

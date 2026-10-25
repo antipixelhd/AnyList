@@ -1104,10 +1104,14 @@ async def _commit_session(session_id: str, user_id: int, idempotency_key: str) -
         await _pull_committed_import(session_id, user_id)
     except ImportCancelled:
         async with maker() as db:
+            from models import User
+            await db.execute(select(User.id).where(User.id == user_id).with_for_update())
             session = (await db.execute(select(NetflixImportSession).where(
                 NetflixImportSession.id == session_id, NetflixImportSession.user_id == user_id,
-            ).with_for_update())).scalar_one_or_none()
+            ).with_for_update().execution_options(populate_existing=True))).scalar_one_or_none()
             if session and session.status == "committing":
+                from core.connection_imports import remove_abandoned_connection
+                await remove_abandoned_connection(db, session)
                 session.status = "cancelled"
                 session.phase = "complete"
                 session.payload = {}

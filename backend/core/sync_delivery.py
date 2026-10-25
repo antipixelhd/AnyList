@@ -62,7 +62,7 @@ async def delivery_targets(db, state):
     targets = []
     from core.connection_imports import onboarding_pending
     for conn in connections:
-        if await onboarding_pending(db, conn, require_snapshot=True):
+        if await onboarding_pending(db, conn, require_approval=True):
             continue
         if conn.id in state.connection_versions and conn.identity_version != state.connection_versions[conn.id]:
             continue

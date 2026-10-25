@@ -302,11 +302,13 @@ async def finish_import(db, session, *, validate=False):
 handoff_connection = ContextVar("import_handoff_connection", default=None)
 
 
-async def onboarding_pending(db, conn, *, require_snapshot=False):
+async def onboarding_pending(db, conn, *, require_snapshot=False, require_approval=False):
     if conn.type not in ('stremio', 'nuvio'):
         return False
     baseline = await db.get(StreamBaseline, conn.id, populate_existing=True)
-    if require_snapshot and (not baseline or not baseline.approved):
+    if require_snapshot and not baseline:
+        return True
+    if require_approval and (not baseline or not baseline.approved):
         return True
     snapshot = (baseline.snapshot or {}) if baseline else {}
     return bool(snapshot.get('import_session_id') or
