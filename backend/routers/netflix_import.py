@@ -61,7 +61,10 @@ async def _prepare_remapped_item(item: dict, media_type: str, tmdb_id: int, api_
         refreshed["catalog_episodes"] = []
         refreshed["seasons"] = []
         refreshed["decision"] = {"action": "skip" if refreshed["is_anime"] else "remap"}
-        refreshed["outcome"] = {**item.get("outcome", {}), "status": "skip" if refreshed["is_anime"] else "completed"}
+        refreshed["outcome"] = {**item.get("outcome", {}), "status": "skip" if refreshed["is_anime"] else "completed",
+                                "status_overridden": False}
+        refreshed["progress_reviewed"] = False
+        refreshed["requires_watch_confirmation"] = False
         return refreshed
 
     source_episodes = item.get("episodes") or []
@@ -363,14 +366,14 @@ async def update_netflix_import_item(
             raise HTTPException(status_code=400, detail="A TMDB API key is required to remap titles.")
         try:
             remapped_item = await _prepare_remapped_item(old_item, media_type, tmdb_id, api_key, language)
-            if (before.payload or {}).get("source") == "amazon" or old_item.get("requires_watch_confirmation"):
-                netflix_sessions._require_playback_review([remapped_item])
             from core.streaming_evidence import prepare_evidence
             from core.streaming_history import WatchObservation
             observations = (old_item.get("source_evidence") or {}).get("observations", [])
             if observations:
                 remapped_item.setdefault("source_evidence", {})["observations"] = observations
                 prepare_evidence([remapped_item], [WatchObservation(**row) for row in observations])
+            if (before.payload or {}).get("source") == "amazon" or old_item.get("requires_watch_confirmation"):
+                netflix_sessions._require_playback_review([remapped_item])
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
         except Exception:

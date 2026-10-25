@@ -101,6 +101,44 @@ class BrowseRequirementTests(unittest.IsolatedAsyncioTestCase):
 
 @unittest.skipUnless(os.getenv('TRACKING_TEST_DATABASE_URL'), 'Requires disposable PostgreSQL')
 class BrowseRequirementsMigrationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_votes_default_migration_restores_disabled_defaults_and_preserves_custom_values(self):
+        import importlib
+        import uuid
+        from sqlalchemy import text
+        from sqlalchemy.ext.asyncio import create_async_engine
+        from alembic.migration import MigrationContext
+        from alembic.operations import Operations
+
+        url = os.environ['TRACKING_TEST_DATABASE_URL']
+        if '/anylist_test' not in url:
+            raise RuntimeError('Requires a disposable test database')
+        engine = create_async_engine(url)
+        try:
+            async with engine.connect() as connection:
+                transaction = await connection.begin()
+                schema = 'votes_migration_test_' + uuid.uuid4().hex
+                await connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+                await connection.execute(text(f'SET LOCAL search_path TO "{schema}"'))
+
+                def verify(sync):
+                    sync.execute(text('CREATE TABLE user_profiles (minimum_votes integer NOT NULL DEFAULT 0)'))
+                    sync.execute(text('INSERT INTO user_profiles VALUES (0), (500)'))
+                    migration = importlib.import_module('migrations.versions.mt058_votes_or_popularity')
+                    with Operations.context(MigrationContext.configure(sync)):
+                        migration.upgrade()
+                        sync.execute(text('INSERT INTO user_profiles DEFAULT VALUES'))
+                        self.assertEqual(list(sync.scalars(text('SELECT minimum_votes FROM user_profiles ORDER BY minimum_votes'))),
+                                         [250, 250, 500])
+                        migration.downgrade()
+                        sync.execute(text('INSERT INTO user_profiles DEFAULT VALUES'))
+                        self.assertEqual(sync.scalar(text('SELECT count(*) FROM user_profiles WHERE minimum_votes = 0')), 1)
+                        self.assertEqual(sync.scalar(text('SELECT count(*) FROM user_profiles WHERE minimum_votes = 500')), 1)
+
+                await connection.run_sync(verify)
+                await transaction.rollback()
+        finally:
+            await engine.dispose()
+
     async def test_migration_preserves_unrelated_preferences_and_removes_obsolete_fields(self):
         import importlib
         import uuid
@@ -186,7 +224,7 @@ class DiscoveryRegressionTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(params['with_watch_monetization_types'], 'flatrate|free|ads')
                 movie.assert_not_awaited(); series.assert_not_awaited(); feed.assert_not_awaited()
 
-    async def test_vote_floor_applies_to_discovery_but_not_search(self):
+    async def test_search_and_discovery_accept_votes_or_popularity(self):
         from core.browse import remote_params
         predicate = {k:v for k,v in FILTERS.items() if k != 'sort'}
         self.assertFalse(matches({'vote_count': 249}, media_type='movie', min_votes=250, **predicate))
@@ -194,6 +232,10 @@ class DiscoveryRegressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(matches({'imdb_votes': 250, 'vote_count': 1}, media_type='movie', min_votes=250, **predicate))
         self.assertTrue(matches({'imdb_votes': 1, 'vote_count': 250}, media_type='movie', min_votes=250, **predicate))
         self.assertEqual(remote_params('series', page=1, min_votes=250, **FILTERS)['vote_count.gte'], 250)
-        with patch('core.tmdb.search_movies', AsyncMock(return_value={'results': [{'id': 1, 'title': 'Avengers: Doomsday', 'vote_count': 0}], 'total_pages': 1})):
-            _, rows = await remote_page('avengers: doom', 'movie', 'fixture', {**FILTERS, 'min_votes': 250}, 1)
-        self.assertEqual([row['id'] for row in rows], [1])
+        raw = [{'id': 1, 'title': 'Avengers: Doomsday', 'vote_count': 0, 'popularity':25},
+               {'id': 2, 'title': 'Avengers: Established', 'vote_count': 250, 'popularity':1},
+               {'id': 3, 'title': 'Avengers: Weak', 'vote_count': 249, 'popularity':24.9}]
+        with patch('core.tmdb.search_movies', AsyncMock(return_value={'results': raw, 'total_pages': 1})):
+            _, rows = await remote_page('avengers', 'movie', 'fixture',
+                                        {**FILTERS, 'min_votes': 250, 'min_popularity':25}, 1)
+        self.assertEqual([row['id'] for row in rows], [1, 2])

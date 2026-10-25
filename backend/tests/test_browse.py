@@ -38,6 +38,12 @@ FILTERS = dict(
 
 
 class FilterTests(unittest.TestCase):
+    def test_provider_vote_prefilter_does_not_eliminate_popularity_qualifiers(self):
+        params = remote_params('movie', page=1, **FILTERS, min_votes=250, min_popularity=25)
+        self.assertNotIn('vote_count.gte', params)
+        params = remote_params('movie', page=1, **FILTERS, min_votes=250, min_popularity=0)
+        self.assertEqual(params['vote_count.gte'], 250)
+
     def test_upcoming_titles_survive_vote_floor_in_any_and_upcoming(self):
         predicate={k:v for k,v in FILTERS.items() if k!='sort'}
         for kind,field in [('movie','release_date'),('series','first_air_date')]:
@@ -472,6 +478,42 @@ class BrowseFilterApiTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         await self.client.aclose()
 
+    async def test_quick_search_broadening_only_relaxes_personal_curation(self):
+        with patch('core.browse.browse_page', AsyncMock(return_value={'results': [], 'has_more': False})) as browse, \
+             patch('routers.tracking.result_filters', AsyncMock(return_value={'min_runtime': 30, 'excluded_genres': [99]})), \
+             patch('routers.tracking.browse_preferences', AsyncMock(side_effect=lambda *args, unfiltered=False: {
+                 'min_votes': 0, 'min_popularity': 0 if unfiltered else 25,
+             })), patch('routers.tracking.anime_is_visible', AsyncMock(return_value=False)):
+            await self.client.get('/tracking/catalog', params={'q': 'Specific', 'region': 'DE'})
+            curated = browse.await_args.kwargs
+            await self.client.get('/tracking/catalog', params={'q': 'Specific', 'region': 'DE', 'unfiltered': 'true'})
+            broad = browse.await_args.kwargs
+        self.assertEqual((curated['min_runtime'], curated['excluded_genres'], curated['min_popularity']), (30, [99], 25))
+        self.assertEqual((broad['min_runtime'], broad['excluded_genres'], broad['min_popularity']), (0, [], 0))
+        self.assertFalse(broad['audience_curation'])
+        self.assertFalse(broad['show_anime'])
+        self.assertEqual((broad['region'], broad['term'], broad['media_type']), ('DE', 'Specific', 'movie'))
+
+    async def test_quick_search_scans_empty_curated_pages_before_deciding_no_matches(self):
+        from core.browse_cursor import encode_search_cursor
+        cursor = encode_search_cursor(2, -1, -1)
+        with patch('core.browse.browse_page', AsyncMock(side_effect=[
+            {'results': [], 'has_more': True, 'page': 1, 'source': 'remote', 'cursor': cursor},
+            {'results': [{'title': 'Later curated hit'}], 'has_more': False, 'page': 2, 'source': 'remote'},
+        ])) as browse:
+            response = await self.client.get('/tracking/catalog', params={'q': 'Specific', 'scan_empty': 'true'})
+        self.assertEqual(response.json()['results'], [{'title': 'Later curated hit'}])
+        self.assertEqual(browse.await_count, 2)
+        self.assertEqual(browse.await_args.kwargs['cursor'], (2, -1, -1))
+
+    async def test_quick_empty_scanning_is_bounded_and_stops_on_degraded_results(self):
+        for notice, expected in [(None, 6), ('Provider unavailable', 1)]:
+            async def page(*args, **kwargs):
+                return {'results': [], 'has_more': True, 'page': kwargs['page'], 'source': 'remote', 'notice': notice}
+            with patch('core.browse.browse_page', AsyncMock(side_effect=page)) as browse:
+                await self.client.get('/tracking/catalog', params={'q': 'Specific', 'scan_empty': 'true'})
+            self.assertEqual(browse.await_count, expected)
+
     async def test_browse_score_validation_and_forwarding(self):
         for endpoint, target in [("browse", "core.browse.browse_page"), ("browse/sections", "core.browse.browse_sections")]:
             with patch(target, AsyncMock(return_value={"results": []})) as browse:
@@ -537,7 +579,7 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code,422)
 
     async def test_prefix_exact_typo_and_future_titles_use_indexed_local_search(self):
-        titles=[Media(title=title,media_type=MediaType.movie,release_date='2099-01-01',tmdb_data={})
+        titles=[Media(title=title,media_type=MediaType.movie,release_date='2099-01-01',tmdb_data={'vote_count':500})
                 for title in ('Dig','Digger','The Dig','Avengers: Doomsday')]
         self.db.add_all(titles);await self.db.commit()
         for term,expected in [('dig',['Dig','Digger','The Dig']),('doomsday',['Avengers: Doomsday'])]:
@@ -602,9 +644,9 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_exact_series_title_is_findable_in_catalog_and_browse(self):
         series = Media(title='War', media_type=MediaType.series, release_date='2026-10-01',
-                       tmdb_data={'vote_count': 12})
+                       tmdb_data={'vote_count': 500})
         near = Media(title='War Stories', media_type=MediaType.series, release_date='2026-10-01',
-                     tmdb_data={'vote_count': 12})
+                     tmdb_data={'vote_count': 500})
         self.db.add_all([series, near])
         await self.db.flush()
         for endpoint in ('catalog', 'browse'):
@@ -629,7 +671,44 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(titles[0], 'War')
                 self.assertIn('War Stories', titles)
 
-    async def test_saved_vote_floor_filters_browse_but_not_search(self):
+    async def test_votes_or_popularity_match_for_local_and_provider_titles_without_bypassing_other_filters(self):
+        from models.users import UserSettings
+        from routers.profile import update_profile
+        from schemas import UserProfileUpdate
+        from sqlalchemy import select
+        settings = await self.db.scalar(select(UserSettings).where(UserSettings.user_id == self.owner.id))
+        settings.preferences = {'minimum_popularity': 25}
+        await update_profile(UserProfileUpdate(minimum_votes=250, minimum_movie_runtime=30,
+                                             excluded_categories=[99]), current_user=self.owner, db=self.db)
+        for kind in ('movie', 'series'):
+            raw = []
+            for index, (votes, popularity, genres, runtime) in enumerate([
+                (10000, 21.886, [18], 150), (0, 25, [18], 150),
+                (249, 24.9, [18], 150), (10000, 100, [99], 150),
+                *(([(10000, 100, [18], 10)]) if kind == 'movie' else []),
+            ]):
+                row = {'id': 730000 + index, 'title': f'Threshold regression {index}',
+                       'name': f'Threshold regression {index}', 'vote_count': votes, 'popularity': popularity,
+                       'genre_ids': genres, 'runtime': runtime, 'release_date': '2020-01-01',
+                       'first_air_date': '2020-01-01', 'adult': False}
+                raw.append(row)
+                self.db.add(Media(title=f'Threshold regression local {index}', media_type=MediaType(kind),
+                    tmdb_id=720000 + index, runtime=runtime, release_date='2020-01-01', tmdb_data={**row,
+                        'genres': [{'id': genre, 'name': 'Documentary' if genre == 99 else 'Drama'} for genre in genres]}))
+            await self.db.flush()
+            for key in (None, 'fixture'):
+                with patch('core.settings_store.get_user_tmdb_key', AsyncMock(return_value=key)), \
+                     patch('core.tmdb.search_movies' if kind == 'movie' else 'core.tmdb.search_shows',
+                           AsyncMock(return_value={'results': raw, 'total_pages': 1})):
+                    for endpoint in ('catalog', 'browse'):
+                        response = await self.client.get('/tracking/' + endpoint,
+                            params={'q': 'Threshold regression', 'media_type': kind, 'scan_empty': 'true'})
+                        self.assertEqual(response.status_code, 200, response.text)
+                        expected = {720000, 720001} | ({730000, 730001} if key else set())
+                        self.assertEqual({row['tmdb_id'] for row in response.json()['results']}, expected,
+                                         (kind, key, endpoint, response.text))
+
+    async def test_saved_vote_floor_applies_to_browse_and_search_when_popularity_is_disabled(self):
         from routers.profile import update_profile
         from schemas import UserProfileUpdate
         await update_profile(UserProfileUpdate(minimum_votes=5000), current_user=self.owner, db=self.db)
@@ -638,7 +717,7 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.json()['results'], [])
         response = await self.client.get('/tracking/browse', params={'q':'Browse Film 00'})
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertIn(self.movies[0].id, {row['id'] for row in response.json()['results']})
+        self.assertEqual(response.json()['results'], [])
         response = await self.client.get('/tracking/browse/sections')
         self.assertTrue(all(not section['results'] for section in response.json()['sections']))
         await update_profile(UserProfileUpdate(minimum_votes=0), current_user=self.owner, db=self.db)
@@ -677,6 +756,7 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
                 tmdb_rating=9 - i / 100,
                 tmdb_data={
                     "genres": ["Drama", "Comedy"],
+                    "vote_count": 500,
                     "popularity": i,
                     "imdb": {"votes": 1000 - i, "popularity_rank": i + 1},
                     "watch_providers": {
@@ -1137,9 +1217,9 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
         from schemas import UserProfileUpdate
         await update_profile(UserProfileUpdate(minimum_movie_runtime=45, excluded_categories=[99]),
                              current_user=self.owner, db=self.db)
-        raw = [{'id': 987001, 'title': 'Policy match short', 'popularity': 80, 'genre_ids': [18]},
-               {'id': 987002, 'title': 'Policy match documentary', 'popularity': 80, 'genre_ids': [99]},
-               {'id': 987003, 'title': 'Policy match feature', 'popularity': 80, 'genre_ids': [18]}]
+        raw = [{'id': 987001, 'title': 'Policy match short', 'popularity': 80, 'vote_count':500, 'genre_ids': [18]},
+               {'id': 987002, 'title': 'Policy match documentary', 'popularity': 80, 'vote_count':500, 'genre_ids': [99]},
+               {'id': 987003, 'title': 'Policy match feature', 'popularity': 80, 'vote_count':500, 'genre_ids': [18]}]
         async def runtime(identifier, **kwargs):
             return {'runtime': 12 if identifier == 987001 else 100}
         with patch('core.settings_store.get_user_tmdb_key', AsyncMock(return_value='fixture')), \
@@ -1158,7 +1238,7 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_text_query_in_upcoming_finds_a_dated_return_instead_of_testing_the_original_premiere(self):
         from core.chronological_discovery import _cache
         _cache._store.clear()
-        raw={'id':990011,'name':'Silo','first_air_date':'2020-01-01','popularity':80,'genre_ids':[18]}
+        raw={'id':990011,'name':'Silo','first_air_date':'2020-01-01','popularity':80,'vote_count':500,'genre_ids':[18]}
         cached=Media(title='Silo',media_type=MediaType.series,tmdb_id=990011,release_date='2020-01-01',
             tmdb_data={**raw,'seasons':[{'season_number':2,'air_date':'2098'}]})
         self.db.add(cached);await self.db.flush()
@@ -1192,7 +1272,7 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_cached_upcoming_events_page_beyond_500_titles_without_loading_catalogue(self):
         from datetime import timedelta
         titles = [Media(title=f'Return {i:04}', media_type=MediaType.series, tmdb_id=700000+i,
-            release_date='2020-01-01', tmdb_data={'popularity':80, 'first_air_date':'2020-01-01',
+            release_date='2020-01-01', tmdb_data={'popularity':80, 'vote_count':500, 'first_air_date':'2020-01-01',
                 'seasons':[{'season_number':2,'air_date':(date(2090,1,1)+timedelta(days=i)).isoformat()}]})
             for i in range(505)]
         self.db.add_all(titles);await self.db.flush()

@@ -346,7 +346,7 @@ async def _set_progress(session_id: str, user_id: int, current: int, total: int,
 
 
 def _require_playback_review(items: list[dict]) -> None:
-    """Admit evidence for review without claiming a completed movie watch."""
+    """Only unqualified playback needs a separate watch-progress decision."""
     # Meaningful playback is evidence, not a claim of completion.
     for item in items:
         if item.get("is_anime"):
@@ -356,16 +356,20 @@ def _require_playback_review(items: list[dict]) -> None:
         evidence = item.setdefault("source_evidence", {})
         if item["kind"] == "movie":
             dates = sorted(set(item.get("source_dates") or []))
-            evidence["playback_dates"] = dates
+            evidence["playback_dates"] = sorted(set(dates) | {
+                row['watched_at'] for row in evidence.get('viewings', []) if row.get('watched_at')})
             item["source_dates"] = dates[:1]
         else:
             evidence["episode_playback_dates"] = [
-                {"source_id": episode.get("source_id"), "dates": list(episode.get("dates") or [])}
+                {"source_id": episode.get("source_id"), "dates": sorted(set(episode.get("dates") or []) | {
+                    row['watched_at'] for row in episode.get('viewings', []) if row.get('watched_at')})}
                 for episode in item.get("episodes") or []
             ]
             for episode in item.get("episodes") or []:
                 episode["dates"] = sorted(set(episode.get("dates") or []))[:1]
             # Series use the same evidence-derived progress defaults as Netflix.
+            continue
+        if item.get("progress_reviewed") and item.get("requires_watch_confirmation") is False:
             continue
         item["requires_watch_confirmation"] = True
         item.setdefault("title_match_state", item["match"].get("state"))
@@ -425,11 +429,11 @@ async def _prepare_session(session_id: str, user_id: int, language: str | None) 
         if not isinstance(prepared, dict):
             prepared = prepared.to_dict() if hasattr(prepared, "to_dict") else {}
         items = _normalise_groups(prepared)
-        if source == "amazon":
-            _require_playback_review(items)
         await _prepare_movie_runtime(items, history.rows, api_key, resolved_language)
         from core.streaming_evidence import prepare_evidence
         prepare_evidence(items, history.rows)
+        if source == "amazon":
+            _require_playback_review(items)
         errors = prepared.get("errors") or history_dict.get("errors") or []
         counts = prepared.get("counts") or history_dict.get("counts") or {}
         if row_count and not counts:

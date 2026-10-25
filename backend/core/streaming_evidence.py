@@ -76,9 +76,13 @@ def prepare_evidence(items, observations):
             if chosen:
                 item.setdefault('source_evidence', {})['viewings'] = rows
                 item['source_dates'] = [chosen['watched_at']]
-                if chosen.get('watched_seconds') is not None:
-                    enough = completed_viewing(chosen, runtime)
-                    item['suggested_movie_status'] = 'completed' if enough else 'dropped'
+                enough = completed_viewing(chosen, runtime)
+                item['suggested_movie_status'] = 'completed' if enough else 'dropped'
+                item['requires_watch_confirmation'] = not enough
+                if not item.get('outcome', {}).get('status_overridden'):
+                    item['progress_reviewed'] = enough
+                    if enough:
+                        item['outcome']['status'] = 'completed'
         else:
             catalog = {(ep.get('season_number'), ep.get('episode_number')): ep for ep in item.get('catalog_episodes', [])}
             for episode in item.get('episodes', []):

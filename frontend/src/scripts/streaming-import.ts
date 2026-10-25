@@ -3,6 +3,10 @@ import { showMessage } from '../lib/settings-feedback';
 import { setupCalendarDateInputs } from '../lib/calendar-date-input';
 import { createImportDraft } from '../lib/import-draft';
 import { importDecisionStep } from '../lib/import-steps';
+import { readRemapTitles } from '../lib/streaming-remap-search';
+import { formatDate } from '../lib/date-time';
+import { needsImportFinishDate, importFinishDateSuggestion, needsImportProgressReview as isIncomplete, hasConfirmedMovieEvidence } from '../lib/import-completion';
+import { createImportSequence } from '../lib/import-sequence';
 
 type MatchCandidate = {
   media_type: "movie" | "show";
@@ -72,6 +76,12 @@ function mountStreamingImport(app: HTMLElement) {
   if (!app || app.dataset.streamingInitialized === "true") return;
   app.dataset.streamingInitialized = "true";
   const disclosureArrow = app.querySelector<HTMLTemplateElement>('[data-role="streaming-disclosure-arrow"]')!.innerHTML;
+  const starIcon = app.querySelector<HTMLTemplateElement>('[data-role="streaming-star"]')!.innerHTML;
+  const mobileReview = matchMedia('(max-width: 650px)');
+  const matchSequence = createImportSequence();
+  const progressSequence = createImportSequence();
+  let sequenceSessionId: string | undefined;
+  let ratingsInitialized = false;
   const upload = app.querySelector<HTMLElement>('[data-role="streaming-import-upload"]') as HTMLDivElement;
   const uploadControls = app.querySelector<HTMLElement>('[data-role="streaming-import-upload-controls"]') as HTMLElement;
   const fileInput = app.querySelector<HTMLElement>('[data-role="streaming-import-file"]') as HTMLInputElement;
@@ -178,60 +188,27 @@ function mountStreamingImport(app: HTMLElement) {
     return 0;
   }
 
-  function seasonSummary(item: StreamingItem): string {
-    const seasons = (item.seasons ?? []).filter((season) => season.season_number > 0);
-    if (!seasons.length) return "Episode positions unavailable";
-    return seasons.map((season) => `S${season.season_number} ${season.represented}/${season.total_released ?? "?"}`).join(" · ");
+  function fileHistory(item: StreamingItem): string {
+    const episodes = item.episodes ?? [];
+    if (!episodes.length) return '';
+    return `<details data-motion-details class="streaming-disclosure streaming-history"><summary class="streaming-disclosure-trigger">View episodes${disclosureArrow}</summary><ul>${episodes.map(episode => {
+      const position = episode.resolution === 'discarded' ? 'Not included'
+        : episode.resolution === 'covered' ? 'Included in your progress'
+        : episode.season_number != null && episode.episode_number != null
+        ? `Season ${episode.season_number} · Episode ${episode.episode_number}` : 'Episode not identified';
+      const dates = [...new Set(episode.dates ?? [])].sort().map(date => formatDate(date));
+      return `<li><span>${esc(episode.source_episode_title || episode.source_title || episode.title || position)}</span><span>${esc([position, ...dates].join(' · '))}</span></li>`;
+    }).join('')}</ul></details>`;
   }
 
-  function episodeResolutionDetails(item: StreamingItem): string {
-    if (item.kind !== "show") return "";
-    const episodes = (item.episodes ?? []).filter((episode) =>
-      episode.resolution === "exact" || episode.resolution === "guessed" || episode.resolution === "covered" || episode.resolution === "discarded",
-    );
-    if (!episodes.length) return "";
-
-    const labels: Record<EpisodeResolution, string> = {
-      exact: "Exact", guessed: "Guessed", covered: "Covered", discarded: "Discarded",
-    };
-    const styles: Record<EpisodeResolution, string> = {
-      exact: "bg-emerald-500/10 text-emerald-300",
-      guessed: "bg-blue-500/10 text-blue-300",
-      covered: "bg-zinc-800 text-zinc-400",
-      discarded: "bg-amber-500/10 text-amber-200",
-    };
-    const counts = (Object.keys(labels) as EpisodeResolution[])
-      .map((resolution) => ({ resolution, count: episodes.filter((episode) => episode.resolution === resolution).length }))
-      .filter(({ count }) => count > 0)
-      .map(({ resolution, count }) => `${labels[resolution]} ${count}`)
-      .join(" · ");
-    const rows = episodes.map((episode) => {
-      const resolution = episode.resolution!;
-      const title = episode.source_episode_title || episode.source_title || episode.title || `${serviceName} episode`;
-      const dates = [...new Set(episode.dates ?? [])].sort();
-      const dateLabel = dates.length ? dates.join(", ") : "Date unavailable";
-      const hasPosition = episode.season_number != null && episode.episode_number != null;
-      const assignment = (resolution === "exact" || resolution === "guessed") && hasPosition
-        ? `<span class="text-zinc-300">→ S${episode.season_number}E${episode.episode_number}</span>`
-        : resolution === "covered"
-        ? `<span class="text-zinc-400">Covered by confirmed progress</span>`
-        : resolution === "discarded"
-        ? `<span class="text-amber-200">No released catalogue position</span>`
-        : "";
-      return `<li class="flex flex-col gap-1 rounded-lg bg-zinc-900/60 px-2.5 py-2 sm:flex-row sm:items-center sm:justify-between"><div class="min-w-0"><p class="break-words text-xs font-medium text-zinc-200">${esc(title)}</p><p class="text-[11px] text-zinc-500">${esc(dateLabel)}</p></div><div class="flex shrink-0 items-center gap-2 text-[11px]"><span class="rounded-full px-2 py-0.5 font-semibold ${styles[resolution]}">${labels[resolution]}</span>${assignment}</div></li>`;
-    }).join("");
-
-    return `<details data-motion-details class="streaming-disclosure mt-3 rounded-lg border border-zinc-800 bg-zinc-950/40"><summary class="streaming-disclosure-trigger cursor-pointer px-3 py-2 text-xs font-semibold text-zinc-300">Episode resolution · ${esc(counts)}${disclosureArrow}</summary><ul class="max-h-64 space-y-1.5 overflow-auto border-t border-zinc-800 p-2">${rows}</ul></details>`;
+  function heading(title: string, description = '', remaining?: number, position = ''): string {
+    return `<header class="streaming-heading"><div><div class="streaming-heading-top"><p class="streaming-step">Step ${step} of 5</p>${step > 1 ? '<button type="button" data-streaming-action="cancel" class="streaming-text-action streaming-muted streaming-mobile-cancel">Cancel</button>' : ''}</div><h2>${title}</h2>${description ? `<p class="streaming-description">${description}</p>` : ''}${position ? `<p class="streaming-position">${esc(position)}</p>` : ''}</div><div class="streaming-step-progress">${remaining != null ? `<span role="status">${remaining ? `${remaining} title${remaining === 1 ? '' : 's'} left` : 'All matches checked'}</span>` : ''}<div class="streaming-step-bars" role="img" aria-label="Step ${step} of 5">${Array.from({length: 5}, (_, index) => `<span class="${index < step ? 'is-reached' : ''}"></span>`).join('')}</div></div></header>`;
   }
 
-  function isIncomplete(item: StreamingItem): boolean {
-    if (item.kind === "movie") return true;
-    if (item.requires_watch_confirmation && !item.progress_reviewed) return true;
-    const seasons = (item.seasons ?? []).filter((season) => season.season_number > 0 && (season.total_released ?? 0) > 0);
-    const unknownSeasons = (item.seasons ?? []).filter((season) => season.season_number > 0 && season.total_released == null);
-    if (unknownSeasons.length) return true;
-    if (seasons.length) return seasons.some((season) => season.represented < (season.total_released ?? 0));
-    return true;
+  function artwork(path?: string | null): string {
+    const poster = posterSrc(path);
+    return poster ? `<img class="streaming-artwork" loading="lazy" src="${esc(poster)}" alt="">`
+      : `<span class="streaming-artwork streaming-artwork-empty" aria-hidden="true">${app.querySelector<HTMLTemplateElement>('[data-role="streaming-poster-placeholder"]')!.innerHTML}</span>`;
   }
 
   function visibleItems(): StreamingItem[] {
@@ -256,50 +233,90 @@ function mountStreamingImport(app: HTMLElement) {
   }
 
   function reviewQueueItems(): StreamingItem[] {
-    const automatic = new Set(autoMatchedItems());
-    return visibleItems().filter((item) =>
-      item.decision?.action !== "skip" && !automatic.has(item),
-    );
+    return reviewItems();
   }
 
-  function itemCard(item: StreamingItem, needsReview: boolean): string {
+  function syncReviewSequences() {
+    if (sequenceSessionId !== session?.id) {
+      sequenceSessionId = session?.id;
+      matchSequence.reset(); progressSequence.reset();
+      ratingsInitialized = false;
+    }
+    if (session && ['review', 'ready'].includes(session.status)) matchSequence.sync(reviewItems().map(item => item.id));
+  }
+
+  function reviewLabel(item: StreamingItem, phase: 'matches' | 'progress'): string {
+    if (phase === 'matches') return item.decision.action === 'skip' ? 'Skipped'
+      : item.decision.action === 'confirm' || item.decision.action === 'remap' ? 'Confirmed' : 'To review';
+    if (item.outcome.status === 'skip') return 'Skipped';
+    if (item.outcome.status === 'completed') return 'Completed';
+    if (item.kind === 'movie') return 'Dropped';
+    return `Season ${item.outcome.latest_season ?? 1} · Episode ${item.outcome.latest_episode ?? 1}`;
+  }
+
+  function reviewLinks(items: StreamingItem[], phase: 'matches' | 'progress'): string {
+    return `<div class="streaming-history-links">${items.map(item => `<button type="button" data-streaming-action="review-item" data-item-id="${esc(item.id)}"><span>${esc(item.match.candidate?.title ?? item.source_title)}</span><small>${esc(reviewLabel(item, phase))}</small></button>`).join('')}</div>`;
+  }
+
+  function reviewHistory(items: StreamingItem[], phase: 'matches' | 'progress'): string {
+    return items.length ? `<details data-motion-details class="streaming-disclosure streaming-review-history"><summary class="streaming-disclosure-trigger">Reviewed titles <span>${items.length}</span>${disclosureArrow}</summary>${reviewLinks(items, phase)}</details>` : '';
+  }
+
+  function reviewOverview(items: StreamingItem[], phase: 'matches' | 'progress'): string {
+    const labels = phase === 'matches' ? ['To review', 'Confirmed', 'Skipped'] : ['Completed', 'Partly watched', 'Dropped', 'Skipped'];
+    const group = (item: StreamingItem) => phase === 'matches' ? reviewLabel(item, phase)
+      : item.outcome.status === 'partial' ? 'Partly watched' : reviewLabel(item, phase);
+    return `<div class="streaming-review-overview">${labels.map(label => {
+      const rows = items.filter(item => group(item) === label);
+      return rows.length ? `<section><h3>${label} <span>${rows.length}</span></h3>${reviewLinks(rows, phase)}</section>` : '';
+    }).join('')}</div>`;
+  }
+
+  function matchCurrent(): StreamingItem | undefined {
+    if (matchSequence.selected && !byId(matchSequence.selected)) matchSequence.resume();
+    const id = matchSequence.current(reviewItems().map(item => String(item.id)));
+    return id ? byId(id) : undefined;
+  }
+
+  function progressPending(): string[] {
+    return progressSequence.pending().filter(id => {
+      const item = byId(id);
+      return item && item.decision.action !== 'skip' && !hasConfirmedMovieEvidence(item);
+    });
+  }
+
+  function progressCurrent(): StreamingItem | undefined {
+    const selected = progressSequence.selected;
+    if (selected && (!byId(selected) || byId(selected)?.decision.action === 'skip')) progressSequence.resume();
+    const id = progressSequence.current(progressPending());
+    return id ? byId(id) : undefined;
+  }
+
+  function itemCard(item: StreamingItem, editing = false, automatic = false): string {
     const candidate = item.match?.candidate;
-    const poster = posterSrc(candidate?.poster_path);
-    const candidateTitle = candidate ? `${candidate.title}${candidate.year ? ` (${candidate.year})` : ""}` : "No confident match found";
-    const badge = item.is_anime ? "Anime skipped" : item.decision?.action === "skip" ? "Skipped" : item.decision?.action === "remap" ? "Remapped" : item.decision?.action === "confirm" ? "Confirmed" : needsReview ? "Review needed" : "High confidence";
-    const badgeStyle = item.decision?.action === "skip" ? "border-zinc-700 bg-zinc-800 text-zinc-300" : needsReview ? "border-amber-400/30 bg-amber-400/10 text-amber-200" : "border-emerald-400/20 bg-emerald-400/5 text-emerald-300";
-    return `<article class="rounded-xl border ${needsReview ? "border-amber-500/25 bg-amber-500/[0.035]" : "border-zinc-800 bg-zinc-900/35"} p-3 sm:p-4" data-streaming-item="${esc(item.id)}">
-      <div class="flex flex-col gap-4 sm:flex-row">
-        <div class="flex min-w-0 flex-1 gap-3">
-          ${poster ? `<img loading="lazy" src="${esc(poster)}" alt="Poster for ${esc(candidateTitle)}" class="h-20 w-14 shrink-0 rounded-lg bg-zinc-800 object-cover">` : `<div class="flex h-20 w-14 shrink-0 items-center justify-center rounded-lg bg-zinc-800 text-lg font-bold text-zinc-500">${esc((candidate?.title || item.source_title).slice(0, 1).toUpperCase())}</div>`}
-          <div class="min-w-0">
-            <p class="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">${esc(serviceName)} title</p>
-            <p class="break-words font-semibold text-zinc-100">${esc(item.source_title)}</p>
-            <p class="mt-1 text-xs text-zinc-500">${item.kind === "show" ? "Series" : "Movie"}${item.source_dates?.length ? ` · ${esc(item.source_dates[0])}` : ""}</p>
-            <p class="mt-2 text-xs text-zinc-400">${item.decision?.action === "remap" ? "Selected" : "Suggested"} catalogue match: <span class="font-semibold text-zinc-200">${esc(candidateTitle)}</span></p>
-            <div class="mt-2 flex flex-wrap items-center gap-2">
-              <span class="rounded-full border px-2 py-0.5 text-xs ${badgeStyle}">${badge}</span>
-            </div>
-            ${item.kind === "show" ? `<p class="mt-2 text-xs text-zinc-400">${esc(seasonSummary(item))}</p>` : ""}
-          </div>
-        </div>
-        <div class="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
-          ${candidate && !item.is_anime ? `<button type="button" data-streaming-action="confirm" data-item-id="${esc(item.id)}" ${item.decision?.action === "confirm" || item.decision?.action === "remap" ? "disabled" : ""} class="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-emerald-500 disabled:cursor-default disabled:opacity-60">${item.decision?.action === "confirm" ? "Confirmed" : item.decision?.action === "remap" ? "Remapped" : `Confirm ${item.kind === "show" ? "show" : "movie"}`}</button>` : ""}
-          <button type="button" data-streaming-action="open-search" data-item-id="${esc(item.id)}" class="rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm font-semibold text-zinc-200 transition-colors hover:bg-zinc-700">Remap</button>
-          ${item.decision?.action !== "skip" ? `<button type="button" data-streaming-action="skip-match" data-item-id="${esc(item.id)}" class="rounded-lg px-3 py-2 text-sm font-semibold text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200">Skip</button>` : ""}
-        </div>
+    const accepted = !editing && (item.decision.action === 'confirm' || item.decision.action === 'remap');
+    const skipped = item.decision.action === 'skip';
+    const arrow = app.querySelector<HTMLTemplateElement>('[data-role="streaming-match-arrow"]')!.innerHTML;
+    return `<article class="streaming-match-row ${skipped ? 'is-skipped' : ''}" data-streaming-item="${esc(item.id)}" aria-label="Match for ${esc(item.source_title)}">
+      <div class="streaming-source"><span class="streaming-mobile-label">In your file</span><p>${esc(item.source_title)}</p></div>
+      <span class="streaming-match-arrow" aria-hidden="true">${arrow}</span>
+      <div class="streaming-found"><span class="streaming-mobile-label">We found</span><div class="streaming-title">${artwork(candidate?.poster_path)}<div>${candidate ? `<h3>${esc(candidate.title)}</h3><p>${[candidate.year, candidate.media_type === 'show' ? 'Series' : 'Movie'].filter(Boolean).map(esc).join(' · ')}</p>` : '<p>No match found</p>'}</div></div></div>
+      <div class="streaming-match-actions">
+        ${automatic ? '' : candidate && !item.is_anime ? `<button type="button" data-streaming-action="confirm" data-item-id="${esc(item.id)}" class="streaming-button streaming-primary ${accepted ? 'is-confirmed' : ''}" ${accepted ? 'disabled' : ''}>${accepted ? 'Confirmed' : 'Confirm'}</button>` : `<button type="button" data-streaming-action="open-search" data-item-id="${esc(item.id)}" class="streaming-button streaming-primary">Find title</button>`}
+        ${candidate ? `<button type="button" data-streaming-action="open-search" data-item-id="${esc(item.id)}" class="streaming-button ${automatic ? 'streaming-primary' : 'streaming-secondary'}">Choose another</button>` : ''}
+        ${automatic ? '' : `<button type="button" data-streaming-action="skip-match" data-item-id="${esc(item.id)}" class="streaming-button streaming-secondary" ${skipped ? 'disabled' : ''}>${skipped ? 'Skipped' : 'Skip'}</button>`}
       </div>
     </article>`;
   }
 
   function outcomeButtons(item: StreamingItem): string {
-    return (item.kind === "movie" ? [["completed", "Completed"], ["dropped", "Dropped"], ["skip", "Skip"]] : [["completed", "Completed"], ["partial", "Partial"], ["skip", "Skip"]]).map(([value, label]) => `<button type="button" data-streaming-action="outcome" data-item-id="${esc(item.id)}" data-status="${value}" aria-pressed="${item.outcome.status === value}" class="flex-1 rounded-lg px-2 py-2 text-xs font-semibold transition-colors sm:text-sm ${item.outcome.status === value ? "bg-blue-600 text-white" : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"}">${label}</button>`).join("");
+    return (item.kind === "movie" ? [["completed", "Completed"], ["dropped", "Dropped"], ["skip", "Skip"]] : [["completed", "Completed"], ["partial", "Partly watched"], ["skip", "Skip"]]).map(([value, label]) => `<button type="button" data-streaming-action="outcome" data-item-id="${esc(item.id)}" data-status="${value}" aria-pressed="${item.outcome.status === value}" class="streaming-outcome ${item.outcome.status === value ? "is-selected" : ""}"><span>${label}</span></button>`).join("");
   }
 
   function partialControls(item: StreamingItem): string {
     if (item.outcome.status !== "partial") return "";
     const seasons = (item.seasons ?? []).filter((season) => season.season_number > 0 && (season.total_released ?? 0) > 0).sort((a, b) => a.season_number - b.season_number);
-    if (!seasons.length) return `<p class="mt-3 text-xs text-amber-200">Episode details are not available for this show yet. Choose Skip or wait for the catalogue to finish loading.</p>`;
+    if (!seasons.length) return `<p class="mt-3 text-xs text-amber-200">Episode details are unavailable. Skip this title or try again later.</p>`;
     const currentSeason = seasons.find((season) => season.season_number === item.outcome.latest_season) ?? seasons[0];
     const season = currentSeason.season_number;
     const total = currentSeason.total_released ?? 0;
@@ -307,64 +324,69 @@ function mountStreamingImport(app: HTMLElement) {
     const seasonOptions = seasons.map((meta) => `<option value="${meta.season_number}" ${meta.season_number === season ? "selected" : ""}>Season ${meta.season_number}</option>`).join("");
     const episodeOptions = Array.from({ length: Math.min(total, 100) }, (_, i) => i + 1).map((n) => `<option value="${n}" ${n === episode ? "selected" : ""}>Episode ${n}</option>`).join("");
     const tracking = item.outcome.tracking_status ?? "watching";
-    return `<div class="grid gap-3 sm:grid-cols-2">
+    return `<div class="streaming-progress-fields"><p class="streaming-field-heading">Last episode watched</p>
       <label class="min-w-0 text-xs font-medium text-zinc-400"><span class="flex min-h-5 items-end">Season</span><select data-streaming-change="latest-season" data-item-id="${esc(item.id)}" class="mt-1 w-full min-w-0 rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-2 text-sm text-zinc-100">${seasonOptions}</select></label>
       <label class="min-w-0 text-xs font-medium text-zinc-400"><span class="flex min-h-5 items-end">Episode</span><select data-streaming-change="latest-episode" data-item-id="${esc(item.id)}" class="mt-1 w-full min-w-0 rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-2 text-sm text-zinc-100">${episodeOptions}</select></label>
-      <label class="min-w-0 text-xs font-medium text-zinc-400 sm:col-span-2"><span class="flex min-h-5 items-end">Status</span><select data-streaming-change="tracking-status" data-item-id="${esc(item.id)}" class="mt-1 w-full min-w-0 rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-2 text-sm text-zinc-100"><option value="watching" ${tracking === "watching" ? "selected" : ""}>Watching</option><option value="paused" ${tracking === "paused" ? "selected" : ""}>Paused</option><option value="dropped" ${tracking === "dropped" ? "selected" : ""}>Dropped</option></select></label>
+      <label class="min-w-0 text-xs font-medium text-zinc-400"><span class="flex min-h-5 items-end">Current status</span><select data-streaming-change="tracking-status" data-item-id="${esc(item.id)}" class="mt-1 w-full min-w-0 rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-2 text-sm text-zinc-100"><option value="watching" ${tracking === "watching" ? "selected" : ""}>Watching</option><option value="paused" ${tracking === "paused" ? "selected" : ""}>Paused</option><option value="dropped" ${tracking === "dropped" ? "selected" : ""}>Dropped</option></select></label>
     </div>`;
   }
 
   function showCard(item: StreamingItem): string {
     const candidate = item.match.candidate;
-    const poster = posterSrc(candidate?.poster_path);
-    const seasons = (item.seasons ?? []).filter((season) => season.season_number > 0);
-    return `<article class="flex h-full min-w-0 flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4 lg:row-span-3 lg:grid lg:[grid-template-rows:subgrid]" data-streaming-item="${esc(item.id)}">
-      <div class="flex gap-3">
-        ${poster ? `<img loading="lazy" src="${esc(poster)}" alt="Poster for ${esc(candidate?.title ?? item.source_title)}" class="h-24 w-16 shrink-0 rounded-lg bg-zinc-800 object-cover">` : `<div class="h-24 w-16 shrink-0 rounded-lg bg-zinc-800"></div>`}
-        <div class="min-w-0 flex-1">
-          <h3 class="break-words font-semibold text-zinc-100">${esc(candidate?.title ?? item.source_title)}</h3>
-          ${seasons.length ? `<div class="mt-2 flex flex-wrap gap-1.5">${seasons.map((season) => `<span class="rounded-md bg-zinc-800 px-2 py-1 text-[11px] text-zinc-400">S${season.season_number}: ${season.represented}/${season.total_released ?? "?"}</span>`).join("")}</div>` : ""}
-          ${episodeResolutionDetails(item)}
-        </div>
-      </div>
-      <div class="flex rounded-xl border border-zinc-800 bg-zinc-950 p-1" role="group" aria-label="Import progress for ${esc(candidate?.title ?? item.source_title)}">${outcomeButtons(item)}</div>
-      <div>${item.outcome.status === "skip" ? `<p class="text-xs text-zinc-500">Skip leaves this title and any existing AnyList progress untouched.</p>` : partialControls(item)}</div>
+    const title = candidate?.title ?? item.source_title;
+    return `<article class="streaming-progress-card" data-streaming-item="${esc(item.id)}">
+      <div class="streaming-title">${artwork(candidate?.poster_path)}<div><h3>${esc(title)}</h3><p>${[candidate?.year, item.kind === 'show' ? 'Series' : 'Movie'].filter(Boolean).map(esc).join(' · ')}</p></div></div>
+      <div class="streaming-progress-choice"><p class="streaming-choice-label">How much have you watched?</p><div class="streaming-outcomes" role="group" aria-label="Watched progress for ${esc(title)}">${outcomeButtons(item)}</div>
+      ${partialControls(item)}
+      ${item.kind === 'show' ? fileHistory(item) : ''}</div>
     </article>`;
   }
 
+  function matchesView(): string {
+    const pending = reviewQueueItems();
+    const automatic = autoMatchedItems();
+    const automaticSet = new Set(automatic);
+    const confirmed = visibleItems().filter(item => !automaticSet.has(item) && ['confirm', 'remap'].includes(item.decision.action ?? ''));
+    const skipped = visibleItems().filter(item => item.decision.action === 'skip');
+    if (mobileReview.matches) {
+      const current = matchCurrent();
+      const index = current ? matchSequence.ids.indexOf(String(current.id)) : -1;
+      const position = current ? index >= 0 ? `Title ${index + 1} of ${matchSequence.ids.length}` : 'Reviewing an earlier choice' : '';
+      const body = current ? `<div class="streaming-mobile-focus">${itemCard(current, true, automaticSet.has(current))}</div>`
+        : matchSequence.overview ? reviewOverview(visibleItems(), 'matches')
+        : '<div class="streaming-review-done"><h3>All matches checked</h3></div>';
+      return `${heading('Check your matches', '', undefined, position)}${body}${!matchSequence.overview || current ? reviewHistory([...confirmed, ...skipped, ...automatic], 'matches') : ''}`;
+    }
+    const group = (label: string, items: StreamingItem[]) => items.length ? `<details data-motion-details ${matchSequence.overview ? 'open' : ''} class="streaming-disclosure streaming-review-group"><summary class="streaming-disclosure-trigger">${label} <span>${items.length}</span>${disclosureArrow}</summary><div>${items.map(item => itemCard(item, true, automaticSet.has(item))).join('')}</div></details>` : '';
+    return `${heading('Check your matches', 'Confirm the title, choose another, or skip it.', pending.length)}
+      <div class="streaming-match-table"><div class="streaming-match-columns" aria-hidden="true"><span>In your file</span><span></span><span>We found</span><span></span></div>${pending.length ? pending.map(item => itemCard(item)).join('') : '<p class="streaming-empty">All matches checked.</p>'}</div>
+      ${group('Confirmed', confirmed)}${group('Skipped', skipped)}${group('Already matched', automatic)}`;
+  }
+
   function progressView(): string {
-    const showItems = visibleItems().filter((item) => item.decision?.action !== "skip");
-    const incomplete = showItems.filter(isIncomplete);
+    const showItems = visibleItems().filter(item => item.decision?.action !== 'skip');
+    const incomplete = showItems.filter(item => isIncomplete(item) || item.outcome.status === 'completed' && !!item.completion_evidence && needsImportFinishDate(item));
+    progressSequence.sync(incomplete.map(item => item.id));
     const visible = (showingCompleted ? showItems : incomplete).slice().sort((a, b) =>
-      (a.match.candidate?.title ?? a.source_title).localeCompare(b.match.candidate?.title ?? b.source_title),
-    );
+      (a.match.candidate?.title ?? a.source_title).localeCompare(b.match.candidate?.title ?? b.source_title));
     const completedCount = showItems.length - incomplete.length;
-    return `<div class="space-y-4">
-      <div><p class="text-xs font-bold uppercase tracking-[0.16em] text-blue-300">Step 3 of 5 · Review watched progress</p><h2 class="mt-1 text-xl font-bold text-zinc-100">Choose how each title should appear in AnyList</h2><p class="mt-1 text-sm text-zinc-400">For Partial Progress select the latest watched episode and its current status.</p></div>
-      <label class="flex cursor-pointer items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-900/40 px-4 py-3 text-sm text-zinc-300"><input type="checkbox" data-streaming-change="show-completed" ${showingCompleted ? "checked" : ""} class="h-4 w-4 rounded border-zinc-600 bg-zinc-950 text-blue-600 focus:ring-blue-500"><span>Show fully represented shows <span class="text-zinc-500">(${completedCount})</span></span></label>
-      ${visible.length ? `<div class="grid gap-3 lg:grid-cols-2">${visible.map(showCard).join("")}</div>` : `<div class="rounded-xl border border-zinc-800 bg-zinc-900/40 px-4 py-8 text-center text-sm text-zinc-400">${showItems.length ? "All shows are represented through their latest released episode. Use the control above to inspect them." : "No matched shows in this export."}</div>`}
-    </div>`;
+    if (mobileReview.matches) {
+      const current = progressCurrent();
+      const index = current ? progressSequence.ids.indexOf(String(current.id)) : -1;
+      const position = current ? index >= 0 ? `Title ${index + 1} of ${progressSequence.ids.length}` : 'Reviewing an earlier choice' : '';
+      const pending = new Set(progressSequence.pending());
+      const reviewed = progressSequence.ids.filter(id => !pending.has(id)).map(id => byId(id)).filter((item): item is StreamingItem => !!item && item.decision.action !== 'skip');
+      return `${heading('Set your watch progress', '', undefined, position)}${current ? `<div class="streaming-mobile-focus">${showCard(current)}</div>` : reviewOverview(showItems, 'progress')}${!progressSequence.overview || current ? reviewHistory(reviewed, 'progress') : ''}`;
+    }
+    return `${heading('Set your watch progress')}<div class="streaming-progress-toolbar">${completedCount ? `<label><input type="checkbox" data-streaming-change="show-completed" ${showingCompleted ? 'checked' : ''}>Show completed titles (${completedCount})</label>` : ''}</div>
+      ${visible.length ? `<div class="streaming-progress-grid">${visible.map(showCard).join('')}</div>` : '<p class="streaming-empty">All watched progress is checked.</p>'}`;
   }
 
   function summaryView(): string {
-    const movies = summaryNumber("movies");
-    const shows = summaryNumber("shows");
-    const episodes = summaryNumber("episodes");
-    const rows = [
-      ["Movies", movies],
-      ["Shows", shows],
-      ["Episodes", episodes],
-    ] as const;
+    const rows = [['Movies', summaryNumber('movies')], ['Series', summaryNumber('shows')], ['Episodes', summaryNumber('episodes')]] as const;
     const summaryErrors = session?.summary?.errors;
-    const errors = typeof summaryErrors === "number" ? summaryErrors : Array.isArray(summaryErrors) ? summaryErrors.length : session?.errors?.length ?? 0;
-    return `<div class="space-y-5">
-      <div><p class="text-xs font-bold uppercase tracking-[0.16em] text-blue-300">Step 5 of 5 · Final review</p><h2 class="mt-1 text-xl font-bold text-zinc-100">Ready to import</h2><p class="mt-1 text-sm text-zinc-400">Review what will change in your AnyList account. Nothing is applied until you select Import.</p></div>
-      <div class="space-y-3">
-        ${rows.map(([label, value]) => `<div class="flex items-center justify-between gap-6 py-3"><span class="text-base text-zinc-300">${label}</span><strong class="text-2xl tabular-nums text-zinc-100">${value.toLocaleString()}</strong></div>`).join("")}
-      </div>
-      <p class="text-xs text-zinc-500">Episode total includes the positions filled by your final Partial and Completed choices.</p>
-      ${errors ? `<p class="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-sm text-amber-200">${errors} CSV row${errors === 1 ? "" : "s"} could not be read.</p>` : ""}
-    </div>`;
+    const errors = typeof summaryErrors === 'number' ? summaryErrors : Array.isArray(summaryErrors) ? summaryErrors.length : session?.errors?.length ?? 0;
+    return `${heading('Ready to import')}<div class="streaming-summary">${rows.map(([label, value]) => `<div><strong>${value.toLocaleString()}</strong><span>${label}</span></div>`).join('')}</div>${errors ? `<p class="streaming-warning">${errors} file row${errors === 1 ? '' : 's'} could not be read.</p>` : ''}`;
   }
 
   function ratingView(): string {
@@ -375,34 +397,34 @@ function mountStreamingImport(app: HTMLElement) {
       const status = item.outcome.tracking_status ?? "watching";
       return status === "paused" ? "Paused" : status === "dropped" ? "Dropped" : "Watching";
     };
+    if (!ratingsInitialized) {
+      for (const group of groups) openRatingGroups.add(group);
+      ratingsInitialized = true;
+    }
     const displayProgress = (item: StreamingItem) => {
       if (item.kind !== "show" || !["Watching", "Paused", "Dropped"].includes(groupFor(item))) return "";
       const season = item.outcome.latest_season;
       const episode = item.outcome.latest_episode;
-      return season != null && episode != null ? `<p class="mt-1 text-xs text-zinc-500">Progress · S${season}E${episode}</p>` : "";
+      return season != null && episode != null ? `<p class="mt-1 text-xs text-zinc-500">Season ${season} · Episode ${episode}</p>` : "";
     };
     const card = (item: StreamingItem) => {
       const candidate = item.match.candidate!;
-      const poster = posterSrc(candidate.poster_path);
       const score = item.outcome.manual_score;
-      return `<article class="flex min-w-0 items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-900/40 p-3">
-        ${poster ? `<img loading="lazy" src="${esc(poster)}" alt="Poster for ${esc(candidate.title)}" class="h-16 w-11 shrink-0 rounded-md bg-zinc-800 object-cover">` : `<div class="flex h-16 w-11 shrink-0 items-center justify-center rounded-md bg-zinc-800 text-sm font-bold text-zinc-500">${esc(candidate.title.slice(0, 1).toUpperCase())}</div>`}
-        <div class="min-w-0 flex-1"><h3 class="truncate text-sm font-semibold text-zinc-100">${esc(candidate.title)}</h3><span class="mt-1 inline-flex rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] font-semibold text-zinc-300">${item.kind === "show" ? "Series" : "Movie"}</span>${displayProgress(item)}</div>
-        <button type="button" data-streaming-action="rate" data-item-id="${esc(item.id)}" aria-label="${score != null ? `Change rating for ${esc(candidate.title)}: ${score.toFixed(1)} out of 10` : `Rate ${esc(candidate.title)}`}" class="shrink-0 rounded-lg bg-yellow-400 px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-yellow-300">${score != null ? `<span aria-hidden="true">★</span> ${score.toFixed(1)} / 10` : "Rate now"}</button>
+      return `<article class="streaming-rating-row">
+        ${artwork(candidate.poster_path)}
+        <div class="min-w-0 flex-1"><h3 class="streaming-rating-title">${esc(candidate.title)}</h3><p class="streaming-media-kind">${item.kind === "show" ? "Series" : "Movie"}</p>${displayProgress(item)}</div>
+        <button type="button" data-streaming-action="rate" data-item-id="${esc(item.id)}" aria-label="${score != null ? `Change rating for ${esc(candidate.title)}: ${score.toFixed(1)} out of 10` : `Rate ${esc(candidate.title)}`}" class="streaming-button streaming-rate ${score != null ? 'is-rated' : ''}">${score != null ? `<span aria-hidden="true">${starIcon}</span> ${score.toFixed(1)} <small>/ 10</small>` : "Rate"}</button>
       </article>`;
     };
-    return `<div class="space-y-4"><div><p class="text-xs font-bold uppercase tracking-[0.16em] text-blue-300">Step 4 of 5 · Optional ratings</p><h2 class="mt-1 text-xl font-bold text-zinc-100">Rate shows and movies</h2><p class="mt-1 text-sm text-zinc-400">This is an optional step. You can still rate anything later in your own list.</p></div>
-      ${groups.map((group) => {
+    return `<div class="streaming-ratings">${heading('Add your ratings', 'Optional — you can do this later.')}
+      ${groups.filter(group => eligible.some(item => groupFor(item) === group)).map((group) => {
         const items = eligible.filter((item) => groupFor(item) === group).sort((a, b) => (a.match.candidate?.title ?? a.source_title).localeCompare(b.match.candidate?.title ?? b.source_title));
-        return `<details data-motion-details data-rating-group="${group}" ${openRatingGroups.has(group) ? "open" : ""} class="streaming-disclosure rounded-xl border border-zinc-800 bg-zinc-900/30"><summary class="streaming-disclosure-trigger cursor-pointer px-4 py-3 text-sm font-semibold text-zinc-200">${group} <span class="ml-1 text-zinc-500">${items.length}</span>${disclosureArrow}</summary><div class="grid gap-2 border-t border-zinc-800 p-3 sm:grid-cols-2">${items.length ? items.map(card).join("") : `<p class="text-sm text-zinc-500">No titles in this group.</p>`}</div></details>`;
+        return `<details data-motion-details data-rating-group="${group}" ${openRatingGroups.has(group) ? "open" : ""} class="streaming-disclosure rounded-xl border border-zinc-800 bg-zinc-900/30"><summary class="streaming-disclosure-trigger cursor-pointer px-4 py-3 text-sm font-semibold text-zinc-200">${group} <span class="ml-1 text-zinc-500">${items.length}</span>${disclosureArrow}</summary><div class="streaming-rating-list">${items.length ? items.map(card).join("") : `<p class="text-sm text-zinc-500">No titles in this group.</p>`}</div></details>`;
       }).join("")}
     </div>`;
   }
 
-  function stepHeader(): string {
-    const labels = ["Upload", "Review matches", "Watch progress", "Ratings", "Import"];
-    return `<div class="mb-5 flex flex-wrap items-center gap-2">${labels.map((label, index) => `<div class="flex items-center gap-2"><span class="flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold ${step === index + 1 ? "bg-blue-600 text-white" : step > index + 1 ? "bg-emerald-500/20 text-emerald-300" : "bg-zinc-800 text-zinc-500"}">${step > index + 1 ? "✓" : index + 1}</span><span class="text-xs ${step === index + 1 ? "font-semibold text-zinc-200" : "text-zinc-500"}">${label}</span></div>${index < labels.length - 1 ? `<span class="h-px min-w-4 flex-1 bg-zinc-800"></span>` : ""}`).join("")}</div>`;
-  }
+
 
   function ratingItems(): StreamingItem[] {
     return visibleItems().filter(item => item.decision?.action !== 'skip' && item.outcome.status !== 'skip'
@@ -410,16 +432,42 @@ function mountStreamingImport(app: HTMLElement) {
   }
 
   function decisionStep(start: number, direction: 1 | -1): number | null {
+    syncReviewSequences();
     return importDecisionStep(start, direction, {
-      matches: reviewQueueItems().length > 0,
-      progress: visibleItems().some(item => item.decision?.action !== 'skip' && (isIncomplete(item)
+      matches: matchSequence.ids.length > 0,
+      progress: progressSequence.ids.some(id => {
+        const item = byId(id);
+        return item && item.decision.action !== 'skip' && !hasConfirmedMovieEvidence(item);
+      }) || visibleItems().some(item => item.decision?.action !== 'skip' && (isIncomplete(item)
         || (item.outcome.status === 'completed' && item.kind === 'show' && item.completion_evidence
           && !item.completion_evidence.finish_date && !('finish_date' in item.outcome)))),
       ratings: ratingItems().length > 0,
     });
   }
 
+  function reviewNavigation(): string | null {
+    if (!mobileReview.matches || ![2, 3].includes(step)) return null;
+    const sequence = step === 2 ? matchSequence : progressSequence;
+    const current = step === 2 ? matchCurrent() : progressCurrent();
+    const left = decisionStep(step - 1, -1) !== null
+      ? '<button type="button" data-streaming-action="back" class="streaming-button streaming-secondary">Back</button>' : '';
+    const label = step === 3 && current && sequence.selected ? 'Save changes' : 'Continue';
+    const returnToPending = step === 2 && !!sequence.selected && !titleReviewComplete();
+    return `<div class="streaming-nav-actions">${left}<button type="button" data-streaming-action="${returnToPending ? 'return-review' : 'next'}" ${step === 2 && !titleReviewComplete() && !returnToPending ? 'disabled' : ''} class="streaming-button streaming-primary">${label}</button></div>`;
+  }
+
+  function updateImportActivity() {
+    const active = busy || !!session && !['committed', 'cancelled', 'failed'].includes(session.status);
+    app.dataset.importActive = String(active);
+    if (active) document.querySelectorAll<HTMLElement>('[data-mobile-navigation] [popover]:popover-open')
+      .forEach(panel => panel.hidePopover());
+  }
+
   function render() {
+    syncReviewSequences();
+    updateImportActivity();
+    app.dataset.reviewLayout = mobileReview.matches ? 'single' : 'list';
+    app.dataset.importStep = String(step);
     if (!session) {
       workflow.classList.add("hidden");
       uploadControls.classList.remove("hidden");
@@ -433,24 +481,16 @@ function mountStreamingImport(app: HTMLElement) {
     let content = "";
     if (isCommitted) {
       step = 5;
-      content = `<div class="rounded-2xl border border-emerald-500/25 bg-emerald-500/5 p-5"><p class="text-xs font-bold uppercase tracking-[0.16em] text-emerald-300">Import complete</p><h2 class="mt-1 text-xl font-bold text-zinc-100">${esc(serviceName)} history added</h2><p class="mt-2 text-sm text-zinc-300">Your reviewed movies and show progress have been added to AnyList.</p></div>`;
+      content = `<div class="streaming-complete"><span aria-hidden="true">✓</span><h2>History imported</h2><p>Your movies and series are in your list.</p></div>`;
     } else if (isFailed) {
-      content = `<div class="rounded-xl border border-red-500/25 bg-red-500/5 p-4"><h2 class="font-semibold text-red-200">We couldn't prepare this export</h2><p class="mt-1 text-sm text-zinc-400">${esc(session.errors?.map((error) => typeof error === "string" ? error : error.message).filter(Boolean).join(" · ") || session.progress?.message || `Try downloading a new copy of your ${serviceName} viewing history.`)}</p><button type="button" data-streaming-action="restart" class="mt-3 rounded-lg border border-zinc-700 px-3 py-2 text-sm font-semibold text-zinc-200 hover:bg-zinc-800">Choose another file</button></div>`;
+      content = `<div class="streaming-failure"><h2>We couldn't read this file</h2><p>${esc(session.errors?.map(error => typeof error === 'string' ? error : error.message).filter(Boolean).join(' · ') || session.progress?.message || `Download a new copy of your ${serviceName} viewing history and try again.`)}</p><button type="button" data-streaming-action="restart" class="streaming-button streaming-primary">Choose another file</button></div>`;
     } else if (isPreparing) {
       const total = Math.max(0, session.progress?.total ?? 0);
       const current = Math.max(0, session.progress?.current ?? 0);
       const pct = total > 0 ? Math.max(0, Math.min(100, Math.round(current * 100 / total))) : 0;
-      content = `<div class="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4 sm:p-6"><p class="text-xs font-bold uppercase tracking-[0.16em] text-blue-300">Step 1 of 5 · Preparing import</p><h2 class="mt-1 text-lg font-bold text-zinc-100">${esc(session.progress?.message || (session.phase === "parse" ? "Reading your CSV…" : "Matching titles and resolving episode positions…"))}</h2><div class="mt-4 h-2 overflow-hidden rounded-full bg-zinc-800"><div class="h-full rounded-full bg-blue-500 transition-all" style="width:${pct}%"></div></div><div class="mt-2 flex justify-between gap-3 text-xs text-zinc-500"><span>${total ? `${current.toLocaleString()} of ${total.toLocaleString()} items` : "Getting started"}</span><span>${total ? `${pct}%` : esc(session.phase)}</span></div><p class="mt-3 text-xs text-zinc-500">Duplicate rows are grouped before matching so the same title is only looked up once.</p></div>`;
+      content = `${heading('Preparing your history')}<div class="streaming-preparing"><div class="streaming-loading-track" role="progressbar" aria-label="Preparing history" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><span style="width:${pct}%"></span></div><p>${total ? `${current.toLocaleString()} of ${total.toLocaleString()}` : 'Reading your file…'}</p></div>`;
     } else if (step === 2) {
-      const needing = reviewItems();
-      const reviewQueue = reviewQueueItems();
-      const auto = autoMatchedItems();
-      const skipped = visibleItems().filter((item) => item.decision?.action === "skip");
-      content = `<div class="space-y-4"><div><p class="text-xs font-bold uppercase tracking-[0.16em] text-blue-300">Step 2 of 5 · Review title matches</p><h2 class="mt-1 text-xl font-bold text-zinc-100">Confirm anything uncertain</h2><p class="mt-1 text-sm text-zinc-400">Confirm watched movies and show matches. Remap incorrect titles or skip them.</p></div>
-        ${reviewQueue.length ? `<div class="space-y-3">${reviewQueue.map((item) => itemCard(item, needing.includes(item))).join("")}</div>` : `<div class="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3 text-sm text-emerald-200">All show and movie titles are resolved. Episode positions will be assigned automatically where the catalogue permits.</div>`}
-        ${auto.length ? `<details data-motion-details class="streaming-disclosure rounded-xl border border-zinc-800 bg-zinc-900/30"><summary class="streaming-disclosure-trigger cursor-pointer px-4 py-3 text-sm font-semibold text-zinc-300">${auto.length} high confidence match${auto.length === 1 ? "" : "es"} accepted automatically${disclosureArrow}</summary><div class="space-y-3 border-t border-zinc-800 p-3">${auto.map((item) => itemCard(item, false)).join("")}</div></details>` : ""}
-        ${skipped.length ? `<details data-motion-details class="streaming-disclosure rounded-xl border border-zinc-800 bg-zinc-900/30"><summary class="streaming-disclosure-trigger cursor-pointer px-4 py-3 text-sm font-semibold text-zinc-400">${skipped.length} title${skipped.length === 1 ? "" : "s"} skipped · reopen to change${disclosureArrow}</summary><div class="space-y-3 border-t border-zinc-800 p-3">${skipped.map((item) => itemCard(item, false)).join("")}</div></details>` : ""}
-      </div>`;
+      content = matchesView();
     } else if (step === 3) {
       content = progressView();
     } else if (step === 4) {
@@ -459,12 +499,11 @@ function mountStreamingImport(app: HTMLElement) {
       content = summaryView();
     }
 
-    const nav = isPreparing
-      ? `<button type="button" data-streaming-action="cancel" class="rounded-lg px-3 py-2 text-sm font-semibold text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">Cancel</button>`
-      : isFailed
-      ? `<button type="button" data-streaming-action="cancel" class="rounded-lg px-3 py-2 text-sm font-semibold text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">Cancel</button>`
-      : `<div class="flex w-full flex-col-reverse gap-2 sm:w-auto sm:flex-row"><button type="button" data-streaming-action="cancel" class="rounded-lg px-3 py-2 text-sm font-semibold text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">Cancel import</button>${decisionStep(step - 1, -1) !== null ? `<button type="button" data-streaming-action="back" class="rounded-lg border border-zinc-700 px-4 py-2 text-sm font-semibold text-zinc-200 hover:bg-zinc-800">Back</button>` : ""}${step < 5 ? `<button type="button" data-streaming-action="next" ${step === 2 && !titleReviewComplete() ? "disabled" : ""} class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40">Continue</button>` : `<button type="button" data-streaming-action="commit" ${busy || saving ? "disabled" : ""} class="rounded-lg bg-emerald-600 px-5 py-2 text-sm font-bold text-white transition-colors hover:bg-emerald-500 disabled:cursor-wait disabled:opacity-50">${busy ? "Importing…" : "Import"}</button>`}</div>`;
-    workflow.innerHTML = `${!isCommitted ? stepHeader() : ""}<div class="space-y-5">${content}<div class="flex flex-col-reverse items-stretch justify-between gap-3 border-t border-zinc-800 pt-4 sm:flex-row sm:items-center">${isPreparing ? `<span class="text-xs text-zinc-500">Matching in progress</span>` : ""}${!isCommitted ? nav : `<button type="button" data-streaming-action="restart" class="self-start rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-500 sm:self-auto">Import another file</button>`}</div></div>`;
+    const nav = isPreparing || isFailed
+      ? `<button type="button" data-streaming-action="cancel" class="streaming-text-action streaming-muted">Cancel</button>`
+      : isCommitted ? `<button type="button" data-streaming-action="restart" class="streaming-button streaming-primary">Import another file</button>`
+      : reviewNavigation() ?? `<button type="button" data-streaming-action="cancel" class="streaming-text-action streaming-muted streaming-cancel">Cancel import</button><div class="streaming-nav-actions">${decisionStep(step - 1, -1) !== null ? '<button type="button" data-streaming-action="back" class="streaming-button streaming-secondary">Back</button>' : ''}${step < 5 ? `<button type="button" data-streaming-action="next" ${step === 2 && !titleReviewComplete() ? 'disabled' : ''} class="streaming-button streaming-primary">Continue</button>` : `<button type="button" data-streaming-action="commit" ${busy || saving ? 'disabled' : ''} class="streaming-button streaming-primary">${busy ? 'Importing…' : 'Import history'}</button>`}</div>`;
+    workflow.innerHTML = `<div class="streaming-flow">${content}<footer class="streaming-footer">${nav}</footer></div>`;
     if (saving) workflow.querySelectorAll<HTMLButtonElement | HTMLInputElement | HTMLSelectElement>('button, input, select').forEach(control => { control.disabled = true; });
   }
 
@@ -500,6 +539,13 @@ function mountStreamingImport(app: HTMLElement) {
     }
   }
 
+  async function advanceAfterLastMatch() {
+    if (step !== 2 || !titleReviewComplete() || !await flushDraft()) return;
+    step = decisionStep(3, 1)!;
+    render();
+    workflow.scrollIntoView({block: 'start'});
+  }
+
   async function poll() {
     if (!session || session.status !== "preparing") return;
     try {
@@ -515,7 +561,7 @@ function mountStreamingImport(app: HTMLElement) {
         render();
         return;
       }
-      if (session.status === "failed") showError("This CSV could not be prepared. Review the message below or try another export.");
+      if (session.status === "failed") showError("This file could not be prepared. Review the message below or try another export.");
       render();
     } catch (error) {
       showError(error instanceof Error ? error.message : "Could not check import progress.");
@@ -532,10 +578,11 @@ function mountStreamingImport(app: HTMLElement) {
     clearError();
     openRatingGroups.clear();
     busy = true;
+    updateImportActivity();
     uploadControls.classList.add("hidden");
     workflow.classList.remove("hidden");
     step = 1;
-    workflow.innerHTML = `<div class="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-5"><div class="flex items-center justify-between gap-3"><p class="text-sm font-semibold text-zinc-200">Uploading ${esc(file.name)}…</p><button type="button" data-streaming-action="cancel-upload" class="rounded-lg px-3 py-2 text-sm font-semibold text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100">Cancel</button></div><div class="mt-3 h-2 overflow-hidden rounded-full bg-zinc-800"><div class="h-full w-1/3 animate-pulse rounded-full bg-blue-500"></div></div></div>`;
+    workflow.innerHTML = `<div class="streaming-uploading"><h2>Uploading your history…</h2><p>${esc(file.name)}</p><div class="streaming-loading-track"><span class="animate-pulse" style="width:35%"></span></div><button type="button" data-streaming-action="cancel-upload" class="streaming-text-action streaming-muted">Cancel</button></div>`;
     const form = new FormData();
     form.append("file", file);
     if (languageInput.value !== "auto") form.append("language", languageInput.value);
@@ -554,6 +601,7 @@ function mountStreamingImport(app: HTMLElement) {
     } finally {
       uploadController = null;
       busy = false;
+      updateImportActivity();
       fileInput.value = "";
     }
   }
@@ -563,6 +611,7 @@ function mountStreamingImport(app: HTMLElement) {
     uploadController.abort();
     uploadController = null;
     busy = false;
+    updateImportActivity();
     workflow.classList.add("hidden");
     workflow.innerHTML = "";
     uploadControls.classList.remove("hidden");
@@ -618,13 +667,13 @@ function mountStreamingImport(app: HTMLElement) {
     remapProgress.classList.add("visible");
     remapState.hidden = true;
     try {
-      const search = (media_type: "movie" | "series") => request<{ results: Array<{ id?: number | null; tmdb_id?: number; type: string; title: string; poster?: string | null; year?: string | null }> }>(
-        `/tracking/catalog?${new URLSearchParams({ media_type, q: query })}`, { signal: controller.signal },
+      const seriesOnly = item.kind === "show" && !canRemapShowToMovie(item);
+      const responses = await readRemapTitles<{tmdb_id?: number; title: string; poster?: string | null; year?: string | null}>(
+        query, seriesOnly, controller.signal, (path, signal) => request(path, {signal}),
       );
-      const mediaTypes = item.kind === "show" && !canRemapShowToMovie(item) ? ["series"] as const : ["movie", "series"] as const;
-      const responses = await Promise.all(mediaTypes.map(search));
-      if (searchController !== controller) return;
-      const buckets = responses.map((response) => response.results ?? []);
+      if (controller.signal.aborted || searchController !== controller) return;
+      const mediaTypes = seriesOnly ? ["series"] as const : ["movie", "series"] as const;
+      const buckets = mediaTypes.map(type => responses[type]);
       const combined: SearchResult[] = [];
       const seen = new Set<string>();
       for (let index = 0; index < Math.max(...buckets.map((bucket) => bucket.length)); index++) {
@@ -665,20 +714,24 @@ function mountStreamingImport(app: HTMLElement) {
     remapResults.hidden = true;
     showDialog(remapDialog);
     remapInput.focus();
+    // Opening a dialog can select its prefilled search text. Keep the caret at the end.
+    remapInput.setSelectionRange(remapInput.value.length, remapInput.value.length);
     void searchTitles();
   }
 
   const finishDialog = app.querySelector<HTMLDialogElement>('[data-role="streaming-finish-dialog"]')!;
   const dateSignal = new AbortController();
   document.addEventListener('astro:before-swap', () => dateSignal.abort(), {once: true});
-  const refreshFinishDate = setupCalendarDateInputs(finishDialog, dateSignal.signal);
-  async function confirmFinishDate(item: StreamingItem) {
-    if (item.kind !== 'show' || item.completion_evidence?.finish_date || 'finish_date' in item.outcome) return;
+  mobileReview.addEventListener('change', () => render(), {signal: dateSignal.signal});
+  const refreshFinishDate = setupCalendarDateInputs(finishDialog, dateSignal.signal, {returnFocus: 'trigger'});
+  async function confirmFinishDate(item: StreamingItem, reselectingCompleted = false) {
+    if (!needsImportFinishDate(item, reselectingCompleted)) return;
     const input = finishDialog.querySelector<HTMLInputElement>('[data-date-iso]')!;
-    input.value = item.completion_evidence?.suggested_date || '';
+    input.value = importFinishDateSuggestion(item);
     refreshFinishDate();
     finishDialog.returnValue = '';
     showDialog(finishDialog);
+    finishDialog.querySelector<HTMLElement>('h2')!.focus({preventScroll: true});
     await new Promise<void>(resolve => finishDialog.addEventListener('close', () => resolve(), {once: true}));
     await saveItem(item, {finish_date: finishDialog.returnValue === 'confirm' && input.value ? input.value : null});
   }
@@ -709,7 +762,7 @@ function mountStreamingImport(app: HTMLElement) {
         method: "POST", body: JSON.stringify({ revision: session.revision, idempotency_key: idempotencyKey }),
       });
       if (session.status === "committing") {
-        workflow.innerHTML = `<div class="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-5"><p class="font-semibold text-emerald-200">Importing reviewed changes…</p><p class="mt-2 text-sm text-zinc-400">Please keep this page open while AnyList saves your watch history.</p><button type="button" data-streaming-action="cancel" class="mt-4 rounded-lg px-3 py-2 text-sm font-semibold text-zinc-300 hover:bg-zinc-800">Cancel import</button></div>`;
+        workflow.innerHTML = `<div class="streaming-uploading"><h2>Importing your history…</h2><p>Keep this page open while we save your history.</p><div class="streaming-loading-track"><span class="animate-pulse" style="width:65%"></span></div><button type="button" data-streaming-action="cancel" class="streaming-text-action streaming-muted">Cancel import</button></div>`;
         const waitForCommit = async () => {
           if (!session) return;
           try {
@@ -752,15 +805,42 @@ function mountStreamingImport(app: HTMLElement) {
     if (action === "cancel") { await cancelSession(); return; }
     if (action === "restart") { session = null; step = 1; openRatingGroups.clear(); clearError(); render(); return; }
     if (saving) return;
-    if (action === "back") { step = decisionStep(step - 1, -1) ?? step; render(); workflow.scrollIntoView({ block: "start" }); return; }
+    if (action === "back") {
+      const previousStep = decisionStep(step - 1, -1);
+      if (previousStep === null) return;
+      step = previousStep;
+      if (step === 2) matchSequence.showOverview();
+      if (step === 3) { progressSequence.showOverview(); showingCompleted = true; }
+      render(); workflow.scrollIntoView({block: 'start'}); return;
+    }
+    if (action === 'review-item') {
+      (step === 2 ? matchSequence : progressSequence).visit(id!);
+      render(); workflow.scrollIntoView({block: 'start'}); return;
+    }
+    if (action === 'return-review') {
+      (step === 2 ? matchSequence : progressSequence).resume(); render(); return;
+    }
     if (action === "next") {
       if (step === 2 && !titleReviewComplete()) {
-        showError("Resolve each uncertain show or movie title before continuing."); return;
+        showError("Confirm, choose another title, or skip each remaining match."); return;
+      }
+      let finishedProgressId: string | undefined;
+      if (step === 3 && mobileReview.matches) {
+        const current = progressCurrent();
+        if (current) {
+          if (current.outcome.status === 'completed') await confirmFinishDate(current);
+          await saveItem(current, {status: current.outcome.status});
+          if (progressSequence.selected || progressPending().length > 1) {
+            progressSequence.complete(current.id); render(); workflow.scrollIntoView({block: 'start'}); return;
+          }
+          finishedProgressId = String(current.id);
+        }
       }
       if (step === 3) for (const item of visibleItems()) {
         if (item.decision.action !== 'skip' && item.outcome.status === 'completed') await confirmFinishDate(item);
       }
       if (!await flushDraft()) return;
+      if (finishedProgressId) progressSequence.complete(finishedProgressId);
       step = decisionStep(step + 1, 1)!;
       render();
       workflow.scrollIntoView({ block: "start" });
@@ -778,12 +858,19 @@ function mountStreamingImport(app: HTMLElement) {
       });
       return;
     }
-    if (action === "confirm") { await saveItem(item, { action: "confirm" }); return; }
-    if (action === "skip-match") { await saveItem(item, { action: "skip" }); return; }
+    if (action === "confirm" || action === 'skip-match') {
+      const wasPending = reviewItems().some(pending => pending.id === item.id);
+      matchSequence.complete(item.id);
+      progressSequence.invalidate(item.id);
+      await saveItem(item, {action: action === 'confirm' ? 'confirm' : 'skip'});
+      if (wasPending) await advanceAfterLastMatch();
+      if (mobileReview.matches) workflow.scrollIntoView({block: 'start'});
+      return;
+    }
     if (action === "open-search") { openRemap(item); return; }
     if (action === "outcome") {
       const status = button.dataset.status as StreamingItem["outcome"]["status"];
-      if (status === "completed") await confirmFinishDate(item);
+      if (status === "completed") await confirmFinishDate(item, item.outcome.status !== 'completed');
       if (status === 'partial' && (!item.outcome.latest_season || !item.outcome.latest_episode)) {
         const firstSeason = (item.seasons ?? []).filter(season => season.season_number > 0 && (season.total_released ?? 0) > 0)
           .sort((a, b) => a.season_number - b.season_number)[0];
@@ -853,15 +940,21 @@ function mountStreamingImport(app: HTMLElement) {
     if (!session) return;
     saving = true;
     render();
+    const wasPending = reviewItems().some(pending => pending.id === item.id);
+    let remapped = false;
     try {
       session = await request<StreamingSession>(`/imports/${encodeURIComponent(session.id)}/items/${encodeURIComponent(String(item.id))}`, {
         method: 'PATCH', body: JSON.stringify({revision: session.revision, action: 'remap', media_type: mediaType, tmdb_id: tmdbId}),
       });
+      matchSequence.complete(item.id);
+      progressSequence.invalidate(item.id);
       closeRemap();
+      remapped = true;
     } catch (error) {
       button.disabled = false;
       showError(error instanceof Error ? error.message : 'Could not remap this title. Please try again.');
     } finally { saving = false; render(); }
+    if (remapped && wasPending) await advanceAfterLastMatch();
   });
 
   upload.addEventListener("click", (event) => {

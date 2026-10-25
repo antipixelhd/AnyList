@@ -124,6 +124,14 @@ async def main(args):
                 if current_case == 'empty_query' or (current_case == 'negative_studio' and path[0] == 'discover'):
                     return {'page': page, 'total_pages': 0, 'results': []}
                 kind = 'tv' if path[1] == 'tv' else 'movie'
+                if current_case.startswith('auto_'):
+                    if current_case == 'auto_combined_established' and kind == 'tv':
+                        return {'page': page, 'total_pages': 1, 'results': []}
+                    row = title(880001, kind, search=True)
+                    row['title' if kind == 'movie' else 'name'] = 'Fallback Target'
+                    row['popularity'] = 80 if current_case == 'auto_separate_empty' and kind == 'tv' else 1
+                    row['vote_count'] = 10000 if current_case == 'auto_combined_established' else 0
+                    return {'page': page, 'total_pages': 1, 'results': [row]}
                 future = str(params.get('primary_release_date.gte') or params.get('first_air_date.gte') or params.get('air_date.gte') or params.get('release_date.gte') or '') > '2026-12-31'
                 count = 500 if 'sparse' in str(params.get('query', '')) else 8
                 secondary = 'release_date.gte' in params or 'air_date.gte' in params
@@ -225,11 +233,17 @@ async def main(args):
             ('grid_score', 'browse', {'sort': 'score', 'min_score': 7}),
             ('cinema_rereleases', 'browse', {'sort': 'newest', 'cinema': 'true', 'include_rereleases': 'true'}),
             ('filter_options', 'browse/facets', {'genres': '18'}),
+            ('auto_combined_empty', None, {}),
+            ('auto_combined_established', None, {}),
+            ('auto_separate_empty', None, {}),
+            ('auto_browse_empty', None, {}),
         ]
         if args.edge_cases_only:
             cases = [case for case in cases if case[0] in ('actor', 'crew', 'studio', 'negative_studio', 'empty_query', 'runtime_timeout', 'provider_failure', 'page_two', 'people_combined', 'all_contributors')]
         elif args.filters_only:
-            cases = cases[-14:]
+            cases = [case for case in cases if case[0] in ('date_genre_score', 'series_airing', 'series_returning',
+                'series_finished', 'series_cancelled', 'movie_released', 'movie_upcoming', 'movie_oldest',
+                'movie_alphabetical', 'grid_popular', 'grid_trending', 'grid_score', 'cinema_rereleases', 'filter_options')]
         elif args.stress_only:
             cases = [case for case in cases if case[0] in ('movie_exact', 'combined_titles', 'actor', 'crew', 'studio', 'default_sections')]
         elif args.contributors_only:
@@ -252,6 +266,7 @@ async def main(args):
                     saved = await db.scalar(select(UserSettings).where(UserSettings.user_id == viewer.id))
                     saved.preferences = {'minimum_popularity': 25 if mode == 'curated' else 0}
                     profile = await db.scalar(select(UserProfileData).where(UserProfileData.user_id == viewer.id))
+                    profile.minimum_votes = 0 if mode == 'show_all' else 250
                     profile.minimum_movie_runtime = 0 if mode == 'show_all' else 30
                     profile.excluded_categories = [] if mode == 'show_all' else [99]
                     await db.commit()
@@ -269,6 +284,32 @@ async def main(args):
                     async def operation(path=path, params=params, label=label, mode=mode):
                         if path:
                             return await request(path, params)
+                        if label.startswith('auto_'):
+                            # Model the browser's two-phase request protocol.
+                            # Frontend tests separately cover state and cancellation.
+                            def empty(row):
+                                return not row['results'] and not row.get('has_more') and not row.get('notice')
+                            if label == 'auto_browse_empty':
+                                values = {'q': 'Fallback Target', 'genres': '18', 'min_score': 7, 'region': 'DE'}
+                                result = await request('browse', values)
+                                if empty(result):
+                                    counters['fallback_requests'] += 1
+                                    result = await request('browse', {**values, 'unfiltered': 'true'})
+                                return result
+                            scopes = ('movie', 'series')
+                            rows = await asyncio.gather(*(request('catalog', {
+                                'q': 'Fallback Target', 'media_type': kind, 'scan_empty': 'true',
+                            }) for kind in scopes))
+                            combined_empty = all(empty(row) for row in rows)
+                            indices = [index for index in range(2) if (
+                                combined_empty if label.startswith('auto_combined_') else empty(rows[index]))]
+                            counters['fallback_requests'] += len(indices)
+                            broad = await asyncio.gather(*(request('catalog', {
+                                'q': 'Fallback Target', 'media_type': scopes[index], 'scan_empty': 'true', 'unfiltered': 'true',
+                            }) for index in indices))
+                            for index, row in zip(indices, broad):
+                                rows[index] = row
+                            return {'results': [item for row in rows for item in row['results']]}
                         if label == 'combined_titles':
                             rows = await asyncio.gather(*(request('catalog', {'q': 'Benchmark title', 'media_type': kind}) for kind in ('movie', 'series')))
                             return {'results': [item for row in rows for item in row['results']]}
