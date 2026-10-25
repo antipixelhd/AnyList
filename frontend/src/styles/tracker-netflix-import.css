@@ -289,6 +289,8 @@
   .connections-settings-page .streaming-progress-card { padding:20px 0; }
   .connections-settings-page .streaming-mobile-focus { padding:20px; border-radius:8px; background:color-mix(in srgb,var(--text) 5%,var(--panel)); }
   .connections-settings-page [data-review-layout="single"]:has(.streaming-mobile-focus) .streaming-footer { position:static; }
+  .connections-settings-page [data-import-active="true"][data-import-step="3"] [data-role="streaming-import-workflow"] { padding-bottom:calc(92px + env(safe-area-inset-bottom)); }
+  .connections-settings-page [data-import-active="true"][data-import-step="3"] .streaming-footer { position:fixed; bottom:0; left:16px; right:16px; z-index:20; margin:0; padding:12px 0 max(12px,env(safe-area-inset-bottom)); background:var(--bg); box-shadow:0 -12px 20px var(--bg); }
   .connections-settings-page .streaming-mobile-focus :is(.streaming-match-row,.streaming-progress-card) { margin:0; padding:0; border:0; }
   .connections-settings-page .streaming-mobile-focus .streaming-match-row { gap:22px; }
   .connections-settings-page .streaming-mobile-focus .streaming-source p { font-size:17px; font-weight:600; }

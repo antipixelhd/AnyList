@@ -193,6 +193,65 @@ class NetflixAutomaticEpisodeImportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({event.media_id % 100 for event in applied.added}, {1})
         self.assertEqual(stats['source_watches'], 1)
 
+    def test_completed_evidence_auto_confirms_movie_progress_without_confirming_uncertain_title_matches(self):
+        from copy import deepcopy
+        from core.streaming_evidence import prepare_evidence
+        from core.streaming_history import WatchObservation
+        for state, decision in [('matched', 'confirm'), ('review', None)]:
+            for seconds in (2520, 2700, 3600):
+                item = {'kind':'movie', 'source_title':'Movie',
+                    'match':{'state':state, 'candidate':{'tmdb_id':1, 'runtime':60}},
+                    'decision':{'action':decision}, 'outcome':{'status':'completed', 'status_overridden':False}}
+                rows = [WatchObservation(row=2, source_title='Movie', watched_at='2020-01-01', watched_seconds=seconds)]
+                prepare_evidence([item], rows)
+                netflix_sessions._require_playback_review([item])
+                self.assertEqual(item['outcome']['status'], 'completed')
+                self.assertTrue(item['progress_reviewed'])
+                self.assertFalse(item['requires_watch_confirmation'])
+                self.assertEqual(item['decision']['action'], decision)
+                self.assertEqual(item['match']['state'], state)
+        weak = deepcopy(item)
+        weak['outcome']['status_overridden'] = False
+        prepare_evidence([weak], [WatchObservation(row=2, source_title='Movie', watched_at='2020-01-01', watched_seconds=2519)])
+        netflix_sessions._require_playback_review([weak])
+        self.assertFalse(weak['progress_reviewed'])
+        self.assertTrue(weak['requires_watch_confirmation'])
+        self.assertEqual(weak['outcome']['status'], 'skip')
+
+    def test_netflix_asserted_movie_watch_is_automatically_progress_confirmed(self):
+        from core.streaming_evidence import prepare_evidence
+        from core.streaming_history import WatchObservation
+        item = {'kind':'movie', 'source_title':'Movie', 'match':{'candidate':{'tmdb_id':1}},
+                'decision':{'action':'confirm'}, 'outcome':{'status':'completed'}}
+        prepare_evidence([item], [WatchObservation(row=2, source_title='Movie', watched_at='2020-01-01')])
+        self.assertTrue(item['progress_reviewed'])
+        self.assertFalse(item['requires_watch_confirmation'])
+        self.assertEqual(item['outcome']['status'], 'completed')
+
+    async def test_movie_remap_rechecks_completion_against_the_selected_runtime(self):
+        from core.streaming_history import WatchObservation
+        for runtime, qualified in [(60, True), (120, False)]:
+            item = {'id':'movie', 'kind':'movie', 'source_title':'Movie', 'source_dates':['2020-01-01'],
+                    'match':{'state':'review'}, 'decision':{'action':None},
+                    'requires_watch_confirmation':True, 'progress_reviewed':False,
+                    'outcome':{'status':'skip', 'status_overridden':True},
+                    'source_evidence':{'observations':[WatchObservation(row=2, source_title='Movie',
+                        watched_at='2020-01-01', watched_seconds=2700).to_dict()]}}
+            draft = SimpleNamespace(id='draft', status='review', revision=1, phase='review', progress={},
+                                    result={}, error_message=None, payload={'source':'amazon', 'items':[item]})
+            db = SimpleNamespace(commit=AsyncMock(), refresh=AsyncMock(), execute=AsyncMock(return_value=_MemoryResult()))
+            with patch('routers.netflix_import._load_owned', AsyncMock(return_value=draft)), \
+                 patch('routers.netflix_import.settings_store.get_user_tmdb_key', AsyncMock(return_value='fixture')), \
+                 patch('core.netflix_sessions.tmdb.get_movie_light', AsyncMock(return_value={
+                     'id':123, 'title':'Selected movie', 'runtime':runtime, 'genres':[]})):
+                updated = await update_netflix_import_item(draft.id, item['id'],
+                    {'revision':1, 'action':'remap', 'media_type':'movie', 'tmdb_id':123}, db, SimpleNamespace(id=7))
+            result = updated['items'][0]
+            self.assertEqual(result['progress_reviewed'], qualified)
+            self.assertEqual(result['requires_watch_confirmation'], not qualified)
+            self.assertEqual(result['outcome']['status'], 'completed' if qualified else 'skip')
+            self.assertEqual(result['decision']['action'], 'remap' if qualified else None)
+
     def test_playback_review_preserves_hidden_skips_and_requires_movie_confirmation(self):
         anime = {"is_anime": True, "decision": {"action": "skip"}}
         movie = {"kind": "movie", "match": {"state": "matched"},

@@ -5,7 +5,7 @@ import { createImportDraft } from '../lib/import-draft';
 import { importDecisionStep } from '../lib/import-steps';
 import { readRemapTitles } from '../lib/streaming-remap-search';
 import { formatDate } from '../lib/date-time';
-import { needsImportFinishDate, importFinishDateSuggestion } from '../lib/import-completion';
+import { needsImportFinishDate, importFinishDateSuggestion, needsImportProgressReview as isIncomplete, hasConfirmedMovieEvidence } from '../lib/import-completion';
 import { createImportSequence } from '../lib/import-sequence';
 
 type MatchCandidate = {
@@ -211,16 +211,6 @@ function mountStreamingImport(app: HTMLElement) {
       : `<span class="streaming-artwork streaming-artwork-empty" aria-hidden="true">${app.querySelector<HTMLTemplateElement>('[data-role="streaming-poster-placeholder"]')!.innerHTML}</span>`;
   }
 
-  function isIncomplete(item: StreamingItem): boolean {
-    if (item.kind === "movie") return true;
-    if (item.requires_watch_confirmation && !item.progress_reviewed) return true;
-    const seasons = (item.seasons ?? []).filter((season) => season.season_number > 0 && (season.total_released ?? 0) > 0);
-    const unknownSeasons = (item.seasons ?? []).filter((season) => season.season_number > 0 && season.total_released == null);
-    if (unknownSeasons.length) return true;
-    if (seasons.length) return seasons.some((season) => season.represented < (season.total_released ?? 0));
-    return true;
-  }
-
   function visibleItems(): StreamingItem[] {
     return (session?.items ?? []).filter((item) => !item.is_anime || skipAnimeInput?.checked === false);
   }
@@ -289,7 +279,10 @@ function mountStreamingImport(app: HTMLElement) {
   }
 
   function progressPending(): string[] {
-    return progressSequence.pending().filter(id => byId(id)?.decision.action !== 'skip' && !!byId(id));
+    return progressSequence.pending().filter(id => {
+      const item = byId(id);
+      return item && item.decision.action !== 'skip' && !hasConfirmedMovieEvidence(item);
+    });
   }
 
   function progressCurrent(): StreamingItem | undefined {
@@ -442,7 +435,10 @@ function mountStreamingImport(app: HTMLElement) {
     syncReviewSequences();
     return importDecisionStep(start, direction, {
       matches: matchSequence.ids.length > 0,
-      progress: progressSequence.ids.length > 0 || visibleItems().some(item => item.decision?.action !== 'skip' && (isIncomplete(item)
+      progress: progressSequence.ids.some(id => {
+        const item = byId(id);
+        return item && item.decision.action !== 'skip' && !hasConfirmedMovieEvidence(item);
+      }) || visibleItems().some(item => item.decision?.action !== 'skip' && (isIncomplete(item)
         || (item.outcome.status === 'completed' && item.kind === 'show' && item.completion_evidence
           && !item.completion_evidence.finish_date && !('finish_date' in item.outcome)))),
       ratings: ratingItems().length > 0,
@@ -471,6 +467,7 @@ function mountStreamingImport(app: HTMLElement) {
     syncReviewSequences();
     updateImportActivity();
     app.dataset.reviewLayout = mobileReview.matches ? 'single' : 'list';
+    app.dataset.importStep = String(step);
     if (!session) {
       workflow.classList.add("hidden");
       uploadControls.classList.remove("hidden");
