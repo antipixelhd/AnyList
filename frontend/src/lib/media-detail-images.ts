@@ -12,7 +12,7 @@ import {editorStore} from './editor-store';
 import {createDetailViewerImageLoader} from './detail-viewer-image';
 import {bindDetailViewerFrame} from './detail-viewer-frame';
 import {detailHeroArtwork,detailSceneArtwork} from './detail-artwork';
-import {commitDetailHero} from './detail-hero';
+import {commitDetailHero,nextDetailHero,publishDetailArtwork} from './detail-hero';
 import {createGalleryPreviewTimer,galleryPreviewImagesSettled} from './gallery-preview-timer';
 import {createGallerySelection} from './gallery-selection';
 
@@ -258,7 +258,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
   let heroRevision=0;
   const paintHero=(url:string|undefined)=>{
     if(!url)return;
-    if(failedHeroes.has(url))return;
+    if(failedHeroes.has(imageKey(url)))return;
     const hero=root.querySelector<HTMLImageElement>('.lab-hero-image');
     const button=root.querySelector<HTMLButtonElement>('.lab-hero-art-button');
     if(!hero)return;
@@ -269,19 +269,20 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
       if(signal.aborted||revision!==heroRevision)return;
       commitDetailHero(hero,candidate,url,button,backdrop=>{
         galleries.hero=[backdrop];
-        editorStore.updateArtwork(info.id,{backdrop});
+        publishDetailArtwork(editorStore,info,{backdrop});
       });
     };
     const failed=()=>{
       if(signal.aborted||revision!==heroRevision)return;
-      failedHeroes.add(url);
+      failedHeroes.add(imageKey(url));
+      if(!hero.naturalWidth)hero.hidden=true;
       const recover=()=>{
         if(signal.aborted)return;
-        const next=[previewInfo?.image,fallback,...(info.backdropFallbacks||[])].find(next=>next&&!failedHeroes.has(next));
+        const next=nextDetailHero([previewInfo?.image,fallback,...(info.backdropFallbacks||[])],failedHeroes);
         if(next){paintHero(next);return;}
         if(!hero.naturalWidth){hero.hidden=true;if(button)button.hidden=true;}
       };
-      if(previewInfo?.image||fallback)recover();else void loadPreview().then(recover);
+      if(info.type==='game'||previewInfo?.image||fallback)recover();else void loadPreview().then(recover);
     };
     candidate.onload=()=>{void candidate.decode().then(commit,failed);};
     candidate.onerror=failed;
@@ -308,7 +309,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
       }
       fallback=data.backdrop_fallback||fallback;
       paintHero(data.backdrop);
-      if(!standalone)editorStore.updateArtwork(info.id,{poster:primary});
+      if(!standalone)publishDetailArtwork(editorStore,info,{poster:primary});
       paintPreview();
       const grid=root.querySelector<HTMLElement>('[data-detail-artwork-grid]');
       if(grid){
@@ -357,11 +358,11 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
     },()=>{});
   loadPreview=()=>previewResource.load();
   if(pending)applyImages({...galleries,image_status:{state:'pending'}});
+  if(initialHero)paintHero(initialHero);
   if(info.heroAvailable){
     // One preview is visible content; full gallery analysis still waits for intent.
     if(info.previewStatus?.state!=='ready')void loadPreview();
     else if(!previewInfo?.image&&!galleries.artwork.length)root.querySelector<HTMLElement>('.lab-art-preview')?.setAttribute('hidden','');
-    if(initialHero)paintHero(initialHero);
   }
   root.addEventListener('click',event=>{
     const button=(event.target as Element).closest<HTMLButtonElement>(standalone?'[data-portrait-image]':'[data-detail-image]');

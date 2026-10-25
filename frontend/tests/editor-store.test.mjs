@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {stripTypeScriptTypes} from 'node:module';
 import test from 'node:test';
-import {commitDetailHero} from '../src/lib/detail-hero.ts';
+import {commitDetailHero,nextDetailHero,publishDetailArtwork} from '../src/lib/detail-hero.ts';
+import {artworkIdentity} from '../src/lib/responsive-artwork.ts';
 
 const source = readFileSync(new URL('../src/lib/editor-store.ts', import.meta.url), 'utf8')
   .replace("'./decoded-artwork.ts'", JSON.stringify(new URL('../src/lib/decoded-artwork.ts', import.meta.url).href))
@@ -18,6 +19,29 @@ const gameState = (id=7, extra={}) => ({subject:{kind:'game',catalogue_id:id},ti
 const gameTitle = state => ({id:state.subject.catalogue_id,subject:state.subject,type:'game',title:state.title,
   poster:state.image_url,game_class:state.game_class,base_work_id:state.base_work_id,game_state:state,
   entry:state.listed?state:null,favorite:state.favorite});
+
+test('detail artwork publishing keeps colliding game/movie identities and pending tracking separate',async()=>{
+  const pending=deferred(),calls=[];
+  const store=new EditorStore(path=>{calls.push(path);return pending.promise;});
+  const movie=store.seed({...draft(),id:7,entry:{score:6,status:'completed'}});
+  const game=store.seed(gameTitle(gameState(7,{listed:true,status:'playing',score:8,revision:1})));
+  const write=store.write(game,{score:9});
+  publishDetailArtwork(store,{id:7,type:'game'},{poster:'/game-cover.jpg',backdrop:'/game-fallback.jpg'});
+  assert.equal(game.entry.score,9);assert.equal(game.backdrop,'/game-fallback.jpg');assert.equal(game.poster,'/game-cover.jpg');
+  assert.equal(movie.poster,'/poster.jpg');assert.equal(movie.backdrop,'/backdrop.jpg');assert.equal(movie.entry.score,6);
+  publishDetailArtwork(store,{id:7,type:'movie'},{backdrop:'/movie-fallback.jpg'});
+  assert.equal(movie.backdrop,'/movie-fallback.jpg');assert.equal(game.backdrop,'/game-fallback.jpg');
+  await turn();pending.resolve(gameState(7,{listed:true,status:'playing',score:9,revision:2}));await write;
+  assert.deepEqual(calls,['games/entries/7']);assert.equal(game.backdrop,'/game-fallback.jpg');
+});
+
+test('hero recovery skips failed image identities across sizes and stops when alternatives are exhausted',()=>{
+  const asset=size=>`https://images.igdb.com/igdb/image/upload/t_${size}/ar123.jpg`;
+  const alternative='https://images.igdb.com/igdb/image/upload/t_thumb/ar456.jpg';
+  const failed=new Set([artworkIdentity(asset('1080p'))]);
+  assert.equal(nextDetailHero([undefined,asset('thumb'),asset('720p'),alternative],failed),alternative);
+  failed.add(artworkIdentity(alternative));assert.equal(nextDetailHero([asset('thumb'),alternative],failed),undefined);
+});
 
 test('game catalogue ids cannot collide with legacy Media ids across reads writes or artwork',async()=>{
   const calls=[];
