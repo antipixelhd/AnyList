@@ -2,6 +2,7 @@ import copy
 import os
 import time
 import unittest
+from datetime import date
 from unittest.mock import AsyncMock
 
 os.environ.setdefault('SECRET_KEY','games-test-only')
@@ -35,6 +36,19 @@ class BrowseTests(unittest.IsolatedAsyncioTestCase):
                 {'id':'xbox','devices':[{'id':'igdb.platform:169'}]}]}
         self.service=browse.GameBrowse(self.sources)
         self.query=await browse.filters(self.sources,category='trending')
+
+    async def test_future_range_does_not_reuse_the_previous_clamped_empty_page(self):
+        first=f'{date.today().year+1}-01-01'
+        query=await browse.filters(self.sources,category='newest',start=first)
+        old_scope=browse.digest(['v1',query,6]);old_key=browse.digest([2,old_scope,int(time.time()//7200)])
+        self.sources.cache.rows[old_key]={'rows':[],'expires':int(time.time()+7200),'has_more':False,
+            'partial':False,'coverage_limited':False,'stale':False,'source':'IGDB release dates',
+            'source_at':None,'fetched_at':'2026-10-25T00:00:00'}
+        self.sources.catalogue_feed.return_value={'data':{'rows':[{**row(1),'release_date':first}],
+            'has_more':False,'next_offset':1,'source':'IGDB release dates'},'stale':False}
+        page=await self.service.page(query,limit=6)
+        self.assertEqual([item['igdb_id'] for item in page['rows']],[1])
+        self.sources.catalogue_feed.assert_awaited_once()
 
     async def test_filter_namespaces_and_devices_replace_the_broad_family(self):
         query=await browse.filters(self.sources,category='popular',genres='igdb.genre:5',

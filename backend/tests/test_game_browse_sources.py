@@ -1,7 +1,7 @@
 import asyncio
 import os
 import unittest
-from datetime import datetime, timezone
+from datetime import date,datetime,timedelta,timezone
 from unittest.mock import AsyncMock
 
 os.environ.setdefault('SECRET_KEY', 'games-test-only')
@@ -71,6 +71,31 @@ class RankingTests(unittest.IsolatedAsyncioTestCase):
         sources._slots=asyncio.Semaphore(2)
         self.api=sources.GameBrowseSources()
         self.api.cache=ImmediateCache()
+
+    async def test_newest_defaults_to_released_but_respects_an_explicit_future_range(self):
+        today=date.today();first=date(today.year+1,1,1);last=first+timedelta(days=30)
+        stamp=lambda value:int(datetime(value.year,value.month,value.day,tzinfo=timezone.utc).timestamp())
+        self.api.igdb=AsyncMock(return_value=[])
+        await self.api.catalogue_feed('newest')
+        self.assertIn(f'first_release_date<{stamp(today+timedelta(days=1))}',self.api.igdb.await_args.args[1])
+        await self.api.catalogue_feed('newest',start=first.isoformat())
+        query=self.api.igdb.await_args.args[1]
+        self.assertIn(f'first_release_date>={stamp(first)}',query)
+        self.assertNotIn('first_release_date<',query)
+        await self.api.catalogue_feed('newest',end=last.isoformat())
+        self.assertIn(f'first_release_date<{stamp(last+timedelta(days=1))}',self.api.igdb.await_args.args[1])
+
+    async def test_newest_text_search_applies_the_effective_default_or_explicit_date_cutoff(self):
+        today=date.today();future=date(today.year+1,1,1);past=today-timedelta(days=10)
+        raw=lambda ident,when:{'id':ident,'name':'Game','game_type':{'id':0},
+            'first_release_date':int(datetime(when.year,when.month,when.day,tzinfo=timezone.utc).timestamp())}
+        self.api.igdb=AsyncMock(return_value=[raw(1,future),raw(2,past)])
+        result=await self.api.catalogue_feed('newest',q='Game')
+        self.assertEqual([row['igdb_id'] for row in result['data']['rows']],[2])
+        result=await self.api.catalogue_feed('newest',q='Game',start=future.isoformat())
+        self.assertEqual([row['igdb_id'] for row in result['data']['rows']],[1])
+        result=await self.api.catalogue_feed('newest',q='Game',end=future.isoformat())
+        self.assertEqual([row['igdb_id'] for row in result['data']['rows']],[1,2])
 
     async def test_partial_title_search_preserves_canonical_identity_and_explicit_filters(self):
         base={'id':119133,'slug':'elden-ring','name':'Elden Ring','game_type':{'id':0},

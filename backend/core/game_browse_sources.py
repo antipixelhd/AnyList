@@ -215,14 +215,15 @@ class GameBrowseSources:
             conditions.append(f'(platforms={choices} | ports.platforms={choices})')
         if sort == 'popular':
             conditions.append('rating_count>0')
-        if sort == 'newest':
-            last = min(last or date.today(), date.today())
+        if sort == 'newest' and not last and (not first or first<=date.today()):
+            last = date.today()
         if first:
             conditions.append(f'first_release_date>={int(datetime(first.year,first.month,first.day,tzinfo=timezone.utc).timestamp())}')
         if last:
             stamp = datetime(last.year,last.month,last.day,tzinfo=timezone.utc)+timedelta(days=1)
             conditions.append(f'first_release_date<{int(stamp.timestamp())}')
-        key = hashlib.sha256(json.dumps(['ports-v2',sort,offset,sorted(genres),sorted(platforms),start,end]).encode()).hexdigest()
+        version='release-range-v3' if sort=='newest' and any(value and value>date.today().isoformat() for value in (start,end)) else 'ports-v2'
+        key = hashlib.sha256(json.dumps([version,sort,offset,sorted(genres),sorted(platforms),start,end]).encode()).hexdigest()
         async def load():
             # Search resolves editions first, then filters canonical metadata.
             # Non-search queries push globally supported filters to IGDB.
@@ -246,7 +247,7 @@ class GameBrowseSources:
                 if q and (genres and not {f'igdb.genre:{g}' for g in genres}.intersection(g['id'] for g in value['genres'])
                     or platforms and not {f'igdb.platform:{p}' for p in platforms}.intersection(value['platform_ids'])
                     or first and (not value['release_date'] or value['release_date'] < first.isoformat())
-                    or end and (not value['release_date'] or value['release_date'] > end)):
+                    or last and (not value['release_date'] or value['release_date'] > last.isoformat())):
                     continue
                 seen.add(value['igdb_id'])
                 rows.append({**value,'source_rank':index})
@@ -271,7 +272,7 @@ class GameBrowseSources:
         """Finalize a bounded canonical search window before chronological paging."""
         if not q or not isinstance(snapshot,int) or isinstance(snapshot,bool) or snapshot<0 or not 0<=offset<=1000:
             raise ProviderError('invalid_request')
-        key=hashlib.sha256(json.dumps(['ports-prefix-v3',snapshot,q,sorted(genres),sorted(platforms),start,end]).encode()).hexdigest()
+        key=hashlib.sha256(json.dumps(['release-prefix-v4',snapshot,q,sorted(genres),sorted(platforms),start,end]).encode()).hexdigest()
         async def load():
             rows,seen,more=[],set(),True
             position=0;search_mode=0

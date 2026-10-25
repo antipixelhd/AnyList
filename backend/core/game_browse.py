@@ -122,7 +122,8 @@ class GameBrowse:
     async def page(self, query, *, limit=24, cursor=None):
         if not 1<=limit<=48:
             raise ProviderError('invalid_request')
-        scope = digest(['prefix-v2' if query['q'] else 'v1',query,limit])
+        date_scope=query['category']=='newest' and (query['q'] or any(value and value>date.today().isoformat() for value in (query['start'],query['end'])))
+        scope = digest(['release-range-v3' if date_scope else 'prefix-v2' if query['q'] else 'v1',query,limit])
         previous = None
         if cursor:
             parent,expires = decode_cursor(cursor,scope)
