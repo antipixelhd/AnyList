@@ -59,6 +59,15 @@ test('genuine loss of the card capture safely returns it without acknowledgement
   assert.equal(f.acknowledgements(), 0);
 });
 
+test('an ordinary quarter-card swipe dismisses even when released slowly', () => {
+  for (const direction of [-1, 1]) {
+    const f = fixture(); f.pointer('pointerdown', 180); f.advance(400);
+    f.pointer('pointermove', 180 + direction * 95); f.advance(150);
+    f.pointer('pointerup', 180 + direction * 95); f.advance(1000);
+    assert.equal(f.card.hidden, true); assert.equal(f.acknowledgements(), 1);
+  }
+});
+
 test('a slow short drag follows the finger, fades, and springs back without dismissing', () => {
   const f = fixture(); f.pointer('pointerdown', 100); f.advance(200); f.pointer('pointermove', 140);
   assert.equal(f.card.style.translate, '40px 0px');

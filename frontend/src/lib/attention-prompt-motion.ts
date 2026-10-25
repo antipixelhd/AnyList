@@ -85,7 +85,7 @@ export function bindAttentionPromptMotion(card: HTMLElement, signal: AbortSignal
     const velocity = elapsed > 0 && performance.now() - last.time <= 100 ? (last.x - first.x) / elapsed : 0;
     const distance = gesture.distance;
     const direction = Math.sign(distance);
-    const threshold = Math.min(120, Math.max(72, card.getBoundingClientRect().width * .35));
+    const threshold = Math.min(96, Math.max(56, card.getBoundingClientRect().width * .25));
     const flick = Math.abs(distance) >= 32 && velocity * direction >= .5;
     if (event.type === 'pointerup' && velocity * direction >= -.2 && (Math.abs(distance) >= threshold || flick)) dismiss(direction);
     else home();
