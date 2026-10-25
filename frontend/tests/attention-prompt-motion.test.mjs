@@ -32,8 +32,32 @@ function fixture({reduced = false} = {}) {
     return event;
   };
   context.motion.show(); advance(1000);
-  return {card, motion: context.motion, pointer, advance, signal, frames, captured, acknowledgements: () => acknowledgements};
+  const captureLoss = (target = card) => {
+    const event = Object.assign(new Event('lostpointercapture'), {pointerId: 1});
+    Object.defineProperty(event, 'target', {value: target});
+    card.dispatchEvent(event);
+  };
+  return {card, motion: context.motion, pointer, captureLoss, advance, signal, frames, captured, acknowledgements: () => acknowledgements};
 }
+
+test('implicit touch capture transferring from child text or buttons does not cancel the drag', () => {
+  for (const tagName of ['STRONG', 'P', 'A', 'BUTTON']) {
+    const f = fixture(); f.pointer('pointerdown', 100); f.advance(20); f.pointer('pointermove', 120);
+    f.captureLoss({tagName});
+    f.advance(20); f.pointer('pointermove', 160);
+    assert.equal(f.card.style.translate, '60px 0px', `${tagName} capture handoff retains finger tracking`);
+    f.pointer('pointerup', 160); f.advance(1000);
+    assert.equal(f.card.hidden, true);
+    assert.equal(f.acknowledgements(), 1);
+  }
+});
+
+test('genuine loss of the card capture safely returns it without acknowledgement', () => {
+  const f = fixture(); f.pointer('pointerdown', 100); f.advance(20); f.pointer('pointermove', 170);
+  f.captured.delete(1); f.captureLoss(); f.advance(1000);
+  assert.equal(f.card.hidden, false); assert.equal(f.card.style.translate, '0px 0px');
+  assert.equal(f.acknowledgements(), 0);
+});
 
 test('a slow short drag follows the finger, fades, and springs back without dismissing', () => {
   const f = fixture(); f.pointer('pointerdown', 100); f.advance(200); f.pointer('pointermove', 140);

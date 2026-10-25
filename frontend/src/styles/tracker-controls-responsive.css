@@ -32,7 +32,7 @@
     min-width:44px;
     padding:4px
   }
-  .attention-prompt-actions .button-primary,.attention-prompt-actions .button-quiet {
+  .attention-prompt-actions .button-primary,.attention-prompt-actions .button-secondary,.attention-prompt-actions .button-quiet {
     min-height:44px
   }
 }
@@ -73,7 +73,7 @@
   gap:8px;
   margin-top:14px
 }
-.attention-prompt-actions .button-primary,.attention-prompt-actions .button-quiet {
+.attention-prompt-actions .button-primary,.attention-prompt-actions .button-secondary,.attention-prompt-actions .button-quiet {
   min-height:36px;
   padding:7px 12px;
   font-size:var(--type-meta-size);
@@ -177,9 +177,9 @@
   .attention-prompt-mobile-close svg { width:18px; height:18px; pointer-events:none; }
   .attention-prompt-mobile-close:hover,.attention-prompt-mobile-close:focus-visible { color:var(--blue); }
   .attention-prompt-copy { padding-right:24px; }
-  .attention-prompt-actions [data-attention-cancel-import],.attention-prompt-actions [data-attention-close] { display:none; }
+  .attention-prompt-actions [data-attention-close] { display:none; }
   .attention-prompt-actions { justify-content:flex-start; }
-  .attention-prompt-actions .button-primary { min-width:0; max-width:100%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .attention-prompt-actions .button-primary,.attention-prompt-actions .button-secondary { min-height:44px; min-width:0; max-width:100%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 
 }
 .entry-progress {

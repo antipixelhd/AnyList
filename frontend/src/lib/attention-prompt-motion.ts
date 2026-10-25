@@ -68,7 +68,7 @@ export function bindAttentionPromptMotion(card: HTMLElement, signal: AbortSignal
     }
     if (gesture.axis !== 'x') return;
     event.preventDefault();
-    card.setPointerCapture(event.pointerId);
+    if (!card.hasPointerCapture(event.pointerId)) card.setPointerCapture(event.pointerId);
     const now = performance.now();
     gesture.samples.push({x: event.clientX, time: now});
     while (gesture.samples.length > 2 && gesture.samples[0].time < now - 100) gesture.samples.shift();
@@ -92,7 +92,12 @@ export function bindAttentionPromptMotion(card: HTMLElement, signal: AbortSignal
   };
   window.addEventListener('pointerup', release, {signal, passive: true});
   window.addEventListener('pointercancel', release, {signal, passive: true});
-  card.addEventListener('lostpointercapture', () => { if (gesture) home(); }, {signal});
+  card.addEventListener('lostpointercapture', event => {
+    // Touch starts with implicit capture on the touched child. Its loss bubbles
+    // when the card takes over; only losing the card's own capture ends a drag.
+    if (event.target !== card || !gesture || event.pointerId !== gesture.id || card.hasPointerCapture(event.pointerId)) return;
+    home();
+  }, {signal});
   card.addEventListener('click', event => {
     if (performance.now() < ignoreClickUntil) { event.preventDefault(); event.stopImmediatePropagation(); }
   }, {signal, capture: true});
