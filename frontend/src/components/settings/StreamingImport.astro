@@ -12,7 +12,8 @@ const extension = service === "amazon" ? ".zip" : ".csv";
       <template data-role="streaming-poster-placeholder"><Icon name="film" /></template>
       <template data-role="streaming-match-arrow"><Icon name="arrow-right" /></template>
       <template data-role="streaming-star"><Icon name="star" /></template>
-      <input type="file" id={`${instance}-streaming-import-file`} data-role="streaming-import-file" accept={extension} class="hidden" disabled={!hasTmdbKey} />
+      {/* Android document providers may label CSV/ZIP files inconsistently. Validate after selection instead of filtering the native picker. */}
+      <input type="file" id={`${instance}-streaming-import-file`} data-role="streaming-import-file" class="hidden" disabled={!hasTmdbKey} />
       <div id={`${instance}-streaming-import-upload-controls`} data-role="streaming-import-upload-controls" hidden={!!connectionId}>
       <div id={`${instance}-streaming-import-upload`} data-role="streaming-import-upload" class:list={[
         "flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed px-5 py-9 text-center transition-colors sm:px-6 sm:py-10",

@@ -145,6 +145,38 @@ class ConnectionDraftDatabaseTests(unittest.IsolatedAsyncioTestCase):
         await require_import_slot(self.db, self.user.id, connection_id=self.conn.id)
         self.assertIsNone(await active_import(self.db, self.user.id + 10000))
 
+    async def test_cancelled_amazon_upload_does_not_restrict_netflix_or_trust_provider_mime(self):
+        from io import BytesIO
+        from fastapi import BackgroundTasks, HTTPException, UploadFile
+        from starlette.datastructures import Headers
+        from routers.netflix_import import upload_netflix_history, cancel_netflix_import
+        await self.stage()
+        tasks = BackgroundTasks()
+        csv = b'Title,Date\nFixture Movie,2020-01-01\n'
+        with patch('routers.netflix_import.settings_store.get_user_tmdb_key', AsyncMock(return_value='fixture')), \
+             patch('routers.netflix_import._schedule'):
+            amazon = await upload_netflix_history('amazon', tasks,
+                UploadFile(filename='Prime Video.zip', file=BytesIO(b'PK-export'),
+                           headers=Headers({'content-type': 'application/octet-stream'})),
+                None, self.db, self.user)
+            await cancel_netflix_import(amazon['id'], self.db, self.user)
+            for mime in ('text/csv', 'text/plain', 'application/octet-stream', 'application/vnd.ms-excel'):
+                with self.subTest(provider_mime=mime):
+                    netflix = await upload_netflix_history('netflix', tasks,
+                        UploadFile(filename='NetflixViewingHistory.CSV', file=BytesIO(csv),
+                                   headers=Headers({'content-type': mime})),
+                        None, self.db, self.user)
+                    self.assertEqual(netflix['source'], 'netflix')
+                    stored = await self.db.get(NetflixImportSession, netflix['id'])
+                    self.assertEqual(stored.source_csv, csv)
+                    await cancel_netflix_import(netflix['id'], self.db, self.user)
+            with self.assertRaises(HTTPException) as wrong_format:
+                await upload_netflix_history('netflix', tasks,
+                    UploadFile(filename='Prime Video.zip', file=BytesIO(b'PK-export')),
+                    None, self.db, self.user)
+            self.assertEqual(wrong_format.exception.status_code, 400)
+        self.assertEqual((await self.db.get(NetflixImportSession, amazon['id'])).status, 'cancelled')
+
     async def test_pending_import_rejects_upload_and_new_connection(self):
         from io import BytesIO
         from fastapi import BackgroundTasks, HTTPException, UploadFile
