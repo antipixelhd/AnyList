@@ -10,7 +10,7 @@ Use a verified Git-ignored output folder. `.local-design/search-browse/` was use
 
 ## Select relevant cases
 
-Trusted `--baseline-ref` comparisons load the affected contributor identity/details modules as well as search/evidence modules. Run `game_person_cached` separately from `game_person_availability`: the latter adds a TMDB identity to the shared fixture, changing whether the former needs a TMDB profile request. Keep that fixture distinction explicit when interpreting cached-read checks.
+Trusted `--baseline-ref` comparisons load the affected contributor identity/details and IMDb person-component modules as well as search/evidence modules. This does not restore provider-discovery adapters or workers. Run `game_person_cached` separately from `game_person_availability`: the latter adds a TMDB identity to the shared fixture, changing whether the former needs a TMDB profile request. Keep that fixture distinction explicit when interpreting cached-read checks.
 
 `game_person_cached` includes a fresh completed automatic-discovery attempt for its cached IMDb source generation. It measures repeat page reads after discovery, including a compact discovery-job header when source identities remain unresolved; it does not measure first admission or provider mapping latency. The initial fetch-to-discovery handoff, bounded continuation, cancellation, failures and identity/exclusion correctness are covered by `test_game_imdb_discovery_pg` and `test_game_imdb_discovery_source`. Keep initial admission separate from this zero-provider, zero-write cached-read workload.
 

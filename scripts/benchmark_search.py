@@ -76,7 +76,7 @@ async def main(args):
         # Execute trusted repository source in this process only; never switch
         # branches or overwrite the user's checkout to compare revisions.
         for name in ('tmdb', 'discovery_policy', 'catalog_search', 'release_browse', 'browse',
-                     'person_identities', 'contributor_evidence', 'studio_discovery', 'contributor_details', 'contributor_search'):
+                     'person_identities', 'game_imdb_person', 'contributor_evidence', 'studio_discovery', 'contributor_details', 'contributor_search'):
             module = importlib.import_module('core.' + name)
             process = await asyncio.to_thread(subprocess.run, ['git', 'show', f'{args.baseline_ref}:backend/core/{name}.py'],
                 cwd=ROOT, check=True, capture_output=True, text=True, encoding='utf-8')
