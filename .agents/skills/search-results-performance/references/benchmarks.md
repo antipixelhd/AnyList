@@ -10,6 +10,8 @@ Use a verified Git-ignored output folder. `.local-design/search-browse/` was use
 
 ## Select relevant cases
 
+Trusted `--baseline-ref` comparisons load the affected contributor identity/details modules as well as search/evidence modules. Run `game_person_cached` separately from `game_person_availability`: the latter adds a TMDB identity to the shared fixture, changing whether the former needs a TMDB profile request. Keep that fixture distinction explicit when interpreting cached-read checks.
+
 | Affected path | Useful existing cases |
 |---|---|
 | Title retrieval/ranking/runtime | `movie_exact`, `movie_typo`, `series_exact`, `combined_titles`, `empty_query`, `runtime_timeout` |

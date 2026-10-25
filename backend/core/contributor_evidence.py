@@ -226,6 +226,7 @@ async def load_evidence(job, api_key):
             raise ValueError('Incomplete person credits')
         from core.contributor_availability import person_domains
         return {'cast':credits['cast'], 'crew':credits['crew'], 'complete':True,
+                'person_identity':{key:profile.get(key) for key in ('id','name','imdb_id','profile_path')},
                 'domain_availability':await asyncio.to_thread(person_domains,credits)}
     config = job['config']
     if config.get('scope')=='domain_availability':
@@ -300,9 +301,16 @@ async def run_batch(factory=AsyncSessionLocal):
                 # slot forever. A later search can retry after the cooldown.
                 values.update(next_attempt_at=None, expires_at=now() + timedelta(hours=6))
         async with factory() as db, db.begin():
-            await db.execute(update(table).where(table.kind == job['kind'], table.native_id == job['native_id'],
+            accepted=await db.execute(update(table).where(table.kind == job['kind'], table.native_id == job['native_id'],
                 table.variant == job['variant'], table.lease_token == job['lease_token'])
-                .values(**values, lease_token=None, lease_until=None))
+                .values(**values, lease_token=None, lease_until=None).returning(table.native_id))
+            if accepted.scalar_one_or_none() is not None and job['kind']=='person' and 'payload' in values:
+                from core.person_identities import verified_tmdb_person
+                from core.catalogue import IdentityConflict
+                raw=values['payload'].get('person_identity')
+                if raw:
+                    try:await verified_tmdb_person(db,job['native_id'],raw)
+                    except IdentityConflict:log.warning('Conflicting verified contributor identifiers left unresolved')
     await asyncio.gather(*(process(job) for job in jobs))
     return len(jobs)
 

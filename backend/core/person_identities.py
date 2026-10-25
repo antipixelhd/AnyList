@@ -1,4 +1,5 @@
 """Bridge contributors only through explicit authoritative provider identifiers."""
+import re
 from sqlalchemy import select, update
 from models.catalogue import CatalogueEntity, CatalogueIdentity
 
@@ -26,6 +27,20 @@ async def canonical_people(db, people, *, lightweight=False):
 async def reconcile_person_identities(db, identities, source):
     if source=='wikidata':
         await reconcile_wikidata_person(db,identities)
+        return
+    if source=='tmdb':
+        pairs={item['namespace']:str(item['external_id']) for item in identities}
+        if len(pairs)!=len(identities) or set(pairs)!={'tmdb.person','imdb.person'}:return
+        from core import catalogue
+        for namespace,native in pairs.items():catalogue.validate_identity(namespace,native,'person')
+        await catalogue.write_lock(db)
+        mappings={row.namespace:row for row in await db.scalars(select(CatalogueIdentity).where(
+            ((CatalogueIdentity.namespace=='tmdb.person')&(CatalogueIdentity.external_id==pairs['tmdb.person']))|
+            ((CatalogueIdentity.namespace=='imdb.person')&(CatalogueIdentity.external_id==pairs['imdb.person']))))}
+        tmdb,imdb=mappings.get('tmdb.person'),mappings.get('imdb.person')
+        if tmdb and imdb and tmdb.entity_id!=imdb.entity_id:
+            await merge_contributor_alias(db,await db.get(CatalogueEntity,imdb.entity_id),
+                await db.get(CatalogueEntity,tmdb.entity_id),'tmdb','person','canonical_person_id')
         return
     await reconcile_contributor_identities(db, identities, source, 'person', 'person', 'canonical_person_id')
 
@@ -121,3 +136,21 @@ async def verified_tvdb_person(db, native, raw):
     if mapping:
         await catalogue.bind_identity(db, mapping.entity_id, 'tmdb.person', tmdb, 'tvdb', {'tvdb_person': str(native)})
     return bool(mapping)
+
+
+async def verified_tmdb_person(db,native,raw):
+    """Reuse an already requested provider profile, never a name-search match."""
+    from core import catalogue
+    if not isinstance(raw,dict) or str(raw.get('id'))!=str(native):
+        raise catalogue.IdentityConflict('Provider person identity mismatch')
+    imdb=raw.get('imdb_id');name=raw.get('name')
+    if not isinstance(imdb,str) or not re.fullmatch(r'nm[0-9]+',imdb) or not isinstance(name,str) or not name.strip():return None
+    identities=[{'namespace':'tmdb.person','external_id':str(native)},
+        {'namespace':'imdb.person','external_id':imdb}]
+    path=raw.get('profile_path')
+    artwork='https://image.tmdb.org/t/p/w185'+path if isinstance(path,str) and re.fullmatch(r'/[A-Za-z0-9_.-]+',path) else None
+    async with db.begin_nested():
+        await catalogue.write_lock(db)
+        row=await catalogue.upsert_entity(db,{'kind':'person','name':name,'identities':identities,
+            **({'image_url':artwork} if artwork else {}),'attributes':{'imdb_id':imdb}},'tmdb')
+    return row

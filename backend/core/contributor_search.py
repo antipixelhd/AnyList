@@ -93,7 +93,9 @@ async def game_matches(db, term, kind):
     count = summary.game_actor_count if kind == 'actor' else summary.game_staff_count if kind == 'staff' else summary.game_work_count
     async with _local_search_slots:
         rows = (await db.execute(select(summary.entity_id, summary.kind, summary.name, summary.image_url,
-            summary.game_work_count, summary.game_actor_count, summary.game_staff_count, summary.game_roles).where(
+            summary.game_work_count, summary.game_actor_count, summary.game_staff_count, summary.game_roles,
+            select(CatalogueIdentity.external_id).where(CatalogueIdentity.entity_id==summary.entity_id,
+                CatalogueIdentity.namespace=='tmdb.person').limit(1).scalar_subquery().label('tmdb_id')).where(
             summary.kind.in_(('organization',) if kind == 'studio' else ('person',) if kind != 'all' else ('person','organization')),
             summary.game_work_count > 0, count > 0, summary.search_text.ilike(pattern, escape='\\'),
         ).order_by(case((func.lower(summary.name) == term.casefold(), 0), else_=1),
@@ -109,7 +111,8 @@ async def game_matches(db, term, kind):
         for section, labels in roles.items():
             works = row.game_actor_count if section == 'actor' else row.game_staff_count if section == 'staff' else row.game_work_count
             item = result(person, section, labels)
-            groups[section].append({**item, 'url': item['url'] + '?media_type=game', '_works': works})
+            groups[section].append({**item, 'url': item['url'] + '?media_type=game', '_works': works,
+                '_native':positive_id(row.tmdb_id)})
     return groups
 
 
@@ -117,7 +120,13 @@ def merge_game_matches(groups, games):
     """Only canonical identity combines domains; namesakes remain separate."""
     for section in KINDS:
         known = {row['key']: row for row in groups[section]}
+        natives={row['_native']:row for row in groups[section] if row.get('_native')}
         for row in games[section]:
+            provider_candidate=row['key'] not in known and row.get('_native') in natives
+            if provider_candidate:
+                item=natives[row['_native']]
+                item.update(key=row['key'],url=row['url'].removesuffix('?media_type=game'))
+                known[row['key']]=item
             if row['key'] not in known:
                 groups[section].append(row)
                 known[row['key']] = row
@@ -126,7 +135,7 @@ def merge_game_matches(groups, games):
                 item['name'] = row['name']
                 item['roles'] = sorted(set(item.get('roles', ())) | set(row['roles']), key=lambda label:(role_order(label),label))[:2]
                 item['_works'] = item.get('_works', 0) + row['_works']
-                item['image'] = row.get('image')
+                item['image'] = (row.get('image') or item.get('image')) if provider_candidate else row.get('image')
     return groups
 
 

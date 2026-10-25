@@ -287,17 +287,6 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
         from core.game_company_works import status as company_status
         company_state=await company_status(db,entity.id,enqueue=True)
         await db.commit()
-    if games and kind!='studio' and entity:
-        ids=[row.external_id for row in identities if row.namespace=='imdb.person']
-        if len(ids)==1:
-            from core.game_imdb_enrichment import request as admit_person
-            from core.game_imdb_person import JOB, view as person_view
-            admitted=await admit_person(db,ids[0],kind=JOB,entity_id=entity.id)
-            imdb_state=await person_view(db,ids[0],state=admitted,check_mapping=True)
-            await db.commit()
-            # IMDb profiles remain a restricted component, never a globally
-            # merged biography that could expose game work on public pages.
-            imdb_profile=imdb_state.get('profile') or {}
     legacy = None
     if native and kind != 'studio':
         if games:
@@ -334,6 +323,31 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
             if profile and positive_id(profile.get("id")) != native:
                 profile = {}
             notice = "Online metadata is temporarily unavailable. Showing saved information."
+    if kind!='studio' and native and profile and not sharing:
+        from core.person_identities import verified_tmdb_person
+        from core.catalogue import IdentityConflict
+        # Reuse the already requested profile's explicit external identifier.
+        if not entity or (not entity.image_url and profile.get('profile_path') and 'image_url' not in (entity.protected_fields or [])) or not any(
+            row.namespace=='imdb.person' and row.external_id==profile.get('imdb_id') for row in identities):
+            try:
+                linked=await verified_tmdb_person(db,native,profile)
+                if linked:
+                    entity=linked
+                    identities=list(await db.scalars(select(CatalogueIdentity).where(CatalogueIdentity.entity_id==entity.id)))
+                    attrs=dict(entity.attributes or {})
+                    if not games:local=await known_works(db,entity,native,kind,viewer)
+                    await db.commit()
+            except IdentityConflict:pass  # Useful profile/works survive conflicting identifiers.
+    if games and kind!='studio' and entity:
+        ids=[row.external_id for row in identities if row.namespace=='imdb.person']
+        if len(ids)==1:
+            from core.game_imdb_enrichment import request as admit_person
+            from core.game_imdb_person import JOB, view as person_view
+            admitted=await admit_person(db,ids[0],kind=JOB,entity_id=entity.id)
+            imdb_state=await person_view(db,ids[0],state=admitted,check_mapping=True)
+            await db.commit()
+            # Restricted profiles must never become public person biographies.
+            imdb_profile=imdb_state.get('profile') or {}
     if not entity and not legacy and not profile.get("name") and not local:
         return None
     # Empty cached fields must not hide a real provider value. Explicitly
