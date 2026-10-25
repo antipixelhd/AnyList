@@ -37,6 +37,7 @@
 }
 .tracker .tracker-dropdown-menu button:hover,
 .tracker .tracker-dropdown-menu button:focus-visible {
+  outline:none;
   color:var(--bright);
   background:var(--dropdown-hover)
 }
@@ -57,6 +58,23 @@
   display:grid;
   width:100%
 }
+/* The reusable field owns its defaults; surface-specific browse/list rules
+   remain more specific. Native and enhanced controls reserve the same space. */
+.tracker :where([data-select-shell]) > :where(select,.tracker-select-trigger) {
+  box-sizing:border-box;
+  width:100%;
+  min-width:0;
+  height:42px;
+  min-height:42px;
+  padding:10px 36px 10px 12px;
+  border:1px solid transparent;
+  border-radius:6px;
+  background:var(--dropdown-bg);
+  color:var(--text);
+  font-size:13px;
+  font-weight:500;
+  line-height:normal
+}
 .tracker-select > select.tracker-select-native {
   grid-area:1/1;
   visibility:hidden!important;
@@ -74,7 +92,7 @@
   text-align:left;
   cursor:pointer
 }
-.tracker-select-trigger:focus-visible {
+.tracker .tracker-select-trigger:focus-visible {
   outline:none;
   filter:brightness(1.16)
 }

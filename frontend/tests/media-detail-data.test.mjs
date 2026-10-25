@@ -7,8 +7,27 @@ import {formatDate,localToday} from '../src/lib/date-time.ts';
 import {countryLabel} from '../src/lib/stats-overview-data.ts';
 const source=readFileSync(new URL('../src/lib/media-detail-data.ts',import.meta.url),'utf8');
 const context={Intl,Date,URLSearchParams,countryLabel,formatDate,localToday};
-runInNewContext(stripTypeScriptTypes(source.replace(/^import .*$/gm,'').replace(/export /g,''))+';globalThis.api={localMediaId,prepareDetail,detailCredits,detailCreditEpisodes,detailOrganizationFacts,durationLabel,detailDate,detailSynopsis,progressTotal,detailFacts,relationLabel,moneyLabel,detailWorkCaption,detailCastPresentation,detailBrowseHref,detailCreators};',context);
+runInNewContext(stripTypeScriptTypes(source.replace(/^import .*$/gm,'').replace(/export /g,''))+';globalThis.api={localMediaId,prepareDetail,detailCredits,detailCreditEpisodes,detailCreditText,detailCreditDescription,detailOrganizationFacts,durationLabel,detailDate,detailSynopsis,progressTotal,detailFacts,relationLabel,moneyLabel,detailWorkCaption,detailCastPresentation,detailBrowseHref,detailCreators};',context);
 const {api}=context;
+
+test('full game crew jobs keep expansion qualifiers, while screen and character subtitles retain existing presentation',()=>{
+  const person={name:'Composer',characters:[],roles:['Music department'],jobs:['composer: main game','composer: Blood and Wine expansion']};
+  assert.equal(api.detailCreditText(person),'composer: main game · composer: Blood and Wine expansion');
+  assert.equal(api.detailCreditText({...person,jobs:undefined}),'Music department');
+  assert.equal(api.detailCreditText({...person,characters:['Character']}),'Character');
+  const text=api.detailCreditDescription({...person,credit_performances:[{characters:['English role'],languages:['en'],attributes:[{text:'English version'},{text:'voice'}],credited_as:'Alias',uncredited:null},
+    {characters:['Other role'],languages:[],attributes:[null,{text:null}],uncredited:true}]});
+  assert.equal(text,'English role — English version, voice, as Alias\nOther role — uncredited');
+});
+
+test('verified composer jobs remain prominent inside broader music departments without changing their qualified text',()=>{
+  const person=(id,name,role,position,jobs=[])=>({id,kind:'staff',name,roles:[role],role_codes:[role],position,jobs,characters:[]});
+  const media=api.prepareDetail({type:'game',organizations:[],people:[person(1,'Sound','sound_department',0),
+    person(2,'Producer','producer',1),person(3,'Composer','music_department',2,['composer: Blood and Wine expansion']),person(4,'Writer','writer',3)]});
+  const rows=api.detailCredits(media).principal;
+  assert.deepEqual(Array.from(rows,row=>row.name),['Writer','Composer','Producer','Sound']);
+  assert.equal(api.detailCreditText(rows[1]),'composer: Blood and Wine expansion');
+});
 
 test('game platform facts include known availability without requiring a dated release',()=>{
   const media=api.prepareDetail({type:'game',platforms:['PC','PlayStation'],releases:[{platform:'PC'},{platform:'Xbox'}]});

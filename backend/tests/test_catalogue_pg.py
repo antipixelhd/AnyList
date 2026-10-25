@@ -203,6 +203,37 @@ class CatalogueDatabaseTests(unittest.IsolatedAsyncioTestCase):
             # Source evidence and manual associations remain stored, not erased.
             self.assertEqual(await db.scalar(select(func.count()).select_from(CharacterPerformance)),1)
 
+    async def test_game_credit_projection_preserves_performance_language_scope_and_all_crew_jobs(self):
+        from core.media_details import work_details
+        async with self.Session() as db:
+            work=CatalogueEntity(kind='game',name='Language fixture',attributes={'languages':['English']})
+            actor=CatalogueEntity(kind='person',name='Shared performer')
+            crew=CatalogueEntity(kind='person',name='Shared composer')
+            db.add_all([work,actor,crew]);await db.flush()
+            for position,(provider,languages,character) in enumerate([
+                    ('wikidata',['en'],'English role'),('imdb',[],'Unlabelled role'),('wikidata',['de'],'German role')]):
+                db.add(CatalogueCredit(work_id=work.id,contributor_id=actor.id,provider=provider,
+                    source_key=f'performance-{position}',role='voice_actor',role_label='Voice actor',position=position,
+                    attributes={'languages':languages,'game_role':{'characters':[character],
+                        'voice':True if languages else None,'credited_as':'English alias' if position==0 else None,
+                        'uncredited':True if position==1 else None}}))
+            for position in range(12):
+                db.add(CatalogueCredit(work_id=work.id,contributor_id=crew.id,provider='imdb',
+                    source_key=f'job-{position}',role='music_department',role_label=f'Job {position}',position=position,
+                    attributes={'game_role':{'jobs':[f'composer: expansion {position}']}}))
+            await db.flush()
+            data=await work_details(db,work,extras=False)
+            performer=next(row for row in data['people'] if row['id']==actor.id)
+            performances=performer['credit_performances']
+            self.assertEqual([(row['source'],row['languages'],row['characters']) for row in performances],[
+                ('wikidata',['en'],['English role']),('imdb',[],['Unlabelled role']),('wikidata',['de'],['German role'])])
+            self.assertEqual(performances[0]['credited_as'],'English alias')
+            self.assertIsNone(performances[1]['voice']);self.assertTrue(performances[1]['uncredited'])
+            self.assertIsNone(performances[2]['uncredited'])
+            composer=next(row for row in data['people'] if row['id']==crew.id)
+            self.assertEqual(composer['roles'],[f'Job {position}' for position in range(12)])
+            self.assertEqual(composer['jobs'],[f'composer: expansion {position}' for position in range(12)])
+
     async def test_wikidata_person_bridge_keeps_credit_history_and_rejects_conflicting_native_ids(self):
         from core.game_credit_sources import record
         from test_game_credit_sources import actor, item

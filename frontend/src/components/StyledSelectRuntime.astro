@@ -128,6 +128,7 @@
       menu.className = 'tracker-select-options tracker-dropdown-menu';
       if (select.closest('[data-browse-form]') || select.matches('[data-browse-results-sort]')) menu.classList.add('browse-select-options');
       menu.setAttribute('role', 'listbox');
+      menu.setAttribute('aria-labelledby', trigger.id);
       menu.dataset.motionStatic = '';
       menu.hidden = true;
       trigger.setAttribute('aria-controls', menu.id);

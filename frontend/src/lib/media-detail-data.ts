@@ -3,7 +3,20 @@ import {countryLabel} from './stats-overview-data.ts';
 import {formatDate,localToday} from './date-time.ts';
 
 export type MediaKind = 'movie' | 'series' | 'game' | 'book';
-export type DetailPerson = {id: number; kind: 'actor' | 'staff' | 'studio' | 'character'; card_key?:string; performances?:{id:number;name:string;image?:string|null}[]; name: string; image?: string | null; character_image?: string | null; character_images?: string[]; url: string | null; roles: string[]; role_codes?: string[]; position?: number | null; credit_order?:number; episode_count?:number; producer_episode_count?:number; episode_total?:number; characters: string[]};
+export type GameCreditPerformance = {source?:string;position?:number|null;characters:string[];languages:string[];
+  attributes?:({text?:string|null}|null)[]|null;voice?:boolean|null;credited_as?:string|null;uncredited?:boolean|null};
+export type DetailPerson = {id: number; kind: 'actor' | 'staff' | 'studio' | 'character'; card_key?:string; performances?:{id:number;name:string;image?:string|null;language?:string|null}[]; name: string; image?: string | null; character_image?: string | null; character_images?: string[]; url: string | null; roles: string[]; role_codes?: string[]; position?: number | null; credit_order?:number; episode_count?:number; producer_episode_count?:number; episode_total?:number; characters: string[];languages?:string[];credit_performances?:GameCreditPerformance[];jobs?:string[]};
+export function detailCreditText(person:DetailPerson) {
+  return person.characters.join(' / ')||(person.jobs?.length?person.jobs.join(' · '):person.roles.join(', '));
+}
+export function detailCreditDescription(person:DetailPerson) {
+  return person.credit_performances?.map(performance=>{
+    const attributes=[...new Set((performance.attributes||[]).map(value=>value?.text).filter((value):value is string=>typeof value==='string'&&!!value))];
+    if(performance.credited_as&&!attributes.includes(`as ${performance.credited_as}`))attributes.push(`as ${performance.credited_as}`);
+    if(performance.uncredited===true&&!attributes.includes('uncredited'))attributes.push('uncredited');
+    return [performance.characters.join(' / '),attributes.join(', ')].filter(Boolean).join(' — ');
+  }).filter(Boolean).join('\n')||detailCreditText(person);
+}
 export function detailCreditEpisodes(person:DetailPerson) {
   const count=person.producer_episode_count,total=person.episode_total;
   if(person.kind!=='staff'||!person.roles.some(role=>/^(executive )?producer$/i.test(role))||
@@ -89,7 +102,8 @@ export function detailCredits(media:DetailMedia) {
   const screen=media.type==='movie'||media.type==='series';
   const cast=media.people.filter(person=>person.kind==='actor').sort((a,b)=>position(a)-position(b)).slice(0,screen?(media.type==='movie'?16:24):undefined);
   const priority=(person:DetailPerson)=>{
-    const roles=media.type==='game'?[...person.roles,...(person.role_codes||[])]:person.roles.length?person.roles:person.role_codes||[];
+    const roles=media.type==='game'?[...person.roles,...(person.role_codes||[]),
+      ...(person.jobs||[]).map(job=>job.split(':',1)[0].trim())]:person.roles.length?person.roles:person.role_codes||[];
     const ranks=[/^(director|supervising director|creator|showrunner|head writer)$/i,/^(writer|screenplay|screenwriter|teleplay|story|author|novel|book|play|original story|characters|characters created by)$/i,/^(cinematographer|cinematography|director of photography|composer|original music composer|editor|film editor|production design|production designer|costume design|costume designer|casting|casting director|visual effects supervisor|animation director)$/i,/^(producer|developer)$/i,...(media.type==='series'?[/^executive producer$/i]:[])];
     const rank=ranks.findIndex(pattern=>roles.some(role=>pattern.test(role.trim())));
     return rank<0?99:rank;

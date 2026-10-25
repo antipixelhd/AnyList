@@ -1,15 +1,18 @@
 ---
 import MediaDetailPerson from './MediaDetailPerson.astro';
 import MediaDetailCastToggle from './MediaDetailCastToggle.astro';
+import BrowseSelect from './BrowseSelect.astro';
+import {gameCastLanguages} from '../lib/game-credit-language';
 import type {DetailPerson} from '../lib/media-detail-data';
 import type {GameCastData,GameCharacter} from '../lib/game-cast-data';
 interface Props {label:string;rows:DetailPerson[];id:string;limit?:number;secondary?:boolean;loading?:boolean;gameCast?:GameCastData|null;gameCharacters?:GameCharacter[]}
 const {label,rows,id,limit=8,secondary=false,loading=false,gameCast,gameCharacters=[]}=Astro.props;
+const languages=gameCast?gameCastLanguages(gameCast.actors):[];
 const deferred=JSON.stringify(gameCast?{actors:gameCast.actors,source_characters:gameCharacters,
   availability:gameCast.availability,mode:gameCast.mode}:rows.slice(limit)).replaceAll('<','\\u003c');
 ---
 <section class:list={['lab-module','media-credit-group',{'media-credit-secondary':secondary}]} data-credit-section={id} data-credit-limit={limit} hidden={!rows.length&&!loading}>
-  <div class="lab-section-title"><h2 data-credit-heading>{label}</h2>{id==='cast'&&<MediaDetailCastToggle gameCast={gameCast}/>}</div>
+  <div class="lab-section-title"><h2 data-credit-heading>{label}</h2>{id==='cast'&&<div class="media-cast-controls"><MediaDetailCastToggle gameCast={gameCast}/>{gameCast&&<div class="media-cast-language" data-game-cast-languages hidden={gameCast.mode!=='actors'||languages.length<=2}><BrowseSelect aria-label="Performance language" data-game-cast-language valueLabel="All languages">{languages.map(([value,text])=><option value={value} selected={value==='all'}>{text}</option>)}</BrowseSelect></div>}</div>}</div>
   <div class="media-credit-content" id={`credits-${id}`} data-credit-content data-cast-content={id==='cast' ? '' : undefined}>
     <div class="lab-person-grid" data-credit-visible>{rows.slice(0,limit).map(person=><MediaDetailPerson person={person}/>)}{!rows.length&&loading&&Array.from({length:limit},()=> <div class="detail-person-skeleton" aria-hidden="true"><span></span><div></div></div>)}</div>
     <div class="lab-person-grid media-credit-more" data-credit-rest hidden></div>

@@ -119,10 +119,10 @@ async def work_details(db, work, *, extras=True):
             if key not in billing or candidate < billing[key]:
                 billing[key] = candidate
                 row['position'] = credit.position
-        if len(row['role_codes']) < 8 and credit.role not in row['role_codes']:
+        if (work.kind=='game' or len(row['role_codes']) < 8) and credit.role not in row['role_codes']:
             row['role_codes'].append(credit.role)
         role = credit.role_label or credit.role.replace('_', ' ').title()
-        if len(row['roles']) < 8 and role not in row['roles']:
+        if (work.kind=='game' or len(row['roles']) < 8) and role not in row['roles']:
             row['roles'].append(role)
         # Each job may overlap the same episodes. Do not sum role counts or
         # infer episode numbers/season ranges from an aggregate count.
@@ -140,11 +140,13 @@ async def work_details(db, work, *, extras=True):
             row.setdefault('performances',[]).extend(performances)
             for lang in (credit.attributes or {}).get('languages') or ['']:
                 if lang not in row.setdefault('languages',[]):row['languages'].append(lang)
-            if credit.provider=='imdb':
-                row.setdefault('credit_performances',[]).append({'source':'imdb','position':credit.position,
-                    'characters':names,'languages':(credit.attributes or {}).get('languages') or [],
-                    'attributes':role.get('performance_attributes'),'voice':role.get('voice'),
-                    'credited_as':role.get('credited_as'),'uncredited':role.get('uncredited')})
+            # Keep language/qualifiers attached to their own performance. An
+            # actor's aggregate language union cannot assign a character to a
+            # particular version, especially across several source providers.
+            row.setdefault('credit_performances',[]).append({'source':credit.provider,'position':credit.position,
+                'characters':names,'languages':(credit.attributes or {}).get('languages') or [],
+                'attributes':role.get('performance_attributes'),'voice':role.get('voice'),
+                'credited_as':role.get('credited_as'),'uncredited':role.get('uncredited')})
             local_images.setdefault(key,[]).extend(value['image'] for value in performances if value['image'])
         elif work.kind=='game':
             jobs=((credit.attributes or {}).get('game_role') or {}).get('jobs') or []

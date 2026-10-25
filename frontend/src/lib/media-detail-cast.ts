@@ -1,11 +1,12 @@
 import { createContentTransition } from './content-motion';
-import { detailCastPresentation, detailCredits, detailCreators, detailCreditEpisodes, type DetailPerson, type DetailMedia } from './media-detail-data';
+import { detailCastPresentation, detailCredits, detailCreators, detailCreditEpisodes, detailCreditText, detailCreditDescription, type DetailPerson, type DetailMedia } from './media-detail-data';
 import { responsiveArtwork } from './responsive-artwork';
 import { type DetailLoadState } from './detail-background';
 import { detailPeopleLoading, waitForDetailPortraits } from './detail-people-loading';
 import {createProgressiveCredits} from './progressive-credits';
 import {visibleArtwork} from './visible-artwork';
 import {gameCastData,gameCharacterCards,keepCachedGameCredits,type GameCastData} from './game-cast-data';
+import {gameCastLanguages,gameCastLanguage,gameCastRows} from './game-credit-language';
 
 export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any = {}) {
   const whenVisible=visibleArtwork(signal);
@@ -22,6 +23,7 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
   const seed=gameSeed?JSON.parse(gameSeed.textContent!):undefined;
   let gameCast:GameCastData|undefined=seed?{...seed,characters:gameCharacterCards(seed.source_characters,seed.actors)}:undefined;
   let mode: 'actors' | 'characters' = gameCast?.mode||'actors';
+  let language='all';
   const backgroundAvailable=!!(info.backgroundAvailable||info.gameCredits);
   let metadataPending=backgroundAvailable&&info.characterStatus?.state!=='ready',error='';
   const statuses=[...root.querySelectorAll<HTMLElement>('[data-detail-people-status]')];
@@ -112,7 +114,9 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
       if(person.url)card.setAttribute('href',person.url);else card.removeAttribute('href');
       if(person.kind==='actor')card.dataset.castPerson=JSON.stringify(person);else delete card.dataset.castPerson;
       card.querySelector<HTMLElement>('h3')!.textContent=person.name;
-      card.querySelector<HTMLElement>('p')!.textContent=person.characters.join(' / ')||person.roles.join(', ');
+      const subtitle=card.querySelector<HTMLElement>('p')!;
+      subtitle.textContent=detailCreditText(person);
+      if(person.jobs?.length||person.credit_performances?.length)subtitle.title=detailCreditDescription(person);else subtitle.removeAttribute('title');
       const episodes=detailCreditEpisodes(person);
       let count=card.querySelector<HTMLElement>('[data-credit-episodes]');
       if(episodes){
@@ -142,6 +146,16 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
   const syncGameControls=()=>{
     if(!gameCast)return;
     const current=gameCast;
+    const options=gameCastLanguages(current.actors);
+    language=gameCastLanguage(current.actors,language);
+    root.querySelectorAll<HTMLElement>('[data-game-cast-languages]').forEach(wrapper=>{
+      wrapper.hidden=mode!=='actors'||options.length<=2;
+      const select=wrapper.querySelector<HTMLSelectElement>('[data-game-cast-language]')!;
+      if(JSON.stringify([...select.options].map(option=>[option.value,option.text]))!==JSON.stringify(options)){
+        select.replaceChildren(...options.map(([value,text])=>new Option(text,value,false,value===language)));
+      }
+      if(select.value!==language){select.value=language;select.dispatchEvent(new Event('change',{bubbles:true}));}
+    });
     root.querySelectorAll<HTMLButtonElement>('[data-cast-mode]').forEach(control=>{
       control.disabled=current.availability[control.dataset.castMode as keyof typeof current.availability]==='empty';
       control.hidden=current.availability[control.dataset.castMode as keyof typeof current.availability]==='unknown';
@@ -151,7 +165,8 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
   };
   const showGameCast=(previewFallback:DetailPerson[]=[])=>{
     if(!gameCast)return;
-    const rows=gameCast[mode];
+    syncGameControls();
+    const rows=mode==='actors'?gameCastRows(gameCast.actors,language):gameCast.characters;
     const preview=root.querySelector<HTMLElement>('[data-credit-preview]');
     if(preview){
       const displayed=(rows.length?rows:previewFallback).slice(0,8);
@@ -166,9 +181,19 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
       section.querySelector<HTMLElement>('[data-credit-heading]')!.textContent=mode==='characters'?'Characters':'Cast';
       section.querySelector<HTMLElement>('[data-credit-toggle]')!.hidden=rows.length<=limit;
     }
-    syncGameControls();
+  };
+  const transitionGameCast=()=>{
+    const visible=containers.find(container=>container.getClientRects().length);
+    const transition=visible&&transitions.get(visible);
+    if(transition)void transition(()=>showGameCast());else showGameCast();
   };
   syncGameControls();
+  root.addEventListener('change',event=>{
+    const select=event.target;
+    if(!gameCast||!(select instanceof HTMLSelectElement)||!select.matches('[data-game-cast-language]')||select.value===language)return;
+    language=gameCastLanguage(gameCast.actors,select.value);
+    transitionGameCast();
+  },{signal});
   const update=(data:{people:DetailPerson[];organizations:DetailPerson[];character_status:DetailLoadState&{complete?:boolean};credits_status?:string;game_characters?:import('./game-cast-data').GameCharacter[];game_character_status?:{complete?:boolean}})=>{
     if(gameCast&&keepCachedGameCredits(data,gameCast,!!root.querySelector('[data-credit-section="crew"] [data-person-id],[data-credit-section="studios"] [data-person-id]'))){metadataPending=true;return data.character_status;}
     const groups=detailCredits({people:data.people,organizations:data.organizations,type:info.type} as DetailMedia);
@@ -227,9 +252,7 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
     if(gameCast){
       // Both controls share one authoritative view and progressive range.
       // The common content transition owns motion without replacing portraits.
-      const preview=root.querySelector<HTMLElement>('[data-credit-preview]');
-      const transition=preview&&transitions.get(preview);
-      if(transition)void transition(()=>showGameCast());else showGameCast();
+      transitionGameCast();
     }else transitions.forEach((transition,container)=>void transition(()=>paint(container,selected)));
     status();
   },{signal});

@@ -1,4 +1,5 @@
 import type {DetailPerson} from './media-detail-data';
+import {gameCastRows} from './game-credit-language.ts';
 export type CastMode='actors'|'characters';
 export type Availability='available'|'empty'|'unknown';
 export type GameCharacter={id:number;name:string;image:string|null;providers?:string[];
@@ -33,7 +34,7 @@ export function gameCharacterCards(characters:GameCharacter[],actors:DetailPerso
 export function gameCastData(actors:DetailPerson[],characters:GameCharacter[],
   credits?:{complete?:boolean;pending?:boolean}|null,characterStatus?:{complete?:boolean}|null):GameCastData {
   const cards=gameCharacterCards(characters,actors),closed=credits?.complete===true&&!credits.pending;
-  return {actors,characters:cards,mode:actors.length?'actors':cards.length?'characters':'actors',
+  return {actors:gameCastRows(actors),characters:cards,mode:actors.length?'actors':cards.length?'characters':'actors',
     availability:{actors:actors.length?'available':closed?'empty':'unknown',
       characters:cards.length?'available':closed&&characterStatus?.complete===true?'empty':'unknown'}};
 }
