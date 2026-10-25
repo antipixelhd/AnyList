@@ -551,9 +551,10 @@ async def list_connections(
         StreamBaseline.user_id == current_user.id))).all()}
     for conn in connections:
         baseline = baselines.get(conn.id)
-        conn.setup_pending = conn.type in ('stremio', 'nuvio') and (
-            not baseline or not baseline.approved or bool((baseline.snapshot or {}).get('import_session_id'))
-            or bool((baseline.snapshot or {}).get('import_handoff')))
+        snapshot = (baseline.snapshot or {}) if baseline else {}
+        conn.setup_pending = conn.type in ('stremio', 'nuvio') and bool(
+            (not baseline and conn.sync_watched) or (baseline is not None and not baseline.approved)
+            or snapshot.get('import_session_id') or snapshot.get('import_handoff'))
     return connections
 
 
@@ -569,6 +570,8 @@ async def create_connection(
             status_code=400,
             detail="type must be plex, jellyfin, emby, nuvio, stremio, or arvio",
         )
+    from core.import_admission import require_import_slot
+    await require_import_slot(db, current_user.id)
     validated_url = body.url
     connection_token = body.token
     server_user_id = body.server_user_id
@@ -1316,7 +1319,8 @@ async def poll_stremio_link(
             "connection": schemas.MediaServerConnectionResponse.model_validate(existing),
         }
 
-    await db.execute(select(User.id).where(User.id == current_user.id).with_for_update())
+    from core.import_admission import require_import_slot
+    await require_import_slot(db, current_user.id)
     await assert_connection_identity_available(
         db, current_user.id, "stremio", str(account["_id"]),
         stremio.DEFAULT_URL, str(account["_id"]),

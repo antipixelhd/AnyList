@@ -110,6 +110,128 @@ class ConnectionDraftDatabaseTests(unittest.IsolatedAsyncioTestCase):
         baseline = await self.db.get(StreamBaseline, self.conn.id)
         return await self.db.get(NetflixImportSession, baseline.snapshot['import_session_id'])
 
+    async def test_watched_disabled_bypasses_review_and_account_reservation(self):
+        from core.import_admission import active_import
+        from core.connection_imports import onboarding_pending
+        self.conn.sync_watched = False
+        await self.db.flush()
+        self.assertIsNone(await active_import(self.db, self.user.id))
+        with patch('core.connection_imports.prepare_items', AsyncMock()) as prepare:
+            self.assertFalse(await self.stage(progress=[movie()]))
+        prepare.assert_not_awaited()
+        self.assertIsNone(await self.db.get(StreamBaseline, self.conn.id))
+        self.assertFalse(await onboarding_pending(self.db, self.conn, require_snapshot=True))
+
+    async def test_turning_watched_off_does_not_release_existing_review(self):
+        from core.connection_imports import onboarding_pending
+        await self.stage(progress=[movie()])
+        self.conn.sync_watched = False
+        await self.db.flush()
+        self.assertTrue(await onboarding_pending(self.db, self.conn))
+        self.assertTrue(await self.stage(progress=[movie()]))
+
+    async def test_account_slot_includes_connection_before_snapshot(self):
+        from core.import_admission import active_import, require_import_slot
+        from fastapi import HTTPException
+        current = await active_import(self.db, self.user.id)
+        self.assertIsNone(current['import_id'])
+        self.assertEqual(current['connection_id'], self.conn.id)
+        with self.assertRaises(HTTPException) as error:
+            await require_import_slot(self.db, self.user.id)
+        self.assertEqual(error.exception.status_code, 409)
+        await require_import_slot(self.db, self.user.id, connection_id=self.conn.id)
+        self.assertIsNone(await active_import(self.db, self.user.id + 10000))
+
+    async def test_pending_import_rejects_upload_and_new_connection(self):
+        from io import BytesIO
+        from fastapi import BackgroundTasks, HTTPException, UploadFile
+        from routers.netflix_import import upload_netflix_history
+        from routers.auth import create_connection
+        from schemas import MediaServerConnectionCreate
+        tasks = BackgroundTasks()
+        with self.assertRaises(HTTPException) as upload_error:
+            await upload_netflix_history('netflix', tasks,
+                UploadFile(filename='history.csv', file=BytesIO(b'Title,Date\nMovie,2020-01-01')),
+                None, self.db, self.user)
+        self.assertEqual(upload_error.exception.status_code, 409)
+        with self.assertRaises(HTTPException) as connection_error:
+            await create_connection(MediaServerConnectionCreate(type='plex', name='Second',
+                url='https://example.test', token='fixture'), tasks, self.db, self.user)
+        self.assertEqual(connection_error.exception.status_code, 409)
+        self.assertEqual(len((await self.db.scalars(select(MediaServerConnection)
+            .where(MediaServerConnection.user_id == self.user.id))).all()), 1)
+        self.assertEqual((await self.db.scalars(select(NetflixImportSession)
+            .where(NetflixImportSession.user_id == self.user.id))).all(), [])
+        self.assertEqual(tasks.tasks, [])
+
+    async def test_file_draft_blocks_initial_snapshot_until_cancelled(self):
+        from core import netflix_sessions
+        from core.import_admission import active_import
+        from datetime import timedelta
+        from fastapi import HTTPException
+        now = netflix_sessions._now()
+        draft = NetflixImportSession(id=str(uuid4()), user_id=self.user.id, status='review',
+            phase='review', payload={'source': 'amazon'}, revision=0,
+            created_at=now, updated_at=now, expires_at=now + timedelta(days=7))
+        self.db.add(draft)
+        await self.db.flush()
+        self.assertEqual((await active_import(self.db, self.user.id))['import_id'], draft.id)
+        with self.assertRaises(HTTPException):
+            await self.stage(progress=[movie()])
+        self.assertIsNone(await self.db.get(StreamBaseline, self.conn.id))
+        draft.status = 'cancelled'
+        await self.db.flush()
+        self.assertTrue(await self.stage(progress=[movie()]))
+        self.assertEqual((await active_import(self.db, self.user.id))['import_id'], (await self.draft()).id)
+
+    async def test_finished_cancelled_expired_drafts_release_slot(self):
+        from core import netflix_sessions
+        from core.import_admission import require_import_slot
+        from datetime import timedelta
+        await self.stage()
+        now = netflix_sessions._now()
+        for status in ('committed', 'cancelled', 'failed'):
+            self.db.add(NetflixImportSession(id=str(uuid4()), user_id=self.user.id, status=status,
+                phase='complete', payload={'source': 'netflix'}, revision=0,
+                created_at=now, updated_at=now,
+                expires_at=now + timedelta(days=-1 if status == 'failed' else 7)))
+        await self.db.flush()
+        self.assertIsNone(await require_import_slot(self.db, self.user.id))
+
+    async def test_concurrent_starts_reserve_only_one_account_slot(self):
+        import asyncio
+        from datetime import timedelta
+        from fastapi import HTTPException
+        from sqlalchemy import delete
+        from core import netflix_sessions
+        from core.import_admission import require_import_slot
+        # Separate committed user: independent transactions must share the mutex.
+        async with AsyncSession(self.engine, expire_on_commit=False) as setup:
+            key = uuid4().hex
+            user = User(username=key, email=f'{key}@example.test', api_key=key)
+            setup.add(user)
+            await setup.commit()
+            user_id = user.id
+        async def start(source):
+            async with AsyncSession(self.engine) as db:
+                try:
+                    await require_import_slot(db, user_id)
+                    await asyncio.sleep(0.03)
+                    now = netflix_sessions._now()
+                    db.add(NetflixImportSession(id=str(uuid4()), user_id=user_id, status='preparing',
+                        phase='parse', payload={'source': source}, revision=0,
+                        created_at=now, updated_at=now, expires_at=now + timedelta(days=7)))
+                    await db.commit()
+                    return 202
+                except HTTPException as error:
+                    return error.status_code
+        try:
+            self.assertEqual(sorted(await asyncio.gather(start('netflix'), start('amazon'))), [202, 409])
+        finally:
+            async with AsyncSession(self.engine) as cleanup:
+                await cleanup.execute(delete(User).where(User.id == user_id))
+                await cleanup.commit()
+
     async def test_first_snapshot_is_private_draft_without_watch_or_notifications(self):
         self.assertTrue(await self.stage(progress=[movie()]))
         draft = await self.draft()
@@ -509,7 +631,7 @@ class ConnectionDraftDatabaseTests(unittest.IsolatedAsyncioTestCase):
         await self.db.flush()
         self.assertEqual((await self.db.scalars(select(PlaybackProgress))).one().progress_seconds, 600)
 
-    async def _assert_first_pull_stages_history(self, provider, *, metadata_error=False):
+    async def _assert_first_pull_stages_history(self, provider, *, metadata_error=False, watched_enabled=True):
         from contextlib import asynccontextmanager, ExitStack
         from datetime import datetime, timezone
         from core import server_sync
@@ -517,7 +639,7 @@ class ConnectionDraftDatabaseTests(unittest.IsolatedAsyncioTestCase):
         from models.sync import SyncJob, SyncStatus
         self.conn.type = provider
         self.conn.server_user_id = '1'
-        self.conn.sync_watched = True
+        self.conn.sync_watched = watched_enabled
         self.conn.sync_playback = True
         self.conn.sync_collection = False
         job = SyncJob(user_id=self.user.id, connection_id=self.conn.id,
@@ -542,7 +664,7 @@ class ConnectionDraftDatabaseTests(unittest.IsolatedAsyncioTestCase):
             stack.enter_context(patch('core.streaming_library.retry_pending_library_deliveries', AsyncMock()))
             history = stack.enter_context(patch.object(server_sync, '_apply_nuvio_watch_history', AsyncMock()))
             playback = stack.enter_context(patch.object(server_sync, '_apply_nuvio_progress', AsyncMock()))
-            snapshot = stack.enter_context(patch('core.tracking_snapshot.observe_stream_snapshot', AsyncMock()))
+            snapshot = stack.enter_context(patch('core.tracking_snapshot.observe_stream_snapshot', AsyncMock(return_value=set())))
             if provider == 'nuvio':
                 stack.enter_context(patch.object(server_sync.nuvio, 'pull_sync_data', AsyncMock(return_value=(
                     None, {'library': [], 'watched': [movie(watched_at=None)], 'progress': [movie()], 'cw_visibility': {}}))))
@@ -556,12 +678,24 @@ class ConnectionDraftDatabaseTests(unittest.IsolatedAsyncioTestCase):
             await run(self.user.id, job.id, 0, 0, self.conn.id)
             await self.db.refresh(job)
             self.assertEqual(job.status, SyncStatus.completed, job.error_message)
-            self.assertEqual((await self.draft()).status, 'review')
+            if watched_enabled:
+                self.assertEqual((await self.draft()).status, 'review')
+                playback.assert_not_awaited()
+                snapshot.assert_not_awaited()
+            else:
+                self.assertEqual((await self.db.scalars(select(NetflixImportSession)
+                    .where(NetflixImportSession.user_id == self.user.id))).all(), [])
+                playback.assert_awaited_once()
+                snapshot.assert_awaited_once()
             history.assert_not_awaited()
-            playback.assert_not_awaited()
-            snapshot.assert_not_awaited()
             self.assertEqual((await self.db.scalars(select(WatchEvent))).all(), [])
             self.assertEqual((await self.db.scalars(select(SyncReview))).all(), [])
+
+    async def test_nuvio_playback_only_first_pull_does_not_open_importer(self):
+        await self._assert_first_pull_stages_history('nuvio', watched_enabled=False)
+
+    async def test_stremio_playback_only_first_pull_does_not_open_importer(self):
+        await self._assert_first_pull_stages_history('stremio', watched_enabled=False)
 
     async def test_nuvio_first_pull_stages_instead_of_applying_or_notifying(self):
         await self._assert_first_pull_stages_history('nuvio')

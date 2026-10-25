@@ -9,7 +9,7 @@ from copy import deepcopy
 from datetime import date, timedelta
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, Form, HTTPException, UploadFile
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core import tmdb, settings_store
@@ -283,6 +283,15 @@ def _schedule(background_tasks: BackgroundTasks, session_id: str, user_id: int, 
         background_tasks.add_task(netflix_sessions._prepare_session, session_id, user_id, language)
 
 
+@router.get("/active")
+async def get_active_import(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    from core.import_admission import active_import
+    return {"active": await active_import(db, current_user.id)}
+
+
 @router.post("/{source}", status_code=202)
 async def upload_netflix_history(
     source: Literal["netflix", "amazon"],
@@ -309,11 +318,8 @@ async def upload_netflix_history(
     if not content:
         raise HTTPException(status_code=400, detail="The uploaded export is empty.")
     now = netflix_sessions._now()
-    await db.execute(delete(NetflixImportSession).where(
-        NetflixImportSession.user_id == current_user.id,
-        NetflixImportSession.status != "committed",
-        NetflixImportSession.expires_at <= now,
-    ))
+    from core.import_admission import require_import_slot
+    await require_import_slot(db, current_user.id)
     if not await settings_store.get_user_tmdb_key(db, current_user.id, cached=False):
         raise HTTPException(status_code=400, detail="Add a TMDB API key in Settings before importing streaming history.")
     session = NetflixImportSession(
@@ -361,6 +367,8 @@ async def get_connection_import(
     if session and session.user_id == current_user.id and session.status in ('review', 'committing', 'failed'):
         if session.expires_at > netflix_sessions._now():
             return {'session': _public_session(session), 'checking': False}
+    if not conn.sync_watched:
+        return {'session': None, 'checking': False}
     running = await db.scalar(select(SyncJob.id).where(
         SyncJob.user_id == current_user.id, SyncJob.connection_id == connection_id,
         SyncJob.status.in_((SyncStatus.pending, SyncStatus.running)),

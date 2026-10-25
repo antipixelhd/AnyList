@@ -503,7 +503,7 @@ class StremioLinkReconnectTests(unittest.IsolatedAsyncioTestCase):
             connection.plex_push_watchlist = False
 
         db = SimpleNamespace(
-            execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None)),
+            execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None, all=lambda: [])),
             add=MagicMock(),
             commit=AsyncMock(),
             refresh=AsyncMock(side_effect=_fake_refresh),
@@ -538,7 +538,7 @@ class StremioLinkReconnectTests(unittest.IsolatedAsyncioTestCase):
             connection.plex_push_watchlist = False
 
         db = SimpleNamespace(
-            execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None)),
+            execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None, all=lambda: [])),
             add=MagicMock(),
             commit=AsyncMock(),
             refresh=AsyncMock(side_effect=_fake_refresh),

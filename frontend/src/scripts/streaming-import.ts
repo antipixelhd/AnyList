@@ -1,3 +1,4 @@
+import { canStartImport } from "../lib/import-admission";
 import { showDialog, closeDialog } from '../lib/ui-motion';
 import { showMessage } from '../lib/settings-feedback';
 import { setupCalendarDateInputs } from '../lib/calendar-date-input';
@@ -644,6 +645,7 @@ function mountStreamingImport(app: HTMLElement) {
       showError(`Choose the ${extension} file downloaded from ${serviceName}.`);
       return;
     }
+    if (!await canStartImport()) return;
     clearError();
     openRatingGroups.clear();
     busy = true;

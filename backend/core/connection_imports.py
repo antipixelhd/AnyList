@@ -15,7 +15,7 @@ from sqlalchemy import select
 from core import netflix_sessions, tmdb
 from core.streaming_evidence import prepare_evidence
 from core.streaming_history import WatchObservation, MIN_WATCH_SECONDS
-from models import Media, MediaServerConnection, NetflixImportSession, Show, User, WatchEvent
+from models import Media, MediaServerConnection, NetflixImportSession, Show, WatchEvent
 from models.tracking import StreamBaseline, TrackedEntry
 
 
@@ -193,6 +193,8 @@ async def stage_first_snapshot(db, conn, library, watched, progress, mappings, a
             return False
         # Abandoned/expired reviews never silently approve a connection.
         return True
+    if not conn.sync_watched:
+        return False
     identity_version = conn.identity_version
     unresolved = {str(row.get('content_id')) for row, _ in observations(watched, progress)
                   if re.fullmatch(r'tt\d+|tmdb:\d+', str(row.get('content_id') or ''), re.IGNORECASE)
@@ -202,8 +204,9 @@ async def stage_first_snapshot(db, conn, library, watched, progress, mappings, a
         # establish a baseline that would suppress these rows on a retry.
         raise ValueError(f'{len(unresolved)} watched title(s) could not be verified. Sync again to retry their identities.')
     items = await prepare_items(watched, progress, mappings, api_key)
-    # Serialize competing first pulls after network work, before creating a draft.
-    await db.execute(select(User.id).where(User.id == conn.user_id).with_for_update())
+    # Admission also covers file uploads and other connections.
+    from core.import_admission import require_import_slot
+    await require_import_slot(db, conn.user_id, connection_id=conn.id)
     await db.refresh(conn)
     if conn.identity_version != identity_version:
         raise ValueError('Connection account changed while preparing history; sync again.')
@@ -306,7 +309,7 @@ async def onboarding_pending(db, conn, *, require_snapshot=False, require_approv
     if conn.type not in ('stremio', 'nuvio'):
         return False
     baseline = await db.get(StreamBaseline, conn.id, populate_existing=True)
-    if require_snapshot and not baseline:
+    if require_snapshot and conn.sync_watched and not baseline:
         return True
     if require_approval and (not baseline or not baseline.approved):
         return True

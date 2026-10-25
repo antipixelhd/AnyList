@@ -28,6 +28,7 @@ from models.connections import MediaServerConnection
 from models.events import WatchEvent
 from models.base import MediaType
 from models.media import Media
+from models.netflix_import import NetflixImportSession
 from models.streaming_library import StreamingLibraryDelivery
 from models.sync import SyncJob, SyncStatus
 from models.tracking import StreamAction, StreamBaseline, SyncReview
@@ -55,6 +56,7 @@ class MultipleStreamConnectionsTests(unittest.IsolatedAsyncioTestCase):
             MediaServerConnection.__table__,
             Media.__table__,
             StreamBaseline.__table__,
+            NetflixImportSession.__table__,
             SyncReview.__table__,
             WatchIntent.__table__,
             StreamAction.__table__,
@@ -256,6 +258,9 @@ class MultipleStreamConnectionsTests(unittest.IsolatedAsyncioTestCase):
             {"_id": "remote-a", "email": "a@example.test"},
         ])) as validate:
             first = await auth.create_connection(body("token-a"), db=self.db, current_user=self.owner)
+            self.db.add(StreamBaseline(connection_id=first.id, user_id=self.owner.id,
+                snapshot={}, approved=True, observed_at=datetime(2026, 9, 1)))
+            await self.db.commit()
             second = await auth.create_connection(body("token-b"), db=self.db, current_user=self.owner)
             self.assertNotEqual(first.id, second.id)
             self.assertEqual(first.provider_account_id, "remote-a")
@@ -265,6 +270,9 @@ class MultipleStreamConnectionsTests(unittest.IsolatedAsyncioTestCase):
             other = await auth.create_connection(body("token-other-user"), db=self.db, current_user=self.other)
             self.assertEqual(other.provider_account_id, "remote-a")
 
+            self.db.add(StreamBaseline(connection_id=second.id, user_id=self.owner.id,
+                snapshot={}, approved=True, observed_at=datetime(2026, 9, 1)))
+            await self.db.commit()
             with self.assertRaises(HTTPException) as duplicate:
                 await auth.create_connection(body("token-duplicate"), db=self.db, current_user=self.owner)
             self.assertEqual(duplicate.exception.status_code, 409)
@@ -410,6 +418,9 @@ class MultipleStreamConnectionsTests(unittest.IsolatedAsyncioTestCase):
             ])) as validate,
         ):
             first = await create("login-session-1", 1, self.owner)
+            self.db.add(StreamBaseline(connection_id=first.id, user_id=self.owner.id,
+                snapshot={}, approved=True, observed_at=datetime(2026, 9, 1)))
+            await self.db.commit()
             second = await create("login-session-2", 2, self.owner)
             self.assertEqual(first.provider_account_id, "shared-remote")
             self.assertEqual(second.provider_account_id, "shared-remote")

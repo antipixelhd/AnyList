@@ -26,6 +26,7 @@ const [settings, me, connections, scrobbleConnections, seasonOverrides, deviceGr
   api.auth.deviceGrants(token!).catch(() => [] as DeviceGrant[]),
   api.sync.getPullSchedule(token!),
 ]);
+const {active: activeImport} = await api.auth.getActiveImport(token!);
 const hasTmdbKey = settings.has_effective_tmdb_key;
 const AUTO_SYNC_INTERVAL_OPTIONS = [
   { value: 0.25, label: "Every 15m" },
@@ -43,6 +44,13 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
   <div id="app-data" data-token={token} class="hidden" aria-hidden="true"></div>
   <div data-connections-page class="max-w-4xl mx-auto min-w-0 w-full">
 
+    {(section === 'imports' || section === 'connections') && <section data-import-admission class="rounded-2xl bg-zinc-900/60 p-5 mb-5" hidden={!activeImport}>
+      <h2 data-import-admission-title class="text-lg font-semibold">{activeImport?.title}</h2>
+      <div class="flex gap-3 mt-4">
+        <a data-import-admission-resume href={activeImport?.resolve_url} class="bg-blue-600 hover:bg-blue-700 rounded-lg px-4 py-2 text-white">Resume import</a>
+        <button data-import-admission-cancel type="button" class="rounded-lg border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 px-4 py-2 cursor-pointer">Cancel import</button>
+      </div>
+    </section>}
     <div class="settings-stack">
       <div class="settings-stack" hidden={section !== "connections"}>
       <section data-connection-imports>
@@ -332,7 +340,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
 
             <!-- Add Connection button + form -->
             <div class="bg-zinc-900 border border-dashed border-zinc-700 rounded-2xl overflow-hidden">
-              <button type="button" id="add-connection-btn" class="w-full flex items-center justify-center gap-2 px-6 py-4 hover:bg-zinc-900/40 cursor-pointer transition-colors text-zinc-400 hover:text-zinc-200" aria-expanded="false" aria-controls="add-connection-form">
+              <button type="button" id="add-connection-btn" disabled={!!activeImport} class="w-full flex items-center justify-center gap-2 px-6 py-4 hover:bg-zinc-900/40 cursor-pointer transition-colors text-zinc-400 hover:text-zinc-200" aria-expanded="false" aria-controls="add-connection-form">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
                 <span class="font-medium">Add Connection</span>
               </button>
@@ -973,6 +981,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
 
 <script>
   import { formatDateTime, timestamp } from '../lib/date-time';
+  import { canStartImport } from "../lib/import-admission";
   import { escapeHtml as esc, errorMessage, showMessage } from '../lib/settings-feedback';
   import { readTrackingServiceSettings } from '../lib/tracking-service-settings';
   import { wireCancelButton, resetCancelButton } from '../lib/sync-controls';
@@ -2303,7 +2312,8 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
     };
 
     if (addBtn && addForm) {
-      addBtn.addEventListener('click', () => {
+      addBtn.addEventListener('click', async () => {
+        if (!await canStartImport()) return;
         const open = !addForm.classList.contains('hidden') && !addForm.inert;
         if (open) void hideCollapsible(addForm);
         else showCollapsible(addForm);
@@ -3446,6 +3456,9 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
 
 <script>
   import "../scripts/streaming-import";
+  import { mountImportAdmission } from "../lib/import-admission";
+  mountImportAdmission();
+  document.addEventListener("astro:page-load", mountImportAdmission);
 </script>
 
 <style is:global>
