@@ -1,5 +1,9 @@
+---
+import Icon from "./Icon.astro";
+---
 <aside class="attention-prompt" data-attention-prompt hidden aria-live="polite" aria-label="Notification requiring attention">
-  <img class="attention-prompt-poster" data-attention-poster alt="" hidden />
+  <button class="attention-prompt-mobile-close" type="button" data-attention-close aria-label="Dismiss notification"><Icon name="close" /></button>
+  <img draggable="false" class="attention-prompt-poster" data-attention-poster alt="" hidden />
   <div class="attention-prompt-content">
     <div class="attention-prompt-copy">
       <span class="eyebrow" data-attention-kicker>Needs attention</span>
@@ -17,7 +21,7 @@
 
 <script>
 import {cancelImportNotification} from '../lib/import-cancel';
-import { showMenu, hideMenu } from '../lib/ui-motion';
+import {bindAttentionPromptMotion} from '../lib/attention-prompt-motion';
 import {refreshNotifications, subscribeNotifications, type NotificationSnapshot} from '../lib/notification-store';
 import {applyResponsiveArtwork, responsiveArtwork} from '../lib/responsive-artwork';
 
@@ -58,14 +62,10 @@ document.addEventListener('astro:page-load', () => {
   let preferencesLoaded = false;
   let preferenceChangedLocally = false;
   let lastSnapshot: NotificationSnapshot | null = null;
-  const hide = (acknowledge = true) => {
-    if (acknowledge) writeAcknowledged(visibleIds);
-    void hideMenu(prompt);
-  };
-  prompt.querySelector('[data-attention-close]')?.addEventListener('click', () => hide());
-  let startX: number | null = null;
-  prompt.addEventListener('pointerdown', event => { startX = event.clientX; });
-  prompt.addEventListener('pointerup', event => { if (startX != null && Math.abs(event.clientX - startX) > 64) hide(); startX = null; });
+  const motion = bindAttentionPromptMotion(prompt, pageListeners.signal, () => writeAcknowledged(visibleIds));
+  const hide = (acknowledge = true) => acknowledge ? motion.dismiss() : motion.hide();
+  prompt.querySelectorAll('[data-attention-close]').forEach(button => button.addEventListener('click', () => hide(), {signal: pageListeners.signal}));
+  document.addEventListener('astro:before-swap', () => pageListeners.abort(), {signal: pageListeners.signal, once: true});
   document.addEventListener('media-tracker:rating-changed', event => {
     const mediaId = Number((event as CustomEvent<{id?: number}>).detail?.id);
     if (!Number.isFinite(mediaId)) return;
@@ -134,8 +134,7 @@ document.addEventListener('astro:page-load', () => {
     };
 
     if (!items.length) {
-      resetSingleRating();
-      void hideMenu(prompt);
+      motion.hide();
       return;
     }
     resetSingleRating();
@@ -179,7 +178,7 @@ document.addEventListener('astro:page-load', () => {
       if (posterImage?.src) rate.dataset.quickRatePoster = posterImage.src;
       rate.dataset.quickRateScore = '';
     }
-    if (prompt.hidden) showMenu(prompt);
+    motion.show();
   };
   document.addEventListener('streaming:activity-changed', () => { if (lastSnapshot) renderPrompt(lastSnapshot); }, {signal: pageListeners.signal});
   document.addEventListener('anylist:rating-popup-preference', event => {
