@@ -1152,7 +1152,7 @@ async def cleanup_expired_netflix_imports() -> int:
             NetflixImportSession.expires_at <= _now(),
             NetflixImportSession.status != "committed",
             NetflixImportSession.status != "cancelled",
-        ))
+        ).with_for_update(skip_locked=True).execution_options(populate_existing=True))
         expired = result.scalars().all()
         for session in expired:
             from core.connection_imports import remove_abandoned_connection

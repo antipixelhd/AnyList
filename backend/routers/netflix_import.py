@@ -224,11 +224,13 @@ def _summary(items: list[dict], parsed_counts: dict | None = None, errors: list 
 async def _load_owned(db: AsyncSession, session_id: str, user_id: int, *, lock: bool = False) -> NetflixImportSession:
     query = select(NetflixImportSession).where(NetflixImportSession.id == session_id, NetflixImportSession.user_id == user_id)
     if lock:
-        query = query.with_for_update()
+        query = query.with_for_update().execution_options(populate_existing=True)
     session = (await db.execute(query)).scalar_one_or_none()
     if session is None:
         raise HTTPException(status_code=404, detail="Import session not found")
     if session.expires_at <= netflix_sessions._now() and session.status != "committed":
+        if not lock:
+            return await _load_owned(db, session_id, user_id, lock=True)
         from core.connection_imports import remove_abandoned_connection
         await remove_abandoned_connection(db, session)
         session.source_csv = None
@@ -586,6 +588,7 @@ async def cancel_netflix_import(
     await db.execute(select(User.id).where(User.id == current_user.id).with_for_update())
     session = await _load_owned(db, session_id, current_user.id, lock=True)
     if session.status == "committed":
+        netflix_sessions._cancelled.discard(session_id)
         raise HTTPException(status_code=409, detail="An imported history cannot be cancelled after it has been committed.")
     if session.status != "cancelled":
         netflix_sessions._cancelled.add(session_id)

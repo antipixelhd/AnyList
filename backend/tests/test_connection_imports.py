@@ -180,6 +180,45 @@ class ConnectionDraftDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(await self.db.get(MediaServerConnection, connection_id, populate_existing=True))
         self.assertEqual(draft.status, 'cancelled')
 
+    async def test_cancel_refreshes_cached_status_after_worker_commits(self):
+        from fastapi import HTTPException
+        from sqlalchemy import update
+        from routers.netflix_import import cancel_netflix_import
+        from core import netflix_sessions
+        await self.stage(progress=[movie()])
+        draft = await self.draft()
+        await _apply_import(self.db, self.user.id, draft, AsyncMock())
+        await finish_import(self.db, draft)
+        draft.status = 'committing'
+        await self.db.commit()
+        # Model another worker's final commit without refreshing this request's
+        # already-loaded ORM identity. The locked read must see the database.
+        await self.db.execute(update(NetflixImportSession).where(NetflixImportSession.id == draft.id)
+            .values(status='committed', payload={}).execution_options(synchronize_session=False))
+        self.assertEqual(draft.status, 'committing')
+        with self.assertRaises(HTTPException) as committed:
+            await cancel_netflix_import(draft.id, self.db, self.user)
+        self.assertEqual(committed.exception.status_code, 409)
+        self.assertEqual(draft.status, 'committed')
+        self.assertIsNotNone(await self.db.get(MediaServerConnection, self.conn.id))
+        self.assertTrue((await self.db.scalars(select(WatchEvent).where(WatchEvent.user_id == self.user.id))).all())
+        self.assertNotIn(draft.id, netflix_sessions._cancelled)
+
+    async def test_expiry_refreshes_cached_state_before_erasing_committed_import(self):
+        from datetime import datetime, timedelta
+        from sqlalchemy import update
+        from routers.netflix_import import _load_owned
+        await self.stage(progress=[movie()])
+        draft = await self.draft()
+        draft.expires_at = datetime.utcnow() - timedelta(seconds=1)
+        await self.db.commit()
+        await self.db.execute(update(NetflixImportSession).where(NetflixImportSession.id == draft.id)
+            .values(status='committed', expires_at=datetime.utcnow() + timedelta(days=365))
+            .execution_options(synchronize_session=False))
+        self.assertEqual(draft.status, 'review')
+        self.assertEqual((await _load_owned(self.db, draft.id, self.user.id)).status, 'committed')
+        self.assertIsNotNone(await self.db.get(MediaServerConnection, self.conn.id))
+
     async def test_atomic_step_save_and_retry_keep_all_choices(self):
         from fastapi import HTTPException
         from routers.netflix_import import update_import_decisions
