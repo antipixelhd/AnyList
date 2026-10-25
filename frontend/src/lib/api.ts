@@ -380,6 +380,7 @@ export interface UserSettings {
 }
 
 export interface MediaServerConnection {
+  setup_pending?: boolean;
   id: number;
   user_id: number;
   type: "jellyfin" | "emby" | "plex" | "nuvio" | "stremio" | "arvio";

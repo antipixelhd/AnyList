@@ -80,3 +80,41 @@ test('a cancelled import cannot be restored by an old save response', async () =
   assert.equal(f.requests.length, 1);
   assert.deepEqual(f.session().items.a, {});
 });
+
+
+test('a whole step saves once and rebases newer optimistic edits over the response', async () => {
+  let session = {id: 'batch', revision: 0, items: {a: {}, b: {}}};
+  const requests = [];
+  const draft = createImportDraft({
+    getSession: () => session, setSession: value => {session = value;},
+    apply: (value, patch) => Object.assign(value.items[patch.itemId], patch.changes),
+    save: () => {throw Error('single-item endpoint should not run');},
+    saveBatch: (current, patches) => new Promise(resolve => {
+      requests.push({patches, finish() {
+        const fresh = structuredClone(current);
+        for (const patch of patches) Object.assign(fresh.items[patch.itemId], patch.changes);
+        fresh.revision++; resolve(fresh);
+      }});
+    }),
+  });
+  draft.stage({itemId: 'a', changes: {status: 'completed'}});
+  draft.stage({itemId: 'b', changes: {status: 'skip'}});
+  const saving = draft.flush();
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].patches.length, 2);
+  draft.stage({itemId: 'a', changes: {status: 'partial'}});
+  requests[0].finish();
+  await Promise.resolve(); await Promise.resolve();
+  assert.equal(session.items.a.status, 'partial');
+  assert.equal(requests[1].patches.length, 1);
+  requests[1].finish(); await saving;
+  assert.deepEqual(draft.snapshot(), []);
+});
+
+test('a restored draft preserves local decisions until the next save', () => {
+  const f = fixture();
+  f.draft.restore([{itemId: 'a', changes: {latest_episode: 8, status: 'partial'}}]);
+  assert.equal(f.requests.length, 0);
+  assert.equal(f.session().items.a.latest_episode, 8);
+  assert.equal(f.draft.snapshot()[0].changes.status, 'partial');
+});

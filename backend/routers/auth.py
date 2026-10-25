@@ -545,7 +545,16 @@ async def list_connections(
         .where(MediaServerConnection.user_id == current_user.id)
         .order_by(MediaServerConnection.created_at)
     )
-    return result.scalars().all()
+    connections = result.scalars().all()
+    from models.tracking import StreamBaseline
+    baselines = {row.connection_id: row for row in (await db.scalars(select(StreamBaseline).where(
+        StreamBaseline.user_id == current_user.id))).all()}
+    for conn in connections:
+        baseline = baselines.get(conn.id)
+        conn.setup_pending = conn.type in ('stremio', 'nuvio') and (
+            not baseline or not baseline.approved or bool((baseline.snapshot or {}).get('import_session_id'))
+            or bool((baseline.snapshot or {}).get('import_handoff')))
+    return connections
 
 
 @router.post("/connections", response_model=schemas.MediaServerConnectionResponse, status_code=201)

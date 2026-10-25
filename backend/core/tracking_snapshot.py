@@ -231,6 +231,10 @@ async def require_stream_reconciliation(db, conn):
     if baseline and isinstance(baseline.snapshot, dict) and baseline.snapshot.get('clear_guard'):
         from fastapi import HTTPException
         raise HTTPException(409, 'A provider clear is incomplete; retry Clear data or run a full resync before pushing')
+    from core.connection_imports import onboarding_pending
+    if await onboarding_pending(db, conn):
+        from fastapi import HTTPException
+        raise HTTPException(409, 'Complete the first import before syncing this connection')
     if not baseline or not baseline.approved:
         from fastapi import HTTPException
         raise HTTPException(409, 'Run a full import and confirm its summary in Notifications before pushing to this connection')

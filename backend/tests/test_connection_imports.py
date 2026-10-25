@@ -131,7 +131,7 @@ class ConnectionDraftDatabaseTests(unittest.IsolatedAsyncioTestCase):
         baseline = await self.db.get(StreamBaseline, self.conn.id)
         self.assertTrue(baseline.approved)
         self.assertNotIn('import_session_id', baseline.snapshot)
-        self.assertEqual((await self.db.scalars(select(NetflixImportSession))).all(), [])
+        self.assertEqual((await self.db.scalars(select(NetflixImportSession).where(NetflixImportSession.user_id == self.user.id))).all(), [])
         self.assertFalse(await self.stage())
 
     async def test_commit_uses_common_import_and_repeat_data_has_no_changes(self):
@@ -169,13 +169,128 @@ class ConnectionDraftDatabaseTests(unittest.IsolatedAsyncioTestCase):
         completed = await prepare_items([], [movie()], {'tmdb:42': 42}, 'fixture')
         self.assertEqual(len(await remove_covered_items(self.db, self.user.id, completed)), 1)
 
-    async def test_cancel_and_expiry_leave_snapshot_so_old_history_is_not_replayed(self):
+    async def test_cancelling_provisional_import_removes_connection(self):
         from routers.netflix_import import cancel_netflix_import
         await self.stage(progress=[movie()])
         draft = await self.draft()
-        await cancel_netflix_import(draft.id, self.db, self.user)
-        self.assertTrue((await self.db.get(StreamBaseline, self.conn.id)).approved)
-        self.assertFalse(await self.stage(progress=[movie()]))
+        connection_id = self.conn.id
+        with patch('core.stremio.logout', AsyncMock()):
+            await cancel_netflix_import(draft.id, self.db, self.user)
+        self.assertIsNone(await self.db.get(StreamBaseline, connection_id, populate_existing=True))
+        self.assertIsNone(await self.db.get(MediaServerConnection, connection_id, populate_existing=True))
+        self.assertEqual(draft.status, 'cancelled')
+
+    async def test_atomic_step_save_and_retry_keep_all_choices(self):
+        from fastapi import HTTPException
+        from routers.netflix_import import update_import_decisions
+        await self.stage(progress=[movie(position=1200000)])
+        draft = await self.draft()
+        item_id = draft.payload['items'][0]['id']
+        revision = draft.revision
+        body = {'revision': revision, 'patches': [
+            {'itemId': item_id, 'changes': {'status': 'completed', 'finish_date': '2020-01-01'}},
+            {'itemId': 'missing', 'changes': {'status': 'skip'}}]}
+        with self.assertRaises(HTTPException):
+            await update_import_decisions(draft.id, body, self.db, self.user)
+        self.assertEqual(draft.revision, revision)
+        self.assertNotIn('finish_date', draft.payload['items'][0]['outcome'])
+        body['patches'].pop()
+        response = await update_import_decisions(draft.id, body, self.db, self.user)
+        self.assertEqual(response['revision'], revision + 1)
+        self.assertEqual(response['items'][0]['outcome']['finish_date'], '2020-01-01')
+        self.assertTrue(response['items'][0]['progress_reviewed'])
+        with self.assertRaises(HTTPException):
+            await update_import_decisions(draft.id, body, self.db, self.user)
+
+    async def test_import_notifications_follow_owner_expiry_and_cancellation(self):
+        from datetime import datetime, timedelta
+        from core.import_notifications import active_import_events
+        await self.stage(progress=[movie()])
+        draft = await self.draft()
+        now = datetime.utcnow()
+        events = await active_import_events(self.db, self.user.id, now)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]['payload']['import_id'], draft.id)
+        self.assertIn('connection=', events[0]['payload']['resolve_url'])
+        self.assertEqual(await active_import_events(self.db, self.user.id + 99999, now), [])
+        self.assertEqual(await active_import_events(self.db, self.user.id, now + timedelta(days=8)), [])
+        draft.status = 'cancelled'
+        await self.db.flush()
+        self.assertEqual(await active_import_events(self.db, self.user.id, now), [])
+
+    async def test_connection_stays_blocked_until_owned_handoff_finishes(self):
+        from core.connection_imports import onboarding_pending, handoff_connection, release_handoff
+        await self.stage(progress=[movie()])
+        draft = await self.draft()
+        self.assertTrue(await onboarding_pending(self.db, self.conn))
+        await finish_import(self.db, draft)
+        await self.db.flush()
+        self.assertTrue(await onboarding_pending(self.db, self.conn))
+        token = handoff_connection.set(self.conn.id)
+        try:
+            self.assertFalse(await onboarding_pending(self.db, self.conn))
+        finally:
+            handoff_connection.reset(token)
+        await release_handoff(self.db, self.conn.id, draft.id)
+        await self.db.flush()
+        self.assertFalse(await onboarding_pending(self.db, self.conn))
+
+    async def test_provisional_connections_are_not_delivery_targets(self):
+        from core.connection_imports import handoff_connection
+        from core.pull_cycle import PullCycleState
+        from core.sync_delivery import delivery_targets
+        await self.stage(progress=[movie()])
+        self.conn.push_watched = True
+        await self.db.flush()
+        cycle = PullCycleState(self.user.id)
+        self.assertNotIn(f'connection:{self.conn.id}', await delivery_targets(self.db, cycle))
+        await finish_import(self.db, await self.draft())
+        await self.db.flush()
+        self.assertNotIn(f'connection:{self.conn.id}', await delivery_targets(self.db, cycle))
+        token = handoff_connection.set(self.conn.id)
+        try:
+            self.assertIn(f'connection:{self.conn.id}', await delivery_targets(self.db, cycle))
+        finally:
+            handoff_connection.reset(token)
+
+    async def test_routine_account_pull_does_not_admit_provisional_connection(self):
+        from fastapi import HTTPException
+        from core.account_sync import queue_account_pull
+        await self.stage(progress=[movie()])
+        with self.assertRaises(HTTPException) as blocked:
+            await queue_account_pull(self.db, self.user.id)
+        self.assertEqual(blocked.exception.status_code, 400)
+        from core.connection_imports import finish_import
+        await finish_import(self.db, await self.draft())
+        await self.db.flush()
+        with self.assertRaises(HTTPException):
+            await queue_account_pull(self.db, self.user.id)
+
+    async def test_file_drafts_are_recoverable_without_a_connection_or_review_row(self):
+        from datetime import datetime, timedelta
+        from core.import_notifications import active_import_events
+        for source in ('netflix', 'amazon'):
+            self.db.add(NetflixImportSession(id=str(uuid4()), user_id=self.user.id,
+                status='preparing', phase='parse', payload={'source': source},
+                expires_at=datetime.utcnow() + timedelta(days=7)))
+        await self.db.flush()
+        events = await active_import_events(self.db, self.user.id, datetime.utcnow())
+        self.assertEqual({event['provider'] for event in events}, {'netflix', 'amazon'})
+        self.assertTrue(all('section=imports' in event['payload']['resolve_url'] for event in events))
+
+    async def test_expired_import_removes_provisional_connection(self):
+        from datetime import datetime, timedelta
+        from routers.netflix_import import _load_owned
+        from fastapi import HTTPException
+        await self.stage(progress=[movie()])
+        draft = await self.draft()
+        connection_id = self.conn.id
+        draft.expires_at = datetime.utcnow() - timedelta(seconds=1)
+        await self.db.flush()
+        with self.assertRaises(HTTPException) as expired:
+            await _load_owned(self.db, draft.id, self.user.id)
+        self.assertEqual(expired.exception.status_code, 410)
+        self.assertIsNone(await self.db.get(MediaServerConnection, connection_id, populate_existing=True))
 
     async def test_changed_connection_cannot_commit_old_account_history(self):
         await self.stage(progress=[movie()])
@@ -210,13 +325,39 @@ class ConnectionDraftDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('import_session_id', baseline.snapshot)
         self.assertEqual((await self.db.scalars(select(TrackedEntry))).one().status, 'completed')
         handoff.assert_awaited_once()
+        root = (await self.db.scalars(select(TrackedEntry).where(TrackedEntry.user_id == self.user.id))).one()
+        self.assertEqual(draft.result['delivery_media_ids'], [root.media_id])
+        self.assertEqual(draft.result['delivery_watch_ids'], [root.media_id])
+
+    async def test_handoff_seeds_accepted_changes_without_new_provider_delta(self):
+        from core.connection_imports import seed_import_delivery
+        from core.pull_cycle import PullCycleState
+        from models import Rating
+        await self.stage(progress=[movie()])
+        draft = await self.draft()
+        await _apply_import(self.db, self.user.id, draft, AsyncMock())
+        root = (await self.db.scalars(select(TrackedEntry).where(TrackedEntry.user_id == self.user.id))).one()
+        self.db.add(Rating(user_id=self.user.id, media_id=root.media_id, rating=8.5))
+        draft.status = 'committed'
+        draft.result = {'pull_pending': True, 'pull_job_id': 123,
+            'delivery_media_ids': [root.media_id], 'delivery_watch_ids': [root.media_id]}
+        await self.db.flush()
+        cycle = PullCycleState(self.user.id)
+        with patch('core.stream_actions.queue_local_dismissals', AsyncMock()) as dismiss:
+            await seed_import_delivery(self.db, self.user.id, 123, cycle)
+        self.assertEqual(cycle.new_watched_ids, {root.media_id})
+        self.assertEqual(cycle.new_ratings, {(root.media_id, None): 8.5})
+        dismiss.assert_awaited_once()
+        unrelated = PullCycleState(self.user.id)
+        await seed_import_delivery(self.db, self.user.id, 999, unrelated)
+        self.assertEqual(unrelated.new_watched_ids, set())
 
     async def test_unresolved_first_history_is_retryable_instead_of_baselined(self):
         row = movie(content_id='tt1234567')
         with self.assertRaisesRegex(ValueError, 'Sync again'):
             await stage_first_snapshot(self.db, self.conn, [], [], [row], {}, 'fixture')
         self.assertIsNone(await self.db.get(StreamBaseline, self.conn.id))
-        self.assertEqual((await self.db.scalars(select(NetflixImportSession))).all(), [])
+        self.assertEqual((await self.db.scalars(select(NetflixImportSession).where(NetflixImportSession.user_id == self.user.id))).all(), [])
         await stage_first_snapshot(self.db, self.conn, [], [], [row], {'tt1234567': 42}, 'fixture')
         self.assertEqual((await self.draft()).status, 'review')
         self.assertEqual((await self.db.scalars(select(WatchEvent))).all(), [])

@@ -2908,6 +2908,14 @@ async def _run_nuvio_sync(
             conn = conn_result.scalar_one_or_none()
             if not conn or not tmdb_api_key:
                 raise RuntimeError("Missing Nuvio connection or TMDB API key")
+            from core.connection_imports import onboarding_pending
+            if await onboarding_pending(db, conn):
+                await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(
+                    status=SyncStatus.completed, current_step="Waiting for first import",
+                    stats={"import_pending": True}, updated_at=datetime.utcnow()))
+                await db.commit()
+                return
+
 
             if full_resync and (movie_limit or show_limit):
                 raise RuntimeError("A full Nuvio resync requires an unbounded complete provider snapshot")
@@ -3093,11 +3101,23 @@ async def _run_nuvio_sync(
                 )
                 warnings.extend(group_warnings)
 
+            from core.connection_imports import stage_first_snapshot
+            reviewing_import = await stage_first_snapshot(
+                db, conn, library_records, watched_records, progress_records, tmdb_ids,
+                tmdb_api_key, full_resync=full_resync, source_started_at=pull_started_at,
+            )
+            if reviewing_import:
+                await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(
+                    status=SyncStatus.completed, current_step="History ready for review",
+                    stats={**stats, "import_pending": True, "provider_snapshot_complete": False},
+                    updated_at=datetime.utcnow()))
+                await db.commit()
+                return
             for media_type in (MediaType.movie, MediaType.series, MediaType.episode):
                 await sync_group(
                     normalized_library,
                     media_type,
-                    sync_collection=True,
+                    sync_collection=not reviewing_import,
                     sync_watched=False,
                 )
             for media_type in (MediaType.movie, MediaType.series, MediaType.episode):
@@ -3115,11 +3135,6 @@ async def _run_nuvio_sync(
                     sync_watched=False,
                 )
 
-            from core.connection_imports import stage_first_snapshot
-            reviewing_import = await stage_first_snapshot(
-                db, conn, library_records, watched_records, progress_records, tmdb_ids,
-                tmdb_api_key, full_resync=full_resync, source_started_at=pull_started_at,
-            )
             if not reviewing_import and conn.sync_watched and watched_records:
                 from core.streaming_clear import assert_pull_snapshot_current
                 await assert_pull_snapshot_current(
@@ -3175,7 +3190,7 @@ async def _run_nuvio_sync(
             # commit. Clear jobs acquire this lock before taking a provider lock.
             await db.commit()
 
-            if (new_collected_ids or removed_collected_ids) and not full_resync:
+            if not reviewing_import and (new_collected_ids or removed_collected_ids) and not full_resync:
                 # Commit local truth before attempting any external write.
                 await db.commit()
                 await outbound_sync.fan_out_streaming_library(
@@ -3211,7 +3226,7 @@ async def _run_nuvio_sync(
                 if not full_resync:
                     from core.stream_actions import dispatch_stream_actions
                     await dispatch_stream_actions(db, user_id)
-            if not full_resync:
+            if not reviewing_import and not full_resync:
                 from core.streaming_library import retry_pending_library_deliveries
                 await retry_pending_library_deliveries(db, user_id, conn.id)
 
@@ -3552,6 +3567,14 @@ async def _run_stremio_sync(
             conn = (await db.execute(conn_query.limit(1))).scalar_one_or_none()
             if not conn or not tmdb_api_key:
                 raise RuntimeError("Missing Stremio connection or TMDB API key")
+            from core.connection_imports import onboarding_pending
+            if await onboarding_pending(db, conn):
+                await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(
+                    status=SyncStatus.completed, current_step="Waiting for first import",
+                    stats={"import_pending": True}, updated_at=datetime.utcnow()))
+                await db.commit()
+                return
+
 
             if full_resync and (movie_limit or show_limit):
                 raise RuntimeError("A full Stremio resync requires an unbounded complete provider snapshot")
@@ -3684,17 +3707,24 @@ async def _run_stremio_sync(
                     )
                 )
 
-            for media_type in (MediaType.movie, MediaType.series):
-                await sync_group(normalized_library, media_type, sync_collection=True)
-            for media_type in (MediaType.movie, MediaType.episode):
-                await sync_group(normalized_watched, media_type, sync_collection=False)
-                await sync_group(normalized_progress, media_type, sync_collection=False)
-
             from core.connection_imports import stage_first_snapshot
             reviewing_import = await stage_first_snapshot(
                 db, conn, library_records, watched_records, progress_records, tmdb_ids,
                 tmdb_api_key, full_resync=full_resync, source_started_at=pull_started_at,
             )
+            if reviewing_import:
+                await db.execute(update(SyncJob).where(SyncJob.id == job_id).values(
+                    status=SyncStatus.completed, current_step="History ready for review",
+                    stats={**stats, "import_pending": True, "provider_snapshot_complete": False},
+                    updated_at=datetime.utcnow()))
+                await db.commit()
+                return
+            for media_type in (MediaType.movie, MediaType.series):
+                await sync_group(normalized_library, media_type, sync_collection=not reviewing_import)
+            for media_type in (MediaType.movie, MediaType.episode):
+                await sync_group(normalized_watched, media_type, sync_collection=False)
+                await sync_group(normalized_progress, media_type, sync_collection=False)
+
             if not reviewing_import and conn.sync_watched and watched_records:
                 from core.streaming_clear import assert_pull_snapshot_current
                 await assert_pull_snapshot_current(
@@ -3727,7 +3757,7 @@ async def _run_stremio_sync(
 
             complete_snapshot_ids = (
                 {str(record["content_id"]) for record in library_records}
-                if complete_snapshot and conn.sync_collection and not full_resync
+                if not reviewing_import and complete_snapshot and conn.sync_collection and not full_resync
                 else None
             )
             from core.streaming_clear import assert_pull_snapshot_current
@@ -3742,7 +3772,7 @@ async def _run_stremio_sync(
                 complete_snapshot_ids=complete_snapshot_ids,
             )
             await db.commit()
-            if (new_collected_ids or removed_collected_ids) and not full_resync:
+            if not reviewing_import and (new_collected_ids or removed_collected_ids) and not full_resync:
                 # Commit local truth before attempting any external write.
                 await db.commit()
                 await outbound_sync.fan_out_streaming_library(
@@ -3776,7 +3806,7 @@ async def _run_stremio_sync(
                 if not full_resync:
                     from core.stream_actions import dispatch_stream_actions
                     await dispatch_stream_actions(db, user_id)
-            if not full_resync:
+            if not reviewing_import and not full_resync:
                 from core.streaming_library import retry_pending_library_deliveries
                 await retry_pending_library_deliveries(db, user_id, conn.id)
             # Tracking/watch changes remain local until their own confirmation rules

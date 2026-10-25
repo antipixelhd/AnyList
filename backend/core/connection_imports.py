@@ -6,6 +6,7 @@ the same import transaction and review UI used by file imports do that later.
 import asyncio
 from datetime import date, timedelta
 from math import isfinite
+from contextvars import ContextVar
 import re
 import uuid
 
@@ -190,10 +191,7 @@ async def stage_first_snapshot(db, conn, library, watched, progress, mappings, a
         session_id = (baseline.snapshot or {}).get('import_session_id')
         if not session_id:
             return False
-        session = await db.get(NetflixImportSession, session_id)
-        if not session or session.status in ('cancelled', 'committed') or session.expires_at <= netflix_sessions._now():
-            baseline.approved = True
-            baseline.snapshot = {key: value for key, value in baseline.snapshot.items() if key != 'import_session_id'}
+        # Abandoned/expired reviews never silently approve a connection.
         return True
     identity_version = conn.identity_version
     unresolved = {str(row.get('content_id')) for row, _ in observations(watched, progress)
@@ -295,4 +293,71 @@ async def finish_import(db, session, *, validate=False):
         raise ValueError('This connection snapshot changed. Cancel this import and sync the connection again.')
     if baseline and (baseline.snapshot or {}).get('import_session_id') == session.id and not validate:
         baseline.approved = True
-        baseline.snapshot = {key: value for key, value in baseline.snapshot.items() if key != 'import_session_id'}
+        baseline.snapshot = {**{key: value for key, value in baseline.snapshot.items() if key != 'import_session_id'},
+                             'import_handoff': session.id}
+
+
+# A committed onboarding import owns its first delivery cycle. Other workers
+# must not fold that connection into routine sync before delivery succeeds.
+handoff_connection = ContextVar("import_handoff_connection", default=None)
+
+
+async def onboarding_pending(db, conn, *, require_snapshot=False):
+    if conn.type not in ('stremio', 'nuvio'):
+        return False
+    baseline = await db.get(StreamBaseline, conn.id, populate_existing=True)
+    if require_snapshot and (not baseline or not baseline.approved):
+        return True
+    snapshot = (baseline.snapshot or {}) if baseline else {}
+    return bool(snapshot.get('import_session_id') or
+                (snapshot.get('import_handoff') and handoff_connection.get() != conn.id))
+
+
+async def release_handoff(db, connection_id, session_id):
+    if connection_id is None:
+        return
+    baseline = await db.get(StreamBaseline, connection_id, populate_existing=True)
+    if baseline and (baseline.snapshot or {}).get('import_handoff') == session_id:
+        baseline.snapshot = {key: value for key, value in baseline.snapshot.items() if key != 'import_handoff'}
+
+
+async def remove_abandoned_connection(db, session):
+    """Remove only the provisional identity that owns this abandoned draft."""
+    from sqlalchemy import delete
+    payload = session.payload or {}
+    connection_id = payload.get('connection_id')
+    if connection_id is None:
+        return
+    conn = await db.get(MediaServerConnection, connection_id, populate_existing=True)
+    baseline = await db.get(StreamBaseline, connection_id, populate_existing=True)
+    if (conn and conn.user_id == session.user_id and conn.identity_version == payload.get('identity_version')
+            and baseline and (baseline.snapshot or {}).get('import_session_id') == session.id):
+        # Cascades remove queued deliveries and the provisional baseline. No
+        # external account data is cleared or changed when a draft expires.
+        await db.execute(delete(MediaServerConnection).where(MediaServerConnection.id == connection_id))
+
+
+async def seed_import_delivery(db, user_id, job_id, cycle):
+    """Include accepted imports even when the provider snapshot is unchanged."""
+    from models.ratings import Rating
+    session = await db.scalar(select(NetflixImportSession).where(
+        NetflixImportSession.user_id == user_id, NetflixImportSession.status == 'committed',
+        NetflixImportSession.result['pull_job_id'].as_integer() == job_id,
+        NetflixImportSession.result['pull_pending'].as_boolean().is_(True)).limit(1))
+    if not session:
+        return
+    result = session.result or {}
+    roots = result.get('delivery_media_ids') or []
+    cycle.new_watched_ids.update(result.get('delivery_watch_ids') or [])
+    for rating in (await db.scalars(select(Rating).where(
+            Rating.user_id == user_id, Rating.media_id.in_(roots), Rating.episode_order.is_(None)))).all():
+        cycle.new_ratings[(rating.media_id, rating.season_number)] = rating.rating
+        cycle.rating_sources[(rating.media_id, rating.season_number)] = set()
+    from core.stream_actions import queue_local_dismissals, queue_restorations
+    for media, entry in (await db.execute(select(Media, TrackedEntry).join(
+            TrackedEntry, TrackedEntry.media_id == Media.id).where(
+            Media.id.in_(roots), TrackedEntry.user_id == user_id))).all():
+        if entry.status == 'watching':
+            await queue_restorations(db, user_id, media)
+        elif entry.status in ('completed', 'paused', 'dropped', 'planning'):
+            await queue_local_dismissals(db, user_id, media)

@@ -1,6 +1,8 @@
 import { showDialog, closeDialog } from '../lib/ui-motion';
 import { showMessage } from '../lib/settings-feedback';
 import { setupCalendarDateInputs } from '../lib/calendar-date-input';
+import { confirmImportCancellation } from '../lib/import-cancel';
+import { importRecovery } from '../lib/import-recovery';
 import { createImportDraft } from '../lib/import-draft';
 import { importDecisionStep } from '../lib/import-steps';
 import { readRemapTitles } from '../lib/streaming-remap-search';
@@ -61,6 +63,8 @@ type StreamingItem = {
 
 type StreamingSession = {
   id: string;
+  expires_at?: string;
+  connection_id?: number | null;
   idempotency_key?: string | null;
   status: "preparing" | "review" | "ready" | "committed" | "cancelled" | "failed" | string;
   phase: string;
@@ -109,6 +113,12 @@ function mountStreamingImport(app: HTMLElement) {
   let step = 1;
   let pollTimer: number | undefined;
   let saving = false;
+  let cancelling = false;
+  let requestEpoch = 0;
+  let saveController = new AbortController();
+  // Storage can be unavailable in private browsing; keep the review functional.
+  let recovery: ReturnType<typeof importRecovery> | undefined;
+  try { recovery = importRecovery(localStorage, document.body.dataset.cacheUser || 'anonymous'); } catch { /* Optional recovery. */ }
   let showingCompleted = false;
   const openRatingGroups = new Set<string>();
   let remappingItemId: string | number | null = null;
@@ -129,6 +139,9 @@ function mountStreamingImport(app: HTMLElement) {
       if (target.outcome.status === 'dropped') target.outcome.tracking_status = 'dropped';
       if (changes.status != null) target.progress_reviewed = true;
     },
+    saveBatch: (current, patches) => request<StreamingSession>(`/imports/${encodeURIComponent(current.id)}/decisions`, {
+      method: 'PATCH', body: JSON.stringify({revision: current.revision, patches}), signal: saveController.signal,
+    }),
     save: (current, {itemId, changes}) => request<StreamingSession>(`/imports/${encodeURIComponent(current.id)}/items/${encodeURIComponent(String(itemId))}`, {
       method: 'PATCH', body: JSON.stringify({revision: current.revision, ...changes}),
     }),
@@ -159,7 +172,9 @@ function mountStreamingImport(app: HTMLElement) {
     const headers = new Headers(init.headers);
     if (token) headers.set("Authorization", `Bearer ${token}`);
     if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
-    const response = await fetch(`/api/proxy${path}`, { ...init, headers });
+    const timeout = AbortSignal.timeout(init.body instanceof FormData ? 120000 : 30000);
+    const signal = AbortSignal.any([dateSignal.signal, timeout, ...(init.signal ? [init.signal] : [])]);
+    const response = await fetch(`/api/proxy${path}`, { ...init, headers, signal });
     if (!response.ok) {
       let detail = `Request failed (${response.status})`;
       try {
@@ -469,11 +484,40 @@ function mountStreamingImport(app: HTMLElement) {
       .forEach(panel => panel.hidePopover());
   }
 
+  function checkpoint() {
+    if (!session || !session.expires_at) return;
+    if (['cancelled', 'committed'].includes(session.status)) { recovery?.remove(session.id); return; }
+    recovery?.save(session.id, {revision: session.revision, expiresAt: session.expires_at, step,
+      patches: draft.snapshot(), matches: matchSequence.snapshot(), progress: progressSequence.snapshot()});
+    const url = new URL(location.href);
+    url.searchParams.set('import', session.id);
+    url.searchParams.set('source', service);
+    if (connectionId) url.searchParams.set('connection', connectionId);
+    else { url.searchParams.delete('connection'); url.searchParams.set('section', 'imports'); }
+    history.replaceState(history.state, '', url);
+  }
+
+  function restoreSession(updated: StreamingSession) {
+    session = updated;
+    idempotencyKey = updated.idempotency_key || '';
+    const saved = recovery?.read(updated.id);
+    syncReviewSequences();
+    if (saved && updated.status === 'review') {
+      if (saved.revision === updated.revision) draft.restore(saved.patches);
+      matchSequence.restore(saved.matches); progressSequence.restore(saved.progress);
+      step = saved.step >= 2 ? saved.step : decisionStep(2, 1)!;
+    } else step = updated.status === 'preparing' ? 1 : decisionStep(2, 1)!;
+  }
+
   function render() {
     syncReviewSequences();
-    updateImportActivity();
+    checkpoint();
     app.dataset.reviewLayout = mobileReview.matches ? 'single' : 'list';
     app.dataset.importStep = String(step);
+    if (session && !['cancelled', 'committed'].includes(session.status)) app.dataset.importSession = session.id;
+    else delete app.dataset.importSession;
+    updateImportActivity();
+    document.dispatchEvent(new CustomEvent('streaming:activity-changed'));
     if (!session) {
       if (connectionId) {
         app.hidden = true;
@@ -513,12 +557,18 @@ function mountStreamingImport(app: HTMLElement) {
       content = summaryView();
     }
 
-    const nav = isPreparing || isFailed
+    const transitioning = saving || cancelling || (busy && !isPreparing);
+    if (transitioning) {
+      content = `<div class="streaming-uploading" role="status" aria-live="polite"><h2>${cancelling ? 'Cancelling import…' : busy ? 'Importing your history…' : 'Saving your choices…'}</h2><div class="streaming-loading-track"><span class="animate-pulse" style="width:50%"></span></div></div>`;
+    }
+    const nav = transitioning
+      ? `<button type="button" data-streaming-action="cancel" class="streaming-button streaming-secondary" ${cancelling ? 'disabled' : ''}>Cancel import</button>`
+      : isPreparing || isFailed
       ? `<button type="button" data-streaming-action="cancel" class="streaming-text-action streaming-muted">Cancel</button>`
       : isCommitted ? `<button type="button" data-streaming-action="restart" class="streaming-button streaming-primary">${connectionId ? 'Done' : 'Import another file'}</button>`
       : reviewNavigation() ?? `<button type="button" data-streaming-action="cancel" class="streaming-text-action streaming-muted streaming-cancel">Cancel import</button><div class="streaming-nav-actions">${decisionStep(step - 1, -1) !== null ? '<button type="button" data-streaming-action="back" class="streaming-button streaming-secondary">Back</button>' : ''}${step < 5 ? `<button type="button" data-streaming-action="next" ${step === 2 && !titleReviewComplete() ? 'disabled' : ''} class="streaming-button streaming-primary">Continue</button>` : `<button type="button" data-streaming-action="commit" ${busy || saving ? 'disabled' : ''} class="streaming-button streaming-primary">${busy ? 'Importing…' : 'Import history'}</button>`}</div>`;
     workflow.innerHTML = `<div class="streaming-flow">${content}<footer class="streaming-footer">${nav}</footer></div>`;
-    if (saving) workflow.querySelectorAll<HTMLButtonElement | HTMLInputElement | HTMLSelectElement>('button, input, select').forEach(control => { control.disabled = true; });
+
   }
 
   function byId(id: string | number): StreamingItem | undefined {
@@ -538,11 +588,12 @@ function mountStreamingImport(app: HTMLElement) {
     saving = true;
     render();
     try {
+      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
       await draft.flush();
-      return session?.id === id;
+      return session?.id === id && !cancelling && !dateSignal.signal.aborted;
     } catch (error) {
-      if (session?.id === id) {
-        try { draft.rebase(await request<StreamingSession>(`/imports/${encodeURIComponent(id)}`)); }
+      if (session?.id === id && !cancelling && !dateSignal.signal.aborted) {
+        try { draft.rebase(await request<StreamingSession>(`/imports/${encodeURIComponent(id)}`, {signal: AbortSignal.timeout(5000)})); }
         catch { /* Retain local choices for retry even if the server is unavailable. */ }
         showError(error instanceof Error ? error.message : 'Could not save your choices. Please try Continue again.');
       }
@@ -562,8 +613,11 @@ function mountStreamingImport(app: HTMLElement) {
 
   async function poll() {
     if (!session || session.status !== "preparing") return;
+    const epoch = requestEpoch;
+    const id = session.id;
     try {
-      const updated = await request<StreamingSession>(`/imports/${encodeURIComponent(session.id)}`);
+      const updated = await request<StreamingSession>(`/imports/${encodeURIComponent(id)}`);
+      if (epoch !== requestEpoch || session?.id !== id || dateSignal.signal.aborted) return;
       session = updated;
       if (session.status === "preparing") {
         render();
@@ -578,6 +632,7 @@ function mountStreamingImport(app: HTMLElement) {
       if (session.status === "failed") showError("This file could not be prepared. Review the message below or try another export.");
       render();
     } catch (error) {
+      if (epoch !== requestEpoch || dateSignal.signal.aborted) return;
       showError(error instanceof Error ? error.message : "Could not check import progress.");
       pollTimer = window.setTimeout(poll, 2500);
     }
@@ -736,6 +791,7 @@ function mountStreamingImport(app: HTMLElement) {
   const finishDialog = app.querySelector<HTMLDialogElement>('[data-role="streaming-finish-dialog"]')!;
   const dateSignal = new AbortController();
   document.addEventListener('astro:before-swap', () => {
+    checkpoint();
     dateSignal.abort();
     if (activeConnectionImport === app) activeConnectionImport = null;
     window.clearTimeout(pollTimer);
@@ -743,6 +799,7 @@ function mountStreamingImport(app: HTMLElement) {
     searchController?.abort();
     uploadController?.abort();
   }, {once: true});
+  window.addEventListener('pagehide', checkpoint, {signal: dateSignal.signal});
   mobileReview.addEventListener('change', () => render(), {signal: dateSignal.signal});
   const refreshFinishDate = setupCalendarDateInputs(finishDialog, dateSignal.signal, {returnFocus: 'trigger'});
   async function confirmFinishDate(item: StreamingItem, reselectingCompleted = false) {
@@ -758,11 +815,25 @@ function mountStreamingImport(app: HTMLElement) {
   }
 
   async function cancelSession() {
-    if (!session) return;
+    if (!session || cancelling) return;
+    if (connectionId && !await confirmImportCancellation(true, dateSignal.signal)) return;
+    const cancelledId = session.id;
     if (pollTimer) window.clearTimeout(pollTimer);
-    try { await request(`/imports/${encodeURIComponent(session.id)}`, { method: "DELETE" }); }
-    catch (error) { showError(error instanceof Error ? error.message : "Could not cancel the import."); return; }
-    session = null;
+    cancelling = true; requestEpoch++; saveController.abort(); saveController = new AbortController(); render();
+    try { await request(`/imports/${encodeURIComponent(cancelledId)}`, { method: "DELETE" }); }
+    catch (error) {
+      cancelling = false; busy = false; render();
+      showError(error instanceof Error ? error.message : "Could not cancel the import.");
+      if (session?.status === 'preparing') void poll();
+      else if (session?.status === 'committing') void commit();
+      return;
+    }
+    recovery?.remove(cancelledId);
+    document.dispatchEvent(new CustomEvent('media-tracker:notifications-changed'));
+    session = null; cancelling = false; busy = false;
+    const url = new URL(location.href); url.searchParams.delete('import'); url.searchParams.delete('source'); url.searchParams.delete('connection');
+    history.replaceState(history.state, '', url);
+    if (connectionId) { location.reload(); return; }
     step = 1;
     openRatingGroups.clear();
     showingCompleted = false;
@@ -775,19 +846,25 @@ function mountStreamingImport(app: HTMLElement) {
     if (!session || busy) return;
     if (!await flushDraft()) return;
     busy = true;
+    const epoch = requestEpoch;
+    const committingId = session.id;
     clearError();
     render();
     idempotencyKey ||= crypto.randomUUID();
     try {
-      session = await request<StreamingSession>(`/imports/${encodeURIComponent(session.id)}/commit`, {
+      const updated = await request<StreamingSession>(`/imports/${encodeURIComponent(committingId)}/commit`, {
         method: "POST", body: JSON.stringify({ revision: session.revision, idempotency_key: idempotencyKey }),
       });
+      if (epoch !== requestEpoch || session?.id !== committingId || dateSignal.signal.aborted) return;
+      session = updated;
       if (session.status === "committing") {
         workflow.innerHTML = `<div class="streaming-uploading"><h2>Importing your history…</h2><p>Keep this page open while we save your history.</p><div class="streaming-loading-track"><span class="animate-pulse" style="width:65%"></span></div><button type="button" data-streaming-action="cancel" class="streaming-text-action streaming-muted">Cancel import</button></div>`;
         const waitForCommit = async () => {
-          if (!session) return;
+          if (!session || epoch !== requestEpoch || dateSignal.signal.aborted) return;
           try {
-            session = await request<StreamingSession>(`/imports/${encodeURIComponent(session.id)}`);
+            const updated = await request<StreamingSession>(`/imports/${encodeURIComponent(committingId)}`);
+            if (epoch !== requestEpoch || session?.id !== committingId || dateSignal.signal.aborted) return;
+            session = updated;
             if (session.status !== "committing") {
               busy = false;
               if (session.status === "review") {
@@ -800,7 +877,10 @@ function mountStreamingImport(app: HTMLElement) {
               render();
               return;
             }
-          } catch (error) { showError(error instanceof Error ? error.message : "Could not check the import result."); }
+          } catch (error) {
+            if (epoch !== requestEpoch || dateSignal.signal.aborted) return;
+            showError(error instanceof Error ? error.message : "Could not check the import result.");
+          }
           pollTimer = window.setTimeout(waitForCommit, 1000);
         };
         await waitForCommit();
@@ -824,7 +904,14 @@ function mountStreamingImport(app: HTMLElement) {
     clearError();
     if (action === "cancel-upload") { cancelUpload(); return; }
     if (action === "cancel") { await cancelSession(); return; }
-    if (action === "restart") { session = null; step = 1; openRatingGroups.clear(); clearError(); render(); return; }
+    if (action === "restart") {
+      if (session?.status === 'failed') { await cancelSession(); return; }
+      session = null; step = 1; openRatingGroups.clear(); clearError();
+      const url = new URL(location.href);
+      for (const key of ['import', 'source', 'connection']) url.searchParams.delete(key);
+      history.replaceState(history.state, '', url);
+      render(); return;
+    }
     if (saving) return;
     if (action === "back") {
       const previousStep = decisionStep(step - 1, -1);
@@ -982,6 +1069,8 @@ function mountStreamingImport(app: HTMLElement) {
     if (!connectionId || !app.isConnected || dateSignal.signal.aborted || session || loadingConnection) return;
     if (app.parentElement?.closest('[hidden]')) return;
     if (activeConnectionImport?.isConnected && activeConnectionImport !== app) return;
+    const requestedConnection = new URL(location.href).searchParams.get('connection');
+    if (requestedConnection && requestedConnection !== connectionId) return;
     loadingConnection = true;
     try {
       const result = await request<{session: StreamingSession | null; checking: boolean}>(`/imports/connections/${encodeURIComponent(connectionId)}`, {signal: dateSignal.signal});
@@ -989,11 +1078,9 @@ function mountStreamingImport(app: HTMLElement) {
       if (result.session) {
         if (activeConnectionImport?.isConnected && activeConnectionImport !== app) return;
         activeConnectionImport = app;
-        session = result.session;
-        idempotencyKey = session.idempotency_key || '';
-        step = decisionStep(2, 1)!;
+        restoreSession(result.session);
         render();
-        if (session.status === 'committing') void commit();
+        if (result.session.status === 'committing') void commit();
       } else if (result.checking) {
         pollTimer = window.setTimeout(loadConnectionImport, 1500);
       }
@@ -1004,6 +1091,23 @@ function mountStreamingImport(app: HTMLElement) {
   document.addEventListener('connections:sync-updated', () => { void loadConnectionImport(); }, {signal: dateSignal.signal});
   document.addEventListener('streaming:connection-finished', () => { void loadConnectionImport(); }, {signal: dateSignal.signal});
   if (connectionId) void loadConnectionImport();
+  else {
+    const params = new URL(location.href).searchParams;
+    const id = params.get('import');
+    if (id && params.get('source') === service && !params.has('connection')) {
+      for (let parent = app.parentElement; parent; parent = parent.parentElement) {
+        if (parent instanceof HTMLDetailsElement) parent.open = true;
+      }
+      workflow.classList.remove('hidden'); uploadControls.classList.add('hidden');
+      workflow.innerHTML = '<div class="streaming-uploading" role="status"><h2>Loading your import…</h2></div>';
+      void request<StreamingSession>(`/imports/${encodeURIComponent(id)}`).then(updated => {
+        if (dateSignal.signal.aborted) return;
+        restoreSession(updated); render();
+        if (session?.status === 'preparing') void poll();
+        if (session?.status === 'committing') void commit();
+      }).catch(error => { workflow.classList.add('hidden'); uploadControls.classList.remove('hidden'); showError(error.message); });
+    }
+  }
 
   upload.addEventListener("click", (event) => {
     if ((event.target as HTMLElement).closest("a")) return;

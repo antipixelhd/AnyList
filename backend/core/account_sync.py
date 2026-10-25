@@ -89,7 +89,9 @@ async def queue_account_pull(db, user_id: int, *, scheduled: bool = False,
     connections = (await db.execute(select(MediaServerConnection).where(
         MediaServerConnection.user_id == user_id,
     ).order_by(MediaServerConnection.id))).scalars().all()
-    targets = [(conn.type, conn.id) for conn in connections if conn.type in SERVER_RUNNERS and has_pull_options(conn)]
+    from core.connection_imports import onboarding_pending
+    targets = [(conn.type, conn.id) for conn in connections
+               if conn.type in SERVER_RUNNERS and has_pull_options(conn) and not await onboarding_pending(db, conn)]
     targets += [(provider, None) for provider in connected_cloud_sources(settings)]
     if not targets:
         if scheduled:
@@ -133,6 +135,13 @@ async def _run_provider(user_id: int, job_id: int) -> None:
         if conn and not getattr(conn, "libraries_confirmed", True):
             job.status = SyncStatus.failed
             job.error_message = "Save library selection before syncing this connection"
+            await db.commit()
+            return
+        from core.connection_imports import onboarding_pending
+        if conn and await onboarding_pending(db, conn):
+            job.status = SyncStatus.completed
+            job.current_step = "Waiting for first import"
+            job.stats = {"import_pending": True}
             await db.commit()
             return
         check = await check_provider_changes(db, user_id=user_id, provider=provider, settings=settings, conn=conn)

@@ -9,12 +9,14 @@
     <div class="attention-prompt-actions">
       <a class="button-primary" href="/recent-events" data-attention-action>Review</a>
       <button class="button-primary button-rate" type="button" data-attention-rate hidden>Rate Now</button>
+      <button class="button-secondary" type="button" data-attention-cancel-import hidden>Cancel import</button>
       <button class="button-quiet" type="button" data-attention-close aria-label="Dismiss this prompt">Dismiss</button>
     </div>
   </div>
 </aside>
 
 <script>
+import {cancelImportNotification} from '../lib/import-cancel';
 import { showMenu, hideMenu } from '../lib/ui-motion';
 import {refreshNotifications, subscribeNotifications, type NotificationSnapshot} from '../lib/notification-store';
 import {applyResponsiveArtwork, responsiveArtwork} from '../lib/responsive-artwork';
@@ -43,6 +45,15 @@ document.addEventListener('astro:page-load', () => {
   const isNotificationsPage = () => location.pathname === '/recent-events';
   let visibleIds: string[] = [];
   let currentRatings: any[] = [];
+  let currentImport: any = null;
+  prompt.querySelector('[data-attention-cancel-import]')?.addEventListener('click', async event => {
+    if (!currentImport) return;
+    const button = event.currentTarget as HTMLButtonElement;
+    button.disabled = true;
+    try { await cancelImportNotification(currentImport.payload.import_id, currentImport.payload.connection_id != null, pageListeners.signal); }
+    catch { button.textContent = 'Retry cancellation'; }
+    finally { button.disabled = false; }
+  }, {signal: pageListeners.signal});
   let showNewRatingsPopup = false;
   let preferencesLoaded = false;
   let preferenceChangedLocally = false;
@@ -79,17 +90,21 @@ document.addEventListener('astro:page-load', () => {
     lastSnapshot = data;
     if (!preferencesLoaded) { prompt.hidden = true; return; }
     const acknowledged = readAcknowledged();
-    const conflicts = (data.results || []).filter((item: any) => item.state === 'pending' && item.priority === 'high');
+    const conflicts = (data.results || []).filter((item: any) => item.state === 'pending' && item.priority === 'high' && item.kind !== 'import_ready');
     const allRatings = (data.results || []).filter((item: any) => item.kind === 'rating_needed' && item.media);
     if (!showNewRatingsPopup) writeAcknowledged(allRatings.map(token));
     const ratings = showNewRatingsPopup ? allRatings : [];
-    const eligible = [...conflicts, ...ratings];
+    const imports = (data.results || []).filter((item: any) => item.kind === 'import_ready'
+      && !document.querySelector('[data-import-session]'));
+    const eligible = [...imports, ...conflicts, ...ratings];
     // Being on Notifications acknowledges items present in each live snapshot.
     // A later snapshot after leaving will still contain fresh, unacknowledged IDs.
     if (isNotificationsPage()) writeAcknowledged(eligible.map(token));
     const unresolvedConflicts = conflicts.filter((item: any) => !acknowledged.has(token(item)) && !isNotificationsPage());
     const unresolvedRatings = ratings.filter((item: any) => !acknowledged.has(token(item)) && !isNotificationsPage());
-    const items = [...unresolvedConflicts, ...unresolvedRatings];
+    const unresolvedImports = imports.filter((item: any) => !acknowledged.has(token(item)) && !isNotificationsPage());
+    currentImport = unresolvedImports[0] || null;
+    const items = [...unresolvedImports, ...unresolvedConflicts, ...unresolvedRatings];
     visibleIds = items.map(token);
     currentRatings = unresolvedRatings;
 
@@ -113,7 +128,9 @@ document.addEventListener('astro:page-load', () => {
       rate.removeAttribute('data-quick-rate-poster');
       rate.removeAttribute('data-quick-rate-score');
       action.hidden = false;
+      prompt.querySelector<HTMLButtonElement>('[data-attention-cancel-import]')!.hidden = true;
       kicker.hidden = false;
+      kicker.textContent = 'Needs attention';
     };
 
     if (!items.length) {
@@ -122,7 +139,14 @@ document.addEventListener('astro:page-load', () => {
       return;
     }
     resetSingleRating();
-    if (items.length > 1) {
+    if (currentImport) {
+      kicker.textContent = 'Import';
+      title.textContent = currentImport.payload.title;
+      message.textContent = currentImport.message;
+      action.href = currentImport.payload.resolve_url;
+      action.textContent = 'Resume import';
+      prompt.querySelector<HTMLButtonElement>('[data-attention-cancel-import]')!.hidden = false;
+    } else if (items.length > 1) {
       const summary = [];
       if (unresolvedRatings.length) summary.push(`${unresolvedRatings.length} ${unresolvedRatings.length === 1 ? 'title' : 'titles'} ready to rate`);
       if (unresolvedConflicts.length) summary.push(`${unresolvedConflicts.length} ${unresolvedConflicts.length === 1 ? 'change' : 'changes'} need review`);
@@ -157,6 +181,7 @@ document.addEventListener('astro:page-load', () => {
     }
     if (prompt.hidden) showMenu(prompt);
   };
+  document.addEventListener('streaming:activity-changed', () => { if (lastSnapshot) renderPrompt(lastSnapshot); }, {signal: pageListeners.signal});
   document.addEventListener('anylist:rating-popup-preference', event => {
     preferenceChangedLocally = true;
     showNewRatingsPopup = Boolean((event as CustomEvent<{enabled: boolean}>).detail?.enabled);

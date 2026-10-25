@@ -874,6 +874,7 @@ async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSe
     await finish_import(db, session, validate=True)
 
     stats = {
+        "delivery_media_ids": [], "delivery_watch_ids": [],
         "movies": 0, "shows": 0, "new_entries": 0, "existing_entries": 0,
         "source_watches": 0, "source_episodes": 0, "duplicates": 0,
         "episodes": 0, "partial_shows": 0,
@@ -899,6 +900,9 @@ async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSe
         date_values = [d for d in (_to_date(x) for x in item.get("source_dates", [])) if d is not None]
         if item["kind"] == "movie":
             movie = await _get_or_create_movie(db, candidate)
+            stats["delivery_media_ids"].append(movie.id)
+            if outcome.get("status") == "completed":
+                stats["delivery_watch_ids"].append(movie.id)
             watched_dates = sorted({_to_date(d) for d in item.get("source_dates", []) if _to_date(d) is not None})
             if not watched_dates and outcome.get('status') == 'completed' and item.get('identity_verified'):
                 if not await _has_completed_event(db, user_id, movie.id, None):
@@ -921,6 +925,7 @@ async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSe
             continue
 
         show, root = await _get_or_create_show_root(db, candidate, item)
+        stats["delivery_media_ids"].append(root.id)
         maps = (await db.execute(select(EpisodeOrderMapping).where(EpisodeOrderMapping.series_tmdb_id == candidate["tmdb_id"]))).scalars().all()
         episode_mappings = {(m.tmdb_season_number, m.tmdb_episode_number): m for m in maps}
         catalog = _all_catalog_episodes(item)
@@ -1020,6 +1025,7 @@ async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSe
                     if (watched_date := _to_date(value)) is not None
                 )
         progress_count = len(watched_media)
+        stats["delivery_watch_ids"].extend(sorted(watched_media))
         root_data = dict(getattr(root, "tmdb_data", None) or {})
         imported_episode_ids = set(root_data.get("tracking_import_episode_media_ids") or [])
         imported_episode_ids.update(imported_release_media_ids)
@@ -1086,7 +1092,9 @@ async def _commit_session(session_id: str, user_id: int, idempotency_key: str) -
             session.phase = "complete"
             session.progress = {"current": len((session.payload or {}).get("items", [])), "total": len((session.payload or {}).get("items", [])), "message": "Import complete"}
             session.result = {"summary": summary, "receipt": idempotency_key, "committed_at": _now().isoformat(),
-                              "pull_pending": True}
+                              "pull_pending": True, "connection_id": (session.payload or {}).get("connection_id"),
+                              "delivery_media_ids": stats.get("delivery_media_ids", []),
+                              "delivery_watch_ids": stats.get("delivery_watch_ids", [])}
             session.payload = {}
             session.source_csv = None
             session.revision += 1
@@ -1147,6 +1155,8 @@ async def cleanup_expired_netflix_imports() -> int:
         ))
         expired = result.scalars().all()
         for session in expired:
+            from core.connection_imports import remove_abandoned_connection
+            await remove_abandoned_connection(db, session)
             session.source_csv = None
             session.payload = {}
             session.status = "cancelled"
@@ -1181,6 +1191,19 @@ async def resume_incomplete_netflix_imports() -> int:
 
 
 async def _pull_committed_import(session_id: str, user_id: int) -> None:
+    from core.connection_imports import handoff_connection
+    maker = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    async with maker() as db:
+        session = await db.get(NetflixImportSession, session_id)
+        connection_id = (session.result or {}).get('connection_id') if session and session.user_id == user_id else None
+    token = handoff_connection.set(connection_id)
+    try:
+        await _run_import_handoff(session_id, user_id)
+    finally:
+        handoff_connection.reset(token)
+
+
+async def _run_import_handoff(session_id: str, user_id: int) -> None:
     """Keep the committed import's handoff pending until an account pull runs."""
     from core.account_sync import ACTIVE, queue_account_pull, run_account_pull
     from models.sync import SyncJob, SyncStatus
@@ -1196,10 +1219,14 @@ async def _pull_committed_import(session_id: str, user_id: int) -> None:
         previous = await db.get(SyncJob, previous_id) if previous_id else None
         if previous and previous.status in ACTIVE:
             return
-        if previous and (previous.status == SyncStatus.completed or (previous.stats or {}).get("reconciled")):
+        if previous and ((previous.status == SyncStatus.completed or (previous.stats or {}).get("reconciled")) and not (previous.stats or {}).get("delivery_pending")):
+            from core.connection_imports import release_handoff
+            await release_handoff(db, session.result.get("connection_id"), session_id)
             session.result = {**session.result, "pull_pending": False}
             await db.commit()
             return
+        if previous and (previous.stats or {}).get("delivery_pending"):
+            return  # The durable delivery retry owns this batch.
         try:
             job = await queue_account_pull(db, user_id)
         except HTTPException as error:
@@ -1213,7 +1240,9 @@ async def _pull_committed_import(session_id: str, user_id: int) -> None:
     async with maker() as db:
         session = await db.get(NetflixImportSession, session_id)
         job = await db.get(SyncJob, job.id)
-        if session and job and (job.status == SyncStatus.completed or (job.stats or {}).get("reconciled")):
+        if session and job and ((job.status == SyncStatus.completed or (job.stats or {}).get("reconciled")) and not (job.stats or {}).get("delivery_pending")):
+            from core.connection_imports import release_handoff
+            await release_handoff(db, session.result.get("connection_id"), session_id)
             session.result = {**session.result, "pull_pending": False}
             await db.commit()
 

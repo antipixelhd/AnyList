@@ -182,7 +182,7 @@ class NetflixAutomaticEpisodeImportTests(unittest.IsolatedAsyncioTestCase):
         item = _duration_show((600,) * 5)
         self.assertEqual(item['outcome']['status'], 'skip')
         self.assertIsNone(item['outcome']['latest_episode'])
-        draft = SimpleNamespace(id='draft', status='review', revision=1, phase='review', progress={},
+        draft = SimpleNamespace(id='draft', status='review', revision=1, phase='review', progress={}, expires_at=datetime.utcnow() + timedelta(days=7),
                                 result={}, error_message=None, payload={'source': 'amazon', 'items': [item]})
         db = SimpleNamespace(commit=AsyncMock(), refresh=AsyncMock(), execute=AsyncMock(return_value=_MemoryResult()))
         with patch('routers.netflix_import._load_owned', new=AsyncMock(return_value=draft)):
@@ -237,7 +237,7 @@ class NetflixAutomaticEpisodeImportTests(unittest.IsolatedAsyncioTestCase):
                     'outcome':{'status':'skip', 'status_overridden':True},
                     'source_evidence':{'observations':[WatchObservation(row=2, source_title='Movie',
                         watched_at='2020-01-01', watched_seconds=2700).to_dict()]}}
-            draft = SimpleNamespace(id='draft', status='review', revision=1, phase='review', progress={},
+            draft = SimpleNamespace(id='draft', status='review', revision=1, phase='review', progress={}, expires_at=datetime.utcnow() + timedelta(days=7),
                                     result={}, error_message=None, payload={'source':'amazon', 'items':[item]})
             db = SimpleNamespace(commit=AsyncMock(), refresh=AsyncMock(), execute=AsyncMock(return_value=_MemoryResult()))
             with patch('routers.netflix_import._load_owned', AsyncMock(return_value=draft)), \
@@ -507,7 +507,7 @@ class NetflixAutomaticEpisodeImportTests(unittest.IsolatedAsyncioTestCase):
         }
         details = {"id": 559969, "title": "El Camino: A Breaking Bad Movie", "release_date": "2019-10-11",
                    "genres": [{"id": 18}], "original_language": "en"}
-        draft = SimpleNamespace(id="draft", status="review", revision=1, phase="review", progress={},
+        draft = SimpleNamespace(id="draft", status="review", revision=1, phase="review", progress={}, expires_at=datetime.utcnow() + timedelta(days=7),
                                 result={}, error_message=None, payload={"source": "amazon", "items": [item]})
         db = SimpleNamespace(commit=AsyncMock(), refresh=AsyncMock(), execute=AsyncMock(return_value=_MemoryResult()))
         with (
@@ -718,7 +718,7 @@ class NetflixDecisionTests(unittest.TestCase):
         item["outcome"]["latest_episode"] = 2
         item["outcome"]["endpoint_overridden"] = True
         session = SimpleNamespace(
-            id="legacy-draft", status="review", phase="review", progress={}, revision=4,
+            id="legacy-draft", status="review", phase="review", progress={}, expires_at=datetime.utcnow() + timedelta(days=7), revision=4,
             payload={"items": [item], "counts": {}, "errors": []}, result={}, error_message=None,
         )
 

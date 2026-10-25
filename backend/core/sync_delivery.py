@@ -60,7 +60,10 @@ async def delivery_targets(db, state):
     connections = (await db.execute(select(MediaServerConnection).where(
         MediaServerConnection.user_id == state.user_id))).scalars().all()
     targets = []
+    from core.connection_imports import onboarding_pending
     for conn in connections:
+        if await onboarding_pending(db, conn, require_snapshot=True):
+            continue
         if conn.id in state.connection_versions and conn.identity_version != state.connection_versions[conn.id]:
             continue
         if conn.push_enabled:
@@ -74,6 +77,21 @@ async def delivery_targets(db, state):
 
 
 async def deliver_cycle(user_id, job_id, factory, state=None):
+    from models.netflix_import import NetflixImportSession
+    from core.connection_imports import handoff_connection
+    async with factory() as db:
+        connection_id = await db.scalar(select(NetflixImportSession.result["connection_id"].as_integer()).where(
+            NetflixImportSession.user_id == user_id, NetflixImportSession.status == "committed",
+            NetflixImportSession.result["pull_job_id"].as_integer() == job_id,
+            NetflixImportSession.result["pull_pending"].as_boolean().is_(True)).limit(1))
+    token = handoff_connection.set(connection_id)
+    try:
+        return await _deliver_cycle(user_id, job_id, factory, state)
+    finally:
+        handoff_connection.reset(token)
+
+
+async def _deliver_cycle(user_id, job_id, factory, state=None):
     """At-least-once handoff; a failure leaves the committed batch recoverable."""
     from core.scheduler import _flush_pull_cycle
     async with _locks.setdefault(user_id, asyncio.Lock()):

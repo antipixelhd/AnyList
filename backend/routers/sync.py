@@ -335,6 +335,9 @@ async def sync_connection(
     current_user: User = Depends(get_current_user),
 ):
     conn = await _get_connection_or_404(db, connection_id, current_user.id)
+    from core.connection_imports import onboarding_pending
+    if await onboarding_pending(db, conn):
+        raise HTTPException(409, "Complete the first import before syncing this connection")
     if not full and not movie_limit and not show_limit:
         return await sync_account(background_tasks, db, current_user)
     from core.account_sync import require_idle_account
