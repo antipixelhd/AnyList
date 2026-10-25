@@ -3,7 +3,7 @@ import {gameProgress} from './game-progress';
 import {scoreLabel} from './tracker';
 import {mountListCoverPreview} from './list-cover-preview';
 import {mountListFilterControls} from './list-filter-controls';
-import {compareGameListEntries,gameListQuery} from './game-list-data';
+import {compareGameListEntries,gameListQuery,gameListRefreshQuery} from './game-list-data';
 
 let listeners:AbortController|undefined;
 export function mountGameList(){
@@ -38,12 +38,12 @@ export function mountGameList(){
   let searchTimer:ReturnType<typeof setTimeout>|undefined;
   let request:AbortController|undefined,generation=0;
   const invalidate=()=>{generation++;request?.abort();};
-  const submit=async()=>{
+  const load=async(preservePage=false)=>{
     clearTimeout(searchTimer);invalidate();
     const revision=generation;request=new AbortController();const requestSignal=request.signal;
     controls.sync(field('status').value||'all',defaultSort);
     const values=new URLSearchParams();for(const [key,value] of new FormData(form))if(typeof value==='string')values.set(key,value);
-    const query=gameListQuery(values,defaultSort).query;
+    const query=preservePage?gameListRefreshQuery(values,new URLSearchParams(location.search),defaultSort):gameListQuery(values,defaultSort).query;
     const url=new URL(location.href);url.search=query.toString();
     const content=root.querySelector<HTMLElement>('.list-content')!;
     content.setAttribute('aria-busy','true');root.querySelector('[data-game-list-error]')?.remove();
@@ -60,16 +60,24 @@ export function mountGameList(){
       for(const key of Object.keys(counts))delete counts[key];Object.assign(counts,nextCounts);
       for(const key of ['status','favorites','sort'])root.dataset[key]=next.dataset[key];
       content.replaceChildren(...document.importNode(nextContent,true).childNodes);
+      controls.refreshFacets(next.querySelector<HTMLElement>('#list-filters')!);
       const seed=document.querySelector('#list-editor-entries'),nextSeed=html.querySelector('#list-editor-entries');
       if(seed&&nextSeed){seed.textContent=nextSeed.textContent;seedEditorPage();}
       reconcileRows();mountPreview();updateCounts();
-      history.replaceState(history.state,'',url);
+      history.replaceState(history.state,'',response.url);
     }catch(error){
       if(signal.aborted||revision!==generation)return;
       const message=document.createElement('p');message.className='error-message';message.dataset.gameListError='';message.setAttribute('role','alert');
-      message.append('Unable to filter this list. ');
-      const retry=document.createElement('button');retry.type='button';retry.className='lab-text-button';retry.textContent='Retry';retry.addEventListener('click',submit,{signal});message.append(retry);content.prepend(message);
+      message.append('Unable to refresh this list. ');
+      const retry=document.createElement('button');retry.type='button';retry.className='lab-text-button';retry.textContent='Retry';retry.addEventListener('click',()=>void load(preservePage),{signal});message.append(retry);content.prepend(message);
     }finally{if(!signal.aborted&&revision===generation){request=undefined;content.removeAttribute('aria-busy');}}
+  };
+  const submit=()=>load();
+  let refreshQueued=false;
+  const refresh=()=>{
+    if(refreshQueued)return;
+    refreshQueued=true;
+    queueMicrotask(()=>{refreshQueued=false;if(!signal.aborted)void load(true);});
   };
   signal.addEventListener('abort',()=>{clearTimeout(searchTimer);invalidate();},{once:true});
   form.addEventListener('submit',event=>{event.preventDefault();void submit();},{signal});
@@ -124,11 +132,18 @@ export function mountGameList(){
     if(!entry||entry.status!==row.dataset.entryStatus||Number(entry.score??-1)!==Number(row.dataset.score)||Number(entry.total_seconds??-1)!==Number(row.dataset.hours)||(achievement&&(gameProgress(entry).achievement||'—')!==achievement.textContent)||row.querySelector<HTMLElement>('[data-game-list-favorite]')!.hidden===!!title.favorite)paint(title);
   });};
   reconcileRows();
+  let refreshAfterWrite=false;
   document.addEventListener('anylist:editor-state',event=>{
     const title=(event as CustomEvent<EditorTitle>).detail;paint(title);
     // A read begun before an optimistic write/commit may carry an older private
     // snapshot. Restart it so it cannot seed that snapshot over the saved state.
-    if(title.type==='game'&&request&&!request.signal.aborted)void submit();
+    if(root.dataset.owner!=='true'||title.type!=='game'||!title.subject)return;
+    const pending=editorStore.hasPendingSubject(title.subject);
+    if(pending&&request&&!request.signal.aborted){invalidate();refreshAfterWrite=true;}
+    if(!pending&&refreshAfterWrite){refreshAfterWrite=false;refresh();}
+  },{signal});
+  document.addEventListener('anylist:editor-committed',event=>{
+    if(root.dataset.owner==='true'&&(event as CustomEvent<{title:EditorTitle}>).detail.title.type==='game')refresh();
   },{signal});
   root.addEventListener('click',async event=>{
     const button=(event.target as Element).closest<HTMLButtonElement>('[data-game-list-rate]');if(!button)return;

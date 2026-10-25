@@ -17,6 +17,7 @@ const request=new URLSearchParams(query);request.set('offset',String(offset));re
 let data:any=null,error='';
 try{data=await tracker(`games/users/${encodeURIComponent(Astro.params.username!)}/list?${request}`,Astro.locals.token);}
 catch(cause){error=(cause as Error).message;Astro.response.status=error==='This profile is private.'?403:error==='Not found.'?404:503;}
+if(data&&page>Math.max(1,Math.ceil(data.total/limit)))return Astro.redirect(gameListHref(Astro.url.pathname,query,{page:Math.max(1,Math.ceil(data.total/limit))}));
 const entries=data?.results||[],owner=data?.profile?.owner===true;
 const href=(changes:Record<string,string|number|null>)=>gameListHref(Astro.url.pathname,query,changes);
 const showAchievements=preferences.show_game_achievements;

@@ -18,6 +18,12 @@ export function gameListHref(path:string,query:URLSearchParams,changes:Record<st
   for(const [key,value] of Object.entries(changes)){if(value==null||value==='')next.delete(key);else next.set(key,String(value));}
   return `${path}${next.size?`?${next}`:''}`;
 }
+/** Keep the current page during a save refresh, unless filters changed meanwhile. */
+export function gameListRefreshQuery(form:URLSearchParams,current:URLSearchParams,defaultSort='title') {
+  const next=gameListQuery(form,defaultSort),previous=gameListQuery(current,defaultSort);
+  if(next.query.toString()===previous.query.toString()&&previous.page>1)next.query.set('page',String(previous.page));
+  return next.query;
+}
 export function gameListEditorTitle(state:Record<string,any>):EditorTitle {
   return {id:state.subject.catalogue_id,subject:state.subject,type:'game',title:state.title,poster:state.image_url,
     year:state.year,genres:state.genres,game_class:state.game_class,base_work_id:state.base_work_id,

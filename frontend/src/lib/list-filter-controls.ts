@@ -9,7 +9,8 @@ export function mountListFilterControls(root:HTMLElement,signal:AbortSignal) {
     const yearSlider=input('year-filter');
     const yearOutput=root.querySelector<HTMLOutputElement>('#year-value')!;
     const yearField=root.querySelector<HTMLInputElement>('[data-list-selected-year]')!;
-    const availableYears=JSON.parse(yearSlider.dataset.years||'[]') as string[];
+    let availableYears=JSON.parse(yearSlider.dataset.years||'[]') as string[];
+    let pendingFacets:HTMLElement|null=null;
     const filterDropdowns=[...root.querySelectorAll<HTMLElement>('[data-filter-dropdown]')].map(root=>({
       root,
       select:root.parentElement!.querySelector<HTMLSelectElement>('select')!,
@@ -34,6 +35,7 @@ export function mountListFilterControls(root:HTMLElement,signal:AbortSignal) {
       dropdown.trigger.setAttribute('aria-expanded','false');
       void hideMenu(dropdown.menu);
       if(restoreFocus)dropdown.trigger.focus();
+      queueMicrotask(flushFacets);
     }
     function openDropdown(dropdown:FilterDropdown,focusOption=false) {
       filterDropdowns.forEach(other=>{if(other!==dropdown)closeDropdown(other);});
@@ -126,7 +128,34 @@ export function mountListFilterControls(root:HTMLElement,signal:AbortSignal) {
     }
     yearSlider.addEventListener('input',syncYear,{signal});
     syncYear();
-    return {selectedYear,sync(status:string,defaultSort:string){
+    function refreshFacets(next:HTMLElement){
+      if(signal.aborted)return;
+      if(document.activeElement===yearSlider||filterDropdowns.some(dropdown=>dropdown.trigger.getAttribute('aria-expanded')==='true')){pendingFacets=next;return;}
+      pendingFacets=null;
+      const genre=filterDropdowns.find(dropdown=>dropdown.select.id==='genre-filter');
+      const source=next.querySelector<HTMLSelectElement>('#genre-filter');
+      if(genre&&source){
+        const selected=genre.select.value;
+        const options=[...source.options].map(option=>({value:option.value,text:option.text}));
+        if(!options.some(option=>option.value===selected))options.push({value:selected,text:selected});
+        if(JSON.stringify([...genre.select.options].map(option=>({value:option.value,text:option.text})))!==JSON.stringify(options)){
+          closeDropdown(genre);
+          genre.select.replaceChildren(...options.map(option=>new Option(option.text,option.value)));
+          genre.select.value=selected;
+          genre.options=options.map(option=>{const button=document.createElement('button');button.type='button';button.role='option';button.dataset.filterValue=option.value;button.textContent=option.text;return button;});
+          genre.menu.replaceChildren(...genre.options);syncDropdown(genre);
+        }
+      }
+      const selected=yearField.value;
+      availableYears=JSON.parse(next.querySelector<HTMLInputElement>('#year-filter')?.dataset.years||'[]');
+      if(selected&&!availableYears.includes(selected))availableYears.push(selected);
+      availableYears.sort();yearSlider.dataset.years=JSON.stringify(availableYears);yearSlider.max=String(availableYears.length);
+      yearSlider.disabled=!availableYears.length;yearSlider.value=String(selected?availableYears.indexOf(selected)+1:0);syncYear();
+    }
+    function flushFacets(){if(pendingFacets)refreshFacets(pendingFacets);}
+    root.addEventListener('focusout',()=>queueMicrotask(flushFacets),{signal});
+    signal.addEventListener('abort',()=>{pendingFacets=null;},{once:true});
+    return {selectedYear,refreshFacets,sync(status:string,defaultSort:string){
       syncYear();
       const active=[status!=='all',input('list-search').value.trim()!=='',input('genre-filter').value!=='',selectedYear()!=='',input('favorite-filter').value!=='',input('sort-filter').value!==defaultSort].filter(Boolean).length;
       mobileToggle.toggleAttribute('data-active',active>0);

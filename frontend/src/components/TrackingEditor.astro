@@ -318,7 +318,7 @@ document.addEventListener('astro:page-load', () => {
     if(!current||!editing||!await confirmEntryAction(message))return;
     if(sessionSignal.aborted || currentTitle !== editing || !dialog.open)return;
     button.disabled=true;
-    try{const id=await editorStore.remove(editing);if(sessionSignal.aborted)return;finishEditing();if(document.querySelector('[data-browse-page]'))document.dispatchEvent(new CustomEvent('anylist:entry-saved',{detail:{id,status:null,score:null}}));else location.reload();}catch(e){if(sessionSignal.aborted)return;error.textContent=(e as Error).message;error.hidden=false;button.disabled=false;}
+    try{const id=await editorStore.remove(editing);if(sessionSignal.aborted)return;finishEditing();if(document.querySelector('[data-browse-page]'))document.dispatchEvent(new CustomEvent('anylist:entry-saved',{detail:{id,status:null,score:null}}));else if(editing.type!=='game'||!document.querySelector('[data-game-list]'))location.reload();}catch(e){if(sessionSignal.aborted)return;error.textContent=(e as Error).message;error.hidden=false;button.disabled=false;}
   });
   form.addEventListener('keydown', event => {
     if (event.key !== 'Enter' || event.isComposing || !(event.target instanceof HTMLInputElement)) return;
@@ -350,7 +350,7 @@ document.addEventListener('astro:page-load', () => {
           closed=new Promise<void>(resolve=>dialog.addEventListener('close',()=>resolve(),{once:true}));finishEditing();
         }
         await closed;
-        if(next)void openGame(next.subject,next.button);else if(!dialog.open&&!document.querySelector('[data-media-detail]'))location.reload();
+        if(next)void openGame(next.subject,next.button);else if(!dialog.open&&!document.querySelector('[data-media-detail], [data-game-list]'))location.reload();
       }catch(cause){
         if(sessionSignal.aborted)return;
         if(!next){

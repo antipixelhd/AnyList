@@ -3,7 +3,7 @@ import {readFileSync} from 'node:fs';
 import {stripTypeScriptTypes} from 'node:module';
 import test from 'node:test';
 const source=readFileSync(new URL('../src/lib/game-list-data.ts',import.meta.url),'utf8').replace("'./game-editor-data'",JSON.stringify(new URL('../src/lib/game-editor-data.ts',import.meta.url).href));
-const {gameListQuery,gameListHref,gameListEditorTitle,compareGameListEntries}=await import(`data:text/javascript;base64,${Buffer.from(stripTypeScriptTypes(source)).toString('base64')}`);
+const {gameListQuery,gameListHref,gameListRefreshQuery,gameListEditorTitle,compareGameListEntries}=await import(`data:text/javascript;base64,${Buffer.from(stripTypeScriptTypes(source)).toString('base64')}`);
 
 test('game list pagination keeps filters and validates incoming URL state',()=>{
   const parsed=gameListQuery(new URLSearchParams('q=Elden&status=completed&genre=RPG&year=2024&page=2&favorites=true'),'score');
@@ -13,6 +13,14 @@ test('game list pagination keeps filters and validates incoming URL state',()=>{
   assert.equal(next.searchParams.get('page'),'3');assert.equal(next.searchParams.get('sort'),'score');
   const invalid=gameListQuery(new URLSearchParams('page=Infinity&status=watching&year=any&sort=sql'));
   assert.equal(invalid.offset,0);assert.equal(invalid.query.has('status'),false);assert.equal(invalid.query.has('year'),false);assert.equal(invalid.query.get('sort'),'title');
+});
+
+test('save refresh retains a bounded list page but a changed filter starts from its first page',()=>{
+  const current=new URLSearchParams('status=completed&sort=score&page=3');
+  assert.equal(gameListRefreshQuery(new URLSearchParams('sort=score&status=completed'),current).get('page'),'3');
+  assert.equal(gameListRefreshQuery(new URLSearchParams('sort=score&status=paused'),current).has('page'),false);
+  assert.equal(gameListRefreshQuery(new URLSearchParams('sort=score&status=completed&q=Tunic'),current).has('page'),false);
+  assert.equal(gameListRefreshQuery(new URLSearchParams('sort=score&status=completed'),new URLSearchParams('status=completed&sort=score&page=Infinity')).has('page'),false);
 });
 test('game list editor seeds keep typed identity, independent expansion state and unknown progress',()=>{
   const state={subject:{kind:'game',catalogue_id:7},title:'Expansion',game_class:'expansion',base_work_id:6,listed:true,status:'completed',score:8,total_seconds:null};
