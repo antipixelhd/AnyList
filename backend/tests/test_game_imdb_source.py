@@ -61,6 +61,32 @@ class IMDbSourceTests(unittest.IsolatedAsyncioTestCase):
             self.http.request.return_value={'data':{'title':raw}}
             with self.assertRaisesRegex(ProviderError,'identity_conflict'):await self.source.title('tt123')
 
+    async def test_portraits_are_one_small_batch_with_explicit_null_images(self):
+        image={'url':'https://m.media-amazon.com/images/M/person._V1_.jpg','width':500,'height':700}
+        self.http.request.return_value={'data':{'p0':{'id':'nm1','primaryImage':image},'p1':{'id':'nm2','primaryImage':None}}}
+        result=await self.source.portraits(['nm1','nm2'])
+        self.assertEqual(result['nm1']['image'],image['url']);self.assertIsNone(result['nm2']['image'])
+        self.http.request.assert_awaited_once()
+        query=self.http.request.call_args.kwargs['json']
+        self.assertEqual(query['variables'],{'id0':'nm1','id1':'nm2'})
+        self.assertNotIn('credits',query['query'])
+        self.assertNotIn('knownFor',query['query'])
+
+    async def test_portrait_denial_missing_field_identity_and_unsafe_urls_are_not_verified_empty(self):
+        for body in [
+            {'data':{'p0':{'id':'nm1','primaryImage':None}},'extensions':{'entitlements':{'fields':{'Name.primaryImage':'DENY'}}}},
+            {'data':{'p0':{'id':'nm2','primaryImage':None}}},
+            {'data':{'p0':{'id':'nm1'}}},
+            {'data':{'p0':{'id':'nm1','primaryImage':{'url':'https://evil.example/image.jpg','width':200,'height':300}}}},
+            {'data':{'p0':{'id':'nm1','primaryImage':{'url':'https://m.media-amazon.com/images/M/a.jpg','width':True,'height':300}}}},
+        ]:
+            self.http.request.return_value=body
+            with self.assertRaises(ProviderError):await self.source.portraits(['nm1'])
+        self.http.request.reset_mock()
+        for ids in [[],['nm1']*2,['tt1'],[{}],['nm1']*17]:
+            with self.assertRaises(ProviderError):await self.source.portraits(ids)
+        self.http.request.assert_not_awaited()
+
     async def test_entitlement_denial_cannot_become_verified_empty_credits(self):
         self.http.request.return_value={'data':{'title':{**title(),'credits':connection([])}},
             'extensions':{'entitlements':{'fields':{'Title.credits':'DENY'}}}}

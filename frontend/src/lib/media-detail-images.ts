@@ -371,6 +371,12 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
     lightbox.dataset.gallery=viewerGroup();
     const url=(standalone?button.dataset.portraitImage:button.dataset.detailImage)!;
     if(active==='artwork'&&url&&!galleries.artwork.includes(url))galleries.artwork.unshift(url);
+    // A portrait may arrive after initialization. Keep that primary image in
+    // the standalone gallery before opening or requesting optional extras.
+    if(standalone&&url){
+      if(!galleries[active].some(value=>imageKey(value)===imageKey(url)))galleries[active].unshift(url);
+      info[active]=[url];
+    }
     const gridIndex=[...root.querySelectorAll('[data-detail-artwork-grid] button')].indexOf(button);
     followedSlot=undefined;
     prepareViewer();

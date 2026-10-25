@@ -99,6 +99,38 @@ class IMDbGameSource:
         raw=await self.query(TITLE_QUERY,{'id':native})
         return game_header(raw.get('title'),native)
 
+    async def portraits(self,natives):
+        """Small optional alias batch; never fetch a filmography for a headshot."""
+        if not isinstance(natives,list) or not 1<=len(natives)<=16:
+            raise ProviderError('invalid_request')
+        for native in natives:identifier(native,person=True)
+        if len(set(natives))!=len(natives):raise ProviderError('invalid_request')
+        variables={f'id{i}':native for i,native in enumerate(natives)}
+        query='query GamePersonImages('+', '.join(f'${key}: ID!' for key in variables)+') { '+ ' '.join(
+            f'p{i}: name(id: $id{i}) {{ id primaryImage {{ url width height }} }}' for i in range(len(natives)))+' }'
+        body=await self.query(query,variables)
+        if any(field=='Name.primaryImage' or field.startswith('Name.primaryImage.') for field in body.get('_denied_fields',[])):
+            raise ProviderError('not_entitled')
+        from urllib.parse import urlsplit
+        result={}
+        for i,native in enumerate(natives):
+            person=body.get(f'p{i}')
+            if not isinstance(person,dict) or person.get('id')!=native:raise ProviderError('identity_conflict')
+            if 'primaryImage' not in person:raise ProviderError('bad_response')
+            raw=person['primaryImage']
+            result[native]={'image':None,'width':None,'height':None}
+            if raw is None:continue
+            if not isinstance(raw,dict):raise ProviderError('bad_response')
+            url=raw.get('url')
+            try:parsed=urlsplit(url) if isinstance(url,str) else None
+            except ValueError:parsed=None
+            if (not parsed or parsed.scheme!='https' or parsed.netloc!='m.media-amazon.com'
+                or not re.fullmatch(r'/images/M/[^/]+\._V1[^.]*\.(?:jpg|jpeg|png)',parsed.path) or parsed.query or parsed.fragment
+                or not all(type(raw.get(key)) is int and 0<raw[key]<=100000 for key in ('width','height'))):
+                raise ProviderError('bad_response')
+            result[native]={'image':url,'width':raw['width'],'height':raw['height']}
+        return result
+
     async def credits(self,native,after=None,*,person=False):
         identifier(native,person)
         if after is not None and (not isinstance(after,str) or not 1<=len(after)<=4096):

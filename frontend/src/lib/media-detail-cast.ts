@@ -7,6 +7,7 @@ import {createProgressiveCredits} from './progressive-credits';
 import {visibleArtwork} from './visible-artwork';
 import {gameCastData,gameCharacterCards,keepCachedGameCredits,type GameCastData} from './game-cast-data';
 import {gameCastLanguages,gameCastLanguage,gameCastRows} from './game-credit-language';
+import {mountGamePersonImages} from './game-person-images';
 
 export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any = {}) {
   const whenVisible=visibleArtwork(signal);
@@ -21,6 +22,7 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
   const pending = new WeakMap<HTMLElement,()=>void>();
   const gameSeed=root.querySelector('[data-game-cast-data]');
   const seed=gameSeed?JSON.parse(gameSeed.textContent!):undefined;
+  if(gameSeed||info.gameCredits)mountGamePersonImages(root,signal);
   let gameCast:GameCastData|undefined=seed?{...seed,characters:gameCharacterCards(seed.source_characters,seed.actors)}:undefined;
   let mode: 'actors' | 'characters' = gameCast?.mode||'actors';
   let language='all';

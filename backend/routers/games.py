@@ -73,6 +73,16 @@ async def imdb_person_status(native: Annotated[str,Path(pattern=r'^nm[0-9]+$',ma
     return await view(db,native,include_profile=False)
 
 
+class PersonImageBatch(BaseModel):
+    ids:list[Annotated[int,Field(gt=0,strict=True)]]=Field(min_length=1,max_length=16)
+
+
+@router.post('/people/images')
+async def game_person_images(body:PersonImageBatch,db:DB,viewer:Reader) -> dict:
+    from core.game_person_images import portraits
+    return await portraits(db,list(dict.fromkeys(body.ids)))
+
+
 @router.get('/companies/{company_id}/works/status')
 async def company_works_status(company_id:Annotated[int,Path(gt=0)],db:DB,viewer:Reader) -> dict:
     from core.game_company_works import status

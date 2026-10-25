@@ -29,7 +29,7 @@ export interface ResponsiveArtworkAttributes {
 }
 
 interface ParsedArtwork {
-  kind: "tmdb" | "tvdb" | "igdb" | "other";
+  kind: "tmdb" | "tvdb" | "igdb" | "imdb" | "other";
   suffix?: string;
   raw: string;
 }
@@ -102,6 +102,12 @@ function parseArtwork(path: string): ParsedArtwork {
         const match=/^\/igdb\/image\/upload\/t_[^/]+(\/[^/]+)$/.exec(url.pathname);
         if(match)return {kind:'igdb',suffix:suffixWithQuery(match[1],url.search,url.hash),raw:path};
       }
+      if(url.hostname==='m.media-amazon.com'&&url.protocol==='https:'&&!url.search&&!url.hash){
+        // Retain the provider's crop; remove only our verified resize/quality
+        // modifiers so cards and the portrait viewer share one asset identity.
+        const match=/^(\/images\/M\/[^/]+\._V1[^.]*?)\.(jpg|jpeg|png)$/.exec(url.pathname);
+        if(match)return {kind:'imdb',suffix:`${match[1].replace(/_(?:QL\d+|UX\d+)(?=_|$)/g,'').replace(/_+$/,'')}_.${match[2]}`,raw:path};
+      }
     } catch {
       // Keep malformed or unsupported absolute URLs as-is below.
     }
@@ -156,6 +162,15 @@ export function responsiveArtwork(
 
   const parsed = parseArtwork(path);
   const route=options.route==='proxy'?'proxy':'direct';
+  if(parsed.kind==='imdb'){
+    const original=`https://m.media-amazon.com${parsed.suffix}`;
+    const url=(width:number)=>original.replace(/_\.(jpg|jpeg|png)$/,`_QL75_UX${width}_.$1`);
+    const width=widthFromSize(options.size||'w500');
+    if(options.size==='original')return {src:original};
+    const bucket=width!=null&&width<=185?185:width!=null&&width<=342?342:780;
+    return {src:url(bucket),...(options.sizes?{sizes:options.sizes,
+      srcset:[185,342,780].map(value=>`${url(value)} ${value}w`).join(', ')}:{})};
+  }
   if(parsed.kind==='igdb'){
     const width=widthFromSize(options.size||'w500');
     const bucket=options.size==='original'?'1080p':width!=null&&width<=185?'cover_small_2x':width!=null&&width<=500?'cover_big_2x':'720p';

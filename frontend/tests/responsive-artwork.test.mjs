@@ -2,6 +2,19 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {responsiveArtwork,artworkIdentity,ARTWORK_WIDTHS} from '../src/lib/responsive-artwork.ts';
 
+test('IMDb portraits preserve their crop and one identity across bounded CDN widths',()=>{
+  const original='https://m.media-amazon.com/images/M/person._V1_CR273,1,2730,4095_.jpg';
+  const small=responsiveArtwork(original,{size:'w185',sizes:'57px'});
+  assert.equal(small.src,'https://m.media-amazon.com/images/M/person._V1_CR273,1,2730,4095_QL75_UX185_.jpg');
+  assert.match(small.srcset,/_UX342_\.jpg 342w/);
+  assert.equal(artworkIdentity(small.src),artworkIdentity(original));
+  assert.equal(responsiveArtwork(small.src,{size:'original'}).src,original);
+  assert.equal(responsiveArtwork(original,{size:'w342',route:'proxy'}).src,
+    'https://m.media-amazon.com/images/M/person._V1_CR273,1,2730,4095_QL75_UX342_.jpg');
+  for(const url of ['https://untrusted.example/images/M/person._V1_.jpg',original+'?token=private'])
+    assert.deepEqual(responsiveArtwork(url),{src:url});
+});
+
 test('IGDB artwork uses public fit buckets and shares one identity across detail and editor sizes',()=>{
   const path='https://images.igdb.com/igdb/image/upload/t_thumb/co7sly.jpg';
   const cover=responsiveArtwork(path,{size:'w500',route:'proxy'}).src;

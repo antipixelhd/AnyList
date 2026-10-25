@@ -14,8 +14,10 @@ import { createSectionScroll } from './section-scroll';
 import {browseCardKey} from './browse-card-data';
 import {contributorSourceRefresh} from './contributor-source-refresh';
 import {contributorAvailability,disabledContributorOption} from './contributor-availability';
+import {mountGamePersonImages} from './game-person-images';
 
 export function initializeContributorPage(root: HTMLElement, signal: AbortSignal) {
+  if(root.dataset.mediaType==='game')mountGamePersonImages(root,signal);
   mountContributorBiography(root, signal);
   mountPortraitViewer(root, signal);
   const data: ContributorPage = JSON.parse(root.querySelector('[data-contributor-data]')!.textContent!);
