@@ -16,9 +16,11 @@ export function mountDetailDlc(root:HTMLElement,id:number,signal:AbortSignal){
   const paint=(title:EditorTitle)=>{
     const card=cards.get(title.id!);if(!card)return;
     card.title=title;
-    const state=title.entry||title.game_state;
-    card.button.textContent=state?.status?gameStatuses.find(([value])=>value===state.status)?.[1]||'Edit':'Edit';
-    card.button.setAttribute('aria-label',`Edit ${title.title}`);
+    const state=title.entry||(title.game_class==='expansion'?null:title.game_state);
+    const adding=title.game_class==='expansion'&&!state;
+    card.button.textContent=adding?'Add to list':state?.status?gameStatuses.find(([value])=>value===state.status)?.[1]||'Edit':'Edit';
+    card.button.setAttribute('aria-label',`${adding?'Add to list:':'Edit'} ${title.title}`);
+    card.score.hidden=!state;
     card.score.textContent=scoreLabel(state?.score??null);
   };
   const append=(raw:EditorTitle)=>{
