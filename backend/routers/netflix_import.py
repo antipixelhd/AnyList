@@ -604,8 +604,8 @@ async def cancel_netflix_import(
         if connection_id is not None:
             conn = await db.get(MediaServerConnection, connection_id, populate_existing=True)
             if conn and conn.user_id == current_user.id and conn.identity_version == identity_version:
-                from routers.auth import delete_connection
-                await delete_connection(connection_id, db, current_user)
+                from core.connection_lifecycle import delete_connection
+                await delete_connection(db, conn)
         await db.commit()
         await db.refresh(session)
     return _public_session(session)
