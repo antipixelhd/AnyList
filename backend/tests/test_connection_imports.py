@@ -1,0 +1,267 @@
+"""Connection onboarding uses the streaming draft, never background watch writes."""
+import os
+import unittest
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
+from uuid import uuid4
+
+os.environ.setdefault('SECRET_KEY', 'local-tests-only')
+os.environ.setdefault('DATABASE_URL', 'postgresql+asyncpg://test:test@localhost/test')
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from core.connection_imports import observations, prepare_items, stage_first_snapshot, finish_import, remove_covered_items
+from core.netflix_sessions import _apply_import
+from core.streaming_evidence import activity_plan
+from models import User, MediaServerConnection, NetflixImportSession, WatchEvent
+from models.tracking import StreamBaseline, SyncReview, TrackedEntry
+from routers.netflix_import import get_connection_import
+
+
+def movie(**changes):
+    return {'content_id': 'tmdb:42', 'content_type': 'movie', 'title': 'Movie',
+            'last_watched': 1578009600000, 'position': 2520000, 'duration': 3600000, **changes}
+
+
+class ConnectionEvidenceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_movie_threshold_minimum_and_explicit_watched_without_date(self):
+        details = {'id': 42, 'title': 'Movie', 'runtime': 60, 'release_date': '2019-01-01'}
+        with patch('core.connection_imports.tmdb.get_movie_light', AsyncMock(return_value=details)):
+            strong = (await prepare_items([], [movie()], {'tmdb:42': 42}, 'fixture'))[0]
+            self.assertTrue(strong['progress_reviewed'])
+            self.assertEqual(strong['outcome']['status'], 'completed')
+            weak = (await prepare_items([], [movie(position=600000)], {'tmdb:42': 42}, 'fixture'))[0]
+            self.assertFalse(weak['progress_reviewed'])
+            self.assertEqual(weak['outcome']['tracking_status'], 'dropped')
+            self.assertEqual(await prepare_items([], [movie(position=599999)], {'tmdb:42': 42}, 'fixture'), [])
+            explicit = (await prepare_items([movie(watched_at=None)], [], {'tmdb:42': 42}, 'fixture'))[0]
+            self.assertTrue(explicit['progress_reviewed'])
+            self.assertEqual(explicit['source_dates'], [])
+            self.assertEqual(activity_plan(explicit), [])
+
+    async def test_series_keeps_weak_evidence_but_suggests_only_completed_episodes(self):
+        show = {'id': 99, 'name': 'Show', 'first_air_date': '2019-01-01',
+                'seasons': [{'season_number': 1, 'episode_count': 5}]}
+        catalog = {'episodes': [{'id': n, 'name': f'Episode {n}', 'season_number': 1,
+                                'episode_number': n, 'air_date': '2019-01-01', 'runtime': 60} for n in range(1, 6)]}
+        watched = [{'content_id': 'tmdb:99', 'content_type': 'series', 'title': 'Show',
+                    'season': 1, 'episode': n, 'watched_at': 1578009600000,
+                    'date_shared': n < 3} for n in range(1, 4)]
+        progress = [{**movie(), 'content_id': 'tmdb:99', 'content_type': 'series', 'title': 'Show',
+                     'season': 1, 'episode': n, 'position': 1200000} for n in (4, 5)]
+        with patch('core.connection_imports.tmdb.get_show_light', AsyncMock(return_value=show)), \
+             patch('core.connection_imports.tmdb.get_season', AsyncMock(return_value=catalog)):
+            item = (await prepare_items(watched, progress, {'tmdb:99': 99}, 'fixture'))[0]
+        self.assertEqual(item['match']['state'], 'matched')
+        self.assertEqual(item['decision']['action'], 'confirm')
+        self.assertEqual(item['outcome']['latest_episode'], 3)
+        self.assertEqual(item['outcome']['status'], 'partial')
+        self.assertEqual(len(item['episodes']), 5)
+        self.assertEqual([e['watch_qualified'] for e in item['episodes']], [True, True, True, False, False])
+        self.assertEqual(item['episodes'][0]['dates'], [])
+        self.assertFalse(any(e['key'] == 'episode:1:1' for e in activity_plan(item)))
+
+    async def test_unresolved_identifiers_never_trigger_name_search(self):
+        with patch('core.connection_imports.tmdb.get_movie_light', AsyncMock()) as details:
+            self.assertEqual(await prepare_items([movie()], [], {}, 'fixture'), [])
+            details.assert_not_awaited()
+        self.assertEqual(observations([], [movie(position='invalid')]), [])
+
+    async def test_ambiguous_external_identity_is_not_automatically_accepted(self):
+        from core.server_sync import _resolve_nuvio_tmdb_ids
+        db = SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(all=lambda: [])))
+        with patch('core.server_sync.tmdb.find_by_external_id', AsyncMock(return_value={
+            'movie_results': [{'id': 1}, {'id': 2}],
+        })):
+            self.assertEqual(await _resolve_nuvio_tmdb_ids([
+                {'content_id': 'tt1234567', 'content_type': 'movie'}], db, 7, 'fixture'), {})
+
+
+@unittest.skipUnless(os.getenv('TRACKING_TEST_DATABASE_URL'), 'Requires disposable PostgreSQL database')
+class ConnectionDraftDatabaseTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.engine = create_async_engine(os.environ['TRACKING_TEST_DATABASE_URL'])
+        self.connection = await self.engine.connect()
+        self.transaction = await self.connection.begin()
+        self.db = AsyncSession(bind=self.connection, expire_on_commit=False, join_transaction_mode='create_savepoint')
+        key = uuid4().hex
+        self.user = User(username=key, email=f'{key}@example.test', api_key=key)
+        self.db.add(self.user)
+        await self.db.flush()
+        self.conn = MediaServerConnection(user_id=self.user.id, type='stremio', name='Fixture',
+            url='https://example.test', token='fixture', server_user_id='fixture', identity_version=0)
+        self.db.add(self.conn)
+        await self.db.flush()
+        self.details = patch('core.connection_imports.tmdb.get_movie_light', AsyncMock(return_value={
+            'id': 42, 'title': 'Movie', 'runtime': 60, 'release_date': '2019-01-01'}))
+        self.details.start()
+        self.addCleanup(self.details.stop)
+
+    async def asyncTearDown(self):
+        await self.db.close()
+        await self.transaction.rollback()
+        await self.connection.close()
+        await self.engine.dispose()
+
+    async def stage(self, watched=None, progress=None):
+        return await stage_first_snapshot(self.db, self.conn, [], watched or [], progress or [], {'tmdb:42': 42}, 'fixture')
+
+    async def draft(self):
+        baseline = await self.db.get(StreamBaseline, self.conn.id)
+        return await self.db.get(NetflixImportSession, baseline.snapshot['import_session_id'])
+
+    async def test_first_snapshot_is_private_draft_without_watch_or_notifications(self):
+        self.assertTrue(await self.stage(progress=[movie()]))
+        draft = await self.draft()
+        self.assertEqual(draft.payload['source'], 'stremio')
+        self.assertEqual(draft.payload['connection_id'], self.conn.id)
+        self.assertEqual((await self.db.scalars(select(TrackedEntry))).all(), [])
+        self.assertEqual((await self.db.scalars(select(WatchEvent))).all(), [])
+        self.assertEqual((await self.db.scalars(select(SyncReview))).all(), [])
+        self.assertTrue(await self.stage(progress=[movie(position=3000000)]))
+        self.assertEqual((await self.draft()).id, draft.id)
+        response = await get_connection_import(self.conn.id, self.db, self.user)
+        self.assertEqual(response['session']['id'], draft.id)
+        other = SimpleNamespace(id=self.user.id + 100)
+        with self.assertRaisesRegex(Exception, '404'):
+            await get_connection_import(self.conn.id, self.db, other)
+
+    async def test_empty_snapshot_creates_baseline_without_opening_importer(self):
+        self.assertTrue(await self.stage())
+        baseline = await self.db.get(StreamBaseline, self.conn.id)
+        self.assertTrue(baseline.approved)
+        self.assertNotIn('import_session_id', baseline.snapshot)
+        self.assertEqual((await self.db.scalars(select(NetflixImportSession))).all(), [])
+        self.assertFalse(await self.stage())
+
+    async def test_commit_uses_common_import_and_repeat_data_has_no_changes(self):
+        await self.stage(progress=[movie()])
+        draft = await self.draft()
+        await _apply_import(self.db, self.user.id, draft, AsyncMock())
+        await self.db.flush()
+        items = await prepare_items([], [movie()], {'tmdb:42': 42}, 'fixture')
+        self.assertEqual(await remove_covered_items(self.db, self.user.id, items), [])
+        earlier = await prepare_items([], [movie(last_watched=1546300800000)], {'tmdb:42': 42}, 'fixture')
+        self.assertEqual(len(await remove_covered_items(self.db, self.user.id, earlier)), 1)
+        await finish_import(self.db, draft)
+        self.assertTrue((await self.db.get(StreamBaseline, self.conn.id)).approved)
+
+    async def test_undated_completed_watch_preserves_progress_without_activity_date(self):
+        await self.stage(watched=[movie(watched_at=None)])
+        draft = await self.draft()
+        await _apply_import(self.db, self.user.id, draft, AsyncMock())
+        await self.db.flush()
+        watch = (await self.db.scalars(select(WatchEvent))).one()
+        self.assertTrue(watch.date_inferred)
+        entry = (await self.db.scalars(select(TrackedEntry))).one()
+        self.assertEqual(entry.progress, 1)
+        self.assertIsNone(entry.finish_date)
+        items = await prepare_items([movie(watched_at=None)], [], {'tmdb:42': 42}, 'fixture')
+        self.assertEqual(await remove_covered_items(self.db, self.user.id, items), [])
+
+    async def test_repeated_dropped_movie_is_covered_but_later_completion_is_new(self):
+        await self.stage(progress=[movie(position=600000)])
+        draft = await self.draft()
+        await _apply_import(self.db, self.user.id, draft, AsyncMock())
+        await self.db.flush()
+        weak = await prepare_items([], [movie(position=600000)], {'tmdb:42': 42}, 'fixture')
+        self.assertEqual(await remove_covered_items(self.db, self.user.id, weak), [])
+        completed = await prepare_items([], [movie()], {'tmdb:42': 42}, 'fixture')
+        self.assertEqual(len(await remove_covered_items(self.db, self.user.id, completed)), 1)
+
+    async def test_cancel_and_expiry_leave_snapshot_so_old_history_is_not_replayed(self):
+        from routers.netflix_import import cancel_netflix_import
+        await self.stage(progress=[movie()])
+        draft = await self.draft()
+        await cancel_netflix_import(draft.id, self.db, self.user)
+        self.assertTrue((await self.db.get(StreamBaseline, self.conn.id)).approved)
+        self.assertFalse(await self.stage(progress=[movie()]))
+
+    async def test_changed_connection_cannot_commit_old_account_history(self):
+        await self.stage(progress=[movie()])
+        draft = await self.draft()
+        self.conn.identity_version = 1
+        await self.db.flush()
+        with self.assertRaisesRegex(ValueError, 'connection changed'):
+            await _apply_import(self.db, self.user.id, draft, AsyncMock())
+        self.assertEqual((await self.db.scalars(select(TrackedEntry))).all(), [])
+
+    async def test_commit_worker_applies_draft_and_releases_connection_in_one_transaction(self):
+        from contextlib import asynccontextmanager
+        from core import netflix_sessions
+        await self.stage(progress=[movie()])
+        draft = await self.draft()
+        draft.status = 'committing'
+        draft.idempotency_key = 'connection-fixture'
+        await self.db.commit()
+
+        @asynccontextmanager
+        async def session():
+            yield self.db
+
+        with patch.object(netflix_sessions, 'async_sessionmaker', return_value=session), \
+             patch.object(netflix_sessions, '_pull_committed_import', AsyncMock()) as handoff:
+            await netflix_sessions._commit_session(draft.id, self.user.id, draft.idempotency_key)
+        await self.db.refresh(draft)
+        self.assertEqual(draft.status, 'committed')
+        self.assertEqual(draft.payload, {})
+        baseline = await self.db.get(StreamBaseline, self.conn.id)
+        self.assertTrue(baseline.approved)
+        self.assertNotIn('import_session_id', baseline.snapshot)
+        self.assertEqual((await self.db.scalars(select(TrackedEntry))).one().status, 'completed')
+        handoff.assert_awaited_once()
+
+    async def _assert_first_pull_stages_history(self, provider):
+        from contextlib import asynccontextmanager, ExitStack
+        from datetime import datetime, timezone
+        from core import server_sync
+        from models.base import CollectionSource
+        from models.sync import SyncJob, SyncStatus
+        self.conn.type = provider
+        self.conn.server_user_id = '1'
+        self.conn.sync_watched = True
+        self.conn.sync_playback = True
+        self.conn.sync_collection = False
+        job = SyncJob(user_id=self.user.id, connection_id=self.conn.id,
+                      source=CollectionSource(provider), status=SyncStatus.pending, job_type='pull')
+        self.db.add(job)
+        await self.db.commit()
+
+        @asynccontextmanager
+        async def session():
+            yield self.db
+
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(server_sync, 'async_sessionmaker', return_value=session))
+            stack.enter_context(patch('core.settings_store.get_effective_tmdb_key', AsyncMock(return_value='fixture')))
+            stack.enter_context(patch.object(server_sync, 'sync_items', AsyncMock(return_value=[])))
+            stack.enter_context(patch.object(server_sync, 'pre_cache_all_collected_bg', AsyncMock()))
+            stack.enter_context(patch('core.streaming_library.retry_pending_library_deliveries', AsyncMock()))
+            history = stack.enter_context(patch.object(server_sync, '_apply_nuvio_watch_history', AsyncMock()))
+            playback = stack.enter_context(patch.object(server_sync, '_apply_nuvio_progress', AsyncMock()))
+            snapshot = stack.enter_context(patch('core.tracking_snapshot.observe_stream_snapshot', AsyncMock()))
+            if provider == 'nuvio':
+                stack.enter_context(patch.object(server_sync.nuvio, 'pull_sync_data', AsyncMock(return_value=(
+                    None, {'library': [], 'watched': [movie(watched_at=None)], 'progress': [movie()], 'cw_visibility': {}}))))
+                run = server_sync._run_nuvio_sync
+            else:
+                stack.enter_context(patch.object(server_sync, '_pull_stremio_items', AsyncMock(return_value=(
+                    [{'_id': 'tmdb:42'}], True, datetime.now(timezone.utc).replace(tzinfo=None)))))
+                stack.enter_context(patch.object(server_sync, '_stremio_records', AsyncMock(return_value=(
+                    [], [movie(watched_at=None)], [movie()], set()))))
+                run = server_sync._run_stremio_sync
+            await run(self.user.id, job.id, 0, 0, self.conn.id)
+            await self.db.refresh(job)
+            self.assertEqual(job.status, SyncStatus.completed, job.error_message)
+            self.assertEqual((await self.draft()).status, 'review')
+            history.assert_not_awaited()
+            playback.assert_not_awaited()
+            snapshot.assert_not_awaited()
+            self.assertEqual((await self.db.scalars(select(WatchEvent))).all(), [])
+            self.assertEqual((await self.db.scalars(select(SyncReview))).all(), [])
+
+    async def test_nuvio_first_pull_stages_instead_of_applying_or_notifying(self):
+        await self._assert_first_pull_stages_history('nuvio')
+
+    async def test_stremio_first_pull_stages_instead_of_applying_or_notifying(self):
+        await self._assert_first_pull_stages_history('stremio')

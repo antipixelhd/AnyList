@@ -61,6 +61,7 @@ type StreamingItem = {
 
 type StreamingSession = {
   id: string;
+  idempotency_key?: string | null;
   status: "preparing" | "review" | "ready" | "committed" | "cancelled" | "failed" | string;
   phase: string;
   progress: { current: number; total: number; message: string };
@@ -71,6 +72,8 @@ type StreamingSession = {
 };
 
 type SearchResult = MatchCandidate & { id?: number | null };
+
+let activeConnectionImport: HTMLElement | null = null;
 
 function mountStreamingImport(app: HTMLElement) {
   if (!app || app.dataset.streamingInitialized === "true") return;
@@ -97,6 +100,8 @@ function mountStreamingImport(app: HTMLElement) {
   const service = app.dataset.service!;
   const serviceName = app.dataset.serviceName!;
   const extension = app.dataset.extension!;
+  const connectionId = app.dataset.connectionImport;
+  const sourceLabel = connectionId ? `From ${serviceName}` : "In your file";
   const token = document.getElementById("app-data")?.getAttribute("data-token") ?? "";
   const hasTmdbKey = app.getAttribute("data-has-tmdb-key") === "true";
 
@@ -130,6 +135,7 @@ function mountStreamingImport(app: HTMLElement) {
   });
   let idempotencyKey = "";
   let busy = false;
+  let loadingConnection = false;
   let uploadController: AbortController | null = null;
   const esc = (value: unknown) => String(value ?? "").replace(/[&<>"']/g, (char) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
@@ -202,7 +208,7 @@ function mountStreamingImport(app: HTMLElement) {
   }
 
   function heading(title: string, description = '', remaining?: number, position = ''): string {
-    return `<header class="streaming-heading"><div><div class="streaming-heading-top"><p class="streaming-step">Step ${step} of 5</p>${step > 1 ? '<button type="button" data-streaming-action="cancel" class="streaming-text-action streaming-muted streaming-mobile-cancel">Cancel</button>' : ''}</div><h2>${title}</h2>${description ? `<p class="streaming-description">${description}</p>` : ''}${position ? `<p class="streaming-position">${esc(position)}</p>` : ''}</div><div class="streaming-step-progress">${remaining != null ? `<span role="status">${remaining ? `${remaining} title${remaining === 1 ? '' : 's'} left` : 'All matches checked'}</span>` : ''}<div class="streaming-step-bars" role="img" aria-label="Step ${step} of 5">${Array.from({length: 5}, (_, index) => `<span class="${index < step ? 'is-reached' : ''}"></span>`).join('')}</div></div></header>`;
+    return `<header class="streaming-heading"><div><div class="streaming-heading-top"><p class="streaming-step">${connectionId ? `${esc(serviceName)} · ` : ""}Step ${step} of 5</p>${step > 1 ? '<button type="button" data-streaming-action="cancel" class="streaming-text-action streaming-muted streaming-mobile-cancel">Cancel</button>' : ''}</div><h2>${title}</h2>${description ? `<p class="streaming-description">${description}</p>` : ''}${position ? `<p class="streaming-position">${esc(position)}</p>` : ''}</div><div class="streaming-step-progress">${remaining != null ? `<span role="status">${remaining ? `${remaining} title${remaining === 1 ? '' : 's'} left` : 'All matches checked'}</span>` : ''}<div class="streaming-step-bars" role="img" aria-label="Step ${step} of 5">${Array.from({length: 5}, (_, index) => `<span class="${index < step ? 'is-reached' : ''}"></span>`).join('')}</div></div></header>`;
   }
 
   function artwork(path?: string | null): string {
@@ -298,7 +304,7 @@ function mountStreamingImport(app: HTMLElement) {
     const skipped = item.decision.action === 'skip';
     const arrow = app.querySelector<HTMLTemplateElement>('[data-role="streaming-match-arrow"]')!.innerHTML;
     return `<article class="streaming-match-row ${skipped ? 'is-skipped' : ''}" data-streaming-item="${esc(item.id)}" aria-label="Match for ${esc(item.source_title)}">
-      <div class="streaming-source"><span class="streaming-mobile-label">In your file</span><p>${esc(item.source_title)}</p></div>
+      <div class="streaming-source"><span class="streaming-mobile-label">${esc(sourceLabel)}</span><p>${esc(item.source_title)}</p></div>
       <span class="streaming-match-arrow" aria-hidden="true">${arrow}</span>
       <div class="streaming-found"><span class="streaming-mobile-label">We found</span><div class="streaming-title">${artwork(candidate?.poster_path)}<div>${candidate ? `<h3>${esc(candidate.title)}</h3><p>${[candidate.year, candidate.media_type === 'show' ? 'Series' : 'Movie'].filter(Boolean).map(esc).join(' · ')}</p>` : '<p>No match found</p>'}</div></div></div>
       <div class="streaming-match-actions">
@@ -359,7 +365,7 @@ function mountStreamingImport(app: HTMLElement) {
     }
     const group = (label: string, items: StreamingItem[]) => items.length ? `<details data-motion-details ${matchSequence.overview ? 'open' : ''} class="streaming-disclosure streaming-review-group"><summary class="streaming-disclosure-trigger">${label} <span>${items.length}</span>${disclosureArrow}</summary><div>${items.map(item => itemCard(item, true, automaticSet.has(item))).join('')}</div></details>` : '';
     return `${heading('Check your matches', 'Confirm the title, choose another, or skip it.', pending.length)}
-      <div class="streaming-match-table"><div class="streaming-match-columns" aria-hidden="true"><span>In your file</span><span></span><span>We found</span><span></span></div>${pending.length ? pending.map(item => itemCard(item)).join('') : '<p class="streaming-empty">All matches checked.</p>'}</div>
+      <div class="streaming-match-table"><div class="streaming-match-columns" aria-hidden="true"><span>${esc(sourceLabel)}</span><span></span><span>We found</span><span></span></div>${pending.length ? pending.map(item => itemCard(item)).join('') : '<p class="streaming-empty">All matches checked.</p>'}</div>
       ${group('Confirmed', confirmed)}${group('Skipped', skipped)}${group('Already matched', automatic)}`;
   }
 
@@ -469,10 +475,18 @@ function mountStreamingImport(app: HTMLElement) {
     app.dataset.reviewLayout = mobileReview.matches ? 'single' : 'list';
     app.dataset.importStep = String(step);
     if (!session) {
+      if (connectionId) {
+        app.hidden = true;
+        if (activeConnectionImport === app) {
+          activeConnectionImport = null;
+          document.dispatchEvent(new CustomEvent('streaming:connection-finished'));
+        }
+      }
       workflow.classList.add("hidden");
       uploadControls.classList.remove("hidden");
       return;
     }
+    app.hidden = false;
     workflow.classList.remove("hidden");
     uploadControls.classList.add("hidden");
     const isPreparing = session.status === "preparing";
@@ -483,7 +497,7 @@ function mountStreamingImport(app: HTMLElement) {
       step = 5;
       content = `<div class="streaming-complete"><span aria-hidden="true">✓</span><h2>History imported</h2><p>Your movies and series are in your list.</p></div>`;
     } else if (isFailed) {
-      content = `<div class="streaming-failure"><h2>We couldn't read this file</h2><p>${esc(session.errors?.map(error => typeof error === 'string' ? error : error.message).filter(Boolean).join(' · ') || session.progress?.message || `Download a new copy of your ${serviceName} viewing history and try again.`)}</p><button type="button" data-streaming-action="restart" class="streaming-button streaming-primary">Choose another file</button></div>`;
+      content = `<div class="streaming-failure"><h2>${connectionId ? "Import could not be completed" : "We couldn't read this file"}</h2><p>${esc(session.errors?.map(error => typeof error === 'string' ? error : error.message).filter(Boolean).join(' · ') || session.progress?.message || `Download a new copy of your ${serviceName} viewing history and try again.`)}</p><button type="button" data-streaming-action="${connectionId ? "cancel" : "restart"}" class="streaming-button streaming-primary">${connectionId ? "Cancel import" : "Choose another file"}</button></div>`;
     } else if (isPreparing) {
       const total = Math.max(0, session.progress?.total ?? 0);
       const current = Math.max(0, session.progress?.current ?? 0);
@@ -501,7 +515,7 @@ function mountStreamingImport(app: HTMLElement) {
 
     const nav = isPreparing || isFailed
       ? `<button type="button" data-streaming-action="cancel" class="streaming-text-action streaming-muted">Cancel</button>`
-      : isCommitted ? `<button type="button" data-streaming-action="restart" class="streaming-button streaming-primary">Import another file</button>`
+      : isCommitted ? `<button type="button" data-streaming-action="restart" class="streaming-button streaming-primary">${connectionId ? 'Done' : 'Import another file'}</button>`
       : reviewNavigation() ?? `<button type="button" data-streaming-action="cancel" class="streaming-text-action streaming-muted streaming-cancel">Cancel import</button><div class="streaming-nav-actions">${decisionStep(step - 1, -1) !== null ? '<button type="button" data-streaming-action="back" class="streaming-button streaming-secondary">Back</button>' : ''}${step < 5 ? `<button type="button" data-streaming-action="next" ${step === 2 && !titleReviewComplete() ? 'disabled' : ''} class="streaming-button streaming-primary">Continue</button>` : `<button type="button" data-streaming-action="commit" ${busy || saving ? 'disabled' : ''} class="streaming-button streaming-primary">${busy ? 'Importing…' : 'Import history'}</button>`}</div>`;
     workflow.innerHTML = `<div class="streaming-flow">${content}<footer class="streaming-footer">${nav}</footer></div>`;
     if (saving) workflow.querySelectorAll<HTMLButtonElement | HTMLInputElement | HTMLSelectElement>('button, input, select').forEach(control => { control.disabled = true; });
@@ -721,7 +735,14 @@ function mountStreamingImport(app: HTMLElement) {
 
   const finishDialog = app.querySelector<HTMLDialogElement>('[data-role="streaming-finish-dialog"]')!;
   const dateSignal = new AbortController();
-  document.addEventListener('astro:before-swap', () => dateSignal.abort(), {once: true});
+  document.addEventListener('astro:before-swap', () => {
+    dateSignal.abort();
+    if (activeConnectionImport === app) activeConnectionImport = null;
+    window.clearTimeout(pollTimer);
+    window.clearTimeout(searchTimer);
+    searchController?.abort();
+    uploadController?.abort();
+  }, {once: true});
   mobileReview.addEventListener('change', () => render(), {signal: dateSignal.signal});
   const refreshFinishDate = setupCalendarDateInputs(finishDialog, dateSignal.signal, {returnFocus: 'trigger'});
   async function confirmFinishDate(item: StreamingItem, reselectingCompleted = false) {
@@ -956,6 +977,33 @@ function mountStreamingImport(app: HTMLElement) {
     } finally { saving = false; render(); }
     if (remapped && wasPending) await advanceAfterLastMatch();
   });
+
+  async function loadConnectionImport() {
+    if (!connectionId || !app.isConnected || dateSignal.signal.aborted || session || loadingConnection) return;
+    if (app.parentElement?.closest('[hidden]')) return;
+    if (activeConnectionImport?.isConnected && activeConnectionImport !== app) return;
+    loadingConnection = true;
+    try {
+      const result = await request<{session: StreamingSession | null; checking: boolean}>(`/imports/connections/${encodeURIComponent(connectionId)}`, {signal: dateSignal.signal});
+      if (dateSignal.signal.aborted) return;
+      if (result.session) {
+        if (activeConnectionImport?.isConnected && activeConnectionImport !== app) return;
+        activeConnectionImport = app;
+        session = result.session;
+        idempotencyKey = session.idempotency_key || '';
+        step = decisionStep(2, 1)!;
+        render();
+        if (session.status === 'committing') void commit();
+      } else if (result.checking) {
+        pollTimer = window.setTimeout(loadConnectionImport, 1500);
+      }
+    } catch (error) {
+      if (!dateSignal.signal.aborted) showError(error instanceof Error ? error.message : 'Could not load connection history.');
+    } finally { loadingConnection = false; }
+  }
+  document.addEventListener('connections:sync-updated', () => { void loadConnectionImport(); }, {signal: dateSignal.signal});
+  document.addEventListener('streaming:connection-finished', () => { void loadConnectionImport(); }, {signal: dateSignal.signal});
+  if (connectionId) void loadConnectionImport();
 
   upload.addEventListener("click", (event) => {
     if ((event.target as HTMLElement).closest("a")) return;

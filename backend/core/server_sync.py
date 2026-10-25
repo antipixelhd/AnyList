@@ -2510,8 +2510,9 @@ async def _resolve_nuvio_tmdb_ids(
                 result = await tmdb.find_by_external_id(content_id, "imdb_id", api_key=api_key)
                 result_key = "movie_results" if content_types[content_id] == "movie" else "tv_results"
                 matches = result.get(result_key) or []
-                if matches and matches[0].get("id") is not None:
-                    resolved[content_id] = int(matches[0]["id"])
+                identities = {int(match['id']) for match in matches if match.get('id') is not None}
+                if len(identities) == 1:
+                    resolved[content_id] = identities.pop()
             except Exception as exc:
                 logger.warning(
                     "Failed to resolve Nuvio IMDb ID %s through TMDB: %s",
@@ -3114,7 +3115,14 @@ async def _run_nuvio_sync(
                     sync_watched=False,
                 )
 
-            if conn.sync_watched and watched_records:
+            from core.connection_imports import stage_first_snapshot
+            reviewing_import = False
+            if not stats['errors']:
+                reviewing_import = await stage_first_snapshot(
+                    db, conn, library_records, watched_records, progress_records, tmdb_ids,
+                    tmdb_api_key, full_resync=full_resync, source_started_at=pull_started_at,
+                )
+            if not reviewing_import and conn.sync_watched and watched_records:
                 from core.streaming_clear import assert_pull_snapshot_current
                 await assert_pull_snapshot_current(
                     db, user_id, conn, pull_started_at, full_resync=full_resync,
@@ -3134,7 +3142,7 @@ async def _run_nuvio_sync(
                     )
                 )
 
-            if progress_records:
+            if progress_records and not reviewing_import:
                 from core.streaming_clear import assert_pull_snapshot_current
                 await assert_pull_snapshot_current(
                     db, user_id, conn, pull_started_at, full_resync=full_resync,
@@ -3182,7 +3190,7 @@ async def _run_nuvio_sync(
                 )
 
             changed_media_ids = set(new_collected_ids) | set(removed_collected_ids)
-            if (conn.sync_playback or conn.sync_watched or full_resync) and not stats['errors']:
+            if not reviewing_import and (conn.sync_playback or conn.sync_watched or full_resync) and not stats['errors']:
                 from core.tracking_snapshot import observe_stream_snapshot
                 removed_watch_ids = set()
                 propagated_watch_ids = await observe_stream_snapshot(
@@ -3684,7 +3692,14 @@ async def _run_stremio_sync(
                 await sync_group(normalized_watched, media_type, sync_collection=False)
                 await sync_group(normalized_progress, media_type, sync_collection=False)
 
-            if conn.sync_watched and watched_records:
+            from core.connection_imports import stage_first_snapshot
+            reviewing_import = False
+            if not stats['errors']:
+                reviewing_import = await stage_first_snapshot(
+                    db, conn, library_records, watched_records, progress_records, tmdb_ids,
+                    tmdb_api_key, full_resync=full_resync, source_started_at=pull_started_at,
+                )
+            if not reviewing_import and conn.sync_watched and watched_records:
                 from core.streaming_clear import assert_pull_snapshot_current
                 await assert_pull_snapshot_current(
                     db, user_id, conn, pull_started_at, full_resync=full_resync,
@@ -3704,7 +3719,7 @@ async def _run_stremio_sync(
                         dedupe_by_media_id_only=True,
                     )
                 )
-            if progress_records:
+            if progress_records and not reviewing_import:
                 from core.streaming_clear import assert_pull_snapshot_current
                 await assert_pull_snapshot_current(
                     db, user_id, conn, pull_started_at, full_resync=full_resync,
@@ -3743,7 +3758,7 @@ async def _run_stremio_sync(
                     api_key=tmdb_api_key,
                 )
             changed_media_ids = set(new_collected_ids) | set(removed_collected_ids)
-            if (conn.sync_playback or conn.sync_watched or full_resync) and not stats['errors']:
+            if not reviewing_import and (conn.sync_playback or conn.sync_watched or full_resync) and not stats['errors']:
                 from core.tracking_snapshot import observe_stream_snapshot
                 removed_watch_ids = set()
                 propagated_watch_ids = await observe_stream_snapshot(
@@ -3770,8 +3785,9 @@ async def _run_stremio_sync(
                 await retry_pending_library_deliveries(db, user_id, conn.id)
             # Tracking/watch changes remain local until their own confirmation rules
             # allow export. Verified streaming-library deltas are mirrored separately.
-            conn.stremio_pull_cursor_at = pull_started_at
-            conn.stremio_full_sync_done = True
+            if not reviewing_import:
+                conn.stremio_pull_cursor_at = pull_started_at
+                conn.stremio_full_sync_done = True
             stats["succeeded"] = len(changed_media_ids)
             stats["failed"] = stats["errors"]
             warnings = await _stamp_matched_show_warnings(db, user_id, warnings)

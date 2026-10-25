@@ -381,6 +381,34 @@ def _require_playback_review(items: list[dict]) -> None:
         item["decision"] = {"action": None}
 
 
+async def hydrate_existing_items(db, user_id, items):
+    """Attach local state and require proven mappings for alternate episode order."""
+    for item in items:
+        candidate = item["match"].get("candidate")
+        if not candidate:
+            continue
+        media_type = MediaType.movie if item["kind"] == "movie" else MediaType.series
+        media = (await db.execute(select(Media).where(
+            Media.tmdb_id == candidate["tmdb_id"], Media.media_type == media_type,
+        ))).scalar_one_or_none()
+        if media:
+            tracked = (await db.execute(select(TrackedEntry).where(
+                TrackedEntry.user_id == user_id, TrackedEntry.media_id == media.id,
+            ))).scalar_one_or_none()
+            item["existing"] = _existing_state(media, tracked)
+        if item["kind"] == "show":
+            show = (await db.execute(select(Show).where(Show.tmdb_id == candidate["tmdb_id"]))).scalar_one_or_none()
+            if show and show.canonical_source == "tvdb":
+                tmdb_eps = [e for e in item.get("episodes", []) if e.get("matched") and e.get("season_number", 0) > 0 and e.get("episode_number")]
+                tmdb_positions = {(e["season_number"], e["episode_number"]) for e in tmdb_eps}
+                mappings = (await db.execute(select(EpisodeOrderMapping).where(EpisodeOrderMapping.series_tmdb_id == candidate["tmdb_id"]))).scalars().all()
+                mapped = {(m.tmdb_season_number, m.tmdb_episode_number) for m in mappings}
+                if tmdb_positions - mapped:
+                    item["match"]["state"] = "review"
+                    item["match"]["reason"] = "This existing show uses TVDB episode order; confirm an episode order before importing."
+                    item["decision"]["action"] = None
+
+
 async def _prepare_session(session_id: str, user_id: int, language: str | None) -> None:
     maker = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     try:
@@ -445,30 +473,7 @@ async def _prepare_session(session_id: str, user_id: int, language: str | None) 
             ).with_for_update())).scalar_one_or_none()
             if session is None or session.status != "preparing" or session_id in _cancelled:
                 return
-            for item in items:
-                candidate = item["match"].get("candidate")
-                if not candidate:
-                    continue
-                media_type = MediaType.movie if item["kind"] == "movie" else MediaType.series
-                media = (await db.execute(select(Media).where(
-                    Media.tmdb_id == candidate["tmdb_id"], Media.media_type == media_type,
-                ))).scalar_one_or_none()
-                if media:
-                    tracked = (await db.execute(select(TrackedEntry).where(
-                        TrackedEntry.user_id == user_id, TrackedEntry.media_id == media.id,
-                    ))).scalar_one_or_none()
-                    item["existing"] = _existing_state(media, tracked)
-                if item["kind"] == "show":
-                    show = (await db.execute(select(Show).where(Show.tmdb_id == candidate["tmdb_id"]))).scalar_one_or_none()
-                    if show and show.canonical_source == "tvdb":
-                        tmdb_eps = [e for e in item.get("episodes", []) if e.get("matched") and e.get("season_number", 0) > 0 and e.get("episode_number")]
-                        tmdb_positions = {(e["season_number"], e["episode_number"]) for e in tmdb_eps}
-                        mappings = (await db.execute(select(EpisodeOrderMapping).where(EpisodeOrderMapping.series_tmdb_id == candidate["tmdb_id"]))).scalars().all()
-                        mapped = {(m.tmdb_season_number, m.tmdb_episode_number) for m in mappings}
-                        if tmdb_positions - mapped:
-                            item["match"]["state"] = "review"
-                            item["match"]["reason"] = "This existing show uses TVDB episode order; confirm an episode order before importing."
-                            item["decision"]["action"] = None
+            await hydrate_existing_items(db, user_id, items)
             from core.streaming_duplicates import remove_covered_items
             items, already_imported = await remove_covered_items(db, user_id, items)
             counts = {**counts, "already_imported": already_imported}
@@ -865,6 +870,8 @@ async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSe
     # progress. All catalog and personal writes below share this transaction.
     from models.users import User as UserModel
     await db.execute(select(UserModel.id).where(UserModel.id == user_id).with_for_update())
+    from core.connection_imports import finish_import
+    await finish_import(db, session, validate=True)
 
     stats = {
         "movies": 0, "shows": 0, "new_entries": 0, "existing_entries": 0,
@@ -893,6 +900,11 @@ async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSe
         if item["kind"] == "movie":
             movie = await _get_or_create_movie(db, candidate)
             watched_dates = sorted({_to_date(d) for d in item.get("source_dates", []) if _to_date(d) is not None})
+            if not watched_dates and outcome.get('status') == 'completed' and item.get('identity_verified'):
+                if not await _has_completed_event(db, user_id, movie.id, None):
+                    db.add(WatchEvent(user_id=user_id, media_id=movie.id,
+                        watched_at=inferred_watch_datetime(), date_inferred=True,
+                        completed=True, play_count=1, provisional=True))
             for watched_date in watched_dates[:1] if outcome.get("status") == "completed" else []:
                 watched_at = datetime.combine(watched_date, datetime.min.time())
                 if await reconcile_inferred_watch_date(db, user_id, movie.id, watched_at, authoritative=True) or await _reconcile_first_watch(db, user_id, movie.id, watched_at) or await _has_completed_event(db, user_id, movie.id, watched_at):
@@ -1053,6 +1065,8 @@ async def _commit_session(session_id: str, user_id: int, idempotency_key: str) -
             stats = await _apply_import(db, user_id, session, report_progress)
             if session_id in _cancelled:
                 raise ImportCancelled()
+            from core.connection_imports import finish_import
+            await finish_import(db, session)
             summary = {
                 "movies": stats["movies"], "shows": stats["shows"],
                 "new_entries": stats["new_entries"], "existing_entries": stats["existing_entries"],

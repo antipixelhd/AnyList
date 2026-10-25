@@ -1,7 +1,7 @@
 """Private, resumable Netflix viewing-history import drafts."""
 
 from __future__ import annotations
-from typing import Literal
+from typing import Annotated, Literal
 from core import netflix_sessions
 
 import uuid
@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core import tmdb, settings_store
 from db import get_db
 from dependencies import get_current_user
-from models import Media, NetflixImportSession, User
+from models import Media, MediaServerConnection, NetflixImportSession, User
 from models.base import MediaType
 from models.tracking import TrackedEntry
 
@@ -257,6 +257,7 @@ def _public_session(session: NetflixImportSession) -> dict:
         "phase": session.phase,
         "progress": session.progress or {"current": 0, "total": 0, "message": ""},
         "revision": session.revision,
+        "idempotency_key": session.idempotency_key if session.status == 'committing' else None,
         "items": items,
         "summary": summary,
         "errors": errors,
@@ -335,6 +336,30 @@ async def get_netflix_import(
     elif session.status == "committing" and session_id not in netflix_sessions._committing:
         _schedule_commit(background_tasks, session_id, current_user.id, session.idempotency_key)
     return _public_session(session)
+
+
+@router.get("/connections/{connection_id}")
+async def get_connection_import(
+    connection_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    from models.tracking import StreamBaseline
+    from models.sync import SyncJob, SyncStatus
+    conn = await db.get(MediaServerConnection, connection_id)
+    if conn is None or conn.user_id != current_user.id or conn.type not in ('nuvio', 'stremio'):
+        raise HTTPException(404, 'Connection not found')
+    baseline = await db.get(StreamBaseline, connection_id)
+    session_id = (baseline.snapshot or {}).get('import_session_id') if baseline else None
+    session = await db.get(NetflixImportSession, session_id) if session_id else None
+    if session and session.user_id == current_user.id and session.status in ('review', 'committing', 'failed'):
+        if session.expires_at > netflix_sessions._now():
+            return {'session': _public_session(session), 'checking': False}
+    running = await db.scalar(select(SyncJob.id).where(
+        SyncJob.user_id == current_user.id, SyncJob.connection_id == connection_id,
+        SyncJob.status.in_((SyncStatus.pending, SyncStatus.running)),
+    ).limit(1))
+    return {'session': None, 'checking': baseline is None and running is not None}
 
 
 @router.patch("/{session_id}/items/{item_id}")
@@ -517,6 +542,8 @@ async def cancel_netflix_import(
         raise HTTPException(status_code=409, detail="An imported history cannot be cancelled after it has been committed.")
     if session.status != "cancelled":
         netflix_sessions._cancelled.add(session_id)
+        from core.connection_imports import finish_import
+        await finish_import(db, session)
         session.status = "cancelled"
         session.phase = "complete"
         session.source_csv = None

@@ -1,5 +1,6 @@
 ---
 import LocalDateTime from '../components/LocalDateTime.astro';
+import StreamingImport from "../components/settings/StreamingImport.astro";
 import DataImportSettings from "../components/settings/DataImportSettings.astro";
 import DataImportDialogs from "../components/settings/DataImportDialogs.astro";
 import TraktSettings from "../components/settings/TraktSettings.astro";
@@ -44,6 +45,11 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
 
     <div class="settings-stack">
       <div class="settings-stack" hidden={section !== "connections"}>
+      <section data-connection-imports>
+        {connections.filter(conn => conn.type === 'nuvio' || conn.type === 'stremio').map(conn => (
+          <StreamingImport hasTmdbKey={hasTmdbKey} service={conn.type as 'nuvio' | 'stremio'} connectionId={conn.id} connectionName={conn.name} />
+        ))}
+      </section>
       {!me.is_admin && <MetadataConnections settings={settings} />}
       <section class="space-y-3">
         <h2 class="section-headline border-b border-zinc-800 pb-2">Synchronization</h2>
@@ -793,6 +799,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
             </div>
           </div>
         </form>
+
       </section>
 
       </div>
@@ -3061,6 +3068,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
       });
       if (!res.ok) return;
       const jobs: any[] = await res.json();
+      document.dispatchEvent(new CustomEvent("connections:sync-updated"));
 
       function parseUTC(dateStr: string): Date {
         return timestamp(dateStr) || new Date(NaN);
