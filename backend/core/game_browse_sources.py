@@ -121,6 +121,9 @@ class GameBrowseSources:
         async with _slots:
             return await self.api.http.request(provider, 'GET', url, **kwargs)
 
+    async def defer(self,provider,seconds):
+        await self.api.http.defer(provider,seconds)
+
     async def reference(self, endpoint, fields):
         async def load():
             rows = await self.igdb(endpoint, f'fields {fields}; limit 500;')

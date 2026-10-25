@@ -60,7 +60,8 @@ class PersonEnrichmentTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(rows[0].attributes['voice']);self.assertEqual(rows[0].attributes['languages'],[])
         async with self.Session() as db:
             state=await view(db,'nm1')
-            self.assertTrue(state['complete']);self.assertEqual(state['mapping']['state'],'partial')
+            self.assertFalse(state['complete']);self.assertTrue(state['pending'])
+            self.assertTrue(state['mapping']['source_complete']);self.assertEqual(state['mapping']['state'],'partial')
             self.assertEqual((state['mapping']['source_games'],state['mapping']['mapped_games'],state['mapping']['unmapped_games']),(2,1,1))
             self.assertEqual(state['profile']['biography'],'A biography mentioning game work')
             person=await db.get(CatalogueEntity,self.person_id)
@@ -127,8 +128,9 @@ class PersonEnrichmentTests(unittest.IsolatedAsyncioTestCase):
         try:
             async with self.Session() as db:state=await view(db,'nm1',include_profile=False)
         finally:event.remove(self.engine.sync_engine,'before_cursor_execute',record)
-        self.assertNotIn('profile',state);self.assertEqual(len(statements),2)
-        self.assertTrue(all('payload' not in statement for statement in statements))
+        self.assertNotIn('profile',state);self.assertEqual(len(statements),3)
+        self.assertTrue(all('catalogue_metadata_snapshots.payload,' not in statement
+            and 'catalogue_metadata_snapshots.payload \nFROM' not in statement for statement in statements))
 
     async def test_new_reviewed_binding_reprojects_cached_pages_without_renewing_source_freshness(self):
         from core.game_imdb_bindings import GameIMDbBindings

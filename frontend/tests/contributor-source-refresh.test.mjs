@@ -6,7 +6,7 @@ async function fixture(run){
   const original={fetch:globalThis.fetch,set:globalThis.setTimeout,clear:globalThis.clearTimeout};
   const timers=[],calls=[],paint=[],controller=new AbortController();
   let reply={id:'nm1',pending:false,complete:true,fetched_at:'new'};
-  globalThis.setTimeout=callback=>{const timer={callback};timers.push(timer);return timer;};
+  globalThis.setTimeout=(callback,delay)=>{const timer={callback,delay};timers.push(timer);return timer;};
   globalThis.clearTimeout=timer=>{const index=timers.indexOf(timer);if(index>=0)timers.splice(index,1);};
   globalThis.fetch=async(path,options)=>{calls.push({path,options});return Response.json(reply);};
   const resource=contributorSourceRefresh(controller.signal,value=>paint.push(value));
@@ -38,6 +38,24 @@ test('new mappings offer a refresh even when the cached source timestamp stays f
   f.resource.update({id:'nm1',pending:true,complete:false,fetched_at:'same',revision:'old'});
   f.reply({id:'nm1',pending:false,complete:true,fetched_at:'same',revision:'new'});
   await f.tick();assert.equal(f.paint.at(-1),true);
+}));
+
+test('transient discovery failures respect cooldown and offer recovered works without reshuffling',()=>fixture(async f=>{
+  f.resource.update({id:'nm1',pending:true,complete:false,error:'rate_limited',retry_after:180,fetched_at:'same',revision:'old'});
+  assert.equal(f.timers[0].delay,180000);assert.equal(f.calls.length,0);
+  f.reply({id:'nm1',pending:true,complete:false,error:'rate_limited',retry_after:300});
+  await f.tick();assert.equal(f.paint.at(-1),false);assert.equal(f.timers[0].delay,300000);
+  f.reply({id:'nm1',pending:false,complete:true,fetched_at:'same',revision:'new'});
+  await f.tick();assert.equal(f.paint.at(-1),true);assert.equal(f.timers.length,0);
+}));
+
+test('persistent retry states stop after twenty status reads and navigation clears long cooldowns',()=>fixture(async f=>{
+  f.resource.update({id:'nm1',pending:true,complete:false});
+  f.reply({id:'nm1',pending:true,complete:false,error:'unavailable',retry_after:3600});
+  for(let index=0;index<20;index++)await f.tick();
+  assert.equal(f.calls.length,20);assert.equal(f.timers.length,0);assert.equal(f.paint.at(-1),false);
+  f.resource.update({id:'nm1',pending:true,complete:false,error:'rate_limited',retry_after:3600});
+  assert.equal(f.timers[0].delay,3600000);f.controller.abort();assert.equal(f.timers.length,0);
 }));
 
 test('company portfolios poll an approval-protected compact status and preserve the shared refresh behavior',()=>fixture(async f=>{

@@ -1,7 +1,7 @@
 """On-demand IMDb person components, isolated from public movie/series profiles.
 
 Complete source connections are cached independently of game mapping coverage.
-Only existing explicit IMDb-to-IGDB bindings become catalogue participation.
+Explicit IMDb-to-IGDB bindings become participation; missing bindings are discovered on demand.
 """
 import asyncio
 import uuid
@@ -47,6 +47,7 @@ async def view(db,native,*,state=None,include_profile=True,check_mapping=False):
     identifier(native,person=True)
     row=(await db.execute(snapshot(COMPONENT,native).with_only_columns(
         *([MetadataSnapshot.payload['profile'].label('profile')] if include_profile else []),MetadataSnapshot.coverage,
+        *([MetadataSnapshot.payload['generation'].astext.label('generation'),MetadataSnapshot.entity_id] if check_mapping else []),
         MetadataSnapshot.fetched_at))).one_or_none()
     if state is None:state=await job_status(db,native,kind=JOB)
     if check_mapping and row and row.coverage.get('source_complete') and not state['pending']:
@@ -55,6 +56,15 @@ async def view(db,native,*,state=None,include_profile=True,check_mapping=False):
             # A reviewed/new game mapping can unlock cached person works.
             # Replay the saved connection instead of refetching IMDb for it.
             if await queue_projection(db,native):state={**state,'state':'pending','pending':True,'complete':False,'error':None,'retry_after':2}
+    if row and row.coverage.get('source_complete') and row.coverage.get('unmapped_games',0) and not state['pending']:
+        from core.game_imdb_discovery import request as discover,header as discovery_header,status as discovery_status
+        if check_mapping and row.generation and row.entity_id:
+            discovery=await discover(db,native,row.generation,row.entity_id)
+        else:
+            saved=await discovery_header(db,native)
+            discovery=discovery_status(saved) if saved else None
+        if discovery and discovery['pending']:
+            state={**state,**{key:discovery[key] for key in ('state','pending','complete','retry_after','error')}}
     return {'id':native,**state,**({'profile':row.profile if row else None} if include_profile else {}),
         'fetched_at':row.fetched_at.replace(tzinfo=timezone.utc).isoformat() if row and row.fetched_at else None,
         'revision':row.coverage.get('projection_revision') if row else None,
@@ -114,6 +124,11 @@ async def project_mapped(db,native,rows,generation,*,source_generation=None):
     ids={row['title_id'] for row in games}
     bindings=dict((await db.execute(verified_bindings(ids).with_only_columns(
         CatalogueIdentity.external_id,CatalogueIdentity.entity_id))).all()) if ids else {}
+    from core.game_imdb_discovery import MAP
+    excluded=set(await db.scalars(select(MetadataSnapshot.external_id).where(MetadataSnapshot.provider=='wikidata',
+        MetadataSnapshot.kind==MAP,MetadataSnapshot.external_id.in_(ids),MetadataSnapshot.payload['status'].astext=='excluded',
+        MetadataSnapshot.expires_at>now()))) if ids else set()
+    excluded|=ids-{row['title_id'] for row in games if row['category']!='thanks'}
     credits=[]
     for row in games:
         work=bindings.get(row['title_id'])
@@ -147,9 +162,10 @@ async def project_mapped(db,native,rows,generation,*,source_generation=None):
     role_coverage={}
     for kind in ('actor','staff'):
         titles={row['title_id'] for row in games if (row['category'] in acting)==(kind=='actor') and row['category']!='thanks'}
-        role_coverage[kind]={'source':len(titles),'unmapped':len(titles-set(bindings))}
-    return {'role_coverage':role_coverage,'state':'partial' if omitted or ids-set(bindings) else 'mapped','source_games':len(ids),
-        'mapped_games':len(set(bindings)&ids),'unmapped_games':len(ids-set(bindings)),'omitted_rows':omitted,
+        role_coverage[kind]={'source':len(titles-excluded),'raw_source':len(titles),'excluded':len(titles&excluded),
+            'unmapped':len(titles-set(bindings)-excluded)}
+    return {'role_coverage':role_coverage,'state':'partial' if omitted or ids-set(bindings)-excluded else 'mapped','source_games':len(ids),
+        'mapped_games':len(set(bindings)&ids),'excluded_games':len(excluded),'unmapped_games':len(ids-set(bindings)-excluded),'omitted_rows':omitted,
         'scope':'retrieved_person_connection','official_filmography_complete':False}
 
 
@@ -265,6 +281,9 @@ class GameIMDbPersonEnrichment:
                 component.coverage={**mapping,'source_complete':True,'projection_revision':state['generation'],
                     'binding_revision':await binding_revision(db)}
                 component.fetched_at=now();component.expires_at=now()+timedelta(days=30)
+                if mapping.get('unmapped_games'):
+                    from core.game_imdb_discovery import request as discover
+                    await discover(db,native,state['generation'],job.entity_id)
                 state['state']='complete';state.pop('cursor');state.pop('seen')
                 job.next_attempt_at=job.lease_token=job.lease_until=None
                 job.expires_at=now()+timedelta(days=30)

@@ -16,7 +16,8 @@ export function contributorSourceRefresh(signal:AbortSignal, ready:(available:bo
     if(signal.aborted||!initial?.pending||!(company?/^[1-9][0-9]*$/:/^nm[0-9]+$/).test(initial.id))return;
     const current=generation;
     let attempts=0;
-    const schedule=(delay:number)=>{timer=setTimeout(()=>void poll(),Math.max(3000,Math.min(60000,delay*1000)));};
+    const retryable=(error?:string|null)=>!error||['rate_limited','timeout','unavailable','network_error','incomplete_cache','stale_mapping','retry_pending','refreshing'].includes(error);
+    const schedule=(delay:number)=>{timer=setTimeout(()=>void poll(),Math.max(3000,Math.min(3600000,delay*1000)));};
     const poll=async()=>{
       if(signal.aborted||generation!==current)return;
       request=new AbortController();
@@ -27,9 +28,9 @@ export function contributorSourceRefresh(signal:AbortSignal, ready:(available:bo
         const next:GamePersonStatus=await response.json();
         if(signal.aborted||generation!==current||next.id!==initial.id)return;
         if(!next.pending&&next.complete){ready(next.fetched_at!==initial.fetched_at||next.revision!==initial.revision);return;}
-        if(next.pending&&!next.error&&++attempts<20)schedule(next.retry_after||3);
+        if(next.pending&&retryable(next.error)&&++attempts<20)schedule(next.retry_after||3);
       }catch{ /* Saved works remain usable during failures or navigation. */ }
     };
-    if(!initial.error)schedule(initial.retry_after||3);
+    if(retryable(initial.error))schedule(initial.retry_after||3);
   },stop};
 }

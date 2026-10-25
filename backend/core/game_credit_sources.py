@@ -152,6 +152,9 @@ class GameCreditSources:
             body=await self.sources.request('wikidata','https://www.wikidata.org/w/api.php',params={
                 'action':'wbgetentities','ids':'|'.join(ids),'props':'labels|descriptions|aliases|claims|info',
                 'languages':'en|mul','languagefallback':1,'format':'json','maxlag':5,'redirects':'yes'})
+            if isinstance(body,dict) and (body.get('error') or {}).get('code')=='maxlag':
+                await self.sources.defer('wikidata',60)
+                raise ProviderError('rate_limited',60)
             if not isinstance(body,dict) or body.get('error') or not isinstance(body.get('entities'),dict):
                 raise ProviderError('bad_response')
             result={}

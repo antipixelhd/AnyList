@@ -130,6 +130,11 @@ async def main(args):
                                 'index_generation':'fixture','index_pages':20,'index_titles':1000},
                             coverage={'source_complete':True,'state':'partial','projection_revision':'fixture-v1','binding_revision':None,
                                 'source_games':1000,'mapped_games':0,'unmapped_games':1000},fetched_at=stamp,expires_at=stamp+timedelta(days=30))])
+                    # This case measures an already cached discovery attempt,
+                    # including unresolved external identities, not first admission.
+                    db.add(MetadataSnapshot(provider='imdb',kind='game_person_discovery',external_id='nm8000000',
+                        entity_id=performer.id,payload={'generation':'fixture','page':20,'offset':0,'processed':1000},
+                        coverage={'state':'complete','complete':True,'received':1000},fetched_at=stamp,expires_at=stamp+timedelta(days=1)))
                     for page in range(20):
                         db.add(MetadataSnapshot(provider='imdb',kind='game_person_index',external_id=f'nm8000000:fixture:{page}',
                             entity_id=performer.id,coverage={'page':page},payload={'titles':[{'id':f'tt{page*50+i}',

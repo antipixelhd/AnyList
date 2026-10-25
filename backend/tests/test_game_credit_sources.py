@@ -85,7 +85,7 @@ class Cache:
 
 class SourceTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self.public=SimpleNamespace(cache=Cache(),request=AsyncMock())
+        self.public=SimpleNamespace(cache=Cache(),request=AsyncMock(),defer=AsyncMock())
         self.api=source.GameCreditSources(self.public)
 
     async def test_batched_entities_preserve_all_credits_and_warm_reads_avoid_provider_calls(self):
@@ -106,7 +106,8 @@ class SourceTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ProviderError,'identity_conflict'):await self.api.game(10,'game')
         self.public.request.return_value={'error':{'code':'maxlag'}}
         for _ in range(2):
-            with self.assertRaisesRegex(ProviderError,'bad_response'):await self.api.entities(['Q200'])
+            with self.assertRaisesRegex(ProviderError,'rate_limited'):await self.api.entities(['Q200'])
+        self.public.defer.assert_awaited_with('wikidata',60)
         self.assertEqual(self.public.request.await_count,3)
 
     async def test_unmatched_and_missing_items_are_distinct_from_an_empty_cast(self):

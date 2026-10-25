@@ -840,6 +840,7 @@ async def background_jobs():
     from core.contributor_evidence import scheduler as contributor_verification
     from core.game_imdb_enrichment import scheduler as game_credit_enrichment
     from core.game_imdb_person import scheduler as game_person_enrichment
+    from core.game_imdb_discovery import scheduler as game_person_discovery
     from core.game_company_works import scheduler as game_company_enrichment
     from core.game_time_to_beat import scheduler as game_time_estimates
     from core.game_statistics import scheduler as game_statistics
@@ -854,6 +855,7 @@ async def background_jobs():
         contributor_verification,
         game_credit_enrichment,
         game_person_enrichment,
+        game_person_discovery,
         game_company_enrichment,
         game_time_estimates,
         game_statistics,
