@@ -65,16 +65,19 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
         originals.set(row.id,row.unlocked);
         const label=document.createElement('label');label.className='game-achievement-option';
         const checkbox=document.createElement('input');checkbox.type='checkbox';checkbox.checked=updates.get(row.id)??row.unlocked;
+        const artwork=()=>checkbox.checked?row.icon_url:row.locked_icon_url||row.icon_url;
+        let image:HTMLImageElement|undefined;
         checkbox.addEventListener('change',()=>{
           if(checkbox.checked===originals.get(row.id))updates.delete(row.id);else updates.set(row.id,checkbox.checked);
+          if(image)image.src=artwork();
           count.value=String(exactCount());renderGuidance();renderProgress();
         });
         label.append(checkbox);
-        const art=checkbox.checked?row.icon_url:row.locked_icon_url||row.icon_url;
-        if(art){const image=document.createElement('img');image.src=art;image.alt='';image.loading='lazy';label.append(image);}
+        if(artwork()){image=document.createElement('img');image.src=artwork();image.alt='';image.loading='lazy';label.append(image);}
         const text=document.createElement('span');const name=document.createElement('strong');
-        name.textContent=row.hidden&&!row.unlocked?'Hidden achievement':row.name;text.append(name);
-        if(row.description&&(!row.hidden||row.unlocked)){const description=document.createElement('span');description.textContent=row.description;text.append(description);}
+        // Manual selection requires the supplied identity even for Steam's hidden achievements.
+        name.textContent=row.name;text.append(name);
+        if(row.description){const description=document.createElement('span');description.textContent=row.description;text.append(description);}
         label.append(text);
         if(row.global_percentage!=null){const global=document.createElement('small');global.textContent=`${Number(row.global_percentage.toFixed(1))}% of players`;label.append(global);}
         list.append(label);

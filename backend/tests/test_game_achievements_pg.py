@@ -81,7 +81,10 @@ class AchievementDatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(data['status']['pending']);self.assertEqual(data['status']['error'],'unavailable')
 
     async def test_enabling_a_key_fetches_only_the_missing_schema_and_keeps_personal_percentage(self):
-        self.source.key='';await GameAchievements(self.Session,self.source).run(self.base)
+        self.source.key=''
+        # Simulate an unconfigured server independently of the developer's private key.
+        with patch.object(settings,'steam_web_api_key',''):
+            await GameAchievements(self.Session,self.source).run(self.base)
         async with self.Session() as db:
             entry=await db.scalar(select(GameEntry).where(GameEntry.work_id==self.base));entry.achievement_mode='percentage';entry.achievement_percentage=37.5
             await db.commit()
