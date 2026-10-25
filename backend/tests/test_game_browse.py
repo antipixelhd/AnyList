@@ -103,6 +103,19 @@ class BrowseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.sources.timeline_search.await_count,1)
         with self.assertRaises(ProviderError):await self.service.page({**query,'timeline':False},limit=1,cursor=first['cursor'])
 
+    async def test_partial_query_mode_stays_in_continuations_after_buffered_rows_are_consumed(self):
+        async def feed(*args,offset=0,search_mode=0,**kwargs):
+            if offset:
+                self.assertEqual((offset,search_mode),(100,1))
+            return {'data':{'rows':[row(1),row(2)] if not offset else [row(3)],
+                'has_more':not offset,'next_offset':100 if not offset else 101,'search_mode':1,'source':'IGDB search'}}
+        self.sources.catalogue_feed.side_effect=feed
+        query={**self.query,'q':'Game P'};pages=[];cursor=None
+        for _ in range(3):
+            page=await self.service.page(query,limit=1,cursor=cursor);pages.extend(row['igdb_id'] for row in page['rows']);cursor=page['cursor']
+        self.assertEqual(pages,[1,2,3]);self.assertIsNone(cursor)
+        self.assertEqual(self.sources.catalogue_feed.await_count,2)
+
     async def test_critic_provider_failure_is_retryable_instead_of_an_empty_negative_page(self):
         self.sources.attention.return_value={'data':{'rows':[row(1)],'has_more':False,'source':'IGDB Visits'},'stale':False}
         self.sources.critic_scores.side_effect=ProviderError('unavailable')

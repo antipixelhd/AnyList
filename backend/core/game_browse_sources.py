@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 from core.catalogue_providers import CatalogueProviders, ProviderHTTP, ProviderError
 from core.config import settings
 from core.game_source_cache import GameSourceCache
+from core.game_search import broader_query, matches_partial
 from core.game_types import INDEPENDENT, platform_group, search_candidate, canonical_game, candidate_fields, game_platforms
 from db import AsyncSessionLocal
 
@@ -192,10 +193,12 @@ class GameBrowseSources:
             raise ProviderError('invalid_request')
         return await self.igdb('games', f'fields {CARD_FIELDS}; where ({" | ".join(clauses)}); limit 200;')
 
-    async def catalogue_feed(self, sort, *, offset=0, genres=(), platforms=(), start=None, end=None, q=''):
+    async def catalogue_feed(self, sort, *, offset=0, genres=(), platforms=(), start=None, end=None, q='', search_mode=0):
         if sort not in {'newest','popular'} or isinstance(offset, bool) or not isinstance(offset, int) or not 0 <= offset <= 10000:
             raise ProviderError('invalid_request')
         if len(genres)+len(platforms) > 250 or any(not positive(identifier) for identifier in [*genres,*platforms]) or len(q) > 100:
+            raise ProviderError('invalid_request')
+        if type(search_mode) is not int or search_mode not in (0,1) or search_mode and not broader_query(q):
             raise ProviderError('invalid_request')
         try:
             first = date.fromisoformat(start) if start else None
@@ -223,15 +226,22 @@ class GameBrowseSources:
         async def load():
             # Search resolves editions first, then filters canonical metadata.
             # Non-search queries push globally supported filters to IGDB.
-            prefix = f'search {json.dumps(q)};' if q else 'where '+ ' & '.join(conditions)+';'
             ordering = '' if q else f'sort {"rating_count" if sort == "popular" else "first_release_date"} desc;'
-            raw = await self.igdb('games', f'{prefix} fields {CARD_FIELDS}; {ordering} limit 100; offset {offset};')
-            if not isinstance(raw, list) or len(raw) > 100:
-                raise ProviderError('bad_response')
+            async def fetch(query):
+                prefix=f'search {json.dumps(query)};' if query else 'where '+' & '.join(conditions)+';'
+                raw=await self.igdb('games',f'{prefix} fields {CARD_FIELDS}; {ordering} limit 100; offset {offset};')
+                if not isinstance(raw,list) or len(raw)>100:raise ProviderError('bad_response')
+                return raw
+            mode=search_mode
+            raw=await fetch(broader_query(q) if mode else q)
+            if q and offset==0 and not mode and (broader:=broader_query(q)) and not any(search_candidate(item) for item in raw):
+                raw=await fetch(broader);mode=1
             rows, seen = [], set()
             for index, item in enumerate(raw, start=offset+1):
                 value = card(item, expansions=bool(q))
                 if not value or value['igdb_id'] in seen:
+                    continue
+                if mode and not matches_partial(q,value['title']):
                     continue
                 if q and (genres and not {f'igdb.genre:{g}' for g in genres}.intersection(g['id'] for g in value['genres'])
                     or platforms and not {f'igdb.platform:{p}' for p in platforms}.intersection(value['platform_ids'])
@@ -241,7 +251,7 @@ class GameBrowseSources:
                 seen.add(value['igdb_id'])
                 rows.append({**value,'source_rank':index})
             return {'rows':rows,'has_more':len(raw)==100,'next_offset':offset+len(raw),
-                'source':'IGDB search' if q else 'IGDB accumulated user votes' if sort=='popular' else 'IGDB release dates'}
+                'search_mode':mode,'source':'IGDB search' if q else 'IGDB accumulated user votes' if sort=='popular' else 'IGDB release dates'}
         if q:
             # Arbitrary search strings stay in the existing bounded HTTP cache,
             # rather than creating unbounded durable query records.
@@ -261,13 +271,14 @@ class GameBrowseSources:
         """Finalize a bounded canonical search window before chronological paging."""
         if not q or not isinstance(snapshot,int) or isinstance(snapshot,bool) or snapshot<0 or not 0<=offset<=1000:
             raise ProviderError('invalid_request')
-        key=hashlib.sha256(json.dumps(['ports-v2',snapshot,q,sorted(genres),sorted(platforms),start,end]).encode()).hexdigest()
+        key=hashlib.sha256(json.dumps(['ports-prefix-v3',snapshot,q,sorted(genres),sorted(platforms),start,end]).encode()).hexdigest()
         async def load():
             rows,seen,more=[],set(),True
-            position=0
+            position=0;search_mode=0
             for _ in range(10):
-                result=await self.catalogue_feed('newest',offset=position,genres=genres,platforms=platforms,start=start,end=end,q=q)
+                result=await self.catalogue_feed('newest',offset=position,genres=genres,platforms=platforms,start=start,end=end,q=q,search_mode=search_mode)
                 data=result['data']
+                search_mode=data.get('search_mode',0)
                 for value in data['rows']:
                     if value['igdb_id'] not in seen:
                         seen.add(value['igdb_id']);rows.append(value)

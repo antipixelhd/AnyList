@@ -111,7 +111,8 @@ class GameBrowse:
         if query['q'] or category in {'newest','popular'}:
             return await source.catalogue_feed(category if category in {'newest','popular'} else 'popular',
                 offset=position[0],genres=[int(value.split(':')[1]) for value in query['genres']],
-                platforms=query['platforms'],start=query['start'],end=query['end'],q=query['q'])
+                platforms=query['platforms'],start=query['start'],end=query['end'],q=query['q'],
+                **({'search_mode':position[1]} if query['q'] else {}))
         if category=='most_played':
             return await source.most_played()
         if category=='score':
@@ -121,7 +122,7 @@ class GameBrowse:
     async def page(self, query, *, limit=24, cursor=None):
         if not 1<=limit<=48:
             raise ProviderError('invalid_request')
-        scope = digest(['v1',query,limit])
+        scope = digest(['prefix-v2' if query['q'] else 'v1',query,limit])
         previous = None
         if cursor:
             parent,expires = decode_cursor(cursor,scope)
@@ -166,7 +167,7 @@ class GameBrowse:
                         state['position']=[data.get('next_page',251),data.get('next_start',0)]
                         beyond = state['position'][0]>250
                     else:
-                        state['position']=[data.get('next_offset',10001),0]
+                        state['position']=[data.get('next_offset',10001),data.get('search_mode',0)]
                         beyond = state['position'][0]>10000
                     if beyond and not state['exhausted']:
                         state['limited']=True;state['exhausted']=True

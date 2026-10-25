@@ -436,11 +436,14 @@ async def main(args):
                 return [{'game_id':8000000+i,'value':1000-i,'calculated_at':int(time.time())} for i in range(offset,min(offset+100,300))]
             if endpoint=='games':
                 searching=query.startswith('search ')
+                if query.startswith('search "Elden R";'):return []
+                broader=query.startswith('search "Elden";')
                 if searching:
-                    offset=int(re.search(r'offset (\d+)',query).group(1));ids=range(8000000+offset,8000000+min(offset+100,300))
+                    offset=int(re.search(r'offset (\d+)',query).group(1));ids=range(8000000+offset,8000000+min(offset+100,160 if broader else 300))
                 else:ids=map(int,re.search(r'id=\(([\d,]+)\)',query).group(1).split(','))
                 return [{'id':identifier,'slug':f'benchmark-game-{identifier-8000000}',
-                    'name':f'Benchmark game {identifier-8000000:05}','game_type':{'id':0},'first_release_date':1704067200+((identifier%20)*86400 if searching else 0),
+                    'name':(f'Elden Ring benchmark {identifier-8000000:05}' if identifier%2==0 else f'Unrelated benchmark {identifier-8000000:05}') if broader else f'Benchmark game {identifier-8000000:05}',
+                    'game_type':{'id':0},'first_release_date':1704067200+((identifier%20)*86400 if searching else 0),
                     'genres':[{'id':5 if identifier%2==0 else 9,'name':'Role-playing (RPG)' if identifier%2==0 else 'Adventure'}],
                     'platforms':[{'id':6,'name':'PC (Microsoft Windows)'}] if identifier%3 else [{'id':167,'name':'PlayStation 5','platform_family':{'name':'PlayStation'}}]}
                     for identifier in ids]
@@ -478,6 +481,7 @@ async def main(args):
             ('game_browse_grid','games/browse',{'limit':24}),
             ('game_browse_pages','games/browse',{'limit':24}),
             ('game_browse_timeline','games/browse',{'limit':24,'category':'newest','timeline':'true','q':'Benchmark'}),
+            ('game_browse_partial_search','games/browse',{'limit':24,'q':'Elden R'}),
             ('game_browse_genre_platform','games/browse',{'limit':24,'genres':'igdb.genre:5','platforms':'pc'}),
             ('game_list', f'games/users/{viewer.username}/list', {'limit': 50}),
             *([('game_statistics_overview',f'games/users/{viewer.username}/statistics',{}),
@@ -758,6 +762,15 @@ async def main(args):
                                 raise RuntimeError('Game credit projection lost cast, independent characters or performance associations')
                             if 'statement' in json.dumps(result):raise RuntimeError('Raw source credit evidence leaked into the detail payload')
                             return result
+                        if label=='game_browse_partial_search':
+                            result=await request(path,params);rows=list(result['results'])
+                            for _ in range(2):
+                                if not result['has_more']:raise RuntimeError('Partial game search exhausted before its broader window')
+                                result=await request(path,{**params,'cursor':result['cursor']});rows.extend(result['results'])
+                            ids=[row['igdb_id'] for row in rows]
+                            if ids!=list(range(8000000,8000144,2)) or any(not row['title'].startswith('Elden Ring') for row in rows):
+                                raise RuntimeError('Partial game search lost, repeated or admitted unrelated candidates')
+                            return {**result,'results':rows}
                         if label in {'game_browse_pages','game_browse_timeline'}:
                             first=await request(path,params)
                             second=await request(path,{**params,'cursor':first['cursor']})

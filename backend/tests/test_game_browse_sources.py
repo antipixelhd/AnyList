@@ -72,6 +72,62 @@ class RankingTests(unittest.IsolatedAsyncioTestCase):
         self.api=sources.GameBrowseSources()
         self.api.cache=ImmediateCache()
 
+    async def test_partial_title_search_preserves_canonical_identity_and_explicit_filters(self):
+        base={'id':119133,'slug':'elden-ring','name':'Elden Ring','game_type':{'id':0},
+            'first_release_date':1645747200,'platforms':[{'id':6,'name':'PC (Microsoft Windows)'}],
+            'genres':[{'id':12,'name':'RPG'}]}
+        expansion={'id':240009,'name':'Elden Ring: Shadow of the Erdtree','game_type':{'id':2},
+            'first_release_date':1718928000,'parent_game':base,'platforms':base['platforms'],'genres':base['genres']}
+        async def request(endpoint,query):
+            if query.startswith('search "Elden R";'):return []
+            self.assertTrue(query.startswith('search "Elden";'))
+            return [base,{'id':999,'version_parent':base},expansion,
+                {'id':4,'name':'Elder Scrolls','game_type':{'id':0}},
+                {'id':5,'name':'Elden Ring Weapon Pack','game_type':{'id':1}}]
+        self.api.igdb=AsyncMock(side_effect=request)
+        page=(await self.api.catalogue_feed('popular',q='Elden R',platforms=[6],genres=[12]))['data']
+        self.assertEqual([row['igdb_id'] for row in page['rows']],[119133,240009])
+        self.assertEqual((page['search_mode'],page['next_offset'],page['has_more']),(1,5,False))
+        filtered=(await self.api.catalogue_feed('popular',q='Elden R',platforms=[6],end='2023-12-31'))['data']
+        self.assertEqual([row['igdb_id'] for row in filtered['rows']],[119133])
+        self.assertFalse((await self.api.catalogue_feed('popular',q='Elden R',platforms=[167]))['data']['rows'])
+
+    async def test_broader_continuations_keep_upstream_offsets_and_do_not_repeat_the_primary_probe(self):
+        raw=[{'id':i+1,'name':'Elden Ring' if i%2==0 else 'Elder Scrolls','game_type':{'id':0}} for i in range(100)]
+        self.api.igdb=AsyncMock(return_value=raw)
+        page=(await self.api.catalogue_feed('popular',q='Elden R',offset=100,search_mode=1))['data']
+        self.assertEqual((len(page['rows']),page['next_offset'],page['has_more'],page['search_mode']),(50,200,True,1))
+        self.assertEqual(self.api.igdb.await_count,1)
+        query=self.api.igdb.await_args.args[1]
+        self.assertTrue(query.startswith('search "Elden";'));self.assertIn('offset 100;',query)
+        for arguments in ({'search_mode':True},{'search_mode':2},{'search_mode':1,'q':'single'}):
+            with self.assertRaises(ProviderError):await self.api.catalogue_feed('popular',**({'q':'Elden R'}|arguments))
+
+    async def test_partial_timeline_uses_one_broader_mode_for_the_whole_finalized_window(self):
+        async def request(endpoint,query):
+            if query.startswith('search "Game P";'):return []
+            self.assertTrue(query.startswith('search "Game";'))
+            offset=100 if 'offset 100;' in query else 0
+            return [{'id':i+1,'name':f'Game Prefix {i}','game_type':{'id':0},'first_release_date':1704067200+i*86400}
+                for i in range(offset,102 if offset else 100)]
+        self.api.igdb=AsyncMock(side_effect=request)
+        result=(await self.api.timeline_search(snapshot=1,q='Game P'))['data']
+        self.assertEqual(len(result['rows']),100);self.assertTrue(result['has_more'])
+        self.assertEqual(self.api.igdb.await_count,3)
+        queries=[call.args[1] for call in self.api.igdb.await_args_list]
+        self.assertEqual(sum(query.startswith('search "Game P";') for query in queries),1)
+        self.assertTrue(queries[-1].startswith('search "Game";'));self.assertIn('offset 100;',queries[-1])
+        dates=[row['release_date'] for row in result['rows']]
+        self.assertEqual(dates,sorted(dates,reverse=True))
+
+    async def test_existing_browse_matches_do_not_expand_when_explicit_filters_exclude_them(self):
+        self.api.igdb=AsyncMock(return_value=[{'id':1,'name':'Elden Ring','game_type':{'id':0},
+            'platforms':[{'id':6,'name':'PC (Microsoft Windows)'}]}])
+        result=await self.api.catalogue_feed('popular',q='Elden R',platforms=[167])
+        self.assertEqual(result['data']['rows'],[])
+        self.assertEqual(result['data']['search_mode'],0)
+        self.assertEqual(self.api.igdb.await_count,1)
+
     async def test_timeline_search_finalizes_canonical_dates_before_exposing_pages_and_reuses_the_snapshot(self):
         from core.game_source_cache import GameSourceCache
         class Memory(ImmediateCache):

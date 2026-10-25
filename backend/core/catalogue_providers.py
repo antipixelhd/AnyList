@@ -3,7 +3,6 @@
 import asyncio
 import hashlib
 import json
-import re
 import logging
 import time
 from collections import OrderedDict
@@ -463,6 +462,7 @@ class CatalogueProviders:
             return await search(self.http, query, page, limit)
         if provider == "igdb":
             from core.game_types import search_candidate, candidate_fields
+            from core.game_search import broader_query, matches_partial
             fields=candidate_fields('id,name,cover.url,first_release_date,game_type.type')
             rows = await self.igdb(
                 "games",
@@ -475,15 +475,12 @@ class CatalogueProviders:
             # IGDB search can return no matches while a user types the last
             # word ("Elden R"). One bounded broader query recovers prefix
             # candidates; it never establishes cross-provider identity.
-            words=re.findall(r'[^\W_]+',query.casefold())
-            if not results and page==1 and len(words)>1 and re.fullmatch(r'[^\W_]+(?:\s+[^\W_]+)+',query.strip()):
-                broader=query.rsplit(None,1)[0] if len(query.split())>1 else ''
-                if len(broader)>=2:
-                    fallback=await self.igdb('games',f'search {json.dumps(broader)}; fields {fields}; limit {limit}; offset 0;')
-                    for row in fallback:
-                        candidate=search_candidate(row)
-                        if candidate and all(any(part.startswith(word) for part in re.findall(r'[^\W_]+',candidate['name'].casefold())) for word in words):
-                            results.setdefault(candidate['external_id'],candidate)
+            if not results and page==1 and (broader:=broader_query(query)):
+                fallback=await self.igdb('games',f'search {json.dumps(broader)}; fields {fields}; limit {limit}; offset 0;')
+                for row in fallback:
+                    candidate=search_candidate(row)
+                    if candidate and matches_partial(query,candidate['name']):
+                        results.setdefault(candidate['external_id'],candidate)
             return list(results.values())
         if provider == "hardcover":
             d = await self.hardcover(
