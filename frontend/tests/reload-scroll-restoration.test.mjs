@@ -135,6 +135,34 @@ test('list landing does not override hard reload or back/forward positions', () 
   }
 });
 
+test('router scrollend saves finish before idle restoration without overriding a pending traversal', () => {
+  const documentEvents = new Map(), windowEvents = new Map(), settledTasks = [];
+  const state = { index: 4, scrollX: 0, scrollY: 900 };
+  const history = { state, scrollRestoration: 'manual' };
+  const context = contextFor(history, [{ type: 'navigate' }]);
+  context.setTimeout = callback => settledTasks.push(callback);
+  context.document.addEventListener = (event, handler) => documentEvents.set(event, handler);
+  context.window.addEventListener = (event, handler) => windowEvents.set(event, handler);
+  runInNewContext(script, context);
+  documentEvents.get('astro:page-load')();
+  windowEvents.get('scrollend')();
+  // Astro may register its scrollend listener after the inline initializer.
+  history.scrollRestoration = 'manual'; state.scrollY = 1100;
+  settledTasks.shift()();
+  assert.equal(history.scrollRestoration, 'auto');
+  assert.equal(history.state, state); assert.equal(history.state.scrollY, 1100);
+  windowEvents.get('scrollend')();
+  documentEvents.get('astro:before-preparation')();
+  settledTasks.shift()();
+  assert.equal(history.scrollRestoration, 'manual');
+  windowEvents.get('scrollend')(); settledTasks.shift()();
+  assert.equal(history.scrollRestoration, 'manual');
+  documentEvents.get('astro:page-load')();
+  assert.equal(history.scrollRestoration, 'auto');
+  windowEvents.get('scrollend')(); windowEvents.get('popstate')(); settledTasks.shift()();
+  assert.equal(history.scrollRestoration, 'manual');
+});
+
 test('shared layouts preload the same primary typefaces without route-specific exceptions', () => {
   const preloads = readFileSync(new URL('../src/components/PrimaryFontPreloads.astro', import.meta.url), 'utf8');
   assert.match(preloads, /\[400, 500, 600, 700\]/);
