@@ -131,8 +131,8 @@ async def availability(db,viewer,*,kind,key):
             admitted=await request(db,entity.id)
             if admitted:
                 source=await view(db,admitted['id'],state=admitted,include_profile=False,check_mapping=True)
-                game_pending=source['pending'];coverage=source['mapping'];roles=coverage.get('role_coverage')
-                if source['complete'] and not source['pending'] and coverage.get('source_complete'):
+                game_pending=source['pending'] or source.get('identity_pending',False);coverage=source['mapping'];roles=coverage.get('role_coverage')
+                if source['complete'] and not game_pending and coverage.get('source_complete'):
                     if roles is None:
                         game_pending=await queue_projection(db,admitted['id']) or game_pending
                     # A positive source connection with no displayed work may

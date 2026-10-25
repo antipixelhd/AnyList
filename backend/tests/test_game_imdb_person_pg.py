@@ -128,7 +128,10 @@ class PersonEnrichmentTests(unittest.IsolatedAsyncioTestCase):
         try:
             async with self.Session() as db:state=await view(db,'nm1',include_profile=False)
         finally:event.remove(self.engine.sync_engine,'before_cursor_execute',record)
-        self.assertNotIn('profile',state);self.assertEqual(len(statements),3)
+        # Identity work has its own compact header while pending; full source
+        # pages and filmography JSON still never enter these status reads.
+        self.assertNotIn('profile',state);self.assertEqual(len(statements),4)
+        self.assertTrue(state['identity_pending'])
         self.assertTrue(all('catalogue_metadata_snapshots.payload,' not in statement
             and 'catalogue_metadata_snapshots.payload \nFROM' not in statement for statement in statements))
 
@@ -251,3 +254,19 @@ class PersonEnrichmentTests(unittest.IsolatedAsyncioTestCase):
         self.source.credits.return_value=page([credit()],1)
         await self.due();self.assertEqual(await self.service.run('nm1'),'ready')
         self.assertEqual(self.source.credits.call_args.args,('nm1',None))
+
+    async def test_cold_complete_connection_admits_identity_and_refresh_keeps_its_check_header(self):
+        from core.game_person_identity import JOB as IDENTITY_JOB
+        self.assertEqual(await self.service.run('nm1'),'ready')
+        async with self.Session() as db:
+            identity=await db.scalar(snapshot(IDENTITY_JOB,'nm1'))
+            self.assertIsNotNone(identity.next_attempt_at)
+            checked={'version':1,'state':'unresolved','next_check_at':(now()+timedelta(days=7)).isoformat()}
+            component=await db.scalar(snapshot(COMPONENT,'nm1'))
+            component.payload={**component.payload,'identity_bridge':checked}
+            await db.commit()
+        await self.due()
+        self.assertEqual(await self.service.run('nm1'),'ready')
+        async with self.Session() as db:
+            component=await db.scalar(snapshot(COMPONENT,'nm1'))
+            self.assertEqual(component.payload['identity_bridge'],checked)

@@ -40,6 +40,25 @@ test('new mappings offer a refresh even when the cached source timestamp stays f
   await f.tick();assert.equal(f.paint.at(-1),true);
 }));
 
+test('identity resolution can finish after complete credits without replacing a scrolled portfolio',()=>fixture(async f=>{
+  f.resource.update({id:'nm1',pending:false,complete:true,identity_pending:true,fetched_at:'same',revision:'old'});
+  f.reply({id:'nm1',pending:false,complete:true,identity_pending:true,retry_after:60,fetched_at:'same',revision:'old'});
+  await f.tick();assert.equal(f.paint.at(-1),false);assert.equal(f.timers[0].delay,60000);
+  f.reply({id:'nm1',pending:false,complete:true,fetched_at:'same',revision:'joined'});
+  await f.tick();assert.equal(f.paint.at(-1),true);assert.equal(f.timers.length,0);
+}));
+
+test('new usable works can be refreshed while later mappings still wait and retries preserve the offer',()=>fixture(async f=>{
+  f.resource.update({id:'nm1',pending:true,complete:false,fetched_at:'same',revision:'old'});
+  f.reply({id:'nm1',pending:true,complete:false,error:'rate_limited',retry_after:60,fetched_at:'same',revision:'more-works'});
+  await f.tick();assert.equal(f.paint.at(-1),true);assert.equal(f.timers[0].delay,60000);
+  f.reply({id:'nm1',pending:true,complete:false,error:'unavailable',retry_after:300,fetched_at:'same',revision:'more-works'});
+  await f.tick();assert.equal(f.paint.at(-1),true);assert.equal(f.timers[0].delay,300000);
+  f.reply({id:'nm1',pending:false,complete:true,fetched_at:'same',revision:'more-works'});
+  await f.tick();assert.equal(f.paint.at(-1),true);assert.equal(f.timers.length,0);
+  f.resource.update(null);assert.equal(f.paint.at(-1),false);
+}));
+
 test('transient discovery failures respect cooldown and offer recovered works without reshuffling',()=>fixture(async f=>{
   f.resource.update({id:'nm1',pending:true,complete:false,error:'rate_limited',retry_after:180,fetched_at:'same',revision:'old'});
   assert.equal(f.timers[0].delay,180000);assert.equal(f.calls.length,0);

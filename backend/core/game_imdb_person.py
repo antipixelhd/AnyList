@@ -47,6 +47,7 @@ async def view(db,native,*,state=None,include_profile=True,check_mapping=False):
     identifier(native,person=True)
     row=(await db.execute(snapshot(COMPONENT,native).with_only_columns(
         *([MetadataSnapshot.payload['profile'].label('profile')] if include_profile else []),MetadataSnapshot.coverage,
+        MetadataSnapshot.payload['identity_bridge'].label('identity_bridge'),
         *([MetadataSnapshot.payload['generation'].astext.label('generation'),MetadataSnapshot.entity_id] if check_mapping else []),
         MetadataSnapshot.fetched_at))).one_or_none()
     if state is None:state=await job_status(db,native,kind=JOB)
@@ -65,7 +66,17 @@ async def view(db,native,*,state=None,include_profile=True,check_mapping=False):
             discovery=discovery_status(saved) if saved else None
         if discovery and discovery['pending']:
             state={**state,**{key:discovery[key] for key in ('state','pending','complete','retry_after','error')}}
+    # Keep admission order consistent with publication: source/discovery jobs
+    # precede identity jobs. Do not hold an identity write while waiting for a
+    # source job that is itself publishing the initial identity handoff.
+    identity_state=None
+    if row and row.coverage.get('source_complete'):
+        from core.game_person_identity import request as resolve_person
+        identity_state=await resolve_person(db,native,row.entity_id if check_mapping else None,
+            row.identity_bridge,enqueue=check_mapping)
+    identity_pending=bool(identity_state and identity_state['pending'])
     return {'id':native,**state,**({'profile':row.profile if row else None} if include_profile else {}),
+        **({'identity_pending':True,**({'retry_after':identity_state['retry_after']} if not state['pending'] else {})} if identity_pending else {}),
         'fetched_at':row.fetched_at.replace(tzinfo=timezone.utc).isoformat() if row and row.fetched_at else None,
         'revision':row.coverage.get('projection_revision') if row else None,
         'mapping':row.coverage if row else {'state':'unknown'}}
@@ -273,7 +284,9 @@ class GameIMDbPersonEnrichment:
                 incoming=profile(pages[0]['header'])
                 field_times={**(component.payload or {}).get('profile_fetched_at',{}),
                     **{key:now().isoformat() for key in incoming}}
-                component.payload={'profile':{**previous,**incoming},'profile_fetched_at':field_times,'generation':state['generation'],
+                component.payload={**({'identity_bridge':component.payload['identity_bridge']} if
+                    component.payload and 'identity_bridge' in component.payload else {}),
+                    'profile':{**previous,**incoming},'profile_fetched_at':field_times,'generation':state['generation'],
                     'received':state['received'],'total':state['total'],'pages':state['pages']}
                 from core.game_imdb_review import write_index
                 component.payload={**component.payload,**await write_index(db,native,state['generation'],
@@ -284,6 +297,8 @@ class GameIMDbPersonEnrichment:
                 if mapping.get('unmapped_games'):
                     from core.game_imdb_discovery import request as discover
                     await discover(db,native,state['generation'],job.entity_id)
+                from core.game_person_identity import request as resolve_person
+                await resolve_person(db,native,job.entity_id,component.payload.get('identity_bridge'),enqueue=True)
                 state['state']='complete';state.pop('cursor');state.pop('seen')
                 job.next_attempt_at=job.lease_token=job.lease_until=None
                 job.expires_at=now()+timedelta(days=30)
@@ -339,11 +354,15 @@ class GameIMDbPersonEnrichment:
             job.next_attempt_at=now()+timedelta(seconds=min(3600,delay));await db.commit()
 
     async def tick(self):
+        from core.game_person_identity import JOB as IDENTITY_JOB,GamePersonIdentity
         async with self.sessions() as db:
-            native=await db.scalar(select(MetadataSnapshot.external_id).where(MetadataSnapshot.provider=='imdb',MetadataSnapshot.kind==JOB,
+            queued=(await db.execute(select(MetadataSnapshot.kind,MetadataSnapshot.external_id).where(MetadataSnapshot.provider=='imdb',
+                MetadataSnapshot.kind.in_((JOB,IDENTITY_JOB)),
                 MetadataSnapshot.next_attempt_at<=now(),or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=now()))
-                .order_by(MetadataSnapshot.next_attempt_at,MetadataSnapshot.id).limit(1))
-        if native:await self.run(native)
+                .order_by(MetadataSnapshot.next_attempt_at,MetadataSnapshot.id).limit(1))).one_or_none()
+        if queued:
+            if queued.kind==IDENTITY_JOB:await GamePersonIdentity(self.sessions).run(queued.external_id)
+            else:await self.run(queued.external_id)
 
 
 async def scheduler():

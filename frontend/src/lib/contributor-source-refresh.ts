@@ -1,6 +1,6 @@
 export interface GamePersonStatus {
   source?:'igdb-company';
-  id:string; pending:boolean; complete:boolean; retry_after?:number; error?:string|null; fetched_at?:string|null; revision?:string|null;
+  id:string; pending:boolean; complete:boolean; identity_pending?:boolean; retry_after?:number; error?:string|null; fetched_at?:string|null; revision?:string|null;
 }
 
 // New evidence is offered explicitly: never replace a scrolled filmography or
@@ -13,9 +13,9 @@ export function contributorSourceRefresh(signal:AbortSignal, ready:(available:bo
   return {update(initial?:GamePersonStatus|null){
     stop();
     const company=initial?.source==='igdb-company';
-    if(signal.aborted||!initial?.pending||!(company?/^[1-9][0-9]*$/:/^nm[0-9]+$/).test(initial.id))return;
+    if(signal.aborted||!initial||!(initial.pending||initial.identity_pending)||!(company?/^[1-9][0-9]*$/:/^nm[0-9]+$/).test(initial.id))return;
     const current=generation;
-    let attempts=0;
+    let attempts=0,available=false;
     const retryable=(error?:string|null)=>!error||['rate_limited','timeout','unavailable','network_error','incomplete_cache','stale_mapping','retry_pending','refreshing'].includes(error);
     const schedule=(delay:number)=>{timer=setTimeout(()=>void poll(),Math.max(3000,Math.min(3600000,delay*1000)));};
     const poll=async()=>{
@@ -27,8 +27,14 @@ export function contributorSourceRefresh(signal:AbortSignal, ready:(available:bo
         if(!response.ok)return;
         const next:GamePersonStatus=await response.json();
         if(signal.aborted||generation!==current||next.id!==initial.id)return;
-        if(!next.pending&&next.complete){ready(next.fetched_at!==initial.fetched_at||next.revision!==initial.revision);return;}
-        if(next.pending&&retryable(next.error)&&++attempts<20)schedule(next.retry_after||3);
+        // A usable projection can grow before every remote identity has been
+        // attempted. Offer it without waiting for a rate-limited tail, and
+        // never replace the user's scrolled list or open editor automatically.
+        if(!available&&(next.fetched_at&&next.fetched_at!==initial.fetched_at||next.revision&&next.revision!==initial.revision)){
+          available=true;ready(true);
+        }
+        if(!next.pending&&!next.identity_pending&&next.complete)return;
+        if((next.pending||next.identity_pending)&&retryable(next.error)&&++attempts<20)schedule(next.retry_after||3);
       }catch{ /* Saved works remain usable during failures or navigation. */ }
     };
     if(retryable(initial.error))schedule(initial.retry_after||3);
