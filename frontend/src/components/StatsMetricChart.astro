@@ -15,7 +15,7 @@ const rows = id === 'watch_years' ? watchYearRows(allRows) : score || id === 'ep
     </div>
   </header>
   <div class="overview-plot"><div class="overview-chart-scroll"><div class="overview-chart-canvas" style={`--chart-min-width:${chartMinimumWidth(rows.length)}px`}><canvas data-overview-chart={id} role="img" aria-label={`${title}: ${countLabel==='Titles'?'titles watched':countLabel.toLowerCase()}`} aria-describedby={`${id}-data`}></canvas></div></div>
-    <p class="overview-plot-empty" data-chart-empty={id} hidden={rows.some(row => row.titles)}>{emptyLabel}</p>
+    <p class="overview-plot-empty" data-chart-empty={id} data-empty-label={emptyLabel} hidden={rows.some(row => row.titles)}>{emptyLabel}</p>
   </div>
   <div class="overview-sr-only" id={`${id}-data`}>
     <div class="overview-table-scroll"><table><caption>{title}</caption><thead><tr><th scope="col">{categoryLabel||(id === 'scores' ? 'Score interval' : id.includes('years') ? 'Year' : 'Episode count')}</th><th scope="col">{countLabel}</th>{showHours&&<th scope="col">Hours</th>}{!score && <th scope="col">Mean score</th>}</tr></thead>

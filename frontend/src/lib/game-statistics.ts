@@ -61,7 +61,7 @@ function mount(root:HTMLElement) {
       ...(key==='scores'?[]:[{metric:'mean_score',label:'Mean score',value:displayNumber(row.mean_score,2)}]),
     ]}));tooltips.set(key,tooltip);tooltip.update(rows,metric);
     const label=metric==='titles'?'Games':metric==='hours'?'Hours':'Mean score',highest=Math.max(0,...rows.map(row=>value(row)||0));
-    const empty=node(`[data-chart-empty="${id}"]`);empty.hidden=rows.some(row=>value(row)!==null&&(row.titles>0));empty.textContent=metric==='mean_score'?'No rated games.':metric==='hours'?'No recorded time.':'No games.';
+    const empty=node(`[data-chart-empty="${id}"]`);empty.hidden=rows.some(row=>value(row)!==null&&(row.titles>0));empty.textContent=metric==='mean_score'?'No rated games.':metric==='hours'?'No recorded time.':empty.dataset.emptyLabel||'No games.';
     canvas.setAttribute('aria-label',`${node(`[data-chart-section="${id}"] h3`).textContent}: ${label}`);
     const options:ChartOptions<'bar'|'line'>={responsive:true,maintainAspectRatio:false,events:['mousemove','mouseout','click'],animation:reduced.matches?false:{duration:initial?0:600,easing:'easeInOutCubic'},interaction:{mode:'index',intersect:false},plugins:{legend:{display:false},tooltip:{enabled:false}},
       scales:{x:{offset:!isLine||rows.length===1,afterFit(axis){axis.height=50;},grid:{display:false,drawTicks:false},border:{display:false},ticks:{color:color('--text-data'),padding:(50-font.size*1.2)/2,maxRotation:0,autoSkip:true,maxTicksLimit:Math.max(1,rows.length),font:{...font,lineHeight:1.2}}},y:{beginAtZero:true,max:metric==='mean_score'?10:highest>0?highest*1.05:undefined,display:false}},layout:{padding:{top:14}}};
@@ -80,7 +80,7 @@ function mount(root:HTMLElement) {
     node('[data-game-planned-count]').textContent=displayNumber(data.planned.games);
     node('[data-game-planned-hours]').textContent=data.planned.estimated_seconds===null?'—':`${data.planned.known_estimate_games<data.planned.games?'≥ ':''}${displayNumber(data.planned.estimated_seconds/3600,1)}`;
     node('[data-game-replays]').textContent=data.totals.replay_games?displayNumber(data.totals.replays):'—';
-    const undated=node('[data-game-undated]');undated.hidden=!data.coverage.undated_completions;undated.textContent=`${displayNumber(data.coverage.undated_completions)} completions have no date.`;
+    const undated=node('[data-game-undated]'),count=data.coverage.undated_completions;undated.hidden=!count;undated.textContent=`${displayNumber(count)} ${count===1?'completion has':'completions have'} no date.`;
     node('[data-game-comparisons]').replaceChildren(...data.comparisons.map(row=>{const tr=document.createElement('tr');[row.label,displayNumber(row.games),signedNumber(row.mean_difference_seconds,3600),row.mean_relative_percent===null?'—':`${signedNumber(row.mean_relative_percent)}%`].forEach((text,index)=>{const cell=document.createElement(index?'td':'th');if(index===0)cell.scope='row';cell.textContent=text;tr.append(cell);});return tr;}));
     chartKeys.forEach(key=>draw(key,data,initial));
     const colors=[color('--muted'),color('--stats-cyan'),'#ed984e','#45a987','#d94d5b'];
