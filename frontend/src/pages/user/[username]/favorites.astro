@@ -19,7 +19,7 @@ const favoriteGroups = profileMediaGroups(favorites, profile?.combine_lists !== 
 <Tracker title={`${profile?.display_name ?? 'Profile'} Favorites`} ownerProfileColor={profile?.profile_color} ownerIsViewer={profile?.owner === true}>
   {profile ? <>
     <ProfileHeader profile={profile} active="favorites" />
-    <div class="page-width favorites-page">
+    <div class="page-width favorites-page" data-profile-owner={String(profile.owner === true)}>
       <p class="error-message" role="alert" data-favorites-error hidden></p>
       <p class="favorites-instructions" data-favorites-instructions hidden>Drag cards to arrange them. Focus a card and use the arrow keys to move it.</p>
       <span class="sr-only" aria-live="polite" data-favorites-feedback></span>
@@ -46,8 +46,9 @@ const favoriteGroups = profileMediaGroups(favorites, profile?.combine_lists !== 
   </> : <div class="page-width"><p class="error-message" role="alert">{error}</p></div>}
 </Tracker>
 <script>
+import {editorStore} from '../../../lib/editor-store';
 let favoritePageListeners: AbortController;
-document.addEventListener('astro:page-load', () => {
+function mountFavorites() {
   favoritePageListeners?.abort();
   favoritePageListeners = new AbortController();
   const page = document.querySelector<HTMLElement>('.favorites-page');
@@ -61,6 +62,7 @@ document.addEventListener('astro:page-load', () => {
   const feedback = page.querySelector<HTMLElement>('[data-favorites-feedback]')!;
   let savedOrder = [...grid.querySelectorAll<HTMLElement>('[data-favorite-card]')].map(card => card.dataset.mediaId!);
   let dragging: HTMLElement | null = null;
+  let refreshFavorites = () => {};
   const cards = () => [...grid.querySelectorAll<HTMLElement>('[data-favorite-card]')];
   const order = () => cards().map(card => card.dataset.mediaId!);
   const report = (message: string) => { feedback.textContent = message; };
@@ -71,6 +73,7 @@ document.addEventListener('astro:page-load', () => {
     instructions.hidden = !active;
     cards().forEach(card => { if (active) card.tabIndex = 0; else card.removeAttribute('tabindex'); });
     error.hidden = true;
+    if (!active) queueMicrotask(() => refreshFavorites());
   };
   const updateEmpty = () => {
     const hasCards = cards().length > 0;
@@ -85,6 +88,29 @@ document.addEventListener('astro:page-load', () => {
       if (hasCards) visibleGroups[0]?.querySelector('.favorites-group-heading')?.append(actions);
     }
   };
+
+  if (page.dataset.profileOwner === 'true') {
+    let revision = 0, dirty = false, loading = false;
+    const signal = favoritePageListeners.signal;
+    refreshFavorites = () => {
+      if (!dirty || loading || editorStore.hasPendingWrites() || signal.aborted || page.dataset.reordering === 'true') return;
+      loading = true; const version = revision;
+      void (async () => {
+        try {
+          const response = await fetch(location.href, {cache:'no-store', signal});
+          if (!response.ok) throw new Error('Unable to refresh favorites.');
+          const fresh = new DOMParser().parseFromString(await response.text(), 'text/html');
+          if (signal.aborted) return;
+          if (version !== revision || editorStore.hasPendingWrites() || page.dataset.reordering === 'true') { loading = false; refreshFavorites(); return; }
+          const next = fresh.querySelector<HTMLElement>('.favorites-page[data-profile-owner="true"]');
+          if (next && page.isConnected) { page.replaceWith(next); dirty = false; document.dispatchEvent(new Event('anylist:favorites-reconciled')); }
+        } catch { if (!signal.aborted) window.anyListToast?.('Saved, but favorites could not be refreshed.'); }
+        finally { loading = false; }
+      })();
+    };
+    document.addEventListener('anylist:editor-state', () => { revision++; if (dirty) refreshFavorites(); }, {signal});
+    document.addEventListener('anylist:editor-committed', () => { dirty = true; refreshFavorites(); }, {signal});
+  }
 
   reorder?.addEventListener('click', async () => {
     if (page.dataset.reordering !== 'true') { setReordering(true); return; }
@@ -191,5 +217,7 @@ document.addEventListener('astro:page-load', () => {
     card.focus();
     report(`${card.dataset.title} moved to position ${index + direction + 1}.`);
   }, {signal: favoritePageListeners.signal});
-});
+}
+document.addEventListener('astro:page-load', mountFavorites);
+document.addEventListener('anylist:favorites-reconciled', mountFavorites);
 </script>

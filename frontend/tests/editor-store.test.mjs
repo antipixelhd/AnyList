@@ -269,3 +269,18 @@ test('curated artwork updates preserve optimistic intent and ignore an old decod
     assert.equal(title.poster,'/new-poster.jpg');assert.equal(title.favorite,true);
   }finally{globalThis.Image=previous;}
 });
+
+
+test('pending writes stay visible to page reconciliation until each queued edit settles', async () => {
+  const first=deferred(), second=deferred(); let calls=0;
+  const store=new EditorStore(()=> (++calls===1 ? first.promise : second.promise));
+  const title=store.seed({...draft(),id:1,entry:{status:'planning',progress:0}});
+  assert.equal(store.hasPendingWrites(),false);
+  const a=store.write(title,{status:'watching'});
+  const b=store.write(title,{manual_score:8});
+  assert.equal(store.hasPendingWrites(),true);
+  await turn(); first.resolve({id:1,status:'watching'}); await a;
+  assert.equal(store.hasPendingWrites(),true);
+  await turn(); second.resolve({id:1,status:'watching',score:8}); await b;
+  assert.equal(store.hasPendingWrites(),false);
+});

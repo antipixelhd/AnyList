@@ -175,9 +175,21 @@ export function mountMediaDetail() {
       const content=html.querySelector('.media-social-grid');
       if(!content)throw new Error('Unable to load social activity.');
       if(signal.aborted)return;
+      const selectedScope = host.querySelector<HTMLButtonElement>('[data-social-scope][aria-selected="true"]')?.dataset.socialScope;
       host.replaceChildren(document.importNode(content,true));localizeDateTimes(host);socialLoaded=true;
-    })().catch(error=>{if(!signal.aborted)host.textContent=error instanceof Error?error.message:'Unable to load social activity.';}).finally(()=>{socialPending=undefined;});
+      if (selectedScope) host.querySelector<HTMLButtonElement>(`[data-social-scope="${selectedScope}"]`)?.click();
+    })().catch(error=>{if(!signal.aborted&&!host.children.length)host.textContent=error instanceof Error?error.message:'Unable to load social activity.';}).finally(()=>{socialPending=undefined;});
   };
+  document.addEventListener('anylist:editor-committed', event => {
+    const saved = (event as CustomEvent<{title:EditorTitle}>).detail.title;
+    if (saved.id !== info.id || (!socialLoaded && !socialPending)) return;
+    void (async () => {
+      await socialPending;
+      if (signal.aborted) return;
+      socialLoaded = false;
+      if (root.querySelector<HTMLElement>('[data-detail-panel="social"]')?.hidden === false) loadSocial();
+    })();
+  }, {signal});
   const tabs = [...root.querySelectorAll<HTMLButtonElement>('[data-detail-tab]')];
   const panels = [...root.querySelectorAll<HTMLElement>('[data-detail-panel]')];
   const switchPanel = createContentTransition(root.querySelector<HTMLElement>('[data-detail-panels]')!,signal);

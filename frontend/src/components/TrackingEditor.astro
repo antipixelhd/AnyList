@@ -129,10 +129,12 @@ document.addEventListener('astro:page-load', () => {
     void closeDialog(dialog);
   };
   function finishEditing() {
-    // Close immediately; background writes keep their own snapshot for retry.
+    // Keep the write optimistic while both dialogs use their normal close motion.
     const search = document.querySelector<HTMLDialogElement>('[data-quick-search]');
-    if (dialog.open) dialog.close();
-    if (search?.open) search.close();
+    return Promise.all([
+      dialog.open ? closeDialog(dialog) : Promise.resolve(),
+      search?.open ? closeDialog(search) : Promise.resolve(),
+    ]);
   }
   function populateEditor(title: any) {
     const entry = title.entry;
@@ -275,7 +277,7 @@ document.addEventListener('astro:page-load', () => {
         sectionHeading.focus({preventScroll:true});
       } else opener?.blur();
       if (!listRow.matches(':hover')) delete listRow.dataset.editorDeselected;
-    } else opener?.focus();
+    } else if (!document.querySelector('[data-quick-search][data-motion-closing]')) opener?.focus();
     opener = null;
   });
   document.querySelector<HTMLButtonElement>('#delete-tracked-entry')!.addEventListener('click',async event=>{
@@ -284,7 +286,21 @@ document.addEventListener('astro:page-load', () => {
     if(!current||!editing||!await confirmEntryAction('Are you sure you want to delete this list entry?'))return;
     if(sessionSignal.aborted || currentTitle !== editing || !dialog.open)return;
     button.disabled=true;
-    try{const id=await editorStore.remove(editing);if(sessionSignal.aborted)return;finishEditing();if(document.querySelector('[data-browse-page]'))document.dispatchEvent(new CustomEvent('anylist:entry-saved',{detail:{id,status:null,score:null}}));else location.reload();}catch(e){if(sessionSignal.aborted)return;error.textContent=(e as Error).message;error.hidden=false;button.disabled=false;}
+    const previous = {...current};
+    const previousOpener = opener;
+    const closing = finishEditing();
+    try {
+      const id = await editorStore.remove(editing);
+      if (!sessionSignal.aborted) document.dispatchEvent(new CustomEvent('anylist:entry-saved',{detail:{id,status:null,score:null}}));
+    } catch (e) {
+      await closing;
+      if (sessionSignal.aborted) return;
+      if (dialog.open) { window.anyListToast?.((e as Error).message); return; }
+      opener = previousOpener;
+      populateEditor({...editing, entry:previous});
+      error.textContent = (e as Error).message; error.hidden = false; button.disabled = false;
+      showDialog(dialog);
+    }
   });
   form.addEventListener('keydown', event => {
     if (event.key !== 'Enter' || event.isComposing || !(event.target instanceof HTMLInputElement)) return;
@@ -321,13 +337,13 @@ document.addEventListener('astro:page-load', () => {
     const previous = {...current};
     const previousScore = displayedScore;
     const previousOpener = opener;
-    finishEditing();
+    const closing = finishEditing();
     try {
       const saved = await editorStore.write(editing, body);
       if (sessionSignal.aborted) return;
       document.dispatchEvent(new CustomEvent('anylist:entry-saved',{detail:saved}));
-      if(!document.querySelector('[data-browse-page]')) location.reload();
     } catch(e) {
+      await closing;
       if (sessionSignal.aborted) return;
       if (dialog.open) { window.anyListToast?.((e as Error).message); return; }
       opener = previousOpener;

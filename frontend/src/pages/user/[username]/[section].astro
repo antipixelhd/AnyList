@@ -88,9 +88,10 @@ import {applyResponsiveArtwork} from '../../../lib/responsive-artwork';
 import {compactListProgress} from '../../../lib/tracker';
 import {placeDropdown} from '../../../lib/dropdown-position';
 import {reveal,dismiss,showMenu,hideMenu} from '../../../lib/ui-motion';
+import {editorStore, type EditorTitle} from '../../../lib/editor-store';
 let pageListeners: AbortController;
 document.addEventListener('astro:before-swap',()=>pageListeners?.abort());
-document.addEventListener('astro:page-load', () => {
+function mountProfileList() {
   pageListeners?.abort();
   pageListeners = new AbortController();
   if (!document.querySelector('#entry-groups')) return;
@@ -309,7 +310,7 @@ document.addEventListener('astro:page-load', () => {
       mobileToggle.setAttribute('aria-label',active>0?`Filters and sorting (${active} active)`:'Filters and sorting');
       resetButton.disabled=active===0;
       filterDropdowns.forEach(syncDropdown);
-      document.querySelectorAll<HTMLButtonElement>('[data-status]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.status===status)));
+      document.querySelectorAll<HTMLButtonElement>('[data-status]').forEach(button=>{ const active=button.dataset.status===status; button.setAttribute('aria-pressed',String(active)); button.classList.toggle('selected',active); });
     }
     const filter = () => {
       hidePreview();
@@ -323,7 +324,7 @@ document.addEventListener('astro:page-load', () => {
         let visible = 0;
         rows.forEach(row=> {
           table.append(row);
-          row.hidden = (status !== 'all' && status!==group.dataset.group) || !row.dataset.title!.includes(query) || !!(input('genre-filter').value && !JSON.parse(row.dataset.genres!).includes(input('genre-filter').value)) || !!(selectedYear() && row.dataset.year!==selectedYear()) || !!(input('favorite-filter').value && row.dataset.favorite!=='yes');
+          row.hidden = row.hasAttribute('data-editor-removed') || (status !== 'all' && status!==group.dataset.group) || !row.dataset.title!.includes(query) || !!(input('genre-filter').value && !JSON.parse(row.dataset.genres!).includes(input('genre-filter').value)) || !!(selectedYear() && row.dataset.year!==selectedYear()) || !!(input('favorite-filter').value && row.dataset.favorite!=='yes');
           if (!row.hidden) visible++;
         });
         group.hidden = visible===0;
@@ -332,7 +333,7 @@ document.addEventListener('astro:page-load', () => {
       document.querySelector('#result-count')!.textContent=`${count} entries`;
       (document.querySelector('#list-empty') as HTMLElement).hidden=count>0;
       document.querySelectorAll<HTMLButtonElement>('[data-status]').forEach(button=>{
-        const total=button.dataset.status==='all'?document.querySelectorAll('.entry-row').length:groups.querySelectorAll(`[data-group="${button.dataset.status}"] .entry-row`).length;
+        const total=button.dataset.status==='all'?groups.querySelectorAll('.entry-row:not([data-editor-removed])').length:groups.querySelectorAll(`[data-group="${button.dataset.status}"] .entry-row:not([data-editor-removed])`).length;
         button.querySelector('span')!.textContent=String(total);
       });
       updateFilterControls();
@@ -365,8 +366,82 @@ document.addEventListener('astro:page-load', () => {
     },{signal:pageListeners.signal});
     document.addEventListener('keydown',event=>{if(!event.defaultPrevented&&event.key==='Escape'&&filters.classList.contains('open'))setFiltersOpen(false);},{signal:pageListeners.signal});
     document.addEventListener('media-tracker:rating-changed', filter,{signal:pageListeners.signal});
+    if (document.querySelector('#list-editor-entries')) {
+      let revision = 0, dirty = false, refreshScheduled = false;
+      const scheduleRefresh = () => {
+        if (!dirty || refreshScheduled || editorStore.hasPendingWrites() || pageListeners.signal.aborted) return;
+        const editor = document.querySelector<HTMLDialogElement>('#tracking-editor');
+        if (editor?.open) { editor.addEventListener('close', scheduleRefresh, {once:true, signal:pageListeners.signal}); return; }
+        const focused = document.activeElement;
+        if (focused instanceof HTMLInputElement && focused.closest('.list-shell')) {
+          focused.addEventListener('blur', scheduleRefresh, {once:true, signal:pageListeners.signal}); return;
+        }
+        refreshScheduled = true;
+        const version = revision;
+        void (async () => {
+          try {
+            const response = await fetch(location.href, {cache:'no-store', signal:pageListeners.signal});
+            if (!response.ok) throw new Error('Unable to refresh the list.');
+            const fresh = new DOMParser().parseFromString(await response.text(), 'text/html');
+            if (pageListeners.signal.aborted) return;
+            if (version !== revision || editorStore.hasPendingWrites()) { refreshScheduled = false; scheduleRefresh(); return; }
+            const shell = document.querySelector<HTMLElement>('.list-shell');
+            const next = fresh.querySelector<HTMLElement>('.list-shell');
+            if (!shell || !next || !fresh.querySelector('#list-editor-entries')) return;
+            const values = Object.fromEntries(['list-search','genre-filter','favorite-filter','sort-filter'].map(id => [id, input(id).value]));
+            const year = selectedYear();
+            const currentStatus = status;
+            const filtersOpen = mobileToggle.getAttribute('aria-expanded') === 'true';
+            const currentYears = JSON.parse(next.querySelector<HTMLInputElement>('#year-filter')?.dataset.years || '[]') as string[];
+            next.dataset.initialStatus = currentStatus;
+            for (const [id, value] of Object.entries(values)) {
+              const control = next.querySelector<HTMLInputElement | HTMLSelectElement>(`#${id}`);
+              if (control) control.value = value;
+            }
+            const nextYear = next.querySelector<HTMLInputElement>('#year-filter');
+            if (nextYear) nextYear.value = String(Math.max(0, currentYears.indexOf(year) + 1));
+            shell.replaceWith(next);
+            const listData = document.querySelector('#list-editor-entries');
+            const nextData = fresh.querySelector('#list-editor-entries');
+            if (listData && nextData) listData.textContent = nextData.textContent;
+            dirty = false;
+            document.dispatchEvent(new Event('anylist:list-reconciled'));
+            if (filtersOpen && matchMedia('(max-width:650px)').matches) document.querySelector<HTMLButtonElement>('.mobile-filter-toggle')?.click();
+          } catch (error) {
+            if (!pageListeners.signal.aborted) window.anyListToast?.('List saved, but the list view could not be refreshed.');
+          } finally { refreshScheduled = false; }
+        })();
+      };
+      document.addEventListener('anylist:editor-state', event => {
+        revision++;
+        const title = (event as CustomEvent<EditorTitle>).detail;
+        const button = title.id ? groups.querySelector<HTMLElement>(`[data-edit-entry="${title.id}"]`) : null;
+        const row = button?.closest<HTMLElement>('.entry-row');
+        if (row) {
+          const entry = title.entry;
+          row.toggleAttribute('data-editor-removed', !entry);
+          if (entry) {
+            row.dataset.score = String(entry.score ?? -1);
+            row.dataset.progress = String(entry.progress ?? 0);
+            row.dataset.favorite = title.favorite ? 'yes' : 'no';
+            if (entry.updated_at) row.dataset.updated = entry.updated_at;
+            const score = row.querySelector<HTMLElement>('[data-score-label]');
+            if (score) score.textContent = entry.score ? String(Number(Number(entry.score).toFixed(1))) : '—';
+            const scoreButton = row.querySelector<HTMLElement>('[data-quick-rate-id]');
+            if (scoreButton) { scoreButton.dataset.quickRateScore = String(entry.score ?? ''); scoreButton.dataset.quickRateMode = entry.rating_mode || 'manual'; }
+            const target = groups.querySelector<HTMLElement>(`[data-group="${entry.status}"] .entry-table`);
+            target?.append(row);
+          }
+          filter();
+        }
+        if (dirty) scheduleRefresh();
+      }, {signal:pageListeners.signal});
+      document.addEventListener('anylist:editor-committed', () => { dirty = true; scheduleRefresh(); }, {signal:pageListeners.signal});
+    }
     updateEntryImages();
     filter();
   }
-});
+}
+document.addEventListener('astro:page-load', mountProfileList);
+document.addEventListener('anylist:list-reconciled', mountProfileList);
 </script>

@@ -66,6 +66,7 @@ export class EditorStore {
     return record.title;
   }
   get(title: EditorTitle) { return this.record(title)?.title || this.seed(title); }
+  hasPendingWrites() { return [...this.records.values()].some(record => record.pending.length || record.libraryPending.length || record.importing); }
   find(id: number) { return [...this.records.values()].find(r => r.title.id === id && !r.stale)?.title; }
   async load(id: number) {
     const cached = [...this.records.values()].find(r => r.title.id === id);

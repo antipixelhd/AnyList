@@ -362,6 +362,7 @@ function mount(root: HTMLElement) {
   // The profile runtime applies the owner/viewer accent on body, including
   // saved choices restored during client-side navigation. Repaint canvases too.
   observer.observe(document.body, { attributes: true, attributeFilter: ['style'] });
+  document.addEventListener('anylist:editor-committed', () => { if (response.owner) void loader.load(media); }, {signal:events.signal});
   document.addEventListener('astro:before-swap', () => { stopped = true; clearTimeout(timer); loader.stop(); events.abort(); genres.stop(); actors.stop(); studios.stop(); staff.stop(); observer.disconnect(); charts.forEach(chart => chart.destroy()); pies.forEach(chart => chart.destroy()); }, { once: true, signal: events.signal });
   render(response, true);
 }
