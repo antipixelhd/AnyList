@@ -203,7 +203,9 @@ export class EditorStore {
   }
   warmArtwork(title: EditorTitle, posterSrc?: string, backdropSrc?:string) {
     const record = this.record(title)!;
-    if (posterSrc) record.posterSrc = posterSrc;
+    // A global search opener may sit above a different title's details page.
+    // Reuse decoded/displayed sources only when they belong to this title.
+    if (posterSrc && title.poster && artworkIdentity(posterSrc) === artworkIdentity(title.poster)) record.posterSrc = posterSrc;
     if (!title.backdrop) return;
     // A details-page editor reuses the hero's selected source instead of warming another bucket.
     if(backdropSrc&&artworkIdentity(backdropSrc)===artworkIdentity(title.backdrop))record.backdropSrc=backdropSrc;
