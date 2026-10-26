@@ -167,6 +167,7 @@ if(params.has('cinema'))initialChips.push(cinemaLabel);
               value={params.get("q") || ""}
               placeholder="Search titles…"
               autocomplete="off"
+              autocapitalize="words"
               aria-label="Search titles"
             />
             <button type="button" class="browse-search-clear" data-browse-search-clear aria-label="Clear search" hidden={!params.get("q")}>

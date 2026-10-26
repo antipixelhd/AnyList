@@ -3,6 +3,7 @@ import { editorStore, type EditorTitle } from './editor-store';
   import { showDialog, closeDialog } from './ui-motion';
 import { responsiveArtwork } from './responsive-artwork';
 import { quickSearchShortcut } from './quick-search-shortcut';
+import { wireSearchWordCapitalization } from './search-word-capitalization';
 import {quickSearchRequests,rankCombinedMedia,readQuickTitles,createQuickSearchReader,visibleQuickSearchSections,availableQuickSearchTabs,resolvedQuickSearchTab,steppedQuickSearchTab,mergeContributorResults,type SearchSection} from './quick-search-data';
 import { animate } from 'motion/mini';
 
@@ -35,6 +36,7 @@ export function mountQuickSearch() {
   type ContributorResult={key:string;name:string;image?:string|null;roles:string[];url:string};
   const closeButton = dialog?.querySelector<HTMLButtonElement>('[data-quick-search-close]');
   const input = dialog?.querySelector<HTMLInputElement>('#quick-search-input');
+  if (input) wireSearchWordCapitalization(input, pageListeners.signal);
   const resultShell = dialog?.querySelector<HTMLElement>('.quick-search-results');
   const state = dialog?.querySelector<HTMLElement>('[data-search-state]');
   const announcement = dialog?.querySelector<HTMLElement>('[data-search-announcement]');

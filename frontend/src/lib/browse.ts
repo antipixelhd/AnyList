@@ -1,5 +1,6 @@
 import { bindBrowseCardActions, bindBrowseCardTouch, paintBrowseCardState, type BrowseItem } from './browse-card-actions';
 import { formatDate } from './date-time';
+import { wireSearchWordCapitalization } from './search-word-capitalization';
 import { STREAMING_REGION_COOKIE, deviceStreamingCountry, streamingRegionPreference } from './streaming-region';
 import {
   isCategoryView,
@@ -60,6 +61,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   const searchClear = find<HTMLButtonElement>("[data-browse-search-clear]");
   const field = (name: string) =>
     form.elements.namedItem(name) as HTMLInputElement | HTMLSelectElement;
+  wireSearchWordCapitalization(field('q') as HTMLInputElement, signal);
   const grid = find<HTMLElement>("[data-browse-results]");
   const sections = find<HTMLElement>("[data-browse-sections]");
   const paintRanges = initializeBrowseRanges(form, signal);
