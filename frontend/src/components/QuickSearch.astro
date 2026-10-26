@@ -8,7 +8,7 @@ const { combineLists = true, hideTrigger = false } = Astro.props;
   <div class="quick-search-bar">
     <Icon name="search" />
     <label class="sr-only" for="quick-search-input">Quick search</label>
-    <input id="quick-search-input" type="search" placeholder="Search titles, people and studios…" maxlength="100" autocomplete="off" spellcheck="false" />
+    <input id="quick-search-input" type="search" placeholder="Search titles, people and studios…" maxlength="100" autocomplete="off" autocapitalize="words" spellcheck="false" />
     <button class="editor-icon-button" type="button" aria-label="Close search" data-motion-press data-quick-search-close><Icon name="close" /></button>
     <div class="quick-search-progress" data-search-progress aria-hidden="true"></div>
   </div>
