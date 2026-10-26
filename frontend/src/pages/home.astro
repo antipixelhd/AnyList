@@ -43,6 +43,7 @@ const upcomingSeasonCards=upcomingSeasons.map((entry:any)=>({
 <Tracker title="Home"><div class="page-width dashboard home-dashboard" data-username={Astro.locals.user.username} data-watching-count={watchingCount??''}>
   <header class="page-intro"><div><span class="eyebrow">Following feed</span><h1>Welcome back, {Astro.locals.user.display_name || Astro.locals.user.username}</h1><p>See the latest updates from the public profiles you follow.</p></div><a class="button-primary" href="/browse" data-find-title hidden={watchingCount!==0}>Find your next title</a></header>
   <div class="home-columns"><aside class="series-progress" aria-labelledby="series-progress-heading"><div class="section-heading"><h2 id="series-progress-heading">Series in Progress</h2></div>
+    <script id="home-editor-entries" type="application/json" set:html={JSON.stringify(seriesInProgress).replace(/</g, '\\u003c')}></script>
     {seriesCards.length ? <div class="series-progress-grid" data-progress-grid>{seriesCards.map((entry:any)=><ProgressCard entry={entry}/>)}</div> : <p class="series-progress-empty" data-progress-empty>Series you mark as Watching will appear here.</p>}
     <section class="upcoming-releases" aria-labelledby="upcoming-releases-heading" data-upcoming-releases>
       <div class="section-heading"><h2 id="upcoming-releases-heading">Upcoming releases</h2></div>
@@ -73,6 +74,7 @@ const upcomingSeasonCards=upcomingSeasons.map((entry:any)=>({
 import {localToday} from '../lib/date-time';
 import {startVisibleRefresh, type VisibleRefreshHandle} from '../lib/visible-refresh';
 import {createHomePanelRefresh} from '../lib/home-panel-refresh';
+import {editorStore, type EditorTitle} from '../lib/editor-store';
 
 let homeProgressListeners: AbortController | undefined;
 let homeSeriesRefresh: VisibleRefreshHandle | undefined;
@@ -85,12 +87,15 @@ function initializeHomeProgress() {
   homeProgressListeners?.abort();
   homeProgressListeners = new AbortController();
   const {signal} = homeProgressListeners;
+  editorStore.scope(document.body.dataset.cacheUser || 'anonymous');
+  const initialEntries = JSON.parse(document.querySelector('#home-editor-entries')?.textContent || '[]');
+  initialEntries.forEach((entry:any) => editorStore.seed({...entry, entry}));
   let progressRevision=0;
   document.addEventListener('anylist:editor-state',()=>{progressRevision++;},{signal});
   const refreshPanels = createHomePanelRefresh({
     signal,
     getRevision:()=>progressRevision,
-    isBusy: () => !!document.querySelector('.home-dashboard [data-updating="true"]'),
+    isBusy: () => editorStore.hasPendingWrites() || !!document.querySelector('.home-dashboard [data-updating="true"]'),
     replace: fresh => {
       const current = document.querySelector('.home-dashboard .series-progress');
       const next = fresh.querySelector('.home-dashboard .series-progress');
@@ -152,7 +157,7 @@ function initializeHomeProgress() {
     card.dataset.progress = String(progress);
     if (hasReleased && Number.isFinite(released)) card.dataset.released = String(released);
     card.dataset.seasonPosition = updated.season_position || '';
-    card.querySelector<HTMLElement>('[data-current-position]')!.textContent = updated.season_position || '0';
+    card.querySelector<HTMLElement>('[data-current-position]')!.textContent = updated.season_position || String(progress);
     card.querySelector<HTMLElement>('[data-progress-count]')!.textContent = String(progress);
     card.querySelector<HTMLElement>('[data-released-count]')!.textContent = hasReleased ? String(released) : '?';
     card.querySelector<HTMLElement>('[data-episodes-behind]')!.textContent = canIncrement
@@ -178,59 +183,50 @@ function initializeHomeProgress() {
     if ('next_release_date' in updated) card.dataset.nextAir = updated.next_release_date || '';
   };
 
-  grid.querySelectorAll<HTMLButtonElement>('[data-progress-action]').forEach(button => button.addEventListener('click', async () => {
-    const card = button.closest<HTMLElement>('[data-progress-card]');
-    if (!card || button.disabled) return;
-    progressRevision++;
-    button.dataset.updating = 'true';
-    button.disabled = true;
-    button.title = 'Updating episode progress…';
-    try {
-      const response = await fetch(`/api/proxy/tracking/entry/${button.dataset.progressAction}`, {
-        method:'PATCH', headers:{'content-type':'application/json'},
-        body:JSON.stringify({progress:Number(button.dataset.nextProgress)}), signal,
-      });
-      if (!response.ok) throw new Error((await response.json().catch(()=>null))?.detail || 'Could not update episode progress.');
-      const updated = await response.json();
-      if (updated.status !== 'watching') {
-        card.remove();
-        if (!grid.querySelector('[data-progress-card]')) {
-          const empty = document.createElement('p');
-          empty.className = 'series-progress-empty';
-          empty.textContent = 'Series you mark as Watching will appear here.';
-          grid.replaceWith(empty);
-        }
-        const dashboard = document.querySelector<HTMLElement>('.home-dashboard');
-        if (dashboard?.dataset.watchingCount) {
-          const count = Math.max(0, Number(dashboard.dataset.watchingCount) - 1);
-          dashboard.dataset.watchingCount = String(count);
-          const browse = dashboard.querySelector<HTMLElement>('[data-find-title]');
-          if (browse) browse.hidden = count !== 0;
-        }
-        document.dispatchEvent(new CustomEvent('anylist:data-changed'));
-        return;
+  document.addEventListener('anylist:editor-state', event => {
+    const title = (event as CustomEvent<EditorTitle>).detail;
+    const card = [...grid.querySelectorAll<HTMLElement>('[data-progress-card]')].find(item => item.dataset.mediaId === String(title.id));
+    if (!card) return;
+    const entry = title.entry;
+    const wasHidden = card.hasAttribute('data-optimistic-hidden');
+    const nowHidden = !entry || entry.status !== 'watching';
+    card.toggleAttribute('data-optimistic-hidden', nowHidden);
+    card.hidden = nowHidden;
+    if (entry) syncCardProgress(card, entry);
+    if (wasHidden !== nowHidden) {
+      const dashboard = document.querySelector<HTMLElement>('.home-dashboard');
+      if (dashboard?.dataset.watchingCount) {
+        const count = Math.max(0, Number(dashboard.dataset.watchingCount) + (nowHidden ? -1 : 1));
+        dashboard.dataset.watchingCount = String(count);
+        const browse = dashboard.querySelector<HTMLElement>('[data-find-title]');
+        if (browse) browse.hidden = count !== 0;
       }
-      syncCardProgress(card,updated);
-      document.dispatchEvent(new CustomEvent('anylist:data-changed'));
-    } catch (error) {
-      button.disabled = false;
-      button.title = error instanceof Error ? error.message : 'Could not update episode progress.';
-      button.setAttribute('aria-label', `${button.title} Try again`);
-    } finally {
-      delete button.dataset.updating;
     }
+  }, {signal});
+
+  grid.querySelectorAll<HTMLButtonElement>('[data-progress-action]').forEach(button => button.addEventListener('click', () => {
+    const title = editorStore.find(Number(button.dataset.progressAction));
+    if (!title || button.disabled) return;
+    const progress = Number(title.entry?.progress ?? 0) + 1;
+    void editorStore.write(title,{progress}).catch(error => {
+      if (signal.aborted) return;
+      const message = error instanceof Error ? error.message : 'Could not update episode progress.';
+      window.anyListToast?.(message);
+      button.title = message;
+      button.setAttribute('aria-label', `${message} Try again`);
+    });
   }, {signal}));
 
   const dashboard = document.querySelector<HTMLElement>('.home-dashboard');
   const username = dashboard?.dataset.username;
   if (!dashboard || !username) return;
   homeSeriesRefresh = startVisibleRefresh({intervalMs:60_000, refresh:async refreshSignal => {
-    if (grid.querySelector('[data-updating="true"]')) return;
+    if (editorStore.hasPendingWrites() || grid.querySelector('[data-updating="true"]')) return;
     const revision=progressRevision;
     const response = await fetch(`/api/proxy/tracking/profile/${encodeURIComponent(username)}/all`, {cache:'no-store',signal:refreshSignal});
     if (!response.ok) return;
     const entries = (await response.json()).entries;
-    if(signal.aborted||refreshSignal.aborted||revision!==progressRevision||grid.querySelector('[data-updating="true"]'))return;
+    if(signal.aborted||refreshSignal.aborted||revision!==progressRevision||editorStore.hasPendingWrites()||grid.querySelector('[data-updating="true"]'))return;
     if (!Array.isArray(entries)) return;
     const watching = entries.filter((entry:any) => entry.status === 'watching');
     dashboard.dataset.watchingCount = String(watching.length);

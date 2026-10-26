@@ -67,6 +67,7 @@ export class EditorStore {
   }
   get(title: EditorTitle) { return this.record(title)?.title || this.seed(title); }
   hasPendingWrites() { return [...this.records.values()].some(record => record.pending.length || record.libraryPending.length || record.importing); }
+  hasPendingEntryWrites(title: EditorTitle) { return !!this.record(title)?.pending.length; }
   find(id: number) { return [...this.records.values()].find(r => r.title.id === id && !r.stale)?.title; }
   async load(id: number) {
     const cached = [...this.records.values()].find(r => r.title.id === id);
@@ -109,8 +110,27 @@ export class EditorStore {
       if ('favorite' in operation.patch) favorite=operation.patch.favorite;
       if (!entry && Object.keys(operation.patch).length===1 && 'favorite' in operation.patch) continue;
       const previous = entry?.status;
+      const previousProgress = entry?.progress ?? 0;
       entry = {...(entry || {status:'planning', progress:0, rating_mode:'manual', manual_score:null,
         season_scores:{}, favorite:false, rewatch_count:0, notes:'', start_date:null, finish_date:null}), ...operation.patch};
+      if ('status' in operation.patch && record.title.type === 'movie') {
+        entry.progress = entry.status === 'completed' ? 1 : 0;
+      } else if (entry.status === 'completed' && previous !== 'completed' && record.title.type === 'series') {
+        const seasons = (record.title as EditorTitle & {seasons?: {season_number:number;released_count:number|null}[]}).seasons;
+        const regular = seasons?.filter(season => season.season_number > 0);
+        const released = entry.released_episodes ?? (regular?.length && regular.every(season => season.released_count != null)
+          ? regular.reduce((sum, season) => sum + season.released_count!, 0) : null);
+        if (released != null && released > 0) entry.progress = released;
+      }
+      if (entry.progress !== previousProgress) {
+        // A season/episode label belongs to the old progress until the server confirms the new position.
+        entry.season_position = null;
+        if ('progress' in operation.patch && !('status' in operation.patch) && entry.progress > 0) {
+          const released = entry.released_episodes ?? (record.title.type === 'movie' ? 1 : null);
+          entry.status = previous === 'completed' || (released != null && released > 0 && entry.progress >= released)
+            ? 'completed' : 'watching';
+        }
+      }
       if ('manual_score' in operation.patch) entry.score = operation.patch.manual_score || null;
       const today = localToday();
       if (entry.status !== previous && entry.status === 'watching' && !entry.start_date && !('start_date' in operation.patch)) entry.start_date = today;

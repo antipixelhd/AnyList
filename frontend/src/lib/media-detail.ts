@@ -9,7 +9,7 @@ import { initializeScrollMotion } from './scroll-motion';
 import { showToast } from './toasts';
 import {detailWorkCaption,relationLabel} from './media-detail-data';
 import {detailWorkArtwork} from './detail-artwork';
-import {currentDetailSeason,detailSeasonState,type DetailSeason} from './season-detail-data';
+import {currentDetailSeason,detailSeasonState,optimisticSeasonProgress,type DetailSeason} from './season-detail-data';
 import {observeDeferredArtwork} from './visible-artwork';
 import {responsiveArtwork} from './responsive-artwork';
 import {localizeDateTimes} from './date-time-dom';
@@ -226,9 +226,26 @@ export function mountMediaDetail() {
   const note = root.querySelector<HTMLTextAreaElement>('#detail-note');
   let noteDirty = false;
   note?.addEventListener('input',()=>{noteDirty=true;},{signal});
+  let displayedProgress = title?.entry?.progress ?? null;
+  let projectedSeasons:DetailSeason[] | null = null;
+  let requestSeasonRefresh = () => {};
   const paint = (state: EditorTitle) => {
     title = state;
-    const catalogue=(state as EditorTitle & {seasons?:DetailSeason[]}).seasons||[];
+    const rawCatalogue=(state as EditorTitle & {seasons?:DetailSeason[]}).seasons||[];
+    const nextProgress = state.entry?.progress ?? 0;
+    if (displayedProgress != null && nextProgress !== displayedProgress)
+      projectedSeasons = optimisticSeasonProgress(rawCatalogue, nextProgress);
+    displayedProgress = nextProgress;
+    const catalogue = projectedSeasons || rawCatalogue;
+    if (projectedSeasons) for (const season of projectedSeasons) for (const episode of season.episodes || []) {
+      const row = root.querySelector<HTMLElement>(`[data-episode-row="${episode.id}"]`);
+      if (!row) continue;
+      row.dataset.watched = String(episode.watched);
+      const button = row.querySelector<HTMLButtonElement>('[data-watch-episode]');
+      if (button) { button.setAttribute('aria-pressed', String(episode.watched)); button.setAttribute('aria-label', `Mark season ${season.season_number} episode ${episode.episode_number} ${episode.watched?'unwatched':'watched'}`); }
+      const heading = row.querySelector<HTMLElement>('[data-episode-title]');
+      if (heading) heading.textContent = root.dataset.spoilers === 'true' || episode.watched ? heading.dataset.episodeTitle! : `Episode ${episode.episode_number}`;
+    }
     const watching=state.entry?.status==='watching';
     const current=currentDetailSeason(catalogue,watching);
     for(const season of catalogue){
@@ -264,7 +281,7 @@ export function mountMediaDetail() {
   };
   document.addEventListener('anylist:editor-state', event => {
     const state = (event as CustomEvent<EditorTitle>).detail;
-    if (state.id===info.id) paint(state);
+    if (state.id===info.id) { paint(state); requestSeasonRefresh(); }
   }, {signal});
   if (title) paint(title);
   favorite?.addEventListener('click',()=>{
@@ -322,6 +339,8 @@ export function mountMediaDetail() {
     const response=await fetch(`/api/proxy/tracking/title/${info.id}`,{signal});
     if(!response.ok)throw new Error('Unable to refresh episode state. Reload to see your saved change.');
     const data=await response.json();if(signal.aborted||version!==seasonReadVersion)return;
+    if (title && editorStore.hasPendingEntryWrites(title)) { seasonRefreshNeeded = true; return; }
+    projectedSeasons = null;
     paint(editorStore.seed({...data,editor_library:title?.editor_library}));
     for(const season of data.seasons||[]){
       const number=season.season_number;
@@ -334,10 +353,17 @@ export function mountMediaDetail() {
     }
     paintEpisodeTitles();
   };
+  let seasonRefreshNeeded = false;
+  requestSeasonRefresh = () => {
+    if (!seasonRefreshNeeded || signal.aborted || !title || editorStore.hasPendingEntryWrites(title)) return;
+    seasonRefreshNeeded = false;
+    void refreshSeasonState().catch(()=>{if(!signal.aborted)showToast('Reload to see your updated episode state.','error');});
+  };
   document.addEventListener('anylist:editor-committed',event=>{
     const {title:saved,patch}=(event as CustomEvent<{title:EditorTitle;patch:Record<string,unknown>|null}>).detail;
     if(saved.id!==info.id||info.type!=='series'||(patch&&!['status','progress','rewatch_count'].some(key=>key in patch)))return;
-    void refreshSeasonState().catch(()=>{if(!signal.aborted)showToast('Reload to see your updated episode state.','error');});
+    seasonRefreshNeeded = true;
+    requestSeasonRefresh();
   },{signal});
   root.querySelectorAll<HTMLButtonElement>('[data-watch-episode]').forEach(button=>button.addEventListener('click',async()=>{
     const watched=button.getAttribute('aria-pressed')!=='true';button.disabled=true;button.setAttribute('aria-busy','true');

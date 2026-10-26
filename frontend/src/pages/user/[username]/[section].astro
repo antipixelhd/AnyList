@@ -83,12 +83,11 @@ const availabilityLabel=(reason:string|undefined)=>reason==='airing'?'Currently 
   </> : <div class="page-width"><p class="error-message" role="alert">{error}</p></div>}
 </Tracker>
 <script>
-import {releaseAnnotation} from '../../../lib/release-annotation';
 import {applyResponsiveArtwork} from '../../../lib/responsive-artwork';
 import {compactListProgress} from '../../../lib/tracker';
 import {placeDropdown} from '../../../lib/dropdown-position';
 import {reveal,dismiss,showMenu,hideMenu} from '../../../lib/ui-motion';
-import {editorStore, type EditorTitle} from '../../../lib/editor-store';
+import {editorStore, seedEditorPage, type EditorTitle} from '../../../lib/editor-store';
 let pageListeners: AbortController;
 document.addEventListener('astro:before-swap',()=>pageListeners?.abort());
 function mountProfileList() {
@@ -159,51 +158,18 @@ function mountProfileList() {
   window.addEventListener('scroll',hidePreview,{capture:true,signal:pageListeners.signal});
   window.addEventListener('resize',hidePreview,{signal:pageListeners.signal});
   const groups = document.querySelector('#entry-groups');
-  let refreshList = () => {};
-  document.querySelectorAll<HTMLButtonElement>('[data-progress-increment]').forEach(button=>button.addEventListener('click',async()=>{
-    const row=button.closest<HTMLElement>('.entry-row')!;
-    button.dataset.defaultTitle ||= button.title;
-    button.dataset.defaultLabel ||= button.getAttribute('aria-label') || '';
-    button.disabled=true;
-    try {
-      const response=await fetch(`/api/proxy/tracking/entry/${button.dataset.progressIncrement}`,{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({progress:Number(button.dataset.nextProgress)})});
-      if(!response.ok) throw new Error((await response.json().catch(()=>null))?.detail||'Could not update episode progress.');
-      const updated=await response.json();
-      row.dataset.progress=String(updated.progress);
-      row.dataset.updated=updated.updated_at||new Date().toISOString();
-      syncAvailability(row, updated);
-      const label=row.querySelector<HTMLElement>('[data-progress-label]')!;
-      label.textContent=row.dataset.mediaType==='movie'?String(updated.progress):(updated.season_position||'—');
-      row.querySelector<HTMLElement>('[data-mobile-progress-label]')!.textContent=compactListProgress({...updated,type:row.dataset.mediaType});
-      const indicator=row.querySelector<HTMLElement>('.unwatched-indicator');
-      if(indicator) indicator.remove();
-      const releaseLabel=updated.status==='completed'?releaseAnnotation(updated.new_seasons,updated.new_episodes):null;
-      if(releaseLabel){
-        const notice=document.createElement('small');notice.className='unwatched-indicator';
-        notice.textContent=releaseLabel;
-        let annotations=row.querySelector<HTMLElement>('.entry-annotations');
-        if(!annotations){annotations=document.createElement('span');annotations.className='entry-annotations';row.querySelector('.entry-title')!.append(annotations);}
-        annotations.prepend(notice);
-      }
-      const annotations=row.querySelector('.entry-annotations');
-      if(annotations&&!annotations.children.length) annotations.remove();
-      if(row.closest<HTMLElement>('[data-group]')?.dataset.group!==updated.status){
-        groups?.querySelector<HTMLElement>(`[data-group="${updated.status}"] .entry-table`)?.append(row);
-      }
-      if(row.dataset.mediaType==='movie'||updated.progress>=updated.released_episodes) button.remove();
-      else {button.dataset.nextProgress=String(updated.progress+1);button.disabled=false;}
-      button.title=button.dataset.defaultTitle || '';
-      button.setAttribute('aria-label',button.dataset.defaultLabel || '');
-      document.dispatchEvent(new CustomEvent('anylist:data-changed'));
-      refreshList();
-      document.querySelector('#progress-feedback')!.textContent=button.title;
-    } catch(error) {
-      button.disabled=false;
-      button.title=error instanceof Error?error.message:'Could not update episode progress.';
-      button.setAttribute('aria-label',`${button.title} Try again`);
-      document.querySelector('#progress-feedback')!.textContent=button.title;
-    }
-  }));
+  if (document.querySelector('#list-editor-entries')) seedEditorPage();
+  document.querySelectorAll<HTMLButtonElement>('[data-progress-increment]').forEach(button=>button.addEventListener('click',()=>{
+    const title = editorStore.find(Number(button.dataset.progressIncrement));
+    if (!title || button.disabled) return;
+    const next = Number(title.entry?.progress ?? 0) + 1;
+    void editorStore.write(title,{progress:next}).catch(error => {
+      if (pageListeners.signal.aborted) return;
+      const message = error instanceof Error ? error.message : 'Could not update episode progress.';
+      document.querySelector('#progress-feedback')!.textContent = message;
+      window.anyListToast?.(message);
+    });
+  }, {signal:pageListeners.signal}));
   if (groups) {
     let status = document.querySelector<HTMLElement>('.list-shell')?.dataset.initialStatus || 'all';
     const input = (id:string) => document.getElementById(id) as HTMLInputElement;
@@ -338,7 +304,6 @@ function mountProfileList() {
       });
       updateFilterControls();
     }
-    refreshList=filter;
     document.querySelectorAll<HTMLButtonElement>('[data-status]').forEach(button=>button.addEventListener('click',()=>{status=button.dataset.status!;document.querySelectorAll('[data-status]').forEach(b=>b.classList.toggle('selected',b===button));filter();}));
     ['list-search','genre-filter','year-filter','sort-filter','favorite-filter'].forEach(id=>input(id).addEventListener('input',filter));
     resetButton.addEventListener('click',()=>{['list-search','genre-filter','favorite-filter'].forEach(id=>input(id).value='');yearSlider.value='0';input('sort-filter').value=defaultSort;document.querySelector<HTMLButtonElement>('[data-status=all]')!.click();});
@@ -425,6 +390,19 @@ function mountProfileList() {
             row.dataset.progress = String(entry.progress ?? 0);
             row.dataset.favorite = title.favorite ? 'yes' : 'no';
             if (entry.updated_at) row.dataset.updated = entry.updated_at;
+            const progress = Number(entry.progress ?? 0);
+            const progressLabel = row.querySelector<HTMLElement>('[data-progress-label]');
+            if (progressLabel) progressLabel.textContent = title.type === 'movie' ? String(progress) : (entry.season_position || String(progress));
+            const mobileProgress = row.querySelector<HTMLElement>('[data-mobile-progress-label]');
+            if (mobileProgress) mobileProgress.textContent = compactListProgress({type:title.type,progress,released_episodes:entry.released_episodes});
+            const increment = row.querySelector<HTMLButtonElement>('[data-progress-increment]');
+            if (increment) {
+              increment.dataset.nextProgress = String(progress + 1);
+              const released = entry.released_episodes ?? (title.type === 'movie' ? 1 : null);
+              increment.hidden = released != null && progress >= released;
+              increment.disabled = increment.hidden;
+            }
+            syncAvailability(row, entry);
             const score = row.querySelector<HTMLElement>('[data-score-label]');
             if (score) score.textContent = entry.score ? String(Number(Number(entry.score).toFixed(1))) : '—';
             const scoreButton = row.querySelector<HTMLElement>('[data-quick-rate-id]');
