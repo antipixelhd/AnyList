@@ -1,4 +1,5 @@
 ---
+import ConnectionSecretInput from '../ConnectionSecretInput.astro';
 import { connectionIconHtml } from "../../lib/connectionIcons";
 import type { UserSettings } from "../../lib/api";
 
@@ -65,8 +66,7 @@ const { settings, hasTmdbKey } = Astro.props;
         <div class="space-y-2">
           <label for="trakt_client_secret" class="block text-sm font-medium text-zinc-400">Client Secret</label>
           <div class="relative group/field">
-            <input
-              type="password"
+            <ConnectionSecretInput
               name="trakt_client_secret"
               id="trakt_client_secret"
               value={settings.trakt_client_secret || ""}

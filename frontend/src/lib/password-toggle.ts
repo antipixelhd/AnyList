@@ -9,8 +9,10 @@ export function wirePasswordToggles(root: Document = document): void {
       ? event.target.closest<HTMLButtonElement>(".password-toggle, .metadata-password-toggle") : null;
     const input = toggle?.parentElement?.querySelector("input");
     if (!input) return;
-    const visible = input.type === "password";
-    input.type = visible ? "text" : "password";
+    const externalSecret = input.hasAttribute('data-connection-secret');
+    const visible = externalSecret ? input.dataset.secretVisible !== 'true' : input.type === "password";
+    if (externalSecret) input.dataset.secretVisible = String(visible);
+    else input.type = visible ? "text" : "password";
     toggle?.querySelector(".eye-icon")?.classList.toggle("hidden", visible);
     toggle?.querySelector(".eye-slash-icon")?.classList.toggle("hidden", !visible);
   }, { capture: true });

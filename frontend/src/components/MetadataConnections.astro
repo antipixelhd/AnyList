@@ -1,18 +1,18 @@
 ---
+import ConnectionSecretInput from './ConnectionSecretInput.astro';
 import Icon from './Icon.astro';
 const { settings } = Astro.props;
 ---
 <section>
   <h2 class="section-headline border-b border-zinc-800 pb-2 mb-4">Metadata providers</h2>
-  <form id="metadata-settings-form" class="space-y-6 max-w-xl">
+  <form autocomplete="off" id="metadata-settings-form" class="space-y-6 max-w-xl">
           <!-- TMDB Read Access Token -->
           <div class="space-y-2">
             <label for="tmdb_api_key" class="block text-sm font-medium text-zinc-400">TMDB Read Access Token</label>
             
             <div class="flex gap-2">
               <div class="relative flex-1 group/field">
-                <input
-                  type="password"
+                <ConnectionSecretInput
                   name="tmdb_api_key"
                   id="tmdb_api_key"
                   value={settings.tmdb_api_key || ""}
@@ -52,8 +52,7 @@ const { settings } = Astro.props;
             
             <div class="flex gap-2">
               <div class="relative flex-1 group/field">
-                <input
-                  type="password"
+                <ConnectionSecretInput
                   name="tvdb_api_key"
                   id="tvdb_api_key"
                   value={settings.tvdb_api_key || ""}
@@ -86,8 +85,7 @@ const { settings } = Astro.props;
 
             <label for="tvdb_subscriber_pin" class="block text-sm font-medium text-zinc-400 pt-2">TVDB Subscriber PIN <span class="text-zinc-600">(optional)</span></label>
             <div class="relative group/field">
-              <input
-                type="password"
+              <ConnectionSecretInput
                 name="tvdb_subscriber_pin"
                 id="tvdb_subscriber_pin"
                 value={settings.tvdb_subscriber_pin || ""}
