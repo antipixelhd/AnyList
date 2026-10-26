@@ -1,8 +1,9 @@
 .toast-stack { position:fixed; inset:auto max(20px,env(safe-area-inset-right)) max(24px,env(safe-area-inset-bottom)) auto; width:min(400px,calc(100vw - 32px)); display:grid; gap:10px; z-index:250; pointer-events:none; }
 .app-toast { display:flex; align-items:center; gap:12px; padding:14px 16px; background:var(--panel,#151f2e); border:1px solid var(--border,#293c50); border-radius:8px; box-shadow:0 8px 28px #0005; color:var(--bright,#edf5fa); pointer-events:auto; font-size:var(--type-label-size,1.3rem); }
-.app-toast p { flex:1; margin:0; overflow-wrap:anywhere; line-height:1.5; }
+.app-toast p { flex:1; min-width:0; margin:0; overflow-wrap:anywhere; line-height:1.5; }
 .app-toast [data-toast-icon] { display:flex; color:var(--blue,#3db4f2); }
 .app-toast [hidden] { display:none!important; }
+.app-toast[data-kind=error] { border-color:#7b4050; background:color-mix(in srgb,var(--panel,#151f2e) 92%,#a8465d); }
 .app-toast[data-kind=error] [data-toast-icon] { color:#ef9caa; }
 .app-toast[data-kind=success] [data-toast-icon] { color:#86d7b5; }
 .app-toast[data-kind=warning] [data-toast-icon] { color:#edc17a; }
@@ -11,4 +12,4 @@
 .app-toast [data-toast-action] { color:var(--blue,#3db4f2); font-weight:600; }
 .app-toast button:focus-visible { outline:2px solid var(--blue,#3db4f2); outline-offset:2px; }
 @media (hover:hover) and (pointer:fine) { .app-toast button:hover { color:var(--bright,#edf5fa); background:var(--border,#293c50); } }
-@media (max-width:760px) { .toast-stack { inset:auto 16px calc(78px + env(safe-area-inset-bottom)) 16px; width:auto; }.app-toast { padding:12px; } }
+@media (max-width:760px) { .app-toast p[data-single-line] { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; } .toast-stack { inset:auto 16px calc(78px + env(safe-area-inset-bottom)) 16px; width:auto; }.app-toast { padding:12px; } }

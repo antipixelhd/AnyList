@@ -75,6 +75,7 @@ import {localToday} from '../lib/date-time';
 import {startVisibleRefresh, type VisibleRefreshHandle} from '../lib/visible-refresh';
 import {createHomePanelRefresh} from '../lib/home-panel-refresh';
 import {editorStore, type EditorTitle} from '../lib/editor-store';
+import {showActionFailure} from '../lib/action-failure';
 
 let homeProgressListeners: AbortController | undefined;
 let homeSeriesRefresh: VisibleRefreshHandle | undefined;
@@ -210,10 +211,7 @@ function initializeHomeProgress() {
     const progress = Number(title.entry?.progress ?? 0) + 1;
     void editorStore.write(title,{progress}).catch(error => {
       if (signal.aborted) return;
-      const message = error instanceof Error ? error.message : 'Could not update episode progress.';
-      window.anyListToast?.(message);
-      button.title = message;
-      button.setAttribute('aria-label', `${message} Try again`);
+      showActionFailure('progress', title.title, error);
     });
   }, {signal}));
 
@@ -270,7 +268,7 @@ function initializeHomeProgress() {
     void homeUpcomingRefresh?.refresh();
   }, {signal});
   document.addEventListener('anylist:editor-committed', () => {
-    void (async () => { await homeSeriesRefresh?.refresh(); if (!signal.aborted) await refreshPanels(); })();
+    void (async () => { await homeSeriesRefresh?.refresh(); if (!signal.aborted) await refreshPanels(() => location.reload()); })();
     void homeUpcomingRefresh?.refresh();
   }, {signal});
 }

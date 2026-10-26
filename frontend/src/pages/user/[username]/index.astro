@@ -44,8 +44,9 @@ document.addEventListener('astro:page-load', () => {
         if (version !== revision || editorStore.hasPendingWrites()) { loading = false; refresh(); return; }
         const current = document.querySelector('.profile-overview[data-profile-owner="true"]');
         const next = fresh.querySelector('.profile-overview[data-profile-owner="true"]');
-        if (current && next) { current.replaceWith(next); dirty = false; }
-      } catch { if (!signal.aborted) window.anyListToast?.('Saved, but the profile could not be refreshed.'); }
+        if (!current || !next) throw new Error('Profile refresh incomplete.');
+        current.replaceWith(next); dirty = false;
+      } catch { if (!signal.aborted) location.reload(); }
       finally { loading = false; }
     })();
   };

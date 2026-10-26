@@ -88,6 +88,7 @@ import {compactListProgress} from '../../../lib/tracker';
 import {placeDropdown} from '../../../lib/dropdown-position';
 import {reveal,dismiss,showMenu,hideMenu} from '../../../lib/ui-motion';
 import {editorStore, seedEditorPage, type EditorTitle} from '../../../lib/editor-store';
+import {showActionFailure} from '../../../lib/action-failure';
 let pageListeners: AbortController;
 document.addEventListener('astro:before-swap',()=>pageListeners?.abort());
 function mountProfileList() {
@@ -165,9 +166,7 @@ function mountProfileList() {
     const next = Number(title.entry?.progress ?? 0) + 1;
     void editorStore.write(title,{progress:next}).catch(error => {
       if (pageListeners.signal.aborted) return;
-      const message = error instanceof Error ? error.message : 'Could not update episode progress.';
-      document.querySelector('#progress-feedback')!.textContent = message;
-      window.anyListToast?.(message);
+      showActionFailure('progress', title.title, error);
     });
   }, {signal:pageListeners.signal}));
   if (groups) {
@@ -352,7 +351,7 @@ function mountProfileList() {
             if (version !== revision || editorStore.hasPendingWrites()) { refreshScheduled = false; scheduleRefresh(); return; }
             const shell = document.querySelector<HTMLElement>('.list-shell');
             const next = fresh.querySelector<HTMLElement>('.list-shell');
-            if (!shell || !next || !fresh.querySelector('#list-editor-entries')) return;
+            if (!shell || !next || !fresh.querySelector('#list-editor-entries')) throw new Error('List refresh incomplete.');
             const values = Object.fromEntries(['list-search','genre-filter','favorite-filter','sort-filter'].map(id => [id, input(id).value]));
             const year = selectedYear();
             const currentStatus = status;
@@ -373,7 +372,7 @@ function mountProfileList() {
             document.dispatchEvent(new Event('anylist:list-reconciled'));
             if (filtersOpen && matchMedia('(max-width:650px)').matches) document.querySelector<HTMLButtonElement>('.mobile-filter-toggle')?.click();
           } catch (error) {
-            if (!pageListeners.signal.aborted) window.anyListToast?.('List saved, but the list view could not be refreshed.');
+            if (!pageListeners.signal.aborted) location.reload();
           } finally { refreshScheduled = false; }
         })();
       };

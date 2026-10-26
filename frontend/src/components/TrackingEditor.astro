@@ -52,6 +52,8 @@ import { setupScoreSteppers } from '../lib/scoreStepper';
 import { setupCalendarDateInputs } from '../lib/calendar-date-input';
 import { editorStore, seedEditorPage, type EditorTitle } from '../lib/editor-store';
 import { showDialog, closeDialog, showMenu, hideMenu } from '../lib/ui-motion';
+import {showActionFailure} from '../lib/action-failure';
+import {markFailureHandled} from '../lib/handled-failures';
 import {confirmEntryAction as confirmAction,watchRollbackWarning} from '../lib/entry-confirmation';
 let pageListeners: AbortController;
 document.addEventListener('astro:before-swap', () => pageListeners?.abort());
@@ -202,8 +204,7 @@ document.addEventListener('astro:page-load', () => {
     const editing = currentTitle!;
     void editorStore.writeLibrary(editing, !libraryDesired).catch(cause => {
       if (sessionSignal.aborted) return;
-      if (!dialog.open || currentTitle !== editing) { window.anyListToast?.(cause.message); return; }
-      error.textContent = cause.message; error.hidden = false;
+      showActionFailure('library', editing.title, cause);
     });
   });
   document.addEventListener('anylist:editor-state', event => {
@@ -254,7 +255,7 @@ document.addEventListener('astro:page-load', () => {
       if (loadController !== controller || opener !== button || sessionSignal.aborted) return;
       populateEditor(title);
       showDialog(dialog);
-    } catch(e) { if ((e as Error).name !== 'AbortError') window.anyListToast?.((e as Error).message); }
+    } catch(e) { if ((e as Error).name !== 'AbortError') showActionFailure('open', supplied?.title, e); }
   }
   document.addEventListener('click', event => {
     const button = (event.target as HTMLElement).closest<HTMLElement>('[data-edit-entry]');
@@ -306,13 +307,16 @@ document.addEventListener('astro:page-load', () => {
       const id = await editorStore.remove(editing);
       if (!sessionSignal.aborted) document.dispatchEvent(new CustomEvent('anylist:entry-saved',{detail:{id,status:null,score:null}}));
     } catch (e) {
+      markFailureHandled(e);
       await closing;
       if (sessionSignal.aborted) return;
-      if (dialog.open) { window.anyListToast?.((e as Error).message); return; }
+      if (dialog.open) { showActionFailure('remove', editing.title, e); return; }
       opener = previousOpener;
       populateEditor({...editing, entry:previous});
-      error.textContent = (e as Error).message; error.hidden = false; button.disabled = false;
+      const detail = e instanceof Error && !(e instanceof TypeError) && e.message !== 'Unable to save this entry. Try again.' ? e.message : '';
+      error.textContent = detail; error.hidden = !detail; button.disabled = false;
       showDialog(dialog);
+      showActionFailure('remove', editing.title, e);
     }
   });
   form.addEventListener('keydown', event => {
@@ -347,6 +351,7 @@ document.addEventListener('astro:page-load', () => {
       }
     }
     const editing = currentTitle!;
+    const wasNew = !editing.entry;
     const previous = {...current};
     const previousScore = displayedScore;
     const previousOpener = opener;
@@ -356,16 +361,19 @@ document.addEventListener('astro:page-load', () => {
       if (sessionSignal.aborted) return;
       document.dispatchEvent(new CustomEvent('anylist:entry-saved',{detail:saved}));
     } catch(e) {
+      markFailureHandled(e);
       await closing;
       if (sessionSignal.aborted) return;
-      if (dialog.open) { window.anyListToast?.((e as Error).message); return; }
+      if (dialog.open) { showActionFailure(wasNew ? 'add' : 'update', editing.title, e); return; }
       opener = previousOpener;
       populateEditor({...editing, entry:{...previous,...body}});
       current = {...previous, id:editing.id};
       document.querySelector<HTMLButtonElement>('#delete-tracked-entry')!.hidden = !editing.entry;
       displayedScore = previousScore;
-      error.textContent = (e as Error).message; error.hidden = false;
+      const detail = e instanceof Error && !(e instanceof TypeError) && e.message !== 'Unable to save this entry. Try again.' ? e.message : '';
+      error.textContent = detail; error.hidden = !detail;
       showDialog(dialog);
+      showActionFailure(wasNew ? 'add' : 'update', editing.title, e);
     }
   });
   const prepare = (event: Event) => {

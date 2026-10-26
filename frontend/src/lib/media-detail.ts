@@ -7,6 +7,7 @@ import { mountDetailCast } from './media-detail-cast';
 import {detailBackground,type DetailLoadState} from './detail-background';
 import { initializeScrollMotion } from './scroll-motion';
 import { showToast } from './toasts';
+import {showActionFailure} from './action-failure';
 import {detailWorkCaption,relationLabel} from './media-detail-data';
 import {detailWorkArtwork} from './detail-artwork';
 import {currentDetailSeason,detailSeasonState,optimisticSeasonProgress,type DetailSeason} from './season-detail-data';
@@ -289,21 +290,21 @@ export function mountMediaDetail() {
     const desired=!(title.favorite ?? title.entry?.favorite);
     void editorStore.write(title,{favorite:desired}).then(saved=>{
       if (title?.favorite===saved.favorite) showToast({message:desired?'Added to favorites.':'Removed from favorites.',kind:'success',key:'detail-favorite'});
-    }).catch(error=>showToast(error.message,'error'));
+    }).catch(error=>showActionFailure('favorite',title?.title,error));
   },{signal});
   library?.addEventListener('click',()=>{
     if (!title || library.disabled) return;
     const desired=!title.editor_library?.desired;
     void editorStore.writeLibrary(title,desired).then(saved=>{
       if (title?.editor_library?.desired===saved.desired) showToast({message:desired?'Added to library.':'Removed from library.',kind:'success',key:'detail-library'});
-    }).catch(error=>showToast(error.message,'error'));
+    }).catch(error=>showActionFailure('library',title?.title,error));
   },{signal});
   root.querySelector<HTMLButtonElement>('[data-detail-save-note]')?.addEventListener('click',async event=>{
     if (!title || !note) return;
     const button=event.currentTarget as HTMLButtonElement;
     const notes=note.value; button.disabled=true; button.setAttribute('aria-busy','true');
     try { await editorStore.write(title,{notes}); if (note.value===notes) noteDirty=false; showToast('Notes saved.','success'); }
-    catch (error) { showToast(error instanceof Error?error.message:'Unable to save notes.','error'); }
+    catch (error) { showActionFailure('note',null,error); }
     finally { button.disabled=false; button.removeAttribute('aria-busy'); }
   },{signal});
 
@@ -330,7 +331,7 @@ export function mountMediaDetail() {
     const input=event.currentTarget as HTMLInputElement;if(!title)return;
     input.disabled=true;
     try{await editorStore.write(title,{rating_mode:input.checked?'average':'manual'});}
-    catch(error){if(!signal.aborted)showToast((error as Error).message,'error');}
+    catch(error){if(!signal.aborted)showActionFailure('rating',title?.title,error);}
     finally{input.disabled=false;}
   },{signal});
   let seasonReadVersion=0;
@@ -357,7 +358,7 @@ export function mountMediaDetail() {
   requestSeasonRefresh = () => {
     if (!seasonRefreshNeeded || signal.aborted || !title || editorStore.hasPendingEntryWrites(title)) return;
     seasonRefreshNeeded = false;
-    void refreshSeasonState().catch(()=>{if(!signal.aborted)showToast('Reload to see your updated episode state.','error');});
+    void refreshSeasonState().catch(()=>{if(!signal.aborted)location.reload();});
   };
   document.addEventListener('anylist:editor-committed',event=>{
     const {title:saved,patch}=(event as CustomEvent<{title:EditorTitle;patch:Record<string,unknown>|null}>).detail;
@@ -379,8 +380,8 @@ export function mountMediaDetail() {
         }
       }
       const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(typeof result.detail==='string'?result.detail:'Unable to update this episode.');
-      await refreshSeasonState();
-    }catch(error){if(!signal.aborted)showToast((error as Error).message,'error');}
+      await refreshSeasonState().catch(()=>{if(!signal.aborted)location.reload();});
+    }catch(error){if(!signal.aborted)showActionFailure('progress',title?.title,error);}
     finally{button.disabled=false;button.removeAttribute('aria-busy');}
   },{signal}));
   const request=async(path:string)=>{
@@ -392,7 +393,7 @@ export function mountMediaDetail() {
   root.querySelector<HTMLButtonElement>('#refresh-episodes')?.addEventListener('click',async event=>{
     const button=event.currentTarget as HTMLButtonElement;button.disabled=true;button.setAttribute('aria-busy','true');
     try{await request(`title/${info.id}/refresh-episodes`);location.reload();}
-    catch(error){showToast((error as Error).message,'error');button.disabled=false;button.removeAttribute('aria-busy');}
+    catch(error){showActionFailure('progress',title?.title,error);button.disabled=false;button.removeAttribute('aria-busy');}
   },{signal});
   const mode=root.querySelector<HTMLDialogElement>('#season-mode');
   mode?.addEventListener('click',event=>{if(event.target===mode)void closeDialog(mode,'cancel');},{signal});

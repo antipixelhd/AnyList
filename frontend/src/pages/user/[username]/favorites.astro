@@ -46,6 +46,7 @@ const favoriteGroups = profileMediaGroups(favorites, profile?.combine_lists !== 
   </> : <div class="page-width"><p class="error-message" role="alert">{error}</p></div>}
 </Tracker>
 <script>
+import {showActionFailure} from '../../../lib/action-failure';
 import {editorStore} from '../../../lib/editor-store';
 let favoritePageListeners: AbortController;
 function mountFavorites() {
@@ -103,8 +104,9 @@ function mountFavorites() {
           if (signal.aborted) return;
           if (version !== revision || editorStore.hasPendingWrites() || page.dataset.reordering === 'true') { loading = false; refreshFavorites(); return; }
           const next = fresh.querySelector<HTMLElement>('.favorites-page[data-profile-owner="true"]');
-          if (next && page.isConnected) { page.replaceWith(next); dirty = false; document.dispatchEvent(new Event('anylist:favorites-reconciled')); }
-        } catch { if (!signal.aborted) window.anyListToast?.('Saved, but favorites could not be refreshed.'); }
+          if (!next) throw new Error('Favorites refresh incomplete.');
+          if (page.isConnected) { page.replaceWith(next); dirty = false; document.dispatchEvent(new Event('anylist:favorites-reconciled')); }
+        } catch { if (!signal.aborted) location.reload(); }
         finally { loading = false; }
       })();
     };
@@ -132,8 +134,7 @@ function mountFavorites() {
       setReordering(false);
       report('Favorite order saved.');
     } catch (cause) {
-      error.textContent = cause instanceof Error ? cause.message : 'Could not save favorite order.';
-      error.hidden = false;
+      showActionFailure('favorite-order',null,cause);
     } finally {
       reorder.disabled = false;
       if (cancel) cancel.disabled = false;
@@ -175,8 +176,7 @@ function mountFavorites() {
       report(`${title} removed from favorites.`);
       document.dispatchEvent(new CustomEvent('anylist:data-changed'));
     } catch (cause) {
-      error.textContent = cause instanceof Error ? cause.message : 'Could not remove this favorite.';
-      error.hidden = false;
+      showActionFailure('favorite',button.closest<HTMLElement>('[data-favorite-card]')?.dataset.title,cause);
       button.disabled = false;
     }
   }, {signal: favoritePageListeners.signal});

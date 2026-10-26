@@ -1,5 +1,7 @@
 <script>
   import { formatDateTime, localToday } from '../lib/date-time';
+  import {showActionFailure} from '../lib/action-failure';
+  import {markFailureHandled} from '../lib/handled-failures';
     import {showToast} from '../lib/toasts';
     // ── Card action bar ────────────────────────────────────────────────────────
     const API = '/api/proxy';
@@ -29,6 +31,7 @@
     // apiFetch's Error.message is the raw response body — usually a JSON
     // {"detail": "..."} string from FastAPI, sometimes plain text.
     function alertFromError(err: any, fallback = 'Something went wrong'): void {
+      markFailureHandled(err);
       let msg = fallback;
       try {
         const data = JSON.parse(err.message);
@@ -384,7 +387,7 @@
                 }
               }
             }
-          } catch { cb.checked = !cb.checked; }
+          } catch (error) { cb.checked = !cb.checked; showActionFailure('custom-list',lists.find(list=>String(list.id)===String(listId))?.name,error); }
         });
       });
     }
