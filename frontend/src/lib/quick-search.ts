@@ -256,9 +256,8 @@ export function mountQuickSearch() {
     if (!title || !dialog?.open) return;
     const image = button.closest('.quick-search-result')?.querySelector<HTMLImageElement>('img');
     editorStore.warmArtwork(title, image?.currentSrc || image?.src);
-    dialog.close();
-    const opener=mobile.matches?document.querySelector<HTMLElement>('[data-mobile-navigation] .mobile-navigation-trigger')||openButton:openButton;
-    document.dispatchEvent(new CustomEvent('anylist:open-editor', {detail:{mediaId:title.id, title, opener}}));
+    // Keep results underneath the editor: cancel returns here; saving closes both.
+    document.dispatchEvent(new CustomEvent('anylist:open-editor', {detail:{mediaId:title.id, title, opener:button}}));
   }, {signal: pageListeners.signal});
   const prepareEditor = (event: Event) => {
     const button = (event.target as Element).closest<HTMLButtonElement>('[data-search-add]');
