@@ -11,6 +11,6 @@
 }
 
 /* Low-specificity fallback: controls with their own focus colors retain them. */
-:where(button,a,summary,[role="button"]):where(:has(> .ui-icon),:has(> svg),[class*="icon-button"],[class*="icon-link"],.password-toggle,.metadata-password-toggle):focus-visible {
+:is(button,a,summary,[role="button"]):where(:has(> .ui-icon),:has(> svg),[class*="icon-button"],[class*="icon-link"],.password-toggle,.metadata-password-toggle):focus-visible {
   color: var(--blue, var(--accent-500, #3db4f2));
 }
