@@ -21,6 +21,8 @@
     const active = !!ownerColor || applySiteWide;
     const color = active ? validColor(effectiveOwnerColor || viewerColor) : DEFAULT_COLOR;
     body.style.setProperty('--blue', color);
+    // Global search follows the viewer's site-wide choice, never the profile being viewed.
+    body.style.setProperty('--quick-search-blue', applySiteWide ? viewerColor : DEFAULT_COLOR);
     if (active) body.dataset.themeActive = '';
     else delete body.dataset.themeActive;
     const root = body.ownerDocument.documentElement;

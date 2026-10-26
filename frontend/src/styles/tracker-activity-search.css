@@ -83,6 +83,7 @@
 }
 /* Fast search starts as a compact input; result cards appear together after a response. */
 .quick-search-dialog {
+  --blue:var(--quick-search-blue,#3db4f2);
   position:fixed;
   inset:52px 0 auto;
   width:min(660px,calc(100vw - 64px));
@@ -186,8 +187,8 @@
 .quick-search-dialog .quick-search-card { padding:0; border:0; border-radius:0; background:transparent; box-shadow:none; }
 .quick-search-dialog .quick-search-card h2 { margin:0 0 10px; color:var(--text); font-size:14px; font-weight:700; }
 .quick-search-dialog [data-search-results] { padding:5px 20px; border-radius:4px; background:var(--panel); }
-.quick-search-dialog .quick-search-result { min-height:60px; padding:10px 0; gap:8px; border-radius:0; }
-.quick-search-dialog .quick-search-result:is(:hover,:focus-within) { background:transparent; color:var(--text); }
+.quick-search-dialog .quick-search-result { min-height:60px; margin-inline:-20px; padding:10px 20px; gap:8px; border-radius:0; }
+.quick-search-dialog .quick-search-result:is(:hover,:focus-within) { background:var(--blue); color:#fff; }
 .quick-search-dialog .quick-search-result-link { grid-template-columns:40px minmax(0,1fr); gap:10px; }
 .quick-search-dialog .quick-search-result-link:is(:hover,:focus-visible) { color:var(--blue); }
 .quick-search-dialog .quick-search-result img,.quick-search-dialog .quick-search-poster { width:40px; height:40px; }
@@ -203,6 +204,7 @@
 }
 .quick-search-dialog .quick-search-add > span:not(.ui-icon) { display:none; }
 .quick-search-dialog .quick-search-add:is(:hover,:focus-visible) { border:0; background:transparent; color:var(--blue); }
+.quick-search-dialog .quick-search-result:is(:hover,:focus-within) :is(.quick-search-result-link,.quick-search-add,small) { color:#fff; }
 @media(hover:none),(pointer:coarse) { .quick-search-dialog .quick-search-add { min-width:44px; min-height:44px; } }
 .quick-search-state {
   position:static;
