@@ -91,5 +91,6 @@ vuln.env
 test.py
 
 # --- Planning files ---
-docs/
+docs/*
+!docs/games-implementation-checklists/
 docs/tvdb-first-class-plan.md
