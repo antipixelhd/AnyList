@@ -8,8 +8,6 @@ import BrowseSkeleton from "../components/BrowseSkeleton.astro";
 import BrowseSelect from "../components/BrowseSelect.astro";
 import Icon from "../components/Icon.astro";
 import {timelineGroups} from '../lib/browse-timeline-data';
-import { tracker } from "../lib/tracker";
-import {shouldBroadenSearch, broadSearchParams} from '../lib/search-fallback';
 import "../styles/browse.css";
 import { releaseYearBounds, releaseYearLabel } from "../lib/browse-ranges";
 import {
@@ -41,30 +39,7 @@ let sections: any[] = [];
 let payload: any = { results: [], has_more: false, page: 1, source: "" },
   facets: any = { genres: [], providers: [] },
   error = "";
-const responses = await Promise.allSettled([
-  (async () => {
-    const path = categories
-      ? `browse/sections?${new URLSearchParams({ media_type: type, region: params.get("region") || "US", min_score: params.get("min_score") || "0" })}`
-      : `browse?${browseRequestParams(params)}`;
-    const first = await tracker(path, Astro.locals.token);
-    if (!categories && shouldBroadenSearch(params, first)) {
-      const broad = await tracker(`browse?${browseRequestParams(broadSearchParams(params))}`, Astro.locals.token);
-      return {...broad, curation_expanded: true};
-    }
-    return first;
-  })(),
-  tracker(
-    `browse/facets?${new URLSearchParams({ media_type: type, region: params.get("region") || "US", genres: params.get("genres") || "" })}`,
-    Astro.locals.token,
-  ),
-]);
-if (responses[0].status === "fulfilled") {
-  if (categories) {
-    sections = responses[0].value.sections;
-    payload.notice = responses[0].value.notice;
-  } else payload = responses[0].value;
-} else error = "Unable to load titles. Check your filters and try again.";
-if (responses[1].status === "fulfilled") facets = responses[1].value;
+// Render the shell immediately; discovery and facets load independently in the browser.
 const cinemaCountry = region;
 const cinemaScope = cinemaCountry ? new Intl.DisplayNames(['en'],{type:'region'}).of(cinemaCountry) || cinemaCountry : 'Worldwide';
 const cinemaLabel = `Theatrical · ${cinemaScope}`;
@@ -263,6 +238,7 @@ if(params.has('cinema'))initialChips.push(cinemaLabel);
               <span>Streaming on</span>
               <select name="provider">
                 <option value="">Any service</option>
+                {params.get("provider") && <option value={params.get("provider")!} selected>Selected service</option>}
                 {facets.providers.map((provider: any) => (
                   <option
                     value={provider.id}
@@ -334,8 +310,8 @@ if(params.has('cinema'))initialChips.push(cinemaLabel);
         Try again
       </button>
     </div>
-    <section aria-label="Browse results" data-browse-region aria-busy="false">
-      <div class="browse-sections" data-browse-sections hidden={!categories}>
+    <section aria-label="Browse results" data-browse-region aria-busy="true" data-browse-loading="empty">
+      <div class="browse-sections" data-browse-sections hidden>
         {sections.map((section: any) => (
           <section class="browse-category" aria-label={section.title}>
             <header>
@@ -358,7 +334,7 @@ if(params.has('cinema'))initialChips.push(cinemaLabel);
           </section>
         ))}
       </div>
-      <div class={view==='timeline'?'browse-timeline':'browse-grid'} data-browse-results hidden={categories}>
+      <div class={view==='timeline'?'browse-timeline':'browse-grid'} data-browse-results hidden>
         {view === 'timeline' ? timelineGroups<any>(payload.results, params.get('sort')==='upcoming'||params.get('status')==='upcoming').map(year => (
           <section class="browse-timeline-year" data-timeline-year={year.year}>
             <h2 class="browse-timeline-year-label">{year.year || 'Undated'}</h2>
@@ -380,13 +356,12 @@ if(params.has('cinema'))initialChips.push(cinemaLabel);
       <div
         class="browse-loading-view"
         data-browse-skeleton
-        hidden
         aria-hidden="true"
       >
-        <div class="browse-grid browse-skeletons" data-skeleton-grid>
+        <div class="browse-grid browse-skeletons" data-skeleton-grid hidden={categories || view==='timeline'}>
           {Array.from({ length: 12 }, () => <BrowseSkeleton />)}
         </div>
-        <div class="browse-timeline" data-skeleton-timeline hidden>
+        <div class="browse-timeline" data-skeleton-timeline hidden={view!=='timeline'}>
           <section class="browse-timeline-year">
             <h2 class="browse-timeline-year-label"><span class="skeleton-block" style="width:2.4ch;height:1lh"></span></h2>
             <div class="browse-timeline-months">
@@ -399,7 +374,7 @@ if(params.has('cinema'))initialChips.push(cinemaLabel);
             </div>
           </section>
         </div>
-        <div class="browse-sections" data-skeleton-sections hidden>
+        <div class="browse-sections" data-skeleton-sections hidden={!categories}>
           {["Trending now", "Newest", "All-time popular", "Highest rated"].map(title => (
             <section class="browse-category">
               <header><h2>{title}</h2><span class="browse-skeleton-view-all">View all</span></header>
@@ -413,14 +388,14 @@ if(params.has('cinema'))initialChips.push(cinemaLabel);
       <div
         class="empty-state"
         data-browse-empty
-        hidden={categories || payload.results.length > 0 || !!error}
+        hidden
       >
         <h2>No matching titles</h2>
         <button type="button" class="button-secondary" data-browse-clear>
           Clear filters
         </button>
       </div>
-      <div class="browse-load" data-browse-sentinel hidden={categories}>
+      <div class="browse-load" data-browse-sentinel hidden>
         <button
           type="button"
           class="button-quiet"
@@ -435,7 +410,7 @@ if(params.has('cinema'))initialChips.push(cinemaLabel);
         >
           {payload.partial ? 'End of curated results' : "You're all caught up"}
         </span>
-        <button type="button" class="button-secondary" data-browse-show-all hidden={categories || payload.has_more || !!error}>Show all</button>
+        <button type="button" class="button-secondary" data-browse-show-all hidden>Show all</button>
       </div>
     </section>
     </div>
@@ -448,7 +423,7 @@ if(params.has('cinema'))initialChips.push(cinemaLabel);
     <script
       id="browse-data"
       type="application/json"
-      set:html={JSON.stringify({ payload, facets, sections }).replaceAll(
+      set:html={JSON.stringify({ payload, facets, sections, pending: true, categories }).replaceAll(
         "<",
         "\\u003c",
       )}

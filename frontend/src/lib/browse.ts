@@ -85,7 +85,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     find<HTMLElement>("#browse-data").textContent || "{}",
   );
   let payload: Payload = initial.payload;
-  let displayedCategories = !sections.hidden;
+  let displayedCategories = initial.pending ? initial.categories : !sections.hidden;
   let facets: { genres: Facet[]; providers: Facet[] } = initial.facets;
   const responseCache = createBrowseCache<Payload | SectionsPayload>();
   const prediction=createPrediction<Payload | SectionsPayload>(async(path,requestSignal)=>json(path,{signal:requestSignal}),signal);
@@ -139,9 +139,9 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     : `browse?${browseRequestParams(values)}`;
   const initialValues = params();
   initialValues.set('page', '1');
-  if (error.hidden) responseCache.set(requestPath(initialValues), displayedCategories
+  if (!initial.pending && error.hidden) responseCache.set(requestPath(initialValues), displayedCategories
     ? {sections: initial.sections, notice: payload.notice} : payload);
-  facetCache.set(`${field('type').value}:${field('region').value}`, facets);
+  if (!initial.pending) facetCache.set(`${field('type').value}:${field('region').value}:${field('genres').value}`, facets);
   const updateUrl = () => {
     const values = params();
     values.delete('unfiltered');
@@ -869,12 +869,14 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
         }
         select.value = detected;
         refreshSelect(select);
-        void loadFacets();
-        changed();
+        if (!initial.pending) { void loadFacets(); changed(); }
       }
     }
   }
-  if (!displayedCategories && payload.has_more && error.hidden && sentinel.getBoundingClientRect().top < innerHeight + 260) void load(false);
+  if (initial.pending) {
+    void loadFacets();
+    void load();
+  } else if (!displayedCategories && payload.has_more && error.hidden && sentinel.getBoundingClientRect().top < innerHeight + 260) void load(false);
   if (error.hidden === false) suspended = true;
   if (
     field("start").value ||
