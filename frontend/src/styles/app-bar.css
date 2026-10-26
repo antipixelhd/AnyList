@@ -55,6 +55,10 @@ html.appbar-nav-transition-cursor {
     font-size: 17px;
   }
 
+  .tracker .account-nav .appbar-icon-link:focus-visible {
+    color: var(--blue);
+  }
+
   .tracker .account-nav .profile-action {
     width: 43px;
     height: 43px;
