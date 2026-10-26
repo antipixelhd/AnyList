@@ -18,9 +18,9 @@ function field() {
   };
 }
 
-test('mobile normalization preserves caret/selection and emits no duplicate search input',()=>{
+test('universal normalization preserves caret/selection and emits no duplicate search input',()=>{
   const input=field();
-  wireSearchWordCapitalization(input,new AbortController().signal,()=>true);
+  wireSearchWordCapitalization(input,new AbortController().signal);
   input.value='ßeta test';input.selectionStart=5;input.selectionEnd=9;input.selectionDirection='backward';
   input.events.get('input').listener({isComposing:false});
   assert.equal(input.value,'SSeta Test');
@@ -29,12 +29,12 @@ test('mobile normalization preserves caret/selection and emits no duplicate sear
   assert.equal(input.events.get('input').options.capture,true);
 });
 
-test('desktop input and active IME composition remain untouched',()=>{
-  const input=field();let mobile=false;
-  wireSearchWordCapitalization(input,new AbortController().signal,()=>mobile);
+test('normalization works without viewport APIs and defers active IME composition',()=>{
+  const input=field();
+  wireSearchWordCapitalization(input,new AbortController().signal);
   input.value='the matrix';input.selectionStart=input.selectionEnd=10;
-  input.events.get('input').listener({isComposing:false});assert.equal(input.value,'the matrix');
-  mobile=true;
+  input.events.get('input').listener({isComposing:false});assert.equal(input.value,'The Matrix');
+  input.value='the matrix';
   input.events.get('input').listener({isComposing:true});assert.equal(input.value,'the matrix');
   input.events.get('compositionend').listener();
   assert.equal(input.value,'The Matrix');assert.equal(input.dispatched,1);

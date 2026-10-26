@@ -4,9 +4,8 @@ export function capitalizeSearchWords(value: string): string {
 }
 
 /** Run before search listeners read the input, without emitting another normal input event. */
-export function wireSearchWordCapitalization(input: HTMLInputElement, signal: AbortSignal, enabled = () => matchMedia('(max-width:650px), (pointer:coarse)').matches) {
+export function wireSearchWordCapitalization(input: HTMLInputElement, signal: AbortSignal) {
   const normalize = () => {
-    if (!enabled()) return false;
     const value = input.value;
     const next = capitalizeSearchWords(value);
     if (next === value) return false;
