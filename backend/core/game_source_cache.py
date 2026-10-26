@@ -3,15 +3,23 @@ import asyncio
 import json
 import uuid
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from core.catalogue_providers import ProviderError
 from models.catalogue import MetadataSnapshot
 
 _flights = {}
 SCHEMA_VERSION = 'v1'
+
+
+@lru_cache(maxsize=8)
+def session_factory(engine):
+    """Share source flights within the request's actual database deployment."""
+    return async_sessionmaker(engine, expire_on_commit=False)
 
 
 def utcnow():

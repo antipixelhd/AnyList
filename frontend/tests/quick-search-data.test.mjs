@@ -105,10 +105,30 @@ test('verification polling is bounded and cancelled on query change',async()=>{
   const controller=new AbortController();let calls=0;
   const fetcher=async()=>{calls++;return {ok:true,json:async()=>({verification_pending:true})};};
   await readQuickSearch({kind:'contributors',url:'/studios'},controller.signal,()=>{},fetcher,async()=>{});
-  assert.equal(calls,5);
+  assert.equal(calls,20);
   calls=0;
   await readQuickSearch({kind:'contributors',url:'/studios'},controller.signal,()=>controller.abort(),fetcher);
   assert.equal(calls,1);
+});
+
+test('cold people can settle after the old seven-second polling window',async()=>{
+  let calls=0;const updates=[];
+  await readQuickSearch({kind:'contributors',url:'/people'},new AbortController().signal,data=>updates.push(data),
+    async()=>({ok:true,json:async()=>({results:{actor:++calls>=8?['verified person']:[]},verification_pending:calls<8})}),async()=>{});
+  assert.equal(calls,8);
+  assert.deepEqual(updates.at(-1).results.actor,['verified person']);
+  assert.equal(updates.at(-1).verification_pending,false);
+});
+
+test('exhausted or long-cooldown verification stays partial and preserves usable results',async()=>{
+  for(const retry_after of [2,60]){
+    let calls=0;const updates=[];
+    await readQuickSearch({kind:'contributors',url:'/people'},new AbortController().signal,data=>updates.push(data),
+      async()=>{calls++;return {ok:true,json:async()=>({results:{actor:['existing person']},verification_pending:true,retry_after})};},async()=>{});
+    assert.equal(calls,retry_after===60?1:20);
+    assert.equal(updates.at(-1).partial,true);
+    assert.deepEqual(updates.at(-1).results.actor,['existing person']);
+  }
 });
 
 test('desktop searches both media types and all contributors without duplicating people requests',()=>{

@@ -19,15 +19,20 @@ function verificationPause(signal:AbortSignal) {
 export async function readQuickSearch(request:SearchRequest,signal:AbortSignal,onResult:(data:any)=>void,
   fetcher:typeof fetch=fetch,pause=verificationPause) {
   let previous:string|undefined;
-  for(let attempt=0;attempt<5;attempt++) {
+  for(let attempt=0;attempt<20;attempt++) {
     const response=await fetcher(request.url,{signal});
     if(!response.ok)throw new Error('Search unavailable');
     const data=await response.json();
     if(signal.aborted)return;
-    const signature=JSON.stringify([data.results,data.partial,data.verification_pending]);
-    if(signature!==previous){onResult(data);previous=signature;}
+    // A slow cold career may need several worker ticks. Preserve its usable
+    // results, but never turn an exhausted/cooling-down check into verified empty.
+    const stoppedPending=request.kind==='contributors'&&data.verification_pending&&
+      (attempt===19||(typeof data.retry_after==='number'&&data.retry_after>30));
+    const published=stoppedPending?{...data,partial:true}:data;
+    const signature=JSON.stringify([published.results,published.partial,published.verification_pending]);
+    if(signature!==previous){onResult(published);previous=signature;}
     if(signal.aborted)return;
-    if(request.kind!=='contributors'||!data.verification_pending||attempt===4)return;
+    if(request.kind!=='contributors'||!data.verification_pending||stoppedPending)return;
     await pause(signal);
   }
 }

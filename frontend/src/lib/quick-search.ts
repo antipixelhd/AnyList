@@ -224,13 +224,16 @@ export function mountQuickSearch() {
       })();
       await Promise.all([titles, ...requests.filter(request => request.kind === 'contributors'||request.kind==='game').map(async request=>{
         let gameRows:GameSearchResult[]=[];
+        let requestPartial=false;
         try{
           await searchReader.read(request,current.signal,data=>{
             if(controller!==current||current.signal.aborted)return;
             if(request.kind==='game')gameRows=unique(data.results||[]) as GameSearchResult[];
-            else{contributors=mergeContributorResults(contributors,data.results||{},request.scope);if(data.partial)failed++;render('contributors');}
+            else{contributors=mergeContributorResults(contributors,data.results||{},request.scope);
+              if(!!data.partial!==requestPartial){failed+=data.partial?1:-1;requestPartial=!!data.partial;}
+              render('contributors');}
           });
-        }catch(cause){if(controller!==current||current.signal.aborted)return;failed++;}
+        }catch(cause){if(controller!==current||current.signal.aborted)return;if(!requestPartial)failed++;}
         finally{if(controller===current&&!current.signal.aborted){
           pending--;
           if(request.kind==='game'){gamePending=false;latest.game=gameRows;render('games');}

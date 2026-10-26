@@ -21,6 +21,33 @@ def connection(rows,total=None,more=False,cursor=None):
 
 
 class IMDbSourceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_person_suggestions_keep_namesake_ids_and_ignore_unrelated_fuzzy_hits(self):
+        self.http.request.return_value = {'d': [
+            {'id': 'nm1', 'l': 'Cissy Jones', 's': 'Actress, Firewatch'},
+            {'id': 'nm2', 'l': 'Cissy Jones'},
+            {'id': 'nm3', 'l': 'Sissy Grover'},
+            {'id': 'nm1', 'l': 'Cissy Jones'},
+        ]}
+        result = await self.source.people_candidates('Cissy Jones')
+        self.assertEqual([row['id'] for row in result], ['nm1', 'nm2'])
+        self.assertTrue(all('s' not in row for row in result))
+        self.assertEqual(self.http.request.await_args.args[2],
+            'https://v3.sg.media-imdb.com/suggestion/names/x/Cissy%20Jones.json')
+
+    async def test_person_suggestion_images_are_optional_and_restricted_to_imdb_cdn(self):
+        self.http.request.return_value = {'d': [
+            {'id': 'nm1', 'l': 'Actor One', 'i': {'imageUrl': 'https://evil.example/photo.jpg'}},
+            {'id': 'nm2', 'l': 'Actor Two', 'i': {'imageUrl': 'https://m.media-amazon.com/images/M/photo._V1_.jpg'}},
+        ]}
+        result = await self.source.people_candidates('Actor')
+        self.assertIsNone(result[0]['image'])
+        self.assertEqual(result[1]['image'], 'https://m.media-amazon.com/images/M/photo._V1_.jpg')
+
+    async def test_malformed_person_suggestions_are_not_verified_empty_or_title_bindings(self):
+        for body in ({}, {'d': None}, {'d': [{'id': 'tt1', 'l': 'Name'}]}, {'d': [{'id': 'nm1'}]}):
+            self.http.request.return_value = body
+            with self.assertRaises(ProviderError):
+                await self.source.people_candidates('Name')
     def setUp(self):
         self.http=SimpleNamespace(request=AsyncMock())
         self.source=IMDbGameSource(self.http)

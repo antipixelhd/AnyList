@@ -23,6 +23,7 @@ from collections import Counter
 from contextlib import ExitStack
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -472,6 +473,8 @@ async def main(args):
             cases += [('game_people_search','quick-search/contributors',{'q':'Game works performer','kind':'actor','work_domain':'game'}),
                 ('game_people_shared','quick-search/contributors',{'q':'Game works performer','kind':'actor'})]
             cases += [('game_person_cached',path,{'media_type':'game'}),('game_person_status','games/people/nm8000000/imdb',{})]
+            if args.case and 'game_person_name_search' in args.case:
+                cases += [('game_person_name_search','quick-search/contributors',{'q':'Game works performer','kind':'people','work_domain':'game'})]
             if args.case and 'game_person_availability' in args.case:
                 cases += [('game_person_availability',path+'/availability',{})]
             if args.case and 'game_person_review' in args.case:
@@ -566,6 +569,15 @@ async def main(args):
             from core import game_company_discovery
             company_discovery = game_company_discovery.GameCompanyDiscovery(fixture.Session, sources=game_sources)
             stack.enter_context(patch.object(game_company_discovery, 'GameCompanyDiscovery', return_value=company_discovery))
+            from core import game_people_discovery
+            async def people_candidates(term):
+                counters['provider_requests'] += 1
+                counters['provider:imdb/names'] += 1
+                await asyncio.sleep(args.provider_delay_ms / 1000)
+                return [{'id':'nm8000000','name':'Game works performer','image':None}] if current_case=='game_person_name_search' else []
+            people_source = SimpleNamespace(people_candidates=people_candidates)
+            people_discovery = game_people_discovery.GamePeopleDiscovery(fixture.Session, sources=game_sources, source=people_source)
+            stack.enter_context(patch.object(game_people_discovery, 'GamePeopleDiscovery', return_value=people_discovery))
             if args.case and 'game_offers' in args.case:
                 stack.enter_context(patch.object(provider_settings,'itad_api_key','fixture-itad-key'))
             stack.enter_context(patch.object(tmdb, '_request', side_effect=provider))
@@ -591,7 +603,7 @@ async def main(args):
                     reset()
                     if path == 'quick-search/contributors':
                         async with fixture.Session() as db:
-                            await db.execute(delete(MetadataSnapshot).where(MetadataSnapshot.kind=='game_company_search'))
+                            await db.execute(delete(MetadataSnapshot).where(MetadataSnapshot.kind.in_(('game_company_search','game_people_search'))))
                             await db.commit()
                     if label.startswith('game_browse'):
                         async with fixture.Session() as db:
@@ -613,6 +625,19 @@ async def main(args):
                         params['unfiltered'] = 'true'
 
                     async def operation(path=path, params=params, label=label, mode=mode):
+                        if label == 'game_person_name_search':
+                            result = await request(path, params)
+                            if [row['key'] for row in result['results']['actor']] != [f'catalogue:{game_contributor_id}']:
+                                raise RuntimeError('Name discovery lost its canonical verified game person')
+                            if result.get('verification_pending') or not result.get('partial'):
+                                raise RuntimeError('Cached unresolved person lost partial mapping evidence or became pending')
+                            if 'SOURCE_EVIDENCE_SENTINEL' in json.dumps(result):
+                                raise RuntimeError('Name discovery transferred full person source evidence')
+                            for identity in counters:
+                                sql=sql_patterns.get(identity.removeprefix('sql:'),'') if identity.startswith('sql:') else ''
+                                if re.search(r'catalogue_metadata_snapshots_\d+\.payload(?:,|\s+AS|\s+FROM)',sql):
+                                    raise RuntimeError('Name discovery hydrated a full career instead of compact job evidence')
+                            return result
                         if label == 'game_company_search':
                             result = await request(path, params)
                             if [row['key'] for row in result['results']['studio']] != [f'catalogue:{game_company_id}']:

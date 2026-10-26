@@ -7,10 +7,8 @@ import asyncio
 import hashlib
 import json
 from datetime import timedelta
-from functools import lru_cache
 
 from sqlalchemy import and_, func, select
-from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from core import catalogue
 from core.catalogue_normalize import entity
@@ -19,6 +17,7 @@ from core.catalogue_providers import ProviderError
 from core.game_browse_sources import GameBrowseSources, positive
 from core.game_company_works import JOB
 from core.game_imdb_enrichment import now, request as admit
+from core.game_source_cache import session_factory
 from db import AsyncSessionLocal
 from models.catalogue import CatalogueEntity, CatalogueIdentity, MetadataSnapshot
 
@@ -95,13 +94,6 @@ class GameCompanyDiscovery:
         return {'ids': list({row[0] for row in rows}),
             'pending': any(row[3] is None or row[1] or row[2] and row[2] > now() for row in rows),
             'partial': bool(cached.get('error')) or len(rows) != len(natives)}
-
-
-@lru_cache(maxsize=8)
-def session_factory(engine):
-    # Use the request's engine, including disposable/isolated deployments.
-    # Stable factories share in-flight provider work across request sessions.
-    return async_sessionmaker(engine, expire_on_commit=False)
 
 
 async def discover_companies(db, term, kind):

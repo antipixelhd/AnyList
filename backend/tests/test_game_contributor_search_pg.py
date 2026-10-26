@@ -24,6 +24,10 @@ class GameContributorSearchTests(unittest.IsolatedAsyncioTestCase):
             return_value={'ids': [], 'pending': False, 'partial': False}))
         self.discovery_patch.start()
         self.addCleanup(self.discovery_patch.stop)
+        self.people_discovery_patch = patch.object(search, 'discover_people', AsyncMock(
+            return_value={'ids': [], 'pending': False, 'partial': False}))
+        self.people_discovery_patch.start()
+        self.addCleanup(self.people_discovery_patch.stop)
 
     asyncTearDown = fixture.GameContributorTests.asyncTearDown
     seed = fixture.GameContributorTests.seed

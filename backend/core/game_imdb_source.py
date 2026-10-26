@@ -7,6 +7,7 @@ import re
 from urllib.parse import quote
 
 from core.catalogue_providers import ProviderError, ProviderHTTP
+from core.game_search import matches_partial
 
 TITLE_ID = re.compile(r'tt[0-9]+\Z')
 PERSON_ID = re.compile(r'nm[0-9]+\Z')
@@ -161,3 +162,30 @@ class IMDbGameSource:
             for row in rows if isinstance(row,dict) and isinstance(row.get('id'),str)
             and TITLE_ID.fullmatch(row['id']) and isinstance(row.get('l'),str)
             and (row.get('qid')=='videoGame' or row.get('q')=='video game')]
+
+    async def people_candidates(self, term):
+        """Name suggestions establish source identities, never shared people."""
+        if not isinstance(term, str) or not 2 <= len(term.strip()) <= 100:
+            raise ProviderError('invalid_request')
+        body = await self.http.request('imdb', 'GET',
+            'https://v3.sg.media-imdb.com/suggestion/names/x/' + quote(term.strip(), safe='') + '.json',
+            headers=HEADERS)
+        rows = body.get('d') if isinstance(body, dict) else None
+        if (not isinstance(rows, list) or len(rows) > 50 or any(not isinstance(row, dict)
+                or not isinstance(row.get('id'), str) or not PERSON_ID.fullmatch(row['id'])
+                or not isinstance(row.get('l'), str) or not 1 <= len(row['l'].strip()) <= 500 for row in rows)):
+            raise ProviderError('bad_response')
+        result = []
+        seen = set()
+        for row in rows:
+            if row['id'] in seen or not matches_partial(term, row['l']):
+                continue
+            seen.add(row['id'])
+            artwork = (row.get('i') or {}).get('imageUrl') if isinstance(row.get('i'), dict) else None
+            # A provider's portrait is optional; never use arbitrary suggestion
+            # URLs as images or infer identity from the image/name/description.
+            if not isinstance(artwork, str) or not re.fullmatch(
+                    r'https://m\.media-amazon\.com/images/M/[^/?#]+\._V1[^/?#]*\.(?:jpg|jpeg|png)', artwork):
+                artwork = None
+            result.append({'id': row['id'], 'name': row['l'].strip(), 'image': artwork})
+        return result[:8]
