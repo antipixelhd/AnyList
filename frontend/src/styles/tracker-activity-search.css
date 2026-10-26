@@ -317,16 +317,26 @@
     margin:24px auto 0;
     padding:0 60px;
     gap:48px;
+    --quick-search-panel-width:calc((100% - 96px) / 3);
     grid-template-columns:repeat(3,minmax(0,1fr));
     overflow:visible;
+  }
+  .quick-search-dialog[data-quick-search] .quick-search-results:not(:has(> .quick-search-card:not([hidden]) ~ .quick-search-card:not([hidden]) ~ .quick-search-card:not([hidden]))) {
+    grid-template-columns:repeat(2,var(--quick-search-panel-width));
+    justify-content:center;
+  }
+  .quick-search-dialog[data-quick-search] .quick-search-results:not(:has(> .quick-search-card:not([hidden]) ~ .quick-search-card:not([hidden]))):not(:has(> .quick-search-card:not([hidden]) ~ .quick-search-card:not([hidden]) ~ .quick-search-card:not([hidden]))) {
+    grid-template-columns:var(--quick-search-panel-width);
   }
   .quick-search-dialog[data-quick-search] .quick-search-state { max-width:660px; margin:24px auto 0; }
 }
 @media (min-width:651px) and (max-width:1500px) {
-  .quick-search-dialog[data-quick-search] .quick-search-results { gap:32px; }
+  .quick-search-dialog[data-quick-search] .quick-search-results { gap:32px; --quick-search-panel-width:calc((100% - 64px) / 3); }
 }
 @media (min-width:651px) and (max-width:1400px) {
+  .quick-search-dialog[data-quick-search] .quick-search-results:has(> .quick-search-card:not([hidden]) ~ .quick-search-card:not([hidden])):not(:has(> .quick-search-card:not([hidden]) ~ .quick-search-card:not([hidden]) ~ .quick-search-card:not([hidden]))) { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .quick-search-dialog[data-quick-search] .quick-search-results { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .quick-search-dialog[data-quick-search] .quick-search-results:not(:has(> .quick-search-card:not([hidden]) ~ .quick-search-card:not([hidden]))):not(:has(> .quick-search-card:not([hidden]) ~ .quick-search-card:not([hidden]) ~ .quick-search-card:not([hidden]))) { --quick-search-panel-width:calc((100% - 32px) / 2); }
 }
 @media (min-width:651px) and (max-width:724px) {
   .quick-search-dialog[data-quick-search] .quick-search-bar { width:calc(100% - 64px); }
