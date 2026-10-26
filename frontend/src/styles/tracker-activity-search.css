@@ -285,3 +285,8 @@
 @media(prefers-reduced-motion:reduce) {
   .quick-search-dialog .quick-search-bar,.quick-search-mobile-tabs > button,.quick-search-tab-markers span { transition:none; }
 }
+
+@media (prefers-reduced-motion:no-preference) {
+  .quick-search-dialog .quick-search-result { transition:background-color .15s ease,color .15s ease; }
+  .quick-search-dialog .quick-search-result :is(.quick-search-result-link,.quick-search-add,small) { transition:color .15s ease; }
+}

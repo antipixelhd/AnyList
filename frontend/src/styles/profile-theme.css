@@ -40,3 +40,9 @@
 .tracker[data-theme-active] .topbar.appbar-fade-capable.appbar-at-top:not(.appbar-hidden) .appbar-nav a.active {
   color: var(--blue);
 }
+
+/* Match the gentle list highlight without delaying pointer feedback. */
+@media (prefers-reduced-motion:no-preference) {
+  .tracker #entry-groups .entry-row { transition:background-color .15s ease,color .15s ease; }
+  .tracker #entry-groups .entry-row :is(a,.entry-score,.entry-progress,.entry-type,.unwatched-indicator) { transition:color .15s ease; }
+}
