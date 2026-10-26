@@ -1,50 +1,52 @@
 ---
 import Icon from "../Icon.astro";
 import CalendarDateInput from "../CalendarDateInput.astro";
-interface Props { hasTmdbKey: boolean; service: "netflix" | "amazon" }
-const { hasTmdbKey, service } = Astro.props;
-const serviceName = service === "amazon" ? "Amazon Prime Video" : "Netflix";
+interface Props { hasTmdbKey: boolean; service: "netflix" | "amazon" | "nuvio" | "stremio"; connectionId?: number; connectionName?: string }
+const { hasTmdbKey, service, connectionId, connectionName } = Astro.props;
+const serviceName = connectionName || ({amazon: 'Amazon Prime Video', netflix: 'Netflix', nuvio: 'Nuvio', stremio: 'Stremio'}[service]);
+const instance = connectionId ? `connection-${connectionId}` : service;
 const extension = service === "amazon" ? ".zip" : ".csv";
 ---
-    <div data-streaming-import data-service={service} data-service-name={serviceName} data-extension={extension} data-has-tmdb-key={String(hasTmdbKey)}>
+    <div data-streaming-import data-service={service} data-connection-import={connectionId} data-service-name={serviceName} data-extension={extension} data-has-tmdb-key={String(hasTmdbKey)} hidden={!!connectionId}>
       <template data-role="streaming-disclosure-arrow"><Icon name="chevron-down" class="streaming-disclosure-arrow" /></template>
       <template data-role="streaming-poster-placeholder"><Icon name="film" /></template>
       <template data-role="streaming-match-arrow"><Icon name="arrow-right" /></template>
       <template data-role="streaming-star"><Icon name="star" /></template>
-      <input type="file" id={`${service}-streaming-import-file`} data-role="streaming-import-file" accept={extension} class="hidden" disabled={!hasTmdbKey} />
-      <div id={`${service}-streaming-import-upload-controls`} data-role="streaming-import-upload-controls">
-      <div id={`${service}-streaming-import-upload`} data-role="streaming-import-upload" class:list={[
+      {/* Request documents, not camera/media sources. Broad document MIME families keep mislabeled CSV/ZIP exports selectable; validate the format after selection. */}
+      <input type="file" id={`${instance}-streaming-import-file`} data-role="streaming-import-file" accept="text/*,application/*" class="hidden" disabled={!hasTmdbKey} />
+      <div id={`${instance}-streaming-import-upload-controls`} data-role="streaming-import-upload-controls" hidden={!!connectionId}>
+      <div id={`${instance}-streaming-import-upload`} data-role="streaming-import-upload" class:list={[
         "flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed px-5 py-9 text-center transition-colors sm:px-6 sm:py-10",
         hasTmdbKey ? "cursor-pointer border-zinc-700 bg-zinc-900/40 hover:border-zinc-500" : "cursor-not-allowed border-zinc-800 bg-zinc-900/20 opacity-50",
-      ]} role="button" tabindex={hasTmdbKey ? 0 : -1} aria-controls={`${service}-streaming-import-file`} aria-label={`Choose ${serviceName} viewing history`}>
+      ]} role="button" tabindex={hasTmdbKey ? 0 : -1} aria-controls={`${instance}-streaming-import-file`} aria-label={`Choose ${serviceName} viewing history`}>
         <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="h-8 w-8 text-zinc-500"><path stroke-linecap="round" stroke-linejoin="round" d="M12 16.5V9.75m0 0 3 3m-3-3-3 3M6.75 19.5a4.5 4.5 0 0 1-1.41-8.775 5.25 5.25 0 0 1 10.233-2.33 3 3 0 0 1 3.758 3.848A3.752 3.752 0 0 1 18 19.5H6.75Z"/></svg>
         <p class="text-base font-semibold text-zinc-200">{hasTmdbKey ? "Choose your viewing history" : "Connect TMDB to import your history"}</p>
         {hasTmdbKey && <p class="text-sm text-zinc-400">Drop your {extension} file here or choose a file</p>}
         <p class="text-xs text-zinc-500">{service === "amazon" ? <>Request your Prime Video data from <a href="https://www.amazon.de/hz/privacy-central/data-requests/preview.html" target="_blank" rel="noopener noreferrer" class="text-blue-400 hover:text-blue-300">Amazon</a>, then upload the ZIP. It may take a couple of days.</> : <>Download all your <a href="https://www.netflix.com/settings/viewing-history" target="_blank" rel="noopener noreferrer" class="text-blue-400 hover:text-blue-300">Netflix viewing activity</a>.</>}</p>
       </div>
-      <div class="streaming-upload-options"><label for={`${service}-streaming-import-language`}><span>File language</span><select id={`${service}-streaming-import-language`} data-role="streaming-import-language" aria-label="File language" class="streaming-language-select"><option value="auto">Detect automatically</option><option value="en">English</option><option value="de">Deutsch</option></select></label><p>Anime imports are not supported yet.</p></div>
-      <input id={`${service}-streaming-skip-anime`} data-role="streaming-skip-anime" type="checkbox" checked disabled hidden />
+      <div class="streaming-upload-options"><label for={`${instance}-streaming-import-language`}><span>File language</span><select id={`${instance}-streaming-import-language`} data-role="streaming-import-language" aria-label="File language" class="streaming-language-select"><option value="auto">Detect automatically</option><option value="en">English</option><option value="de">Deutsch</option></select></label><p>Anime imports are not supported yet.</p></div>
+      <input id={`${instance}-streaming-skip-anime`} data-role="streaming-skip-anime" type="checkbox" checked disabled hidden />
       </div>
-      <section id={`${service}-streaming-import-workflow`} data-role="streaming-import-workflow" class="mt-5 hidden" aria-live="polite"></section>
-      <dialog data-role="streaming-finish-dialog" class="streaming-finish-dialog" aria-labelledby={`${service}-finish-title`} data-motion-static>
+      <section id={`${instance}-streaming-import-workflow`} data-role="streaming-import-workflow" class="mt-5 hidden" aria-live="polite"></section>
+      <dialog data-role="streaming-finish-dialog" class="streaming-finish-dialog" aria-labelledby={`${instance}-finish-title`} data-motion-static>
         <form method="dialog">
-          <h2 id={`${service}-finish-title`} tabindex="-1" autofocus>When did you finish this series?</h2>
-          <CalendarDateInput id={`${service}-finish-date`} name="finish_date" label="Finish date" />
+          <h2 id={`${instance}-finish-title`} tabindex="-1" autofocus>When did you finish this series?</h2>
+          <CalendarDateInput id={`${instance}-finish-date`} name="finish_date" label="Finish date" />
           <div class="streaming-finish-actions"><button type="submit" value="skip" class="streaming-button streaming-secondary">Skip</button><button type="submit" value="confirm" class="streaming-button streaming-primary">Confirm date</button></div>
         </form>
       </dialog>
-      <dialog id={`${service}-streaming-remap-dialog`} data-role="streaming-remap-dialog" aria-labelledby={`${service}-streaming-remap-title`} class="quick-search-dialog streaming-remap-dialog">
-        <h2 id={`${service}-streaming-remap-title`} data-role="streaming-remap-title" class="sr-only">Select a movie or series</h2>
+      <dialog id={`${instance}-streaming-remap-dialog`} data-role="streaming-remap-dialog" aria-labelledby={`${instance}-streaming-remap-title`} class="quick-search-dialog streaming-remap-dialog">
+        <h2 id={`${instance}-streaming-remap-title`} data-role="streaming-remap-title" class="sr-only">Select a movie or series</h2>
         <div class="quick-search-bar">
           <Icon name="search" />
-          <label class="sr-only" for={`${service}-streaming-remap-input`}>Search movies and series</label>
-          <input id={`${service}-streaming-remap-input`} data-role="streaming-remap-input" type="search" placeholder="Search movies and series…" autocomplete="off" spellcheck="false" />
-          <button id={`${service}-streaming-remap-close`} data-role="streaming-remap-close" class="editor-icon-button" type="button" aria-label="Close title search"><Icon name="close" /></button>
-          <div id={`${service}-streaming-remap-progress`} data-role="streaming-remap-progress" class="quick-search-progress" aria-hidden="true"></div>
+          <label class="sr-only" for={`${instance}-streaming-remap-input`}>Search movies and series</label>
+          <input id={`${instance}-streaming-remap-input`} data-role="streaming-remap-input" type="search" placeholder="Search movies and series…" autocomplete="off" spellcheck="false" />
+          <button id={`${instance}-streaming-remap-close`} data-role="streaming-remap-close" class="editor-icon-button" type="button" aria-label="Close title search"><Icon name="close" /></button>
+          <div id={`${instance}-streaming-remap-progress`} data-role="streaming-remap-progress" class="quick-search-progress" aria-hidden="true"></div>
         </div>
-        <p id={`${service}-streaming-remap-state`} data-role="streaming-remap-state" class="quick-search-state" role="status" hidden></p>
-        <div id={`${service}-streaming-remap-results`} data-role="streaming-remap-results" class="quick-search-results combined" hidden>
-          <section class="quick-search-card"><div id={`${service}-streaming-remap-list`} data-role="streaming-remap-list"></div></section>
+        <p id={`${instance}-streaming-remap-state`} data-role="streaming-remap-state" class="quick-search-state" role="status" hidden></p>
+        <div id={`${instance}-streaming-remap-results`} data-role="streaming-remap-results" class="quick-search-results combined" hidden>
+          <section class="quick-search-card"><div id={`${instance}-streaming-remap-list`} data-role="streaming-remap-list"></div></section>
         </div>
       </dialog>
     </div>

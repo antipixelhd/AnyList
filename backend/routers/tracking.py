@@ -351,11 +351,13 @@ async def recent_events(db: AsyncSession = Depends(get_db), viewer: User = Depen
     recent_jobs=(await db.execute(select(SyncJob).where(SyncJob.user_id==viewer.id)
         .order_by(SyncJob.updated_at.desc(),SyncJob.id.desc()).limit(200))).scalars().all()
     failure_events=connection_failure_events(recent_jobs,connection_names)
-    pending=sum(1 for r,_ in rows if r.state=='pending' and r.kind!='outbound_pending')+len(failure_events)
+    from core.import_notifications import active_import_events
+    import_events = await active_import_events(db, viewer.id, datetime.utcnow())
+    pending=sum(1 for r,_ in rows if r.state=='pending' and r.kind!='outbound_pending')+len(failure_events)+len(import_events)
     outbound=group_outbound_delivery(actions,cloud_actions,outbound_review_rows,markers,connection_names,
         library_actions,watch_intents)
     return {'pending':pending,'outbound':outbound,
-        'results':failure_events+[{'id':r.id,'kind':r.kind,'state':r.state,'provider':r.provider,'message':r.message,'previous_status':r.previous_status,'proposed_status':r.proposed_status,
+        'results':import_events+failure_events+[{'id':r.id,'kind':r.kind,'state':r.state,'provider':r.provider,'message':r.message,'previous_status':r.previous_status,'proposed_status':r.proposed_status,
                     'previous_score':r.previous_score,'proposed_score':r.proposed_score,'season_number':r.season_number,
                     'priority':review_priority(r),'dismissible':r.state!='pending' or r.kind in {'new_season_release_date','new_season_release'},'payload':r.payload or {},
                     'media':tracking_projection.media_data(m) if m else None,'created_at':r.created_at} for r,m in rows]}

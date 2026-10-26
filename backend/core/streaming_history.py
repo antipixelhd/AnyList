@@ -2,6 +2,8 @@
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+MIN_WATCH_SECONDS = 600
+
 @dataclass(slots=True)
 class WatchObservation:
     """One distinct source title/date observation after duplicate removal."""
@@ -16,6 +18,8 @@ class WatchObservation:
     source_rows: list[int] = field(default_factory=list)
     watched_seconds: float | None = None
     completed_evidence: bool = False
+    episode_number: int | None = None
+    duration_seconds: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

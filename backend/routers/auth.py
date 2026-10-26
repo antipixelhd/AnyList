@@ -545,7 +545,17 @@ async def list_connections(
         .where(MediaServerConnection.user_id == current_user.id)
         .order_by(MediaServerConnection.created_at)
     )
-    return result.scalars().all()
+    connections = result.scalars().all()
+    from models.tracking import StreamBaseline
+    baselines = {row.connection_id: row for row in (await db.scalars(select(StreamBaseline).where(
+        StreamBaseline.user_id == current_user.id))).all()}
+    for conn in connections:
+        baseline = baselines.get(conn.id)
+        snapshot = (baseline.snapshot or {}) if baseline else {}
+        conn.setup_pending = conn.type in ('stremio', 'nuvio') and bool(
+            (not baseline and conn.sync_watched) or (baseline is not None and not baseline.approved)
+            or snapshot.get('import_session_id') or snapshot.get('import_handoff'))
+    return connections
 
 
 @router.post("/connections", response_model=schemas.MediaServerConnectionResponse, status_code=201)
@@ -560,6 +570,8 @@ async def create_connection(
             status_code=400,
             detail="type must be plex, jellyfin, emby, nuvio, stremio, or arvio",
         )
+    from core.import_admission import require_import_slot
+    await require_import_slot(db, current_user.id)
     validated_url = body.url
     connection_token = body.token
     server_user_id = body.server_user_id
@@ -829,39 +841,8 @@ async def delete_connection(
     conn = result.scalar_one_or_none()
     if not conn:
         raise HTTPException(status_code=404, detail="Connection not found")
-    if conn.type in ("stremio", "nuvio"):
-        from core import stremio, nuvio
-        from core.connection_identity import reset_stream_connection_state
-        await db.execute(select(User.id).where(User.id == current_user.id).with_for_update())
-        provider = stremio if conn.type == "stremio" else nuvio
-        async with provider.connection_lock(conn.id):
-            await db.refresh(conn)
-            await reset_stream_connection_state(db, conn)
-            return await _delete_connection_fields(db, conn)
-    return await _delete_connection_fields(db, conn)
-
-
-async def _delete_connection_fields(db, conn):
-    if conn.type == "stremio":
-        from core import stremio
-        # A manually supplied auth key may also serve another AnyList user.
-        # Removing this connection must not revoke that remaining session.
-        shared_session = (await db.execute(select(MediaServerConnection.id).where(
-            MediaServerConnection.type == "stremio",
-            MediaServerConnection.token == conn.token,
-            MediaServerConnection.id != conn.id,
-        ).limit(1))).scalar_one_or_none()
-        if shared_session is None:
-            try:
-                await stremio.logout(conn.token)
-            except stremio.StremioAPIError:
-                logger.warning(
-                    "Failed to revoke Stremio session for connection %s",
-                    conn.id,
-                )
-    await db.delete(conn)
-    await db.commit()
-    return {"status": "deleted"}
+    from core.connection_lifecycle import delete_connection as remove_connection
+    return await remove_connection(db, conn)
 
 
 # ── Scrobble-only connections ──────────────────────────────────────────────────
@@ -1338,7 +1319,8 @@ async def poll_stremio_link(
             "connection": schemas.MediaServerConnectionResponse.model_validate(existing),
         }
 
-    await db.execute(select(User.id).where(User.id == current_user.id).with_for_update())
+    from core.import_admission import require_import_slot
+    await require_import_slot(db, current_user.id)
     await assert_connection_identity_available(
         db, current_user.id, "stremio", str(account["_id"]),
         stremio.DEFAULT_URL, str(account["_id"]),

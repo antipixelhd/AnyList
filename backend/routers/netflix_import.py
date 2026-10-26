@@ -1,7 +1,7 @@
 """Private, resumable Netflix viewing-history import drafts."""
 
 from __future__ import annotations
-from typing import Literal
+from typing import Annotated, Literal
 from core import netflix_sessions
 
 import uuid
@@ -9,13 +9,13 @@ from copy import deepcopy
 from datetime import date, timedelta
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, Form, HTTPException, UploadFile
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core import tmdb, settings_store
 from db import get_db
 from dependencies import get_current_user
-from models import Media, NetflixImportSession, User
+from models import Media, MediaServerConnection, NetflixImportSession, User
 from models.base import MediaType
 from models.tracking import TrackedEntry
 
@@ -224,11 +224,15 @@ def _summary(items: list[dict], parsed_counts: dict | None = None, errors: list 
 async def _load_owned(db: AsyncSession, session_id: str, user_id: int, *, lock: bool = False) -> NetflixImportSession:
     query = select(NetflixImportSession).where(NetflixImportSession.id == session_id, NetflixImportSession.user_id == user_id)
     if lock:
-        query = query.with_for_update()
+        query = query.with_for_update().execution_options(populate_existing=True)
     session = (await db.execute(query)).scalar_one_or_none()
     if session is None:
         raise HTTPException(status_code=404, detail="Import session not found")
     if session.expires_at <= netflix_sessions._now() and session.status != "committed":
+        if not lock:
+            return await _load_owned(db, session_id, user_id, lock=True)
+        from core.connection_imports import remove_abandoned_connection
+        await remove_abandoned_connection(db, session)
         session.source_csv = None
         session.payload = {}
         session.status = "cancelled"
@@ -253,10 +257,13 @@ def _public_session(session: NetflixImportSession) -> dict:
     return {
         "id": session.id,
         "source": payload.get("source", "netflix"),
+        "connection_id": payload.get("connection_id"),
+        "expires_at": session.expires_at.isoformat() + "Z" if session.expires_at else None,
         "status": session.status,
         "phase": session.phase,
         "progress": session.progress or {"current": 0, "total": 0, "message": ""},
         "revision": session.revision,
+        "idempotency_key": session.idempotency_key if session.status == 'committing' else None,
         "items": items,
         "summary": summary,
         "errors": errors,
@@ -274,6 +281,15 @@ def _schedule(background_tasks: BackgroundTasks, session_id: str, user_id: int, 
     if session_id not in netflix_sessions._running:
         netflix_sessions._running.add(session_id)
         background_tasks.add_task(netflix_sessions._prepare_session, session_id, user_id, language)
+
+
+@router.get("/active")
+async def get_active_import(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    from core.import_admission import active_import
+    return {"active": await active_import(db, current_user.id)}
 
 
 @router.post("/{source}", status_code=202)
@@ -302,11 +318,8 @@ async def upload_netflix_history(
     if not content:
         raise HTTPException(status_code=400, detail="The uploaded export is empty.")
     now = netflix_sessions._now()
-    await db.execute(delete(NetflixImportSession).where(
-        NetflixImportSession.user_id == current_user.id,
-        NetflixImportSession.status != "committed",
-        NetflixImportSession.expires_at <= now,
-    ))
+    from core.import_admission import require_import_slot
+    await require_import_slot(db, current_user.id)
     if not await settings_store.get_user_tmdb_key(db, current_user.id, cached=False):
         raise HTTPException(status_code=400, detail="Add a TMDB API key in Settings before importing streaming history.")
     session = NetflixImportSession(
@@ -335,6 +348,32 @@ async def get_netflix_import(
     elif session.status == "committing" and session_id not in netflix_sessions._committing:
         _schedule_commit(background_tasks, session_id, current_user.id, session.idempotency_key)
     return _public_session(session)
+
+
+@router.get("/connections/{connection_id}")
+async def get_connection_import(
+    connection_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    from models.tracking import StreamBaseline
+    from models.sync import SyncJob, SyncStatus
+    conn = await db.get(MediaServerConnection, connection_id)
+    if conn is None or conn.user_id != current_user.id or conn.type not in ('nuvio', 'stremio'):
+        raise HTTPException(404, 'Connection not found')
+    baseline = await db.get(StreamBaseline, connection_id)
+    session_id = (baseline.snapshot or {}).get('import_session_id') if baseline else None
+    session = await db.get(NetflixImportSession, session_id) if session_id else None
+    if session and session.user_id == current_user.id and session.status in ('review', 'committing', 'failed'):
+        if session.expires_at > netflix_sessions._now():
+            return {'session': _public_session(session), 'checking': False}
+    if not conn.sync_watched:
+        return {'session': None, 'checking': False}
+    running = await db.scalar(select(SyncJob.id).where(
+        SyncJob.user_id == current_user.id, SyncJob.connection_id == connection_id,
+        SyncJob.status.in_((SyncStatus.pending, SyncStatus.running)),
+    ).limit(1))
+    return {'session': None, 'checking': baseline is None and running is not None}
 
 
 @router.patch("/{session_id}/items/{item_id}")
@@ -393,6 +432,19 @@ async def update_netflix_import_item(
     item = next((value for value in items if value.get("id") == item_id), None)
     if item is None:
         raise HTTPException(status_code=404, detail="Import item not found")
+    await _apply_item_patch(db, current_user, item, patch, remapped_item)
+    payload["items"] = items
+    session.payload = payload
+    session.error_message = None
+    session.revision += 1
+    session.updated_at = netflix_sessions._now()
+    await db.commit()
+    await db.refresh(session)
+    return _public_session(session)
+
+
+async def _apply_item_patch(db, current_user, item, patch, remapped_item=None):
+    action = patch.get("action")
     if action is not None and action not in ("confirm", "remap", "skip"):
         raise HTTPException(status_code=422, detail="Action must be confirm, remap, or skip.")
     if action == "skip":
@@ -491,6 +543,35 @@ async def update_netflix_import_item(
         media = (await db.execute(select(Media).where(Media.tmdb_id == candidate["tmdb_id"], Media.media_type == media_type))).scalar_one_or_none()
         tracked = (await db.execute(select(TrackedEntry).where(TrackedEntry.user_id == current_user.id, TrackedEntry.media_id == media.id))).scalar_one_or_none() if media else None
         item["existing"] = netflix_sessions._existing_state(media, tracked)
+
+
+@router.patch("/{session_id}/decisions")
+async def update_import_decisions(
+    session_id: str,
+    body: dict,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    """Save a review step atomically, with one snapshot and one response."""
+    session = await _load_owned(db, session_id, current_user.id, lock=True)
+    if session.status != "review" or body.get("revision") != session.revision:
+        raise HTTPException(409, "This import changed. Reload it and try again.")
+    patches = body.get("patches")
+    if not isinstance(patches, list) or len(patches) > 10000:
+        raise HTTPException(422, "Invalid import decisions.")
+    payload = dict(session.payload or {})
+    items = deepcopy(payload.get("items", []))
+    netflix_sessions._resolve_draft_items(items)
+    by_id = {str(item["id"]): item for item in items}
+    for patch in patches:
+        if not isinstance(patch, dict) or not isinstance(patch.get("changes"), dict):
+            raise HTTPException(422, "Invalid import decision.")
+        item = by_id.get(str(patch.get("itemId")))
+        if item is None:
+            raise HTTPException(404, "Import item not found")
+        if patch["changes"].get("action") == "remap":
+            raise HTTPException(422, "Remap titles separately before saving decisions.")
+        await _apply_item_patch(db, current_user, item, patch["changes"])
     payload["items"] = items
     session.payload = payload
     session.error_message = None
@@ -512,11 +593,15 @@ async def cancel_netflix_import(
     preliminary = await _load_owned(db, session_id, current_user.id)
     if preliminary.status == "committing":
         netflix_sessions._cancelled.add(session_id)
+    await db.execute(select(User.id).where(User.id == current_user.id).with_for_update())
     session = await _load_owned(db, session_id, current_user.id, lock=True)
     if session.status == "committed":
+        netflix_sessions._cancelled.discard(session_id)
         raise HTTPException(status_code=409, detail="An imported history cannot be cancelled after it has been committed.")
     if session.status != "cancelled":
         netflix_sessions._cancelled.add(session_id)
+        connection_id = (session.payload or {}).get("connection_id")
+        identity_version = (session.payload or {}).get("identity_version")
         session.status = "cancelled"
         session.phase = "complete"
         session.source_csv = None
@@ -524,6 +609,11 @@ async def cancel_netflix_import(
         session.progress = {"current": 0, "total": 0, "message": "Import cancelled"}
         session.revision += 1
         session.updated_at = netflix_sessions._now()
+        if connection_id is not None:
+            conn = await db.get(MediaServerConnection, connection_id, populate_existing=True)
+            if conn and conn.user_id == current_user.id and conn.identity_version == identity_version:
+                from core.connection_lifecycle import delete_connection
+                await delete_connection(db, conn)
         await db.commit()
         await db.refresh(session)
     return _public_session(session)

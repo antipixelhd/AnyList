@@ -14,9 +14,8 @@ from datetime import datetime, timezone
 from zipfile import ZipFile, BadZipFile
 from core.archive_reader import BoundedZipReader
 from core.netflix_import import _norm_text
-from core.streaming_history import WatchObservation, ParsedHistory
+from core.streaming_history import WatchObservation, ParsedHistory, MIN_WATCH_SECONDS
 
-MIN_WATCH_SECONDS = 600
 MAX_CSV_BYTES = 25 * 1024 * 1024
 MAX_ROWS = 100_000
 

@@ -1,5 +1,7 @@
 ---
 import LocalDateTime from '../components/LocalDateTime.astro';
+import ImportAdmissionNotice from "../components/settings/ImportAdmissionNotice.astro";
+import StreamingImport from "../components/settings/StreamingImport.astro";
 import DataImportSettings from "../components/settings/DataImportSettings.astro";
 import DataImportDialogs from "../components/settings/DataImportDialogs.astro";
 import TraktSettings from "../components/settings/TraktSettings.astro";
@@ -25,6 +27,7 @@ const [settings, me, connections, scrobbleConnections, seasonOverrides, deviceGr
   api.auth.deviceGrants(token!).catch(() => [] as DeviceGrant[]),
   api.sync.getPullSchedule(token!),
 ]);
+const {active: activeImport} = await api.auth.getActiveImport(token!);
 const hasTmdbKey = settings.has_effective_tmdb_key;
 const AUTO_SYNC_INTERVAL_OPTIONS = [
   { value: 0.25, label: "Every 15m" },
@@ -44,6 +47,11 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
 
     <div class="settings-stack">
       <div class="settings-stack" hidden={section !== "connections"}>
+      <section data-connection-imports>
+        {connections.filter(conn => conn.type === 'nuvio' || conn.type === 'stremio').map(conn => (
+          <StreamingImport hasTmdbKey={hasTmdbKey} service={conn.type as 'nuvio' | 'stremio'} connectionId={conn.id} connectionName={conn.name} />
+        ))}
+      </section>
       {!me.is_admin && <MetadataConnections settings={settings} />}
       <section class="space-y-3">
         <h2 class="section-headline border-b border-zinc-800 pb-2">Synchronization</h2>
@@ -80,7 +88,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
                   <div class="flex min-w-0 items-center gap-4 pointer-events-none">
                     <Fragment set:html={connectionIconHtml(conn.type)} />
                     <div class="flex min-w-0 flex-col gap-0.5">
-                      <span class="font-medium text-zinc-200">{conn.name}</span>
+                      <span class="font-medium text-zinc-200">{conn.name}</span>{conn.setup_pending && <span class="text-xs text-zinc-400">Setup in progress</span>}
                       <span id={`conn-status-${conn.id}`} class="conn-status-badge hidden text-xs font-normal px-1.5 py-0.5 rounded pointer-events-auto"></span>
                       <span class="break-all text-xs text-zinc-500">{typeLabel} · {conn.url}</span>
                     </div>
@@ -325,7 +333,8 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
             </div>
 
             <!-- Add Connection button + form -->
-            <div class="bg-zinc-900 border border-dashed border-zinc-700 rounded-2xl overflow-hidden">
+            <ImportAdmissionNotice active={activeImport} />
+            <div data-import-start-connection hidden={!!activeImport} class="bg-zinc-900 border border-dashed border-zinc-700 rounded-2xl overflow-hidden">
               <button type="button" id="add-connection-btn" class="w-full flex items-center justify-center gap-2 px-6 py-4 hover:bg-zinc-900/40 cursor-pointer transition-colors text-zinc-400 hover:text-zinc-200" aria-expanded="false" aria-controls="add-connection-form">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
                 <span class="font-medium">Add Connection</span>
@@ -793,6 +802,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
             </div>
           </div>
         </form>
+
       </section>
 
       </div>
@@ -832,7 +842,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
         </div>
       </section>
 
-      <div class="settings-stack" hidden={section !== "imports"}><DataImportSettings hasTmdbKey={hasTmdbKey} /></div>
+      <div class="settings-stack" hidden={section !== "imports"}><DataImportSettings hasTmdbKey={hasTmdbKey} activeImport={activeImport} /></div>
 
       <!-- API Key -->
       <section hidden={section !== "developer"}>
@@ -966,6 +976,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
 
 <script>
   import { formatDateTime, timestamp } from '../lib/date-time';
+  import { canStartImport } from "../lib/import-admission";
   import { escapeHtml as esc, errorMessage, showMessage } from '../lib/settings-feedback';
   import { readTrackingServiceSettings } from '../lib/tracking-service-settings';
   import { wireCancelButton, resetCancelButton } from '../lib/sync-controls';
@@ -2296,7 +2307,8 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
     };
 
     if (addBtn && addForm) {
-      addBtn.addEventListener('click', () => {
+      addBtn.addEventListener('click', async () => {
+        if (!await canStartImport()) return;
         const open = !addForm.classList.contains('hidden') && !addForm.inert;
         if (open) void hideCollapsible(addForm);
         else showCollapsible(addForm);
@@ -3061,6 +3073,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
       });
       if (!res.ok) return;
       const jobs: any[] = await res.json();
+      document.dispatchEvent(new CustomEvent("connections:sync-updated"));
 
       function parseUTC(dateStr: string): Date {
         return timestamp(dateStr) || new Date(NaN);
@@ -3438,6 +3451,9 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
 
 <script>
   import "../scripts/streaming-import";
+  import { mountImportAdmission } from "../lib/import-admission";
+  mountImportAdmission();
+  document.addEventListener("astro:page-load", mountImportAdmission);
 </script>
 
 <style is:global>

@@ -1,3 +1,4 @@
+import {cancelImportNotification} from './import-cancel';
 import {
   subscribeNotifications,
   type NotificationSnapshot,
@@ -327,9 +328,12 @@ function mountInbox(
       card.querySelector<HTMLElement>(`[data-notification-action="${name}"]`);
     const visible = (name: string, show: boolean) =>
       setHidden(action(name), !show);
-    visible("resolve", event.kind === "connection_failure");
+    visible("resolve", event.kind === "connection_failure" || event.kind === "import_ready");
     const resolve = action("resolve") as HTMLAnchorElement | null;
-    if (resolve) resolve.href = event.payload?.resolve_url || "#";
+    if (resolve) { resolve.href = event.payload?.resolve_url || "#"; resolve.textContent = event.kind === 'import_ready' ? 'Resume import' : 'Resolve'; }
+    visible('cancel-import', event.kind === 'import_ready');
+    const cancelImport = action('cancel-import');
+    if (cancelImport) { cancelImport.dataset.cancelImport = event.payload?.import_id || ''; cancelImport.dataset.connectionImport = String(event.payload?.connection_id != null); }
     visible("rate", event.kind === "rating_needed" && Boolean(event.media));
     const rate = action("rate") as HTMLButtonElement | null;
     if (rate && event.media) {
@@ -372,6 +376,7 @@ function mountInbox(
       ![
         "unmatched_import",
         "connection_failure",
+        "import_ready",
         "new_season_release_date",
         "new_season_release",
       ].includes(event.kind);
@@ -697,9 +702,19 @@ function mountInbox(
     "click",
     async (event) => {
       const target = (event.target as HTMLElement).closest<HTMLElement>(
-        "[data-event], [data-match-search], [data-match-result-event], [data-dismiss], [data-unignore]",
+        "[data-event], [data-match-search], [data-match-result-event], [data-dismiss], [data-unignore], [data-cancel-import]",
       );
       if (!target) return;
+      if (target.dataset.cancelImport) {
+        event.preventDefault();
+        const button = target as HTMLButtonElement;
+        if (button.disabled) return;
+        button.disabled = true;
+        try { await cancelImportNotification(button.dataset.cancelImport!, button.dataset.connectionImport === 'true', listeners.signal); button.blur(); flushDeferred(); }
+        catch (exception) { fail(exception); }
+        finally { button.disabled = false; }
+        return;
+      }
       if (target.dataset.matchSearch != null) {
         const box = target.closest<HTMLElement>("[data-match-box]");
         const input = box?.querySelector<HTMLInputElement>("input");

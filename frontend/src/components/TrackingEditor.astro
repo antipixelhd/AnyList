@@ -357,7 +357,7 @@ document.addEventListener('astro:page-load', () => {
   .editor-delete-button:focus-visible { outline:none; background:#ed577a; color:#fff; }
   @media (hover:hover) { .editor-delete-button:hover { background:#ed577a; color:#fff; } }
   .editor-delete-button:disabled { opacity:.6; cursor:wait; }
-  .editor-confirmation { width:min(440px,calc(100vw - 32px)); max-height:calc(100dvh - 32px); padding:20px; border:0; border-radius:4px; background:var(--panel,#151f2e); color:var(--muted,#a2b5c7); box-shadow:0 20px 65px #02071199; }
+  .editor-confirmation { position:fixed; inset:0; margin:auto; width:min(440px,calc(100vw - 32px)); max-height:calc(100dvh - 32px); padding:20px; border:0; border-radius:4px; background:var(--panel,#151f2e); color:var(--muted,#a2b5c7); box-shadow:0 20px 65px #02071199; }
   .editor-confirmation::backdrop { background:#03091280; }
   .editor-confirmation header { display:flex; align-items:center; justify-content:space-between; gap:20px; }
   .editor-confirmation h2 { margin:0; font-size:18px; font-weight:500; line-height:1.4; }
