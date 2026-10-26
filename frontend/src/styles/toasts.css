@@ -3,8 +3,9 @@
 .app-toast p { flex:1; min-width:0; margin:0; overflow-wrap:anywhere; line-height:1.5; }
 .app-toast [data-toast-icon] { display:flex; color:var(--blue,#3db4f2); }
 .app-toast [hidden] { display:none!important; }
-.app-toast[data-kind=error] { border-color:#7b4050; background:color-mix(in srgb,var(--panel,#151f2e) 92%,#a8465d); }
-.app-toast[data-kind=error] [data-toast-icon] { color:#ef9caa; }
+.app-toast[data-kind=error] { border-color:transparent; background:#c83e5b; color:#fff; font-weight:600; box-shadow:0 8px 28px #0006; }
+.app-toast[data-kind=error] [data-toast-icon] { display:none; }
+.app-toast[data-kind=error] button { color:#fff; }
 .app-toast[data-kind=success] [data-toast-icon] { color:#86d7b5; }
 .app-toast[data-kind=warning] [data-toast-icon] { color:#edc17a; }
 .app-toast .ui-icon { display:flex; width:16px; height:16px; }

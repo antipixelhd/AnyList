@@ -1133,6 +1133,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         profile_entry = next(row for row in profile.json()['entries'] if row['id'] == self.show.id)
         self.assertEqual(profile_entry['progress'], 4)
         self.assertEqual(profile_entry['season_position'], 'S2E2')
+        self.assertEqual(profile_entry['progress_positions'], ['S1E1', 'S1E2', 'S2E1', 'S2E2'])
 
         position, finished = await series_activity_details(self.db, self.show, 4)
         self.assertEqual(position, 'S2E2')

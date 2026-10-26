@@ -1075,7 +1075,10 @@ async def profile_list(username: str, media_type: Literal["movie", "series", "al
                 title_episodes = [r for r in released if (
                     (r.tvdb_id if provider == 'tvdb' else r.tmdb_id) in ids or r.id in imported_ids
                 )]
+                title_episodes.sort(key=lambda episode: (episode.season_number or 0, episode.episode_number or 0))
                 result['released_episodes'] = len(title_episodes)
+                if owner:
+                    result['progress_positions'] = [f'S{episode.season_number}E{episode.episode_number}' for episode in title_episodes]
                 latest_released = max(
                     title_episodes,
                     key=lambda episode: (episode.season_number or 0, episode.episode_number or 0),

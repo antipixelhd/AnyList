@@ -9,7 +9,7 @@ export type EditorTitle = {
   favorite?: boolean;
   editor_library?: { available: boolean; desired: boolean };
   overview?:string|null; runtime?:number|null; release_date?:string|null; year?:string;
-  genres?:string[]; tmdb_score?:number|null;
+  genres?:string[]; tmdb_score?:number|null; progress_positions?:string[];
 };
 type RecordState = {
   title: EditorTitle; committed: EditorTitle['entry'];
@@ -123,8 +123,8 @@ export class EditorStore {
         if (released != null && released > 0) entry.progress = released;
       }
       if (entry.progress !== previousProgress) {
-        // A season/episode label belongs to the old progress until the server confirms the new position.
-        entry.season_position = null;
+        // The ordered released catalogue allows exact optimistic positions across seasons.
+        entry.season_position = entry.progress > 0 ? record.title.progress_positions?.[entry.progress - 1] ?? null : null;
         if ('progress' in operation.patch && !('status' in operation.patch) && entry.progress > 0) {
           const released = entry.released_episodes ?? (record.title.type === 'movie' ? 1 : null);
           entry.status = previous === 'completed' || (released != null && released > 0 && entry.progress >= released)
@@ -281,7 +281,7 @@ export const editorStore = new EditorStore(async (path, options) => {
 export function seedEditorPage() {
   editorStore.scope(document.body.dataset.cacheUser || 'anonymous');
   const list = JSON.parse(document.querySelector('#list-editor-entries')?.textContent || '[]');
-  list.forEach((entry: any) => editorStore.seed({...entry, entry:entry.entry ?? entry}));
+  list.forEach((entry: any) => editorStore.seed({...entry, entry:entry.entry ? {...entry.entry, progress:entry.progress, released_episodes:entry.released_episodes, season_position:entry.season_position} : entry}));
   const title = JSON.parse(document.querySelector('#title-editor-data')?.textContent || 'null');
   if (title) editorStore.seed(title);
   const browse = JSON.parse(document.querySelector('#browse-data')?.textContent || '{}');

@@ -333,3 +333,15 @@ test('movie progress and status changes project a completed watch immediately',a
   assert.equal(title.entry.progress,1);assert.equal(title.entry.status,'completed');
   await turn();pending.resolve({id:1,status:'completed',progress:1});await write;
 });
+
+
+test('optimistic progress follows ordered episodes across season boundaries and rolls back', async () => {
+  const pending=deferred(); const store=new EditorStore(()=>pending.promise);
+  const title=store.seed({...draft(),id:1,type:'series',progress_positions:['S1E1','S1E2','S2E1','S2E2'],entry:{status:'watching',progress:2,released_episodes:4,season_position:'S1E2'}});
+  const write=store.write(title,{progress:3});
+  assert.equal(title.entry.season_position,'S2E1');
+  assert.equal(title.entry.released_episodes,4);
+  await turn(); pending.reject(new Error('offline')); await assert.rejects(write,/offline/);
+  assert.equal(title.entry.season_position,'S1E2');
+  assert.equal(title.entry.released_episodes,4);
+});
