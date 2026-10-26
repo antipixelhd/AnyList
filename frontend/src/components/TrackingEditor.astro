@@ -211,6 +211,17 @@ document.addEventListener('astro:page-load', () => {
     if (dialog.open && currentTitle && (title === currentTitle || title.id && title.id === currentTitle.id)) {
       libraryDesired = title.editor_library?.desired === true;
       renderLibraryButton();
+      // If the editor was opened while a progress write was pending, reconcile
+      // its untouched fields when that write confirms or rolls back.
+      if (current && title.entry && !dialog.hasAttribute('data-motion-closing')) {
+        for (const name of ['status','progress','start_date','finish_date']) {
+          if (!(name in title.entry)) continue;
+          const previous = current[name] ?? (name === 'progress' ? 0 : '');
+          if (field(name).value === String(previous)) field(name).value = String(title.entry[name] ?? '');
+          current[name] = title.entry[name];
+        }
+        syncStatus(); refreshDateInputs();
+      }
     }
   }, {signal:pageListeners.signal});
   async function openEditor(mediaId: number | null, button: HTMLElement, supplied?: EditorTitle) {
