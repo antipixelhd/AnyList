@@ -24,6 +24,7 @@ const results=await Promise.allSettled([
   tracker('games/browse/facets',Astro.locals.token),
 ]);
 if(results[0].status==='fulfilled')payload=results[0].value;else error='Unable to load games. Try again.';
+if(payload.verification_error)error='Unable to verify game scores. Try again.';
 if(results[1].status==='fulfilled')facets=results[1].value;
 const sections=gameBrowseCategories.map(([key,title])=>({key,title,payload:categories&&key==='trending'&&!error?payload:null}));
 const signedIn=!!Astro.locals.user;
@@ -66,9 +67,9 @@ const firstYear=1900,lastYear=Math.max(new Date().getFullYear()+3,Number(values.
         <div class="browse-active-filters" data-active-filters></div>
         <label class="browse-results-sort" hidden={categories||timeline}><Icon name="sort"/><BrowseSelect aria-label="Sort results" data-browse-results-sort valueLabel={selectedSort}>{sortOptions.map(([key,label])=><option value={key} selected={effectiveSort===key}>{label}</option>)}</BrowseSelect></label>
       </div>
-      <p class="browse-notice" data-browse-notice role="status" aria-live="polite">{!categories&&!error?values.get('q')&&!payload.coverage_limited?values.has('min_metacritic')&&payload.partial?'Some games have no verified critic score.':'':gameSourceContext(payload):''}</p>
+      <p class="browse-notice" data-browse-notice role="status" aria-live="polite">{!categories&&!error&&!payload.verification_pending?values.get('q')&&!payload.coverage_limited?values.has('min_metacritic')&&payload.partial?'Some games have no verified critic score.':'':gameSourceContext(payload):''}</p>
       <div class="browse-error" data-browse-error role="alert" hidden={!error}><span>{error}</span><button type="button" class="button-secondary" data-browse-retry>Try again</button></div>
-      <section aria-label="Browse results" data-browse-region aria-busy="false">
+      <section aria-label="Browse results" data-browse-region aria-busy={payload.verification_pending?'true':'false'}>
         <div class="browse-sections" data-browse-sections hidden={!categories}>
           {sections.map(section=><section class="browse-category" data-game-shelf={section.key} aria-label={section.title} aria-busy={!section.payload}>
             <header><h2><a href={gameBrowseHref(new URLSearchParams(),{sort:section.key})} data-game-view-all={section.key} title={section.payload?gameSourceContext(section.payload):undefined}>{section.title}</a></h2><a href={gameBrowseHref(new URLSearchParams(),{sort:section.key})} data-game-view-all={section.key}>View all</a></header>
@@ -79,9 +80,9 @@ const firstYear=1900,lastYear=Math.max(new Date().getFullYear()+3,Number(values.
         <div class={timeline?'browse-timeline':'browse-grid'} data-browse-results hidden={categories}>
           {timeline?timelineGroups<any>(payload.results).map(year=><section class="browse-timeline-year" data-timeline-year={year.year}><h2 class="browse-timeline-year-label">{year.year||'Undated'}</h2><div class="browse-timeline-months">{year.months.map(month=><section class="browse-timeline-month" data-timeline-month={month.key}><h3>{month.label}</h3><div class="browse-grid">{month.items.map(item=><BrowseCard {item} {signedIn}/>)}</div></section>)}</div></section>):payload.results.map((item:any)=><BrowseCard {item} {signedIn}/>)}
         </div>
-        <BrowseLoadingSkeletons sectionTitles={gameBrowseCategories.map(([,title])=>title)}/>
-        <div class="empty-state" data-browse-empty hidden={categories||payload.results.length>0||payload.has_more||!!error}><h2>{payload.coverage_limited?'No verified games in this search window':'No matching games'}</h2><button type="button" class="button-secondary" data-browse-clear>Clear filters</button></div>
-        <div class="browse-load" data-browse-sentinel hidden={categories}><button type="button" class="button-quiet" data-browse-more hidden={!payload.has_more}>Load more</button><span data-browse-end hidden={payload.has_more||!payload.results.length}>{payload.partial?'End of verified results':"You're all caught up"}</span></div>
+        <BrowseLoadingSkeletons sectionTitles={gameBrowseCategories.map(([,title])=>title)} active={!!payload.verification_pending&&!payload.results.length}/>
+        <div class="empty-state" data-browse-empty hidden={categories||payload.verification_pending||payload.results.length>0||payload.has_more||!!error}><h2>{payload.coverage_limited?'No verified games in this search window':'No matching games'}</h2><button type="button" class="button-secondary" data-browse-clear>Clear filters</button></div>
+        <div class="browse-load" data-browse-sentinel hidden={categories}><button type="button" class="button-quiet" data-browse-more hidden={!payload.has_more}>Load more</button><span data-browse-end hidden={!!error||payload.verification_pending||payload.has_more||!payload.results.length}>{payload.partial?'End of verified results':"You're all caught up"}</span></div>
       </section>
     </div>
     <template data-browse-close-icon><Icon name="close"/></template>

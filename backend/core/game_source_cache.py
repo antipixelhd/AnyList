@@ -68,7 +68,7 @@ class GameSourceCache:
             raise ProviderError('cursor_expired')
         return row[0]
 
-    async def get(self, provider, kind, key, loader, *, ttl=timedelta(hours=6), max_stale=timedelta(days=3)):
+    async def get(self, provider, kind, key, loader, *, ttl=timedelta(hours=6), max_stale=timedelta(days=3), progressive=False):
         if not kind.startswith('game_'):
             raise ProviderError('invalid_request')
         async with self.sessions() as db:
@@ -81,6 +81,8 @@ class GameSourceCache:
             if previous:
                 return previous
             raise ProviderError('retry_pending')
+        if progressive and previous and row.lease_until and row.lease_until > now:
+            return previous
         flight_key = (id(self.sessions), SCHEMA_VERSION, provider, kind, key)
         task = _flights.get(flight_key)
         if task is None:
@@ -88,7 +90,7 @@ class GameSourceCache:
                 if previous:
                     return previous
                 raise ProviderError('rate_limited')
-            task = asyncio.create_task(self.refresh(provider, kind, key, loader, ttl, max_stale))
+            task = asyncio.create_task(self.refresh(provider, kind, key, loader, ttl, max_stale, progressive=progressive))
             _flights[flight_key] = task
             def finished(done):
                 if _flights.get(flight_key) is done:
@@ -99,9 +101,38 @@ class GameSourceCache:
         # A usable expired ranking paints immediately while a shared refresh
         # runs. Cold reads wait for that same task; cancelling one cannot cancel
         # another viewer's refresh. The database lease also spans workers.
-        return previous if previous else await asyncio.shield(task)
+        return previous if previous and not (progressive and previous.get('error')) else await asyncio.shield(task)
 
-    async def refresh(self, provider, kind, key, loader, ttl, max_stale):
+    async def progressive(self, provider, kind, key, loader, *, wait_seconds=.15, **kwargs):
+        """A page may paint a verified prefix while its shared lease finishes."""
+        task=asyncio.create_task(self.get(provider,kind,key,loader,progressive=True,**kwargs))
+        def done(finished):
+            if not finished.cancelled():finished.exception()
+        task.add_done_callback(done)
+        try:
+            return await asyncio.wait_for(asyncio.shield(task),wait_seconds)
+        except TimeoutError:
+            async with self.sessions() as db:
+                row=await db.scalar(self.query(provider,kind,key))
+            return self.view(row,utcnow(),kwargs.get('max_stale',timedelta(days=3))) or {
+                'data':None,'stale':True,'error':None}
+
+    async def publish(self,provider,kind,key,token,data,max_stale):
+        if not isinstance(data,dict) or len(json.dumps(data).encode())>2_000_000:
+            raise ProviderError('bad_response')
+        async with self.sessions() as db:
+            row=await db.scalar(self.query(provider,kind,key).with_for_update())
+            if not row or row.lease_token!=token:return
+            old=self.view(row,utcnow(),max_stale)
+            # Keep a useful prefix across retry startup; final publication can
+            # replace it with a newly verified source generation.
+            if old and len((old['data'] or {}).get('rows',[]))>len(data.get('rows',[])):
+                return
+            row.payload=data;row.fetched_at=utcnow();row.expires_at=None
+            row.coverage={**(row.coverage or {}),'page_complete':False}
+            await db.commit()
+
+    async def refresh(self, provider, kind, key, loader, ttl, max_stale, *, progressive=False):
         self.query(provider,kind,key)  # Validate the persisted namespace before INSERT.
         token = uuid.uuid4().hex
         async with self.sessions() as db:
@@ -124,10 +155,13 @@ class GameSourceCache:
                     return previous
                 raise ProviderError('retry_pending')
             row.lease_token, row.lease_until = token, now+timedelta(minutes=3)
+            if progressive:row.error_code=row.next_attempt_at=None
             await db.commit()
         error = None
         try:
-            data = await asyncio.wait_for(loader(), 60)
+            async def publish(data):
+                await self.publish(provider,kind,key,token,data,max_stale)
+            data = await asyncio.wait_for(loader(publish) if progressive else loader(), 60)
             if not isinstance(data, dict) or len(json.dumps(data).encode()) > 2_000_000:
                 raise ProviderError('bad_response')
         except (ProviderError, asyncio.TimeoutError) as cause:
@@ -151,6 +185,7 @@ class GameSourceCache:
             else:
                 row.payload, row.fetched_at, row.expires_at = data, now, now+ttl
                 row.error_code, row.next_attempt_at, row.attempts = None, None, 0
+                if progressive:row.coverage={**(row.coverage or {}),'page_complete':True}
             await self.prune(db, provider, kind, now)
             await db.commit()
             result = self.view(row, now, max_stale)

@@ -355,7 +355,7 @@ class GameBrowseSources:
         return await self.cache.get('rawg', 'game_browse_bridge', str(identifier), load,
             ttl=timedelta(days=7), max_stale=timedelta(days=30))
 
-    async def critic_scores(self, games):
+    async def critic_scores(self, games, *, on_progress=None):
         """Exact IGDB→Wikidata→RAWG identities; missing evidence is not score zero."""
         slugs = sorted({row['igdb_slug'] for row in games if SLUG.fullmatch(row.get('igdb_slug') or '')})
         if len(games) > 24:
@@ -411,12 +411,27 @@ class GameBrowseSources:
             if not year.isdigit() or not game.get('year') or abs(int(year)-int(game['year']))>2:
                 return None
             return result['data']['score']
-        values = await asyncio.gather(*(score(game) for game in games),return_exceptions=True)
-        if any(isinstance(value,Exception) for value in values):
+        async def one(game):
+            try:return game['igdb_id'],await score(game)
+            except Exception as error:return game['igdb_id'],error
+        values={};failed=False
+        tasks=[asyncio.create_task(one(game)) for game in games]
+        try:
+            for finished in asyncio.as_completed(tasks):
+                identifier,value=await finished
+                if isinstance(value,Exception):failed=True
+                else:
+                    values[identifier]=value
+                    if on_progress:await on_progress(values)
+        finally:
+            for task in tasks:
+                if not task.done():task.cancel()
+            await asyncio.gather(*tasks,return_exceptions=True)
+        if failed:
             # An outage must remain retryable, not consume these candidates as
             # if they simply lacked critic evidence for the next two hours.
             raise ProviderError('unavailable')
-        return {game['igdb_id']:value for game,value in zip(games,values) if isinstance(value,int) and not isinstance(value,bool)}
+        return {identifier:value for identifier,value in values.items() if isinstance(value,int) and not isinstance(value,bool)}
 
     async def bridges(self, keys, *, metacritic=False):
         keys = sorted(set(keys))

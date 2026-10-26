@@ -119,7 +119,7 @@ class GameBrowse:
             return await source.highest_rated(page=position[0],start=position[1])
         return await source.attention(sellers=category=='sellers',offset=position[0])
 
-    async def page(self, query, *, limit=24, cursor=None):
+    async def page(self, query, *, limit=24, cursor=None, wait_seconds=None):
         if not 1<=limit<=48:
             raise ProviderError('invalid_request')
         scope = digest(['release-precision-v1',query,limit])
@@ -134,12 +134,20 @@ class GameBrowse:
             key = digest([scope,parent])
         else:
             key = digest([2,scope,int(time.time()//7200)])
-        async def load():
+        expires = previous['expires'] if previous else int(time.time()+7200)
+        def draft(rows,state):
+            return dict(projection=2,scope=scope,expires=expires,rows=rows,has_more=False,
+                partial=True,coverage_limited=state.get('limited',False),stale=state.get('stale',False),
+                source=state.get('source'),source_at=state.get('source_at'),fetched_at=state.get('fetched_at'),
+                verification_pending=True)
+        async def load(publish=None):
             state = copy.deepcopy(previous['continuation']) if previous else dict(
                 position=[1,0] if query['category']=='score' and not query['q'] else [0,0],
                 buffer=[],seen=[],exhausted=False,partial=False,limited=False,source_at=None,source=None,stale=False,fetched_at=None,window=int(time.time()//7200))
             seen = set(state['seen'])
             rows,frames,examined,scores = [],0,0,{}
+            published=0
+            if publish:await publish(draft([],state))
             while len(rows)<limit:
                 if not state['buffer']:
                     if state['exhausted'] or frames>=2:
@@ -177,7 +185,21 @@ class GameBrowse:
                     break
                 if query['min_metacritic'] and state['buffer'][0]['igdb_id'] not in scores:
                     batch = state['buffer'][:min(24,48-examined)]
-                    known = await self.sources.critic_scores(batch)
+                    async def progress(available):
+                        nonlocal published
+                        prefix=list(rows);included=set(seen)
+                        for candidate in batch:
+                            identifier=candidate['igdb_id']
+                            if identifier in included:continue
+                            if identifier not in available:break
+                            included.add(identifier)
+                            value=available[identifier]
+                            if value is not None and value>=query['min_metacritic']:
+                                prefix.append({**candidate,'metacritic':value})
+                                if len(prefix)>=limit:break
+                        if len(prefix)>published:
+                            await publish(draft(prefix,state));published=len(prefix)
+                    known = await self.sources.critic_scores(batch,**({'on_progress':progress} if publish else {}))
                     scores.update({row['igdb_id']:known.get(row['igdb_id']) for row in batch})
                 value = state['buffer'].pop(0)
                 identifier = value['igdb_id']
@@ -194,11 +216,17 @@ class GameBrowse:
                     value={**value,'metacritic':critic}
                 rows.append(value)
             state['seen']=sorted(seen)
-            expires = previous['expires'] if previous else int(time.time()+7200)
             return dict(projection=2,scope=scope,expires=expires,rows=rows,continuation=state,
                 has_more=bool(state['buffer']) or not state['exhausted'],partial=state['partial'] or state['limited'],
                 coverage_limited=state['limited'],stale=state['stale'],source=state['source'],source_at=state['source_at'],fetched_at=state['fetched_at'])
-        public = (await self.sources.cache.get('igdb','game_browse_pages',key,load,ttl=PAGE_AGE,max_stale=PAGE_AGE))['data']
+        if wait_seconds is not None and query['min_metacritic']:
+            cached=await self.sources.cache.progressive('igdb','game_browse_pages',key,load,
+                ttl=PAGE_AGE,max_stale=PAGE_AGE,wait_seconds=wait_seconds)
+            public=cached['data'] or draft([],{})
+            if public.get('verification_pending') and cached.get('error'):
+                public={**public,'verification_pending':False,'verification_error':cached['error']}
+        else:
+            public=(await self.sources.cache.get('igdb','game_browse_pages',key,load,ttl=PAGE_AGE,max_stale=PAGE_AGE))['data']
         if public['expires']<=time.time():
             raise ProviderError('cursor_expired')
         observed = public.get('source_at')
@@ -207,7 +235,9 @@ class GameBrowse:
             if not time.time()-age<=observed<=time.time()+300:
                 raise ProviderError('unavailable')
         return {name:public[name] for name in ('rows','has_more','partial','coverage_limited','stale','source','source_at','fetched_at')} | {
-            'cursor':encode_cursor(scope,key,public['expires']) if public['has_more'] else None}
+            'cursor':encode_cursor(scope,key,public['expires']) if public['has_more'] else None,
+            **({'verification_pending':True,'retry_after':2} if public.get('verification_pending') else {}),
+            **({'verification_error':public['verification_error']} if public.get('verification_error') else {})}
 
 
 async def project(db, viewer_id, page):

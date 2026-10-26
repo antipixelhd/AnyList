@@ -321,7 +321,8 @@ async def browse_games(db: DB, viewer: Viewer,
     try:
         query = await game_browse.filters(service.sources, category=category,genres=genres,platforms=platforms,
             start=start,end=end,q=q,min_metacritic=min_metacritic,timeline=timeline)
-        page = await service.page(query,limit=limit,cursor=cursor)
+        page = await service.page(query,limit=limit,cursor=cursor,
+            wait_seconds=.15 if min_metacritic else None)
         return await game_browse.project(db,viewer_id,page)
     except ProviderError as cause:
         code = 409 if cause.code=='cursor_expired' else 422 if cause.code in {'invalid_request','invalid_cursor'} else 503

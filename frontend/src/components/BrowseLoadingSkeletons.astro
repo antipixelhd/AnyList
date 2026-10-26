@@ -1,11 +1,11 @@
 ---
 import BrowseSkeleton from './BrowseSkeleton.astro';
-const {sectionTitles=['Trending now','Newest','All-time popular','Highest rated']}=Astro.props as {sectionTitles?:string[]};
+const {sectionTitles=['Trending now','Newest','All-time popular','Highest rated'],active=false}=Astro.props as {sectionTitles?:string[];active?:boolean};
 ---
       <div
         class="browse-loading-view"
         data-browse-skeleton
-        hidden
+        hidden={!active}
         aria-hidden="true"
       >
         <div class="browse-grid browse-skeletons" data-skeleton-grid>

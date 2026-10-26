@@ -77,6 +77,8 @@ def title(identifier, kind='movie', *, search=False, future=False):
 async def main(args):
     if not os.environ.get('STATISTICS_TEST_DATABASE_URL'):
         raise SystemExit('Set STATISTICS_TEST_DATABASE_URL to a disposable anylist_test database.')
+    if args.critic_blocking_reference and (not args.case or 'game_browse_critic' not in args.case):
+        raise SystemExit('--critic-blocking-reference requires --case game_browse_critic')
     if args.baseline_ref:
         if not re.fullmatch(r'[0-9a-fA-F]{7,40}', args.baseline_ref):
             raise SystemExit('--baseline-ref must be a local commit SHA')
@@ -476,6 +478,29 @@ async def main(args):
                     for identifier in ids]
             raise RuntimeError('Unexpected Games benchmark provider endpoint')
         game_sources.igdb=game_provider
+        critic_clock={}
+        async def critic_provider(provider,url,**kwargs):
+            counters['provider_requests']+=1;counters['provider:'+provider+'/critic']+=1
+            await asyncio.sleep(args.provider_delay_ms/1000)
+            if provider=='wikidata':
+                indices=sorted({int(value) for value in re.findall(r'benchmark-game-(\d+)',kwargs['params']['query'])})
+                return {'results':{'bindings':[{
+                    name:{'value':value} for name,value in {'key':f'rawg-benchmark-{i}',
+                        'item':f'http://www.wikidata.org/entity/Q{4000000+i}',
+                        'slug':f'benchmark-game-{i}','id':str(8000000+i)}.items()
+                } for i in indices if i%7]}}
+            if provider=='rawg':
+                index=int(url.rsplit('-',1)[1])
+                return {'id':10000+index,'slug':f'rawg-benchmark-{index}',
+                    'released':'2024-01-01','metacritic':90 if index%3==0 else 70}
+            raise RuntimeError('Unexpected critic benchmark provider')
+        game_sources.request=critic_provider
+        publish_progress=game_sources.cache.publish
+        async def record_critic_progress(provider,kind,key,token,data,max_stale):
+            await publish_progress(provider,kind,key,token,data,max_stale)
+            if current_case=='game_browse_critic' and data.get('rows') and 'first_verified_ms' not in counters:
+                counters['first_verified_ms']=round((time.perf_counter()-critic_clock['start'])*1000,2)
+        game_sources.cache.publish=record_critic_progress
         event.listen(fixture.engine.sync_engine, 'before_cursor_execute', sql_start)
         event.listen(fixture.engine.sync_engine, 'after_cursor_execute', sql_end)
         feed = [{**title(1000 + i), 'imdb_votes': 10000, 'imdb_id': f'tt{1000+i}', 'imdb_score': 8} for i in range(120)]
@@ -513,6 +538,8 @@ async def main(args):
             ('game_browse_timeline','games/browse',{'limit':24,'category':'newest','timeline':'true','q':'Benchmark'}),
             ('game_browse_partial_search','games/browse',{'limit':24,'q':'Elden R'}),
             ('game_browse_genre_platform','games/browse',{'limit':24,'genres':'igdb.genre:5','platforms':'pc'}),
+            *([('game_browse_critic','games/browse',{'limit':24,'min_metacritic':80})]
+                if args.case and 'game_browse_critic' in args.case else []),
             ('game_list', f'games/users/{viewer.username}/list', {'limit': 50}),
             *([('game_statistics_overview',f'games/users/{viewer.username}/statistics',{}),
                 ('game_statistics_rebuild',f'games/users/{viewer.username}/statistics',{}),
@@ -599,6 +626,11 @@ async def main(args):
             stack.enter_context(patch.object(tmdb, '_request', side_effect=provider))
             stack.enter_context(patch('core.game_discovery.candidates', side_effect=game_candidates))
             stack.enter_context(patch.object(game_browse,'GameBrowseSources',return_value=game_sources))
+            if args.critic_blocking_reference:
+                original_page=game_browse.GameBrowse.page
+                async def blocking_page(self,query,**kwargs):
+                    return await original_page(self,query,**{**kwargs,'wait_seconds':None})
+                stack.enter_context(patch.object(game_browse.GameBrowse,'page',blocking_page))
             stack.enter_context(patch('core.mdblist_discovery.ranked_rows', AsyncMock(return_value=(feed, False))))
             if args.skip_contributor_relevance:
                 async def unverified_studios(db, viewer, rows, api_key):
@@ -625,6 +657,10 @@ async def main(args):
                         async with fixture.Session() as db:
                             await db.execute(delete(MetadataSnapshot).where(or_(MetadataSnapshot.kind.like('game_browse%'),MetadataSnapshot.kind=='game_timeline_windows')))
                             await db.commit()
+                        if label=='game_browse_critic':
+                            async with fixture.Session() as db:
+                                await db.execute(delete(MetadataSnapshot).where(MetadataSnapshot.kind=='game_critic_bridge'))
+                                await db.commit()
                     if path == 'quick-search/contributors':
                         async with fixture.Session() as db:
                             await db.execute(delete(ContributorEvidence))
@@ -839,6 +875,23 @@ async def main(args):
                             if ids!=list(range(8000000,8000144,2)) or any(not row['title'].startswith('Elden Ring') for row in rows):
                                 raise RuntimeError('Partial game search lost, repeated or admitted unrelated candidates')
                             return {**result,'results':rows}
+                        if label=='game_browse_critic':
+                            from core.game_source_cache import _flights
+                            critic_clock['start']=time.perf_counter()
+                            first=await request(path,params)
+                            counters['first_response_ms']=round((time.perf_counter()-critic_clock['start'])*1000,2)
+                            counters['first_response_pending']=bool(first.get('verification_pending'))
+                            if first['results'] and 'first_verified_ms' not in counters:
+                                counters['first_verified_ms']=counters['first_response_ms']
+                            tasks=[task for key,task in list(_flights.items()) if key[0]==id(fixture.Session)]
+                            if tasks:await asyncio.gather(*tasks)
+                            result=await request(path,params) if first.get('verification_pending') or tasks else first
+                            expected=[8000000+i for i in range(48) if i%7 and i%3==0]
+                            if [r['igdb_id'] for r in result['results']]!=expected or any(r['metacritic']<80 for r in result['results']):
+                                raise RuntimeError('Critic verification changed exact score eligibility or Trending order')
+                            if result.get('verification_pending') or result.get('verification_error') or not result['partial']:
+                                raise RuntimeError('Critic verification failed to settle with honest unknown-score coverage')
+                            return result
                         if label in {'game_browse_pages','game_browse_timeline'}:
                             first=await request(path,params)
                             second=await request(path,{**params,'cursor':first['cursor']})
@@ -946,6 +999,8 @@ if __name__ == '__main__':
     parser.add_argument('--rounds', type=int, default=3)
     parser.add_argument('--provider-delay-ms', type=float, default=50)
     parser.add_argument('--baseline-ref', help='Load benchmarked modules from a trusted local commit SHA')
+    parser.add_argument('--critic-blocking-reference',action='store_true',
+        help='Compare the same critic workload while waiting for its full page; not a historical checkout replay')
     parser.add_argument('--edge-cases-only', action='store_true')
     parser.add_argument('--filters-only', action='store_true')
     parser.add_argument('--stress-only', action='store_true')

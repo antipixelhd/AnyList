@@ -4,6 +4,7 @@ import {browseCardKey,browseCardHref} from './browse-card-data';
 import {createBrowseCard} from './browse-card-render';
 import {prepareBrowsePoster,createBrowseLoading} from './browse-loading';
 import {createBrowseCache} from './browse-cache';
+import {readVerifiedGamePage,gameBrowseCacheable,type GameVerificationPage} from './game-browse-verification';
 import {initializeMobileBrowseFilters} from './browse-mobile-filters';
 import {initializeBrowseMenus} from './browse-menus';
 import {initializeBrowseRanges} from './browse-ranges';
@@ -15,7 +16,7 @@ import {genreSelectionLabel} from './browse-view';
 import {formatDate} from './date-time';
 import {gameBrowseValues,gameBrowseIsCategories,gameBrowseHasFilters,gameBrowseRequest,gameBrowseHref,gamePlatformSelection,gameSourceContext,type GamePlatformGroup} from './game-browse-data';
 
-type Payload={results:BrowseItem[];has_more:boolean;cursor?:string|null;source?:string;source_at?:number|null;fetched_at?:string|null;partial?:boolean;stale?:boolean;coverage_limited?:boolean};
+type Payload=GameVerificationPage&{results:BrowseItem[];has_more:boolean;cursor?:string|null;source?:string;source_at?:number|null;fetched_at?:string|null;partial?:boolean;stale?:boolean;coverage_limited?:boolean};
 type Shelf={key:string;title:string;payload:Payload|null};
 class BrowseReadError extends Error {status:number;constructor(message:string,status:number){super(message);this.status=status;}}
 
@@ -87,7 +88,7 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
     if(!response.ok)throw new BrowseReadError(typeof body?.detail==='string'?body.detail:'Unable to load games. Try again.',response.status);
     if(!Array.isArray(body?.results))throw new Error('Unable to load games. Try again.');
     if(requestSignal.aborted||signal.aborted)throw new DOMException('Aborted','AbortError');
-    const page=reconcile(body,started);cache.set(path,page);return page;
+    const page=reconcile(body,started);if(gameBrowseCacheable(page))cache.set(path,page);return page;
   };
   const register=(container:HTMLElement,rows:BrowseItem[])=>{
     const byKey=new Map(rows.map(item=>[browseCardKey(item),item]));
@@ -107,9 +108,9 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
   const footer=()=>{
     find('[data-browse-sentinel]').hidden=presentedCategories;
     more.hidden=!payload.has_more;more.disabled=loading;
-    end.hidden=payload.has_more||!grid.querySelector('[data-browse-card]');
+    end.hidden=loading||!error.hidden||!!payload.verification_pending||payload.has_more||!grid.querySelector('[data-browse-card]');
     end.textContent=payload.partial?'End of verified results':"You're all caught up";
-    empty.hidden=presentedCategories||loading||payload.has_more||!!grid.querySelector('[data-browse-card]')||!error.hidden;
+    empty.hidden=presentedCategories||loading||!!payload.verification_pending||payload.has_more||!!grid.querySelector('[data-browse-card]')||!error.hidden;
     empty.querySelector('h2')!.textContent=payload.coverage_limited?'No verified games in this search window':'No matching games';
   };
   const paintSource=(shelf:Shelf)=>{
@@ -117,10 +118,10 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
     host.querySelectorAll<HTMLElement>('[data-game-view-all]').forEach(link=>{link.title=context;link.setAttribute('aria-description',context);});
   };
   for(const shelf of shelves.values())if(shelf.payload){
-    reconcile(shelf.payload,-1);cache.set(gameBrowseRequest(new URLSearchParams({sort:shelf.key}),6),shelf.payload);
+    reconcile(shelf.payload,-1);if(gameBrowseCacheable(shelf.payload))cache.set(gameBrowseRequest(new URLSearchParams({sort:shelf.key}),6),shelf.payload);
     register(find(`[data-game-shelf="${shelf.key}"]`),shelf.payload.results);paintSource(shelf);
   }
-  if(!initial.categories){reconcile(payload,-1);register(grid,payload.results);if(!initial.error)cache.set(gameBrowseRequest(initialValues),payload);}
+  if(!initial.categories){reconcile(payload,-1);register(grid,payload.results);if(!initial.error&&gameBrowseCacheable(payload))cache.set(gameBrowseRequest(initialValues),payload);}
   requestAnimationFrame(()=>requestAnimationFrame(()=>{if(!signal.aborted)initializeScrollMotion(root,signal,'.browse-card-body, .browse-skeleton-body','browse-scroll-reveal',{animateInitial:false,downwardOnly:true,scaleEntrance:true,once:true,appearedAttribute:'data-browse-appeared'});}));
   bindBrowseCardActions(region,items,signal,syncItem,message=>{notice.textContent=message;notice.hidden=false;});bindBrowseCardTouch(region,signal);
   function updateControls(){
@@ -199,7 +200,7 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
     loading=true;retryAppend=append;error.hidden=true;empty.hidden=true;demand.reset(scrollY);
     clearTimeout(timer);
     if(!append){
-      grid.hidden=true;sections.hidden=true;
+      grid.hidden=!(payload.verification_pending&&activeValues===current.toString());sections.hidden=true;
       if(config.category){sections.hidden=false;loadingView.finish();}
       else loadingView.show(false,false,config.timeline);
     }
@@ -213,14 +214,24 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
         loading=false;region.setAttribute('aria-busy','false');footer();
         await loadShelves(epoch,currentRequest.signal);return;
       }
-      const result=await json(path,currentRequest.signal);
-      if(signal.aborted||currentRequest.signal.aborted||epoch!==generation)return;
-      if(!append){clear(grid);seen.clear();}
-      grid.className=config.timeline?'browse-timeline':'browse-grid';
-      render(result.results,grid,config.timeline,true);payload=result;presentedCategories=false;paintedTimeline=config.timeline;
-      activeValues=current.toString();loadingView.finish();sections.hidden=true;grid.hidden=false;
-      notice.textContent=current.get('q')&&!result.coverage_limited?current.has('min_metacritic')&&result.partial?'Some games have no verified critic score.':'':gameSourceContext(result);
-      history.replaceState(history.state,'',gameBrowseHref(current));
+      let painted=false;
+      await readVerifiedGamePage(()=>json(path,currentRequest.signal),result=>{
+        if(signal.aborted||currentRequest.signal.aborted||epoch!==generation)return;
+        if(!append){
+          const existing=[...grid.querySelectorAll<HTMLElement>('[data-browse-card]')].map(card=>card.dataset.key);
+          const desired=result.results.map(browseCardKey);
+          const samePrefix=existing.every((key,index)=>key===desired[index]);
+          if((!painted&&activeValues!==current.toString())||!samePrefix){clear(grid);seen.clear();}
+        }
+        grid.className=config.timeline?'browse-timeline':'browse-grid';
+        render(result.results,grid,config.timeline,true);painted=true;
+        if(!result.verification_pending&&!result.verification_error)payload=result;
+        presentedCategories=false;paintedTimeline=config.timeline;activeValues=current.toString();
+        if(result.results.length||!result.verification_pending)loadingView.finish();
+        sections.hidden=true;grid.hidden=false;
+        notice.textContent=result.verification_pending?'':current.get('q')&&!result.coverage_limited?current.has('min_metacritic')&&result.partial?'Some games have no verified critic score.':'':gameSourceContext(result);
+        history.replaceState(history.state,'',gameBrowseHref(current));
+      },currentRequest.signal);
     }catch(cause){
       if(signal.aborted||currentRequest.signal.aborted||epoch!==generation)return;
       loadingView.finish();sections.hidden=!presentedCategories;grid.hidden=presentedCategories;
@@ -278,4 +289,5 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
   signal.addEventListener('abort',()=>{request?.abort();clearTimeout(timer);observer.disconnect();cancelAnimationFrame(frame);},{once:true});
   syncGenres();syncPlatforms();updateControls();footer();
   if(initial.categories){request=new AbortController();void loadShelves(generation,request.signal);}
+  else if(payload.verification_pending)void load(false);
 }
