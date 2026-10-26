@@ -11,6 +11,7 @@ from core import catalogue
 from core.catalogue_providers import CatalogueProviders,ProviderHTTP
 from core.game_imdb_enrichment import now
 from core.game_types import capabilities
+from core.game_release_dates import VERSION as RELEASE_VERSION
 from models.catalogue import CatalogueIdentity,MetadataSnapshot
 
 _flights={}
@@ -39,7 +40,8 @@ async def native_id(db,work,identities=None):
 async def header(db,native):
     return (await db.execute(select(MetadataSnapshot.entity_id,MetadataSnapshot.fetched_at,MetadataSnapshot.expires_at,
         MetadataSnapshot.next_attempt_at,MetadataSnapshot.lease_until,MetadataSnapshot.error_code,
-        MetadataSnapshot.coverage['characters_complete'].as_boolean().label('characters_complete')).where(
+        MetadataSnapshot.coverage['characters_complete'].as_boolean().label('characters_complete'),
+        MetadataSnapshot.coverage['release_precision_version'].as_integer().label('release_precision_version')).where(
             MetadataSnapshot.provider=='igdb',MetadataSnapshot.kind=='game',MetadataSnapshot.external_id==native))).one_or_none()
 
 
@@ -62,6 +64,12 @@ async def request(db,work,*,identities=None):
     row=await header(db,native);stamp=now()
     if row and row.entity_id not in (None,work.id):
         return None,{'state':'unavailable','primary_ready':False,'pending':False,'complete':False,'error':'identity_conflict','retry_after':0}
+    if (row and row.fetched_at and row.release_precision_version!=RELEASE_VERSION and not row.next_attempt_at
+            and not (row.lease_until and row.lease_until>stamp) and row.expires_at and row.expires_at>stamp):
+        await db.execute(update(MetadataSnapshot).where(MetadataSnapshot.provider=='igdb',MetadataSnapshot.kind=='game',
+            MetadataSnapshot.external_id==native,MetadataSnapshot.next_attempt_at.is_(None),
+            or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=stamp)).values(expires_at=stamp))
+        row=await header(db,native)
     if row and (row.lease_until and row.lease_until>stamp or row.next_attempt_at or row.expires_at and row.expires_at>stamp):
         return native,status(row,work.id)
     statement=insert(MetadataSnapshot).values(provider='igdb',kind='game',external_id=native,entity_id=work.id,next_attempt_at=stamp)

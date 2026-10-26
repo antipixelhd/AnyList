@@ -373,6 +373,7 @@ def normalize_tvdb(raw, kind="series"):
 
 
 def normalize_igdb(raw):
+    from core.game_release_dates import game_release, release
     from core.game_store_source import igdb_age_ratings
     from core.game_types import igdb_game_class, platform_group, game_platforms
     doc = document(
@@ -390,7 +391,7 @@ def normalize_igdb(raw):
                 "game_type": raw.get("game_type"),
                 "platforms": [{"id": str(p['id']), "name": p.get('name'), "group": platform_group(p)}
                               for p in game_platforms(raw)],
-                "release_date": date(raw.get("first_release_date")),
+                **game_release(raw),
                 "genres": [g['name'] for g in raw.get('genres') or [] if isinstance(g,dict) and isinstance(g.get('name'),str)],
                 "genre_filters": {g['name'].casefold():f"igdb.genre:{g['id']}" for g in raw.get('genres') or []
                     if isinstance(g,dict) and isinstance(g.get('name'),str) and type(g.get('id')) is int and g['id']>0},
@@ -445,6 +446,7 @@ def normalize_igdb(raw):
             "igdb.release",
             r,
             name=f"{raw['name']} — {platform.get('name', platform['id'])}",
+            attributes=release(r),
         )
         doc["releases"].append(
             {
@@ -453,7 +455,7 @@ def normalize_igdb(raw):
                 "platform_id": str(platform["id"]),
                 "platform_name": platform.get("name"),
                 "region": str(r.get("region")) if r.get("region") else None,
-                "release_date": date(r.get("date")),
+                "release_date": release(r)['release_date'],
             }
         )
     for field, rel in [
@@ -476,12 +478,12 @@ def normalize_igdb(raw):
                     parent if isinstance(parent, dict) else {"id": parent},
                     description=parent.get('summary') if isinstance(parent,dict) else None,
                     artwork=parent.get('cover') if isinstance(parent, dict) else None,
-                    attributes={'release_date':date(parent.get('first_release_date')),
+                    attributes={**game_release(parent),
                                 **({'game_class': igdb_game_class(parent)} if parent.get('game_type') is not None else {})} if isinstance(parent, dict) else {},
                 )
                 if parent
                 else entity("game", "igdb.game", r, description=r.get('summary'),artwork=r.get('cover'), attributes={
-                    'release_date':date(r.get('first_release_date')),
+                    **game_release(r),
                     **({'game_class': igdb_game_class(r)} if r.get('game_type') is not None else {})})
             )
             if parent:

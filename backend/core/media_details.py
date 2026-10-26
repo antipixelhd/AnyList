@@ -208,6 +208,13 @@ async def work_details(db, work, *, extras=True):
 async def catalogue_title(db, work, viewer_id=None, *, store_country=None, enqueue_offers=False,enqueue_ratings=False,enqueue_info=False,identities=None):
     details = await work_details(db, work)
     attrs = work.attributes or {}
+    legacy_game_date = (work.kind=='game' and attrs.get('release_date_projection')!=1
+        and (work.field_sources or {}).get('attributes.release_date')=='igdb')
+    if legacy_game_date and 'attributes.release_date' not in (work.protected_fields or []):
+        # Old IGDB timestamps did not retain precision. Keep their known year
+        # visible while the on-demand metadata upgrade verifies month/day.
+        value=attrs.get('release_date')
+        attrs={**attrs,'release_date':value[:4] if isinstance(value,str) else None}
     editions = []
     releases = []
     prices = []
@@ -256,7 +263,9 @@ async def catalogue_title(db, work, viewer_id=None, *, store_country=None, enque
             if not platform or platform in seen_platforms:
                 continue
             seen_platforms.add(platform)
-            releases.append({'platform': platform, 'region': release.region, 'release_date': release.release_date})
+            value=release.release_date
+            releases.append({'platform': platform, 'region': release.region,
+                'release_date':value[:4] if legacy_game_date and isinstance(value,str) else value})
         from core.game_offers import view as offers_view
         offers=await offers_view(db,work,viewer_id,hint=store_country,identities=identities,enqueue=enqueue_offers)
         prices=offers['offers'];personal['game_offer_context']={key:value for key,value in offers.items() if key!='offers'}

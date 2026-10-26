@@ -19,13 +19,16 @@ class Provider:
     validate=lambda *args:None
     def __init__(self):
         self.called=0;self.characters=asyncio.Event();self.release=asyncio.Event();self.fail=None;self.wrong=False;self.fail_characters=False;self.title='Hydrated game';self.optional_active=0;self.optional_max=0
+        self.dates={}
     async def detail(self,provider,kind,native,*,on_primary=None):
         self.called+=1
         if self.fail:raise self.fail
         raw={'id':1942 if self.wrong else int(native),'name':self.title,'slug':'hydrated-game','summary':'Full primary synopsis',
             'game_type':{'id':0,'type':'Main Game'},'cover':{'url':'https://images.igdb.com/igdb/image/upload/t_thumb/source.jpg'},
             'genres':[{'id':5,'name':'Adventure'}],'platforms':[{'id':6,'name':'PC (Microsoft Windows)'}],
-            '_coverage':{'primary_complete':True,'source_game_id':native,'characters_complete':False,'children_complete':True}}
+            '_coverage':{'primary_complete':True,'source_game_id':native,'characters_complete':False,
+                'release_precision_version':1,'children_complete':True}}
+        raw.update(self.dates)
         if on_primary:await on_primary(normalize_igdb(raw),{'game':deepcopy(raw)})
         self.optional_active+=1;self.optional_max=max(self.optional_max,self.optional_active)
         self.characters.set()
@@ -60,6 +63,35 @@ class GameMetadataTests(unittest.IsolatedAsyncioTestCase):
     async def finish(self):
         flight=_flights.get((id(self.engine),'119133'));self.provider.release.set()
         if flight:await asyncio.shield(flight.task)
+
+    async def test_cached_legacy_day_upgrades_to_partial_release_and_preserves_tracking(self):
+        from models.catalogue import GameRelease
+        from core.game_metadata import request
+        self.provider.dates={'first_release_date':1803859200,'release_dates':[{'id':982776,
+            'date':1803859200,'date_format':{'id':1,'format':'YYYYMM'},'y':2027,'m':3,
+            'platform':{'id':6,'name':'PC (Microsoft Windows)'}}]}
+        async with self.Session() as db:
+            work=await db.get(CatalogueEntity,self.base)
+            work.attributes={**work.attributes,'release_date':'2027-03-01'}
+            work.field_sources={**work.field_sources,'attributes.release_date':'igdb'}
+            db.add(MetadataSnapshot(provider='igdb',kind='game',external_id='119133',entity_id=self.base,
+                fetched_at=now(),expires_at=now()+timedelta(days=30),coverage={'characters_complete':True},payload={}))
+            await db.commit()
+        data=(await self.detail()).json()
+        self.assertEqual(data['release_date'],'2027')  # Honest cached year while verification runs.
+        await self.finish()
+        data=(await self.detail()).json()
+        self.assertEqual(data['release_date'],'2027-03')
+        self.assertEqual(data['releases'][0]['release_date'],'2027-03')
+        async with self.Session() as db:
+            release=await db.scalar(select(GameRelease).where(GameRelease.work_id==self.base))
+            self.assertEqual(release.release_date,'2027-03')
+            work=await db.get(CatalogueEntity,self.base)
+            _,state=await request(db,work)
+            self.assertFalse(state['pending'])
+            entry=await db.scalar(select(GameEntry).where(GameEntry.work_id==self.base))
+            self.assertEqual((entry.total_seconds,entry.completion_seconds,entry.score),(198000,144000,9))
+        self.assertEqual(self.provider.called,1)
 
     async def test_real_page_returns_primary_before_characters_and_preserves_concurrent_tracking_and_artwork(self):
         response=await asyncio.wait_for(self.detail(),8);self.assertEqual(response.status_code,200,response.text)

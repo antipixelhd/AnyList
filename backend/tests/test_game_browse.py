@@ -94,7 +94,7 @@ class BrowseTests(unittest.IsolatedAsyncioTestCase):
         self.sources.attention.return_value={'data':{'rows':[row(1),row(2)],'has_more':False,
             'source':'IGDB Visits'},'stale':False}
         first=await self.service.page(self.query,limit=1)
-        key,_=browse.decode_cursor(first['cursor'],browse.digest(['v1',self.query,1]))
+        key,_=browse.decode_cursor(first['cursor'],browse.digest(['release-precision-v1',self.query,1]))
         self.sources.cache.rows[key].pop('projection')
         with self.assertRaisesRegex(ProviderError,'cursor_expired'):
             await self.service.page(self.query,limit=1,cursor=first['cursor'])

@@ -97,7 +97,8 @@ def game_platforms(raw: dict) -> list[dict]:
 
 def search_candidate(raw: dict) -> dict | None:
     """Resolve verified edition/port identity before evaluating eligibility."""
-    from core.catalogue_normalize import date, image
+    from core.catalogue_normalize import image
+    from core.game_release_dates import game_release
     work=canonical_game(raw)
     if work is None:
         return None
@@ -113,8 +114,9 @@ def search_candidate(raw: dict) -> dict | None:
         base_id = base.get('id') if isinstance(base, dict) else None
         if isinstance(base_id, bool) or not isinstance(base_id, int) or base_id <= 0 or igdb_game_class(base) not in INDEPENDENT:
             return None
+    released = game_release(work)
     return dict(external_id=str(identifier), name=work['name'], image_url=image(work.get('cover')),
-                release_date=date(work.get('first_release_date')), game_class=kind)
+                **{key:released[key] for key in ('release_date','release_date_precision','release_quarter')}, game_class=kind)
 
 
 def platform_group(platform: dict) -> str:

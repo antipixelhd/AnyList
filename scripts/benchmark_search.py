@@ -387,6 +387,13 @@ async def main(args):
                 # compare game membership/order/progress without those clocks.
                 identities = [{key: value for key, value in item.items() if key not in ('updated_at', 'year', 'genres')} for item in items] if label.startswith(('game_list', 'game_favorites')) else items
                 row['result_identity'] = hashlib.sha256(json.dumps(identities, sort_keys=True).encode()).hexdigest()
+                if label in ('game_browse_pages','game_browse_timeline'):
+                    # Retain the full fingerprint above. This additional hash
+                    # proves adding precision metadata leaves all older fields,
+                    # membership and ordering unchanged across this projection.
+                    prior=[{key:value for key,value in item.items() if key not in (
+                        'release_date_precision','release_quarter')} for item in items]
+                    row['release_compatible_identity']=hashlib.sha256(json.dumps(prior,sort_keys=True).encode()).hexdigest()
                 row['payload_bytes'] = len(json.dumps(result).encode())
                 row['total'] = result.get('total')
                 row['has_more'] = result.get('has_more')
@@ -462,6 +469,8 @@ async def main(args):
                 return [{'id':identifier,'slug':f'benchmark-game-{identifier-8000000}',
                     'name':(f'Elden Ring benchmark {identifier-8000000:05}' if identifier%2==0 else f'Unrelated benchmark {identifier-8000000:05}') if broader else f'Benchmark game {identifier-8000000:05}',
                     'game_type':{'id':0},'first_release_date':1704067200+((identifier%20)*86400 if searching else 0),
+                    'release_dates':[{'date':1704067200+((identifier%20)*86400 if searching else 0),
+                        'date_format':{'id':0,'format':'YYYYMMDD'}}],
                     'genres':[{'id':5 if identifier%2==0 else 9,'name':'Role-playing (RPG)' if identifier%2==0 else 'Adventure'}],
                     'platforms':[{'id':6,'name':'PC (Microsoft Windows)'}] if identifier%3 else [{'id':167,'name':'PlayStation 5','platform_family':{'name':'PlayStation'}}]}
                     for identifier in ids]

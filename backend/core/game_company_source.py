@@ -4,13 +4,14 @@ from core.catalogue_providers import ProviderError
 from core.game_browse_sources import GameBrowseSources,positive
 from core.game_types import capabilities,igdb_game_class
 from core.catalogue_normalize import normalize_igdb
+from core.game_release_dates import FIELDS as RELEASE_FIELDS
 
 SIZE=25
 ROLES=('developer','publisher','supporting','porting')
 FIELDS=('id,slug,name,summary,first_release_date,game_type.type,version_parent,parent_game.name,parent_game.game_type.type,'
     'cover.url,artworks.url,genres.name,platforms.name,platforms.platform_family.name,ports.game_type.type,'
     'ports.platforms.name,ports.platforms.platform_family.name,external_games.uid,external_games.url,'
-    'external_games.external_game_source.name,involved_companies.developer,involved_companies.company.country')
+    'external_games.external_game_source.name,involved_companies.developer,involved_companies.company.country,'+RELEASE_FIELDS)
 
 
 def documents(rows,games):

@@ -13,6 +13,7 @@ from sqlalchemy import and_, literal, select
 from core.config import settings
 from core.catalogue_providers import ProviderError
 from core.game_browse_sources import GameBrowseSources
+from core.game_release_dates import in_range
 from models.catalogue import CatalogueEntity, CatalogueIdentity
 from models.games import GameChildState, GameEntry
 
@@ -94,8 +95,7 @@ def matches(row, query):
         return False
     if query['platforms'] and not {f'igdb.platform:{p}' for p in query['platforms']}.intersection(row.get('platform_ids',[])):
         return False
-    released = row.get('release_date')
-    return not (query['start'] and (not released or released<query['start']) or query['end'] and (not released or released>query['end']))
+    return in_range(row,query['start'],query['end'])
 
 
 class GameBrowse:
@@ -122,8 +122,7 @@ class GameBrowse:
     async def page(self, query, *, limit=24, cursor=None):
         if not 1<=limit<=48:
             raise ProviderError('invalid_request')
-        date_scope=query['category']=='newest' and (query['q'] or any(value and value>date.today().isoformat() for value in (query['start'],query['end'])))
-        scope = digest(['release-range-v3' if date_scope else 'prefix-v2' if query['q'] else 'v1',query,limit])
+        scope = digest(['release-precision-v1',query,limit])
         previous = None
         if cursor:
             parent,expires = decode_cursor(cursor,scope)

@@ -72,6 +72,18 @@ class RankingTests(unittest.IsolatedAsyncioTestCase):
         self.api=sources.GameBrowseSources()
         self.api.cache=ImmediateCache()
 
+    async def test_partial_periods_survive_non_search_range_filters_without_fake_days(self):
+        def raw(ident,when,form):
+            value=int(datetime.fromisoformat(when).replace(tzinfo=timezone.utc).timestamp())
+            return {'id':ident,'name':'Game','game_type':{'id':0},'first_release_date':value,
+                'release_dates':[{'date':value,'date_format':{'format':form}}]}
+        self.api.igdb=AsyncMock(return_value=[raw(1,'2027-12-31','YYYY'),raw(2,'2027-03-01','YYYYMM'),
+            raw(3,'2027-03-17','YYYYMMDD'),raw(4,'2027-04-01','YYYYMMDD')])
+        result=await self.api.catalogue_feed('newest',start='2027-03-15',end='2027-03-20')
+        self.assertEqual([(row['igdb_id'],row['release_date']) for row in result['data']['rows']],
+            [(1,'2027'),(2,'2027-03'),(3,'2027-03-17')])
+        self.assertIn('release_dates.date_format=(1,2,3,4,5,6)',self.api.igdb.await_args.args[1])
+
     async def test_newest_defaults_to_released_but_respects_an_explicit_future_range(self):
         today=date.today();first=date(today.year+1,1,1);last=first+timedelta(days=30)
         stamp=lambda value:int(datetime(value.year,value.month,value.day,tzinfo=timezone.utc).timestamp())
@@ -88,7 +100,9 @@ class RankingTests(unittest.IsolatedAsyncioTestCase):
     async def test_newest_text_search_applies_the_effective_default_or_explicit_date_cutoff(self):
         today=date.today();future=date(today.year+1,1,1);past=today-timedelta(days=10)
         raw=lambda ident,when:{'id':ident,'name':'Game','game_type':{'id':0},
-            'first_release_date':int(datetime(when.year,when.month,when.day,tzinfo=timezone.utc).timestamp())}
+            'first_release_date':int(datetime(when.year,when.month,when.day,tzinfo=timezone.utc).timestamp()),
+            'release_dates':[{'date_format':{'format':'YYYYMMDD'},'y':when.year,'m':when.month,'d':when.day,
+                'date':int(datetime(when.year,when.month,when.day,tzinfo=timezone.utc).timestamp())}]}
         self.api.igdb=AsyncMock(return_value=[raw(1,future),raw(2,past)])
         result=await self.api.catalogue_feed('newest',q='Game')
         self.assertEqual([row['igdb_id'] for row in result['data']['rows']],[2])

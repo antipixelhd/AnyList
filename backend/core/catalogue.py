@@ -195,7 +195,14 @@ def merge_fields(row, values, source):
                 setattr(row, field, value)
             sources[field] = source
     attrs = dict(row.attributes or {})
+    from core.game_release_dates import KEYS as RELEASE_KEYS, merge_release
+    release_source=sources.get('attributes.release_date')
+    release_handled = row.kind in ('game','release') and merge_release(
+        attrs,sources,protected,values.get('attributes') or {},source,
+        rank_allowed=not release_source or source_rank(row.kind,source)>=source_rank(row.kind,release_source))
     for key, value in (values.get("attributes") or {}).items():
+        if release_handled and key in RELEASE_KEYS:
+            continue
         field = "attributes." + key
         if (
             value is None
@@ -507,6 +514,8 @@ async def ingest_document(db, doc, provider, *, entities=None, project_screen_ro
         }
         if old:
             values = {k: v for k, v in values.items() if has_value(v)}
+        if provider=='igdb' and (release.attributes or {}).get('release_date_projection')==1:
+            values['release_date']=(release.attributes or {}).get('release_date')
         await upsert(db, GameRelease, values, ["entity_id"])
     child_edges={'dlc':set(),'expansion':set()}
     for r in doc["relationships"]:
