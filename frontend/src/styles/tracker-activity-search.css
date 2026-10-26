@@ -314,7 +314,7 @@
     max-width:1480px;
     max-height:none;
     min-height:0;
-    margin:24px auto 0;
+    margin:16px auto 0;
     padding:0 60px;
     gap:48px;
     --quick-search-panel-width:calc((100% - 96px) / 3);
