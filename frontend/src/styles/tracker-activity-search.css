@@ -203,6 +203,18 @@
   color:var(--muted);
 }
 .quick-search-dialog .quick-search-add > span:not(.ui-icon) { display:none; }
+.quick-search-dialog .quick-search-add .ui-icon {
+  display:grid;
+  place-items:center;
+  width:24px;
+  height:24px;
+  border-radius:50%;
+  background:color-mix(in srgb,var(--blue) 20%,var(--panel));
+  color:var(--blue);
+}
+.quick-search-dialog .quick-search-result:is(:hover,:focus-within) .quick-search-add .ui-icon {
+  background:color-mix(in srgb,#fff 65%,var(--blue));
+}
 .quick-search-dialog .quick-search-add:is(:hover,:focus-visible) { border:0; background:transparent; color:var(--blue); }
 .quick-search-dialog .quick-search-result:is(:hover,:focus-within) :is(.quick-search-result-link,.quick-search-add,small) { color:#fff; }
 @media(hover:none),(pointer:coarse) { .quick-search-dialog .quick-search-add { min-width:44px; min-height:44px; } }

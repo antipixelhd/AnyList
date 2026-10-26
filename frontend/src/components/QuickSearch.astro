@@ -32,7 +32,7 @@ const { combineLists = true, hideTrigger = false } = Astro.props;
     <section class="quick-search-card" data-search-section="studio" hidden><h2>Studios</h2><div data-search-results="studio"></div></section>
   </div>
 </dialog>
-<template data-search-add-icon><Icon name="plus" /></template>
+<template data-search-add-icon><span class="ui-icon" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 2v12M2 8h12" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" /></svg></span></template>
 
 <script>
 import {mountQuickSearch} from '../lib/quick-search';
