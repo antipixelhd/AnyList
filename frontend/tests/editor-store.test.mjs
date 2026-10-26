@@ -76,6 +76,20 @@ test('seeded editor snapshots open without reads, preserve all fields and share 
   assert.deepEqual(calls,[]);
 });
 
+test('unrelated details artwork cannot overwrite a quick-search poster or its cold backdrop fallback', () => {
+  const store=new EditorStore(()=>{throw Error('unexpected read');});
+  const title=store.seed(draft());
+  const searchPoster='https://image.tmdb.org/t/p/w185/poster.jpg';
+  store.warmArtwork(title,searchPoster);
+  // Quick search restores focus to the global search trigger on a different details page.
+  store.warmArtwork(title,'https://image.tmdb.org/t/p/w500/other-poster.jpg','https://image.tmdb.org/t/p/original/other-backdrop.jpg');
+  assert.equal(store.artwork(title).poster,searchPoster);
+  assert.equal(store.artwork(title).backdrop,searchPoster);
+  const cold=store.seed({...draft(),tmdb_id:456,poster:'/cold.jpg',backdrop:null});
+  store.warmArtwork(cold,'https://image.tmdb.org/t/p/w500/other-poster.jpg');
+  assert.equal(store.artwork(cold).poster,'https://image.tmdb.org/t/p/w342/cold.jpg');
+});
+
 test('drafts import only on write; rapid changes paint immediately and save in order', async () => {
   const calls=[], pending=[];
   const store=new EditorStore((path,options)=>{calls.push([path,options]);const job=deferred();pending.push(job);return job.promise;});
@@ -192,11 +206,11 @@ test('cold backdrop decoding never changes the artwork chosen for an open editor
   globalThis.Image=class {decode(){return ready.promise;}};
   try {
     const store=new EditorStore(()=>{}), title=store.seed(draft());
-    store.warmArtwork(title,'cached-poster');
+    store.warmArtwork(title,'https://image.tmdb.org/t/p/w185/poster.jpg');
     const opened=store.artwork(title);
-    assert.equal(opened.backdrop,'cached-poster');
+    assert.equal(opened.backdrop,'https://image.tmdb.org/t/p/w185/poster.jpg');
     ready.resolve();await turn();
-    assert.equal(opened.backdrop,'cached-poster');
+    assert.equal(opened.backdrop,'https://image.tmdb.org/t/p/w185/poster.jpg');
     assert.equal(store.artwork(title).backdrop,'https://image.tmdb.org/t/p/w1280/backdrop.jpg');
   } finally {globalThis.Image=previous;}
 });
@@ -230,7 +244,7 @@ test('a committed MetaHub fallback is reused when opening the editor without a g
     assert.equal(button.dataset.detailImage,fallback);assert.equal(title.backdrop,fallback);
     assert.equal(title.favorite,true);assert.equal(title.entry,null);
     assert.deepEqual(requests,[]);
-    store.warmArtwork(title,'cached-poster',fallback);await turn();
+    store.warmArtwork(title,'https://image.tmdb.org/t/p/w185/poster.jpg',fallback);await turn();
     assert.equal(store.artwork(title).backdrop,fallback);assert.deepEqual(requests,[fallback]);
     save.resolve({id:7,status:null,favorite:true});await pending;
     assert.equal(title.favorite,true);
@@ -242,7 +256,7 @@ test('curated artwork updates preserve optimistic intent and ignore an old decod
   globalThis.Image=class {decode(){return images++===0?old.promise:curated.promise;}};
   try {
     const store=new EditorStore(()=>save.promise),title=store.seed({...draft(),id:7});
-    store.warmArtwork(title,'cached-poster');
+    store.warmArtwork(title,'https://image.tmdb.org/t/p/w185/poster.jpg');
     const pending=store.write(title,{favorite:true});
     store.updateArtwork(7,{poster:'/new-poster.jpg',backdrop:'/new-background.jpg'});
     store.warmArtwork(title);
