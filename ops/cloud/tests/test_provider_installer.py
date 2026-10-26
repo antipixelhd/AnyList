@@ -127,6 +127,7 @@ class ProviderInstallerTests(unittest.TestCase):
                     f'[Service]\nEnvironmentFile=/etc/anylist-preview/{branch}.env\n')
             with patch.object(installer,'ETC',folder),patch.object(installer,'UNITS',folder),patch.object(
                     installer,'INSTALL',folder),patch.object(installer.os,'geteuid',return_value=0,create=True),patch.object(
+                    installer,'root_owned'),patch.object(
                     installer.sys,'argv',['installer']),patch.object(installer.sys,'stdin',io.StringIO('{"STEAM_WEB_API_KEY":"test-key"}')),patch.object(
                     installer,'write_private') as write,patch.object(installer.subprocess,'run') as command,patch.object(
                     installer,'restart_backends') as restart,redirect_stdout(io.StringIO()):

@@ -150,8 +150,7 @@ def main():
         return
     path = ETC / "providers.env"
     if path.exists():
-        if path.is_symlink() or path.stat().st_uid != 0:
-            raise ValueError("Unexpected provider file ownership")
+        root_owned(path)
         previous = dict(
             line.split("=", 1)
             for line in path.read_text().splitlines()
@@ -167,14 +166,12 @@ def main():
             raise ValueError("Invalid preview port")
         unit = UNITS / f"anylist-preview-{branch}-backend.service"
         if unit.exists():
-            if unit.is_symlink() or unit.stat().st_uid != 0:
-                raise ValueError("Unexpected unit ownership")
+            root_owned(unit)
             prepared.append((unit, updated_unit(unit.read_text(), branch), port))
     template = INSTALL / "backend.service.in"
     template_text = updated_unit(template.read_text(), "@BRANCH@")
     # Validate every destination before changing any service/configuration.
-    if template.is_symlink() or template.stat().st_uid != 0:
-        raise ValueError("Unexpected template ownership")
+    root_owned(template)
     write_private(
         path,
         "".join(f"{key}={value}\n" for key, value in sorted(values.items())),
