@@ -31,7 +31,13 @@ sys.path[:0] = [str(ROOT / 'backend'), str(ROOT / 'backend/tests')]
 os.environ.setdefault('SECRET_KEY', 'benchmark-only')
 os.environ.setdefault('DATABASE_URL', 'postgresql+asyncpg://test:test@localhost/test')
 
-from core import chronological_discovery, contributor_evidence, contributor_search, tmdb
+from core import (
+    chronological_discovery,
+    contributor_evidence,
+    contributor_search,
+    game_person_identity,
+    tmdb,
+)
 from dependencies import get_current_user, get_current_user_or_api_key
 from models import GlobalSettings, Media, User, UserProfileData
 from models.base import MediaType
@@ -128,7 +134,8 @@ async def main(args):
                             payload={'private_source_evidence':'SOURCE_EVIDENCE_SENTINEL '*50000},expires_at=stamp+timedelta(days=30)),
                         MetadataSnapshot(provider='imdb',kind='game_person_credits',external_id='nm8000000',entity_id=performer.id,
                             payload={'profile':{'biography':'Benchmark cached biography.'},'generation':'fixture',
-                                'identity_bridge':{'version':1,'state':'unresolved','next_check_at':(stamp+timedelta(days=7)).isoformat()},
+                                'identity_bridge':{'version':game_person_identity.VERSION,
+                                    'state':'unresolved','next_check_at':(stamp+timedelta(days=7)).isoformat()},
                                 'index_generation':'fixture','index_pages':20,'index_titles':1000},
                             coverage={'source_complete':True,'state':'partial','projection_revision':'fixture-v1','binding_revision':None,
                                 'source_games':1000,'mapped_games':0,'unmapped_games':1000},fetched_at=stamp,expires_at=stamp+timedelta(days=30))])

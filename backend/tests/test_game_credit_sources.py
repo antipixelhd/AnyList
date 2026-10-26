@@ -88,6 +88,17 @@ class SourceTests(unittest.IsolatedAsyncioTestCase):
         self.public=SimpleNamespace(cache=Cache(),request=AsyncMock(),defer=AsyncMock())
         self.api=source.GameCreditSources(self.public)
 
+    async def test_person_reference_projection_has_own_cache_and_preserves_nested_evidence(self):
+        raw=actor();raw['claims']['P569']=[claim({'time':'+1990-08-18T00:00:00Z'},references=[{
+            'hash':'source-proof','snaks':{'P4985':[snak('123')]}}])]
+        self.public.request.return_value={'entities':{'Q200':raw}}
+        regular=await self.api.entities(['Q200'])
+        self.assertNotIn('P569',regular['data']['entities']['Q200']['claims'])
+        enriched=await self.api.entities(['Q200'],person_references=True)
+        self.assertEqual(enriched['data']['entities']['Q200']['claims']['P569'],raw['claims']['P569'])
+        self.assertEqual(await self.api.entities(['Q200'],person_references=True),enriched)
+        self.assertEqual(self.public.request.await_count,2)
+
     async def test_batched_entities_preserve_all_credits_and_warm_reads_avoid_provider_calls(self):
         raw=game();raw['claims']['P725']=[voice(f'Q{i}',key=f'Q100$voice-{i}') for i in range(200,261)]
         async def request(provider,url,params):

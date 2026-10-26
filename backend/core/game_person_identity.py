@@ -8,17 +8,19 @@ import asyncio
 import uuid
 from datetime import datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select, update
+from sqlalchemy.orm import aliased
 
 from core import catalogue, settings_store, tmdb
 from core.game_imdb_enrichment import now, request as admit, snapshot, header, status_view
 from core.game_imdb_source import identifier
-from core.person_identities import verified_tmdb_person
-from models.catalogue import CatalogueEntity, CatalogueIdentity
+from core.person_identities import verified_tmdb_person, verified_reference_person
+from core.game_person_reference import GamePersonReference
+from models.catalogue import CatalogueEntity, CatalogueIdentity, MetadataSnapshot
 
 JOB = 'game_person_identity'
 COMPONENT = 'game_person_credits'
-VERSION = 1
+VERSION = 2
 
 
 def fresh(value):
@@ -35,10 +37,38 @@ async def request(db, native, entity_id, checked, *, enqueue):
     identifier(native, person=True)
     if not fresh(checked):
         if enqueue:
+            if not isinstance(checked, dict) or checked.get('version') != VERSION:
+                # A prior resolver's negative TTL cannot prevent newly added
+                # evidence from being checked. Preserve active work/backoff.
+                await db.execute(update(MetadataSnapshot).where(
+                    MetadataSnapshot.provider == 'imdb', MetadataSnapshot.kind == JOB,
+                    MetadataSnapshot.external_id == native, MetadataSnapshot.next_attempt_at.is_(None),
+                    or_(MetadataSnapshot.lease_until.is_(None), MetadataSnapshot.lease_until <= now()),
+                    func.coalesce(MetadataSnapshot.payload['identity']['version'].as_integer(), 0) != VERSION
+                ).values(expires_at=now()))
             return await admit(db, native, kind=JOB, entity_id=entity_id)
         row = await header(db, native, kind=JOB)
         return status_view(row) if row else None
     return None
+
+
+async def backfill(db, *, limit=4):
+    """Upgrade already requested cached people, not a provider-wide crawl."""
+    job = aliased(MetadataSnapshot)
+    rows = (await db.execute(select(MetadataSnapshot.external_id, MetadataSnapshot.entity_id,
+        MetadataSnapshot.payload['identity_bridge'].label('checked')).outerjoin(job,
+            (job.provider == 'imdb') & (job.kind == JOB) & (job.external_id == MetadataSnapshot.external_id)).where(
+        MetadataSnapshot.provider == 'imdb', MetadataSnapshot.kind == COMPONENT,
+        MetadataSnapshot.coverage['source_complete'].as_boolean().is_(True),
+        func.coalesce(MetadataSnapshot.payload['identity_bridge']['version'].as_integer(), 0) != VERSION,
+        job.next_attempt_at.is_(None), or_(job.lease_until.is_(None), job.lease_until <= now()),
+        or_(job.id.is_(None), func.coalesce(job.payload['identity']['version'].as_integer(), 0) != VERSION)
+    ).order_by(MetadataSnapshot.id).limit(limit))).all()
+    for row in rows:
+        await request(db, row.external_id, row.entity_id, row.checked, enqueue=True)
+    if rows:
+        await db.commit()
+    return len(rows)
 
 
 async def lookup(native, key):
@@ -84,10 +114,14 @@ class GamePersonIdentity:
                     CatalogueIdentity.entity_id == mapping.entity_id, CatalogueIdentity.namespace == 'tmdb.person')))
                 key = settings_store.get_server_tmdb_key(await settings_store.get_global_settings(db))
             state, profile = ('verified', None) if len(linked) == 1 else ('conflict', None) if linked else ('unavailable', None)
+            proof = None
             if not linked and key:
                 async with asyncio.timeout(25):
                     state, profile = await lookup(native, key)
-            return await self.publish(native, token, state, profile)
+                if state == 'unresolved':
+                    async with asyncio.timeout(70):
+                        state, profile, proof = await GamePersonReference(self.sessions).resolve(native, key)
+            return await self.publish(native, token, state, profile, proof=proof)
         except asyncio.CancelledError:
             await self.fail(native, token, cancelled=True)
             raise
@@ -95,7 +129,7 @@ class GamePersonIdentity:
             await self.fail(native, token)
             return 'retry'
 
-    async def publish(self, native, token, state, profile):
+    async def publish(self, native, token, state, profile, *, proof=None):
         async with self.sessions() as db:
             await catalogue.write_lock(db)
             job = await db.scalar(snapshot(JOB, native).with_for_update())
@@ -103,7 +137,10 @@ class GamePersonIdentity:
                 return 'superseded'
             if profile:
                 try:
-                    await verified_tmdb_person(db, profile['id'], profile)
+                    if proof:
+                        await verified_reference_person(db, native, profile, proof)
+                    else:
+                        await verified_tmdb_person(db, profile['id'], profile)
                 except catalogue.IdentityConflict:
                     state = 'conflict'
             mapping = await catalogue.resolve_identity(db, 'imdb.person', native)
@@ -128,10 +165,14 @@ class GamePersonIdentity:
             # Keep the last positive provider proof across subsequent checks,
             # including retries and reuse of an already stored binding.
             job.payload = {**(job.payload or {}), 'identity': evidence,
+                **({'reference_assessment': proof} if proof else {}),
                 **({'last_verified_binding': {'imdb_id': native, 'tmdb_id': profile['id'],
-                    'provider': 'tmdb', 'verified_at': stamp.isoformat(),
-                    'methods': ['external_id_lookup', 'person_details.imdb_id'],
-                    'sources': [f'https://api.themoviedb.org/3/find/{native}?external_source=imdb_id',
+                    'provider': 'wikidata' if proof else 'tmdb', 'verified_at': stamp.isoformat(),
+                    'methods': [proof['method'], proof.get('corroboration', 'explicit_identifiers')] if proof
+                        else ['external_id_lookup', 'person_details.imdb_id'],
+                    'sources': [f'https://www.wikidata.org/wiki/{proof["wikidata_id"]}',
+                        f'https://api.themoviedb.org/3/person/{profile["id"]}'] if proof else [
+                        f'https://api.themoviedb.org/3/find/{native}?external_source=imdb_id',
                         f'https://api.themoviedb.org/3/person/{profile["id"]}']}}
                     if profile and state == 'verified' else {})}
             job.coverage = {'complete': True, 'state': state}

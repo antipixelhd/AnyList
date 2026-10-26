@@ -143,11 +143,12 @@ class GameCreditSources:
         # evidence and failure backoff already used for game metadata sources.
         self.sources=sources or GameBrowseSources()
 
-    async def entities(self,ids):
+    async def entities(self,ids,*,person_references=False):
         if not isinstance(ids,(list,tuple,set)) or not ids or len(ids)>50 or any(not isinstance(q,str) or not ITEM.fullmatch(q) for q in ids):
             raise ProviderError('invalid_request')
         ids=sorted(set(ids))
-        key=hashlib.sha256(json.dumps(['identity-v2',ids]).encode()).hexdigest()
+        properties=PROPERTIES | {'P569'} if person_references else PROPERTIES
+        key=hashlib.sha256(json.dumps(['person-reference-v1' if person_references else 'identity-v2',ids]).encode()).hexdigest()
         async def load():
             body=await self.sources.request('wikidata','https://www.wikidata.org/w/api.php',params={
                 'action':'wbgetentities','ids':'|'.join(ids),'props':'labels|descriptions|aliases|claims|info',
@@ -164,9 +165,9 @@ class GameCreditSources:
                 if raw:
                     if not isinstance(raw.get('claims'),dict):raise ProviderError('bad_response')
                     if any(not isinstance(rows,list) or any(not isinstance(row,dict) for row in rows)
-                           for prop,rows in raw['claims'].items() if prop in PROPERTIES):raise ProviderError('bad_response')
+                           for prop,rows in raw['claims'].items() if prop in properties):raise ProviderError('bad_response')
                     result[q]={**{field:raw.get(field) for field in ('id','labels','aliases','lastrevid')},
-                        'claims':{prop:rows for prop,rows in raw['claims'].items() if prop in PROPERTIES}}
+                        'claims':{prop:rows for prop,rows in raw['claims'].items() if prop in properties}}
             return {'entities':result,'missing':sorted(set(ids)-set(result))}
         return await self.sources.cache.get('wikidata','game_credit_items',key,load,
             ttl=timedelta(days=7),max_stale=timedelta(days=30))

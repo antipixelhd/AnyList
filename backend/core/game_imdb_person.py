@@ -367,11 +367,18 @@ class GameIMDbPersonEnrichment:
 
 async def scheduler():
     from db import AsyncSessionLocal
+    from time import monotonic
+    from core.game_person_identity import backfill
     service=GameIMDbPersonEnrichment(AsyncSessionLocal)
+    next_backfill=0
     try:
         while True:
             delay=2
-            try:await service.tick()
+            try:
+                if monotonic()>=next_backfill:
+                    async with AsyncSessionLocal() as db:await backfill(db)
+                    next_backfill=monotonic()+60
+                await service.tick()
             except asyncio.CancelledError:raise
             except Exception:delay=30
             await asyncio.sleep(delay)

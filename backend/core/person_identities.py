@@ -154,3 +154,27 @@ async def verified_tmdb_person(db,native,raw):
         row=await catalogue.upsert_entity(db,{'kind':'person','name':name,'identities':identities,
             **({'image_url':artwork} if artwork else {}),'attributes':{'imdb_id':imdb}},'tmdb')
     return row
+
+
+async def verified_reference_person(db, native, raw, proof):
+    """Publish corroborated evidence without inventing a TMDB-supplied IMDb ID."""
+    from core import catalogue
+    if (proof.get('imdb_id') != native or proof.get('tmdb_id') != raw.get('id')
+            or proof.get('method') not in ('direct_identifiers', 'birth_reference')
+            or proof.get('method') == 'birth_reference' and proof.get('corroboration') not in (
+                'full_birthdate', 'exact_work_ids_and_specific_characters')):
+        raise catalogue.IdentityConflict('Invalid corroborated person evidence')
+    identities = [{'namespace': 'tmdb.person', 'external_id': str(raw['id'])},
+        {'namespace': 'imdb.person', 'external_id': native},
+        {'namespace': 'wikidata.item', 'external_id': proof['wikidata_id']}]
+    async with db.begin_nested():
+        await catalogue.write_lock(db)
+        row = await catalogue.upsert_entity(db, {'kind': 'person', 'name': raw['name'],
+            'identities': identities}, 'wikidata')
+        # Existing authoritative/reviewed bindings retain their original proof.
+        for identity in await db.scalars(select(CatalogueIdentity).where(
+                CatalogueIdentity.entity_id == row.id,
+                CatalogueIdentity.namespace.in_(('wikidata.item', 'tmdb.person', 'imdb.person')))):
+            if identity.source == 'wikidata' and not (identity.evidence or {}).get('corroborated_person'):
+                identity.evidence = {**(identity.evidence or {}), 'corroborated_person': proof}
+    return row

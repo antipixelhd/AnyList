@@ -19,6 +19,10 @@ class ReversePersonIdentityTests(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
         await bridge_fixture.PersonBridgeTests.asyncSetUp(self)
+        resolver = patch('core.game_person_identity.GamePersonReference.resolve',
+            AsyncMock(return_value=('unresolved', None, {'method':'wikidata_reference','candidates':[]})))
+        self.reference = resolver.start()
+        self.addCleanup(resolver.stop)
         self.service = GamePersonIdentity(self.Session)
         stamp = now() - timedelta(days=2)
         self.fetch_time = stamp.replace(microsecond=stamp.microsecond//1000*1000)
@@ -179,3 +183,71 @@ class ReversePersonIdentityTests(unittest.IsolatedAsyncioTestCase):
         with patch('core.game_person_identity.tmdb.find_by_external_id',AsyncMock(side_effect=AssertionError('Known identity refetched'))) as lookup:
             self.assertEqual(await self.service.run('nm100'),'verified')
             lookup.assert_not_awaited()
+
+    async def test_reference_join_keeps_null_provider_id_and_preserves_provenance_and_aliases(self):
+        profile={**self.profile,'imdb_id':None}
+        proof={'imdb_id':'nm100','tmdb_id':10,'wikidata_id':'Q123','revision':42,
+            'method':'birth_reference','corroboration':'exact_work_ids_and_specific_characters',
+            'birthdate_discrepancy':True,'birthdays':{'tmdb':'1995-08-18','wikidata_references':['1990-08-18']}}
+        self.reference.return_value=('verified',profile,proof)
+        state,_,_=await self.run_bridge({'person_results':[]})
+        self.assertEqual(state,'verified')
+        async with self.Session() as db:
+            root=await catalogue.resolve_identity(db,'imdb.person','nm100')
+            self.assertEqual(root.entity_id,self.movie_person)
+            self.assertEqual((await catalogue.resolve_identity(db,'wikidata.item','Q123')).entity_id,self.movie_person)
+            self.assertEqual((await db.get(CatalogueEntity,self.person)).canonical_person_id,self.movie_person)
+            self.assertEqual((await catalogue.resolve_identity(db,'imdb.person','nm200')).entity_id,self.namesake)
+            job=await db.scalar(snapshot(JOB,'nm100'))
+            self.assertEqual(job.payload['reference_assessment'],proof)
+            self.assertEqual(job.payload['last_verified_binding']['provider'],'wikidata')
+            self.assertEqual(root.evidence.get('corroborated_person',{}),{})  # Original IMDb proof is retained.
+            wiki=await catalogue.resolve_identity(db,'wikidata.item','Q123')
+            self.assertTrue(wiki.evidence['corroborated_person']['birthdate_discrepancy'])
+            self.assertEqual((await db.get(CatalogueEntity,self.movie_person)).image_url,'https://example.test/selected.jpg')
+            self.assertNotIn('birthday',(await db.get(CatalogueEntity,self.movie_person)).attributes)
+            component=await db.scalar(snapshot(COMPONENT,'nm100'))
+            self.assertEqual(component.fetched_at,self.fetch_time)
+        self.assertIsNone(profile['imdb_id'])
+        self.assertEqual(await self.service.run('nm100'),'cached')
+        self.reference.assert_awaited_once()
+
+    async def test_reference_conflict_cannot_replace_reviewed_identity_or_suppress_failures(self):
+        async with self.Session() as db:
+            db.add(CatalogueIdentity(entity_id=self.movie_person,namespace='imdb.person',external_id='nm300',source='reviewed'))
+            await db.commit()
+        proof={'imdb_id':'nm100','tmdb_id':10,'wikidata_id':'Q123','method':'birth_reference',
+            'corroboration':'full_birthdate'}
+        self.reference.return_value=('verified',{**self.profile,'imdb_id':None},proof)
+        self.assertEqual((await self.run_bridge({'person_results':[]}))[0],'conflict')
+        async with self.Session() as db:
+            self.assertEqual((await catalogue.resolve_identity(db,'imdb.person','nm300')).entity_id,self.movie_person)
+            self.assertIsNone(await catalogue.resolve_identity(db,'wikidata.item','Q123'))
+            self.assertIsNone((await db.get(CatalogueEntity,self.person)).canonical_person_id)
+            job=await db.scalar(snapshot(JOB,'nm100'));job.next_attempt_at=now();await db.commit()
+        self.reference.side_effect=TimeoutError
+        self.assertEqual((await self.run_bridge({'person_results':[]}))[0],'retry')
+        async with self.Session() as db:
+            job=await db.scalar(snapshot(JOB,'nm100'))
+            self.assertEqual(job.error_code,'identity_unavailable')
+            self.assertNotIn('last_verified_binding',job.payload)
+
+    async def test_old_negative_ttl_is_upgraded_but_active_backoff_is_preserved(self):
+        from core.game_person_identity import VERSION, backfill
+        async with self.Session() as db:
+            component=await db.scalar(snapshot(COMPONENT,'nm100'))
+            component.coverage={**component.coverage,'source_complete':True}
+            component.payload={**component.payload,'identity_bridge':{'version':VERSION-1,'state':'unresolved',
+                'next_check_at':(now()+timedelta(days=7)).isoformat()}}
+            job=await db.scalar(snapshot(JOB,'nm100'))
+            job.payload={'identity':{'version':VERSION-1}}
+            job.next_attempt_at=None;job.expires_at=now()+timedelta(days=7)
+            await db.commit()
+            self.assertEqual(await backfill(db),1)
+            await db.refresh(job)
+            self.assertIsNotNone(job.next_attempt_at)
+            job.error_code='identity_unavailable';job.next_attempt_at=now()+timedelta(hours=1)
+            await db.commit()
+            self.assertEqual(await backfill(db),0)
+            await db.refresh(job)
+            self.assertGreater(job.next_attempt_at,now()+timedelta(minutes=59))
