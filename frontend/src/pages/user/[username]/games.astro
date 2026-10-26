@@ -4,7 +4,7 @@ import ProfileHeader from '../../../components/ProfileHeader.astro';
 import ProfileListFilters from '../../../components/ProfileListFilters.astro';
 import EntryAnnotations from '../../../components/EntryAnnotations.astro';
 import Icon from '../../../components/Icon.astro';
-import {tracker,scoreLabel} from '../../../lib/tracker';
+import {tracker,trackerFailure,scoreLabel} from '../../../lib/tracker';
 import {gameStatuses} from '../../../lib/game-editor-data';
 import {gameProgress} from '../../../lib/game-progress';
 import {gameListQuery,gameListHref,gameListEditorTitle} from '../../../lib/game-list-data';
@@ -16,7 +16,7 @@ const {query,page,offset,limit}=gameListQuery(Astro.url.searchParams,preferences
 const request=new URLSearchParams(query);request.set('offset',String(offset));request.set('limit',String(limit));
 let data:any=null,error='';
 try{data=await tracker(`games/users/${encodeURIComponent(Astro.params.username!)}/list?${request}`,Astro.locals.token);}
-catch(cause){error=(cause as Error).message;Astro.response.status=error==='This profile is private.'?403:error==='Not found.'?404:503;}
+catch(cause){const failure=trackerFailure(cause);error=failure.message;Astro.response.status=failure.status;}
 if(data&&page>Math.max(1,Math.ceil(data.total/limit)))return Astro.redirect(gameListHref(Astro.url.pathname,query,{page:Math.max(1,Math.ceil(data.total/limit))}));
 const entries=data?.results||[],owner=data?.profile?.owner===true;
 const href=(changes:Record<string,string|number|null>)=>gameListHref(Astro.url.pathname,query,changes);

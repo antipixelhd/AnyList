@@ -8,7 +8,7 @@ import StatsDistribution from '../../../../components/StatsDistribution.astro';
 import StatsMediaGroupCard from '../../../../components/StatsMediaGroupCard.astro';
 import StatsPersonCard from '../../../../components/StatsPersonCard.astro';
 import Icon from '../../../../components/Icon.astro';
-import {tracker} from '../../../../lib/tracker';
+import {tracker,trackerFailure} from '../../../../lib/tracker';
 import {gameStatsQuery,gameStatsSections,gameHeadlines,gameChartRows,gameCard,signedNumber,type GameStatsResponse,type GameOverview,type GameStatsGroup} from '../../../../lib/game-statistics-data';
 import '../../../../styles/stats-overview.css';
 import '../../../../styles/stats-genres.css';
@@ -18,7 +18,7 @@ const query=gameStatsQuery(Astro.url.searchParams);
 Astro.response.headers.set('Cache-Control','private, no-store');
 let data:GameStatsResponse|null=null,error='';
 try{data=await tracker(`games/users/${encodeURIComponent(username)}/statistics?${new URLSearchParams({section:query.section,sort:query.sort,page:String(query.page)})}`,Astro.locals.token);}
-catch(cause){error=(cause as Error).message;}
+catch(cause){const failure=trackerFailure(cause);error=failure.message;Astro.response.status=failure.status;}
 const overview=data?.status==='ready'&&query.section==='overview'?data.data as GameOverview:null;
 const groups=data?.status==='ready'&&query.section!=='overview'?data.data as GameStatsGroup[]:[];
 const head=gameHeadlines(overview),icons=['display','check','hourglass','star','percent','list'];

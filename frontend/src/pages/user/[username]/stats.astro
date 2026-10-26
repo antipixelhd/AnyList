@@ -13,7 +13,7 @@ import ProfileStatsDomains from '../../../components/ProfileStatsDomains.astro';
 import '../../../styles/stats-overview.css';
 import '../../../styles/stats-genres.css';
 import '../../../styles/stats-actors.css';
-import { tracker } from '../../../lib/tracker';
+import { tracker,trackerFailure } from '../../../lib/tracker';
 import type { OverviewResponse, Overview, MediaScope } from '../../../lib/stats-overview-data';
 import { headlineValues } from '../../../lib/stats-overview-data';
 import { genreSort, rankedGenres } from '../../../lib/stats-genres-data';
@@ -34,7 +34,7 @@ const staffSort = genreSort(Astro.url.searchParams.get('staff_sort'));
 const artwork = actorArtwork(Astro.url.searchParams.get('artwork'));
 let data: OverviewResponse | null = null, error = '';
 try { data = await tracker(`profile/${encodeURIComponent(username!)}/stats/overview?media_type=${media}`, Astro.locals.token); }
-catch (cause) { error = (cause as Error).message; }
+catch (cause) { const failure=trackerFailure(cause);error=failure.message;Astro.response.status=failure.status; }
 const ready = data?.status === 'ready' && data.overview !== null;
 const overview: Overview = data?.overview || {
   media_type: media, totals: { listed_titles: 0, watched_titles: 0, episode_plays: 0, distinct_episodes: 0, watch_minutes: 0, watch_days: 0, planned_minutes: 0, planned_days: 0, mean_score: null, standard_deviation: null, rated_titles: 0 },

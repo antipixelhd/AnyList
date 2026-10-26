@@ -4,7 +4,7 @@ import ProfileHeader from '../../../components/ProfileHeader.astro';
 import ActivityCard from '../../../components/ActivityCard.astro';
 import Icon from '../../../components/Icon.astro';
 import ProfileOverviewLeft from '../../../components/ProfileOverviewLeft.astro';
-import {tracker} from '../../../lib/tracker';
+import {tracker,trackerFailure} from '../../../lib/tracker';
 import type { ProfileStats } from '../../../lib/profile-stats-data';
 import '../../../styles/profile-overview.css';
 import {viewerMediaPreferences} from '../../../lib/viewer-media-preferences';
@@ -14,7 +14,7 @@ import {mergeActivityFeeds} from '../../../lib/activity-feed';
 const preferences=await viewerMediaPreferences(Astro.locals);
 const ownHint=Astro.locals.user?.username===Astro.params.username;
 let profile:any=null,error='';
-try{profile=await tracker(`people/${encodeURIComponent(Astro.params.username!)}${ownHint&&!preferences.show_movies_series?'/header':''}`,Astro.locals.token);}catch(e){error=(e as Error).message;Astro.response.status=error==='This profile is private.'?403:error==='Not found.'?404:503;}
+try{profile=await tracker(`people/${encodeURIComponent(Astro.params.username!)}${ownHint&&!preferences.show_movies_series?'/header':''}`,Astro.locals.token);}catch(e){const failure=trackerFailure(e);error=failure.message;Astro.response.status=failure.status;}
 const domains=profileMediaDomains(profile?.owner===true,preferences);
 let movieStats: ProfileStats | null = null, seriesStats: ProfileStats | null = null;
 let gameFavorites:any[]|null=null;

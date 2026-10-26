@@ -1,12 +1,26 @@
 import { responsiveArtwork,type ArtworkRoute } from "./responsive-artwork";
 import { formatDateTime, timestamp } from './date-time';
 
+export class TrackerRequestError extends Error {
+  readonly status:number;
+  constructor(status:number) {
+    super(status===403?'This profile is private.':status===404?'Not found.':'Unable to load this page. Please try again.');
+    this.name='TrackerRequestError';this.status=status;
+  }
+}
+
+/** Profile pages preserve access failures without treating upstream outages as content. */
+export function trackerFailure(cause:unknown) {
+  return {message:cause instanceof Error?cause.message:'Unable to load this page. Please try again.',
+    status:cause instanceof TrackerRequestError&&[401,403,404].includes(cause.status)?cause.status:503};
+}
+
 export async function tracker(path: string, token?: string) {
   const port = process.env.BACKEND_PORT ?? '7331';
   const response = await fetch(`http://127.0.0.1:${port}/tracking/${path}`, {
     headers: token ? {Authorization: `Bearer ${token}`} : {},
   });
-  if (!response.ok) throw new Error(response.status === 403 ? 'This profile is private.' : response.status === 404 ? 'Not found.' : 'Unable to load this page. Please try again.');
+  if (!response.ok) throw new TrackerRequestError(response.status);
   return response.json();
 }
 

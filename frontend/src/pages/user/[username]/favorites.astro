@@ -2,7 +2,7 @@
 import FavoriteCard from "../../../components/FavoriteCard.astro";
 import Tracker from '../../../layouts/Tracker.astro';
 import ProfileHeader from '../../../components/ProfileHeader.astro';
-import {tracker} from '../../../lib/tracker';
+import {tracker,trackerFailure} from '../../../lib/tracker';
 import {profileMediaGroups} from '../../../lib/profile-media-groups';
 import {viewerMediaPreferences} from '../../../lib/viewer-media-preferences';
 import {profileMediaDomains} from '../../../lib/media-domains';
@@ -28,8 +28,8 @@ try {
     screenFavorites=screenProfile.favorites||[];
   }
 } catch (cause) {
-  error = (cause as Error).message;
-  profile=null;Astro.response.status=error==='This profile is private.'?403:error==='Not found.'?404:503;
+  const failure=trackerFailure(cause);error=failure.message;
+  profile=null;Astro.response.status=failure.status;
 }
 const favorites: any[] = game?(favoriteGames?.results||[]).map((state:any)=>({id:state.subject.catalogue_id,type:'game',title:state.title,poster:state.image_url})):screenFavorites;
 const favoriteGroups = profileMediaGroups(favorites, profile?.combine_lists !== false);
