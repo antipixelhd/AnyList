@@ -268,6 +268,8 @@ document.addEventListener('astro:page-load', () => {
   dialog.querySelectorAll('.editor-close').forEach(button => button.addEventListener('click', closeEditor));
   dialog.addEventListener('click', event => { if (event.target === dialog) closeEditor(); });
   dialog.addEventListener('close', () => {
+    // The native close event is queued; a failed save may already have reopened the editor.
+    if (dialog.open) return;
     loadController?.abort(); loadController = null; libraryButton.hidden = true; current = null; currentTitle = null; displayedScore = ''; form.reset();
     const listRow = opener?.closest<HTMLElement>('.entry-row');
     if (listRow) {
