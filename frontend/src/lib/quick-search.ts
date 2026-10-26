@@ -4,6 +4,7 @@ import { editorStore, type EditorTitle } from './editor-store';
 import { responsiveArtwork } from './responsive-artwork';
 import { quickSearchShortcut } from './quick-search-shortcut';
 import { wireSearchWordCapitalization } from './search-word-capitalization';
+import { mountQuickSearchLayout } from './quick-search-layout';
 import {quickSearchRequests,rankCombinedMedia,readQuickTitles,createQuickSearchReader,visibleQuickSearchSections,availableQuickSearchTabs,resolvedQuickSearchTab,steppedQuickSearchTab,mergeContributorResults,type SearchSection} from './quick-search-data';
 import { animate } from 'motion/mini';
 
@@ -38,6 +39,7 @@ export function mountQuickSearch() {
   const input = dialog?.querySelector<HTMLInputElement>('#quick-search-input');
   if (input) wireSearchWordCapitalization(input, pageListeners.signal);
   const resultShell = dialog?.querySelector<HTMLElement>('.quick-search-results');
+  const scheduleLayout = resultShell ? mountQuickSearchLayout(resultShell, pageListeners.signal) : () => {};
   const state = dialog?.querySelector<HTMLElement>('[data-search-state]');
   const announcement = dialog?.querySelector<HTMLElement>('[data-search-announcement]');
   const progress = dialog?.querySelector<HTMLElement>('[data-search-progress]');
@@ -165,6 +167,7 @@ export function mountQuickSearch() {
     }
     if (resultShell) {
       resultShell.hidden = !visible.length;
+      scheduleLayout();
     }
     dialog!.style.setProperty('--search-columns',String(Math.max(1,Math.min(4,visible.length))));
     dialog!.toggleAttribute('data-search-expanded',visible.length>1&&!mobile.matches);

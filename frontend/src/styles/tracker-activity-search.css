@@ -328,6 +328,10 @@
   .quick-search-dialog[data-quick-search] .quick-search-results:not(:has(> .quick-search-card:not([hidden]) ~ .quick-search-card:not([hidden]))):not(:has(> .quick-search-card:not([hidden]) ~ .quick-search-card:not([hidden]) ~ .quick-search-card:not([hidden]))) {
     grid-template-columns:var(--quick-search-panel-width);
   }
+  .quick-search-dialog[data-quick-search] .quick-search-results[data-masonry] {
+    grid-auto-rows:1px;
+    row-gap:0;
+  }
   .quick-search-dialog[data-quick-search] .quick-search-state { max-width:660px; margin:24px auto 0; }
 }
 @media (min-width:651px) and (max-width:1500px) {
