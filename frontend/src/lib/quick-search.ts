@@ -286,7 +286,7 @@ export function mountQuickSearch() {
     if (announcement) announcement.textContent = '';
     showState('');
     updateTabs();
-    timer = window.setTimeout(search, 60);
+    timer = window.setTimeout(search, 300);
   },{signal:pageListeners.signal});
   tabButtons.forEach(button=>button.addEventListener('click',()=>{
     const direction=Number(button.dataset.searchTabStep);

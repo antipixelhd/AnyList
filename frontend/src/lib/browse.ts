@@ -571,7 +571,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     }
     searchClear.hidden = !field("q").value;
     // Update immediately; only network requests from typing/dragging are debounced.
-    const debounce = event?.type === 'input' ? 100 : 0;
+    const debounce = event?.type === 'input' ? 300 : 0;
     void load(false, debounce);
   }
   function clear() {
