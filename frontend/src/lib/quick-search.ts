@@ -274,7 +274,18 @@ export function mountQuickSearch() {
   };
   resultShell?.addEventListener('pointerover', prepareEditor, {signal:pageListeners.signal});
   resultShell?.addEventListener('focusin', prepareEditor, {signal:pageListeners.signal});
-  dialog?.addEventListener('click', event => { if (event.target === dialog) void closeDialog(dialog); },{signal:pageListeners.signal});
+  // A click can target the dialog after a drag starts in a child and ends outside it.
+  // Dismiss only when the pointer also started on the backdrop.
+  let pointerStartedOnBackdrop = false;
+  dialog.addEventListener('pointerdown', event => {
+    pointerStartedOnBackdrop = event.isPrimary && event.button === 0 && event.target === dialog;
+  }, {signal:pageListeners.signal});
+  dialog.addEventListener('pointercancel', () => { pointerStartedOnBackdrop = false; }, {signal:pageListeners.signal});
+  dialog.addEventListener('click', event => {
+    const dismiss = pointerStartedOnBackdrop && event.target === dialog;
+    pointerStartedOnBackdrop = false;
+    if (dismiss) void closeDialog(dialog);
+  }, {signal:pageListeners.signal});
   dialog.addEventListener('keydown', event => {
     if (event.key !== 'Escape') return;
     event.preventDefault();
