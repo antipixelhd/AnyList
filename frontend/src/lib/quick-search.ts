@@ -2,6 +2,7 @@
 import { editorStore, type EditorTitle } from './editor-store';
   import { showDialog, closeDialog } from './ui-motion';
 import { responsiveArtwork } from './responsive-artwork';
+import { quickSearchShortcut } from './quick-search-shortcut';
 import {quickSearchRequests,rankCombinedMedia,readQuickTitles,createQuickSearchReader,visibleQuickSearchSections,availableQuickSearchTabs,resolvedQuickSearchTab,steppedQuickSearchTab,mergeContributorResults,type SearchSection} from './quick-search-data';
 import { animate } from 'motion/mini';
 
@@ -315,6 +316,10 @@ export function mountQuickSearch() {
   },{signal:pageListeners.signal});
   pageListeners.signal.addEventListener('abort',()=>{clearTimeout(timer);clearTimeout(progressTimer);controller?.abort();tabAnimations.forEach(control=>control.cancel());},{once:true});
   document.addEventListener('keydown', event => {
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); open(); }
+    const action = quickSearchShortcut(event, dialog.open, !!document.querySelector('dialog[open]:not([data-quick-search])'));
+    if (!action) return;
+    event.preventDefault();
+    if (action === 'close') void closeDialog(dialog, 'cancel');
+    else if (action === 'open') open();
   }, { signal: pageListeners.signal });
 }

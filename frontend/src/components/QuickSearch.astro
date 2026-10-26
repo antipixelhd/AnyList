@@ -12,6 +12,7 @@ const { combineLists = true, hideTrigger = false } = Astro.props;
     <button class="editor-icon-button" type="button" aria-label="Close search" data-motion-press data-quick-search-close><Icon name="close" /></button>
     <div class="quick-search-progress" data-search-progress aria-hidden="true"></div>
   </div>
+  <p class="quick-search-hint">Hint: Hit Ctrl-S to quickly toggle Quick Search</p>
   <nav class="quick-search-mobile-tabs" data-search-tabs aria-label="Search result sections">
     <button type="button" data-search-tab-step="-1" aria-label="Previous search section" disabled><Icon name="chevron-left" /></button>
     <div class="quick-search-tab-current">
