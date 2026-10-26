@@ -20,6 +20,10 @@ class GameContributorSearchTests(unittest.IsolatedAsyncioTestCase):
         await fixture.GameContributorTests.asyncSetUp(self)
         self.app.dependency_overrides[get_current_user] = lambda: self.viewer
         search._candidate_cache._store.clear()
+        self.discovery_patch = patch.object(search, 'discover_companies', AsyncMock(
+            return_value={'ids': [], 'pending': False, 'partial': False}))
+        self.discovery_patch.start()
+        self.addCleanup(self.discovery_patch.stop)
 
     asyncTearDown = fixture.GameContributorTests.asyncTearDown
     seed = fixture.GameContributorTests.seed

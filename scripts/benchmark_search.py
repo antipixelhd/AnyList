@@ -110,7 +110,7 @@ async def main(args):
             if not args.case or any(name.startswith(('game_contributor','game_people','game_person','game_company')) for name in args.case):
                 performer=CatalogueEntity(kind='person',name='Game works performer')
                 db.add(performer);await db.flush();game_contributor_id=performer.id
-                if args.case and any(name in args.case for name in ('game_company_cached','game_company_availability')):
+                if args.case and any(name in args.case for name in ('game_company_cached','game_company_availability','game_company_search')):
                     company=CatalogueEntity(kind='organization',name='Portfolio company')
                     db.add(company);await db.flush();game_company_id=company.id
                     db.add(CatalogueIdentity(entity_id=company.id,namespace='igdb.company',external_id='7000000',source='igdb'))
@@ -429,9 +429,13 @@ async def main(args):
         from core import game_browse
         from core.game_browse_sources import GameBrowseSources
         game_sources = GameBrowseSources(fixture.Session)
+        game_sources.api.validate = lambda *args: None
         async def game_provider(endpoint, query):
             counters['provider_requests'] += 1
             counters['provider:igdb/'+endpoint] += 1
+            if endpoint == 'companies':
+                await asyncio.sleep(args.provider_delay_ms / 1000)
+                return [{'id':7000000,'name':'Portfolio company'}] if 'Portfolio company' in query else []
             await asyncio.sleep(args.provider_delay_ms / 1000)
             if endpoint=='genres':return [{'id':5,'name':'Role-playing (RPG)'},{'id':9,'name':'Adventure'}]
             if endpoint=='platforms':return [{'id':6,'name':'PC (Microsoft Windows)'},{'id':167,'name':'PlayStation 5','platform_family':{'name':'PlayStation'}}]
@@ -475,6 +479,7 @@ async def main(args):
         cases += [
             *([('game_company_cached',f'contributors/studio/catalogue:{game_company_id}',{'media_type':'game'})] if game_company_id else []),
             *([('game_company_availability',f'contributors/studio/catalogue:{game_company_id}/availability',{})] if game_company_id else []),
+            *([('game_company_search','quick-search/contributors',{'q':'Portfolio company','kind':'studio','work_domain':'game'})] if game_company_id else []),
             ('game_search', 'games/search', {'q': 'Benchmark'}),
             *([('game_time_to_beat',f'games/works/{first_game.id}/time-to-beat',{})] if args.case and 'game_time_to_beat' in args.case else []),
             *([('game_offers',f'games/works/{first_game.id}/offers',{'country':'DE'})] if args.case and 'game_offers' in args.case else []),
@@ -558,6 +563,9 @@ async def main(args):
                 raise ValueError('Unknown case for the selected matrix')
             cases = [case for case in cases if case[0] in selected]
         with ExitStack() as stack:
+            from core import game_company_discovery
+            company_discovery = game_company_discovery.GameCompanyDiscovery(fixture.Session, sources=game_sources)
+            stack.enter_context(patch.object(game_company_discovery, 'GameCompanyDiscovery', return_value=company_discovery))
             if args.case and 'game_offers' in args.case:
                 stack.enter_context(patch.object(provider_settings,'itad_api_key','fixture-itad-key'))
             stack.enter_context(patch.object(tmdb, '_request', side_effect=provider))
@@ -581,6 +589,10 @@ async def main(args):
                 for label, path, values in cases:
                     current_case = label
                     reset()
+                    if path == 'quick-search/contributors':
+                        async with fixture.Session() as db:
+                            await db.execute(delete(MetadataSnapshot).where(MetadataSnapshot.kind=='game_company_search'))
+                            await db.commit()
                     if label.startswith('game_browse'):
                         async with fixture.Session() as db:
                             await db.execute(delete(MetadataSnapshot).where(or_(MetadataSnapshot.kind.like('game_browse%'),MetadataSnapshot.kind=='game_timeline_windows')))
@@ -601,6 +613,15 @@ async def main(args):
                         params['unfiltered'] = 'true'
 
                     async def operation(path=path, params=params, label=label, mode=mode):
+                        if label == 'game_company_search':
+                            result = await request(path, params)
+                            if [row['key'] for row in result['results']['studio']] != [f'catalogue:{game_company_id}']:
+                                raise RuntimeError('Company discovery lost its verified canonical portfolio')
+                            if result.get('verification_pending') or result.get('partial'):
+                                raise RuntimeError('Fresh complete company unexpectedly pending or partial')
+                            if 'COMPANY_RAW_SENTINEL' in json.dumps(result):
+                                raise RuntimeError('Company search transferred full portfolio evidence')
+                            return result
                         if label=='game_metadata':
                             result=await request(path,params)
                             if not result['primary_ready'] or not result['complete'] or result['pending'] or result['entity_id']!=first_game.id:

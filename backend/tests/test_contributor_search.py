@@ -24,6 +24,9 @@ class ContributorSearchTests(unittest.IsolatedAsyncioTestCase):
         self.db = SimpleNamespace(execute=AsyncMock(), scalar=AsyncMock(), commit=AsyncMock())
         self.db.execute.return_value = SimpleNamespace(all=lambda: [])
         self.viewer = SimpleNamespace(id=7, games_access=True)
+        discovery = patch.object(search, 'discover_companies', AsyncMock(
+            return_value={'ids': [], 'pending': False, 'partial': False}))
+        discovery.start(); self.addCleanup(discovery.stop)
         self.local = patch.object(search, 'local_matches', AsyncMock(return_value=empty()))
         self.local_mock = self.local.start()
         self.keys = patch.object(search.settings_store, 'get_user_tmdb_key', AsyncMock(return_value='fixture-key'))

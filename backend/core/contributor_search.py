@@ -11,6 +11,7 @@ from core import settings_store, tmdb
 from core.contributor_details import is_actor, positive_id
 from core.credit_roles import work_credit
 from core.person_identities import canonical_people
+from core.game_company_discovery import discover_companies
 from core.principal_credits import remote_person_kind, number, group
 from core.statistics_staff import role_label, role_order
 from core.studio_names import studio_name
@@ -85,7 +86,7 @@ async def _local_matches(db, term, kind):
     return groups
 
 
-async def game_matches(db, term, kind):
+async def game_matches(db, term, kind, *, company_ids=()):
     """Read fresh verified game summaries; never scan careers per keystroke."""
     from core.game_contributor_works import ACTING, COMPANIES
     summary = ContributorSearch
@@ -97,7 +98,9 @@ async def game_matches(db, term, kind):
             select(CatalogueIdentity.external_id).where(CatalogueIdentity.entity_id==summary.entity_id,
                 CatalogueIdentity.namespace=='tmdb.person').limit(1).scalar_subquery().label('tmdb_id')).where(
             summary.kind.in_(('organization',) if kind == 'studio' else ('person',) if kind != 'all' else ('person','organization')),
-            summary.game_work_count > 0, count > 0, summary.search_text.ilike(pattern, escape='\\'),
+            summary.game_work_count > 0, count > 0,
+            or_(summary.search_text.ilike(pattern, escape='\\'),
+                summary.entity_id.in_(company_ids) if company_ids else False),
         ).order_by(case((func.lower(summary.name) == term.casefold(), 0), else_=1),
             count.desc(), func.lower(summary.name), summary.entity_id).limit(80))).all()
     groups = {section: [] for section in KINDS}
@@ -264,16 +267,7 @@ async def _discover_candidates(db, viewer, term, kind, key):
 _candidate_cache = tmdb._TTLCache(maxsize=128)
 
 
-async def search_contributors(db, viewer, term, kind='all', work_domain='all'):
-    from core.game_access import allowed, require
-    if work_domain == 'game':
-        require(viewer)
-    elif not allowed(viewer):
-        work_domain = 'movies_series'
-    if work_domain == 'game':
-        groups = await game_matches(db, term, kind)
-        return {'results': ranked_results(groups, term), 'partial': False, 'verification_pending': False,
-            'game_coverage': 'saved_credits'}
+async def screen_matches(db, viewer, term, kind):
     key = await settings_store.get_user_tmdb_key(db, viewer.id)
     identity = (viewer.id, term.strip().casefold(), kind, hashlib.sha256(str(key).encode()).digest())
     cached = _candidate_cache.get(identity)
@@ -293,8 +287,30 @@ async def search_contributors(db, viewer, term, kind='all', work_domain='all'):
         row['_match'] = 0 if name == query else 1 if name.startswith(query) else 2
     groups['studio'], studios_pending = await verified_studios(db, viewer, groups['studio'], key)
     people_pending = await verified_people(db, viewer, groups, key)
+    return groups, failed, studios_pending or people_pending
+
+
+async def search_contributors(db, viewer, term, kind='all', work_domain='all'):
+    from core.game_access import allowed, require
+    if work_domain == 'game':
+        require(viewer)
+        companies = await discover_companies(db, term, kind)
+        groups = await game_matches(db, term, kind, company_ids=companies['ids'])
+        return {'results': ranked_results(groups, term), 'partial': companies['partial'],
+            'verification_pending': companies['pending'], 'game_coverage': 'saved_credits'}
+    if not allowed(viewer):
+        work_domain = 'movies_series'
+    companies = {'ids': [], 'pending': False, 'partial': False}
     if work_domain == 'all':
-        groups = merge_game_matches(groups, await game_matches(db, term, kind))
-    return {'results': ranked_results(groups, term), 'partial': failed,
-            'verification_pending':studios_pending or people_pending,
+        # Public candidate discovery uses separate shared sessions; it can run
+        # alongside TMDB without sharing the request's transaction or adding
+        # sequential provider latency to existing movie/series discovery.
+        screen, companies = await asyncio.gather(
+            screen_matches(db, viewer, term, kind), discover_companies(db, term, kind))
+        groups, failed, pending = screen
+        groups = merge_game_matches(groups, await game_matches(db, term, kind, company_ids=companies['ids']))
+    else:
+        groups, failed, pending = await screen_matches(db, viewer, term, kind)
+    return {'results': ranked_results(groups, term), 'partial': failed or companies['partial'],
+            'verification_pending':pending or companies['pending'],
             **({'game_coverage':'saved_credits'} if work_domain == 'all' else {})}

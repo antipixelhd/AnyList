@@ -2,6 +2,14 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {quickSearchRequests,rankCombinedMedia,createQuickTitleBatch,createQuickSearchReader,visibleQuickSearchSections,availableQuickSearchTabs,resolvedQuickSearchTab,steppedQuickSearchTab,mergeContributorResults,readQuickSearch} from '../src/lib/quick-search-data.ts';
 
+test('contributor discovery follows enabled domains instead of revealing hidden game studios',()=>{
+  for(const [movies,games,domain] of [[true,true,'all'],[true,false,'movies_series'],[false,true,'game']]){
+    const requests=quickSearchRequests('Supergiant',undefined,movies,games).filter(row=>row.kind==='contributors');
+    assert.equal(requests.length,2);
+    for(const request of requests)assert.equal(new URL(request.url,'https://example.test').searchParams.get('work_domain'),domain);
+  }
+});
+
 test('movie/series opt-out rejects title fan-out and title tabs together, retaining shared people search',()=>{
   const requests=quickSearchRequests('Troy',undefined,false,false);
   assert.equal(requests.length,2);assert.ok(requests.every(request=>request.kind==='contributors'));
