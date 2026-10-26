@@ -310,20 +310,20 @@
   .quick-search-dialog[data-quick-search] .quick-search-bar { width:660px; }
   .quick-search-dialog[data-quick-search] .quick-search-results {
     box-sizing:border-box;
-    width:100%;
-    max-width:1700px;
+    width:calc(100% - 80px);
+    max-width:1480px;
     max-height:none;
     min-height:0;
     margin:24px auto 0;
     padding:0 60px;
-    gap:60px;
+    gap:48px;
     grid-template-columns:repeat(3,minmax(0,1fr));
     overflow:visible;
   }
   .quick-search-dialog[data-quick-search] .quick-search-state { max-width:660px; margin:24px auto 0; }
 }
 @media (min-width:651px) and (max-width:1500px) {
-  .quick-search-dialog[data-quick-search] .quick-search-results { gap:40px; }
+  .quick-search-dialog[data-quick-search] .quick-search-results { gap:32px; }
 }
 @media (min-width:651px) and (max-width:1400px) {
   .quick-search-dialog[data-quick-search] .quick-search-results { grid-template-columns:repeat(2,minmax(0,1fr)); }
