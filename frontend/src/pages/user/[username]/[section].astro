@@ -287,8 +287,8 @@ function mountProfileList() {
         const sort = input('sort-filter').value;
         rows.sort((a,b)=>sort==='title' ? a.dataset.title!.localeCompare(b.dataset.title!) : sort==='updated' ? b.dataset.updated!.localeCompare(a.dataset.updated!) : Number(b.dataset[sort]) - Number(a.dataset[sort]));
         let visible = 0;
-        rows.forEach(row=> {
-          table.append(row);
+        rows.forEach((row,index)=> {
+          if (table.children[index + 1] !== row) table.insertBefore(row,table.children[index + 1] || null);
           row.hidden = row.hasAttribute('data-editor-removed') || (status !== 'all' && status!==group.dataset.group) || !row.dataset.title!.includes(query) || !!(input('genre-filter').value && !JSON.parse(row.dataset.genres!).includes(input('genre-filter').value)) || !!(selectedYear() && row.dataset.year!==selectedYear()) || !!(input('favorite-filter').value && row.dataset.favorite!=='yes');
           if (!row.hidden) visible++;
         });
@@ -407,7 +407,7 @@ function mountProfileList() {
             const scoreButton = row.querySelector<HTMLElement>('[data-quick-rate-id]');
             if (scoreButton) { scoreButton.dataset.quickRateScore = String(entry.score ?? ''); scoreButton.dataset.quickRateMode = entry.rating_mode || 'manual'; }
             const target = groups.querySelector<HTMLElement>(`[data-group="${entry.status}"] .entry-table`);
-            target?.append(row);
+            if (target && row.parentElement !== target) target.append(row);
           }
           filter();
         }
