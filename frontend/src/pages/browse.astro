@@ -8,6 +8,8 @@ import BrowseSkeleton from "../components/BrowseSkeleton.astro";
 import BrowseSelect from "../components/BrowseSelect.astro";
 import Icon from "../components/Icon.astro";
 import {timelineGroups} from '../lib/browse-timeline-data';
+import { tracker } from '../lib/tracker';
+import {shouldBroadenSearch, broadSearchParams} from '../lib/search-fallback';
 import "../styles/browse.css";
 import { releaseYearBounds, releaseYearLabel } from "../lib/browse-ranges";
 import {
@@ -18,6 +20,9 @@ import {
   browseLayout,
 } from "../lib/browse-view";
 const params = new URLSearchParams(Astro.url.search);
+const staticBrowse = params.get('static') === '1';
+const staticPage = Math.max(1, Math.min(100, Number(params.get('page')) || 1));
+params.delete('static');
 params.delete("streaming");
 params.delete("unfiltered");
 params.delete("include_rereleases");
@@ -33,13 +38,44 @@ if(type==='series'||!['1','true'].includes(params.get('cinema')||''))params.dele
 params.delete("type");
 params.set("media_type", type);
 params.delete("page");
+if (staticBrowse) params.set('page', String(staticPage));
 params.delete("source");
 const categories = isCategoryView(params);
 let sections: any[] = [];
 let payload: any = { results: [], has_more: false, page: 1, source: "" },
   facets: any = { genres: [], providers: [] },
   error = "";
-// Render the shell immediately; discovery and facets load independently in the browser.
+// Normal visits render the shell immediately. The linked no-JS view fetches
+// real results on the server and has ordinary page navigation.
+if (staticBrowse) {
+  const responses = await Promise.allSettled([
+    (async () => {
+      const path = categories
+        ? `browse/sections?${new URLSearchParams({ media_type: type, region, min_score: params.get('min_score') || '0' })}`
+        : `browse?${browseRequestParams(params)}`;
+      const first = await tracker(path, Astro.locals.token);
+      if (!categories && shouldBroadenSearch(params, first)) {
+        const broad = await tracker(`browse?${browseRequestParams(broadSearchParams(params))}`, Astro.locals.token);
+        return { ...broad, curation_expanded: true };
+      }
+      return first;
+    })(),
+    tracker(`browse/facets?${new URLSearchParams({ media_type: type, region, genres: params.get('genres') || '' })}`, Astro.locals.token),
+  ]);
+  if (responses[0].status === 'fulfilled') {
+    if (categories) {
+      sections = responses[0].value.sections;
+      payload.notice = responses[0].value.notice;
+    } else payload = responses[0].value;
+  } else error = 'Unable to load titles. Check your filters and try again.';
+  if (responses[1].status === 'fulfilled') facets = responses[1].value;
+}
+const staticHref = (page: number) => {
+  const values = new URLSearchParams(Astro.url.search);
+  values.set('static', '1');
+  values.set('page', String(page));
+  return `/browse?${values}`;
+};
 const cinemaCountry = region;
 const cinemaScope = cinemaCountry ? new Intl.DisplayNames(['en'],{type:'region'}).of(cinemaCountry) || cinemaCountry : 'Worldwide';
 const cinemaLabel = `Theatrical · ${cinemaScope}`;
@@ -154,6 +190,7 @@ if(params.has('cinema'))initialChips.push(cinemaLabel);
       role="search"
       data-browse-form
     >
+      {staticBrowse && <input type="hidden" name="static" value="1" />}
       <input type="hidden" name="type" value={type} />
       <input type="hidden" name="view" value={view} />
       <div class="browse-search-row">
@@ -311,8 +348,12 @@ if(params.has('cinema'))initialChips.push(cinemaLabel);
         Try again
       </button>
     </div>
-    <section aria-label="Browse results" data-browse-region aria-busy="true" data-browse-loading="empty">
-      <div class="browse-sections" data-browse-sections hidden>
+    {!staticBrowse && <noscript>
+      <style is:inline>.browse-loading-view { display: none !important; }</style>
+      <p><a href={staticHref(1)}>Browse titles without JavaScript</a></p>
+    </noscript>}
+    <section aria-label="Browse results" data-browse-region aria-busy={staticBrowse ? 'false' : 'true'} data-browse-loading={staticBrowse ? undefined : 'empty'}>
+      <div class="browse-sections" data-browse-sections hidden={!staticBrowse || !categories}>
         {sections.map((section: any) => (
           <section class="browse-category" aria-label={section.title}>
             <header>
@@ -335,7 +376,7 @@ if(params.has('cinema'))initialChips.push(cinemaLabel);
           </section>
         ))}
       </div>
-      <div class={view==='timeline'?'browse-timeline':'browse-grid'} data-browse-results hidden>
+      <div class={view==='timeline'?'browse-timeline':'browse-grid'} data-browse-results hidden={!staticBrowse || categories}>
         {view === 'timeline' ? timelineGroups<any>(payload.results, params.get('sort')==='upcoming'||params.get('status')==='upcoming').map(year => (
           <section class="browse-timeline-year" data-timeline-year={year.year}>
             <h2 class="browse-timeline-year-label">{year.year || 'Undated'}</h2>
@@ -358,6 +399,7 @@ if(params.has('cinema'))initialChips.push(cinemaLabel);
         class="browse-loading-view"
         data-browse-skeleton
         aria-hidden="true"
+        hidden={staticBrowse}
       >
         <div class="browse-grid browse-skeletons" data-skeleton-grid hidden={categories || view==='timeline'}>
           {Array.from({ length: 12 }, () => <BrowseSkeleton />)}
@@ -386,6 +428,12 @@ if(params.has('cinema'))initialChips.push(cinemaLabel);
           ))}
         </div>
       </div>
+      {staticBrowse && !categories && <noscript>
+        <nav aria-label="Browse pages" class="browse-static-pages">
+          {staticPage > 1 && <a href={staticHref(staticPage - 1)}>Previous page</a>}
+          {payload.has_more && <a href={staticHref(staticPage + 1)}>Next page</a>}
+        </nav>
+      </noscript>}
       <div
         class="empty-state"
         data-browse-empty
@@ -424,7 +472,7 @@ if(params.has('cinema'))initialChips.push(cinemaLabel);
     <script
       id="browse-data"
       type="application/json"
-      set:html={JSON.stringify({ payload, facets, sections, pending: true, categories }).replaceAll(
+      set:html={JSON.stringify({ payload, facets, sections, pending: !staticBrowse, categories }).replaceAll(
         "<",
         "\\u003c",
       )}

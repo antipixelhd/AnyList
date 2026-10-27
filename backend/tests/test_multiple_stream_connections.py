@@ -576,6 +576,21 @@ class MultipleStreamConnectionsTests(unittest.IsolatedAsyncioTestCase):
             await signal_connection_import_cancellation(self.db, conn)
             self.assertEqual(netflix_sessions._cancelled, {own.id})
 
+    async def test_removal_invalidates_commit_in_another_process(self):
+        from core import netflix_sessions
+        from core.connection_imports import finish_import, signal_connection_import_cancellation
+        conn = await self._connection(provider='stremio', account_id='another-process')
+        draft = await self._import_draft(conn, status='committing')
+        await self.db.commit()
+        with patch.object(netflix_sessions, '_committing', set()), \
+             patch.object(netflix_sessions, '_cancelled', set()):
+            await signal_connection_import_cancellation(self.db, conn)
+            self.assertEqual(netflix_sessions._cancelled, set())
+            await self.db.refresh(conn)
+            self.assertEqual(conn.identity_version, 1)
+            with self.assertRaises(netflix_sessions.ImportCancelled):
+                await finish_import(self.db, draft)
+
     async def test_cancellation_during_handoff_rolls_back_the_import(self):
         from contextlib import asynccontextmanager
         from collections import defaultdict

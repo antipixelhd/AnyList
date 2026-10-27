@@ -44,18 +44,15 @@ test('nested icon clicks reveal and conceal passwords with matching icon states'
   assert.equal(button.slash.has('hidden'), true);
 });
 
-test('connection secrets reveal and conceal without becoming login password fields', t => {
+test('connection secrets use native password masking until explicitly revealed', t => {
   const root = page(t), button = control();
-  button.input.type = 'text';
   button.input.hasAttribute = name => name === 'data-connection-secret';
   wirePasswordToggles(root);
   root.click(button.target);
-  assert.equal(button.input.dataset.secretVisible, 'true');
   assert.equal(button.input.type, 'text');
   assert.equal(button.eye.has('hidden'), true);
   root.click(button.target);
-  assert.equal(button.input.dataset.secretVisible, 'false');
-  assert.equal(button.input.type, 'text');
+  assert.equal(button.input.type, 'password');
   assert.equal(button.eye.has('hidden'), false);
 });
 

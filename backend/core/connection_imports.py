@@ -10,7 +10,8 @@ from contextvars import ContextVar
 import re
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core import netflix_sessions, tmdb
 from core.streaming_evidence import prepare_evidence
@@ -28,10 +29,33 @@ def _connection_drafts(conn):
 
 
 async def signal_connection_import_cancellation(db, conn):
-    """Let an in-process commit roll back before removal waits for the user lock."""
-    ids = await db.scalars(_connection_drafts(conn).with_only_columns(NetflixImportSession.id)
-                           .where(NetflixImportSession.status == 'committing'))
-    netflix_sessions._cancelled.update(session_id for session_id in ids if session_id in netflix_sessions._committing)
+    """Invalidate a committing snapshot before removal waits for its user lock.
+
+    The import transaction holds the session and user rows, so neither can
+    carry a cancellation signal from another worker. The connection identity
+    can be updated independently and is checked again just before commit.
+    """
+    drafts = (await db.execute(_connection_drafts(conn).with_only_columns(
+        NetflixImportSession.id,
+        NetflixImportSession.payload['identity_version'].as_integer(),
+    ).where(NetflixImportSession.status == 'committing'))).all()
+    if not drafts:
+        return
+    netflix_sessions._cancelled.update(
+        draft_id for draft_id, _ in drafts if draft_id in netflix_sessions._committing
+    )
+    versions = {version for _, version in drafts}
+    maker = async_sessionmaker(db.bind, expire_on_commit=False, class_=AsyncSession)
+    async with maker() as signal_db:
+        for version in versions:
+            if version is None:
+                continue
+            await signal_db.execute(update(MediaServerConnection).where(
+                MediaServerConnection.id == conn.id,
+                MediaServerConnection.user_id == conn.user_id,
+                MediaServerConnection.identity_version == version,
+            ).values(identity_version=MediaServerConnection.identity_version + 1))
+        await signal_db.commit()
 
 
 async def cancel_connection_imports(db, conn):
@@ -341,7 +365,7 @@ async def finish_import(db, session, *, validate=False):
             or conn.identity_version != payload.get('identity_version')):
         if validate:
             raise ValueError('This connection changed. Cancel this import and sync the connection again.')
-        return
+        raise netflix_sessions.ImportCancelled()
     baseline = await db.get(StreamBaseline, connection_id)
     if validate and (not baseline or (baseline.snapshot or {}).get('import_session_id') != session.id):
         raise ValueError('This connection snapshot changed. Cancel this import and sync the connection again.')
