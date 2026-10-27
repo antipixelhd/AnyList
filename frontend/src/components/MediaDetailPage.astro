@@ -14,6 +14,7 @@ import Icon from './Icon.astro';
 import ImageLightbox from './ImageLightbox.astro';
 import MediaDetailSeasons from './MediaDetailSeasons.astro';
 import MediaDetailDlc from './MediaDetailDlc.astro';
+import MediaDetailAchievements from './MediaDetailAchievements.astro';
 import '../styles/game-detail-dlc.css';
 import MediaDetailFacts from './MediaDetailFacts.astro';
 import MediaDetailPerson from './MediaDetailPerson.astro';
@@ -46,20 +47,23 @@ const poster=responsiveArtwork(title?.poster,{size:'w500',sizes:'(max-width:650p
 const backdrop=responsiveArtwork(title?.backdrop,{size:'original',route:'direct'});
 const reserveBackdrop=!!backdrop||!!(screenTitle&&title?.background_status?.state!=='ready');
 const facts=title?detailFacts(title):[];
-const synopsis=detailSynopsis(title?.overview);
+const synopsis=detailSynopsis(title?.overview,gameTitle);
 const people=title?[...title.people,...title.organizations]:[];
 const credits=title?detailCredits(title):null;
 const gameCast=gameTitle&&credits?gameCastData(credits.cast,title?.game_characters||[],title?.game_credit_status,title?.game_character_status):null;
 const gamePeopleEmpty=!!gameCast&&gameCast.availability.actors==='empty'&&gameCast.availability.characters==='empty'&&!people.length;
 const preview=gameCast?.[gameCast.mode].length?gameCast[gameCast.mode].slice(0,8):credits?.preview||[];
-const artwork=[...new Set((title?.artwork||[]).filter(Boolean))].slice(0,10) as string[];
+const allArtwork=[...new Set((title?.artwork||[]).filter(Boolean))] as string[];
+const artwork=gameTitle?allArtwork:allArtwork.slice(0,10);
 const scenes=artwork.filter(url=>url!==title?.backdrop);
-const scene=title?.artwork_preview?.image||scenes[0];
+const scene=title?.artwork_preview?.image||scenes[0]||(gameTitle?title?.backdrop:null);
 const sceneThumbnail=title?.artwork_preview?.thumbnail||title?.artwork_thumbnails?.[scene||''];
+const achievementSummary=title?.entry?.achievements||title?.game_state?.achievements||{};
+const achievementsVisible=!!achievementSummary.mode||!!achievementSummary.total||Astro.url.searchParams.get('tab')==='achievements';
 const creators=detailCreators(people);
 const typeHref=title&&detailBrowseHref(title.type);
 const yearHref=title?.year&&detailBrowseHref(title.type,{year:title.year});
-const tabs=[{id:'overview',label:'Overview'},...(title?.type==='series'?[{id:'seasons',label:'Seasons'}]:[]),...(gameTitle&&!gameChild&&trackable?[{id:'dlc',label:'DLC'}]:[]),...(signedIn&&trackable?[{id:'social',label:'Social'}]:[]),...(trackable||people.length?[{id:'people',label:trackable?'Cast & crew':'Creators'}]:[]),...(screenTitle||artwork.length?[{id:'artwork',label:'Artwork'}]:[])];
+const tabs=[{id:'overview',label:'Overview'},...(title?.type==='series'?[{id:'seasons',label:'Seasons'}]:[]),...(gameTitle&&!gameChild&&trackable?[{id:'dlc',label:'DLC'},...(signedIn?[{id:'achievements',label:'Achievements'}]:[])]:[]),...(signedIn&&trackable?[{id:'social',label:'Social'}]:[]),...(trackable||people.length?[{id:'people',label:trackable?'Cast & crew':'Creators'}]:[]),...(screenTitle||artwork.length?[{id:'artwork',label:'Artwork'}]:[])];
 const initialTab=tabs.find(tab=>tab.id===Astro.url.searchParams.get('tab')&&!(tab.id==='people'&&gamePeopleEmpty))?.id||'overview';
 // Discover only the primary preview in the head, ahead of the large credit JSON.
 const initialArtwork=[poster,backdrop].filter(Boolean).map(image=>({...image,priority:'high'}));
@@ -98,7 +102,7 @@ const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
     </aside>
     <div class="lab-main">
       {title.base_game&&<a class="game-base-link" href={`/games/${title.base_game.id}`}><span>Base game</span><strong>{title.base_game.title}</strong><Icon name="arrow-right"/></a>}
-      <div class="lab-section-navigation"><div class="lab-tabs" role="tablist" aria-label="Media details">{tabs.map(tab=><button type="button" role="tab" id={`detail-tab-${tab.id}`} aria-controls={`detail-panel-${tab.id}`} aria-selected={tab.id===initialTab} tabindex={tab.id===initialTab?0:-1} data-detail-tab={tab.id} disabled={tab.id==='people'&&gamePeopleEmpty}>{tab.label}</button>)}</div></div>
+      <div class="lab-section-navigation"><div class="lab-tabs" role="tablist" aria-label="Media details">{tabs.map(tab=><button type="button" role="tab" id={`detail-tab-${tab.id}`} aria-controls={`detail-panel-${tab.id}`} aria-selected={tab.id===initialTab} tabindex={tab.id===initialTab?0:-1} data-detail-tab={tab.id} hidden={tab.id==='achievements'&&!achievementsVisible} disabled={tab.id==='people'&&gamePeopleEmpty||tab.id==='achievements'&&!achievementsVisible}>{tab.label}</button>)}</div></div>
       <div data-detail-panels>
         <div class="lab-panel" id="detail-panel-overview" role="tabpanel" aria-labelledby="detail-tab-overview" data-detail-panel="overview" hidden={initialTab!=='overview'}>
           <div class="lab-overview-grid">
@@ -124,6 +128,7 @@ const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
           </div>
         </div>
         {gameTitle&&!gameChild&&trackable&&<section class="lab-panel" id="detail-panel-dlc" role="tabpanel" aria-labelledby="detail-tab-dlc" data-detail-panel="dlc" hidden={initialTab!=='dlc'}><MediaDetailDlc/></section>}
+        {gameTitle&&!gameChild&&trackable&&signedIn&&<section class="lab-panel" id="detail-panel-achievements" role="tabpanel" aria-labelledby="detail-tab-achievements" data-detail-panel="achievements" hidden={initialTab!=='achievements'}><MediaDetailAchievements id={title.id}/></section>}
         {title.type==='series'&&<section class="lab-panel" id="detail-panel-seasons" role="tabpanel" aria-labelledby="detail-tab-seasons" data-detail-panel="seasons" hidden={initialTab!=='seasons'}><MediaDetailSeasons title={title} signedIn={signedIn} removeSpecials={removeSpecials}/></section>}
         {signedIn&&trackable&&<section class="lab-panel" id="detail-panel-social" role="tabpanel" aria-labelledby="detail-tab-social" data-detail-panel="social" hidden={initialTab!=='social'}><div data-detail-social><p class="section-empty">Loading social activity…</p></div></section>}
         {(trackable||!!people.length)&&<section class="lab-panel" id="detail-panel-people" role="tabpanel" aria-labelledby="detail-tab-people" data-detail-panel="people" hidden={initialTab!=='people'}><p class="detail-load-status" data-detail-people-status hidden></p>{credits&&<><MediaDetailCredits label={gameCast?.mode==='characters'?'Characters':'Cast'} rows={gameCast?gameCast[gameCast.mode]:credits.cast} id="cast" gameCast={gameCast} gameCharacters={title.game_characters} loading={(screenTitle||gameTitle&&!!title.game_credit_status?.pending)&&!credits.cast.length}/><MediaDetailCredits label={trackable?'Crew':'Creators'} rows={credits.principal} id="crew"/><MediaDetailCredits label="Studios" rows={credits.studios} id="studios" limit={6}/></>}</section>}

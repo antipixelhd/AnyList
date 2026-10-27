@@ -23,6 +23,16 @@ def fixture(name):
 
 
 class NormalizationTests(unittest.TestCase):
+    def test_game_scenes_use_typed_dimensions_and_keep_every_gallery_asset(self):
+        raw={'id':1,'name':'Scene fixture','game_type':{'id':0},
+            'screenshots':[{'url':'https://cdn.test/scene.jpg','width':1920,'height':1080}],
+            'artworks':[{'url':'https://cdn.test/logo.jpg','width':5981,'height':920},
+                        {'url':'https://cdn.test/square.jpg','width':256,'height':256},
+                        {'url':'https://cdn.test/art.jpg','width':1920,'height':1080}]}
+        attrs=normalize.normalize_igdb(raw)['work']['attributes']
+        self.assertEqual(attrs['scene_artwork'],['https://cdn.test/scene.jpg','https://cdn.test/art.jpg'])
+        self.assertEqual(len(attrs['artwork']),4)
+        self.assertEqual(attrs['artwork'][0],'https://cdn.test/scene.jpg')
     def test_game_platform_availability_includes_verified_ports_without_copying_remakes(self):
         raw={'id':1960,'name':'Original','game_type':{'id':0},'platforms':[{'id':7,'name':'PlayStation'}],
              'ports':[{'id':266501,'game_type':{'id':11},'platforms':[{'id':6,'name':'PC (Microsoft Windows)'}]},
@@ -148,6 +158,16 @@ class NormalizationTests(unittest.TestCase):
 
 
 class ClientTests(unittest.IsolatedAsyncioTestCase):
+    async def test_wikidata_query_cooldown_does_not_block_exact_entity_reads(self):
+        providers._local_next.clear()
+        async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request:
+            httpx.Response(429,headers={'Retry-After':'300'},json={}) if request.url.host=='query.wikidata.org'
+            else httpx.Response(200,json={'entities':{}}))) as client:
+            api=providers.ProviderHTTP(client)
+            with self.assertRaises(providers.ProviderError):
+                await api.request('wikidata','POST','https://query.wikidata.org/sparql',data={'query':'fixture'},cache=False)
+            self.assertEqual(await api.request('wikidata','GET','https://www.wikidata.org/w/api.php',cache=False),{'entities':{}})
+        providers._local_next.clear()
     async def test_tvdb_enriches_principals_and_verified_studios_without_fetching_supporting_people(self):
         from core import tvdb
         raw={'id':1,'name':'Movie','characters':[

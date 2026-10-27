@@ -560,7 +560,7 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len((await self.client.get('/tracking/games/users/player/activity')).json()['results']), 2)
 
     async def test_game_following_and_social_enforce_privacy_and_exclude_unlisted_children(self):
-        await self.save(status='completed', score=9)
+        row = await self.save(status='completed', score=9, total_seconds=0)
         child = await self.client.patch(f'/tracking/games/children/{self.child}', json={'status': 'completed', 'score': 8})
         self.assertEqual(child.status_code, 200, child.text)
         async with self.Session() as db:
@@ -571,6 +571,12 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({row['media']['id'] for row in feed}, {self.base, self.child})
         social = (await self.client.get(f'/tracking/games/works/{self.base}/social')).json()
         self.assertEqual([person['username'] for person in social['people']], ['player'])
+        self.assertEqual(social['people'][0]['total_seconds'], 0)
+        self.viewer = self.user
+        row = await self.save(revision=row['revision'], total_seconds=7200)
+        self.viewer = self.other
+        social = (await self.client.get(f'/tracking/games/works/{self.base}/social')).json()
+        self.assertEqual(social['people'][0]['total_seconds'], 7200)
         self.assertEqual(social['activities'], [])
         self.assertEqual([row['user_id'] for row in social['following_activities']], [self.user.id])
         async with self.Session() as db:
@@ -591,6 +597,26 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(removed.status_code, 200)
         visible = (await self.client.get('/tracking/games/users/player/activity')).json()['results']
         self.assertEqual([row['media']['id'] for row in visible], [self.base])
+
+    async def test_late_first_completion_fact_reprojects_old_activity_without_replacing_it(self):
+        row=await self.save(status='completed',finish_date='2000-01-01',total_seconds=36000)
+        async with self.Session() as db:
+            activity=await db.scalar(select(GameActivity).where(GameActivity.work_id==self.base))
+            activity.created_at=datetime.now(timezone.utc).replace(tzinfo=None)-timedelta(days=2)
+            await db.commit()
+        path='/tracking/games/users/player/activity'
+        original=(await self.client.get(path)).json()['results']
+        self.assertIsNone(original[0]['payload']['completion_seconds'])
+        for seconds in (7200,3600,0,None):
+            row=await self.save(revision=row['revision'],completion_seconds=seconds)
+            current=(await self.client.get(path)).json()['results']
+            self.assertEqual(len(current),1)
+            self.assertEqual(current[0]['key'],original[0]['key'])
+            self.assertEqual(current[0]['created_at'],original[0]['created_at'])
+            self.assertEqual(current[0]['payload']['completion_seconds'],seconds)
+            self.assertEqual(row['total_seconds'],36000)
+            social=(await self.client.get(f'/tracking/games/works/{self.base}/social')).json()
+            self.assertEqual(social['activities'][0]['payload']['completion_seconds'],seconds)
 
     async def test_visibility_does_not_block_direct_links_or_public_profiles_and_notes_stay_private(self):
         await self.save(notes='Private note', status='playing')

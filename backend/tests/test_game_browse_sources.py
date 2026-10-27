@@ -139,7 +139,7 @@ class RankingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.api.igdb.await_count,1)
         query=self.api.igdb.await_args.args[1]
         self.assertTrue(query.startswith('search "Elden";'));self.assertIn('offset 100;',query)
-        for arguments in ({'search_mode':True},{'search_mode':2},{'search_mode':1,'q':'single'}):
+        for arguments in ({'search_mode':True},{'search_mode':2},{'search_mode':1,'q':'tiny'}):
             with self.assertRaises(ProviderError):await self.api.catalogue_feed('popular',**({'q':'Elden R'}|arguments))
 
     async def test_partial_timeline_uses_one_broader_mode_for_the_whole_finalized_window(self):

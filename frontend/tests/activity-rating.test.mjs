@@ -8,9 +8,18 @@ const trackerSource = readFileSync(new URL('../src/lib/tracker.ts', import.meta.
   .replace('"./responsive-artwork"', JSON.stringify(new URL('../src/lib/responsive-artwork.ts', import.meta.url).href))
   .replace("'./date-time'", JSON.stringify(new URL('../src/lib/date-time.ts', import.meta.url).href))
   .replaceAll("'./tracking-statuses.ts'", JSON.stringify(new URL('../src/lib/tracking-statuses.ts', import.meta.url).href));
-const {activityRating, activityAction,trackedWorkHref} = await import(
+const {activityRating, activityAction,activityCompletionSuffix,trackedWorkHref} = await import(
   `data:text/javascript;base64,${Buffer.from(stripTypeScriptTypes(trackerSource)).toString('base64')}`
 );
+
+test('completion suffix uses only first completion, including zero, and clears on unknown',()=>{
+  const activity={media:{type:'game'},status:'completed',payload:{status_changed:true,total_seconds:999999,completion_seconds:7200}};
+  assert.equal(activityCompletionSuffix(activity),' with 2 hours');
+  assert.equal(activityCompletionSuffix({...activity,payload:{...activity.payload,completion_seconds:0}}),' with 0 hours');
+  assert.equal(activityCompletionSuffix({...activity,payload:{...activity.payload,completion_seconds:null}}),'');
+  assert.equal(activityCompletionSuffix({...activity,payload:{hours_changed:true,completion_seconds:7200}}),'');
+  assert.equal(activityCompletionSuffix({...activity,media:{type:'movie'}}),'');
+});
 
 test('game activity uses game wording and typed work links even when ids overlap movies',()=>{
   assert.equal(trackedWorkHref({id:7,type:'game'}),'/games/7');

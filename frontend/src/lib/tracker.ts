@@ -61,6 +61,12 @@ export function activityRating(activity: any) {
   return { previous, current, label };
 }
 
+export function activityCompletionSuffix(activity:any){
+  const seconds=activity.payload?.completion_seconds;
+  return activity.media?.type==='game'&&activity.status==='completed'&&activity.payload?.status_changed&&seconds!=null
+    ? ` with ${new Intl.NumberFormat(undefined,{maximumFractionDigits:1}).format(seconds/3600)} hours` : '';
+}
+
 export function activityAction(activity: any) {
   const details = activity.payload || {};
   if(activity.media?.type==='game'){

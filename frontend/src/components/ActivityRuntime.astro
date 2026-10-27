@@ -1,0 +1,21 @@
+<script>
+import {activityCompletionSuffix} from '../lib/tracker';
+let listeners:AbortController|undefined;
+function mount(){
+  listeners?.abort();listeners=new AbortController();const {signal}=listeners;
+  document.addEventListener('click',event=>{
+    const button=(event.target as Element).closest<HTMLButtonElement>('[data-activity-playtime]');
+    if(!button)return;
+    document.dispatchEvent(new CustomEvent('anylist:open-editor',{detail:{subject:{kind:'game',catalogue_id:Number(button.dataset.activityPlaytime)},opener:button}}));
+  },{signal});
+  document.addEventListener('anylist:editor-state',event=>{
+    const title=(event as CustomEvent).detail;if(title.type!=='game')return;
+    for(const card of document.querySelectorAll<HTMLElement>('[data-game-completion][data-activity-own="true"]')){
+      if(Number(card.dataset.gameActivityId)!==title.id)continue;
+      card.querySelector('[data-activity-completion]')!.textContent=activityCompletionSuffix({media:{type:'game'},status:'completed',payload:{status_changed:true,completion_seconds:(title.entry||title.game_state)?.completion_seconds}});
+    }
+  },{signal});
+}
+mount();document.addEventListener('astro:page-load',mount);
+document.addEventListener('astro:before-swap',()=>listeners?.abort());
+</script>

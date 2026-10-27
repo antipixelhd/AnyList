@@ -10,6 +10,19 @@ const context={Intl,Date,URLSearchParams,countryLabel,formatDate,localToday};
 runInNewContext(stripTypeScriptTypes(source.replace(/^import .*$/gm,'').replace(/export /g,''))+';globalThis.api={localMediaId,prepareDetail,detailCredits,detailCreditEpisodes,detailCreditText,detailCreditDescription,detailOrganizationFacts,durationLabel,detailDate,detailSynopsis,progressTotal,detailFacts,relationLabel,moneyLabel,detailWorkCaption,detailCastPresentation,detailBrowseHref,detailCreators};',context);
 const {api}=context;
 
+test('Games overview collapses at the first paragraph without truncating or losing stored text',()=>{
+  for(const separator of ['\n\n','\r\n\r\n','\n \n']){
+    const lead='First paragraph. '+Array(150).fill('word').join(' '),full=lead+separator+'Second paragraph.\n\nThird.';
+    const result=api.detailSynopsis(full,true);
+    assert.equal(result.lead,lead);assert.equal(result.lead+result.rest,full);
+    assert.equal(result.expandable,true);assert.equal(result.shortened,false);
+  }
+  for(const full of ['','Short synopsis.','One paragraph\nwith a line break.']){
+    const result=api.detailSynopsis(full,true);
+    assert.equal(result.lead,full);assert.equal(result.rest,'');assert.equal(result.expandable,false);
+  }
+});
+
 test('full game crew jobs keep expansion qualifiers, while screen and character subtitles retain existing presentation',()=>{
   const person={name:'Composer',characters:[],roles:['Music department'],jobs:['composer: main game','composer: Blood and Wine expansion']};
   assert.equal(api.detailCreditText(person),'composer: main game · composer: Blood and Wine expansion');

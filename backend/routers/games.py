@@ -528,9 +528,9 @@ async def profile_activity(username: str, db: DB, viewer: Viewer,
 @router.get('/works/{work_id}/social')
 async def game_social(work_id: WorkId, db: DB, viewer: Reader) -> dict:
     from core import game_activity
-    await tracking.work(db, work_id)
+    work=await tracking.work(db, work_id)
     people = await game_activity.social_people(db, viewer.id, work_id)
-    return {'people': people,
+    return {'people': people,'game_class':capabilities(work.attributes).game_class,
         'activities': await game_activity.rows(db, [viewer.id], limit=30, work_id=work_id),
         'following_activities': await game_activity.rows(db, game_activity.following_ids(viewer.id),
             limit=30, work_id=work_id, public_only=True)}

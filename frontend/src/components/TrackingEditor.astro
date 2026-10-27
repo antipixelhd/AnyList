@@ -23,16 +23,16 @@ import EditorSelect from './EditorSelect.astro';
       <div class="editor-status-field"><label id="editor-status-label" for="editor-status-trigger">Status</label><EditorSelect id="editor-status" name="status" label="Status" labelledBy="editor-status-label" options={statuses} value="watching"/></div>
       <div class="editor-score-field"><label for="editor-manual-score">Score</label><NumberStepper id="editor-manual-score" name="manual_score" label="Score" min={0} max={10} step={0.1} value={0} score/></div>
       <div id="progress-field" class="editor-number-field"><label for="editor-progress">Episode progress</label><NumberStepper id="editor-progress" name="progress" label="Episode progress"/></div>
-      <div class="editor-number-field" data-game-only data-game-main hidden><label for="game-total-hours">Total time (hours)</label><NumberStepper id="game-total-hours" name="game_total_hours" label="Total time in hours" step="any"/></div>
-      <div class="game-first-completion" data-game-only data-game-first hidden><div class="game-field-heading"><label for="game-first-hours">First completion time</label><button type="button" class="game-value-button" data-game-first-edit>Add</button></div><div class="editor-number-field" data-game-first-input hidden><NumberStepper id="game-first-hours" name="game_first_hours" label="First completion time in hours" step="any"/></div></div>
+      <div class="editor-number-field" data-game-only data-game-main hidden><label for="game-total-hours">Total time (hours)</label><NumberStepper id="game-total-hours" name="game_total_hours" label="Total time in hours" step="any"/>
+        <div class="game-first-completion" data-game-first hidden><div class="game-field-heading"><label for="game-first-hours">First completion</label><button type="button" class="game-value-button" data-game-first-edit>Add</button></div><div class="editor-number-field" data-game-first-input hidden><NumberStepper id="game-first-hours" name="game_first_hours" label="First completion time in hours" step="any"/></div></div>
+      </div>
       <div class="editor-number-field" data-game-only data-game-main hidden><label for="game-replays">Replay count</label><NumberStepper id="game-replays" name="game_replays" label="Replay count" max={2147483647}/></div>
       <section class="wide game-achievement-editor" data-game-only data-game-main hidden aria-label="Achievement progress">
         <div class="game-field-heading"><span>Achievements</span><button type="button" class="game-value-button" data-game-achievement-add>Add</button><button type="button" class="game-value-button" data-game-achievement-remove hidden aria-label="Remove achievement progress">Remove</button></div>
         <div class="game-achievement-controls" data-game-achievement-controls hidden>
           <div data-game-achievement-mode-field hidden><EditorSelect id="game-achievement-mode" name="game_achievement_mode" label="Achievement tracking"/></div>
           <input name="game_achievement_count" type="hidden"/><input name="game_achievement_percentage" type="hidden"/>
-          <div class="game-achievement-value"><button type="button" class="game-value-button" data-game-achievement-value aria-label="Edit achievement progress"></button><input type="number" min="0" step="1" inputmode="decimal" data-game-achievement-number aria-label="Achievement progress" hidden/></div>
-          <input class="game-achievement-slider" type="range" min="0" step="1" data-game-achievement-slider aria-label="Achievement progress"/>
+          <div class="game-achievement-value"><NumberStepper id="game-achievement-value" name="game_achievement_value" label="Achievement progress"/><span id="game-achievement-maximum" data-game-achievement-maximum></span></div>
           <div data-game-targeted hidden><p class="game-achievement-guidance" data-game-achievement-guidance></p><div class="game-achievement-options" data-game-achievement-options></div><p role="status" data-game-achievement-status hidden></p><button type="button" class="lab-text-button" data-game-achievement-more hidden>Load more</button></div>
         </div>
       </section>

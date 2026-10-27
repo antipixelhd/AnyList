@@ -27,7 +27,7 @@ class Provider:
             'game_type':{'id':0,'type':'Main Game'},'cover':{'url':'https://images.igdb.com/igdb/image/upload/t_thumb/source.jpg'},
             'genres':[{'id':5,'name':'Adventure'}],'platforms':[{'id':6,'name':'PC (Microsoft Windows)'}],
             '_coverage':{'primary_complete':True,'source_game_id':native,'characters_complete':False,
-                'release_precision_version':1,'children_complete':True}}
+                'release_precision_version':1,'artwork_policy_version':1,'children_complete':True}}
         raw.update(self.dates)
         if on_primary:await on_primary(normalize_igdb(raw),{'game':deepcopy(raw)})
         self.optional_active+=1;self.optional_max=max(self.optional_max,self.optional_active)
@@ -266,6 +266,7 @@ class SourceCheckpointTests(unittest.IsolatedAsyncioTestCase):
     async def test_real_igdb_adapter_publishes_root_and_edition_primary_before_character_request_finishes(self):
         for edition in (False,True):
             api=CatalogueProviders()
+            api.validate=lambda *args:None  # Transport is mocked; never require real provider credentials.
             root={'id':119133,'name':'Primary game','game_type':{'id':0,'type':'Main Game'}}
             api.igdb=AsyncMock(side_effect=[[{'id':555,'name':'Edition','version_parent':119133}],[root]] if edition else [[root]])
             entered,release=asyncio.Event(),asyncio.Event()

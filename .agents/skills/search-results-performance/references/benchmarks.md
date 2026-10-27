@@ -14,6 +14,8 @@ Trusted `--baseline-ref` comparisons load the affected contributor identity/deta
 
 `game_person_cached` includes a fresh completed automatic-discovery attempt for its cached IMDb source generation and a fresh unresolved person-identity check. It measures repeat page reads after discovery, including a compact discovery-job header when source identities remain unresolved and a small identity-check field from the same component read; it does not measure first admission or provider mapping latency. The initial fetch-to-discovery/identity handoff, bounded continuation, cancellation, failures and identity/exclusion correctness are covered by `test_game_imdb_discovery_pg`, `test_game_imdb_discovery_source` and `test_game_person_identity_pg`. Keep initial admission separate from this zero-provider, zero-write cached-read workload.
 
+Run `game_credits` separately from Games search/browse cases when measuring only the cached credit projection. Combining them gives the shared first-game fixture an IGDB identity and can admit unrelated primary metadata hydration, including its wait budget. Report that combined workload explicitly rather than interpreting its latency as credit-projection cost. The source tests also cover bounded exact-ID Wikidata statement-search recovery, independent WDQS/Action API cooldowns and verification against actual claims; the cached-person benchmark does not exercise that fallback.
+
 | Affected path | Useful existing cases |
 |---|---|
 | Title retrieval/ranking/runtime | `movie_exact`, `movie_typo`, `series_exact`, `combined_titles`, `empty_query`, `runtime_timeout` |

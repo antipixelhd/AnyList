@@ -1,7 +1,7 @@
 """Public game activity is a projection of verified changes, never editor input."""
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import and_, or_, select, func
+from sqlalchemy import and_, or_, select, func, literal
 
 from core.catalogue_normalize import image
 from models import User, UserProfileData, Follow
@@ -66,7 +66,8 @@ async def record(db, row, before, after):
 
 async def rows(db, user_ids, *, limit=60, work_id=None, public_only=False):
     query = (select(GameActivity, CatalogueEntity.id, CatalogueEntity.name, CatalogueEntity.image_url,
-        User.username, UserProfileData.display_name, UserProfileData.avatar_path)
+        User.username, UserProfileData.display_name, UserProfileData.avatar_path, GameEntry.completion_seconds,
+        CatalogueEntity.attributes['game_class'].astext)
         .join(CatalogueEntity, CatalogueEntity.id == GameActivity.work_id)
         .join(User, User.id == GameActivity.user_id)
         .outerjoin(UserProfileData, UserProfileData.user_id == User.id)
@@ -79,14 +80,17 @@ async def rows(db, user_ids, *, limit=60, work_id=None, public_only=False):
     if work_id is not None:
         query = query.where(GameActivity.work_id == work_id)
     result = []
-    for activity, work_id, title, poster, username, display_name, avatar_path in (await db.execute(query.order_by(
+    for activity, work_id, title, poster, username, display_name, avatar_path, completion_seconds, game_class in (await db.execute(query.order_by(
         GameActivity.created_at.desc(), GameActivity.id.desc()).limit(limit))).all():
         details = activity.payload or {}
         result.append(dict(key=f'game:{activity.user_id}:{work_id}:{details.get("window_started_at", activity.id)}',
             user_id=activity.user_id, username=username, display_name=display_name or username,
             has_avatar=bool(avatar_path), status=activity.status, score=activity.score,
-            payload={key: details[key] for key in PUBLIC_FIELDS if key in details}, created_at=activity.created_at,
-            media=dict(id=work_id, type='game', title=title, poster=image(poster))))
+            # Read the current first-completion fact through the existing owner/work
+            # join. Old events update retroactively without writes or reordering.
+            payload={**{key: details[key] for key in PUBLIC_FIELDS if key in details},
+                'completion_seconds': completion_seconds}, created_at=activity.created_at,
+            media=dict(id=work_id, type='game', game_class=game_class, title=title, poster=image(poster))))
     return result
 
 
@@ -97,17 +101,17 @@ def following_ids(viewer_id):
 async def social_people(db, viewer_id, work_id):
     from sqlalchemy import union_all
     membership = union_all(
-        select(GameEntry.user_id, GameEntry.status, GameEntry.score).where(GameEntry.work_id == work_id),
-        select(GameChildState.user_id, GameChildState.status, GameChildState.score).where(
+        select(GameEntry.user_id, GameEntry.status, GameEntry.score, GameEntry.total_seconds).where(GameEntry.work_id == work_id),
+        select(GameChildState.user_id, GameChildState.status, GameChildState.score, literal(None).label('total_seconds')).where(
             GameChildState.work_id == work_id, GameChildState.base_entry_id.is_not(None)),
     ).subquery()
     visible = or_(User.id == viewer_id, and_(User.id.in_(following_ids(viewer_id)), UserProfileData.privacy_level == PrivacyLevel.public))
-    data = (await db.execute(select(User.id, User.username, UserProfileData.display_name, UserProfileData.avatar_path, membership.c.status, membership.c.score)
+    data = (await db.execute(select(User.id, User.username, UserProfileData.display_name, UserProfileData.avatar_path, membership.c.status, membership.c.score, membership.c.total_seconds)
         .join(membership, membership.c.user_id == User.id)
         .outerjoin(UserProfileData, UserProfileData.user_id == User.id).where(visible))).all()
     rank = {status: index for index, status in enumerate(('completed', 'playing', 'paused', 'dropped', 'planning'))}
     people = [dict(id=user_id, username=username, display_name=display_name or username,
-        has_avatar=bool(avatar_path), status=status, score=score, self=user_id == viewer_id)
-        for user_id, username, display_name, avatar_path, status, score in data]
+        has_avatar=bool(avatar_path), status=status, score=score, total_seconds=total_seconds, self=user_id == viewer_id)
+        for user_id, username, display_name, avatar_path, status, score, total_seconds in data]
     people.sort(key=lambda row: (rank.get(row['status'], 99), row['score'] is None, -(row['score'] or 0), not row['self'], row['display_name'].casefold()))
     return people

@@ -54,6 +54,26 @@ class DiscoverySourceTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result['outcomes'][0]['document']['coverage']['credits_complete'])
         self.assertNotIn('search ',self.sources.igdb.await_args.args[1])
 
+    async def test_query_service_outage_recovers_exact_statement_candidates_and_verifies_claims(self):
+        self.http.request.side_effect=[ProviderError('rate_limited',3600),{'query':{'search':[{'title':'Q1'},{'title':'Q2'}]}}]
+        self.wiki.entities.return_value={'data':{'entities':{'Q1':mapped('Q1','tt1',10),'Q2':mapped('Q2','tt999',20)}},'stale':False}
+        self.sources.igdb.return_value=[raw(10)]
+        result=await self.api.page(['tt1','tt2'])
+        self.assertEqual([row['status'] for row in result['outcomes']],['verified','unmapped'])
+        self.assertEqual(self.http.request.await_count,2)
+        call=self.http.request.await_args
+        self.assertEqual(call.args,('wikidata','GET','https://www.wikidata.org/w/api.php'))
+        self.assertEqual(call.kwargs['params']['srsearch'],'haswbstatement:P345=tt1|P345=tt2')
+
+    async def test_index_fallback_truncation_and_missing_entities_are_not_verified_negatives(self):
+        for response in ({'query':{'search':[]},'continue':{'sroffset':50}},
+                         {'error':{'code':'maxlag'}},{'query':{'search':[{'title':{'bad':'Q1'}}]}}):
+            self.http.request.return_value=response
+            with self.assertRaises(ProviderError):await self.api.indexed_items(['tt1'])
+        self.http.request.return_value={'query':{'search':[{'title':'Q1'}]}}
+        self.wiki.entities.return_value={'data':{'entities':{}},'stale':False}
+        with self.assertRaises(ProviderError):await self.api.indexed_items(['tt1'])
+
     async def test_verified_expansion_fetches_its_typed_parent_and_ordinary_dlc_is_excluded(self):
         self.response([('tt1','Q1'),('tt2','Q2')])
         self.wiki.entities.return_value={'data':{'entities':{'Q1':mapped('Q1','tt1',10),'Q2':mapped('Q2','tt2',20)}},'stale':False}
@@ -89,7 +109,7 @@ class DiscoverySourceTests(unittest.IsolatedAsyncioTestCase):
         self.http.request.side_effect=ProviderError('unavailable')
         for _ in range(2):
             with self.assertRaisesRegex(ProviderError,'unavailable'):await self.api.page(['tt1'])
-        self.assertEqual(self.http.request.await_count,2);self.wiki.entities.assert_not_awaited()
+        self.assertEqual(self.http.request.await_count,4);self.wiki.entities.assert_not_awaited()
 
     async def test_redirected_candidates_share_one_verified_item_and_deprecated_claims_do_not_bind(self):
         self.response([('tt1','Q1'),('tt1','Q2')])

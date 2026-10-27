@@ -17,7 +17,7 @@ from core.wikidata_claims import best_claims,qualified,snak_value
 
 SIZE=20
 FIELDS=('id,name,slug,summary,first_release_date,game_type.type,version_parent,parent_game.name,parent_game.game_type.type,'
-    'cover.url,artworks.url,genres.name,platforms.name,platforms.platform_family.name,'
+    'cover.url,artworks.url,artworks.width,artworks.height,screenshots.url,screenshots.width,screenshots.height,genres.name,platforms.name,platforms.platform_family.name,'
     'involved_companies.developer,involved_companies.publisher,involved_companies.supporting,involved_companies.porting,'
     'involved_companies.company.name,involved_companies.company.logo.url,involved_companies.company.country,'
     'external_games.uid,external_games.url,external_games.external_game_source.name,'+RELEASE_FIELDS)
@@ -80,10 +80,14 @@ class GameIMDbDiscoverySource:
                 '?item p:P345 ?statement. ?statement ps:P345 ?title; wikibase:rank ?rank. '
                 'FILTER(?rank != wikibase:DeprecatedRank) } LIMIT 401')
             # Documented form POST keeps batch queries out of URL length limits.
-            raw=await self.sources.api.http.request('wikidata','POST','https://query.wikidata.org/sparql',
-                data={'query':query,'format':'json'},headers={
-                    'User-Agent':'AnyList catalogue/1 (https://github.com/antipixelhd/AnyList)',
-                    'Accept':'application/sparql-results+json'})
+            try:
+                raw=await self.sources.api.http.request('wikidata','POST','https://query.wikidata.org/sparql',
+                    data={'query':query,'format':'json'},headers={
+                        'User-Agent':'AnyList catalogue/1 (https://github.com/antipixelhd/AnyList)',
+                        'Accept':'application/sparql-results+json'})
+            except ProviderError as error:
+                if error.code not in ('rate_limited','unavailable','timeout'):raise
+                return await self.indexed_items(ids)
             rows=(raw.get('results') or {}).get('bindings') if isinstance(raw,dict) else None
             if not isinstance(rows,list) or len(rows)>=401:raise ProviderError('bad_response')
             result={value:[] for value in ids}
@@ -97,6 +101,32 @@ class GameIMDbDiscoverySource:
             return {'items':result}
         return await self.sources.cache.get('wikidata','game_imdb_reverse',key,load,
             ttl=timedelta(days=7),max_stale=timedelta(days=30))
+
+    async def indexed_items(self,ids):
+        # WikibaseCirrusSearch supports exact external-ID statement queries.
+        # Search only proposes QIDs; actual nondeprecated P345 claims below,
+        # and the existing bidirectional IGDB mapping, still prove identity.
+        raw=await self.sources.api.http.request('wikidata','GET','https://www.wikidata.org/w/api.php',params={
+            'action':'query','list':'search','srsearch':'haswbstatement:'+'|'.join('P345='+value for value in sorted(ids)),
+            'srnamespace':0,'srlimit':50,'srprop':'','format':'json','maxlag':5},headers={
+            'User-Agent':'AnyList catalogue/1 (https://github.com/antipixelhd/AnyList)'})
+        rows=(raw.get('query') or {}).get('search') if isinstance(raw,dict) else None
+        if isinstance(raw,dict) and (raw.get('error') or {}).get('code')=='maxlag':
+            raise ProviderError('rate_limited',60)
+        if not isinstance(rows,list) or raw.get('error') or raw.get('continue') or len(rows)>=50:
+            raise ProviderError('coverage_limited')
+        qids=[row.get('title') for row in rows if isinstance(row,dict)]
+        if len(qids)!=len(rows) or any(not isinstance(q,str) or not re.fullmatch(r'Q[1-9][0-9]*',q) for q in qids) or len(set(qids))!=len(qids):
+            raise ProviderError('bad_response')
+        fetched=await self.wiki.entities(qids) if qids else {'data':{'entities':{}},'stale':False}
+        if fetched.get('stale'):raise ProviderError('stale_mapping')
+        entities=fetched['data']['entities'];result={value:[] for value in ids}
+        if any(q not in entities for q in qids):raise ProviderError('incomplete_cache')
+        for q,item in entities.items():
+            claims={snak_value(row.get('mainsnak')) for row in best_claims(item,'P345')}
+            for native in ids:
+                if native in claims:result[native].append(q)
+        return {'items':result}
 
     async def games(self,ids=(),slugs=()):
         clauses=[]

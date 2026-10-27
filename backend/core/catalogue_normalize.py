@@ -372,6 +372,21 @@ def normalize_tvdb(raw, kind="series"):
     return project_selection(doc)
 
 
+def game_artwork(raw):
+    gallery, scenes = [], []
+    for field in ('screenshots','artworks'):
+        for row in raw.get(field) or []:
+            url=image(row)
+            if not url:continue
+            if url not in gallery:gallery.append(url)
+            width,height=(row.get(key) for key in ('width','height')) if isinstance(row,dict) else (None,None)
+            # Asset type and source dimensions establish scene suitability.
+            # Preserve logos, portraits and unusual crops in the full gallery.
+            if all(type(value) is int and value>0 for value in (width,height)) and 1.25<=width/height<=2.5:
+                if url not in scenes:scenes.append(url)
+    return {'artwork':gallery,'scene_artwork':scenes,'artwork_policy_version':1}
+
+
 def normalize_igdb(raw):
     from core.game_release_dates import game_release, release
     from core.game_store_source import igdb_age_ratings
@@ -395,7 +410,7 @@ def normalize_igdb(raw):
                 "genres": [g['name'] for g in raw.get('genres') or [] if isinstance(g,dict) and isinstance(g.get('name'),str)],
                 "genre_filters": {g['name'].casefold():f"igdb.genre:{g['id']}" for g in raw.get('genres') or []
                     if isinstance(g,dict) and isinstance(g.get('name'),str) and type(g.get('id')) is int and g['id']>0},
-                "artwork": [image(a) for a in raw.get("artworks") or []],
+                **game_artwork(raw),
                 **game_countries(raw),
             },
         )

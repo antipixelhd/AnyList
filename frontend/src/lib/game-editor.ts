@@ -11,9 +11,9 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
   const modeControl=setupEditorSelect(mode.closest<HTMLElement>('[data-editor-select]')!,signal);
   const total=input('game_total_hours'),first=input('game_first_hours'),replays=input('game_replays');
   const count=input('game_achievement_count'),percentage=input('game_achievement_percentage');
-  const slider=dialog.querySelector<HTMLInputElement>('[data-game-achievement-slider]')!;
-  const number=dialog.querySelector<HTMLInputElement>('[data-game-achievement-number]')!;
-  const valueButton=dialog.querySelector<HTMLButtonElement>('[data-game-achievement-value]')!;
+  const number=input('game_achievement_value');
+  const maximum=dialog.querySelector<HTMLElement>('[data-game-achievement-maximum]')!;
+  number.setAttribute('aria-describedby','game-achievement-maximum');
   const add=dialog.querySelector<HTMLButtonElement>('[data-game-achievement-add]')!;
   const remove=dialog.querySelector<HTMLButtonElement>('[data-game-achievement-remove]')!;
   const firstEdit=dialog.querySelector<HTMLButtonElement>('[data-game-first-edit]')!;
@@ -33,15 +33,15 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
   const summary=()=>current.achievements||{};
   const progress=()=>mode.value==='percentage'?Number(percentage.value||0):mode.value==='targeted'?exactCount():Number(count.value||0);
   function renderProgress(value=progress()) {
-    const percent=mode.value==='percentage',max=percent?100:Number(summary().total||0);
-    slider.max=number.max=String(max);slider.step=number.step=percent?'0.1':'1';
-    slider.value=number.value=String(value);slider.disabled=max===0;
-    slider.style.setProperty('--game-progress',`${max?value/max*100:0}%`);
-    const label=percent?`${Number(value.toFixed(1))}%`:`${value} / ${max}`;
-    valueButton.textContent=label;slider.setAttribute('aria-valuetext',percent?label:`${value} of ${max} achievements`);
+    const percent=mode.value==='percentage',max=percent?100:summary().total;
+    if(max==null)number.removeAttribute('max');else number.max=String(max);
+    number.step=percent?'0.1':'1';number.inputMode=percent?'decimal':'numeric';
+    number.value=String(value);
+    maximum.textContent=percent?'%':max==null?'':`/ ${max}`;
   }
   function renderFirst() {
     firstEdit.textContent=first.value?`${first.value} h · Edit`:'Add';
+    firstEdit.setAttribute('aria-label',first.value?`Edit first completion time: ${first.value} hours`:'Add first completion time');
   }
   const renderGuidance=()=>{
     const previous=summary().count;
@@ -99,10 +99,10 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
       summary().total===0&&!selected&&!initialMode;
     setVisible('[data-game-achievement-controls]',!!selected&&!child);
     add.hidden=!!selected;remove.hidden=!selected;
-    dialog.querySelector<HTMLElement>('[data-game-achievement-mode-field]')!.hidden=mode.options.length<=2;
+    dialog.querySelector<HTMLElement>('[data-game-achievement-mode-field]')!.hidden=[...mode.options].filter(option=>!option.hidden).length<2;
     // The hidden select must remain readable even while the optional panel is collapsed.
     mode.disabled=child;modeControl.sync();
-    number.hidden=true;valueButton.hidden=false;
+    number.required=!!selected;
     setVisible('[data-game-targeted]',selected==='targeted');
     if(selected==='targeted'){
       count.value=String(exactCount());renderGuidance();
@@ -112,16 +112,18 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
     shownMode=selected;
   }
   function modeOptions(selected:string){
-    mode.replaceChildren(new Option('Not tracked',''));
+    // Unset is form state, not a tracking mode. Only Add/Remove change it.
+    const unset=new Option('','');unset.hidden=true;unset.disabled=true;
+    mode.replaceChildren(unset);
     const known=summary().total!=null;
-    if(!known||initialMode==='percentage'||selected==='percentage')mode.add(new Option('Percentage','percentage'));
-    if(known)mode.add(new Option('Count','count'));
+    mode.add(new Option('Percentage','percentage'));
+    if(known||initialMode==='count'||selected==='count')mode.add(new Option('Count','count'));
     if(summary().definitions_available||initialMode==='targeted')mode.add(new Option('Individual','targeted'));
     mode.value=selected;
   }
   function applyCatalogue(data:AchievementCatalogue){
     if(data.total==null)return; // Missing source evidence cannot erase known capabilities.
-    if(progressPending||document.activeElement===number||document.activeElement===slider){pendingCatalogue=data;return;}
+    if(progressPending||document.activeElement===number){pendingCatalogue=data;return;}
     pendingCatalogue=undefined;
     const previous=summary(),selected=mode.value;
     if(data.total===previous.total&&data.definitions_available===previous.definitions_available)return;
@@ -139,7 +141,7 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
     }
     mode.value=summary().total!=null?'count':'percentage';
     if(!count.value)count.value='0';if(!percentage.value)percentage.value='0';
-    renderMode();slider.focus();
+    renderMode();number.focus();number.select();
   },{signal});
   remove.addEventListener('click',()=>{mode.value='';renderMode();add.focus();},{signal});
   mode.addEventListener('change',async()=>{
@@ -155,7 +157,8 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
   let progressPending=false;
   async function commitProgress(raw:string) {
     if(progressPending)return;
-    const max=mode.value==='percentage'?100:Number(summary().total||0);
+    if(raw.trim()==='')return;
+    const max=mode.value==='percentage'?100:summary().total??Infinity;
     const parsed=Number(raw),value=Math.min(max,Math.max(0,Number.isFinite(parsed)?parsed:progress()));
     const desired=mode.value==='percentage'?Math.round(value*10)/10:Math.round(value);
     if(mode.value==='targeted'&&desired!==exactCount()) {
@@ -170,16 +173,14 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
     }
     (mode.value==='percentage'?percentage:count).value=String(desired);renderProgress();
   }
-  slider.addEventListener('input',()=>{
-    if(mode.value!=='targeted')(mode.value==='percentage'?percentage:count).value=slider.value;
-    renderProgress(Number(slider.value));
+  number.addEventListener('input',()=>{
+    if(mode.value!=='targeted')(mode.value==='percentage'?percentage:count).value=number.value;
   },{signal});
-  slider.addEventListener('change',()=>{void commitProgress(slider.value);},{signal});
-  valueButton.addEventListener('click',()=>{valueButton.hidden=true;number.hidden=false;number.focus();number.select();},{signal});
-  number.addEventListener('blur',()=>{void commitProgress(number.value);number.hidden=true;valueButton.hidden=false;},{signal});
+  number.addEventListener('change',()=>{void commitProgress(number.value);},{signal});
+  number.addEventListener('blur',()=>{void commitProgress(number.value);},{signal});
   number.addEventListener('keydown',event=>{
     if(event.key==='Enter'){event.preventDefault();number.blur();}
-    if(event.key==='Escape'){event.preventDefault();event.stopPropagation();number.value=String(progress());number.blur();valueButton.focus();}
+    if(event.key==='Escape'){event.preventDefault();event.stopPropagation();number.value=String(progress());number.blur();}
   },{signal});
   loadMore.addEventListener('click',()=>{loadMore.textContent='Load more';void loadAchievements();},{signal});
   const syncFirst=()=>{
@@ -189,9 +190,21 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
     if(status==='completed'&&!totalTouched&&current.total_seconds==null&&first.value)total.value=first.value;
     renderFirst();
   };
-  firstEdit.addEventListener('click',()=>{firstInput.hidden=false;firstEdit.hidden=true;first.focus();first.select();},{signal});
+  let firstCorrection: {first:string;total:string;firstTouched:boolean;totalTouched:boolean}|undefined;
+  firstEdit.addEventListener('click',()=>{
+    firstCorrection={first:first.value,total:total.value,firstTouched,totalTouched};
+    firstInput.hidden=false;firstEdit.hidden=true;first.focus();first.select();
+  },{signal});
   firstInput.addEventListener('focusout',event=>{if(firstInput.contains(event.relatedTarget as Node)||!first.checkValidity())return;firstInput.hidden=true;firstEdit.hidden=false;renderFirst();},{signal});
-  first.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();first.blur();}},{signal});
+  first.addEventListener('keydown',event=>{
+    if(event.key==='Enter'){event.preventDefault();first.blur();}
+    if(event.key==='Escape'&&firstCorrection){
+      event.preventDefault();event.stopPropagation();
+      first.value=firstCorrection.first;total.value=firstCorrection.total;
+      firstTouched=firstCorrection.firstTouched;totalTouched=firstCorrection.totalTouched;
+      firstInput.hidden=true;firstEdit.hidden=false;renderFirst();firstEdit.focus();
+    }
+  },{signal});
   total.addEventListener('input',()=>{totalTouched=true;syncFirst();},{signal});
   first.addEventListener('input',()=>{firstTouched=true;if(!totalTouched&&current.total_seconds==null)total.value=first.value;renderFirst();},{signal});
   form.addEventListener('input',event=>{

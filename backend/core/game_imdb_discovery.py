@@ -137,9 +137,10 @@ class GamePersonDiscovery:
                 job.error_code=None;job.attempts=0;job.lease_token=job.lease_until=None
                 job.next_attempt_at=None if complete else now()+timedelta(seconds=2)
                 job.expires_at=now()+timedelta(days=1) if complete else None
-                if complete:
-                    from core.game_imdb_person import queue_projection
-                    await queue_projection(db,native)
+                # Publish each verified batch. A later provider failure must
+                # not hold already discovered participation behind completion.
+                from core.game_imdb_person import queue_projection
+                await queue_projection(db,native)
                 await db.commit()
             return 'ready' if complete else 'partial'
         except asyncio.CancelledError:

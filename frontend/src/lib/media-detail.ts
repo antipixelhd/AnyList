@@ -14,6 +14,7 @@ import {observeDeferredArtwork} from './visible-artwork';
 import {responsiveArtwork} from './responsive-artwork';
 import {gameProgress} from './game-progress';
 import {mountDetailDlc} from './media-detail-dlc';
+import {mountDetailAchievements} from './media-detail-achievements';
 import {mountGameTimeToBeat} from './game-time-to-beat';
 import {mountGameOffers} from './game-offers';
 import {mountGameRatings} from './game-ratings';
@@ -38,6 +39,7 @@ export function mountMediaDetail() {
   seedEditorPage();
   const info = JSON.parse(root.querySelector('#media-detail-data')!.textContent!);
   const loadDlc=mountDetailDlc(root,info.id,signal);
+  const loadAchievements=mountDetailAchievements(root,info.id,signal);
   const deferArtwork=observeDeferredArtwork(root,signal);
   mountDetailCast(root,signal,info);
   if(root.dataset.mediaKind==='game'){mountGameMetadata(root,info.id,signal);mountGameTimeToBeat(root,info.id,signal);mountGameOffers(root,info.id,signal);mountGameRatings(root,info.id,signal);mountGameInfo(root,info.id,signal,info.gameInfo);}
@@ -211,6 +213,7 @@ export function mountMediaDetail() {
     if(id==='seasons')loadEpisodeImages();
     if(id==='social')loadSocial();
     if(id==='dlc')loadDlc();
+    if(id==='achievements')loadAchievements();
   };
   selectTab(new URLSearchParams(location.search).get('tab') || 'overview',false);
   tabs.forEach((tab,index) => {

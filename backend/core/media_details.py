@@ -168,7 +168,8 @@ async def work_details(db, work, *, extras=True):
         return {'catalogue_id':work.id, 'people':list(people.values()), 'organizations':list(organizations.values()),
             **({'game_characters':game_characters,'game_character_status':game_character_status} if work.kind=='game' else {})}
     attrs = work.attributes or {}
-    artwork = [url for value in attrs.get('artwork') or [] if (url := image(value))]
+    artwork = [url for value in [*(attrs.get('artwork') or []),
+        *((attrs.get('scene_artwork') or []) if work.kind=='game' else [])] if (url := image(value))]
     posters = [work.image_url, *(attrs.get('posters') or [])]
     if work.kind in ('movie', 'series'):
         # Untagged legacy URLs cannot establish the requested image language.
@@ -278,8 +279,13 @@ async def catalogue_title(db, work, viewer_id=None, *, store_country=None, enque
             details['sources'].append({'name': 'Open Library', 'url': f'https://openlibrary.org/works/{native}'})
         elif identity.namespace == 'steam.app' and native.isdecimal():
             details['sources'].append({'name': 'Steam', 'url': f'https://store.steampowered.com/app/{native}/'})
+    scenes=[url for value in attrs.get('scene_artwork') or [] if (url:=image(value))]
+    selected=image(attrs.get('backdrop_path')) or (next(iter(details['artwork']),None) if 'attributes.artwork' in (work.protected_fields or []) else None)
+    backdrop=selected or next(iter(scenes if work.kind=='game' and attrs.get('artwork_policy_version')==1 else details['artwork']),None)
+    preview=next((url for url in scenes if url!=backdrop),backdrop) if work.kind=='game' else None
     return {**details, 'id': work.id, 'type': work.kind, 'title': work.name, 'overview': work.description,
-        'poster': image(work.image_url), 'backdrop': next(iter(details['artwork']), None),
+        'poster': image(work.image_url), 'backdrop': backdrop,
+        **({'artwork_preview':{'image':preview},'backdrop_fallbacks':scenes} if work.kind=='game' else {}),
         'release_date': attrs.get('release_date'), 'year': str(attrs.get('release_date') or '')[:4],
         'genres': [value if isinstance(value, str) else value.get('name') for value in attrs.get('genres') or []
             if isinstance(value, str) or (isinstance(value, dict) and value.get('name'))],

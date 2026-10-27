@@ -223,6 +223,9 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
     });
   };
   const watchLandscape=(button:HTMLButtonElement)=>{
+    // Games retain the provider's complete gallery. Scene selection is based
+    // on typed source evidence; a square extra must not remove a usable panel.
+    if(info.type==='game')return;
     const thumbnail=button.querySelector<HTMLImageElement>('img');
     if(!thumbnail)return;
     const inspect=()=>{

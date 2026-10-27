@@ -159,8 +159,12 @@ export function durationLabel(minutes?: number | null) {
 export function detailDate(value?: string | null) {
   return formatDate(value?.slice(0, 10));
 }
-export function detailSynopsis(value?: string | null) {
+export function detailSynopsis(value?: string | null, oneParagraph=false) {
   const full=(value||'').trim();
+  if(oneParagraph){
+    const end=full.search(/\r?\n\s*\r?\n/);
+    return {lead:end<0?full:full.slice(0,end),rest:end<0?'':full.slice(end),shortened:false,expandable:end>=0};
+  }
   const words=[...full.matchAll(/\S+/g)];
   const shortened=words.length>120;
   const end=shortened?words[119].index!+words[119][0].length:full.length;

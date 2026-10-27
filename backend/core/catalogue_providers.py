@@ -9,6 +9,7 @@ from collections import OrderedDict
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
+from urllib.parse import urlsplit
 
 import httpx
 from sqlalchemy import select, text, update, func
@@ -49,6 +50,7 @@ INTERVALS = {
     "tvmaze": 0.5,
     "steam": 0.5,
     "wikidata": 1.0,
+    "wikidata_query": 1.0,
     "imdb": 1.0,
 }
 SUPPORT = {
@@ -220,6 +222,9 @@ class ProviderHTTP:
             _local_next[provider] = max(_local_next.get(provider, 0), time.monotonic() + delay)
 
     async def request(self, provider, method, url, *, cache=True, **kwargs):
+        # WDQS and the Action API are separate services. A query-service 429
+        # must not prevent reading explicit entities from the Action API.
+        budget = 'wikidata_query' if provider=='wikidata' and urlsplit(url).hostname=='query.wikidata.org' else provider
         # Cache keys are digests, never raw credentials. Max 128 responses, 10m.
         key = hashlib.sha256(
             json.dumps(
@@ -239,7 +244,7 @@ class ProviderHTTP:
         try:
             for attempt in range(3):
                 try:
-                    async with self.lane(provider):
+                    async with self.lane(budget):
                         async with client.stream(method, url, **kwargs) as response:
                             status = response.status_code
                             headers = response.headers
@@ -262,7 +267,7 @@ class ProviderHTTP:
                             headers.get("Retry-After", ""), 2**attempt
                         )
                         if status == 429:
-                            await self.defer(provider, delay)
+                            await self.defer(budget, delay)
                         if attempt == 2 or delay > 5:
                             raise ProviderError(
                                 "rate_limited" if status == 429 else "unavailable",
@@ -320,7 +325,7 @@ class ProviderHTTP:
 
 IGDB_FIELDS = (
     'age_ratings.organization.name,age_ratings.rating_category.rating,'
-    "id,slug,name,summary,first_release_date,version_parent,parent_game.name,parent_game.game_type.type,game_type.type,cover.url,genres.name,artworks.url,platforms.name,platforms.platform_family.name,involved_companies.developer,involved_companies.publisher,involved_companies.supporting,involved_companies.porting,involved_companies.company.name,involved_companies.company.country,involved_companies.company.description,involved_companies.company.logo.url,external_games.uid,external_games.url,external_games.external_game_source.name,release_dates.date,release_dates.date_format.format,release_dates.y,release_dates.m,release_dates.d,release_dates.region,release_dates.platform.name,collections.name,"
+    "id,slug,name,summary,first_release_date,version_parent,parent_game.name,parent_game.game_type.type,game_type.type,cover.url,genres.name,artworks.url,artworks.width,artworks.height,screenshots.url,screenshots.width,screenshots.height,platforms.name,platforms.platform_family.name,involved_companies.developer,involved_companies.publisher,involved_companies.supporting,involved_companies.porting,involved_companies.company.name,involved_companies.company.country,involved_companies.company.description,involved_companies.company.logo.url,external_games.uid,external_games.url,external_games.external_game_source.name,release_dates.date,release_dates.date_format.format,release_dates.y,release_dates.m,release_dates.d,release_dates.region,release_dates.platform.name,collections.name,"
     + ",".join(
         f"{field}.{projection}"
         for field in (
@@ -462,7 +467,7 @@ class CatalogueProviders:
             return await search(self.http, query, page, limit)
         if provider == "igdb":
             from core.game_types import search_candidate, candidate_fields
-            from core.game_search import broader_query, matches_partial
+            from core.game_search import broader_query, matches_partial, rank
             fields=candidate_fields('id,name,cover.url,first_release_date,game_type.type')
             rows = await self.igdb(
                 "games",
@@ -481,7 +486,7 @@ class CatalogueProviders:
                     candidate=search_candidate(row)
                     if candidate and matches_partial(query,candidate['name']):
                         results.setdefault(candidate['external_id'],candidate)
-            return list(results.values())
+            return sorted(results.values(),key=lambda row:-rank(query,row['name']))
         if provider == "hardcover":
             d = await self.hardcover(
                 'query($q:String!,$page:Int!,$limit:Int!){ search(query:$q,query_type:"Book",page:$page,per_page:$limit){results} }',
@@ -603,7 +608,7 @@ class CatalogueProviders:
                         if x not in doc['work']['identities'])
                 return doc
             raw['_coverage']={'primary_complete':True,'source_game_id':str(raw['id']),
-                'characters_complete':False,'release_dates':'provider_projection','release_precision_version':1,'contributors':'companies_only',
+                'characters_complete':False,'release_dates':'provider_projection','release_precision_version':1,'artwork_policy_version':1,'contributors':'companies_only',
                 'children_complete':all(isinstance(raw.get(field,[]),list) and all(
                     isinstance(child,dict) and child.get('id') and child.get('name') and igdb_game_class(child)!='unknown'
                     for child in raw.get(field,[])) for field in ('dlcs','expansions'))}
