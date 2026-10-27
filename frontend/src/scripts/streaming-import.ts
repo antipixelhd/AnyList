@@ -37,7 +37,7 @@ type StreamingItem = {
   requires_watch_confirmation?: boolean;
   progress_reviewed?: boolean;
   suggested_movie_status?: "completed" | "dropped";
-  completion_evidence?: {finish_date: string | null; suggested_date: string | null};
+  completion_evidence?: {finish_date: string | null; suggested_date: string | null; default_completed?: boolean};
   source_title: string;
   source_dates?: string[];
   source_rows?: number;
@@ -866,9 +866,13 @@ function mountStreamingImport(app: HTMLElement) {
   window.addEventListener('pagehide', checkpoint, {signal: dateSignal.signal});
   mobileReview.addEventListener('change', () => render(), {signal: dateSignal.signal});
   const refreshFinishDate = setupCalendarDateInputs(finishDialog, dateSignal.signal, {returnFocus: 'trigger'});
+  finishDialog.addEventListener('click', event => {
+    if (event.target === finishDialog) void closeDialog(finishDialog, 'skip');
+  }, {signal: dateSignal.signal});
   async function confirmFinishDate(item: StreamingItem, reselectingCompleted = false) {
     if (!needsImportFinishDate(item, reselectingCompleted)) return;
     const input = finishDialog.querySelector<HTMLInputElement>('[data-date-iso]')!;
+    finishDialog.querySelector<HTMLElement>('h2')!.textContent = `When did you finish this ${item.kind === 'movie' ? 'movie' : 'series'}?`;
     input.value = importFinishDateSuggestion(item);
     refreshFinishDate();
     finishDialog.returnValue = '';

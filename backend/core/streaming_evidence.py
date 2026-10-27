@@ -132,7 +132,10 @@ def partial_tracking_status(item, today=None):
 
 def completion_evidence(item):
     dates = sorted(set(item.get('source_dates') or []))
-    result = {'suggested_date': dates[-1] if dates else None, 'finish_date': None}
+    result = {'suggested_date': dates[-1] if dates else None, 'finish_date': None,
+              'default_completed': (item.get('suggested_movie_status') != 'dropped'
+                                    and not item.get('requires_watch_confirmation') if item['kind'] == 'movie'
+                                    else default_show_status(item.get('seasons', [])) == 'completed')}
     if item['kind'] == 'movie':
         result['finish_date'] = dates[0] if dates else None
         return result
