@@ -12,6 +12,7 @@ from core.catalogue_providers import CatalogueProviders,ProviderHTTP
 from core.game_imdb_enrichment import now
 from core.game_types import capabilities
 from core.game_release_dates import VERSION as RELEASE_VERSION
+from core.catalogue_normalize import GAME_ARTWORK_VERSION
 from models.catalogue import CatalogueIdentity,MetadataSnapshot
 
 _flights={}
@@ -65,7 +66,7 @@ async def request(db,work,*,identities=None):
     row=await header(db,native);stamp=now()
     if row and row.entity_id not in (None,work.id):
         return None,{'state':'unavailable','primary_ready':False,'pending':False,'complete':False,'error':'identity_conflict','retry_after':0}
-    if (row and row.fetched_at and (row.release_precision_version!=RELEASE_VERSION or row.artwork_policy_version!=1) and not row.next_attempt_at
+    if (row and row.fetched_at and (row.release_precision_version!=RELEASE_VERSION or row.artwork_policy_version!=GAME_ARTWORK_VERSION) and not row.next_attempt_at
             and not (row.lease_until and row.lease_until>stamp) and row.expires_at and row.expires_at>stamp):
         await db.execute(update(MetadataSnapshot).where(MetadataSnapshot.provider=='igdb',MetadataSnapshot.kind=='game',
             MetadataSnapshot.external_id==native,MetadataSnapshot.next_attempt_at.is_(None),

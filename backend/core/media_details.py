@@ -5,7 +5,7 @@ from urllib.parse import urlsplit
 from sqlalchemy import or_, select
 from sqlalchemy.orm import load_only
 
-from core.catalogue_normalize import image
+from core.catalogue_normalize import image,GAME_ARTWORK_VERSION
 from core.media_images import provider_images, unique_images
 from core.screen_characters import character_images, role_image_candidates
 from core.studio_names import studio_name
@@ -281,7 +281,7 @@ async def catalogue_title(db, work, viewer_id=None, *, store_country=None, enque
             details['sources'].append({'name': 'Steam', 'url': f'https://store.steampowered.com/app/{native}/'})
     scenes=[url for value in attrs.get('scene_artwork') or [] if (url:=image(value))]
     selected=image(attrs.get('backdrop_path')) or (next(iter(details['artwork']),None) if 'attributes.artwork' in (work.protected_fields or []) else None)
-    backdrop=selected or next(iter(scenes if work.kind=='game' and attrs.get('artwork_policy_version')==1 else details['artwork']),None)
+    backdrop=selected or next(iter(scenes if work.kind=='game' and attrs.get('artwork_policy_version') in (1,GAME_ARTWORK_VERSION) else details['artwork']),None)
     preview=next((url for url in scenes if url!=backdrop),backdrop) if work.kind=='game' else None
     return {**details, 'id': work.id, 'type': work.kind, 'title': work.name, 'overview': work.description,
         'poster': image(work.image_url), 'backdrop': backdrop,

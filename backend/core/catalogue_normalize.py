@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 from core.countries import country_codes, game_countries, numeric_country, screen_countries
 from core.studio_names import studio_name, studio_attributes
 from core.movie_financials import movie_financials
+GAME_ARTWORK_VERSION = 2
 
 
 PRIMARY = {"movie": "tmdb", "series": "tmdb", "game": "igdb", "book": "hardcover"}
@@ -374,8 +375,8 @@ def normalize_tvdb(raw, kind="series"):
 
 def game_artwork(raw):
     gallery, scenes = [], []
-    for field in ('screenshots','artworks'):
-        for row in raw.get(field) or []:
+    for priority,field in enumerate(('screenshots','artworks')):
+        for position,row in enumerate(raw.get(field) or []):
             url=image(row)
             if not url:continue
             if url not in gallery:gallery.append(url)
@@ -383,8 +384,9 @@ def game_artwork(raw):
             # Asset type and source dimensions establish scene suitability.
             # Preserve logos, portraits and unusual crops in the full gallery.
             if all(type(value) is int and value>0 for value in (width,height)) and 1.25<=width/height<=2.5:
-                if url not in scenes:scenes.append(url)
-    return {'artwork':gallery,'scene_artwork':scenes,'artwork_policy_version':1}
+                scenes.append((priority,-width*height,position,url))
+    ordered=list(dict.fromkeys(row[-1] for row in sorted(scenes)))
+    return {'artwork':gallery,'scene_artwork':ordered,'artwork_policy_version':GAME_ARTWORK_VERSION}
 
 
 def normalize_igdb(raw):

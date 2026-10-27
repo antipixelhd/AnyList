@@ -18,11 +18,21 @@ Implementation and verification progress is recorded in [the 27 October verifica
 - [ ] **R10 — Fuzzy Games search parity.** “baldurs” must find “Baldur’s Gate”/“Baldur's Gate”, matching the intended movie/series search experience. Inspect/reuse existing normalization, candidate retrieval and fuzzy ranking rather than only special-casing an apostrophe. Cover punctuation/diacritics, case, partial multiword input, representative minor misspellings, exact-title priority and the existing elden -> Elden R regression. Keep fuzzy discovery separate from identity binding: fuzzy results never automatically merge/map games or people. Preserve separate Games title cards, access/visibility, exclusions, paging and bounded provider work. Verify quick search and applicable browse/search surfaces.
 - [ ] **R11 — Omit empty DLC tab.** When no eligible playable DLC/expansions exist, omit the Games details DLC tab instead of greying it out. Distinguish verified absence from loading/partial/error evidence so background retrieval does not falsely hide available content. Handle stale/direct tab URLs and active-tab fallback without broken panels, focus or URL loops. Preserve expansion-first/category/date sorting and excluded pack/update rules.
 
+## Additional feedback — 27 October 2026
+
+These extend the active work; they are not covered by earlier acceptance evidence.
+
+- [ ] **R12 — Neil Newbon's incomplete Games portfolio.** Reproduce `actors/catalogue:37800?media_type=game`. Resolve the exact canonical/provider identities and trace complete source pagination, mapping, eligibility, public discovery jobs, cache generations and page/poll behavior independently of Amelia Tyler's case in R09. Discover all available eligible source works without visiting games individually; retain honest partial/error coverage and namesake safety. No manual seed, name-only mapping or title-specific repair.
+- [ ] **R13 — Characters on cold actor works.** Actor works must show their available characters automatically, without opening each game to prime its credits first. Trace the person participation/title credits/character projection boundary; reuse canonical evidence and the shared movie/series work-card design. Use bounded, shared acquisition and incremental publication rather than per-card request fan-out or route reloads. Preserve private viewer state, selection, paging, scroll and unknown/partial/error distinctions. Verify fresh actor-to-work journeys, including R09 and R12 identities.
+- [ ] **R14 — Cold Games details and skeletons.** Reproduce slow piecemeal cold details and characters that require a manual refresh. Use shared skeleton/loading patterns and automatically publish ready component data into the current page. Primary metadata, viewer state and primary artwork must remain the priority. Preserve usable content, pending writes and selected artwork; do not hide the whole page, invent empty states, or use route-wide refresh to reveal completed background work. Verify real authenticated desktop/mobile cold and warm pages, failures, repeat switches, nonzero-scroll reload and history traversal.
+- [ ] **R15 — Broad cold-loading performance improvement.** Profile and improve cold Games details and cold actor portfolios across retrieval, provider acquisition, eligibility, caching, SQL/payload transfer, rendering and polling. Apply search-results-performance and web-perf guidance. Capture equivalent before/after benchmark and real-browser evidence; distinguish controlled fixture costs from live-provider/VPS/browser latency. Keep provider work, concurrency and VPS CPU/event-loop work bounded. Preserve complete domain data, correctness, privacy and identity; warm caches or skeletons alone do not close the cold-performance defects.
+
 ## User-reported beta URLs
 
 - Contributor with only BG3 visible: https://instance-20260813-1501.tailf7212b.ts.net:8001/actors/catalogue:37799?media_type=game&view=timeline
 - BG3 details/artwork: https://instance-20260813-1501.tailf7212b.ts.net:8001/games/36823
 - Also inspect Elden Ring for background/In the frame artwork and the shared editor. Resolve its current canonical beta URL; do not assume local fixture IDs match beta.
+- Neil Newbon's incomplete works: https://instance-20260813-1501.tailf7212b.ts.net:8001/actors/catalogue:37800?media_type=game
 
 ## Execution and acceptance
 

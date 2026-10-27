@@ -10,7 +10,7 @@ import test_games_pg as fixture
 from core.game_metadata import GameMetadata,_flights,header,status,request
 from core.game_imdb_enrichment import now
 from core.catalogue_providers import ProviderError,CatalogueProviders
-from core.catalogue_normalize import normalize_igdb
+from core.catalogue_normalize import normalize_igdb,GAME_ARTWORK_VERSION
 from models.catalogue import CatalogueEntity,CatalogueIdentity,MetadataSnapshot,CharacterAppearance
 from models.games import GameEntry
 
@@ -27,7 +27,7 @@ class Provider:
             'game_type':{'id':0,'type':'Main Game'},'cover':{'url':'https://images.igdb.com/igdb/image/upload/t_thumb/source.jpg'},
             'genres':[{'id':5,'name':'Adventure'}],'platforms':[{'id':6,'name':'PC (Microsoft Windows)'}],
             '_coverage':{'primary_complete':True,'source_game_id':native,'characters_complete':False,
-                'release_precision_version':1,'artwork_policy_version':1,'children_complete':True}}
+                'release_precision_version':1,'artwork_policy_version':GAME_ARTWORK_VERSION,'children_complete':True}}
         raw.update(self.dates)
         if on_primary:await on_primary(normalize_igdb(raw),{'game':deepcopy(raw)})
         self.optional_active+=1;self.optional_max=max(self.optional_max,self.optional_active)

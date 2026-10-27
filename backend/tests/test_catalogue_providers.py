@@ -33,6 +33,11 @@ class NormalizationTests(unittest.TestCase):
         self.assertEqual(attrs['scene_artwork'],['https://cdn.test/scene.jpg','https://cdn.test/art.jpg'])
         self.assertEqual(len(attrs['artwork']),4)
         self.assertEqual(attrs['artwork'][0],'https://cdn.test/scene.jpg')
+        raw['screenshots'].append({'url':'https://cdn.test/high-resolution-scene.jpg','width':3840,'height':2160})
+        upgraded=normalize.normalize_igdb(raw)['work']['attributes']
+        self.assertEqual(upgraded['scene_artwork'][0],'https://cdn.test/high-resolution-scene.jpg')
+        self.assertEqual(upgraded['artwork'][0],'https://cdn.test/scene.jpg')
+        self.assertEqual(len(upgraded['artwork']),5)
     def test_game_platform_availability_includes_verified_ports_without_copying_remakes(self):
         raw={'id':1960,'name':'Original','game_type':{'id':0},'platforms':[{'id':7,'name':'PlayStation'}],
              'ports':[{'id':266501,'game_type':{'id':11},'platforms':[{'id':6,'name':'PC (Microsoft Windows)'}]},

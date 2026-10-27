@@ -18,6 +18,7 @@ from sqlalchemy.dialects.postgresql import insert
 from core.config import settings
 from models.catalogue import MetadataProviderBudget
 from .catalogue_normalize import (
+    GAME_ARTWORK_VERSION,
     normalize_hardcover,
     normalize_igdb,
     normalize_rawg,
@@ -608,7 +609,7 @@ class CatalogueProviders:
                         if x not in doc['work']['identities'])
                 return doc
             raw['_coverage']={'primary_complete':True,'source_game_id':str(raw['id']),
-                'characters_complete':False,'release_dates':'provider_projection','release_precision_version':1,'artwork_policy_version':1,'contributors':'companies_only',
+                'characters_complete':False,'release_dates':'provider_projection','release_precision_version':1,'artwork_policy_version':GAME_ARTWORK_VERSION,'contributors':'companies_only',
                 'children_complete':all(isinstance(raw.get(field,[]),list) and all(
                     isinstance(child,dict) and child.get('id') and child.get('name') and igdb_game_class(child)!='unknown'
                     for child in raw.get(field,[])) for field in ('dlcs','expansions'))}
