@@ -386,7 +386,12 @@ async def get_connection_import(
     if latest and latest.status in (SyncStatus.failed, SyncStatus.cancelled):
         return {'session': None, 'checking': False, 'error': latest.error_message or 'History checking stopped. Try again.'}
     # Account-level onboarding can be queued before the per-connection job exists.
-    return {'session': None, 'checking': True}
+    return {'session': None, 'checking': True, 'progress': {
+        'current': max(0, latest.processed_items or 0) if latest else 0,
+        'total': max(0, latest.total_items or 0) if latest else 0,
+        'message': ('Waiting to start…' if latest is None or latest.status == SyncStatus.pending
+                    else latest.current_step or 'Comparing your history…'),
+    }}
 
 
 @router.patch("/{session_id}/items/{item_id}")

@@ -321,9 +321,9 @@
 .connections-settings-page:has([data-connection-import][data-import-active="true"]) section:has(> #connections-form) { display:none; }
 .connections-settings-page [data-connection-imports]:not(:has([data-import-active="true"])) { display:none; }
 
-.connections-settings-page [data-connection-import] [data-role="streaming-import-workflow"] { scroll-margin-top:100px; }
+.connections-settings-page [data-role="streaming-import-workflow"] { scroll-margin-top:100px; }
 .connections-settings-page .streaming-loading-track.is-indeterminate span { width:35%; animation:streaming-check-progress 1.4s ease-in-out infinite alternate; }
 .connections-settings-page .streaming-check-error { color:var(--bright); margin-block:20px; }
 @keyframes streaming-check-progress { from { transform:translateX(-100%); } to { transform:translateX(285%); } }
-@media (max-width:650px) { .connections-settings-page [data-connection-import] [data-role="streaming-import-workflow"] { scroll-margin-top:16px; } }
+@media (max-width:650px) { .connections-settings-page [data-role="streaming-import-workflow"] { scroll-margin-top:16px; } }
 @media (prefers-reduced-motion:reduce) { .connections-settings-page .streaming-loading-track.is-indeterminate span { animation:none; width:100%; opacity:.5; } }

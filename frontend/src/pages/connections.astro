@@ -50,7 +50,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
       <div class="settings-stack" hidden={section !== "connections"}>
       <section data-connection-imports>
         {connections.filter(conn => conn.type === 'nuvio' || conn.type === 'stremio').map(conn => (
-          <StreamingImport hasTmdbKey={hasTmdbKey} service={conn.type as 'nuvio' | 'stremio'} connectionId={conn.id} connectionName={conn.name} connectionPending={activeImport?.connection_id === conn.id} />
+          <StreamingImport hasTmdbKey={hasTmdbKey} service={conn.type as 'nuvio' | 'stremio'} connectionId={conn.id} connectionName={conn.name} connectionPending={activeImport?.connection_id === conn.id} resumeSessionId={activeImport?.connection_id === conn.id ? activeImport.import_id : null} />
         ))}
       </section>
       {(['stremio', 'nuvio'] as const).map(service => <template data-connection-import-template={service}><StreamingImport hasTmdbKey={hasTmdbKey} service={service} connectionId={-1} connectionPending={true} /></template>)}

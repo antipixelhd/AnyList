@@ -660,12 +660,22 @@ class MultipleStreamConnectionsTests(unittest.IsolatedAsyncioTestCase):
         conn = await self._connection(provider='stremio', account_id='queued')
         response = await get_connection_import(conn.id, self.db, self.owner)
         self.assertTrue(response['checking'])
+        self.assertEqual(response['progress']['message'], 'Waiting to start…')
         self.db.add(SyncJob(user_id=self.owner.id, connection_id=conn.id, source='stremio',
             status=SyncStatus.failed, error_message='Provider unavailable', created_at=datetime(2026, 9, 1), updated_at=datetime(2026, 9, 1)))
         await self.db.flush()
         response = await get_connection_import(conn.id, self.db, self.owner)
         self.assertFalse(response['checking'])
         self.assertEqual(response['error'], 'Provider unavailable')
+        job = await self.db.scalar(select(SyncJob).where(SyncJob.connection_id == conn.id))
+        job.status = SyncStatus.running
+        job.current_step = 'Comparing your history'
+        job.processed_items = 3
+        job.total_items = 10
+        await self.db.flush()
+        response = await get_connection_import(conn.id, self.db, self.owner)
+        self.assertTrue(response['checking'])
+        self.assertEqual(response['progress'], {'message':'Comparing your history','current':3,'total':10})
         conn.sync_watched = False
         response = await get_connection_import(conn.id, self.db, self.owner)
         self.assertFalse(response['checking'])
