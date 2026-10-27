@@ -369,9 +369,17 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
         unknown = await self.save(self.unknown, achievement_mode='percentage', achievement_percentage=0)
         self.assertEqual(unknown['achievements']['percentage'], 0)
         self.assertIsNone(unknown['achievements']['count'])
-        bad = await self.client.patch(f'/tracking/games/entries/{self.unknown}', json={
+        count = await self.client.patch(f'/tracking/games/entries/{self.unknown}', json={
             'revision': unknown['revision'], 'achievement_mode': 'count', 'achievement_count': 1})
-        self.assertEqual(bad.status_code, 409)
+        self.assertEqual(count.status_code,200,count.text)
+        self.assertEqual(count.json()['achievements']['count'],1)
+        self.assertIsNone(count.json()['achievements']['total']);self.assertIsNone(count.json()['achievements']['percentage'])
+        self.assertEqual(count.json()['achievements']['exact_count'],0)
+        unknown=await self.save(self.unknown,revision=count.json()['revision'],achievement_mode='count',achievement_count=0)
+        self.assertEqual(unknown['achievements']['count'],0);self.assertIsNone(unknown['achievements']['percentage'])
+        bad=await self.client.patch(f'/tracking/games/entries/{self.unknown}',json={
+            'revision':unknown['revision'],'achievement_mode':'targeted'})
+        self.assertEqual(bad.status_code,409)
 
     async def test_achievement_bounds_stale_catalogue_and_cross_work_selection(self):
         row = await self.save()
@@ -383,6 +391,20 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
         unchanged = (await self.client.get(f'/tracking/games/works/{self.base}')).json()
         self.assertEqual(unchanged['revision'], row['revision'])
         self.assertIsNone(unchanged['achievements']['mode'])
+
+    async def test_count_unknown_to_known_catalogue_requires_review_without_changing_saved_progress(self):
+        row=await self.save(self.unknown,achievement_mode='count',achievement_count=1)
+        async with self.Session() as db:
+            work=await db.get(CatalogueEntity,self.unknown)
+            work.attributes={**work.attributes,'achievement_catalogue':{'status':'partial','total':4}}
+            await db.commit()
+        response=await self.client.patch(f'/tracking/games/entries/{self.unknown}',json={
+            'revision':row['revision'],'achievement_mode':'count','achievement_count':2,'expected_achievement_total':None})
+        self.assertEqual(response.status_code,409,response.text)
+        saved=(await self.client.get(f'/tracking/games/works/{self.unknown}')).json()
+        self.assertEqual(saved['revision'],row['revision']);self.assertEqual(saved['achievements']['count'],1)
+        saved=await self.save(self.unknown,revision=row['revision'],achievement_mode='count',achievement_count=2,expected_achievement_total=4)
+        self.assertEqual(saved['achievements']['percentage'],50);self.assertEqual(saved['achievements']['exact_count'],0)
 
     async def test_incremental_achievement_updates_preserve_unloaded_evidence(self):
         row = await self.save(achievement_mode='targeted', expected_achievement_total=3,

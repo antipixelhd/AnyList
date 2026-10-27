@@ -1,5 +1,5 @@
 import type {EditorTitle} from './editor-store';
-import {gameTimePatch,hoursInput} from './game-editor-data';
+import {gameTimePatch,hoursInput,achievementCountInput} from './game-editor-data';
 import {localToday} from './date-time';
 import {setupEditorSelect} from './editor-select';
 import {watchAchievementCatalogue,type AchievementCatalogue} from './game-achievement-catalogue';
@@ -267,8 +267,7 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
       if(selected==='targeted'){
         if(initialMode!=='targeted'||updates.size){patch.achievement_mode='targeted';patch.expected_achievement_total=summary().total;patch.unlock_updates=Object.fromEntries(updates);}
       } else if(selected==='count') {
-        const value=count.value.trim()===''?null:Number(count.value);
-        if(value==null||!Number.isInteger(value)||value<0||value>summary().total)throw new Error('Enter an unlocked count within the known total.');
+        const value=achievementCountInput(count.value,summary().total);
         if(selected!==initialMode||value!==summary().count){Object.assign(patch,{achievement_mode:'count',achievement_count:value,expected_achievement_total:summary().total,confirm_simplified:confirmed});}
       } else {
         const value=percentage.value.trim()===''?null:Number(percentage.value);

@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {actualSeconds,gameDatePatch,gameTimePatch,hoursInput} from '../src/lib/game-editor-data.ts';
+import {actualSeconds,gameDatePatch,gameTimePatch,hoursInput,achievementCountInput} from '../src/lib/game-editor-data.ts';
+
+test('aggregate counts support unknown totals without accepting blank, fractional or out-of-range input',()=>{
+  assert.equal(achievementCountInput('0',null),0);assert.equal(achievementCountInput('1234567',null),1234567);
+  assert.equal(achievementCountInput('54',54),54);
+  for(const value of ['', ' ', '-1','1.5','Infinity','2147483648'])assert.throws(()=>achievementCountInput(value,null));
+  assert.throws(()=>achievementCountInput('55',54));
+});
 
 test('actual game hours retain unknown and explicit zero without rounding untouched source seconds',()=>{
   assert.equal(actualSeconds(''),null);assert.equal(actualSeconds('0'),0);

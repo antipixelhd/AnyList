@@ -174,12 +174,12 @@ export class EditorStore {
           achievements.count=null;achievements.percentage=operation.patch.achievement_percentage;
         }else if(mode==='count'){
           achievements.count=operation.patch.achievement_count;
-          achievements.percentage=achievements.total?achievements.count/achievements.total*100:0;
+          achievements.percentage=achievements.total>0?achievements.count/achievements.total*100:null;
         }else if(mode==='targeted'){
           const delta=Object.values(operation.patch.unlock_updates||{}).reduce<number>((sum,value)=>sum+(value?1:-1),0);
           achievements.exact_count=Math.max(0,(achievements.exact_count||0)+delta);
           achievements.count=achievements.exact_count;
-          achievements.percentage=achievements.total?achievements.count/achievements.total*100:0;
+          achievements.percentage=achievements.total>0?achievements.count/achievements.total*100:null;
         }else if(mode==null){achievements.count=achievements.percentage=null;}
         entry.achievements=achievements;
       }

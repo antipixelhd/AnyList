@@ -8,6 +8,13 @@ export function hoursInput(seconds:number|null|undefined):string {
   return seconds==null?'':Number((seconds/3600).toFixed(6)).toString();
 }
 
+export function achievementCountInput(raw:string,total:number|null|undefined):number {
+  const value=Number(raw);
+  if(!raw.trim()||!Number.isSafeInteger(value)||value<0||value>2147483647||total!=null&&value>total)
+    throw new Error(total==null?'Enter a valid unlocked count.':'Enter an unlocked count within the known total.');
+  return value;
+}
+
 export function actualSeconds(value:string):number|null {
   if(!value.trim())return null;
   const hours=Number(value);

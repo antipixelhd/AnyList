@@ -187,7 +187,7 @@ async def apply_achievements(db, entity, row, patch):
         return  # Exact evidence survives clearing aggregate input and mode changes.
     _, total, definitions = achievement_metadata(entity)
     if mode in {'count', 'targeted'}:
-        if total is None or (mode == 'targeted' and not definitions):
+        if mode == 'targeted' and (total is None or not definitions):
             raise HTTPException(409, {'code': 'achievement_metadata_unavailable'})
         if patch.expected_achievement_total != total:
             raise HTTPException(409, {'code': 'achievement_catalogue_changed', 'total': total})
@@ -232,7 +232,7 @@ async def apply_achievements(db, entity, row, patch):
         if patch.unlocked_ids is not None or patch.unlock_updates is not None or 'achievement_percentage' in fields:
             raise HTTPException(422, 'Count tracking accepts only a count')
         count = patch.achievement_count if 'achievement_count' in fields else row.achievement_count
-        if count is None or count > total:
+        if count is None or total is not None and count > total:
             raise HTTPException(422, 'Choose an unlocked count within the known total')
         row.achievement_count, row.achievement_percentage = count, None
     else:

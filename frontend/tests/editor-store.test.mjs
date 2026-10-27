@@ -406,3 +406,14 @@ test('typed browse invalidation preserves pending game writes and reloads comple
   assert.equal(fresh.entry.notes,'Fresh private note');assert.equal(reads,1);
   assert.equal(store.find(7),movie);
 });
+
+test('unknown-total count optimism never invents a percentage or exact unlocks',async()=>{
+  const pending=deferred(),store=new EditorStore(()=>pending.promise);
+  const original={mode:null,count:null,percentage:null,total:null,exact_count:1};
+  const title=store.seed(gameTitle(gameState(7,{listed:true,status:'playing',revision:1,achievements:original})));
+  const write=store.write(title,{achievement_mode:'count',achievement_count:1234567,expected_achievement_total:null});
+  assert.equal(title.entry.achievements.count,1234567);assert.equal(title.entry.achievements.percentage,null);
+  assert.equal(title.entry.achievements.exact_count,1);assert.equal(original.count,null);
+  await turn();pending.resolve(gameState(7,{listed:true,status:'playing',revision:2,achievements:{...original,mode:'count',count:1234567}}));
+  await write;assert.equal(title.entry.achievements.percentage,null);assert.equal(title.entry.achievements.exact_count,1);
+});

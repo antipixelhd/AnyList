@@ -88,3 +88,9 @@ The DevTools stress trace deliberately withholds all primary artwork for 12 seco
 The cold benchmark transfer is confirmed running but waiting for a renewed Tailscale SSH authentication check. The named VPS responds to ping; its SSH check is separate from the existing valid application session, which was reused for browser acceptance. No cold benchmark result is claimed. The pending upload was prepared before the latest edits and must be replaced with current source before final measurements. No schema migrations are introduced by these follow-ups.
 
 Confirmed beta deployments: artwork quality commit 7b5ea63e (run 40443829944) and person/skeleton commit 78f56399 (run 40445340113), both successful.
+
+## Unknown-total Count persistence correction
+
+Deployed UI verification confirmed Count is available for Saros with an omitted maximum. The attempted zero save then exposed a backend invariant that still required a known total: the API returned 409 and the shared editor correctly restored the unsaved draft. That attempt is not counted as persistence acceptance. The follow-up now permits aggregate counts with an unknown denominator, retains the expected-total conflict check when metadata changes, and still requires known definitions/total for Individual mode. Frontend validation applies the maximum only when known and preserves the integer storage bound. Optimistic state keeps percentage unknown instead of fabricating zero percent. No exact unlocks are inferred.
+
+Four disposable Games integration tests passed: unknown/zero counts and mode evidence, known bounds and stale totals, unknown-to-known metadata conflicts, and incremental retained unlocks. Thirty frontend editor/store tests passed, including long unknown counts and optimistic percentage/exact-evidence correctness. Astro check has zero errors and the production build passed. Actual saved unknown-count acceptance remains pending deployment of this correction.
