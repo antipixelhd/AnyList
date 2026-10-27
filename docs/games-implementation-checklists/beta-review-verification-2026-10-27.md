@@ -1,6 +1,6 @@
 # R01–R11 verification — 27 October 2026
 
-Status: implementation and verification in progress on `beta`. No acceptance checkbox is closed by a build or synthetic fixture alone. Baseline source: `db9b4070`. No merge into `main`; no schema migration introduced.
+Status: implementation and verification in progress on `beta`. Implementation `8f469926` was pushed and deployed successfully ([deployment run](https://github.com/antipixelhd/AnyList/actions/runs/40438771427)). Follow-up gallery, tab-transition, single-row mobile and activity-refresh corrections are being verified. No acceptance checkbox is closed by a build or synthetic fixture alone. Baseline source: `db9b4070`. No merge into `main`; no schema migration introduced.
 
 ## Reproduction and implementation
 
@@ -24,7 +24,26 @@ Status: implementation and verification in progress on `beta`. No acceptance che
 - An initial memory-backed disposable database exhausted memory/storage; those failed runs are not counted as acceptance. A subsequent disk-backed test instance completed 85 of 86 expanded tests; the remaining source-checkpoint test incorrectly required real credentials despite mocking transport. Its fixture now bypasses only provider configuration validation. The focused rerun passed **61 tests**, including that checkpoint and late completion/social privacy regressions.
 - Frontend: **47 selected tests passed**, Astro check reported **0 errors**, and the production build passed. Scope includes activity projection/wording, game editor values, achievement catalogue polling, overview composition, responsive artwork and detail artwork.
 - Local rendered-page evidence uses a synthetic API and localhost-only synthetic session, at 1264×569 and 390×844. It establishes runtime/layout behavior only, not authenticated beta acceptance. Beta authentication was subsequently explicitly authorized and established privately; no token is included here.
-- Before/after harness runs use `scripts/benchmark_search.py` with controlled provider data and matching fixture/settings. Raw samples stay outside Git. Summary and isolated contributor/detail results will be recorded after comparison; no production latency claim is made.
+- Authenticated beta: `baldurs` quick search returned separate Games cards including BG3, BG2, Dark Alliance and verified expansions, alongside the existing screen-title section. BG3's real catalogue has 54 definitions; Elden has 42. BG3 renders 50 definitions initially, conceals hidden names behind disclosure, and offers progressive loading. On the dedicated QA account, a real Completed save with count zero and unknown time displayed `0 / 54`, preserving zero versus unset without inventing unlocked achievements.
+- Authenticated Elden post-deployment: hero `scagdo` loads at 1920×1080; scene preview `scu5kw` at 1280×720, visible. This exposed remaining shared ten-image caps; follow-up backend/client fixes preserve the complete 14-image Elden and 21-image BG3 galleries and restrict fallback to suitable scenes.
+- The extended disposable discovery/metadata/detail run passed **27 integration tests**, including complete 23-image route projection and a protected primary selection. Additional focused image tests passed (14 backend; 7 frontend gallery checks).
+
+## Controlled benchmark comparison
+
+Existing harness; 400 local titles, 80 credit works per section, simulated 50 ms provider delay; three profiles, one cold plus three warm samples per case. Values below are curated warm medians. They are diagnostic ASGI samples, not production percentiles or browser timings.
+
+| Case | SQL reads before → after | Provider work | Payload bytes before → after | Warm ms before → after |
+| --- | --- | --- | --- | --- |
+| `game_search` | 1 → 1 | 1 per request | 1072 → 1072 | 59.83 → 58.37 |
+| `game_search_prefix` | 1 → 1 | 2 per request | 137 → 137 | 114.61 → 108.42 |
+| `game_browse_partial_search` | 14 → 14 (three pages) | Cold 5; warm reused | 33516 → 33516 | 69.89 → 46.43 |
+| `game_activity_profile` | 3 → 3 | 0 | 4177 → 4777 | 13.77 → 13.08 |
+| Isolated `game_credits` | 17 → 17 | 0 | 62124 → 62186 | 29.42 → 30.00 |
+| `game_person_cached` | 10 → 10 | 0; no writes | 10385 → 10385 | Not compared; resource caps differed |
+
+Search/browse identities and order fingerprints were unchanged, including 72 distinct matching browse results across three pages. The cached contributor fingerprint retained 24 displayed works / 400 eligible total. Credit projection retained all 30 people / 100 characters and its fingerprint. Activity's fingerprint intentionally changes because first-completion time and game class are now projected; the extra 600 bytes are scalar presentation facts for 12 cards, not credit/unlock payloads. Private-note and exact-unlock exclusions remain covered separately.
+
+An initial combined `game_credits` + search/browse run admitted unrelated IGDB metadata hydration on the shared fixture and included a 15-second wait in both arms. It is not a cached-credit latency measurement. The isolated rerun above removes that fixture interaction without changing the credit workload. The benchmark reference now documents it. Full raw samples remain in ignored/private scratch storage.
 
 ## Source references
 
@@ -32,4 +51,4 @@ The identifier fallback uses Wikibase's documented exact external-ID statement s
 
 ## Deployment and outstanding work
 
-Implementation commit/deployment: pending. No database schema changed. All checklist items remain open until their named authenticated beta journeys and relevant checks are recorded. Outstanding external-source failure must be reported as partial coverage, never as a completed portfolio or verified absence.
+First implementation commit/deployment: `8f469926`, successful. Follow-up corrections and final authenticated desktop/mobile acceptance are in progress. No database schema changed. All checklist items remain open until their named journeys and relevant checks are recorded. Outstanding external-source failure must be reported as partial coverage, never as a completed portfolio or verified absence.

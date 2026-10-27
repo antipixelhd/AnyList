@@ -200,7 +200,7 @@ async def work_details(db, work, *, extras=True):
     related = await catalogue_related(db, work)
     return {'catalogue_id': work.id, 'people': list(people.values()), 'organizations': list(organizations.values()),
         **({'game_characters':game_characters,'game_character_status':game_character_status} if work.kind=='game' else {}),
-        'posters': unique_images(posters), 'artwork': unique_images(artwork), **related,
+        'posters': unique_images(posters), 'artwork': unique_images(artwork,limit=None if work.kind=='game' else 10), **related,
         **(movie_financials(attrs, *({'budget': row.budget, 'revenue': row.revenue}
             for row in snapshots if row.provider == 'tmdb')) if work.kind == 'movie' else {}),
         'sources': list({source['url']: source for source in sources}.values()), 'countries': attrs.get('countries') or []}

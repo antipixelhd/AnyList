@@ -1,8 +1,10 @@
 <script>
-import {activityCompletionSuffix} from '../lib/tracker';
+import {activityAction,activityCompletionSuffix,activityRating,activityTime,scoreLabel} from '../lib/tracker';
+import {timestamp} from '../lib/date-time';
 let listeners:AbortController|undefined;
 function mount(){
   listeners?.abort();listeners=new AbortController();const {signal}=listeners;
+  const revisions=new Map<number,number>();
   document.addEventListener('click',event=>{
     const button=(event.target as Element).closest<HTMLButtonElement>('[data-activity-playtime]');
     if(!button)return;
@@ -14,6 +16,40 @@ function mount(){
       if(Number(card.dataset.gameActivityId)!==title.id)continue;
       card.querySelector('[data-activity-completion]')!.textContent=activityCompletionSuffix({media:{type:'game'},status:'completed',payload:{status_changed:true,completion_seconds:(title.entry||title.game_state)?.completion_seconds}});
     }
+  },{signal});
+  document.addEventListener('anylist:entry-saved',async event=>{
+    const saved=(event as CustomEvent).detail;if(saved.subject?.kind!=='game')return;
+    const id=saved.subject.catalogue_id;
+    const template=document.querySelector<HTMLElement>(`.overview-activity [data-game-activity-id="${id}"][data-activity-own="true"]`);
+    const feed=template?.closest<HTMLElement>('.overview-activity');if(!template||!feed)return;
+    const active=(revisions.get(id)||0)+1;revisions.set(id,active);
+    try{
+      const response=await fetch(`/api/proxy/tracking/games/users/${encodeURIComponent(template.dataset.gameActivityOwner!)}/activity?limit=12`,{signal,cache:'no-store'});
+      if(!response.ok)return;
+      const data=await response.json();if(signal.aborted||active!==revisions.get(id))return;
+      const existing=new Map([...feed.querySelectorAll<HTMLElement>(`[data-game-activity-id="${id}"]`)].map(card=>[card.dataset.activityKey,card]));
+      const activities=data.results.filter((row:any)=>row.media.id===id),keys=new Set(activities.map((row:any)=>row.key));
+      for(const [key,card] of existing)if(!keys.has(key))card.remove();
+      for(const activity of activities){
+        const card=existing.get(activity.key)||template.cloneNode(true) as HTMLElement;
+        card.dataset.activityKey=activity.key;card.dataset.createdAt=activity.created_at;
+        if(activity.status==='completed'&&activity.payload.status_changed)card.dataset.gameCompletion='true';else delete card.dataset.gameCompletion;
+        card.querySelector('.event-action>span')!.textContent=activityAction(activity);
+        card.querySelector('[data-activity-completion]')!.textContent=activityCompletionSuffix(activity);
+        const time=card.querySelector<HTMLTimeElement>('time')!,relative=activityTime(activity.created_at);
+        time.dateTime=relative.datetime;time.textContent=relative.label;time.title=relative.exact;
+        const rating=activityRating(activity),footer=card.querySelector<HTMLElement>('.event-footer')!;footer.hidden=!rating;
+        if(rating){
+          const previous=footer.querySelector<HTMLElement>('[data-rating-previous]')!;previous.hidden=rating.previous==null;
+          previous.querySelector('[data-rating-previous-value]')!.textContent=scoreLabel(rating.previous);
+          footer.querySelector('[data-rating-current]')!.textContent=scoreLabel(rating.current);
+          footer.querySelector('.score-pill')!.setAttribute('aria-label',rating.label);
+        }
+        if(!card.isConnected)feed.append(card);
+      }
+      const cards=[...feed.querySelectorAll<HTMLElement>('[data-activity-card]')].sort((a,b)=>(timestamp(b.dataset.createdAt)?.getTime()||0)-(timestamp(a.dataset.createdAt)?.getTime()||0)||String(b.dataset.activityKey).localeCompare(String(a.dataset.activityKey)));
+      cards.forEach((card,index)=>{if(index>=12)card.remove();else feed.append(card);});
+    }catch{/* Keep usable activity if the background projection is unavailable. */}
   },{signal});
 }
 mount();document.addEventListener('astro:page-load',mount);

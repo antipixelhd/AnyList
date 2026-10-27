@@ -21,17 +21,18 @@ logger = logging.getLogger(__name__)
 
 
 def image_key(url):
-    return re.sub(r'(https://image\.tmdb\.org/t/p/)[^/]+/', r'\1', url)
+    value=re.sub(r'(https://image\.tmdb\.org/t/p/)[^/]+/', r'\1', url)
+    return re.sub(r'(https://images\.igdb\.com/igdb/image/upload/)t_[^/]+/',r'\1',value)
 
 
-def unique_images(values):
+def unique_images(values, *, limit=10):
     result, seen = [], set()
     for value in values:
         url = image(value)
         if url and image_key(url) not in seen:
             seen.add(image_key(url))
             result.append(url)
-    return result[:10]
+    return result if limit is None else result[:limit]
 
 
 def tmdb_image_url(path):

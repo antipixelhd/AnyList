@@ -18,14 +18,14 @@ import {createGallerySelection} from './gallery-selection';
 
 type Galleries = {posters:string[]; artwork:string[]};
 const imageKey=artworkIdentity;
-export function uniqueDetailImages(values:unknown[]):string[] {
+export function uniqueDetailImages(values:unknown[],limit=10):string[] {
   const seen=new Set<string>();
   return values.filter((url):url is string=>{
     if(typeof url!=='string'||!(/^https?:\/\//.test(url)||url.startsWith('/api/proxy/media/image/')))return false;
     const key=imageKey(url);
     if(seen.has(key))return false;
     seen.add(key);return true;
-  }).slice(0,10);
+  }).slice(0,limit);
 }
 
 export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,standalone?:{lightbox:HTMLDialogElement;logo:boolean;imagesPath?:string}) {
@@ -34,7 +34,8 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
   const prepareViewer=bindDetailImageDragDismiss(lightbox,track,signal);
   const name=info.name||root.querySelector('.lab-heading h1')?.textContent||'Image';
   const initialHero=root.querySelector<HTMLButtonElement>('.lab-hero-art-button')?.dataset.detailImage;
-  const galleries:Galleries&{hero:string[]}={posters:uniqueDetailImages(info.posters||[]),artwork:uniqueDetailImages(info.artwork||[]),hero:initialHero?[initialHero]:[]};
+  const artworkLimit=info.type==='game'?Infinity:10;
+  const galleries:Galleries&{hero:string[]}={posters:uniqueDetailImages(info.posters||[]),artwork:uniqueDetailImages(info.artwork||[],artworkLimit),hero:initialHero?[initialHero]:[]};
   const galleryLimit=standalone&&!standalone.logo?5:10;
   let pending=!!info.imagesAvailable&&(!info.imageStatus?.state||['pending','deferred'].includes(info.imageStatus.state));
   const slots=lightbox.querySelector<HTMLElement>('[data-image-viewer-slots]')!;
@@ -252,9 +253,25 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
     if(image.complete&&image.naturalWidth&&imageKey(button.dataset.detailImage||'')===imageKey(url))return;
     button.dataset.detailImage=url;
     const art=detailSceneArtwork(url,null,'auto',previewInfo?.image===url?previewInfo.thumbnail:thumbnails[url]);
-    if(art&&image.getAttribute('src')!==art.src)applyResponsiveArtwork(image,art.src,{size:'w780',route:'auto'});
+    const hero=root.querySelector<HTMLImageElement>('.lab-hero-image');
+    if(hero&&imageKey(hero.currentSrc||hero.src)===imageKey(url)){
+      image.removeAttribute('srcset');image.removeAttribute('sizes');image.src=hero.currentSrc||hero.src;
+    }else if(art&&image.getAttribute('src')!==art.src)applyResponsiveArtwork(image,art.src,{size:'w780',route:'auto'});
     watchThumbnail(button);
   };
+  if(info.type==='game'){
+    const image=root.querySelector<HTMLImageElement>('.lab-art-image img');
+    const failed=new Set<string>();
+    const recover=()=>{
+      if(signal.aborted||!image)return;
+      failed.add(imageKey(image.currentSrc||image.src));
+      const next=(info.backdropFallbacks||[]).find((url:string)=>!failed.has(imageKey(url)));
+      if(next){previewInfo={image:next};paintPreview();}
+      else root.querySelector<HTMLElement>('.lab-art-preview')?.setAttribute('hidden','');
+    };
+    image?.addEventListener('error',recover,{signal});
+    if(image?.complete&&image.currentSrc&&!image.naturalWidth)recover();
+  }
   let loadPreview=()=>Promise.resolve();
   const failedHeroes=new Set<string>();
   let fallback=info.backdropFallback as string|undefined;
@@ -298,7 +315,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
   const applyImages=(data:Galleries&{poster?:string;backdrop?:string;backdrop_fallback?:string;artwork_thumbnails?:Record<string,string>;image_status?:DetailLoadState;image_replacements?:Record<string,string>})=>{
       const selected=galleries[active][current];
       galleries.posters=uniqueDetailImages(standalone?[info.posters?.[0],...(data.image_status?.state==='deferred'?galleries.posters:data.posters||[])]:data.posters||[]).slice(0,galleryLimit);
-      galleries.artwork=uniqueDetailImages(data.artwork||[]);
+      galleries.artwork=uniqueDetailImages(data.artwork||[],artworkLimit);
       if(lightbox.open&&active==='artwork'&&selected&&selected===previewInfo?.image&&!galleries.artwork.includes(selected))galleries.artwork.unshift(selected);
       thumbnails={...thumbnails,...data.artwork_thumbnails};
       pending=!!data.image_status&&['pending','deferred'].includes(data.image_status.state||'');

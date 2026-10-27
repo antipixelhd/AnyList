@@ -38,7 +38,11 @@
 .editor [data-game-only] input[type=number]{-moz-appearance:textfield}
 @media(max-width:650px){.editor[data-editor-domain=game] .editor-fields>*{grid-column:auto!important;grid-row:auto!important}.game-achievement-editor{grid-template-columns:1fr}.game-achievement-option small{max-width:64px;text-align:right}.game-base-link{flex-wrap:wrap}}
 @media(max-width:650px){.editor[data-editor-domain=game] .editor-fields>.game-achievement-editor{grid-column:1 / -1!important;max-width:none}}
-@media(max-width:650px){.game-achievement-controls{grid-template-columns:1fr}.game-achievement-controls .game-achievement-value{grid-column:1;width:min(100%,220px);justify-self:end}}
+@media(max-width:650px){
+  .game-achievement-controls{grid-template-columns:minmax(0,1fr) auto;gap:10px}
+  .game-achievement-controls .game-achievement-value{grid-column:2;width:auto;max-width:190px;gap:8px}
+  .game-achievement-value .score-stepper{width:clamp(76px,24vw,110px)}
+}
 .browse-heading h1 {
   margin:.32rem 0 .4rem
 }

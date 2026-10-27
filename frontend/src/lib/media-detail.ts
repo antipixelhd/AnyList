@@ -204,6 +204,7 @@ export function mountMediaDetail() {
     const change = () => {
       tabs.forEach(tab => { const active = tab.dataset.detailTab === id; tab.setAttribute('aria-selected',String(active)); tab.tabIndex = active ? 0 : -1; });
       panels.forEach(panel => panel.hidden = panel.dataset.detailPanel !== id);
+      if(id==='achievements')loadAchievements();
     };
     if (animate) void switchPanel(change); else change();
     const url = new URL(location.href);
@@ -213,7 +214,6 @@ export function mountMediaDetail() {
     if(id==='seasons')loadEpisodeImages();
     if(id==='social')loadSocial();
     if(id==='dlc')loadDlc();
-    if(id==='achievements')loadAchievements();
   };
   selectTab(new URLSearchParams(location.search).get('tab') || 'overview',false);
   tabs.forEach((tab,index) => {

@@ -618,6 +618,22 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
             social=(await self.client.get(f'/tracking/games/works/{self.base}/social')).json()
             self.assertEqual(social['activities'][0]['payload']['completion_seconds'],seconds)
 
+    async def test_details_retain_complete_gallery_and_protected_primary_choice(self):
+        rows=[f'https://images.igdb.com/igdb/image/upload/t_thumb/sc{i}.jpg' for i in range(23)]
+        selected=rows[-1]
+        async with self.Session() as db:
+            work=await db.get(CatalogueEntity,self.base)
+            work.attributes={**work.attributes,'artwork':[selected,*rows[:-1]],'scene_artwork':rows,'artwork_policy_version':1}
+            work.protected_fields=['attributes.artwork']
+            await db.commit()
+        response=await self.client.get(f'/catalogue/entities/{self.base}/details')
+        self.assertEqual(response.status_code,200,response.text)
+        data=response.json()
+        self.assertEqual(data['backdrop'],selected)
+        self.assertEqual(len(data['artwork']),23)
+        self.assertEqual(set(data['artwork']),set(rows))
+        self.assertEqual(data['artwork_preview']['image'],rows[0])
+
     async def test_visibility_does_not_block_direct_links_or_public_profiles_and_notes_stay_private(self):
         await self.save(notes='Private note', status='playing')
         prefs = await self.client.patch('/tracking/preferences', json={'show_games': False, 'show_movies_series': False})
