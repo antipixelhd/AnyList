@@ -85,6 +85,7 @@ const availabilityLabel=(reason:string|undefined)=>reason==='airing'?'Currently 
 <script>
 import {applyResponsiveArtwork} from '../../../lib/responsive-artwork';
 import {compactListProgress} from '../../../lib/tracker';
+import {releaseAnnotation} from '../../../lib/release-annotation';
 import {placeDropdown} from '../../../lib/dropdown-position';
 import {reveal,dismiss,showMenu,hideMenu} from '../../../lib/ui-motion';
 import {editorStore, seedEditorPage, type EditorTitle} from '../../../lib/editor-store';
@@ -288,7 +289,8 @@ function mountProfileList() {
         rows.sort((a,b)=>sort==='title' ? a.dataset.title!.localeCompare(b.dataset.title!) : sort==='updated' ? b.dataset.updated!.localeCompare(a.dataset.updated!) : Number(b.dataset[sort]) - Number(a.dataset[sort]));
         let visible = 0;
         rows.forEach((row,index)=> {
-          if (table.children[index + 1] !== row) table.insertBefore(row,table.children[index + 1] || null);
+          const position = table.children[index + 1]; // The table heading stays first.
+          if (position !== row) table.insertBefore(row,position || null);
           row.hidden = row.hasAttribute('data-editor-removed') || (status !== 'all' && status!==group.dataset.group) || !row.dataset.title!.includes(query) || !!(input('genre-filter').value && !JSON.parse(row.dataset.genres!).includes(input('genre-filter').value)) || !!(selectedYear() && row.dataset.year!==selectedYear()) || !!(input('favorite-filter').value && row.dataset.favorite!=='yes');
           if (!row.hidden) visible++;
         });
@@ -402,6 +404,14 @@ function mountProfileList() {
               increment.disabled = increment.hidden;
             }
             syncAvailability(row, entry);
+            const releaseLabel = entry.status === 'completed' ? releaseAnnotation(entry.new_seasons,entry.new_episodes) : null;
+            let annotations = row.querySelector<HTMLElement>('.entry-annotations');
+            let release = annotations?.querySelector<HTMLElement>('.unwatched-indicator');
+            if (releaseLabel) {
+              if (!annotations) { annotations = document.createElement('span'); annotations.className = 'entry-annotations'; row.querySelector('.entry-title')!.append(annotations); }
+              if (!release) { release = document.createElement('small'); release.className = 'unwatched-indicator'; annotations.prepend(release); }
+              release.textContent = releaseLabel;
+            } else { release?.remove(); if (annotations && !annotations.children.length) annotations.remove(); }
             const score = row.querySelector<HTMLElement>('[data-score-label]');
             if (score) score.textContent = entry.score ? String(Number(Number(entry.score).toFixed(1))) : '—';
             const scoreButton = row.querySelector<HTMLElement>('[data-quick-rate-id]');
@@ -413,7 +423,15 @@ function mountProfileList() {
         }
         if (dirty) scheduleRefresh();
       }, {signal:pageListeners.signal});
-      document.addEventListener('anylist:editor-committed', () => { dirty = true; scheduleRefresh(); }, {signal:pageListeners.signal});
+      document.addEventListener('anylist:editor-committed', event => {
+        const {title,patch} = (event as CustomEvent<{title:EditorTitle;patch:Record<string,unknown>|null}>).detail;
+        // Existing rows already receive the authoritative progress response through editor-state.
+        // Replacing the list here would discard their images, focus and hover state.
+        if (patch && Object.keys(patch).length === 1 && 'progress' in patch &&
+            groups.querySelector('[data-edit-entry="' + title.id + '"]')) return;
+        dirty = true;
+        scheduleRefresh();
+      }, {signal:pageListeners.signal});
     }
     updateEntryImages();
     filter();

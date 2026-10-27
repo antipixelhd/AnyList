@@ -270,8 +270,9 @@ button:disabled {
   position:relative;
   min-height:74px
 }
-.entry-row:has(:focus-visible) { background:#1c3043 }
-@media (hover:hover) and (pointer:fine) { .entry-row:hover { background:#1c3043 } }
+.entry-row:hover,.entry-row:has(:focus-visible) {
+  background:#1c3043
+}
 .entry-title {
   display:flex;
   align-items:center;

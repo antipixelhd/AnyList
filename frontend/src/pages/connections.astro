@@ -2000,7 +2000,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
         } catch (e) {
           if (actionConnId && action === 'clear_connection_data') renderConnProgress(actionConnId, null);
           if (actionConnId && action === 'full_resync_connection') renderConnProgress(actionConnId, null);
-          if (action.includes('sync') || action.startsWith('push_')) showActionFailure('sync',newBtn.getAttribute('data-conn-name'),e);
+          if (action?.includes('sync') || action?.startsWith('push_')) showActionFailure('sync',newBtn.getAttribute('data-conn-name'),e);
           else if (isConnectionSave) showActionFailure('settings',null,e);
           else showMessage(errorMessage(e), 'error');
         } finally {
