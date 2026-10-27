@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {BROWSE_FACET_TTL, browseResultTtl, createBrowseCache, clearStoredBrowseCache, waitForBrowseRequest} from '../src/lib/browse-cache.ts';
+import {BROWSE_FACET_TTL, browseResultTtl, createBrowseCache, createBrowseSharedRequests, clearStoredBrowseCache, waitForBrowseRequest} from '../src/lib/browse-cache.ts';
 
 test('stable browse selections outlive release-sensitive views without crossing a UTC date boundary', () => {
   const midday = Date.UTC(2026, 9, 27, 12);
@@ -74,4 +74,26 @@ test('rapid search input aborts the debounce before a stale request can start', 
   const active = waitForBrowseRequest(220, new AbortController().signal);
   t.mock.timers.tick(220);
   await active;
+});
+
+test('switching away and back reuses one pending Browse request and keeps its result', async () => {
+  let calls = 0;
+  let finish;
+  const lifetime = new AbortController();
+  const results = new Map();
+  const shared = createBrowseSharedRequests(() => {
+    calls++;
+    return new Promise(resolve => { finish = resolve; });
+  }, (key, value) => results.set(key, value), lifetime.signal);
+  const first = new AbortController();
+  const abandoned = shared.consume('browse/sections?media_type=movie', first.signal);
+  first.abort();
+  await assert.rejects(abandoned, {name: 'AbortError'});
+  const resumed = shared.consume('browse/sections?media_type=movie', new AbortController().signal);
+  finish({sections: ['movie']});
+  assert.deepEqual(await resumed, {sections: ['movie']});
+  await Promise.resolve();
+  assert.equal(calls, 1);
+  assert.deepEqual(results.get('browse/sections?media_type=movie'), {sections: ['movie']});
+  lifetime.abort();
 });

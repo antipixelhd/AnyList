@@ -14,9 +14,9 @@ import { createBrowseLoading, prepareBrowsePoster } from "./browse-loading";
 import { initializeBrowseRanges } from "./browse-ranges";
 import { createBrowsePaginationDemand } from "./browse-pagination";
 import { initializeMobileBrowseFilters } from "./browse-mobile-filters";
-import { BROWSE_FACET_TTL, browseResultTtl, createBrowseCache, waitForBrowseRequest } from "./browse-cache";
+import { BROWSE_FACET_TTL, browseResultTtl, createBrowseCache, createBrowseSharedRequests, waitForBrowseRequest } from "./browse-cache";
 import { refreshBrowseContextBatches } from './browse-context';
-import {createPrediction, paginationPosition} from "./predictive-loading";
+import {createPrediction, paginationPosition, predictionAllowed} from "./predictive-loading";
 import { initializeBrowseSort } from "./browse-sort";
 import { createBrowseOverride } from './browse-override';
 import {createSearchExpansion, shouldBroadenSearch, broadSearchParams} from './search-fallback';
@@ -102,7 +102,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   document.addEventListener('anylist:editor-state', () => { contextRevision++; }, {signal});
   document.addEventListener('anylist:cache-invalidated',()=>{
     contextRevision++;
-    prediction.cancel();responseCache.clear();facetCache.clear();
+    prediction.cancel();sectionRequests.clear();responseCache.clear();facetCache.clear();
   },{signal});
   const readyPosters = new Set<string>();
   let currentPath: string | undefined;
@@ -189,6 +189,25 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
           : "Unable to load titles. Try again.",
       );
     return body;
+  };
+  const sectionRequests = createBrowseSharedRequests<SectionsPayload>(
+    (path, requestSignal) => json(path, {signal: requestSignal}) as Promise<SectionsPayload>,
+    (path, result) => responseCache.set(path, result), signal,
+  );
+  const prefetchAdjacentSections = (values: URLSearchParams, epoch: number) => {
+    const alternate = new URLSearchParams(values);
+    if (categoryMode(values)) alternate.set('media_type', values.get('media_type') === 'movie' ? 'series' : 'movie');
+    else if (values.get('view') === 'timeline') alternate.delete('view');
+    else return;
+    if (!categoryMode(alternate)) return;
+    const path = requestPath(alternate);
+    const revision = contextRevision;
+    const prefetch = () => {
+      if (!signal.aborted && generation === epoch && contextRevision === revision &&
+          !document.hidden && predictionAllowed() && !responseCache.get(path)) sectionRequests.prefetch(path);
+    };
+    if ('requestIdleCallback' in window) window.requestIdleCallback(prefetch, {timeout: 1500});
+    else setTimeout(prefetch, 250);
   };
   const paintState = paintBrowseCardState;
   const initialItems = new Map<string, Item>(
@@ -515,7 +534,9 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       let response = cached;
       if (!response) {
         await waitForBrowseRequest(debounce, current.signal);
-        response = await prediction.consume(path,current.signal) ?? await json(path, {signal: current.signal}) as Payload | SectionsPayload;
+        response = categoryView
+          ? await sectionRequests.consume(path, current.signal)
+          : await prediction.consume(path,current.signal) ?? await json(path, {signal: current.signal}) as Payload;
         if (current.signal.aborted || signal.aborted || request !== current) return;
       }
       async function fillViewport(first: Payload, requestValues: URLSearchParams): Promise<Payload> {
@@ -575,6 +596,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       }
       notice.textContent = response.notice || "";
       if (cached) void refreshViewerContext(response, current);
+      if (!append) prefetchAdjacentSections(values, epoch);
     } catch (cause) {
       await loadingView.settle(current.signal);
       if (current.signal.aborted || request !== current || signal.aborted)

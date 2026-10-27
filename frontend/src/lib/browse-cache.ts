@@ -21,6 +21,45 @@ export function browseResultTtl(path: string, now: number): number {
 
 export const BROWSE_FACET_TTL = 6 * 60 * MINUTE;
 
+/** A view change stops waiting for a result without discarding useful in-flight work. */
+export function createBrowseSharedRequests<T>(fetcher: (key: string, signal: AbortSignal) => Promise<T>,
+  onResult: (key: string, value: T) => void, lifetime: AbortSignal, limit = 4) {
+  const pending = new Map<string, {controller: AbortController; promise: Promise<T>}>();
+  const clear = () => {
+    for (const entry of pending.values()) entry.controller.abort();
+    pending.clear();
+  };
+  lifetime.addEventListener('abort', clear, {once: true});
+  const start = (key: string) => {
+    const existing = pending.get(key);
+    if (existing) return existing.promise;
+    if (pending.size >= limit) {
+      const oldest = pending.keys().next().value;
+      if (oldest) { pending.get(oldest)?.controller.abort(); pending.delete(oldest); }
+    }
+    const controller = new AbortController();
+    const promise = fetcher(key, controller.signal);
+    const entry = {controller, promise};
+    pending.set(key, entry);
+    void promise.then(value => { if (!controller.signal.aborted && !lifetime.aborted) onResult(key, value); }, () => {})
+      .finally(() => { if (pending.get(key) === entry) pending.delete(key); });
+    return promise;
+  };
+  return {
+    prefetch(key: string) { if (!lifetime.aborted) void start(key).catch(() => {}); },
+    consume(key: string, consumer: AbortSignal) {
+      if (consumer.aborted || lifetime.aborted) return Promise.reject(new DOMException('Aborted', 'AbortError'));
+      return new Promise<T>((resolve, reject) => {
+        const abort = () => { consumer.removeEventListener('abort', abort); reject(new DOMException('Aborted', 'AbortError')); };
+        consumer.addEventListener('abort', abort, {once: true});
+        void start(key).then(value => { consumer.removeEventListener('abort', abort); if (!consumer.aborted) resolve(value); },
+          error => { consumer.removeEventListener('abort', abort); if (!consumer.aborted) reject(error); });
+      });
+    },
+    clear,
+  };
+}
+
 export function clearStoredBrowseCache(storage: Storage) {
   try {
     for (const name of ['results', 'facets']) storage.removeItem(BROWSE_STORAGE_PREFIX + name);
