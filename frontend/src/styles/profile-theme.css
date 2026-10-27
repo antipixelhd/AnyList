@@ -12,6 +12,7 @@
   color:#fff;
 }
 .tracker #entry-groups .entry-row:not([data-editor-deselected]):is(:hover,:has(:focus-visible)) :is(a,button,.entry-score,.entry-progress,.entry-type,.unwatched-indicator) { color:#fff; }
+.tracker #entry-groups .entry-row:not([data-editor-deselected]):is(:hover,:has(:focus-visible)) .entry-score-button:is(:hover,:focus-visible) { color:#f7b731; }
 .tracker #entry-groups .entry-row:not([data-editor-deselected]):is(:hover,:has(:focus-visible)) .entry-cover,
 .tracker #entry-groups .entry-row:not([data-editor-deselected]):is(:hover,:has(:focus-visible)) .entry-thumbnail::after { opacity:0; }
 .tracker #entry-groups .entry-row:not([data-editor-deselected]):is(:hover,:has(:focus-visible)) .row-menu {
