@@ -14,7 +14,7 @@ export type EditorTitle = {
   favorite?: boolean;
   editor_library?: { available: boolean; desired: boolean };
   overview?:string|null; runtime?:number|null; release_date?:string|null; year?:string;
-  genres?:string[]; tmdb_score?:number|null;
+  genres?:string[]; tmdb_score?:number|null; progress_positions?:string[];
 };
 type RecordState = {
   title: EditorTitle; committed: EditorTitle['entry'];
@@ -77,6 +77,8 @@ export class EditorStore {
     return record.title;
   }
   get(title: EditorTitle) { return this.record(title)?.title || this.seed(title); }
+  hasPendingWrites() { return [...this.records.values()].some(record => record.pending.length || record.libraryPending.length || record.importing); }
+  hasPendingEntryWrites(title: EditorTitle) { return !!this.record(title)?.pending.length; }
   // Bare ids are the legacy Media adapter. Games always use a typed subject.
   find(id: number) { return [...this.records.values()].find(r => r.title.id === id && r.title.type!=='game' && !r.stale)?.title; }
   findSubject(subject:WorkSubject) {
@@ -162,6 +164,7 @@ export class EditorStore {
       if ('favorite' in operation.patch) favorite=operation.patch.favorite;
       if (!entry && Object.keys(operation.patch).length===1 && 'favorite' in operation.patch) continue;
       const previous = entry?.status;
+      const previousProgress = entry?.progress ?? 0;
       const defaults=record.title.type==='game'
         ? {status:'planning',listed:true,score:null,total_seconds:null,completion_seconds:null,replay_count:null,notes:'',start_date:null,finish_date:null}
         : {status:'planning', progress:0, rating_mode:'manual', manual_score:null,
@@ -182,6 +185,24 @@ export class EditorStore {
           achievements.percentage=achievements.total>0?achievements.count/achievements.total*100:null;
         }else if(mode==null){achievements.count=achievements.percentage=null;}
         entry.achievements=achievements;
+      }
+      if ('status' in operation.patch && record.title.type === 'movie') {
+        entry.progress = entry.status === 'completed' ? 1 : 0;
+      } else if (entry.status === 'completed' && previous !== 'completed' && record.title.type === 'series') {
+        const seasons = (record.title as EditorTitle & {seasons?: {season_number:number;released_count:number|null}[]}).seasons;
+        const regular = seasons?.filter(season => season.season_number > 0);
+        const released = entry.released_episodes ?? (regular?.length && regular.every(season => season.released_count != null)
+          ? regular.reduce((sum, season) => sum + season.released_count!, 0) : null);
+        if (released != null && released > 0) entry.progress = released;
+      }
+      if (entry.progress !== previousProgress) {
+        // The ordered released catalogue allows exact optimistic positions across seasons.
+        entry.season_position = entry.progress > 0 ? record.title.progress_positions?.[entry.progress - 1] ?? null : null;
+        if ('progress' in operation.patch && !('status' in operation.patch) && entry.progress > 0) {
+          const released = entry.released_episodes ?? (record.title.type === 'movie' ? 1 : null);
+          entry.status = previous === 'completed' || (released != null && released > 0 && entry.progress >= released)
+            ? 'completed' : 'watching';
+        }
       }
       if ('manual_score' in operation.patch) entry.score = operation.patch.manual_score || null;
       const today = localToday();
@@ -298,7 +319,9 @@ export class EditorStore {
   }
   warmArtwork(title: EditorTitle, posterSrc?: string, backdropSrc?:string) {
     const record = this.record(title)!;
-    if (posterSrc) record.posterSrc = posterSrc;
+    // A global search opener may sit above a different title's details page.
+    // Reuse decoded/displayed sources only when they belong to this title.
+    if (posterSrc && title.poster && artworkIdentity(posterSrc) === artworkIdentity(title.poster)) record.posterSrc = posterSrc;
     if (!title.backdrop) return;
     // A details-page editor reuses the hero's selected source instead of warming another bucket.
     if(backdropSrc&&artworkIdentity(backdropSrc)===artworkIdentity(title.backdrop))record.backdropSrc=backdropSrc;
@@ -361,7 +384,7 @@ export const editorStore = new EditorStore(async (path, options) => {
 export function seedEditorPage() {
   editorStore.scope(document.body.dataset.cacheUser || 'anonymous');
   const list = JSON.parse(document.querySelector('#list-editor-entries')?.textContent || '[]');
-  list.forEach((entry: any) => editorStore.seed({...entry, entry:entry.entry ?? entry}));
+  list.forEach((entry: any) => editorStore.seed({...entry, entry:entry.entry ? {...entry.entry, progress:entry.progress, released_episodes:entry.released_episodes, season_position:entry.season_position} : entry}));
   const title = JSON.parse(document.querySelector('#title-editor-data')?.textContent || 'null');
   if (title) editorStore.seed(title);
   const browse = JSON.parse(document.querySelector('#browse-data')?.textContent || '{}');

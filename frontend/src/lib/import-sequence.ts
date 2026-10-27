@@ -6,6 +6,12 @@ export function createImportSequence() {
   let selected: string | null = null;
   let overview = false;
   return {
+    snapshot() { return {ids: [...ids], finished: [...finished], selected, overview}; },
+    restore(value: {ids: string[]; finished: string[]; selected: string | null; overview: boolean}) {
+      ids = [...value.ids]; known.clear(); ids.forEach(id => known.add(id));
+      finished.clear(); value.finished.forEach(id => finished.add(id));
+      selected = value.selected; overview = value.overview;
+    },
     get ids() { return [...ids]; },
     get selected() { return selected; },
     get overview() { return overview; },

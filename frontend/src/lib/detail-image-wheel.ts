@@ -9,7 +9,7 @@ export function bindDetailImageWheel(dialog:HTMLDialogElement,track:HTMLElement,
     // consistently even when a fading control changes the pointer hit target.
     if((event.target as Element)?.closest('[data-image-viewer-slots]'))return;
     event.preventDefault();
-    const now=performance.now(),direction=-Math.sign(event.deltaY);
+    const now=performance.now(),direction=Math.sign(event.deltaY);
     if(now-last>200||Math.sign(delta)!==direction)delta=0;
     last=now;
     const pixels=Math.min(80,Math.abs(event.deltaY)*(event.deltaMode===1?20:event.deltaMode===2?track.clientHeight:1));

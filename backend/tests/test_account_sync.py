@@ -47,7 +47,7 @@ class AccountSyncRulesTests(unittest.IsolatedAsyncioTestCase):
                        SimpleNamespace(id=3, type="nuvio", sync_collection=True),
                        SimpleNamespace(id=4, type="emby", sync_watched=False)]
         db = SimpleNamespace(execute=AsyncMock(side_effect=[result(settings), result(values=connections)]),
-                             add=Mock(), flush=AsyncMock(), commit=AsyncMock())
+                             add=Mock(), flush=AsyncMock(), commit=AsyncMock(), get=AsyncMock(return_value=None))
         def add(job):
             job.id = 30 + db.add.call_count
         db.add.side_effect = add

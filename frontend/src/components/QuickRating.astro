@@ -25,7 +25,8 @@ import Icon from './Icon.astro';
 import { applyResponsiveArtwork } from '../lib/responsive-artwork';
 import { showDialog, closeDialog } from '../lib/ui-motion';
 import {editorStore} from '../lib/editor-store';
-import {showToast} from '../lib/toasts';
+import {showActionFailure} from '../lib/action-failure';
+import {markFailureHandled} from '../lib/handled-failures';
 let pageListeners: AbortController;
 document.addEventListener('astro:page-load', () => {
   pageListeners?.abort();
@@ -111,22 +112,23 @@ document.addEventListener('astro:page-load', () => {
         const pending = onScore(score);
         void closeDialog(dialog);
         void Promise.resolve(pending).catch(cause => {
+          markFailureHandled(cause);
           if (active !== current) return;
           savedScore = previousScore;
           current.score = previousScore;
           remove.hidden = previousScore == null;
           paint(previousScore);
-          error.textContent = cause instanceof Error ? cause.message : 'Unable to save this rating.';
-          error.hidden = false;
+          error.hidden = true;
           showDialog(dialog);
+          showActionFailure('rating', current.title, cause);
         });
       } catch (cause) {
         savedScore = previousScore;
         current.score = previousScore;
         remove.hidden = previousScore == null;
         paint(previousScore);
-        error.textContent = cause instanceof Error ? cause.message : 'Unable to save this rating.';
-        error.hidden = false;
+        error.hidden = true;
+        showActionFailure('rating', current.title, cause);
       }
       return;
     }
@@ -159,12 +161,12 @@ document.addEventListener('astro:page-load', () => {
         if (modeLabel) modeLabel.textContent = savedScore == null ? 'Unrated' : ratingMode === 'average' ? 'Rated-season average' : 'Manual rating';
       });
       document.dispatchEvent(new CustomEvent('media-tracker:rating-changed', { detail: {...saved, id:active.id, score:savedScore} }));
-      showToast(score==null?'Rating removed.':'Rating saved.','success');
       setTimeout(() => { if(active===current && !signal.aborted)void closeDialog(dialog); }, 140);
     } catch (cause) {
+      markFailureHandled(cause);
       if(active!==current || signal.aborted)return;
-      error.textContent = cause instanceof Error ? cause.message : 'Unable to save this rating.';
-      error.hidden = false;
+      error.hidden = true;
+      showActionFailure('rating', current.title, cause);
       paint(savedScore);
     } finally {
       if(active===current && !signal.aborted)stars.classList.remove('saving');

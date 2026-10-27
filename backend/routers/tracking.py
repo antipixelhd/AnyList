@@ -357,11 +357,13 @@ async def recent_events(db: AsyncSession = Depends(get_db), viewer: User = Depen
     recent_jobs=(await db.execute(select(SyncJob).where(SyncJob.user_id==viewer.id)
         .order_by(SyncJob.updated_at.desc(),SyncJob.id.desc()).limit(200))).scalars().all()
     failure_events=connection_failure_events(recent_jobs,connection_names)
-    pending=sum(1 for r,_ in rows if r.state=='pending' and r.kind!='outbound_pending')+len(failure_events)
+    from core.import_notifications import active_import_events
+    import_events = await active_import_events(db, viewer.id, datetime.utcnow())
+    pending=sum(1 for r,_ in rows if r.state=='pending' and r.kind!='outbound_pending')+len(failure_events)+len(import_events)
     outbound=group_outbound_delivery(actions,cloud_actions,outbound_review_rows,markers,connection_names,
         library_actions,watch_intents)
     return {'pending':pending,'outbound':outbound,
-        'results':failure_events+[{'id':r.id,'kind':r.kind,'state':r.state,'provider':r.provider,'message':r.message,'previous_status':r.previous_status,'proposed_status':r.proposed_status,
+        'results':import_events+failure_events+[{'id':r.id,'kind':r.kind,'state':r.state,'provider':r.provider,'message':r.message,'previous_status':r.previous_status,'proposed_status':r.proposed_status,
                     'previous_score':r.previous_score,'proposed_score':r.proposed_score,'season_number':r.season_number,
                     'priority':review_priority(r),'dismissible':r.state!='pending' or r.kind in {'new_season_release_date','new_season_release'},'payload':r.payload or {},
                     'media':tracking_projection.media_data(m) if m else None,'created_at':r.created_at} for r,m in rows]}
@@ -1107,7 +1109,10 @@ async def profile_list(username: str, media_type: Literal["movie", "series", "al
                 title_episodes = [r for r in released if (
                     (r.tvdb_id if provider == 'tvdb' else r.tmdb_id) in ids or r.id in imported_ids
                 )]
+                title_episodes.sort(key=lambda episode: (episode.season_number or 0, episode.episode_number or 0))
                 result['released_episodes'] = len(title_episodes)
+                if owner:
+                    result['progress_positions'] = [f'S{episode.season_number}E{episode.episode_number}' for episode in title_episodes]
                 latest_released = max(
                     title_episodes,
                     key=lambda episode: (episode.season_number or 0, episode.episode_number or 0),
@@ -1265,6 +1270,31 @@ async def account_cinema_country(db, viewer):
     from core.countries import country_code
     value=await db.scalar(select(UserProfileData.country).where(UserProfileData.user_id==viewer.id))
     return country_code(value) if isinstance(value,str) else None
+
+
+class BrowseContextItem(BaseModel):
+    id: int | None = Field(None, gt=0)
+    tmdb_id: int | None = Field(None, gt=0)
+    type: Literal['movie', 'series']
+
+
+class BrowseContextRequest(BaseModel):
+    items: list[BrowseContextItem] = Field(max_length=80)
+
+
+@router.post('/browse/context')
+async def browse_context(body: BrowseContextRequest, response: Response, db: AsyncSession = Depends(get_db),
+                         viewer: User = Depends(get_current_user_or_api_key)):
+    """Refresh only viewer-owned state for an already rendered browse selection."""
+    response.headers['Cache-Control'] = 'private, no-store'
+    await catalog_access(db, viewer)
+    if not viewer or not body.items:
+        return {'items': []}
+    from core.tracking_editor import attach_editor_context
+    rows = [{**item.model_dump(), 'id': None if item.tmdb_id else item.id}
+            for item in body.items if item.id or item.tmdb_id]
+    await attach_editor_context(db, viewer, rows)
+    return {'items': rows}
 
 
 @router.get('/browse/facets')

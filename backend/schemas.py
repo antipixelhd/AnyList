@@ -332,6 +332,7 @@ class MediaServerConnectionUpdate(BaseModel):
 
 
 class MediaServerConnectionResponse(MediaServerConnectionBase):
+    setup_pending: bool = False
     id: int
     user_id: int
     created_at: datetime

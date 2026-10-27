@@ -60,9 +60,11 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
   let previewInteracting=false;
   let previewGesture:{x:number;y:number;moved:boolean}|undefined;
   let pointerPosition:{x:number;y:number}|undefined;
+  const previewControls=[slots,...lightbox.querySelectorAll<HTMLElement>('.image-viewer-button,[data-image-viewer-status]')];
   track.tabIndex=-1;
   const previews=createGalleryPreviewTimer(()=>{
       if(!lightbox.open||previewInteracting||'viewerZoomed' in lightbox.dataset||viewerPending())return false;
+      if(!mobileViewer.matches&&previewControls.some(control=>control.matches(':hover')))return false;
       // Source-free offscreen thumbnails stay lazy and must not block forever.
       if(!galleryPreviewImagesSettled(slots.querySelectorAll<HTMLImageElement>('img')))return false;
       const selected=carousel.slide(current);
@@ -74,15 +76,22 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
     lightbox.dataset.previewsHidden='true';
   },signal);
   const clearPreviewTimer=previews.pause;
-  const revealPreviews=previews.reveal;
+  const revealPreviews=()=>{
+    if(mobileViewer.matches||!pointerPosition||insideViewer(pointerPosition.x,pointerPosition.y))previews.reveal();
+  };
   function refreshPreviewLoading(){if(lightbox.open)previews.refresh();}
   const insideViewer=(x:number,y:number)=>{
     const bounds=lightbox.getBoundingClientRect();
     return x>=bounds.left&&x<bounds.right&&y>=bounds.top&&y<bounds.bottom;
   };
+  previewControls.forEach(control=>{
+    control.addEventListener('pointerenter',refreshPreviewLoading,{signal,passive:true});
+    control.addEventListener('pointerleave',refreshPreviewLoading,{signal,passive:true});
+  });
   slots.addEventListener('load',refreshPreviewLoading,{signal,capture:true});
   slots.addEventListener('error',refreshPreviewLoading,{signal,capture:true});
   lightbox.addEventListener('pointerdown',event=>{
+    if(event.pointerType==='mouse')pointerPosition={x:event.clientX,y:event.clientY};
     // Modal backdrop events also target the dialog, despite being outside it.
     if(!insideViewer(event.clientX,event.clientY))return;
     previewInteracting=true;
@@ -417,7 +426,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
     followedSlot=undefined;
     prepareViewer();
     fitViewer(undefined,viewerGroup());
-    showDialog(lightbox);revealPreviews();showImage(gridIndex>=0?gridIndex:Math.max(0,galleries[active].findIndex(value=>imageKey(value)===imageKey(url))));if(active!=='hero')void loadImages();
+    showDialog(lightbox);previews.reveal();showImage(gridIndex>=0?gridIndex:Math.max(0,galleries[active].findIndex(value=>imageKey(value)===imageKey(url))));if(active!=='hero')void loadImages();
   },{signal});
   // The hero is critical: start its small metadata read immediately. Full
   // gallery curation and extra image downloads wait for a gallery interaction.
@@ -435,7 +444,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
   bindImageViewerDismissal(lightbox,signal);
   bindDetailImageWheel(lightbox,track,signal,direction=>showImage(Math.max(0,Math.min(galleries[active].length-1,current+direction)),true,true,false,true));
   lightbox.addEventListener('keydown',event=>{
-    if(event.key==='Tab')revealPreviews();
+    if(event.key==='Tab')previews.reveal();
     if(event.key==='ArrowLeft'||event.key==='ArrowRight'){event.preventDefault();showImage(current+(event.key==='ArrowLeft'?-1:1),true);}
   },{signal});
   arrows.forEach(button=>button.addEventListener('click',()=>showImage(current+Number(button.dataset.imageViewerStep),true),{signal}));

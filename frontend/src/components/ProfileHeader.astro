@@ -14,7 +14,8 @@ const showLibrary=profile.owner&&domains.show_movies_series&&await hasStreamingL
 </div></section>
 <nav class="profile-tabs" aria-label="Profile" data-profile-owner={profile.owner?'yes':'no'} data-profile-base={base} data-media-domains={JSON.stringify(domains)}><a href={base} class:list={{active:active==='overview'}} aria-current={active==='overview'?'page':undefined}>Overview</a>{domainListLinks(base,domains).map(item=><a href={item.href} class:list={{active:Astro.url.pathname===item.href}} aria-current={Astro.url.pathname===item.href?'page':undefined}>{item.label}</a>)}<a href={`${base}/favorites`} class:list={{active:active==='favorites'}} aria-current={active==='favorites'?'page':undefined}>Favorites</a>{showLibrary&&<a href={`${base}/library`} class:list={{active:active==='library'}} aria-current={active==='library'?'page':undefined}>Library</a>}<a data-profile-stats href={`${base}/stats${!domains.show_movies_series&&domains.show_games?"/games":""}`} class:list={{active:active==='stats'}} aria-current={active==='stats'?'page':undefined}>Stats</a><a href={`${base}/social`} class:list={{active:active==='social'}} aria-current={active==='social'?'page':undefined}>Social</a></nav>
 <script>
-import {domainListLinks,mediaDomains,type MediaDomains} from '../lib/media-domains';
+import {mediaDomains,domainListLinks,type MediaDomains} from '../lib/media-domains';
+import {showActionFailure} from '../lib/action-failure';
 document.addEventListener('astro:page-load', () => {
 const tabs = document.querySelector<HTMLElement>('.profile-tabs');
 const controller = new AbortController();
@@ -53,10 +54,10 @@ if (button) {
     const response = await fetch(`/api/proxy/tracking/people/${encodeURIComponent(button.dataset.username!)}/follow`, { method: next ? 'POST' : 'DELETE' });
     if (!response.ok) throw new Error('Could not update following. Please try again.');
     confirmed = next;
-   } catch {
+   } catch (cause) {
     desired = confirmed;
     render();
-    if (error) error.textContent = 'Could not update following. Please try again.';
+    showActionFailure('follow',button.dataset.displayName,cause);
     break;
    }
   }

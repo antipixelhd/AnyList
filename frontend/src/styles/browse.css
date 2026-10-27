@@ -6,6 +6,8 @@
   max-width: var(--page-max-width);
   padding-bottom: 30px;
 }
+.browse-static-pages { display:flex; gap:20px; margin-top:28px; }
+.browse-static-pages a { color:var(--blue); font-weight:600; }
 .browse-header {
   display: flex;
   align-items: center;
@@ -1040,7 +1042,6 @@
   box-shadow: none;
 }
 .tracker .browse-page .browse-filters :is(
-  .browse-search > div:has(input:focus-visible),
   select:focus-visible,
   .tracker-select-trigger:focus-visible,
   .browse-filter-menu > summary:focus-visible,

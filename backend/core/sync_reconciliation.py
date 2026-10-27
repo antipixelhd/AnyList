@@ -347,6 +347,8 @@ async def finalize(db, state, cycle, *, job_id=None):
     cycle.push_back = state.deferred_push_back
     cycle.connection_versions = state.connection_versions
     if job_id is not None:
+        from core.connection_imports import seed_import_delivery
+        await seed_import_delivery(db, state.user_id, job_id, cycle)
         from core.sync_delivery import persist_delivery
         await persist_delivery(db, job_id, cycle)
     await db.commit()

@@ -176,6 +176,8 @@ async def reset_stream_connection_state(db: AsyncSession, conn: MediaServerConne
         SyncJob.connection_id == conn.id,
         SyncJob.status == SyncStatus.pending,
     ).values(status=SyncStatus.cancelled, error_message="Connection account changed"))
+    from core.connection_imports import cancel_connection_imports
+    await cancel_connection_imports(db, conn)
     await db.execute(delete(StreamBaseline).where(StreamBaseline.connection_id == conn.id))
     await db.execute(delete(SyncReview).where(SyncReview.connection_id == conn.id))
     await db.execute(delete(WatchIntent).where(WatchIntent.connection_id == conn.id))

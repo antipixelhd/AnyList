@@ -83,9 +83,10 @@
 }
 /* Fast search starts as a compact input; result cards appear together after a response. */
 .quick-search-dialog {
+  --blue:var(--quick-search-blue,#3db4f2);
   position:fixed;
   inset:52px 0 auto;
-  width:min(640px,calc(100vw - 64px));
+  width:min(660px,calc(100vw - 64px));
   max-height:calc(100vh - 76px);
   margin:0 auto;
   overflow:auto;
@@ -93,15 +94,55 @@
   border:0;
   box-shadow:none
 }
-.quick-search-dialog[data-search-expanded] { width:min(calc(var(--search-columns,2) * 320px),calc(100vw - 64px)); }
-.quick-search-dialog .quick-search-bar { max-width:640px; margin:auto; }
+.quick-search-dialog[data-search-expanded] { width:min(max(660px,calc(var(--search-columns,2) * 320px)),calc(100vw - 64px)); }
+.quick-search-hint { max-width:660px; margin:6px auto 0; color:var(--muted); font-size:11px; line-height:16px; text-align:right; }
+.quick-search-dialog .quick-search-bar {
+  grid-template-columns:46px minmax(0,1fr) 46px;
+  gap:0;
+  min-height:50px;
+  max-width:660px;
+  margin:auto;
+  padding:0;
+  border:0;
+  border-radius:6px;
+  background:var(--panel);
+  box-shadow:none;
+  transition:background-color .18s ease;
+}
+.quick-search-dialog .quick-search-bar:focus-within { background:color-mix(in srgb,var(--panel) 94%,var(--text)); }
+.quick-search-dialog .quick-search-bar > .ui-icon { justify-self:center; color:var(--muted); font-size:14px; }
+.quick-search-dialog .quick-search-bar input[type=search] {
+  width:100%;
+  min-height:50px;
+  margin:0;
+  padding:0;
+  border:0;
+  border-radius:0;
+  background:transparent;
+  box-shadow:none;
+  outline:none;
+  color:var(--text);
+  font-size:14px;
+  font-weight:600;
+}
+.quick-search-dialog .quick-search-bar input::placeholder { color:var(--muted); opacity:1; }
+.quick-search-dialog .quick-search-bar .editor-icon-button {
+  justify-self:center;
+  width:44px;
+  height:44px;
+  padding:0;
+  background:transparent;
+  color:var(--muted);
+  font-size:14px;
+}
+.quick-search-dialog .quick-search-bar .editor-icon-button:is(:hover,:focus-visible) { background:transparent; color:var(--blue); }
 .quick-search-dialog .quick-search-results,.quick-search-dialog .quick-search-results.combined {
   grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));
   justify-content:stretch;
 }
 .quick-search-dialog :is(.quick-search-results,.quick-search-card,.quick-search-state)[hidden] { display:none!important; }
 .quick-search-mobile-tabs { display:none; }
-.quick-search-dialog .quick-search-result-link:focus-visible { outline:none; background:#1b3043; color:var(--bright); }
+.quick-search-dialog .quick-search-result-link:focus-visible { outline:none; background:transparent; color:var(--blue); }
 .quick-search-contributor { grid-template-columns:minmax(0,1fr); }
 .quick-search-contributor img { border-radius:50%; }
 .quick-search-studio img { border-radius:4px; object-fit:contain; padding:4px; }
@@ -142,6 +183,41 @@
   letter-spacing:0;
   text-transform:none
 }
+/* Quiet grouped panels, with section names above the surface. */
+.quick-search-dialog .quick-search-card { padding:0; border:0; border-radius:0; background:transparent; box-shadow:none; }
+.quick-search-dialog .quick-search-card h2 { margin:0 0 10px; color:var(--text); font-size:14px; font-weight:700; }
+.quick-search-dialog [data-search-results] { padding:5px 20px; border-radius:4px; background:var(--panel); }
+.quick-search-dialog .quick-search-result { min-height:60px; margin-inline:-20px; padding:10px 20px; gap:8px; border-radius:0; }
+.quick-search-dialog .quick-search-result:is(:hover,:focus-within) { background:var(--blue); color:#fff; }
+.quick-search-dialog .quick-search-result-link { grid-template-columns:40px minmax(0,1fr); gap:10px; }
+.quick-search-dialog .quick-search-result-link:is(:hover,:focus-visible) { color:var(--blue); }
+.quick-search-dialog .quick-search-result img,.quick-search-dialog .quick-search-poster { width:40px; height:40px; }
+.quick-search-dialog .quick-search-result strong { font-size:14px; font-weight:600; line-height:1.35; }
+.quick-search-dialog .quick-search-result small { margin-top:2px; color:var(--muted); font-size:12px; line-height:1.35; }
+.quick-search-dialog .quick-search-add {
+  min-width:32px;
+  min-height:40px;
+  padding:0;
+  border:0;
+  background:transparent;
+  color:var(--muted);
+}
+.quick-search-dialog .quick-search-add > span:not(.ui-icon) { display:none; }
+.quick-search-dialog .quick-search-add .ui-icon {
+  display:grid;
+  place-items:center;
+  width:24px;
+  height:24px;
+  border-radius:50%;
+  background:color-mix(in srgb,var(--blue) 20%,var(--panel));
+  color:var(--blue);
+}
+.quick-search-dialog .quick-search-result:is(:hover,:focus-within) .quick-search-add .ui-icon {
+  background:color-mix(in srgb,#fff 65%,var(--blue));
+}
+.quick-search-dialog .quick-search-add:is(:hover,:focus-visible) { border:0; background:transparent; color:var(--blue); }
+.quick-search-dialog .quick-search-result:is(:hover,:focus-within) :is(.quick-search-result-link,.quick-search-add,small) { color:#fff; }
+@media(hover:none),(pointer:coarse) { .quick-search-dialog .quick-search-add { min-width:44px; min-height:44px; } }
 .quick-search-state {
   position:static;
   transform:none;
@@ -155,6 +231,8 @@
   white-space:normal
 }
 @media(max-width:650px) {
+  .quick-search-hint { display:none; }
+  .quick-search-dialog .quick-search-add { min-width:44px; min-height:44px; opacity:1; pointer-events:auto; }
   .quick-search-dialog,.quick-search-dialog[data-combined=yes] {
     inset:max(16px,env(safe-area-inset-top)) 0 auto;
     width:calc(100vw - 28px);
@@ -168,9 +246,9 @@
     gap:10px;
     margin-top:12px;
     padding:8px;
-    border:1px solid #2a3e52;
-    border-radius:7px;
-    background:#192737;
+    border:0;
+    border-radius:6px;
+    background:var(--panel);
     touch-action:pan-y;
   }
   .quick-search-mobile-tabs[hidden] { display:none; }
@@ -189,7 +267,7 @@
   .quick-search-mobile-tabs > [data-search-tab-step="-1"] { grid-column:1; }
   .quick-search-mobile-tabs > .quick-search-tab-current { grid-column:2; }
   .quick-search-mobile-tabs > [data-search-tab-step="1"] { grid-column:3; }
-  .quick-search-mobile-tabs > button:is(:hover,:focus-visible,:active) { outline:none; background:transparent; color:var(--blue); }
+  .quick-search-mobile-tabs > button:is(:hover,:focus-visible) { outline:none; background:transparent; color:var(--blue); }
   .quick-search-mobile-tabs > button:disabled { opacity:.35; cursor:default; background:transparent; }
   .quick-search-mobile-tabs > button[hidden],.quick-search-tab-markers span[hidden] { display:none; }
   .quick-search-tab-current { display:grid; justify-items:center; gap:8px; min-width:0; }
@@ -205,5 +283,66 @@
   .quick-search-dialog .quick-search-state { margin-top:10px; }
 }
 @media(prefers-reduced-motion:reduce) {
-  .quick-search-mobile-tabs > button,.quick-search-tab-markers span { transition:none; }
+  .quick-search-dialog .quick-search-bar,.quick-search-mobile-tabs > button,.quick-search-tab-markers span { transition:none; }
+}
+
+@media (prefers-reduced-motion:no-preference) {
+  .quick-search-dialog .quick-search-result { transition:background-color .15s ease,color .15s ease; }
+  .quick-search-dialog .quick-search-result :is(.quick-search-result-link,.quick-search-add,small) { transition:color .15s ease; }
+}
+
+/* Desktop quick search uses a viewport overlay with one shared scroll surface. */
+@media (min-width:651px) {
+  html:has(.quick-search-dialog[data-quick-search][open]) { overflow:hidden; }
+  .quick-search-dialog[data-quick-search] {
+    inset:0;
+    box-sizing:border-box;
+    width:100%;
+    max-width:none;
+    height:100dvh;
+    max-height:none;
+    margin:0;
+    padding:80px 0 100px;
+    overflow-x:hidden;
+    overflow-y:auto;
+    overscroll-behavior:contain;
+  }
+  .quick-search-dialog[data-quick-search] .quick-search-bar { width:660px; }
+  .quick-search-dialog[data-quick-search] .quick-search-results {
+    box-sizing:border-box;
+    width:calc(100% - 80px);
+    max-width:1480px;
+    max-height:none;
+    min-height:0;
+    margin:16px auto 0;
+    padding:0 60px;
+    gap:48px;
+    --quick-search-panel-width:calc((100% - 96px) / 3);
+    grid-template-columns:repeat(3,minmax(0,1fr));
+    overflow:visible;
+  }
+  .quick-search-dialog[data-quick-search] .quick-search-results:not(:has(> .quick-search-card:not([hidden]) ~ .quick-search-card:not([hidden]) ~ .quick-search-card:not([hidden]))) {
+    grid-template-columns:repeat(2,var(--quick-search-panel-width));
+    justify-content:center;
+  }
+  .quick-search-dialog[data-quick-search] .quick-search-results:not(:has(> .quick-search-card:not([hidden]) ~ .quick-search-card:not([hidden]))):not(:has(> .quick-search-card:not([hidden]) ~ .quick-search-card:not([hidden]) ~ .quick-search-card:not([hidden]))) {
+    grid-template-columns:var(--quick-search-panel-width);
+  }
+  .quick-search-dialog[data-quick-search] .quick-search-results[data-masonry] {
+    grid-auto-rows:1px;
+    row-gap:0;
+  }
+  .quick-search-dialog[data-quick-search] .quick-search-state { max-width:660px; margin:24px auto 0; }
+}
+@media (min-width:651px) and (max-width:1500px) {
+  .quick-search-dialog[data-quick-search] .quick-search-results { gap:32px; --quick-search-panel-width:calc((100% - 64px) / 3); }
+}
+@media (min-width:651px) and (max-width:1400px) {
+  .quick-search-dialog[data-quick-search] .quick-search-results:has(> .quick-search-card:not([hidden]) ~ .quick-search-card:not([hidden])):not(:has(> .quick-search-card:not([hidden]) ~ .quick-search-card:not([hidden]) ~ .quick-search-card:not([hidden]))) { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .quick-search-dialog[data-quick-search] .quick-search-results { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .quick-search-dialog[data-quick-search] .quick-search-results:not(:has(> .quick-search-card:not([hidden]) ~ .quick-search-card:not([hidden]))):not(:has(> .quick-search-card:not([hidden]) ~ .quick-search-card:not([hidden]) ~ .quick-search-card:not([hidden]))) { --quick-search-panel-width:calc((100% - 32px) / 2); }
+}
+@media (min-width:651px) and (max-width:724px) {
+  .quick-search-dialog[data-quick-search] .quick-search-bar { width:calc(100% - 64px); }
+  .quick-search-dialog[data-quick-search] .quick-search-hint { margin-inline:32px; }
 }

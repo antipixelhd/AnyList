@@ -48,21 +48,23 @@ function form(login = async () => ({ profiles: [{ profile_index: 0, name: 'First
   get('test-new-connection-btn').className = 'bg-zinc-800';
   get('test-new-connection-btn').textContent = 'Test';
   get('create-connection-btn').textContent = 'Add';
-  const requests = [], messages = [];
+  const requests = [], messages = [], launched = [];
   const context = {
     document: { getElementById: get, querySelector: selector => get(selector.slice(1)) },
     token: 'session', stremioPollTimer: null, resetPlexLogin: null,
     esc: value => value, errorMessage: error => error.message,
     showMessage: message => messages.push(message), setTimeout() {},
+    launchConnectionImport: connection => {launched.push(connection); return true;},
+    showActionFailure: (...args) => {throw new Error('Unexpected connection failure: '+args[2]);},
     fetch: async (url, options) => {
       requests.push({ url, body: JSON.parse(options.body) });
-      const data = url.endsWith('/connections') ? {} : await login();
+      const data = url.endsWith('/connections') ? {id:55,type:'nuvio',name:'My Nuvio',sync_watched:true} : await login();
       return { ok: true, json: async () => data };
     },
   };
   // The actions slice ends with the enclosing setup function's closing brace.
   runInNewContext(transpile(`async function setup() {\n${fields}\n${actions}\nsetup();`), context);
-  return { get, requests, messages, test: () => get('test-new-connection-btn').fire('click'), add: () => get('create-connection-btn').fire('click') };
+  return { get, requests, messages, launched, test: () => get('test-new-connection-btn').fire('click'), add: () => get('create-connection-btn').fire('click') };
 }
 
 test('Nuvio requires testing and an explicit profile, then saves that profile without another login', async () => {
@@ -89,6 +91,8 @@ test('Nuvio requires testing and an explicit profile, then saves that profile wi
   assert.equal(f.requests.length, 2);
   assert.equal(f.requests[1].body.server_user_id, '1');
   assert.equal(f.requests[1].body.token, 'refresh');
+  assert.equal(f.launched.length, 1);
+  assert.equal(f.launched[0].id, 55);
 });
 
 test('changing credentials clears loaded profiles and requires another test', async () => {

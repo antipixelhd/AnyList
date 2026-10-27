@@ -10,6 +10,7 @@ from models.base import MediaType
 from models.tracking import StreamAction, StreamBaseline, SyncReview, TrackedEntry, TrackingPreferences, TrackingDeletion
 from models.sync import SyncJob, SyncStatus
 from core.tracking_rules import effective_score, observed_status, default_dates
+from core.streaming_history import observed_watch_seconds
 from core.tracking_import import import_tracking_history
 from core.status_provenance import mark_status_change, provider_changed_at, status_changed_at
 from core.web_push import queue_sync_completion_rating
@@ -135,10 +136,10 @@ def completed_rows(progress):
     result = []
     for row in progress:
         try:
-            duration, position = float(row.get('duration') or 0), float(row.get('position') or 0)
-            if duration > 0 and position / duration >= 0.9:
+            duration = float(row.get('duration') or 0) / 1000
+            if duration > 0 and observed_watch_seconds(row) / duration >= 0.9:
                 result.append(row)
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, OverflowError):
             continue
     return result
 
@@ -231,6 +232,10 @@ async def require_stream_reconciliation(db, conn):
     if baseline and isinstance(baseline.snapshot, dict) and baseline.snapshot.get('clear_guard'):
         from fastapi import HTTPException
         raise HTTPException(409, 'A provider clear is incomplete; retry Clear data or run a full resync before pushing')
+    from core.connection_imports import onboarding_pending
+    if await onboarding_pending(db, conn):
+        from fastapi import HTTPException
+        raise HTTPException(409, 'Complete the first import before syncing this connection')
     if not baseline or not baseline.approved:
         from fastapi import HTTPException
         raise HTTPException(409, 'Run a full import and confirm its summary in Notifications before pushing to this connection')

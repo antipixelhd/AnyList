@@ -7,7 +7,9 @@
   import {createPrediction,bindPredictionIntent,predictionManifest,predictivePage,predictionAllowed,type PredictionArtwork} from '../lib/predictive-loading';
   import {approvedGamesPage} from '../lib/game-public-routes';
   import {editorStore,type EditorTitle} from '../lib/editor-store';
+  import {isFailureHandled} from '../lib/handled-failures';
   import {responsiveArtwork} from '../lib/responsive-artwork';
+  import {clearStoredBrowseCache} from '../lib/browse-cache';
   wirePasswordToggles();
 
   type CachedPage = { html: string; bytes: number; storedAt: number; predicted?:boolean };
@@ -211,6 +213,9 @@
 
   if (!state.initialized) {
     state.initialized = true;
+    document.addEventListener('anylist:cache-invalidated', () => {
+      try { clearStoredBrowseCache(window.sessionStorage); } catch { /* Storage is optional. */ }
+    });
     state.originalFetch = window.fetch.bind(window);
     const lifetime=new AbortController();
     state.prediction=createPrediction<CachedPage>(async(href,signal)=>{
@@ -267,7 +272,10 @@
     window.fetch = mutationFetch(navigationFetch, location.href, () => {
       clearPages();
       document.dispatchEvent(new Event('anylist:data-changed'));
-    }, () => showToast('Could not reach the server. This change was not queued.'));
+    }, error => {
+      // Give the initiating control time to show its more useful, action-specific error.
+      window.setTimeout(() => { if (!isFailureHandled(error)) showToast('Could not reach the server. This change was not queued.'); }, 250);
+    });
 
     document.addEventListener('submit', event => {
       const form = event.target as HTMLFormElement;

@@ -49,14 +49,19 @@ test('returning to Completed prompts again after confirming or skipping a date; 
   }
 });
 
-test('verified completion evidence and movies never ask for a series finish date', () => {
+test('only default completion with a verified date bypasses the prompt on reselect', () => {
   const item = series();
   item.completion_evidence.finish_date = '2022-06-01';
   assert.equal(needsImportFinishDate(item), false);
+  assert.equal(needsImportFinishDate(item, true), true, 'a partial or skipped default still needs a chosen date');
+  item.completion_evidence.default_completed = true;
   assert.equal(needsImportFinishDate(item, true), false);
   item.kind = 'movie';
+  assert.equal(needsImportFinishDate(item, true), false, 'a confirmed movie date is sufficient');
+  item.completion_evidence.default_completed = false;
+  assert.equal(needsImportFinishDate(item, true), true, 'a dropped movie needs a chosen completion date');
   item.completion_evidence.finish_date = null;
-  assert.equal(needsImportFinishDate(item, true), false);
+  assert.equal(needsImportFinishDate(item, true), true);
 });
 
 test('a series without any date evidence can still leave the completion date blank', () => {

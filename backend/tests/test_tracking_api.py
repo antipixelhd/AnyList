@@ -445,6 +445,20 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(profile.json()['recent_activity'][0]['status'],'paused')
         self.assertEqual((await self.client.get('/tracking/activity')).json()['results'],[])
 
+    async def test_history_import_uses_first_completed_movie_watch_date(self):
+        from core.tracking_import import import_tracking_history
+
+        self.db.add(WatchEvent(user_id=self.owner.id, media_id=self.movie.id,
+                               completed=False, watched_at=datetime(2019, 1, 1)))
+        for watched_at in (datetime(2022, 6, 4), datetime(2020, 3, 2)):
+            self.db.add(WatchEvent(user_id=self.owner.id, media_id=self.movie.id,
+                                   completed=True, watched_at=watched_at))
+        await self.db.commit()
+        self.assertEqual(await import_tracking_history(self.db, self.owner.id), 1)
+        entry = (await self.db.execute(select(TrackedEntry).where(
+            TrackedEntry.user_id == self.owner.id, TrackedEntry.media_id == self.movie.id))).scalar_one()
+        self.assertEqual(entry.finish_date, date(2020, 3, 2))
+
     async def test_initial_import_completion_suppresses_ratings_until_status_changes(self):
         from core.tracking_import import import_tracking_history
 
@@ -1133,6 +1147,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         profile_entry = next(row for row in profile.json()['entries'] if row['id'] == self.show.id)
         self.assertEqual(profile_entry['progress'], 4)
         self.assertEqual(profile_entry['season_position'], 'S2E2')
+        self.assertEqual(profile_entry['progress_positions'], ['S1E1', 'S1E2', 'S2E1', 'S2E2'])
 
         position, finished = await series_activity_details(self.db, self.show, 4)
         self.assertEqual(position, 'S2E2')

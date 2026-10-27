@@ -90,7 +90,7 @@ test('hiding focus and stationary pointer changes do not reveal idle controls ag
   const boundaryStart=source.indexOf('  const insideViewer=');
   const boundary=source.slice(boundaryStart,source.indexOf("  slots.addEventListener('load'",boundaryStart));
   lightbox.getBoundingClientRect=()=>({left:0,right:100,top:0,bottom:100});
-  vm.runInNewContext((await import('node:module')).stripTypeScriptTypes(boundary+bindings),{window,lightbox,track,pointerPosition:{x:10,y:10},mobileViewer:{matches:false},previewInteracting:false,previewGesture:undefined,revealPreviews:g.controls.reveal,refreshPreviewLoading:g.controls.refresh,signal:g.controller.signal});
+  vm.runInNewContext((await import('node:module')).stripTypeScriptTypes(boundary+bindings),{previewControls:[],window,lightbox,track,pointerPosition:{x:10,y:10},mobileViewer:{matches:false},previewInteracting:false,previewGesture:undefined,revealPreviews:g.controls.reveal,refreshPreviewLoading:g.controls.refresh,signal:g.controller.signal});
   g.controls.reveal();g.tick(1500);assert.equal(g.state.hidden,true);
   handlers.focusout();
   const target={closest:()=>true};
@@ -116,4 +116,42 @@ test('late readiness events never reopen hidden controls',t=>{
   assert.equal(g.state.hidden,true);
   g.state.ready=false;g.controls.refresh();assert.equal(g.state.hidden,true);
   g.state.ready=true;g.controls.refresh();g.tick(1500);assert.equal(g.state.hidden,true);
+});
+
+
+test('desktop inputs outside the picture preserve hidden controls and the idle deadline',async t=>{
+  const {readFileSync}=await import('node:fs');
+  const {stripTypeScriptTypes}=await import('node:module');
+  const {runInNewContext}=await import('node:vm');
+  const source=readFileSync(new URL('../src/lib/media-detail-images.ts',import.meta.url),'utf8');
+  const start=source.indexOf('  const revealPreviews=');
+  const end=source.indexOf('  previewControls.forEach',start);
+  const g=gallery(t);g.state.ready=true;
+  const context={previews:g.controls,lightbox:{open:true,getBoundingClientRect:()=>({left:10,right:110,top:10,bottom:110})},mobileViewer:{matches:false},pointerPosition:{x:150,y:50}};
+  runInNewContext(stripTypeScriptTypes(source.slice(start,end))+';globalThis.reveal=revealPreviews;',context);
+  g.controls.reveal();g.tick(1000);context.reveal();g.tick(500);
+  assert.equal(g.state.hidden,true);
+  context.reveal();assert.equal(g.state.hidden,true);
+  context.pointerPosition={x:50,y:50};context.reveal();assert.equal(g.state.hidden,false);
+  g.tick(1500);context.mobileViewer.matches=true;context.pointerPosition={x:150,y:50};
+  context.reveal();assert.equal(g.state.hidden,false);
+});
+
+test('hovered desktop controls prevent hiding until the pointer leaves',async t=>{
+  const {readFileSync}=await import('node:fs');
+  const {runInNewContext}=await import('node:vm');
+  const source=readFileSync(new URL('../src/lib/media-detail-images.ts',import.meta.url),'utf8');
+  const start=source.indexOf('  const previews=createGalleryPreviewTimer(()=>{')+'  const previews=createGalleryPreviewTimer('.length;
+  const callback=source.slice(start,source.indexOf('},()=>',start)+1);
+  const context={lightbox:{open:true,dataset:{}},previewInteracting:false,mobileViewer:{matches:false},previewControls:[{matches:()=>hovered}],viewerPending:()=>false,galleryPreviewImagesSettled:()=>true,slots:{querySelectorAll:()=>[]},carousel:{slide:()=>undefined},current:0};
+  let hovered=false;
+  const {stripTypeScriptTypes}=await import('node:module');
+  const ready=runInNewContext(stripTypeScriptTypes('('+callback+')'),context);
+  t.mock.timers.enable({apis:['setTimeout','Date']});
+  let hidden=false;
+  const controls=createGalleryPreviewTimer(ready,()=>{hidden=false;},()=>{hidden=true;},new AbortController().signal);
+  controls.reveal();t.mock.timers.tick(700);hovered=true;controls.refresh();t.mock.timers.tick(5000);
+  assert.equal(hidden,false);
+  hovered=false;controls.refresh();t.mock.timers.tick(1);assert.equal(hidden,true);
+  context.mobileViewer.matches=true;hovered=true;controls.reveal();t.mock.timers.tick(1500);assert.equal(hidden,true);
 });

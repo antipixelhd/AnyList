@@ -1,18 +1,19 @@
 type Session = {id: string; revision: number};
-type Patch = {itemId: string | number; changes: Record<string, unknown>};
+export type ImportPatch = {itemId: string | number; changes: Record<string, unknown>};
 
 /** Keep review choices local until a step is submitted. Server snapshots are
  * always rebased over newer choices, including after a failed save is retried. */
 export function createImportDraft<S extends Session>(options: {
   getSession: () => S | null;
   setSession: (session: S) => void;
-  apply: (session: S, patch: Patch) => void;
-  save: (session: S, patch: Patch) => Promise<S>;
+  apply: (session: S, patch: ImportPatch) => void;
+  save: (session: S, patch: ImportPatch) => Promise<S>;
+  saveBatch?: (session: S, patches: ImportPatch[]) => Promise<S>;
 }) {
   let sessionId: string | undefined;
-  let pending: Patch[] = [];
+  let pending: ImportPatch[] = [];
   let flushing: Promise<void> | undefined;
-  let inFlight: Patch | undefined;
+  let inFlight = new Set<ImportPatch>();
   function sync() {
     const current = options.getSession();
     if (current?.id !== sessionId) {
@@ -27,15 +28,22 @@ export function createImportDraft<S extends Session>(options: {
     options.setSession(fresh);
   }
   return {
-    stage(patch: Patch) {
+    stage(patch: ImportPatch) {
       const current = sync();
       if (!current) return;
-      const previous = pending.find(value => value !== inFlight && String(value.itemId) === String(patch.itemId));
+      const previous = pending.find(value => !inFlight.has(value) && String(value.itemId) === String(patch.itemId));
       if (previous) Object.assign(previous.changes, patch.changes);
       else pending.push({itemId: patch.itemId, changes: {...patch.changes}});
       options.apply(current, patch);
     },
     rebase,
+    snapshot() { sync(); return structuredClone(pending); },
+    restore(patches: ImportPatch[]) {
+      sync();
+      pending = structuredClone(patches);
+      const current = options.getSession();
+      if (current) rebase(current);
+    },
     flush(): Promise<void> {
       if (flushing) return flushing;
       const initial = sync();
@@ -43,14 +51,16 @@ export function createImportDraft<S extends Session>(options: {
       const id = initial.id;
       flushing = (async () => {
         while (pending.length && options.getSession()?.id === id) {
-          const patch = pending[0];
-          inFlight = patch;
-          const fresh = await options.save(options.getSession()!, patch);
+          const batch = options.saveBatch ? [...pending] : [pending[0]];
+          inFlight = new Set(batch);
+          const fresh = options.saveBatch
+            ? await options.saveBatch(options.getSession()!, structuredClone(batch))
+            : await options.save(options.getSession()!, batch[0]);
           if (options.getSession()?.id !== id) return;
-          pending.shift();
+          pending = pending.filter(patch => !inFlight.has(patch));
           rebase(fresh);
         }
-      })().finally(() => {flushing = undefined; inFlight = undefined;});
+      })().finally(() => {flushing = undefined; inFlight.clear();});
       return flushing;
     },
   };

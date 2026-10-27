@@ -1,4 +1,5 @@
 import { showToast } from './toasts.ts';
+import {markFailureHandled} from './handled-failures.ts';
 
 export function escapeHtml(value: unknown): string {
   return value == null ? '' : String(value)
@@ -7,6 +8,7 @@ export function escapeHtml(value: unknown): string {
 }
 
 export function errorMessage(error: unknown): string {
+  markFailureHandled(error);
   return error instanceof Error ? error.message : 'Something went wrong. Please try again.';
 }
 

@@ -24,8 +24,12 @@ export function placeDropdown(trigger: HTMLElement, menu: HTMLElement) {
   menu.classList.add('tracker-floating-dropdown');
   menu.style.width = `${Math.min(anchor.width, Math.max(0, bounds.width - 16))}px`;
   menu.hidden = false;
+  // Measure natural height, not a previous opening's clipped scroll box.
+  menu.style.maxHeight = 'none';
   const style = getComputedStyle(menu);
-  const contentHeight = menu.scrollHeight + parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth);
+  // scrollHeight rounds to whole pixels and can clip fractional text line heights.
+  const borders = parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth);
+  const contentHeight = Math.ceil(parseFloat(style.height) + (style.boxSizing === 'border-box' ? 0 : borders + parseFloat(style.paddingTop) + parseFloat(style.paddingBottom)));
   const placement = dropdownPlacement(anchor, bounds, contentHeight);
   Object.assign(menu.style, {left: `${placement.left}px`, top: `${placement.top}px`,
     width: `${placement.width}px`, maxHeight: `${placement.maxHeight}px`, bottom: 'auto', right: 'auto'});

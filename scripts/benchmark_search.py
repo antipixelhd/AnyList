@@ -383,7 +383,7 @@ async def main(args):
             row = {'case': label, 'mode': mode, 'state': state,
                    'ms': round((time.perf_counter() - start) * 1000, 2), **dict(counters)}
             if isinstance(result, dict):
-                items = result.get('results', [])
+                items = result.get('results', result.get('items', []))
                 if label.startswith('game_contributor') or label in ('game_person_cached','game_company_cached'):items=result['works']
                 if label=='game_credits':items=result['people']+result['game_characters']
                 if label=='game_person_roles':items=result['roles']
@@ -433,7 +433,12 @@ async def main(args):
             return result
 
         async def request(path, params):
-            response = await fixture.client.get('/tracking/' + path, params=params)
+            if path == 'browse/context':
+                response = await fixture.client.post('/tracking/browse/context', json={'items': [
+                    {'type': 'movie', 'tmdb_id': identifier} for identifier in range(1000, 1024)
+                ]})
+            else:
+                response = await fixture.client.get('/tracking/' + path, params=params)
             if response.status_code != 200:
                 raise RuntimeError(f'{current_case}: {response.status_code}: {response.text[:200]}')
             return response.json()
@@ -602,6 +607,7 @@ async def main(args):
             ('grid_score', 'browse', {'sort': 'score', 'min_score': 7}),
             ('cinema_rereleases', 'browse', {'sort': 'newest', 'cinema': 'true', 'include_rereleases': 'true'}),
             ('filter_options', 'browse/facets', {'genres': '18'}),
+            ('viewer_context', 'browse/context', {}),
             ('auto_combined_empty', None, {}),
             ('auto_combined_established', None, {}),
             ('auto_separate_empty', None, {}),

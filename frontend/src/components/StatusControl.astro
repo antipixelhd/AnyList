@@ -19,9 +19,9 @@ const editorAction=game?{'data-edit-game':mediaId}:{'data-edit-entry':mediaId};
 import { showMenu, hideMenu } from '../lib/ui-motion';
 import {editorStore,seedEditorPage} from '../lib/editor-store';
 import {statuses} from '../lib/tracker';
-import {showToast} from '../lib/toasts';
 import {gameStatuses,gameDatePatch} from '../lib/game-editor-data';
 import {localToday} from '../lib/date-time';
+import {showActionFailure} from '../lib/action-failure';
 let pageListeners: AbortController;
 document.addEventListener('astro:page-load', () => {
 pageListeners?.abort();
@@ -61,8 +61,7 @@ document.querySelectorAll<HTMLElement>('[data-status-control]').forEach(control=
         else if(status==='completed'&&current.status!=='completed'&&current.completion_seconds==null)patch.completion_seconds=null;
       }
       await editorStore.write(title,patch);
-      showToast('List status updated.','success');
-    }catch(e){showToast((e as Error).message,'error');arrow.focus();}
+    }catch(e){showActionFailure('status',editorStore.find(Number(control.dataset.media))?.title,e);arrow.focus();}
     finally{buttons.forEach(b=>b.disabled=false);}
   }));
   document.addEventListener('anylist:editor-state',event=>{

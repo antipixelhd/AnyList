@@ -1,5 +1,8 @@
 ---
+import ConnectionSecretInput from '../components/ConnectionSecretInput.astro';
 import LocalDateTime from '../components/LocalDateTime.astro';
+import ImportAdmissionNotice from "../components/settings/ImportAdmissionNotice.astro";
+import StreamingImport from "../components/settings/StreamingImport.astro";
 import DataImportSettings from "../components/settings/DataImportSettings.astro";
 import DataImportDialogs from "../components/settings/DataImportDialogs.astro";
 import TraktSettings from "../components/settings/TraktSettings.astro";
@@ -25,6 +28,7 @@ const [settings, me, connections, scrobbleConnections, seasonOverrides, deviceGr
   api.auth.deviceGrants(token!).catch(() => [] as DeviceGrant[]),
   api.sync.getPullSchedule(token!),
 ]);
+const {active: activeImport} = await api.auth.getActiveImport(token!);
 const hasTmdbKey = settings.has_effective_tmdb_key;
 const AUTO_SYNC_INTERVAL_OPTIONS = [
   { value: 0.25, label: "Every 15m" },
@@ -44,6 +48,12 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
 
     <div class="settings-stack">
       <div class="settings-stack" hidden={section !== "connections"}>
+      <section data-connection-imports>
+        {connections.filter(conn => conn.type === 'nuvio' || conn.type === 'stremio').map(conn => (
+          <StreamingImport hasTmdbKey={hasTmdbKey} service={conn.type as 'nuvio' | 'stremio'} connectionId={conn.id} connectionName={conn.name} connectionPending={activeImport?.connection_id === conn.id} resumeSessionId={activeImport?.connection_id === conn.id ? activeImport.import_id : null} />
+        ))}
+      </section>
+      {(['stremio', 'nuvio'] as const).map(service => <template data-connection-import-template={service}><StreamingImport hasTmdbKey={hasTmdbKey} service={service} connectionId={-1} connectionPending={true} /></template>)}
       {!me.is_admin && <MetadataConnections settings={settings} />}
       <section class="space-y-3">
         <h2 class="section-headline border-b border-zinc-800 pb-2">Synchronization</h2>
@@ -61,7 +71,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
         </div>
       </section>
       <section>
-        <form id="connections-form" class="space-y-6 min-w-0 w-full">
+        <div id="connections-form" class="space-y-6 min-w-0 w-full">
           <!-- ======== SYNC SECTION ======== -->
           <div class="space-y-3">
             <h2 class="section-headline border-b border-zinc-800 pb-2">Media Players</h2>
@@ -80,7 +90,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
                   <div class="flex min-w-0 items-center gap-4 pointer-events-none">
                     <Fragment set:html={connectionIconHtml(conn.type)} />
                     <div class="flex min-w-0 flex-col gap-0.5">
-                      <span class="font-medium text-zinc-200">{conn.name}</span>
+                      <span class="font-medium text-zinc-200">{conn.name}</span>{conn.setup_pending && <span class="text-xs text-zinc-400">Setup in progress</span>}
                       <span id={`conn-status-${conn.id}`} class="conn-status-badge hidden text-xs font-normal px-1.5 py-0.5 rounded pointer-events-auto"></span>
                       <span class="break-all text-xs text-zinc-500">{typeLabel} · {conn.url}</span>
                     </div>
@@ -124,7 +134,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
                       <div class={`space-y-2 ${conn.type === "stremio" ? "hidden" : ""}`}>
                         <label class="block text-sm font-medium text-zinc-400">{conn.type === "plex" ? "X-Plex-Token" : conn.type === "nuvio" || conn.type === "arvio" ? "Refresh Token" : "API Token"}</label>
                         <div class="relative">
-                          <input type="password" class="conn-token-input w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" value={conn.token} data-conn-id={conn.id} />
+                          <ConnectionSecretInput class="conn-token-input w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" value={conn.token} data-conn-id={conn.id} />
                           <button type="button" class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors" aria-label="Toggle token visibility">
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-icon"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.644C3.412 7.943 7.213 5 12 5c4.787 0 8.588 2.943 9.964 6.678.066.18.066.362 0 .544C20.588 16.057 16.787 19 12 19c-4.787 0-8.588-2.943-9.964-6.678z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-slash-icon hidden"><path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" /></svg>
@@ -162,8 +172,8 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
                           </button>
                           <div id={`nuvio-reauth-form-${conn.id}`} class="nuvio-reauth-form hidden space-y-2 rounded-xl border border-zinc-800 bg-zinc-950/50 p-4">
                             <p class="text-xs text-zinc-500">Signing in replaces the refresh token above with a fresh one and reconnects immediately.</p>
-                            <input type="email" class="nuvio-reauth-email w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-2.5 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" placeholder={conn.type === "arvio" ? "ARVIO email" : "Nuvio email"} autocomplete="username" />
-                            <input type="password" class="nuvio-reauth-password w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-2.5 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" placeholder={conn.type === "arvio" ? "ARVIO password" : "Nuvio password"} autocomplete="current-password" />
+                            <input type="email" class="nuvio-reauth-email w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-2.5 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" placeholder={conn.type === "arvio" ? "ARVIO email" : "Nuvio email"} autocomplete="off" />
+                            <ConnectionSecretInput class="nuvio-reauth-password w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-2.5 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" placeholder={conn.type === "arvio" ? "ARVIO password" : "Nuvio password"} />
                             <div class="flex items-center gap-2">
                               <button type="button" class="nuvio-reauth-submit text-sm bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-lg transition-colors cursor-pointer">Sign in</button>
                               <span class="nuvio-reauth-status text-xs text-zinc-500"></span>
@@ -325,7 +335,8 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
             </div>
 
             <!-- Add Connection button + form -->
-            <div class="bg-zinc-900 border border-dashed border-zinc-700 rounded-2xl overflow-hidden">
+            <ImportAdmissionNotice active={activeImport} />
+            <div data-import-start-connection hidden={!!activeImport} class="bg-zinc-900 border border-dashed border-zinc-700 rounded-2xl overflow-hidden">
               <button type="button" id="add-connection-btn" class="w-full flex items-center justify-center gap-2 px-6 py-4 hover:bg-zinc-900/40 cursor-pointer transition-colors text-zinc-400 hover:text-zinc-200" aria-expanded="false" aria-controls="add-connection-form">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-5 h-5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
                 <span class="font-medium">Add Connection</span>
@@ -371,12 +382,12 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
                     </div>
                     <div id="new-nuvio-email-row" class="space-y-2 hidden">
                       <label for="new-nuvio-email" class="block text-sm font-medium text-zinc-400">Nuvio Email</label>
-                      <input type="email" id="new-nuvio-email" autocomplete="username" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" />
+                      <input type="email" id="new-nuvio-email" autocomplete="off" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" />
                     </div>
                     <div id="new-conn-token-row" class="space-y-2">
                       <label id="new-conn-token-label" for="new-conn-token" class="block text-sm font-medium text-zinc-400">Token</label>
                       <div class="relative">
-                        <input type="password" id="new-conn-token" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" />
+                        <ConnectionSecretInput id="new-conn-token" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" />
                         <button type="button" class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors" aria-label="Toggle token visibility">
                           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-icon"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.644C3.412 7.943 7.213 5 12 5c4.787 0 8.588 2.943 9.964 6.678.066.18.066.362 0 .544C20.588 16.057 16.787 19 12 19c-4.787 0-8.588-2.943-9.964-6.678z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
                           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-slash-icon hidden"><path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" /></svg>
@@ -664,7 +675,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
                     <div class="space-y-2">
                       <label for="radarr_token" class="block text-sm font-medium text-zinc-400">API Key</label>
                       <div class="relative group/field">
-                        <input type="password" name="radarr_token" id="radarr_token" value={settings.radarr_token || ""} class="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" />
+                        <ConnectionSecretInput name="radarr_token" id="radarr_token" value={settings.radarr_token || ""} class="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" />
                         <button type="button" class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors" aria-label="Toggle password visibility">
                           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-icon"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.644C3.412 7.943 7.213 5 12 5c4.787 0 8.588 2.943 9.964 6.678.066.18.066.362 0 .544C20.588 16.057 16.787 19 12 19c-4.787 0-8.588-2.943-9.964-6.678z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
                           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-slash-icon hidden"><path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" /></svg>
@@ -740,7 +751,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
                     <div class="space-y-2">
                       <label for="sonarr_token" class="block text-sm font-medium text-zinc-400">API Key</label>
                       <div class="relative group/field">
-                        <input type="password" name="sonarr_token" id="sonarr_token" value={settings.sonarr_token || ""} class="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" />
+                        <ConnectionSecretInput name="sonarr_token" id="sonarr_token" value={settings.sonarr_token || ""} class="w-full bg-zinc-950 border border-zinc-800 rounded-lg pl-4 pr-10 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" />
                         <button type="button" class="password-toggle absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 p-1 cursor-pointer transition-colors" aria-label="Toggle password visibility">
                           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-icon"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.644C3.412 7.943 7.213 5 12 5c4.787 0 8.588 2.943 9.964 6.678.066.18.066.362 0 .544C20.588 16.057 16.787 19 12 19c-4.787 0-8.588-2.943-9.964-6.678z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
                           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 eye-slash-icon hidden"><path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" /></svg>
@@ -792,7 +803,8 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
               </div>
             </div>
           </div>
-        </form>
+        </div>
+
       </section>
 
       </div>
@@ -832,7 +844,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
         </div>
       </section>
 
-      <div class="settings-stack" hidden={section !== "imports"}><DataImportSettings hasTmdbKey={hasTmdbKey} /></div>
+      <div class="settings-stack" hidden={section !== "imports"}><DataImportSettings hasTmdbKey={hasTmdbKey} activeImport={activeImport} /></div>
 
       <!-- API Key -->
       <section hidden={section !== "developer"}>
@@ -843,8 +855,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
             <label for="scrob_api_key" class="block text-sm font-medium text-zinc-400">Your API Key</label>
             <div class="flex gap-2">
               <div class="relative flex-1 group/field">
-                <input
-                  type="password"
+                <ConnectionSecretInput
                   id="scrob_api_key"
                   readonly
                   value={me.api_key}
@@ -966,7 +977,10 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
 
 <script>
   import { formatDateTime, timestamp } from '../lib/date-time';
+  import { canStartImport } from "../lib/import-admission";
+  import { launchConnectionImport } from "../scripts/streaming-import";
   import { escapeHtml as esc, errorMessage, showMessage } from '../lib/settings-feedback';
+  import {showActionFailure} from '../lib/action-failure';
   import { readTrackingServiceSettings } from '../lib/tracking-service-settings';
   import { wireCancelButton, resetCancelButton } from '../lib/sync-controls';
   import { createSyncJobMonitor } from '../lib/sync-job-monitor';
@@ -1761,6 +1775,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
             }
             document.querySelector(`[data-connection-id="${connId}"]`)?.remove();
             showMessage('Connection deleted.');
+            document.dispatchEvent(new Event('media-tracker:notifications-changed'));
             return;
           } else if (action === 'scan_libraries') {
             const connId = newBtn.getAttribute('data-conn-id');
@@ -1988,7 +2003,9 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
         } catch (e) {
           if (actionConnId && action === 'clear_connection_data') renderConnProgress(actionConnId, null);
           if (actionConnId && action === 'full_resync_connection') renderConnProgress(actionConnId, null);
-          showMessage(errorMessage(e), 'error');
+          if (action?.includes('sync') || action?.startsWith('push_')) showActionFailure('sync',newBtn.getAttribute('data-conn-name'),e);
+          else if (isConnectionSave) showActionFailure('settings',null,e);
+          else showMessage(errorMessage(e), 'error');
         } finally {
           if (action !== 'sync_account' || newBtn.dataset.cycleActive !== 'true') newBtn.innerHTML = originalHTML;
           if (lockedConnectionId) setConnectionOperationPending(lockedConnectionId, false);
@@ -2212,7 +2229,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
             } catch (error: any) {
               pollTimer = null;
               if (statusEl) statusEl.textContent = error.message;
-              showMessage(error.message, 'error');
+              showMessage(errorMessage(error), 'error');
               startBtn.disabled = false;
               startBtn.textContent = originalLabel;
             }
@@ -2220,7 +2237,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
           pollTimer = window.setTimeout(poll, 1500);
           startBtn.textContent = 'Waiting…';
         } catch (error: any) {
-          showMessage(error.message, 'error');
+          showMessage(errorMessage(error), 'error');
           startBtn.disabled = false;
           startBtn.textContent = originalLabel;
         }
@@ -2296,7 +2313,8 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
     };
 
     if (addBtn && addForm) {
-      addBtn.addEventListener('click', () => {
+      addBtn.addEventListener('click', async () => {
+        if (!await canStartImport()) return;
         const open = !addForm.classList.contains('hidden') && !addForm.inert;
         if (open) void hideCollapsible(addForm);
         else showCollapsible(addForm);
@@ -2403,7 +2421,6 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
 
       if (urlLabel) urlLabel.textContent = (isNuvio || isArvio) ? 'Cloud API URL' : 'Server URL';
       if (tokenLabel) tokenLabel.textContent = isArvio ? 'ARVIO Password' : isNuvio ? 'Nuvio Password' : 'Token';
-      if (tokenInput) tokenInput.autocomplete = (isNuvio || isArvio) ? 'current-password' : 'off';
       const syncRatings = document.getElementById('new-sync-ratings') as HTMLInputElement | null;
       const pushRatings = document.getElementById('new-push-ratings') as HTMLInputElement | null;
       const pushPlayback = document.querySelector<HTMLInputElement>('#new-push-playback');
@@ -2556,7 +2573,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
             if (result.status === 'connected') {
               stremioPollTimer = null;
               if (status) status.textContent = 'Connected. Reloading…';
-              showMessage('Stremio connected.');
+              if (launchConnectionImport(result.connection)) return;
               window.location.reload();
               return;
             }
@@ -2564,7 +2581,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
           } catch (error: any) {
             stremioPollTimer = null;
             if (status) status.textContent = error.message;
-            showMessage(error.message, 'error');
+            showActionFailure('connect','Stremio',error);
             connectStremioBtn.disabled = false;
             connectStremioBtn.textContent = originalLabel;
           }
@@ -2573,7 +2590,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
         connectStremioBtn.textContent = 'Waiting…';
       } catch (error: any) {
         stremioPollTimer = null;
-        showMessage(error.message, 'error');
+        showActionFailure('connect','Stremio',error);
         connectStremioBtn.disabled = false;
         connectStremioBtn.textContent = originalLabel;
       }
@@ -2639,7 +2656,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
           } catch (error: any) {
             plexPollTimer = null;
             setPlexStatus(error.message);
-            showMessage(error.message, 'error');
+            showMessage(errorMessage(error), 'error');
             plexLoginBtn.disabled = false;
             plexLoginBtn.textContent = 'Login with Plex';
           }
@@ -2648,7 +2665,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
       } catch (error: any) {
         plexPollTimer = null;
         setPlexStatus(error.message);
-        showMessage(error.message, 'error');
+        showMessage(errorMessage(error), 'error');
         plexLoginBtn.disabled = false;
         plexLoginBtn.textContent = 'Login with Plex';
       }
@@ -2748,10 +2765,12 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
             const err = await res.json();
             throw new Error(err.detail || 'Failed to create connection');
           }
+          const created = await res.json();
+          if (launchConnectionImport(created)) return;
           showMessage('Connection added! Reloading…');
           setTimeout(() => window.location.reload(), 1000);
         } catch (e: any) {
-          showMessage(errorMessage(e), 'error');
+          showActionFailure('connect',type === 'nuvio' ? 'Nuvio' : type === 'arvio' ? 'ARVIO' : name,e);
           createBtn.disabled = false;
           createBtn.textContent = orig;
           updateNuvioActions();
@@ -2839,7 +2858,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
     }
   }
   function setupSettingsForm() {
-    const form = document.querySelector<HTMLFormElement>('#connections-form');
+    const form = document.querySelector<HTMLElement>('#connections-form');
     if (!form) return;
 
     // Plex "Also monitor users" — toggle picker visibility and lazy-load friends
@@ -3061,6 +3080,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
       });
       if (!res.ok) return;
       const jobs: any[] = await res.json();
+      document.dispatchEvent(new CustomEvent("connections:sync-updated"));
 
       function parseUTC(dateStr: string): Date {
         return timestamp(dateStr) || new Date(NaN);
@@ -3438,6 +3458,9 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
 
 <script>
   import "../scripts/streaming-import";
+  import { mountImportAdmission } from "../lib/import-admission";
+  mountImportAdmission();
+  document.addEventListener("astro:page-load", mountImportAdmission);
 </script>
 
 <style is:global>

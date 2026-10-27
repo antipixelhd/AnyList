@@ -8,10 +8,11 @@ const { combineLists = true, hideTrigger = false,showMoviesSeries=true,showGames
   <div class="quick-search-bar">
     <Icon name="search" />
     <label class="sr-only" for="quick-search-input">Quick search</label>
-    <input id="quick-search-input" type="search" placeholder="Search titles, people and studios…" maxlength="100" autocomplete="off" spellcheck="false" />
+    <input id="quick-search-input" type="search" placeholder="Search titles, people and studios…" maxlength="100" autocomplete="off" autocapitalize="words" spellcheck="false" />
     <button class="editor-icon-button" type="button" aria-label="Close search" data-motion-press data-quick-search-close><Icon name="close" /></button>
     <div class="quick-search-progress" data-search-progress aria-hidden="true"></div>
   </div>
+  <p class="quick-search-hint">Hint: Hit Ctrl-S to quickly toggle Quick Search</p>
   <nav class="quick-search-mobile-tabs" data-search-tabs aria-label="Search result sections">
     <button type="button" data-search-tab-step="-1" aria-label="Previous search section" disabled><Icon name="chevron-left" /></button>
     <div class="quick-search-tab-current">
@@ -32,7 +33,7 @@ const { combineLists = true, hideTrigger = false,showMoviesSeries=true,showGames
     <section class="quick-search-card" data-search-section="studio" hidden><h2>Studios</h2><div data-search-results="studio"></div></section>
   </div>
 </dialog>
-<template data-search-add-icon><Icon name="plus" /></template>
+<template data-search-add-icon><span class="ui-icon" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 2v12M2 8h12" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" /></svg></span></template>
 
 <script>
 import {mountQuickSearch} from '../lib/quick-search';

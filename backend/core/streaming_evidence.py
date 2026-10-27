@@ -17,21 +17,20 @@ def default_show_status(seasons):
 
 
 def choose_viewing(rows, runtime_minutes=None):
-    rows = [row for row in rows if row.get('watched_at')]
     if not rows:
         return None
     completed = [row for row in rows if completed_viewing(row, runtime_minutes)]
     if completed:
-        return min(completed, key=lambda row: row['watched_at'])
-    return min(rows, key=lambda row: (-(row.get('watched_seconds') or 0), row['watched_at']))
+        return min(completed, key=lambda row: row.get('watched_at') or '9999')
+    return min(rows, key=lambda row: (-(row.get('watched_seconds') or 0), row.get('watched_at') or '9999'))
 
 
 def completed_viewing(row, runtime_minutes=None):
     # Files without duration evidence (Netflix) already assert a watch.
     if row.get('completed_evidence') or row.get('watched_seconds') is None:
         return True
-    runtime = float(runtime_minutes or 0)
-    return runtime > 0 and row['watched_seconds'] >= runtime * 60 * .7
+    duration = float(row.get('duration_seconds') or (float(runtime_minutes or 0) * 60))
+    return duration > 0 and row['watched_seconds'] >= duration * .7
 
 
 def _prepare_show_progress(item):
@@ -75,7 +74,7 @@ def prepare_evidence(items, observations):
             chosen = choose_viewing(rows, runtime)
             if chosen:
                 item.setdefault('source_evidence', {})['viewings'] = rows
-                item['source_dates'] = [chosen['watched_at']]
+                item['source_dates'] = [chosen['watched_at']] if chosen.get('watched_at') else []
                 enough = completed_viewing(chosen, runtime)
                 item['suggested_movie_status'] = 'completed' if enough else 'dropped'
                 item['requires_watch_confirmation'] = not enough
@@ -95,12 +94,13 @@ def prepare_evidence(items, observations):
                 if not rows and episode.get('source_episode_title'):
                     rows = by_title.get(_norm_text(episode['source_episode_title']), [])
                 rows = [row for row in rows if (not row.get('show_title') or _norm_text(row['show_title']) == _norm_text(item['source_title']))
-                        and (row.get('season_number') is None or row['season_number'] == episode.get('season_number'))]
+                        and (row.get('season_number') is None or row['season_number'] == episode.get('season_number'))
+                        and (row.get('episode_number') is None or row['episode_number'] == episode.get('episode_number'))]
                 runtime = (catalog.get((episode.get('season_number'), episode.get('episode_number'))) or {}).get('runtime')
                 chosen = choose_viewing(rows, runtime)
                 if chosen:
                     episode['viewings'] = rows
-                    episode['dates'] = [chosen['watched_at']]
+                    episode['dates'] = [chosen['watched_at']] if chosen.get('watched_at') else []
                     episode['watch_qualified'] = completed_viewing(chosen, runtime)
             item['source_dates'] = sorted({day for ep in item.get('episodes', []) for day in ep.get('dates', [])})
             _prepare_show_progress(item)
@@ -132,7 +132,10 @@ def partial_tracking_status(item, today=None):
 
 def completion_evidence(item):
     dates = sorted(set(item.get('source_dates') or []))
-    result = {'suggested_date': dates[-1] if dates else None, 'finish_date': None}
+    result = {'suggested_date': dates[-1] if dates else None, 'finish_date': None,
+              'default_completed': (item.get('suggested_movie_status') != 'dropped'
+                                    and not item.get('requires_watch_confirmation') if item['kind'] == 'movie'
+                                    else default_show_status(item.get('seasons', [])) == 'completed')}
     if item['kind'] == 'movie':
         result['finish_date'] = dates[0] if dates else None
         return result

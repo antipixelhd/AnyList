@@ -11,6 +11,7 @@
   box-shadow:0 1px 3px 0 rgb(0, 0, 0);
   padding-left:0;
   padding-right:0;
+  overflow-x:hidden;
   scrollbar-width:thin;
   scrollbar-color:var(--dropdown-scrollbar) transparent
 }
@@ -46,7 +47,11 @@
   color:var(--blue)
 }
 .tracker .tracker-dropdown-menu > button {
-  border-radius:0
+  border-radius:0;
+  min-width:0;
+  max-width:100%;
+  white-space:normal;
+  overflow-wrap:anywhere
 }
 .tracker-select {
   position:relative;

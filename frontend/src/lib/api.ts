@@ -382,6 +382,7 @@ export interface UserSettings {
 }
 
 export interface MediaServerConnection {
+  setup_pending?: boolean;
   id: number;
   user_id: number;
   type: "jellyfin" | "emby" | "plex" | "nuvio" | "stremio" | "arvio";
@@ -688,6 +689,7 @@ export const api = {
       get<DeviceGrant[]>("/auth/device/grants", undefined, token),
     getSettings: (token: string) =>
       get<UserSettings>("/auth/settings", undefined, token),
+    getActiveImport: (token: string) => get<{active: {import_id: string | null; connection_id: number | null; title: string; status: string; resolve_url: string} | null}>("/imports/active", undefined, token),
     getConnections: (token: string) =>
       get<MediaServerConnection[]>("/auth/connections", undefined, token),
     getScrobbleConnections: (token: string) =>

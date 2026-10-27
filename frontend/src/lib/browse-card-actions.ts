@@ -1,4 +1,5 @@
 import { editorStore, type EditorTitle } from './editor-store';
+import {showActionFailure} from './action-failure';
 import {predictionAllowed} from './predictive-loading';
 import {resolveGameId} from './game-discovery';
 import {localToday} from './date-time';
@@ -10,6 +11,7 @@ export type BrowseItem = {
   poster?: string | null; backdrop?: string | null; year?: string; release_date?: string | null;
   release_event?: string | null; release_season?: number | null; release_country?: string | null;
   list_status?: string | null; score?: number | null; rating_mode?: string;
+  favorite?: boolean;
   entry?: Record<string, any> | null; editor_library?: EditorTitle['editor_library'];
 };
 export const sameBrowseTitle = (a: BrowseItem, b: Pick<EditorTitle, 'id' | 'tmdb_id' | 'type'>) =>
@@ -92,6 +94,8 @@ export function bindBrowseCardActions<T extends BrowseItem>(
     const card = button?.closest<HTMLElement>('[data-browse-card]');
     const item = card && items.get(card);
     if (!button || !card || !item || button.disabled) return;
+    const title = titleFor(item);
+    const wasNew = !title.entry;
     const saved = (entry: any) => { if (!signal.aborted) document.dispatchEvent(new CustomEvent('anylist:entry-saved', {detail:entry})); };
     try {
       const game=item.type==='game';if(game)button.disabled=true;
@@ -110,7 +114,7 @@ export function bindBrowseCardActions<T extends BrowseItem>(
           onScore: async (score: number | null) => saved(await editorStore.write(title, game?{score,...(score!=null?{status:'completed',...(title.entry?.status!=='completed'&&!title.entry?.finish_date?{finish_date:localToday()}:{})}:{})}:{manual_score:score ?? 0,...(score != null ? {status:'completed',rating_mode:'manual'} : {})})),
         });
       }
-    } catch (error) { if (!signal.aborted) onError(error instanceof Error ? error.message : 'Could not update your list.'); }
+    } catch (error) { if (!signal.aborted) showActionFailure(wasNew ? 'add' : 'status', item.title, error); }
     finally { if (!signal.aborted) button.disabled = false; }
   }, {signal});
 }

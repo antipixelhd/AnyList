@@ -1,13 +1,17 @@
 ---
+import ImportAdmissionNotice from "./ImportAdmissionNotice.astro";
+import type { ActiveImport } from "../../lib/import-admission";
 import Icon from "../Icon.astro";
 import StreamingImport from "./StreamingImport.astro";
-interface Props { hasTmdbKey: boolean }
-const { hasTmdbKey } = Astro.props;
+interface Props { hasTmdbKey: boolean; activeImport: ActiveImport | null }
+const { hasTmdbKey, activeImport } = Astro.props;
+const resuming = !!activeImport?.import_id && Astro.url.searchParams.get("import") === activeImport.import_id;
 ---
 
 <section class="mb-10">
-<h2 class="section-headline mb-5">Import from Streaming Service</h2>
-<div class="space-y-3">{(["netflix", "amazon"] as const).map(service => <details data-motion-details class="streaming-disclosure streaming-service rounded-2xl bg-zinc-900/60" data-service={service}>
+<h2 class="section-headline mb-5">Streaming Service</h2>
+<ImportAdmissionNotice active={activeImport} />
+<div class="space-y-3">{(["netflix", "amazon"] as const).map(service => <details data-import-start-service open={resuming && Astro.url.searchParams.get("source") === service} hidden={!!activeImport && !(resuming && Astro.url.searchParams.get("source") === service)} data-motion-details class="streaming-disclosure streaming-service rounded-2xl bg-zinc-900/60" data-service={service}>
 <summary class="streaming-disclosure-trigger flex cursor-pointer list-none items-center gap-4 rounded-2xl px-5 py-5 text-lg font-semibold transition-colors hover:bg-zinc-800/50">
 <span class="shrink-0" aria-hidden="true">{service === "netflix" ? <svg class="h-9 w-9 text-red-600" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 2h4l8 20h-4L6 2Zm0 0h4v20H6V2Zm8 0h4v20h-4V2Z"/></svg> : <svg class="h-9 w-9 text-sky-400" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m9 4 11 6-11 6V4Z" fill="currentColor"/><path d="M3 18c5 4 12 4 18-1m-4 0h4v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>}</span>
 <span>{service === "netflix" ? "Netflix" : "Amazon Prime Video"}</span><Icon name="chevron-down" class="streaming-disclosure-arrow ml-auto text-zinc-500" /></summary>
@@ -16,7 +20,7 @@ const { hasTmdbKey } = Astro.props;
 
 <!-- Import -->
 <section>
-  <h2 class="section-headline mb-4 border-b border-zinc-800 pb-2">Import</h2>
+  <h2 class="section-headline mb-4 border-b border-zinc-800 pb-2">Others</h2>
   <div class="flex items-center gap-1 mb-4 bg-zinc-900 border border-zinc-800 rounded-xl p-1 w-fit">
     <button type="button" data-import-tab="scrob" class="import-tab-btn px-4 py-1.5 rounded-lg text-sm font-semibold bg-blue-600 text-white transition-colors cursor-pointer active:scale-95 active:opacity-70">AnyList</button>
     <button type="button" data-import-tab="trakt" class="import-tab-btn px-4 py-1.5 rounded-lg text-sm font-medium text-zinc-400 transition-colors cursor-pointer active:scale-95 active:opacity-70">Trakt</button>

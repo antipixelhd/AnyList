@@ -1,5 +1,6 @@
 import { bindBrowseCardActions, bindBrowseCardTouch, paintBrowseCardState, type BrowseItem } from './browse-card-actions';
 import { formatDate } from './date-time';
+import { wireSearchWordCapitalization } from './search-word-capitalization';
 import { STREAMING_REGION_COOKIE, deviceStreamingCountry, streamingRegionPreference } from './streaming-region';
 import {
   isCategoryView,
@@ -13,8 +14,9 @@ import { createBrowseLoading, prepareBrowsePoster } from "./browse-loading";
 import { initializeBrowseRanges } from "./browse-ranges";
 import { createBrowsePaginationDemand } from "./browse-pagination";
 import { initializeMobileBrowseFilters } from "./browse-mobile-filters";
-import { createBrowseCache, waitForBrowseRequest } from "./browse-cache";
-import {createPrediction, paginationPosition} from "./predictive-loading";
+import { BROWSE_FACET_TTL, browseResultTtl, createBrowseCache, createBrowseSharedRequests, waitForBrowseRequest } from "./browse-cache";
+import { refreshBrowseContextBatches } from './browse-context';
+import {createPrediction, paginationPosition, predictionAllowed} from "./predictive-loading";
 import { initializeBrowseSort } from "./browse-sort";
 import { createBrowseOverride } from './browse-override';
 import {createSearchExpansion, shouldBroadenSearch, broadSearchParams} from './search-fallback';
@@ -61,6 +63,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   const searchClear = find<HTMLButtonElement>("[data-browse-search-clear]");
   const field = (name: string) =>
     form.elements.namedItem(name) as HTMLInputElement | HTMLSelectElement;
+  wireSearchWordCapitalization(field('q') as HTMLInputElement, signal);
   const grid = find<HTMLElement>("[data-browse-results]");
   const sections = find<HTMLElement>("[data-browse-sections]");
   const paintRanges = initializeBrowseRanges(form, signal);
@@ -85,12 +88,22 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     find<HTMLElement>("#browse-data").textContent || "{}",
   );
   let payload: Payload = initial.payload;
-  let displayedCategories = !sections.hidden;
+  let displayedCategories = initial.pending ? initial.categories : !sections.hidden;
   let facets: { genres: Facet[]; providers: Facet[] } = initial.facets;
-  const responseCache = createBrowseCache<Payload | SectionsPayload>();
+  let storage: Storage | undefined;
+  try { storage = window.sessionStorage; } catch { /* Continue with a page-local cache. */ }
+  const viewer = document.body.dataset.cacheUser || 'anonymous';
+  const responseCache = createBrowseCache<Payload | SectionsPayload>(undefined, browseResultTtl, undefined,
+    storage && {storage, name: 'results', viewer});
   const prediction=createPrediction<Payload | SectionsPayload>(async(path,requestSignal)=>json(path,{signal:requestSignal}),signal);
-  document.addEventListener('anylist:cache-invalidated',()=>{prediction.cancel();responseCache.clear();},{signal});
-  const facetCache = createBrowseCache<typeof facets>();
+  const facetCache = createBrowseCache<typeof facets>(undefined, BROWSE_FACET_TTL, undefined,
+    storage && {storage, name: 'facets', viewer});
+  let contextRevision = 0;
+  document.addEventListener('anylist:editor-state', () => { contextRevision++; }, {signal});
+  document.addEventListener('anylist:cache-invalidated',()=>{
+    contextRevision++;
+    prediction.cancel();sectionRequests.clear();responseCache.clear();facetCache.clear();
+  },{signal});
   const readyPosters = new Set<string>();
   let currentPath: string | undefined;
   let refreshingSelect = false;
@@ -139,9 +152,9 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     : `browse?${browseRequestParams(values)}`;
   const initialValues = params();
   initialValues.set('page', '1');
-  if (error.hidden) responseCache.set(requestPath(initialValues), displayedCategories
+  if (!initial.pending && error.hidden) responseCache.set(requestPath(initialValues), displayedCategories
     ? {sections: initial.sections, notice: payload.notice} : payload);
-  facetCache.set(`${field('type').value}:${field('region').value}`, facets);
+  if (!initial.pending) facetCache.set(`${field('type').value}:${field('region').value}:${field('genres').value}`, facets);
   const updateUrl = () => {
     const values = params();
     values.delete('unfiltered');
@@ -179,6 +192,25 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       );
     return body;
   };
+  const sectionRequests = createBrowseSharedRequests<SectionsPayload>(
+    (path, requestSignal) => json(path, {signal: requestSignal}) as Promise<SectionsPayload>,
+    (path, result) => responseCache.set(path, result), signal,
+  );
+  const prefetchAdjacentSections = (values: URLSearchParams, epoch: number) => {
+    const alternate = new URLSearchParams(values);
+    if (categoryMode(values)) alternate.set('media_type', values.get('media_type') === 'movie' ? 'series' : 'movie');
+    else if (values.get('view') === 'timeline') alternate.delete('view');
+    else return;
+    if (!categoryMode(alternate)) return;
+    const path = requestPath(alternate);
+    const revision = contextRevision;
+    const prefetch = () => {
+      if (!signal.aborted && generation === epoch && contextRevision === revision &&
+          !document.hidden && predictionAllowed() && !responseCache.get(path)) sectionRequests.prefetch(path);
+    };
+    if ('requestIdleCallback' in window) window.requestIdleCallback(prefetch, {timeout: 1500});
+    else setTimeout(prefetch, 250);
+  };
   const paintState = paintBrowseCardState;
   const initialItems = new Map<string, Item>(
     [
@@ -200,7 +232,8 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   });
   const syncItem = (updated: Item) => {
     const entryState = {id: updated.id, entry: updated.entry, list_status: updated.list_status,
-      score: updated.score, rating_mode: updated.rating_mode};
+      score: updated.score, rating_mode: updated.rating_mode, favorite: updated.favorite,
+      editor_library: updated.editor_library};
     for (const cached of responseCache.values()) {
       const cachedItems = 'sections' in cached ? cached.sections.flatMap(section => section.results) : cached.results;
       for (const item of cachedItems) if (titleKey(item) === titleKey(updated)) Object.assign(item, entryState);
@@ -213,6 +246,34 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       });
       paintState(card, item);
     }
+  };
+  const refreshViewerContext = async (response: Payload | SectionsPayload, current: AbortController) => {
+    if (viewer === 'anonymous') return;
+    const selection = 'sections' in response
+      ? response.sections.flatMap(section => section.results) : response.results;
+    const unique = new Map<string, Item>();
+    for (const item of selection) if (item.id || item.tmdb_id) unique.set(titleKey(item), item);
+    if (!unique.size) return;
+    const revision = contextRevision;
+    await refreshBrowseContextBatches([...unique.values()], async batch => {
+      const fresh = await json('browse/context', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({items: batch.map(({id, tmdb_id, type}) => ({
+          id: tmdb_id ? null : id, tmdb_id, type,
+        }))}),
+        signal: current.signal,
+      }) as {items: Item[]};
+      return fresh.items;
+    }, rows => {
+      for (const row of rows) {
+        const displayed = unique.get(titleKey(row));
+        if (!displayed) continue;
+        const title = editorStore.seed({...displayed, ...row} as EditorTitle);
+        syncItem({...displayed, ...row, ...title,
+          list_status: title.entry?.status ?? null, score: title.entry?.score ?? null,
+          rating_mode: title.entry?.rating_mode ?? 'manual'});
+      }
+    }, () => !current.signal.aborted && !signal.aborted && request === current && revision === contextRevision);
   };
   const render = (results: Item[], destination = grid, deduplicate = true) => {
     const fragment = document.createDocumentFragment();
@@ -412,7 +473,9 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       let response = cached;
       if (!response) {
         await waitForBrowseRequest(debounce, current.signal);
-        response = await prediction.consume(path,current.signal) ?? await json(path, {signal: current.signal}) as Payload | SectionsPayload;
+        response = categoryView
+          ? await sectionRequests.consume(path, current.signal)
+          : await prediction.consume(path,current.signal) ?? await json(path, {signal: current.signal}) as Payload;
         if (current.signal.aborted || signal.aborted || request !== current) return;
       }
       async function fillViewport(first: Payload, requestValues: URLSearchParams): Promise<Payload> {
@@ -425,9 +488,10 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
           next.set('page', String(response.page + 1)); next.set('source', response.source);
           if (response.cursor) next.set('cursor', response.cursor);
           const nextPath = requestPath(next);
-          const batch = responseCache.get(nextPath) as Payload | undefined ?? await json(nextPath, {signal: current.signal}) as Payload;
+          const cachedBatch = responseCache.get(nextPath) as Payload | undefined;
+          const batch = cachedBatch ?? await json(nextPath, {signal: current.signal}) as Payload;
           if (current.signal.aborted || signal.aborted || request !== current) throw new DOMException('Search changed', 'AbortError');
-          responseCache.set(nextPath, batch);
+          responseCache.set(nextPath, batch, !cachedBatch);
           batch.results.forEach(item => merged.set(key(item), item));
           response = {...batch, results: [...merged.values()]};
         }
@@ -436,18 +500,19 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       }
       if (!append && response && 'results' in response) {
         response = await fillViewport(response, values);
-        responseCache.set(path, response);
+        responseCache.set(path, response, !cached);
         if (shouldBroadenSearch(values, response) && automaticExpansion.allowed(values)) {
           const broad = broadSearchParams(values);
           const broadPath = requestPath(broad);
-          const first = responseCache.get(broadPath) as Payload | undefined ?? await json(broadPath, {signal: current.signal}) as Payload;
+          const cachedBroad = responseCache.get(broadPath) as Payload | undefined;
+          const first = cachedBroad ?? await json(broadPath, {signal: current.signal}) as Payload;
           if (current.signal.aborted || signal.aborted || request !== current) return;
           response = await fillViewport(first, broad);
-          responseCache.set(broadPath, response);
+          responseCache.set(broadPath, response, !cachedBroad);
           expanded = true;
         }
       }
-      if (!expanded) responseCache.set(path, response!);
+      if (!expanded) responseCache.set(path, response!, !cached);
       if (!cached) await loadingView.settle(current.signal);
       if (request !== current || epoch !== generation || signal.aborted) return;
       if (expanded) automaticExpansion.activate(values);
@@ -469,6 +534,8 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
         payload = response;
       }
       notice.textContent = response.notice || "";
+      if (cached) void refreshViewerContext(response, current);
+      if (!append) prefetchAdjacentSections(values, epoch);
     } catch (cause) {
       await loadingView.settle(current.signal);
       if (current.signal.aborted || request !== current || signal.aborted)
@@ -508,7 +575,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     }
     searchClear.hidden = !field("q").value;
     // Update immediately; only network requests from typing/dragging are debounced.
-    const debounce = event?.type === 'input' ? 100 : 0;
+    const debounce = event?.type === 'input' ? 300 : 0;
     void load(false, debounce);
   }
   function clear() {
@@ -539,12 +606,13 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     facetRequest = current;
     const cacheKey = `${field('type').value}:${field('region').value}:${field('genres').value}`;
     try {
-      const result = facetCache.get(cacheKey) ?? await json(
+      const cachedFacets = facetCache.get(cacheKey);
+      const result = cachedFacets ?? await json(
         `browse/facets?${new URLSearchParams({ media_type: field("type").value, region: field("region").value, genres: field("genres").value })}`,
         { signal: current.signal },
       );
       if (current !== facetRequest || current.signal.aborted || signal.aborted) return;
-      facetCache.set(cacheKey, result);
+      facetCache.set(cacheKey, result, !cachedFacets);
       facets = result;
       find("[id=browse-genres-value]").textContent = genreSelectionLabel(field("genres").value, facets.genres);
       const options = find<HTMLElement>("[data-genre-options]");
@@ -760,12 +828,14 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
         }
         select.value = detected;
         refreshSelect(select);
-        void loadFacets();
-        changed();
+        if (!initial.pending) { void loadFacets(); changed(); }
       }
     }
   }
-  if (!displayedCategories && payload.has_more && error.hidden && sentinel.getBoundingClientRect().top < innerHeight + 260) void load(false);
+  if (initial.pending) {
+    void loadFacets();
+    void load();
+  } else if (!displayedCategories && payload.has_more && error.hidden && sentinel.getBoundingClientRect().top < innerHeight + 260) void load(false);
   if (error.hidden === false) suspended = true;
   if (
     field("start").value ||

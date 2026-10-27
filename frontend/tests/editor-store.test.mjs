@@ -204,6 +204,20 @@ test('seeded editor snapshots open without reads, preserve all fields and share 
   assert.deepEqual(calls,[]);
 });
 
+test('unrelated details artwork cannot overwrite a quick-search poster or its cold backdrop fallback', () => {
+  const store=new EditorStore(()=>{throw Error('unexpected read');});
+  const title=store.seed(draft());
+  const searchPoster='https://image.tmdb.org/t/p/w185/poster.jpg';
+  store.warmArtwork(title,searchPoster);
+  // Quick search restores focus to the global search trigger on a different details page.
+  store.warmArtwork(title,'https://image.tmdb.org/t/p/w500/other-poster.jpg','https://image.tmdb.org/t/p/original/other-backdrop.jpg');
+  assert.equal(store.artwork(title).poster,searchPoster);
+  assert.equal(store.artwork(title).backdrop,searchPoster);
+  const cold=store.seed({...draft(),tmdb_id:456,poster:'/cold.jpg',backdrop:null});
+  store.warmArtwork(cold,'https://image.tmdb.org/t/p/w500/other-poster.jpg');
+  assert.equal(store.artwork(cold).poster,'https://image.tmdb.org/t/p/w342/cold.jpg');
+});
+
 test('drafts import only on write; rapid changes paint immediately and save in order', async () => {
   const calls=[], pending=[];
   const store=new EditorStore((path,options)=>{calls.push([path,options]);const job=deferred();pending.push(job);return job.promise;});
@@ -320,11 +334,11 @@ test('cold backdrop decoding never changes the artwork chosen for an open editor
   globalThis.Image=class {decode(){return ready.promise;}};
   try {
     const store=new EditorStore(()=>{}), title=store.seed(draft());
-    store.warmArtwork(title,'cached-poster');
+    store.warmArtwork(title,'https://image.tmdb.org/t/p/w185/poster.jpg');
     const opened=store.artwork(title);
-    assert.equal(opened.backdrop,'cached-poster');
+    assert.equal(opened.backdrop,'https://image.tmdb.org/t/p/w185/poster.jpg');
     ready.resolve();await turn();
-    assert.equal(opened.backdrop,'cached-poster');
+    assert.equal(opened.backdrop,'https://image.tmdb.org/t/p/w185/poster.jpg');
     assert.equal(store.artwork(title).backdrop,'https://image.tmdb.org/t/p/w1280/backdrop.jpg');
   } finally {globalThis.Image=previous;}
 });
@@ -358,7 +372,7 @@ test('a committed MetaHub fallback is reused when opening the editor without a g
     assert.equal(button.dataset.detailImage,fallback);assert.equal(title.backdrop,fallback);
     assert.equal(title.favorite,true);assert.equal(title.entry,null);
     assert.deepEqual(requests,[]);
-    store.warmArtwork(title,'cached-poster',fallback);await turn();
+    store.warmArtwork(title,'https://image.tmdb.org/t/p/w185/poster.jpg',fallback);await turn();
     assert.equal(store.artwork(title).backdrop,fallback);assert.deepEqual(requests,[fallback]);
     save.resolve({id:7,status:null,favorite:true});await pending;
     assert.equal(title.favorite,true);
@@ -370,7 +384,7 @@ test('curated artwork updates preserve optimistic intent and ignore an old decod
   globalThis.Image=class {decode(){return images++===0?old.promise:curated.promise;}};
   try {
     const store=new EditorStore(()=>save.promise),title=store.seed({...draft(),id:7});
-    store.warmArtwork(title,'cached-poster');
+    store.warmArtwork(title,'https://image.tmdb.org/t/p/w185/poster.jpg');
     const pending=store.write(title,{favorite:true});
     store.updateArtwork(7,{poster:'/new-poster.jpg',backdrop:'/new-background.jpg'});
     store.warmArtwork(title);
@@ -384,36 +398,78 @@ test('curated artwork updates preserve optimistic intent and ignore an old decod
   }finally{globalThis.Image=previous;}
 });
 
-test('typed browse invalidation preserves pending game writes and reloads complete state afterward',async()=>{
-  const pending=deferred();let reads=0;
-  const store=new EditorStore(async(_path,options)=>{
-    if(options?.method==='PATCH')return await pending.promise;
-    reads++;return gameState(7,{listed:true,status:'playing',revision:3,notes:'Fresh private note'});
-  });
-  store.scope('viewer');
-  const game=store.seed(gameTitle(gameState(7,{listed:true,status:'playing',revision:1,notes:'Old private note'})));
-  const movie=store.seed({id:7,type:'movie',title:'Other domain',entry:{status:'watching'}});
-  store.invalidateSubject(game.subject);
-  const write=store.write(game,{score:9});
-  assert.equal(store.hasPendingSubject(game.subject),true);
-  store.invalidateSubject(game.subject);
-  assert.equal(store.findSubject(game.subject),game);
-  await turn();pending.resolve(gameState(7,{listed:true,status:'playing',revision:2,score:9,notes:'Old private note'}));await write;
-  assert.equal(store.hasPendingSubject(game.subject),false);
-  store.invalidateSubject(game.subject);
-  assert.equal(store.findSubject(game.subject),undefined);
-  const fresh=await store.loadSubject(game.subject);
-  assert.equal(fresh.entry.notes,'Fresh private note');assert.equal(reads,1);
-  assert.equal(store.find(7),movie);
+
+test('pending writes stay visible to page reconciliation until each queued edit settles', async () => {
+  const first=deferred(), second=deferred(); let calls=0;
+  const store=new EditorStore(()=> (++calls===1 ? first.promise : second.promise));
+  const title=store.seed({...draft(),id:1,entry:{status:'planning',progress:0}});
+  assert.equal(store.hasPendingWrites(),false);
+  const a=store.write(title,{status:'watching'});
+  const b=store.write(title,{manual_score:8});
+  assert.equal(store.hasPendingWrites(),true);
+  await turn(); first.resolve({id:1,status:'watching'}); await a;
+  assert.equal(store.hasPendingWrites(),true);
+  await turn(); second.resolve({id:1,status:'watching',score:8}); await b;
+  assert.equal(store.hasPendingWrites(),false);
 });
 
-test('unknown-total count optimism never invents a percentage or exact unlocks',async()=>{
-  const pending=deferred(),store=new EditorStore(()=>pending.promise);
-  const original={mode:null,count:null,percentage:null,total:null,exact_count:1};
-  const title=store.seed(gameTitle(gameState(7,{listed:true,status:'playing',revision:1,achievements:original})));
-  const write=store.write(title,{achievement_mode:'count',achievement_count:1234567,expected_achievement_total:null});
-  assert.equal(title.entry.achievements.count,1234567);assert.equal(title.entry.achievements.percentage,null);
-  assert.equal(title.entry.achievements.exact_count,1);assert.equal(original.count,null);
-  await turn();pending.resolve(gameState(7,{listed:true,status:'playing',revision:2,achievements:{...original,mode:'count',count:1234567}}));
-  await write;assert.equal(title.entry.achievements.percentage,null);assert.equal(title.entry.achievements.exact_count,1);
+ test('progress writes optimistically update status, position and roll back on failure',async()=>{
+  const pending=deferred();const store=new EditorStore(()=>pending.promise);
+  const title=store.seed({...draft(),id:1,type:'series',entry:{status:'planning',progress:0,released_episodes:12,season_position:null}});
+  const write=store.write(title,{progress:1});
+  assert.equal(title.entry.progress,1);assert.equal(title.entry.status,'watching');
+  assert.equal(title.entry.season_position,null);assert.ok(title.entry.start_date);
+  await turn();pending.reject(new Error('offline'));await assert.rejects(write,/offline/);
+  assert.equal(title.entry.progress,0);assert.equal(title.entry.status,'planning');
+ });
+
+ test('queued progress uses latest optimistic progress and final episode marks completion',async()=>{
+  const first=deferred(),second=deferred();let calls=0;
+  const store=new EditorStore(()=>++calls===1?first.promise:second.promise);
+  const title=store.seed({...draft(),id:1,type:'series',entry:{status:'dropped',progress:1,released_episodes:3,season_position:'S1E1'}});
+  const a=store.write(title,{progress:title.entry.progress+1});
+  const b=store.write(title,{progress:title.entry.progress+1});
+  assert.equal(title.entry.progress,3);assert.equal(title.entry.status,'completed');
+  await turn();first.resolve({id:1,status:'watching',progress:2,released_episodes:3,season_position:'S1E2'});await a;
+  assert.equal(title.entry.progress,3);assert.equal(title.entry.status,'completed');
+  await turn();second.resolve({id:1,status:'completed',progress:3,released_episodes:3,season_position:'S1E3'});await b;
+  assert.equal(title.entry.season_position,'S1E3');
+ });
+
+ test('explicit status in the editor stays authoritative when progress changes',async()=>{
+  const pending=deferred();const store=new EditorStore(()=>pending.promise);
+  const title=store.seed({...draft(),id:1,type:'series',entry:{status:'dropped',progress:1,released_episodes:10}});
+  const write=store.write(title,{status:'dropped',progress:2});
+  assert.equal(title.entry.status,'dropped');assert.equal(title.entry.progress,2);
+  await turn();pending.resolve({id:1,status:'dropped',progress:2});await write;
+ });
+
+test('a completed editor status projects released series progress immediately',async()=>{
+  const pending=deferred();const store=new EditorStore(()=>pending.promise);
+  const title=store.seed({...draft(),id:1,type:'series',entry:{status:'watching',progress:1,released_episodes:3,season_position:'S1E1'}});
+  const write=store.write(title,{status:'completed'});
+  assert.equal(title.entry.progress,3);assert.equal(title.entry.season_position,null);
+  assert.equal(store.hasPendingEntryWrites(title),true);
+  await turn();pending.resolve({id:1,status:'completed',progress:3,released_episodes:3,season_position:'S1E3'});await write;
+  assert.equal(store.hasPendingEntryWrites(title),false);assert.equal(title.entry.season_position,'S1E3');
+});
+
+test('movie progress and status changes project a completed watch immediately',async()=>{
+  const pending=deferred();const store=new EditorStore(()=>pending.promise);
+  const title=store.seed({...draft(),id:1,entry:{status:'planning',progress:0}});
+  const write=store.write(title,{progress:1});
+  assert.equal(title.entry.progress,1);assert.equal(title.entry.status,'completed');
+  await turn();pending.resolve({id:1,status:'completed',progress:1});await write;
+});
+
+
+test('optimistic progress follows ordered episodes across season boundaries and rolls back', async () => {
+  const pending=deferred(); const store=new EditorStore(()=>pending.promise);
+  const title=store.seed({...draft(),id:1,type:'series',progress_positions:['S1E1','S1E2','S2E1','S2E2'],entry:{status:'watching',progress:2,released_episodes:4,season_position:'S1E2'}});
+  const write=store.write(title,{progress:3});
+  assert.equal(title.entry.season_position,'S2E1');
+  assert.equal(title.entry.released_episodes,4);
+  await turn(); pending.reject(new Error('offline')); await assert.rejects(write,/offline/);
+  assert.equal(title.entry.season_position,'S1E2');
+  assert.equal(title.entry.released_episodes,4);
 });

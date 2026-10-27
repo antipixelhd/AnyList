@@ -52,3 +52,16 @@ test('a write completed during a refresh invalidates its snapshot, while a later
   const fresh=f.refresh();f.finish();await fresh;
   assert.deepEqual(f.replacements,[f.parsed]);
 });
+
+
+test('a failed save-triggered refresh invokes its recovery, while abort stays quiet', async t => {
+  const controller = new AbortController();
+  t.mock.method(globalThis, 'fetch', async () => new Response('', {status: 503}));
+  let recovered = 0;
+  const refresh = createHomePanelRefresh({signal:controller.signal, isBusy:()=>false, replace:()=>assert.fail('failed response must not render')});
+  await refresh(() => recovered++);
+  assert.equal(recovered, 1);
+  controller.abort();
+  await refresh(() => recovered++);
+  assert.equal(recovered, 1);
+});

@@ -38,8 +38,10 @@ export function sectionHref(
   type: string,
   region: string,
   filters: Record<string, string>,
+  staticBrowse = false,
 ) {
   const values = new URLSearchParams(filters);
+  if (staticBrowse) values.set('static', '1');
   if (type === "series") values.set("type", type);
   values.set("region", region);
   return `/browse?${values}`;

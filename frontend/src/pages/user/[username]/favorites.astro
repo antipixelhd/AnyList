@@ -39,7 +39,7 @@ const domainOptions=[...(!game||domains.show_movies_series?[{type:'movies_series
 <Tracker title={`${profile?.display_name ?? 'Profile'} Favorites`} ownerProfileColor={profile?.profile_color} ownerIsViewer={profile?.owner === true}>
   {profile ? <>
     <ProfileHeader profile={profile} active="favorites" />
-    <div class="page-width favorites-page" data-favorite-domain={game?'game':'movies_series'} data-favorites-owner={String(profile.owner)}>
+    <div class="page-width favorites-page" data-profile-owner={String(profile.owner === true)} data-favorite-domain={game?'game':'movies_series'} data-favorites-owner={String(profile.owner)}>
       {domainOptions.length>1&&<nav class="favorites-domain-tabs" aria-label="Favorite media">{domainOptions.map(option=><a href={`${Astro.url.pathname}?media_type=${option.type}`} aria-current={(option.type==='game')===game?'page':undefined}>{option.label}</a>)}</nav>}
       <p class="error-message" role="alert" data-favorites-error hidden></p>
       <p class="favorites-instructions" data-favorites-instructions hidden>Drag cards to arrange them. Focus a card and use the arrow keys to move it.</p>
@@ -68,9 +68,10 @@ const domainOptions=[...(!game||domains.show_movies_series?[{type:'movies_series
   </> : <div class="page-width"><p class="error-message" role="alert">{error}</p></div>}
 </Tracker>
 <script>
+import {showActionFailure} from '../../../lib/action-failure';
 import {editorStore,type EditorTitle} from '../../../lib/editor-store';
 let favoritePageListeners: AbortController;
-document.addEventListener('astro:page-load', () => {
+function mountFavorites() {
   favoritePageListeners?.abort();
   favoritePageListeners = new AbortController();
   const page = document.querySelector<HTMLElement>('.favorites-page');
@@ -85,7 +86,8 @@ document.addEventListener('astro:page-load', () => {
   const feedback = page.querySelector<HTMLElement>('[data-favorites-feedback]')!;
   let savedOrder = [...grid.querySelectorAll<HTMLElement>('[data-favorite-card]')].map(card => card.dataset.mediaId!);
   let dragging: HTMLElement | null = null;
-  const cards = () => [...grid.querySelectorAll<HTMLElement>('[data-favorite-card]')].filter(card=>!card.hidden);
+  let refreshFavorites = () => {};
+  const cards = () => [...grid.querySelectorAll<HTMLElement>('[data-favorite-card]')];
   const order = () => cards().map(card => card.dataset.mediaId!);
   const report = (message: string) => { feedback.textContent = message; };
   const setReordering = (active: boolean) => {
@@ -95,6 +97,7 @@ document.addEventListener('astro:page-load', () => {
     instructions.hidden = !active;
     cards().forEach(card => { if (active) card.tabIndex = 0; else card.removeAttribute('tabindex'); });
     error.hidden = true;
+    if (!active) queueMicrotask(() => refreshFavorites());
   };
   const updateEmpty = () => {
     const hasCards = cards().length > 0;
@@ -109,6 +112,30 @@ document.addEventListener('astro:page-load', () => {
       if (hasCards) visibleGroups[0]?.querySelector('.favorites-group-heading')?.append(actions);
     }
   };
+
+  if (page.dataset.profileOwner === 'true') {
+    let revision = 0, dirty = false, loading = false;
+    const signal = favoritePageListeners.signal;
+    refreshFavorites = () => {
+      if (!dirty || loading || editorStore.hasPendingWrites() || signal.aborted || page.dataset.reordering === 'true') return;
+      loading = true; const version = revision;
+      void (async () => {
+        try {
+          const response = await fetch(location.href, {cache:'no-store', signal});
+          if (!response.ok) throw new Error('Unable to refresh favorites.');
+          const fresh = new DOMParser().parseFromString(await response.text(), 'text/html');
+          if (signal.aborted) return;
+          if (version !== revision || editorStore.hasPendingWrites() || page.dataset.reordering === 'true') { loading = false; refreshFavorites(); return; }
+          const next = fresh.querySelector<HTMLElement>('.favorites-page[data-profile-owner="true"]');
+          if (!next) throw new Error('Favorites refresh incomplete.');
+          if (page.isConnected) { page.replaceWith(next); dirty = false; document.dispatchEvent(new Event('anylist:favorites-reconciled')); }
+        } catch { if (!signal.aborted) location.reload(); }
+        finally { loading = false; }
+      })();
+    };
+    document.addEventListener('anylist:editor-state', () => { revision++; if (dirty) refreshFavorites(); }, {signal});
+    document.addEventListener('anylist:editor-committed', () => { dirty = true; refreshFavorites(); }, {signal});
+  }
 
   reorder?.addEventListener('click', async () => {
     if (page.dataset.reordering !== 'true') { setReordering(true); return; }
@@ -130,8 +157,7 @@ document.addEventListener('astro:page-load', () => {
       setReordering(false);
       report('Favorite order saved.');
     } catch (cause) {
-      error.textContent = cause instanceof Error ? cause.message : 'Could not save favorite order.';
-      error.hidden = false;
+      showActionFailure('favorite-order',null,cause);
     } finally {
       reorder.disabled = false;
       if (cancel) cancel.disabled = false;
@@ -179,8 +205,7 @@ document.addEventListener('astro:page-load', () => {
       document.dispatchEvent(new CustomEvent('anylist:data-changed'));
       if(game)location.reload();
     } catch (cause) {
-      error.textContent = cause instanceof Error ? cause.message : 'Could not remove this favorite.';
-      error.hidden = false;
+      showActionFailure('favorite',button.closest<HTMLElement>('[data-favorite-card]')?.dataset.title,cause);
       button.disabled = false;
     }
   }, {signal: favoritePageListeners.signal});
@@ -227,5 +252,7 @@ document.addEventListener('astro:page-load', () => {
     card.focus();
     report(`${card.dataset.title} moved to position ${index + direction + 1}.`);
   }, {signal: favoritePageListeners.signal});
-});
+}
+document.addEventListener('astro:page-load', mountFavorites);
+document.addEventListener('anylist:favorites-reconciled', mountFavorites);
 </script>

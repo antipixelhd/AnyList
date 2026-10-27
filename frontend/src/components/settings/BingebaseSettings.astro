@@ -1,4 +1,5 @@
 ---
+import ConnectionSecretInput from '../ConnectionSecretInput.astro';
 import type { UserSettings } from "../../lib/api";
 
 interface Props {
@@ -81,8 +82,7 @@ const { settings } = Astro.props;
         <div class="space-y-2">
           <label for="bingebase_api_key" class="block text-sm font-medium text-zinc-400">API Key / Token (Optional)</label>
           <div class="relative group/field">
-            <input
-              type="password"
+            <ConnectionSecretInput
               name="bingebase_api_key"
               id="bingebase_api_key"
               value={settings.bingebase_api_key || ""}

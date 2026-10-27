@@ -7,9 +7,10 @@ import { mountDetailCast } from './media-detail-cast';
 import {detailBackground,type DetailLoadState} from './detail-background';
 import { initializeScrollMotion } from './scroll-motion';
 import { showToast } from './toasts';
+import {showActionFailure} from './action-failure';
 import {detailWorkCaption,relationLabel} from './media-detail-data';
 import {detailWorkArtwork} from './detail-artwork';
-import {currentDetailSeason,detailSeasonState,type DetailSeason} from './season-detail-data';
+import {currentDetailSeason,detailSeasonState,optimisticSeasonProgress,type DetailSeason} from './season-detail-data';
 import {observeDeferredArtwork} from './visible-artwork';
 import {responsiveArtwork} from './responsive-artwork';
 import {gameProgress} from './game-progress';
@@ -187,15 +188,22 @@ export function mountMediaDetail() {
       const html=new DOMParser().parseFromString(await response.text(),'text/html');
       const content=html.querySelector('.media-social-grid');
       if(!content)throw new Error('Unable to load social activity.');
-      if(signal.aborted||revision!==socialRevision)return;
+      if(signal.aborted)return;
+      const selectedScope = host.querySelector<HTMLButtonElement>('[data-social-scope][aria-selected="true"]')?.dataset.socialScope;
       host.replaceChildren(document.importNode(content,true));localizeDateTimes(host);socialLoaded=true;
-    })().catch(error=>{if(!signal.aborted)host.textContent=error instanceof Error?error.message:'Unable to load social activity.';}).finally(()=>{socialPending=undefined;if(!signal.aborted&&revision!==socialRevision&&root.querySelector('[data-detail-tab="social"][aria-selected="true"]'))loadSocial();});
+      if (selectedScope) host.querySelector<HTMLButtonElement>(`[data-social-scope="${selectedScope}"]`)?.click();
+    })().catch(error=>{if(!signal.aborted&&!host.children.length)host.textContent=error instanceof Error?error.message:'Unable to load social activity.';}).finally(()=>{socialPending=undefined;});
   };
-  document.addEventListener('anylist:entry-saved',event=>{
-    const saved=(event as CustomEvent).detail;
-    if((saved.subject?.kind==='game')!==(info.type==='game')||(info.type==='game'?saved.subject?.catalogue_id:saved.id)!==info.id)return;
-    socialRevision++;socialLoaded=false;if(root.querySelector('[data-detail-tab="social"][aria-selected="true"]'))loadSocial();
-  },{signal});
+  document.addEventListener('anylist:editor-committed', event => {
+    const saved = (event as CustomEvent<{title:EditorTitle}>).detail.title;
+    if (saved.type !== info.type || saved.id !== info.id || (!socialLoaded && !socialPending)) return;
+    void (async () => {
+      await socialPending;
+      if (signal.aborted) return;
+      socialLoaded = false;
+      if (root.querySelector<HTMLElement>('[data-detail-panel="social"]')?.hidden === false) loadSocial();
+    })();
+  }, {signal});
   const tabs = [...root.querySelectorAll<HTMLButtonElement>('[data-detail-tab]')];
   const panels = [...root.querySelectorAll<HTMLElement>('[data-detail-panel]')];
   const switchPanel = createContentTransition(root.querySelector<HTMLElement>('[data-detail-panels]')!,signal);
@@ -235,6 +243,9 @@ export function mountMediaDetail() {
   const note = root.querySelector<HTMLTextAreaElement>('#detail-note');
   let noteDirty = false;
   note?.addEventListener('input',()=>{noteDirty=true;},{signal});
+  let displayedProgress = title?.entry?.progress ?? null;
+  let projectedSeasons:DetailSeason[] | null = null;
+  let requestSeasonRefresh = () => {};
   const paint = (state: EditorTitle) => {
     title = state;
     const progress=root.querySelector<HTMLElement>('[data-game-progress]');
@@ -246,7 +257,21 @@ export function mountMediaDetail() {
       }
       progress.hidden=!hours&&(!show||!achievement);
     }
-    const catalogue=(state as EditorTitle & {seasons?:DetailSeason[]}).seasons||[];
+    const rawCatalogue=(state as EditorTitle & {seasons?:DetailSeason[]}).seasons||[];
+    const nextProgress = state.entry?.progress ?? 0;
+    if (displayedProgress != null && nextProgress !== displayedProgress)
+      projectedSeasons = optimisticSeasonProgress(rawCatalogue, nextProgress);
+    displayedProgress = nextProgress;
+    const catalogue = projectedSeasons || rawCatalogue;
+    if (projectedSeasons) for (const season of projectedSeasons) for (const episode of season.episodes || []) {
+      const row = root.querySelector<HTMLElement>(`[data-episode-row="${episode.id}"]`);
+      if (!row) continue;
+      row.dataset.watched = String(episode.watched);
+      const button = row.querySelector<HTMLButtonElement>('[data-watch-episode]');
+      if (button) { button.setAttribute('aria-pressed', String(episode.watched)); button.setAttribute('aria-label', `Mark season ${season.season_number} episode ${episode.episode_number} ${episode.watched?'unwatched':'watched'}`); }
+      const heading = row.querySelector<HTMLElement>('[data-episode-title]');
+      if (heading) heading.textContent = root.dataset.spoilers === 'true' || episode.watched ? heading.dataset.episodeTitle! : `Episode ${episode.episode_number}`;
+    }
     const watching=state.entry?.status==='watching';
     const current=currentDetailSeason(catalogue,watching);
     for(const season of catalogue){
@@ -282,7 +307,7 @@ export function mountMediaDetail() {
   };
   document.addEventListener('anylist:editor-state', event => {
     const state = (event as CustomEvent<EditorTitle>).detail;
-    if (state.type===info.type&&state.id===info.id) paint(state);
+    if (state.type===info.type&&state.id===info.id) { paint(state); requestSeasonRefresh(); }
   }, {signal});
   if (title) paint(title);
   root.querySelector<HTMLButtonElement>('[data-quick-rate-game]')?.addEventListener('click',event=>{
@@ -302,21 +327,21 @@ export function mountMediaDetail() {
     const desired=!(title.favorite ?? title.entry?.favorite);
     void editorStore.write(title,{favorite:desired}).then(saved=>{
       if (title?.favorite===saved.favorite) showToast({message:desired?'Added to favorites.':'Removed from favorites.',kind:'success',key:'detail-favorite'});
-    }).catch(error=>showToast(error.message,'error'));
+    }).catch(error=>showActionFailure('favorite',title?.title,error));
   },{signal});
   library?.addEventListener('click',()=>{
     if (!title || library.disabled) return;
     const desired=!title.editor_library?.desired;
     void editorStore.writeLibrary(title,desired).then(saved=>{
       if (title?.editor_library?.desired===saved.desired) showToast({message:desired?'Added to library.':'Removed from library.',kind:'success',key:'detail-library'});
-    }).catch(error=>showToast(error.message,'error'));
+    }).catch(error=>showActionFailure('library',title?.title,error));
   },{signal});
   root.querySelector<HTMLButtonElement>('[data-detail-save-note]')?.addEventListener('click',async event=>{
     if (!title || !note) return;
     const button=event.currentTarget as HTMLButtonElement;
     const notes=note.value; button.disabled=true; button.setAttribute('aria-busy','true');
     try { await editorStore.write(title,{notes}); if (note.value===notes) noteDirty=false; showToast('Notes saved.','success'); }
-    catch (error) { showToast(error instanceof Error?error.message:'Unable to save notes.','error'); }
+    catch (error) { showActionFailure('note',null,error); }
     finally { button.disabled=false; button.removeAttribute('aria-busy'); }
   },{signal});
 
@@ -343,7 +368,7 @@ export function mountMediaDetail() {
     const input=event.currentTarget as HTMLInputElement;if(!title)return;
     input.disabled=true;
     try{await editorStore.write(title,{rating_mode:input.checked?'average':'manual'});}
-    catch(error){if(!signal.aborted)showToast((error as Error).message,'error');}
+    catch(error){if(!signal.aborted)showActionFailure('rating',title?.title,error);}
     finally{input.disabled=false;}
   },{signal});
   let seasonReadVersion=0;
@@ -352,6 +377,8 @@ export function mountMediaDetail() {
     const response=await fetch(`/api/proxy/tracking/title/${info.id}`,{signal});
     if(!response.ok)throw new Error('Unable to refresh episode state. Reload to see your saved change.');
     const data=await response.json();if(signal.aborted||version!==seasonReadVersion)return;
+    if (title && editorStore.hasPendingEntryWrites(title)) { seasonRefreshNeeded = true; return; }
+    projectedSeasons = null;
     paint(editorStore.seed({...data,editor_library:title?.editor_library}));
     for(const season of data.seasons||[]){
       const number=season.season_number;
@@ -364,10 +391,17 @@ export function mountMediaDetail() {
     }
     paintEpisodeTitles();
   };
+  let seasonRefreshNeeded = false;
+  requestSeasonRefresh = () => {
+    if (!seasonRefreshNeeded || signal.aborted || !title || editorStore.hasPendingEntryWrites(title)) return;
+    seasonRefreshNeeded = false;
+    void refreshSeasonState().catch(()=>{if(!signal.aborted)location.reload();});
+  };
   document.addEventListener('anylist:editor-committed',event=>{
     const {title:saved,patch}=(event as CustomEvent<{title:EditorTitle;patch:Record<string,unknown>|null}>).detail;
     if(saved.type!==info.type||saved.id!==info.id||info.type!=='series'||(patch&&!['status','progress','rewatch_count'].some(key=>key in patch)))return;
-    void refreshSeasonState().catch(()=>{if(!signal.aborted)showToast('Reload to see your updated episode state.','error');});
+    seasonRefreshNeeded = true;
+    requestSeasonRefresh();
   },{signal});
   root.querySelectorAll<HTMLButtonElement>('[data-watch-episode]').forEach(button=>button.addEventListener('click',async()=>{
     const watched=button.getAttribute('aria-pressed')!=='true';button.disabled=true;button.setAttribute('aria-busy','true');
@@ -383,8 +417,8 @@ export function mountMediaDetail() {
         }
       }
       const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(typeof result.detail==='string'?result.detail:'Unable to update this episode.');
-      await refreshSeasonState();
-    }catch(error){if(!signal.aborted)showToast((error as Error).message,'error');}
+      await refreshSeasonState().catch(()=>{if(!signal.aborted)location.reload();});
+    }catch(error){if(!signal.aborted)showActionFailure('progress',title?.title,error);}
     finally{button.disabled=false;button.removeAttribute('aria-busy');}
   },{signal}));
   const request=async(path:string)=>{
@@ -396,7 +430,7 @@ export function mountMediaDetail() {
   root.querySelector<HTMLButtonElement>('#refresh-episodes')?.addEventListener('click',async event=>{
     const button=event.currentTarget as HTMLButtonElement;button.disabled=true;button.setAttribute('aria-busy','true');
     try{await request(`title/${info.id}/refresh-episodes`);location.reload();}
-    catch(error){showToast((error as Error).message,'error');button.disabled=false;button.removeAttribute('aria-busy');}
+    catch(error){showActionFailure('progress',title?.title,error);button.disabled=false;button.removeAttribute('aria-busy');}
   },{signal});
   const mode=root.querySelector<HTMLDialogElement>('#season-mode');
   mode?.addEventListener('click',event=>{if(event.target===mode)void closeDialog(mode,'cancel');},{signal});

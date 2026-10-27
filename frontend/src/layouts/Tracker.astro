@@ -29,10 +29,11 @@ const {shareDescription, title = 'AnyList', favicon = '/favicon-96x96.png', list
 const viewerTheme = await viewerProfileTheme(Astro.locals.token);
 const ownerColor = ownerProfileColor ? profileColor(ownerProfileColor) : undefined;
 const activeColor = ownerColor ?? (viewerTheme.applySiteWide ? viewerTheme.profileColor : undefined);
+const searchColor = viewerTheme.applySiteWide ? viewerTheme.profileColor : '#3db4f2';
 ---
 <!doctype html>
 <html lang="en" style={activeColor ? themeVariables(activeColor) : undefined}><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="theme-color" content="#0b1622"/><title>{title} · AnyList</title><PrimaryFontPreloads /><SharePreview {title} description={shareDescription} /><link rel="icon" href={favicon}/><link rel="apple-touch-icon" href="/apple-touch-icon.png"/><link rel="manifest" href="/site.webmanifest" crossorigin="use-credentials"/><ProfileImageFallback />{preloadArtwork.map((image:ResponsiveArtworkAttributes & {priority?:'high'|'low'|'auto'})=><link rel="preload" as="image" href={image.src} imagesrcset={image.srcset} imagesizes={image.sizes} fetchpriority={image.priority||'auto'}/>)}<ReloadScrollRestoration /><ClientRouter fallback="swap" /></head>
-<body class="tracker" data-cache-user={Astro.locals.user?.id ?? 'anonymous'} data-games-access={requiresGamesAccess?'approved':undefined} data-list-landing={listLanding ? '' : undefined} data-theme-owner-color={ownerColor} data-theme-owner-self={String(ownerIsViewer)} data-theme-viewer-color={viewerTheme.profileColor} data-theme-site-wide={String(viewerTheme.applySiteWide)} data-theme-active={activeColor ? '' : undefined} style={activeColor ? `--blue: ${activeColor}` : undefined}>
+<body class="tracker" data-cache-user={Astro.locals.user?.id ?? 'anonymous'} data-games-access={requiresGamesAccess?'approved':undefined} data-list-landing={listLanding ? '' : undefined} data-theme-owner-color={ownerColor} data-theme-owner-self={String(ownerIsViewer)} data-theme-viewer-color={viewerTheme.profileColor} data-theme-site-wide={String(viewerTheme.applySiteWide)} data-theme-active={activeColor ? '' : undefined} style={`--quick-search-blue: ${searchColor};${activeColor ? ` --blue: ${activeColor};` : ''}`}>
   <a class="skip-link" href="#content">Skip to content</a>
   <slot name="navigation"><AppBar initiallyHidden={listLanding} /></slot>
   <main id="content"><slot /></main>

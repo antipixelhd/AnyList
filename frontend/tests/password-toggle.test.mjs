@@ -21,7 +21,7 @@ function page(t) {
 }
 
 function control(marker = 'password-toggle') {
-  const input = { type: 'password' };
+  const input = { type: 'password', dataset: {}, hasAttribute: () => false };
   const eye = new Set(), slash = new Set(['hidden']);
   const icon = classes => ({ classList: { toggle(name, active) { if (active) classes.add(name); else classes.delete(name); } } });
   const toggle = {
@@ -42,6 +42,18 @@ test('nested icon clicks reveal and conceal passwords with matching icon states'
   assert.equal(button.input.type, 'password');
   assert.equal(button.eye.has('hidden'), false);
   assert.equal(button.slash.has('hidden'), true);
+});
+
+test('connection secrets use native password masking until explicitly revealed', t => {
+  const root = page(t), button = control();
+  button.input.hasAttribute = name => name === 'data-connection-secret';
+  wirePasswordToggles(root);
+  root.click(button.target);
+  assert.equal(button.input.type, 'text');
+  assert.equal(button.eye.has('hidden'), true);
+  root.click(button.target);
+  assert.equal(button.input.type, 'password');
+  assert.equal(button.eye.has('hidden'), false);
 });
 
 test('repeated layout initialization installs one capture listener and navigation needs no rebinding', t => {
