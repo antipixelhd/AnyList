@@ -115,9 +115,8 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
     // Unset is form state, not a tracking mode. Only Add/Remove change it.
     const unset=new Option('','');unset.hidden=true;unset.disabled=true;
     mode.replaceChildren(unset);
-    const known=summary().total!=null;
     mode.add(new Option('Percentage','percentage'));
-    if(known||initialMode==='count'||selected==='count')mode.add(new Option('Count','count'));
+    mode.add(new Option('Count','count'));
     if(summary().definitions_available||initialMode==='targeted')mode.add(new Option('Individual','targeted'));
     mode.value=selected;
   }
@@ -139,7 +138,7 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
       if(!await confirm('Switch to simplified tracking? Your saved individual achievements will be kept.')||signal.aborted||active!==generation)return;
       confirmed=true;
     }
-    mode.value=summary().total!=null?'count':'percentage';
+    mode.value='count';
     if(!count.value)count.value='0';if(!percentage.value)percentage.value='0';
     renderMode();number.focus();number.select();
   },{signal});
