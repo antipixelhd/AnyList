@@ -73,6 +73,47 @@ class PersonEnrichmentTests(unittest.IsolatedAsyncioTestCase):
             detail=await work_details(db,await db.get(CatalogueEntity,self.game_id),extras=False)
             self.assertEqual(detail['people'],[])
 
+    async def test_person_characters_publish_without_title_credit_acquisition(self):
+        from core.game_contributor_works import works_page,role_captions
+        row={**credit(),'characters':[{'name':'First role'},{'name':'Second role'}],
+            'attributes':[{'text':'voice'},{'text':'English version'}]}
+        self.source.credits.return_value=page([row],1)
+        self.assertEqual(await self.service.run('nm1'),'ready')
+        async with self.Session() as db:
+            result=await works_page(db,None,self.person_id,'actor',key='catalogue:test',
+                list_scope='all',status=None,page=1,cursor=None)
+            self.assertEqual(result['works'][0]['characters'],['First role / Second role'])
+            captions=await role_captions(db,self.person_id,'actor',{self.game_id,2147483647})
+            self.assertEqual(captions,[{'id':self.game_id,'roles':['Actor'],'characters':['First role / Second role']}])
+            # Person evidence never manufactures a title-level cast or character identity.
+            detail=await work_details(db,await db.get(CatalogueEntity,self.game_id),extras=False)
+            self.assertEqual(detail['people'],[])
+            await request(db,self.person_id);await db.commit()
+        self.assertEqual(await self.service.run('nm1'),'cached')
+        self.source.credits.assert_awaited_once()
+        async with self.Session() as db:
+            db.add(CatalogueCredit(work_id=self.game_id,contributor_id=self.person_id,provider='wikidata',
+                source_key='title-voice',role='voice_actor',scope='title',attributes={}))
+            await db.commit()
+            captions=await role_captions(db,self.person_id,'actor',{self.game_id})
+            self.assertEqual(captions,[{'id':self.game_id,'roles':['Voice Actor'],'characters':['First role / Second role']}])
+
+    async def test_legacy_connection_is_refetched_once_and_retains_usable_works(self):
+        await self.service.run('nm1')
+        async with self.Session() as db:
+            component=await db.scalar(snapshot(COMPONENT,'nm1'))
+            component.coverage={key:value for key,value in component.coverage.items() if key!='person_version'}
+            await db.commit()
+            state=await view(db,'nm1',check_mapping=True);await db.commit()
+            self.assertTrue(state['pending'])
+        self.assertEqual(len(await self.active()),1)
+        self.source.credits.return_value=page([{**credit(),'characters':[{'name':'New evidence'}]}],1)
+        self.assertEqual(await self.service.run('nm1'),'ready')
+        self.assertEqual((await self.active())[0].character_label,'New evidence')
+        async with self.Session() as db:
+            await request(db,self.person_id);await db.commit()
+        self.assertEqual(await self.service.run('nm1'),'cached')
+
     async def test_pagination_failure_resumes_and_never_becomes_a_complete_empty_filmography(self):
         self.source.credits.side_effect=[page([credit()],2,True,'next'),ProviderError('unavailable')]
         self.assertEqual(await self.service.run('nm1'),'retry');self.assertEqual(await self.active(),[])

@@ -15,13 +15,14 @@ from core import catalogue
 from core.catalogue_providers import ProviderError, ProviderHTTP
 from core.game_imdb_enrichment import now, snapshot, request as admit, status as job_status
 from core.game_imdb_source import IMDbGameSource, identifier, TITLE_ID
-from core.game_imdb_projection import ROLE
+from core.game_imdb_projection import ROLE,texts,VERSIONS
 from core.game_imdb_bindings import revision as binding_revision, verified_bindings
 from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity, MetadataSnapshot, CharacterPerformance
 
 JOB='game_person_job'
 PAGE='game_person_page'
 COMPONENT='game_person_credits'
+VERSION=2
 _flights={}
 _slots=asyncio.Semaphore(1)
 
@@ -51,6 +52,15 @@ async def view(db,native,*,state=None,include_profile=True,check_mapping=False):
         *([MetadataSnapshot.payload['generation'].astext.label('generation'),MetadataSnapshot.entity_id] if check_mapping else []),
         MetadataSnapshot.fetched_at))).one_or_none()
     if state is None:state=await job_status(db,native,kind=JOB)
+    if check_mapping and row and row.coverage.get('person_version')!=VERSION and not state['pending']:
+        # Reuse the component header already read above. Old connections lacked
+        # Cast fields; refresh once without per-work acquisition or losing rows.
+        await db.execute(update(MetadataSnapshot).where(MetadataSnapshot.provider=='imdb',
+            MetadataSnapshot.kind==JOB,MetadataSnapshot.external_id==native,
+            MetadataSnapshot.next_attempt_at.is_(None),
+            or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=now()))
+            .values(expires_at=now(),payload={}))
+        state=await admit(db,native,kind=JOB,entity_id=row.entity_id)
     if check_mapping and row and row.coverage.get('source_complete') and not state['pending']:
         current=await binding_revision(db)
         if row.coverage.get('binding_revision')!=current:
@@ -120,7 +130,9 @@ def game_rows(rows):
         if not isinstance(native,str) or not TITLE_ID.fullmatch(native) or not isinstance(role,str) or not ROLE.fullmatch(role):
             omitted+=1;continue
         key=(native,role)
-        games.setdefault(key,{'title_id':native,'category':role,'position':index})
+        item=games.setdefault(key,{'title_id':native,'category':role,'position':index,'characters':[],'attributes':[]})
+        for field,label in (('characters','name'),('attributes','text')):
+            item[field]=list(dict.fromkeys([*item[field],*texts(row.get(field),label)]))
     return list(games.values()),omitted
 
 
@@ -145,6 +157,8 @@ async def project_mapped(db,native,rows,generation,*,source_generation=None):
         work=bindings.get(row['title_id'])
         if not work:continue
         role='actor' if row['category'] in ('actor','actress','cast') else row['category']
+        characters=row['characters'] if role in ('actor','voice_actor','narrator') else []
+        attributes=row['attributes']
         credits.append({'work_id':work,'contributor_id':root,'role':role,'provider':'imdb','scope':'person',
             'role_label':'Actor' if role=='actor' else role.replace('_',' ').title(),
             'source_key':f"person:{native}:{row['title_id']}:{row['category']}",
@@ -152,13 +166,18 @@ async def project_mapped(db,native,rows,generation,*,source_generation=None):
                 'imdb_person_id':native,'imdb_person_evidence':True,'imdb_person_generation':generation,
                 'imdb_person_source_generation':source_generation or generation,
                 'imdb_title_id':row['title_id'],'imdb_category':row['category'],
-                'person_credit_order':row['position'],'voice':None,'languages':[],
+                'person_credit_order':row['position'],'voice':True if any(value.casefold()=='voice' for value in attributes) else None,
+                'languages':list(dict.fromkeys(VERSIONS[value] for value in attributes if value in VERSIONS)),
+                'game_role':{'characters':characters,'text_characters':characters},
+                'person_character_evidence':bool(characters),
                 'source_url':f'https://www.imdb.com/name/{native}/'}})
+        credits[-1]['character_label']=' / '.join(characters)[:500] or None
     for offset in range(0,len(credits),100):
         statement=insert(CatalogueCredit).values(credits[offset:offset+100])
         await db.execute(statement.on_conflict_do_update(constraint='uq_catalogue_credit_source',set_={
             'contributor_id':statement.excluded.contributor_id,'role':statement.excluded.role,
             'scope':statement.excluded.scope,
+            'character_label':statement.excluded.character_label,
             'role_label':statement.excluded.role_label,
             'attributes':CatalogueCredit.attributes.op('||')(statement.excluded.attributes)}))
     await db.execute(update(CatalogueCredit).where(CatalogueCredit.provider=='imdb',
@@ -291,7 +310,7 @@ class GameIMDbPersonEnrichment:
                 from core.game_imdb_review import write_index
                 component.payload={**component.payload,**await write_index(db,native,state['generation'],
                     [row for stored in pages for row in stored['rows']],entity_id=job.entity_id)}
-                component.coverage={**mapping,'source_complete':True,'projection_revision':state['generation'],
+                component.coverage={**mapping,'person_version':VERSION,'source_complete':True,'projection_revision':state['generation'],
                     'binding_revision':await binding_revision(db)}
                 component.fetched_at=now();component.expires_at=now()+timedelta(days=30)
                 if mapping.get('unmapped_games'):
@@ -327,7 +346,7 @@ class GameIMDbPersonEnrichment:
             from core.game_imdb_review import write_index
             component.payload={**component.payload,**await write_index(db,native,generation,
                 [row for page in pages for row in page],entity_id=job.entity_id)}
-            component.coverage={**mapping,'source_complete':True,'projection_revision':projection,
+            component.coverage={**mapping,**({'person_version':component.coverage['person_version']} if 'person_version' in component.coverage else {}),'source_complete':True,'projection_revision':projection,
                 'binding_revision':await binding_revision(db)}
             state.pop('projection_only',None)
             state.update(state='complete',complete=True)

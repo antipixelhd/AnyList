@@ -85,3 +85,39 @@ test('company portfolios poll an approval-protected compact status and preserve 
   f.resource.update({id:'42/../names',source:'igdb-company',pending:true,complete:false});
   assert.equal(f.timers.length,0);
 }));
+
+test('displayed role captions publish through one bounded status poll',async()=>{
+  const original={fetch:globalThis.fetch,set:globalThis.setTimeout,clear:globalThis.clearTimeout};
+  const timers=[],calls=[],captions=[],controller=new AbortController();
+  globalThis.setTimeout=callback=>{timers.push(callback);return callback;};globalThis.clearTimeout=()=>{};
+  globalThis.fetch=async path=>{calls.push(path);return Response.json({id:'nm1',pending:false,complete:true,roles:[{id:7,roles:['Actor'],characters:['A role']}]});};
+  try{
+    const resource=contributorSourceRefresh(controller.signal,()=>{},
+      {kind:'actor',ids:()=>[7,7,...Array.from({length:110},(_,i)=>i+8)],apply:rows=>captions.push(rows)});
+    resource.update({id:'nm1',pending:true,complete:false});timers.shift()();
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(calls.length,1);
+    const query=new URL(calls[0],'https://test.invalid').searchParams;
+    assert.equal(query.getAll('work_id').length,100);assert.equal(query.get('kind'),'actor');
+    assert.deepEqual(captions,[[{id:7,roles:['Actor'],characters:['A role']}]]);
+  }finally{controller.abort();globalThis.fetch=original.fetch;globalThis.setTimeout=original.set;globalThis.clearTimeout=original.clear;}
+});
+
+test('caption publication covers every mounted card in sequential bounded batches',async()=>{
+  const original={fetch:globalThis.fetch,set:globalThis.setTimeout,clear:globalThis.clearTimeout};
+  const timers=[],sizes=[],published=[],controller=new AbortController();let active=0,maxActive=0;
+  globalThis.setTimeout=callback=>{timers.push(callback);return callback;};globalThis.clearTimeout=()=>{};
+  globalThis.fetch=async path=>{
+    active++;maxActive=Math.max(maxActive,active);
+    const ids=new URL(path,'https://test.invalid').searchParams.getAll('work_id').map(Number);sizes.push(ids.length);
+    await Promise.resolve();active--;
+    return Response.json({id:'nm1',pending:false,complete:true,revision:'new',roles:ids.map(id=>({id,roles:['Actor'],characters:['Role']}))});
+  };
+  try{
+    const resource=contributorSourceRefresh(controller.signal,()=>{},{kind:'actor',ids:()=>Array.from({length:211},(_,i)=>i+1),apply:rows=>published.push(...rows)});
+    resource.update({id:'nm1',pending:true,complete:false,revision:'old'});timers.shift()();
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.deepEqual(sizes,[100,100,11]);assert.equal(maxActive,1);
+    assert.equal(new Set(published.map(row=>row.id)).size,211);
+  }finally{controller.abort();globalThis.fetch=original.fetch;globalThis.setTimeout=original.set;globalThis.clearTimeout=original.clear;}
+});

@@ -41,6 +41,7 @@ PERSON_CREDITS = '''query GamePersonCredits($id: ID!, $after: ID, $profile: Bool
       edges { node {
         title { id titleText { text } titleType { id } releaseYear { year } }
         category { id }
+        ... on Cast { characters { name } attributes { text } }
       } }
     }
   }

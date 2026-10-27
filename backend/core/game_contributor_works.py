@@ -41,6 +41,14 @@ def game_credits(entity_id, kind):
     # A sparse person connection remains stored as participation evidence, but
     # a title's actual voice/job roles take display precedence for the same work.
     role_filter=role_filter & or_(CatalogueCredit.scope!='person',~detailed_role)
+    person_credit=aliased(CatalogueCredit)
+    from sqlalchemy.dialects.postgresql import aggregate_order_by
+    person_characters=select(func.string_agg(func.distinct(person_credit.character_label),
+        aggregate_order_by(literal(' / '),person_credit.character_label))).where(
+        person_credit.work_id==CatalogueCredit.work_id,person_credit.contributor_id.in_(aliases),
+        person_credit.scope=='person',person_credit.role.in_(ACTING),
+        person_credit.attributes['source_active'].astext.is_distinct_from('false'),
+        person_credit.character_label.is_not(None),person_credit.character_label!='').correlate(CatalogueCredit).scalar_subquery()
     independent = INDEPENDENT - {'port'}
     def projected(work):
         expansion_base = select(expansions.c.parent).join(base, base.id == expansions.c.parent).where(
@@ -52,7 +60,8 @@ def game_credits(entity_id, kind):
             work.attributes['game_class'].astext.label('game_class'),
             expansion_base.scalar_subquery().label('base_work_id'),
             role.label('role'), CatalogueCredit.role_label.label('role_label'),
-            CatalogueCredit.character_label.label('character_label')).where(
+            case((role.in_(ACTING),func.coalesce(func.nullif(CatalogueCredit.character_label,''),person_characters)),
+                else_=CatalogueCredit.character_label).label('character_label')).where(
             CatalogueCredit.contributor_id.in_(aliases), role_filter,
             CatalogueCredit.attributes['source_active'].astext.is_distinct_from('false'),
             work.kind == 'game', work.attributes['adult'].astext.is_distinct_from('true'),
@@ -67,6 +76,19 @@ def game_credits(entity_id, kind):
         credited.kind == 'game', credited.attributes['game_class'].astext == 'port')
     return main.union_all(port).cte('game_contributor_credits')
 
+
+
+async def role_captions(db,entity_id,kind,work_ids):
+    """Small public projection for displayed works, never a title hydration fan-out."""
+    credits=game_credits(entity_id,kind)
+    rows=(await db.execute(select(credits.c.id,credits.c.role,credits.c.role_label,
+        credits.c.character_label).where(credits.c.id.in_(work_ids)).distinct())).all()
+    result={}
+    for identifier,role,label,character in rows:
+        item=result.setdefault(identifier,{'id':identifier,'roles':set(),'characters':set()})
+        item['roles'].add(label or role.replace('_',' ').title())
+        if character and role in ACTING:item['characters'].add(character)
+    return [{**item,'roles':sorted(item['roles']),'characters':sorted(item['characters'])} for item in result.values()]
 
 
 async def works_page(db, viewer, entity_id, kind, *, key, list_scope, status, page, cursor):

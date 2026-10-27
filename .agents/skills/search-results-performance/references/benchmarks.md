@@ -90,4 +90,6 @@ When modifying the harness, preserve profile distinctions, cache reset/expiry be
 
 ## Improving the implementation or benchmark
 
+`game_person_roles` measures the approved status route with 100 displayed work IDs. It checks exact work membership, character evidence, no provider work/writes, and no raw source payload. The batch is a request bound, not a stored/displayed collection limit: the browser publishes further mounted cards sequentially in batches on a public revision change. Cached person fixtures carry the current person-connection version; legacy version refresh is tested separately in disposable person integration tests. Do not describe these cached/header cases as a cold provider acquisition benchmark.
+
 The case names, fixture sizes, profiles and current mechanisms above describe the harness, not limits on future improvements. Existing checks are a starting point: add or replace instrumentation, fixtures and comparisons when they better represent the changed path, while retaining meaningful quality, scale and failure coverage. If the workload changes, run comparable arms or document the break in comparability. Do not force a better design to reproduce obsolete query counts, payload shapes, cache layers or provider budgets. More work in one counter can be justified by lower overall latency/resource cost; explain the tradeoff.

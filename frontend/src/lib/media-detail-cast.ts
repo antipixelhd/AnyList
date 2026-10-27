@@ -105,7 +105,14 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
   containers.forEach(container=>paint(container,mode));
   status();
 
-  const fill=(container:HTMLElement,people:DetailPerson[])=>{
+  const fill=(container:HTMLElement,people:DetailPerson[],loading=false)=>{
+    if(!people.length&&loading){
+      if(!container.querySelector('.detail-person-skeleton')){
+        const skeleton=root.querySelector<HTMLTemplateElement>('[data-detail-person-skeleton]');
+        if(skeleton)container.replaceChildren(...Array.from({length:8},()=>skeleton.content.cloneNode(true)));
+      }
+      return;
+    }
     const old=new Map([...container.querySelectorAll<HTMLElement>('[data-person-id]')].map(card=>[card.dataset.cardKey||`${card.dataset.personKind}:${card.dataset.personId}`,card]));
     const template=root.querySelector<HTMLTemplateElement>('[data-detail-person-template]')!;
     const cards=people.map(person=>{
@@ -172,14 +179,14 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
     const preview=root.querySelector<HTMLElement>('[data-credit-preview]');
     if(preview){
       const displayed=(rows.length?rows:previewFallback).slice(0,8);
-      fill(preview,displayed);preview.closest<HTMLElement>('.lab-people-preview')!.hidden=!displayed.length;
+      fill(preview,displayed,metadataPending);preview.closest<HTMLElement>('.lab-people-preview')!.hidden=!displayed.length&&!metadataPending;
     }
     const section=root.querySelector<HTMLElement>('[data-credit-section="cast"]');
     if(section){
       const limit=Number(section.dataset.creditLimit||8);
-      fill(section.querySelector<HTMLElement>('[data-credit-visible]')!,rows.slice(0,limit));
+      fill(section.querySelector<HTMLElement>('[data-credit-visible]')!,rows.slice(0,limit),metadataPending);
       deferred.get(section)?.replace(rows.slice(limit));
-      section.hidden=!rows.length;
+      section.hidden=!rows.length&&!metadataPending;
       section.querySelector<HTMLElement>('[data-credit-heading]')!.textContent=mode==='characters'?'Characters':'Cast';
       section.querySelector<HTMLElement>('[data-credit-toggle]')!.hidden=rows.length<=limit;
     }
@@ -198,6 +205,7 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
   },{signal});
   const update=(data:{people:DetailPerson[];organizations:DetailPerson[];character_status:DetailLoadState&{complete?:boolean};credits_status?:string;game_characters?:import('./game-cast-data').GameCharacter[];game_character_status?:{complete?:boolean}})=>{
     if(gameCast&&keepCachedGameCredits(data,gameCast,!!root.querySelector('[data-credit-section="crew"] [data-person-id],[data-credit-section="studios"] [data-person-id]'))){metadataPending=true;return data.character_status;}
+    metadataPending=data.character_status.pending===true||['partial','pending','deferred'].includes(data.character_status.state||'');
     const groups=detailCredits({people:data.people,organizations:data.organizations,type:info.type} as DetailMedia);
     if(!groups.cast.length&&['failed','deferred'].includes(data.credits_status||''))return {state:'deferred',pending:true,retry_after:60,error:'unavailable'};
     const creatorRow=root.querySelector<HTMLElement>('[data-detail-creators]');
@@ -242,7 +250,7 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
   },{selected:()=>mode==='characters',needed:()=>metadataPending,
     ...(info.gameCredits?{source:{people:`/api/proxy/tracking/games/works/${info.id}/credits`}}:{}),
     primaryReady:()=>waitForDetailPortraits([...root.querySelectorAll<HTMLImageElement>('[data-credit-preview] img')],signal),warm});
-  if(backgroundAvailable)background.start(!root.querySelector('[data-credit-preview] [data-person-id]'));
+  if(backgroundAvailable)background.start(!!info.gameCredits||!root.querySelector('[data-credit-preview] [data-person-id]'));
   root.addEventListener('click',event=>{
     const button=(event.target as Element).closest<HTMLButtonElement>('[data-cast-mode]');
     if((event.target as Element).closest('[data-detail-people-retry]')){void background.retry();return;}

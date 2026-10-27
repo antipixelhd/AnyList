@@ -36,6 +36,27 @@ URL = os.getenv('GAMES_TEST_DATABASE_URL')
 
 @unittest.skipUnless(URL, 'Requires explicit disposable games PostgreSQL')
 class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
+    async def test_person_caption_poll_is_bounded_identity_scoped_and_authenticated(self):
+        from models.catalogue import CatalogueCredit
+        async with self.Session() as db:
+            person=CatalogueEntity(kind='person',name='Same name')
+            namesake=CatalogueEntity(kind='person',name='Same name')
+            db.add_all([person,namesake]);await db.flush()
+            db.add(CatalogueIdentity(entity_id=person.id,namespace='imdb.person',external_id='nm123',source='imdb'))
+            for actor,label in ((person,'Correct role'),(namesake,'Other identity')):
+                db.add(CatalogueCredit(work_id=self.base,contributor_id=actor.id,provider='imdb',
+                    source_key=str(actor.id),scope='person',role='actor',character_label=label,attributes={}))
+            await db.commit()
+        path='/tracking/games/people/nm123/imdb'
+        response=await self.client.get(path,params={'work_id':[self.base,self.pack]})
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertEqual(response.json()['roles'],[{'id':self.base,'roles':['Actor'],'characters':['Correct role']}])
+        self.assertNotIn('Other identity',response.text)
+        self.assertEqual((await self.client.get(path,params={'work_id':[self.base]*101})).status_code,422)
+        self.assertEqual((await self.client.get(path,params={'work_id':0})).status_code,422)
+        self.viewer=None
+        self.assertEqual((await self.client.get(path,params={'work_id':self.base})).status_code,401)
+
     async def asyncSetUp(self):
         if not (':55449/catalogue_test' in URL or '/anylist_test' in URL):
             raise RuntimeError('Refusing non-disposable games database')

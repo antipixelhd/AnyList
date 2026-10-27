@@ -40,7 +40,7 @@ export type DetailMedia = EditorTitle & {
   people: DetailPerson[]; organizations: DetailPerson[]; posters: string[]; artwork: string[]; relations: any[]; similar: any[]; related_pending?: boolean;
   character_status?: {state:string;pending?:boolean;error?:string|null;retry_after?:number};
   game_characters?:import('./game-cast-data').GameCharacter[];
-  game_character_status?:{complete?:boolean;source?:string};
+  game_character_status?:{complete?:boolean;source?:string;pending?:boolean};
   game_credit_status?: {state:string;pending?:boolean;error?:string|null;retry_after?:number;complete?:boolean;coverage?:string};
   completion_estimates?:import('./game-time-to-beat').CompletionEstimates|null;
   game_offer_context?:Omit<import('./game-offer-data').GameOffers,'offers'>;

@@ -65,12 +65,20 @@ async def game_ratings(work_id:WorkId,db:DB,viewer:Reader) -> dict:
 
 
 @router.get('/people/{native}/imdb')
-async def imdb_person_status(native: Annotated[str,Path(pattern=r'^nm[0-9]+$',max_length=30)],db:DB,viewer:Reader) -> dict:
+async def imdb_person_status(native: Annotated[str,Path(pattern=r'^nm[0-9]+$',max_length=30)],db:DB,viewer:Reader,
+    work_id:Annotated[list[Annotated[int,Field(gt=0)]],Query(max_length=100)]=[],
+    kind:Literal['actor','staff']='actor') -> dict:
     from core.game_imdb_person import view
     from core.catalogue import resolve_identity
-    if not await resolve_identity(db,'imdb.person',native):raise HTTPException(404,'Person not found')
+    identity=await resolve_identity(db,'imdb.person',native)
+    if not identity:raise HTTPException(404,'Person not found')
     # Status-only polls neither enqueue more people nor read raw filmographies.
-    return await view(db,native,include_profile=False)
+    result=await view(db,native,include_profile=False)
+    if work_id:
+        from core.game_contributor_works import role_captions
+        person=await db.get(CatalogueEntity,identity.entity_id)
+        result['roles']=await role_captions(db,person.canonical_person_id or person.id,kind,set(work_id))
+    return result
 
 
 class PersonImageBatch(BaseModel):

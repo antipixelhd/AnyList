@@ -112,6 +112,7 @@ async def main(args):
                     tmdb_id=900000 + index, runtime=100, release_date='2026-10-01',
                     tmdb_data=title(900000 + index)))
             first_game=None
+            role_work_ids=[]
             children_base=None
             game_contributor_id=None
             game_company_id=None
@@ -139,7 +140,7 @@ async def main(args):
                                 'identity_bridge':{'version':game_person_identity.VERSION,
                                     'state':'unresolved','next_check_at':(stamp+timedelta(days=7)).isoformat()},
                                 'index_generation':'fixture','index_pages':20,'index_titles':1000},
-                            coverage={'source_complete':True,'state':'partial','projection_revision':'fixture-v1','binding_revision':None,
+                            coverage={'person_version':2,'source_complete':True,'state':'partial','projection_revision':'fixture-v1','binding_revision':None,
                                 'source_games':1000,'mapped_games':0,'unmapped_games':1000},fetched_at=stamp,expires_at=stamp+timedelta(days=30))])
                     # This case measures an already cached discovery attempt,
                     # including unresolved external identities, not first admission.
@@ -161,6 +162,7 @@ async def main(args):
                 db.add(game)
                 await db.flush()
                 if first_game is None:first_game=game
+                if len(role_work_ids)<100:role_work_ids.append(game.id)
                 if game_statistics_enabled:
                     performer=CatalogueEntity(kind='person',name=f'Statistics performer {index:05}')
                     db.add(performer);await db.flush()
@@ -379,6 +381,7 @@ async def main(args):
                 items = result.get('results', [])
                 if label.startswith('game_contributor') or label in ('game_person_cached','game_company_cached'):items=result['works']
                 if label=='game_credits':items=result['people']+result['game_characters']
+                if label=='game_person_roles':items=result['roles']
                 if label.startswith('game_statistics'):items=result.get('data') if isinstance(result.get('data'),list) else [result.get('data')]
                 if result.get('sections'):
                     items = [item for section in result['sections'] for item in section['results']]
@@ -514,6 +517,8 @@ async def main(args):
             cases += [('game_people_search','quick-search/contributors',{'q':'Game works performer','kind':'actor','work_domain':'game'}),
                 ('game_people_shared','quick-search/contributors',{'q':'Game works performer','kind':'actor'})]
             cases += [('game_person_cached',path,{'media_type':'game'}),('game_person_status','games/people/nm8000000/imdb',{})]
+            if args.case and 'game_person_roles' in args.case:
+                cases += [('game_person_roles','games/people/nm8000000/imdb',{'work_id':role_work_ids})]
             if args.case and 'game_person_name_search' in args.case:
                 cases += [('game_person_name_search','quick-search/contributors',{'q':'Game works performer','kind':'people','work_domain':'game'})]
             if args.case and 'game_person_availability' in args.case:
@@ -832,6 +837,10 @@ async def main(args):
                             if not status['complete'] or status['pending']:raise RuntimeError('Cached person source was unnecessarily requeued')
                             if label=='game_person_cached' and (result['known_works']!=args.local_titles or result['description']!='Benchmark cached biography.'):
                                 raise RuntimeError('Person component lost the existing game works or cached profile')
+                            if label=='game_person_roles' and (len(result.get('roles',[]))!=len(role_work_ids)
+                                or {row['id'] for row in result['roles']}!=set(role_work_ids)
+                                or any(len(row['characters'])!=1 for row in result['roles'])):
+                                raise RuntimeError('Caption projection lost displayed identity or character evidence')
                             if counters['provider_requests'] or counters['db_writes']:raise RuntimeError('Cached person reads performed provider work or writes')
                             if 'SOURCE_EVIDENCE_SENTINEL' in json.dumps(result):raise RuntimeError('Person read exposed raw source evidence')
                             for identity in counters:

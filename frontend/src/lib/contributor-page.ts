@@ -217,7 +217,21 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     changed();
   });
   const sourceButton=root.querySelector<HTMLButtonElement>('[data-contributor-source-refresh]');
-  const sourceRefresh=contributorSourceRefresh(signal,available=>{if(sourceButton)sourceButton.hidden=!available;});
+  const sourceRefresh=contributorSourceRefresh(signal,available=>{if(sourceButton)sourceButton.hidden=!available;},data.kind==='studio'?undefined:{
+    kind:data.kind,ids:()=>[...items.values()].filter(item=>item.type==='game'&&item.id).map(item=>item.id!),
+    apply:rows=>{
+      const captions=new Map(rows.map(row=>[row.id,row]));
+      for(const [card,item] of items){
+        const next=item.type==='game'&&item.id?captions.get(item.id):undefined;
+        if(!next)continue;
+        // Only public role text changes. Do not re-seed private/optimistic
+        // tracking, replace cards, alter ordering, paging or scroll position.
+        item.characters=next.characters;item.roles=next.roles;
+        const caption=card.querySelector<HTMLElement>('[data-work-credit]');
+        if(caption){caption.textContent=[...next.characters,...next.roles.filter(role=>!['Actor','Production'].includes(role))].join(' / ');caption.title=caption.textContent;}
+      }
+    }
+  });
   sourceRefresh.update(params.get('media_type')==='game'?(data.game_company_status||data.game_person_status):null);
   sourceButton?.addEventListener('click',()=>{
     sourceButton.disabled=true;
