@@ -43,6 +43,122 @@ class Provider:
 @unittest.skipUnless(fixture.URL,'Requires explicit disposable Games PostgreSQL')
 class GameMetadataTests(unittest.IsolatedAsyncioTestCase):
     cleanup=fixture.GamesDatabaseTests.cleanup
+    async def test_slow_primary_returns_usable_shell_then_public_primary_without_private_payload(self):
+        proceed=asyncio.Event();original=self.provider.detail
+        async def slow(*args,**kwargs):await proceed.wait();return await original(*args,**kwargs)
+        self.provider.detail=slow
+        response=await asyncio.wait_for(self.detail(),2)
+        self.assertEqual(response.status_code,200,response.text)
+        data=response.json();self.assertEqual(data['title'],'Game stub')
+        self.assertFalse(data['game_metadata_status']['primary_ready'])
+        self.assertTrue(data['game_metadata_status']['pending']);self.assertEqual(data['entry']['score'],9)
+        proceed.set();await self.finish()
+        response=await self.client.get(f'/tracking/games/works/{self.base}/primary')
+        self.assertEqual(response.status_code,200,response.text)
+        data=response.json();self.assertEqual(data['title'],'Hydrated game')
+        self.assertEqual(data['poster'],'https://example.test/selected.jpg')
+        for field in ('entry','notes','people','organizations','game_characters','achievement_unlocks','total_seconds','completion_seconds'):
+            self.assertNotIn(field,data)
+        self.assertEqual(response.headers['cache-control'],'private, no-store')
+
+    async def test_scheduler_admits_later_primary_while_optional_character_slots_are_busy(self):
+        ids=[]
+        async with self.Session() as db:
+            for native in ('9101','9102','9103'):
+                work=CatalogueEntity(kind='game',name='Queued primary',attributes={'game_class':'game','igdb_id':native})
+                db.add(work);await db.flush();ids.append(work.id)
+                db.add(CatalogueIdentity(entity_id=work.id,namespace='igdb.game',external_id=native,source='igdb'))
+                await db.flush();await request(db,work)
+            await db.commit()
+        await asyncio.wait_for(self.service.tick(),1)
+        async def primary_ready(native):
+            while True:
+                flight=_flights.get((id(self.engine),native))
+                if flight and flight.primary.is_set():return flight
+                await asyncio.sleep(.01)
+        await asyncio.wait_for(asyncio.gather(primary_ready('9101'),primary_ready('9102')),3)
+        self.assertEqual(self.provider.optional_max,2)
+        await asyncio.wait_for(self.service.tick(),1)
+        third=await asyncio.wait_for(primary_ready('9103'),3)
+        self.assertEqual(third.entity_id,ids[-1])
+        self.assertFalse(third.task.done());self.assertFalse(self.provider.release.is_set())
+        self.assertEqual(self.provider.optional_max,2)
+        self.provider.release.set()
+        await asyncio.gather(*[flight.task for (scope,_),flight in list(_flights.items()) if scope==id(self.engine)])
+
+    async def test_status_shares_a_short_primary_wait_without_cancelling_shared_provider_work(self):
+        proceed=asyncio.Event();original=self.provider.detail
+        async def slow(*args,**kwargs):await proceed.wait();return await original(*args,**kwargs)
+        self.provider.detail=slow
+        response=await asyncio.wait_for(self.detail(),2)
+        self.assertFalse(response.json()['game_metadata_status']['primary_ready'])
+        waiter=asyncio.create_task(self.client.get(f'/tracking/games/works/{self.base}/metadata'))
+        await asyncio.sleep(.05);self.assertFalse(waiter.done())
+        proceed.set()
+        response=await asyncio.wait_for(waiter,2)
+        self.assertTrue(response.json()['primary_ready']);self.assertEqual(self.provider.called,1)
+        self.assertFalse(self.provider.release.is_set());await self.finish()
+
+    async def seed_cached_artwork(self,queued=False):
+        stamp=now()-timedelta(days=1);expires=stamp+timedelta(days=7)
+        small='https://images.igdb.com/igdb/image/upload/t_thumb/small.jpg'
+        large='https://images.igdb.com/igdb/image/upload/t_thumb/large.jpg'
+        gallery=[small,large,*[f'https://example.test/extra-{index}.jpg' for index in range(21)]]
+        async with self.Session() as db:
+            work=await db.get(CatalogueEntity,self.base)
+            work.attributes={**work.attributes,'artwork':gallery,'scene_artwork':[small,large],'artwork_policy_version':1}
+            if queued:
+                work.attributes={**work.attributes,'backdrop_path':'https://example.test/selected-background.jpg'}
+                work.protected_fields=[*work.protected_fields,'attributes.backdrop_path']
+            db.add(MetadataSnapshot(provider='igdb',kind='game',external_id='119133',entity_id=self.base,
+                fetched_at=stamp,expires_at=expires,next_attempt_at=now()+timedelta(minutes=2) if queued else None,
+                error_code='unavailable' if queued else None,
+                coverage={'characters_complete':True,'release_precision_version':1,'artwork_policy_version':1},
+                payload={'game':{'id':119133,'screenshots':[{'url':small,'width':1920,'height':1080},
+                    {'url':large,'width':3840,'height':2160}],'artworks':[],
+                    '_characters':'RAW_CHARACTER_SENTINEL '*50000}}))
+            await db.commit()
+            saved=await header(db,'119133')
+        return saved.fetched_at,saved.expires_at,gallery,large
+
+    async def test_cached_geometry_policy_upgrade_avoids_provider_work_and_preserves_complete_gallery(self):
+        from core.media_details import primary_details
+        stamp,expires,gallery,large=await self.seed_cached_artwork()
+        async with self.Session() as db:
+            work=await db.get(CatalogueEntity,self.base);_,state=await request(db,work);await db.commit()
+            self.assertTrue(state['complete']);self.assertFalse(state['pending'])
+            self.assertEqual(work.attributes['artwork'],gallery)
+            self.assertEqual(work.attributes['scene_artwork'][0],large)
+            self.assertEqual(primary_details(work)['backdrop'],large)
+            row=await header(db,'119133')
+            self.assertEqual((row.fetched_at,row.expires_at),(stamp,expires))
+        statements=[]
+        def record(conn,cursor,sql,params,context,many):statements.append(sql)
+        event.listen(self.engine.sync_engine,'before_cursor_execute',record)
+        try:
+            async with self.Session() as db:
+                await request(db,await db.get(CatalogueEntity,self.base));await db.commit()
+        finally:event.remove(self.engine.sync_engine,'before_cursor_execute',record)
+        self.assertFalse(any('catalogue_metadata_snapshots.payload' in sql for sql in statements))
+        self.assertFalse(any(sql.lstrip().upper().startswith(('INSERT','UPDATE','DELETE')) for sql in statements))
+        self.assertEqual(self.provider.called,0)
+
+    async def test_cached_policy_upgrade_preserves_selected_art_and_retry_state(self):
+        from core.media_details import primary_details
+        stamp,expires,gallery,large=await self.seed_cached_artwork(queued=True)
+        async with self.Session() as db:
+            before=await header(db,'119133');work=await db.get(CatalogueEntity,self.base)
+            _,state=await request(db,work);await db.commit()
+            self.assertTrue(state['pending']);self.assertEqual(state['error'],'unavailable')
+            self.assertEqual(work.attributes['artwork'],gallery)
+            self.assertEqual(primary_details(work)['backdrop'],'https://example.test/selected-background.jpg')
+            row=await header(db,'119133')
+            self.assertEqual((row.fetched_at,row.expires_at,row.next_attempt_at,row.error_code),
+                (stamp,expires,before.next_attempt_at,before.error_code))
+            entry=await db.scalar(select(GameEntry).where(GameEntry.work_id==self.base))
+            self.assertEqual((entry.total_seconds,entry.completion_seconds,entry.score),(198000,144000,9))
+        self.assertEqual(self.provider.called,0)
+
     async def asyncSetUp(self):
         await fixture.GamesDatabaseTests.asyncSetUp(self)
         async with self.Session() as db:
@@ -259,7 +375,7 @@ class SourceCheckpointTests(unittest.IsolatedAsyncioTestCase):
     async def test_partial_character_page_is_not_a_complete_metadata_snapshot(self):
         from types import SimpleNamespace
         row=SimpleNamespace(entity_id=1,fetched_at=now(),expires_at=now()+timedelta(days=7),next_attempt_at=None,
-            lease_until=None,error_code=None,characters_complete=False)
+            lease_until=None,error_code=None,characters_complete=False,artwork_policy_version=GAME_ARTWORK_VERSION)
         state=status(row,1)
         self.assertTrue(state['primary_ready']);self.assertFalse(state['complete']);self.assertFalse(state['pending'])
 

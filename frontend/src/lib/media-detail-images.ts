@@ -354,6 +354,21 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
       }
       return data.image_status;
   };
+  root.addEventListener('anylist:game-primary',event=>{
+    const data=(event as CustomEvent).detail;
+    if(signal.aborted||info.type!=='game'||data?.type!=='game'||data.id!==info.id)return;
+    previewInfo=data.artwork_preview||previewInfo;info.backdropFallbacks=data.backdrop_fallbacks||info.backdropFallbacks;
+    applyImages({...data,
+      posters:uniqueDetailImages([...(data.posters||[]),...galleries.posters]),
+      artwork:uniqueDetailImages([...(data.artwork||[]),...galleries.artwork],artworkLimit),image_status:{state:'ready'}});
+    const tab=root.querySelector<HTMLButtonElement>('[data-detail-tab="artwork"]');
+    if(tab){
+      const empty=!galleries.artwork.length,focused=document.activeElement===tab;
+      if(empty&&tab.getAttribute('aria-selected')==='true')root.querySelector<HTMLButtonElement>('[data-detail-tab="overview"]')?.click();
+      tab.hidden=empty;tab.disabled=empty;if(empty)tab.tabIndex=-1;
+      if(empty&&focused)root.querySelector<HTMLButtonElement>('[data-detail-tab="overview"]')?.focus({preventScroll:true});
+    }
+  },{signal});
   const resource=detailBackground(standalone?.imagesPath||`/api/proxy/tracking/title/${info.id}/images`,signal,applyImages,(state,error)=>{
     viewerStatus.hidden=state!=='retry';
     if(state==='retry'){

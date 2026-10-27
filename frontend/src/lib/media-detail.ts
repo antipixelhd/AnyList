@@ -102,7 +102,7 @@ export function mountMediaDetail() {
   }
   let title = info.type==='game'?editorStore.findSubject({kind:'game',catalogue_id:info.id}):editorStore.find(info.id);
   const synopsis = root.querySelector<HTMLElement>('[data-detail-synopsis]');
-  if (synopsis) mountContributorBiography(synopsis,signal);
+  if (synopsis&&!info.gamePrimaryPending) mountContributorBiography(synopsis,signal);
   root.querySelectorAll<HTMLElement>('[data-credit-section]').forEach(section=>{
     const button=section.querySelector<HTMLButtonElement>('[data-credit-toggle]');
     const content=section.querySelector<HTMLElement>('[data-credit-content]');

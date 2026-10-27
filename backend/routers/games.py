@@ -186,13 +186,22 @@ async def game_credits(work_id: WorkId, db: DB, viewer: Reader) -> dict:
 
 @router.get('/works/{work_id}/metadata')
 async def game_metadata_status(work_id:WorkId,db:DB,viewer:Reader) -> dict:
-    from core.game_metadata import request,GameMetadata
+    from core.game_metadata import GameMetadata
     from sqlalchemy.ext.asyncio import async_sessionmaker
     work=await tracking.work(db,work_id)
-    native,state=await request(db,work);await db.commit()
-    if native and not state['primary_ready'] and state['pending'] and not state.get('error'):
-        GameMetadata(async_sessionmaker(db.bind,expire_on_commit=False),scope=db.bind).start(native,work.id)
+    service=GameMetadata(async_sessionmaker(db.bind,expire_on_commit=False),scope=db.bind)
+    # Share a short wait for the primary event, with the SQL connection released.
+    # Ready data need not wait for another browser polling interval. Warm reads
+    # still return immediately and never acquire optional character payloads.
+    state,_=await service.ensure(db,work,wait_seconds=2)
     return state
+
+
+@router.get('/works/{work_id}/primary')
+async def game_primary(work_id:WorkId,db:DB,viewer:Reader,response:Response) -> dict:
+    from core.media_details import primary_details
+    response.headers['Cache-Control']='private, no-store'
+    return primary_details(await tracking.work(db,work_id))
 
 
 class IMDbBindingReview(BaseModel):

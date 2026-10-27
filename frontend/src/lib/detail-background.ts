@@ -1,7 +1,7 @@
 export type DetailLoadState = {state?:string; pending?:boolean; retry_after?:number; error?:string|null};
 
 /** Optional reads start after paint, preserve cached content, and honor server cooldowns. */
-export function detailBackground<T>(path:string, signal:AbortSignal, apply:(data:T)=>DetailLoadState|void,
+export function detailBackground<T>(path:string, signal:AbortSignal, apply:(data:T)=>DetailLoadState|void|Promise<DetailLoadState|void>,
   status:(state:'loading'|'ready'|'retry',error?:string)=>void) {
   let request:Promise<void>|undefined,timer:ReturnType<typeof setTimeout>|undefined,attempts=0,done=false;
   const schedule=(seconds:number)=>{
@@ -22,7 +22,10 @@ export function detailBackground<T>(path:string, signal:AbortSignal, apply:(data
           if(response.status===429&&retry>0)schedule(retry);
           throw new Error(response.status===429?'Provider limit reached. Retrying automatically.':'Could not load extra details. Retrying automatically.');
         }
-        const state=apply(await response.json())||{};
+        const data=await response.json();
+        if(signal.aborted)return;
+        const state=await apply(data)||{};
+        if(signal.aborted)return;
         attempts=0;
         if(state.state==='deferred'||state.state==='partial'||state.pending||state.state==='pending'){
           status(state.error?'retry':'loading',state.error?'Provider data is temporarily unavailable. Retrying automatically.':undefined);

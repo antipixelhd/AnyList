@@ -83,7 +83,8 @@ async def work_details(db, work, *, extras=True):
         if character_header:
             from core.game_imdb_enrichment import now
             active=bool(character_header[2] and character_header[2]>now())
-            game_character_status.update(pending=not game_character_status['complete'] and bool(active or character_header[3]),
+            game_character_status.update(pending=bool(active or character_header[3]),
+                complete=game_character_status['complete'] and not active and not character_header[3] and not character_header[4],
                 retry_after=max(2,min(3600,int((character_header[3]-now()).total_seconds())+1)) if character_header[3] else 2,
                 error=character_header[4])
     studio_ids = {canonical[person.id].id for c, person in credits if c.role == 'producer'}
@@ -206,6 +207,31 @@ async def work_details(db, work, *, extras=True):
         'sources': list({source['url']: source for source in sources}.values()), 'countries': attrs.get('countries') or []}
 
 
+def primary_details(work,artwork=None):
+    """Canonical primary presentation only: no credits, jobs or viewer state."""
+    attrs=work.attributes or {}
+    gallery=artwork if artwork is not None else unique_images(
+        [url for value in attrs.get('artwork') or [] if (url:=image(value))],limit=None if work.kind=='game' else 10)
+    scenes=[url for value in attrs.get('scene_artwork') or [] if (url:=image(value))]
+    selected=image(attrs.get('backdrop_path')) or (next(iter(gallery),None) if 'attributes.artwork' in (work.protected_fields or []) else None)
+    backdrop=selected or next(iter(scenes if work.kind=='game' and attrs.get('artwork_policy_version') in (1,GAME_ARTWORK_VERSION) else gallery),None)
+    preview=next((url for url in scenes if url!=backdrop),backdrop) if work.kind=='game' else None
+    released=attrs.get('release_date')
+    if (work.kind=='game' and attrs.get('release_date_projection')!=1
+        and (work.field_sources or {}).get('attributes.release_date')=='igdb'
+        and 'attributes.release_date' not in (work.protected_fields or [])):
+        released=released[:4] if isinstance(released,str) else None
+    poster=image(work.image_url)
+    return {'id':work.id,'type':work.kind,'title':work.name,'overview':work.description,
+        'poster':poster,'posters':[poster] if poster else [],'artwork':gallery,'backdrop':backdrop,
+        **({'artwork_preview':{'image':preview},'backdrop_fallbacks':scenes} if work.kind=='game' else {}),
+        'release_date':released,'year':str(released or '')[:4],
+        'genres':[value if isinstance(value,str) else value.get('name') for value in attrs.get('genres') or []
+            if isinstance(value,str) or isinstance(value,dict) and value.get('name')],
+        'platforms':list(dict.fromkeys('PC' if row.get('group')=='PC' or str(row.get('id')) in {'3','6','14'}
+            else row.get('name') for row in attrs.get('platforms') or [] if isinstance(row,dict) and row.get('name'))) if work.kind=='game' else []}
+
+
 async def catalogue_title(db, work, viewer_id=None, *, store_country=None, enqueue_offers=False,enqueue_ratings=False,enqueue_info=False,identities=None):
     details = await work_details(db, work)
     attrs = work.attributes or {}
@@ -279,13 +305,10 @@ async def catalogue_title(db, work, viewer_id=None, *, store_country=None, enque
             details['sources'].append({'name': 'Open Library', 'url': f'https://openlibrary.org/works/{native}'})
         elif identity.namespace == 'steam.app' and native.isdecimal():
             details['sources'].append({'name': 'Steam', 'url': f'https://store.steampowered.com/app/{native}/'})
-    scenes=[url for value in attrs.get('scene_artwork') or [] if (url:=image(value))]
-    selected=image(attrs.get('backdrop_path')) or (next(iter(details['artwork']),None) if 'attributes.artwork' in (work.protected_fields or []) else None)
-    backdrop=selected or next(iter(scenes if work.kind=='game' and attrs.get('artwork_policy_version') in (1,GAME_ARTWORK_VERSION) else details['artwork']),None)
-    preview=next((url for url in scenes if url!=backdrop),backdrop) if work.kind=='game' else None
+    primary=primary_details(work,details['artwork'])
     return {**details, 'id': work.id, 'type': work.kind, 'title': work.name, 'overview': work.description,
-        'poster': image(work.image_url), 'backdrop': backdrop,
-        **({'artwork_preview':{'image':preview},'backdrop_fallbacks':scenes} if work.kind=='game' else {}),
+        'poster':primary['poster'],'backdrop':primary['backdrop'],
+        **({key:primary[key] for key in ('artwork_preview','backdrop_fallbacks')} if work.kind=='game' else {}),
         'release_date': attrs.get('release_date'), 'year': str(attrs.get('release_date') or '')[:4],
         'genres': [value if isinstance(value, str) else value.get('name') for value in attrs.get('genres') or []
             if isinstance(value, str) or (isinstance(value, dict) and value.get('name'))],

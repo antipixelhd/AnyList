@@ -169,7 +169,7 @@ body.tracker .media-detail :is(.lab-public-score,.lab-game-offer) h2 { font-size
 .media-detail .media-person-art { position:relative; flex-shrink:0; width:57px; height:77px; }
 .media-detail .media-person-art :is(img,.lab-person-initials) { position:absolute; inset:0; width:100%; height:100%; }
 .media-detail .media-person-art [hidden] { display:none; }
-.detail-image-skeleton,.media-person-art[data-cast-loading],.detail-person-skeleton>span,.detail-person-skeleton>div { background:linear-gradient(100deg,var(--field) 20%,var(--panel) 45%,var(--field) 70%); background-size:240% 100%; animation:detail-skeleton 1.8s ease-in-out infinite; border-radius:4px; }
+.detail-image-skeleton,.detail-synopsis-skeleton,.media-person-art[data-cast-loading],.detail-person-skeleton>span,.detail-person-skeleton>div { background:linear-gradient(100deg,var(--field) 20%,var(--panel) 45%,var(--field) 70%); background-size:240% 100%; animation:detail-skeleton 1.8s ease-in-out infinite; border-radius:4px; }
 .detail-person-skeleton { display:flex; align-items:center; gap:12px; min-height:77px; }
 .detail-person-skeleton>span { width:57px; height:77px; flex-shrink:0; }
 .detail-person-skeleton>div { width:65%; height:32px; }
@@ -184,7 +184,7 @@ body.tracker .media-detail :is(.lab-public-score,.lab-game-offer) h2 { font-size
 .media-detail [data-credit-preview] { min-height:77px; }
 @keyframes detail-skeleton { from { background-position:100% 0; } to { background-position:-140% 0; } }
 .detail-value-skeleton { display:inline-block; width:48px; height:18px; background:var(--field); border-radius:3px; animation:detail-skeleton 1.8s ease-in-out infinite; }
-@media(prefers-reduced-motion:reduce) { .detail-image-skeleton,.media-person-art[data-cast-loading],.detail-person-skeleton>span,.detail-person-skeleton>div,.detail-value-skeleton { animation:none; } }
+@media(prefers-reduced-motion:reduce) { .detail-image-skeleton,.detail-synopsis-skeleton,.media-person-art[data-cast-loading],.detail-person-skeleton>span,.detail-person-skeleton>div,.detail-value-skeleton { animation:none; } }
 @media (max-width:650px) {
   .media-detail .media-person-art { width:50px; height:72px; }
   .media-detail .lab-people-preview .lab-section-title,.media-credit-group>.lab-section-title { flex-wrap:wrap; gap:12px; }
@@ -278,3 +278,8 @@ body.tracker .media-detail :is(.lab-public-score,.lab-game-offer) h2 { font-size
 [data-episode-spoilers][aria-pressed=true] [data-episode-titles-hidden] { display: none; }
 [data-episode-spoilers][aria-pressed=true] [data-episode-titles-shown] { display: inline-flex; }
 [data-episode-spoilers] [data-episode-titles-hidden] { line-height: 0; }
+
+.media-detail .detail-synopsis-skeleton { display:block; width:100%; height:5em; color:transparent; mask-image:linear-gradient(#000 0 20%,transparent 20% 35%,#000 35% 55%,transparent 55% 70%,#000 70% 90%,transparent 90%); }
+
+.media-detail [data-game-genres]:empty { min-height:26px; }
+.media-detail [data-game-genres][hidden] { display:none; }

@@ -14,7 +14,17 @@ export function mountDetailAchievements(root:HTMLElement,id:number,signal:AbortS
   let title=editorStore.findSubject({kind:'game',catalogue_id:id});
   let catalogue:AchievementCatalogue|undefined,offset=0,total=0,busy=false,loaded=false;
   let request:AbortController|undefined,generation=0,needsReset=false;
+  let definitionError='',sourceStatus:{pending?:boolean;error?:string;state?:string}|undefined;
   const definitions=new Map<number,any>();
+  const paintStatus=()=>{
+    status.textContent=definitionError||
+      (sourceStatus?.error?'Some achievement data is temporarily unavailable.':
+      sourceStatus?.pending||busy&&!loaded?'Loading achievements…':
+      loaded&&!total?(catalogue?.total===0?'No achievements available.':'Achievement definitions are unavailable.'):
+      catalogue?.availability==='partial'?'Achievement data is partial.':
+      catalogue&&catalogue.total==null?'Achievement availability is unknown.':'');
+    status.hidden=!status.textContent;
+  };
   const state=()=>title?.entry?.achievements||title?.game_state?.achievements||{};
   const visible=()=>tab.getAttribute('aria-selected')==='true';
   const paint=()=>{
@@ -42,7 +52,7 @@ export function mountDetailAchievements(root:HTMLElement,id:number,signal:AbortS
   };
   async function load(){
     if(signal.aborted||busy||!visible())return;
-    busy=true;more.disabled=true;request=new AbortController();const active=generation,reset=needsReset;
+    busy=true;more.disabled=true;request=new AbortController();const active=generation,reset=needsReset;paintStatus();
     try{
       const response=await fetch(`/api/proxy/tracking/games/works/${id}/achievements?offset=${reset?0:offset}&limit=50`,{signal:request.signal,cache:'no-store'});
       if(!response.ok)throw new Error('Achievements are temporarily unavailable.');
@@ -50,16 +60,15 @@ export function mountDetailAchievements(root:HTMLElement,id:number,signal:AbortS
       if(reset){rows.replaceChildren();definitions.clear();offset=0;needsReset=false;}
       for(const row of page.results)append(row);
       total=page.total;offset+=page.results.length;loaded=true;more.hidden=offset>=total||!page.results.length;
-      more.textContent='Show more';paint();
-      if(!total){status.hidden=false;status.textContent=catalogue?.total===0?'No achievements available.':'Achievement definitions are unavailable.';}
-    }catch(error){if(!signal.aborted&&active===generation&&(error as Error).name!=='AbortError'){status.hidden=false;status.textContent=(error as Error).message;more.hidden=false;more.textContent='Retry';}}
-    finally{if(active===generation){busy=false;more.disabled=false;}}
+      definitionError='';more.textContent='Show more';paint();paintStatus();
+    }catch(error){if(!signal.aborted&&active===generation&&(error as Error).name!=='AbortError'){definitionError='Achievements are temporarily unavailable.';paintStatus();more.hidden=false;more.textContent='Retry';}}
+    finally{if(active===generation){busy=false;more.disabled=false;paintStatus();}}
   }
   watchAchievementCatalogue(id,signal,(data,source)=>{
-    if(catalogue&&data.definitions_available&&(catalogue.total!==data.total||!catalogue.definitions_available)){
+    if(catalogue&&data.definitions_available&&(catalogue.total!==data.total||!catalogue.definitions_available||catalogue.availability!==data.availability)){
       request?.abort();generation++;busy=false;loaded=false;needsReset=true;
     }
-    catalogue=data;
+    catalogue=data;sourceStatus=source;
     const known=!!state().mode||!!data.total||data.definitions_available&&data.total!==0;
     const empty=data.total===0&&!source?.pending&&!state().mode;
     if(known){tab.hidden=false;tab.disabled=false;}
@@ -68,8 +77,7 @@ export function mountDetailAchievements(root:HTMLElement,id:number,signal:AbortS
       const focused=document.activeElement===tab;tab.hidden=true;tab.disabled=true;tab.tabIndex=-1;
       if(focused)root.querySelector<HTMLButtonElement>('[data-detail-tab="overview"]')?.focus({preventScroll:true});
     }
-    status.hidden=!source?.error&&data.availability==='complete';
-    status.textContent=source?.error?'Some achievement data is temporarily unavailable.':source?.pending?'Loading achievements…':data.availability==='partial'?'Achievement data is partial.':data.total==null?'Achievement availability is unknown.':'';
+    paintStatus();
     paint();if(visible()&&!loaded)void load();
   });
   more.addEventListener('click',()=>void load(),{signal});

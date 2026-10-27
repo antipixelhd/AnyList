@@ -79,6 +79,8 @@ async def main(args):
         raise SystemExit('Set STATISTICS_TEST_DATABASE_URL to a disposable anylist_test database.')
     if args.critic_blocking_reference and (not args.case or 'game_browse_critic' not in args.case):
         raise SystemExit('--critic-blocking-reference requires --case game_browse_critic')
+    if args.primary_blocking_reference and (not args.case or 'game_details_cold' not in args.case):
+        raise SystemExit('--primary-blocking-reference requires --case game_details_cold')
     if args.baseline_ref:
         if not re.fullmatch(r'[0-9a-fA-F]{7,40}', args.baseline_ref):
             raise SystemExit('--baseline-ref must be a local commit SHA')
@@ -261,8 +263,11 @@ async def main(args):
                 db.add(CatalogueIdentity(entity_id=first_game.id,namespace='igdb.game',external_id='9000000',source='igdb'))
                 stamp=datetime.now(timezone.utc).replace(tzinfo=None)
                 db.add(MetadataSnapshot(provider='igdb',kind='game',external_id='9000000',entity_id=first_game.id,
-                    fetched_at=stamp,expires_at=stamp+timedelta(days=7),coverage={'primary_complete':True,'characters_complete':True},
+                    fetched_at=stamp,expires_at=stamp+timedelta(days=7),coverage={'primary_complete':True,'characters_complete':True,'release_precision_version':1,'artwork_policy_version':2},
                     payload={'raw':'PRIMARY_METADATA_SENTINEL '*50000}))
+            if args.case and 'game_details_cold' in args.case:
+                first_game.attributes={**first_game.attributes,'igdb_id':'9000000'}
+                db.add(CatalogueIdentity(entity_id=first_game.id,namespace='igdb.game',external_id='9000000',source='igdb'))
             if args.case and 'game_person_availability' in args.case:
                 from core.contributor_availability import movie_job
                 from core.game_imdb_bindings import revision
@@ -279,7 +284,7 @@ async def main(args):
                     'role_coverage':{'actor':{'source':args.local_titles,'unmapped':0}}}
             await db.commit()
         fixture.app.include_router(games_router)
-        if not args.case or 'game_credits' in args.case:
+        if not args.case or any(case in args.case for case in ('game_credits','game_details_cold')):
             from routers.catalogue import router as catalogue_router
             fixture.app.include_router(catalogue_router,prefix='/tracking')
         fixture.viewer = viewer  # Optional-auth catalogue routes use the same approved fixture.
@@ -421,6 +426,9 @@ async def main(args):
                 if label=='game_metadata':
                     row['result_identity']=hashlib.sha256(json.dumps({key:result[key] for key in ('primary_ready','entity_id','complete')},sort_keys=True).encode()).hexdigest()
                     row['rows']=int(result['primary_ready']);row['pending']=result['pending']
+                if label=='game_details_cold':
+                    row['primary_ready']=result['game_metadata_status']['primary_ready']
+                    row['result_identity']=hashlib.sha256(json.dumps({key:result[key] for key in ('id','type','title')},sort_keys=True).encode()).hexdigest()
             samples.append(row)
             return result
 
@@ -535,6 +543,7 @@ async def main(args):
             *([('game_ratings',f'games/works/{first_game.id}/ratings',{})] if args.case and 'game_ratings' in args.case else []),
             *([('game_info',f'games/works/{first_game.id}/info',{'country':'DE'})] if args.case and 'game_info' in args.case else []),
             *([('game_metadata',f'games/works/{first_game.id}/metadata',{})] if args.case and 'game_metadata' in args.case else []),
+            *([('game_details_cold',f'catalogue/entities/{first_game.id}/details',{})] if args.case and 'game_details_cold' in args.case else []),
             ('game_search_prefix','games/search',{'q':'Elden R'}),
             *([('game_children',f'games/works/{children_base}/children',{'limit':24})] if children_base else []),
             ('game_browse_preview','games/browse',{'limit':6}),
@@ -614,6 +623,26 @@ async def main(args):
                 raise ValueError('Unknown case for the selected matrix')
             cases = [case for case in cases if case[0] in selected]
         with ExitStack() as stack:
+            if args.case and 'game_details_cold' in args.case:
+                from core import game_metadata
+                from core.catalogue_normalize import normalize_igdb,GAME_ARTWORK_VERSION
+                async def cold_primary(provider,kind,native,*,on_primary=None):
+                    counters['provider_requests']+=1;counters['provider:igdb/primary']+=1
+                    await asyncio.sleep(args.provider_delay_ms/1000)
+                    raw={'id':int(native),'name':'Benchmark game 00000','summary':'Primary synopsis',
+                        'game_type':{'id':0,'type':'Main Game'},'_coverage':{'primary_complete':True,
+                            'characters_complete':False,'release_precision_version':1,'artwork_policy_version':GAME_ARTWORK_VERSION}}
+                    if on_primary:await on_primary(normalize_igdb(raw),{'game':raw})
+                    counters['provider_requests']+=1;counters['provider:igdb/characters']+=1
+                    await asyncio.sleep(args.provider_delay_ms/1000)
+                    raw['_coverage']['characters_complete']=True
+                    return normalize_igdb(raw),{'game':raw}
+                stack.enter_context(patch.object(game_metadata,'CatalogueProviders',return_value=SimpleNamespace(validate=lambda *args:None,detail=cold_primary)))
+                if args.primary_blocking_reference:
+                    original_ensure=game_metadata.GameMetadata.ensure
+                    async def blocking_primary(self,db,work,**kwargs):
+                        return await original_ensure(self,db,work,**{**kwargs,'wait_seconds':15})
+                    stack.enter_context(patch.object(game_metadata.GameMetadata,'ensure',blocking_primary))
             from core import game_company_discovery
             company_discovery = game_company_discovery.GameCompanyDiscovery(fixture.Session, sources=game_sources)
             stack.enter_context(patch.object(game_company_discovery, 'GameCompanyDiscovery', return_value=company_discovery))
@@ -654,6 +683,11 @@ async def main(args):
                 for label, path, values in cases:
                     current_case = label
                     reset()
+                    if label=='game_details_cold':
+                        async with fixture.Session() as db:
+                            await db.execute(delete(MetadataSnapshot).where(MetadataSnapshot.provider=='igdb',
+                                MetadataSnapshot.kind=='game',MetadataSnapshot.external_id=='9000000'))
+                            await db.commit()
                     if path == 'quick-search/contributors':
                         async with fixture.Session() as db:
                             await db.execute(delete(MetadataSnapshot).where(MetadataSnapshot.kind.in_(('game_company_search','game_people_search'))))
@@ -703,6 +737,11 @@ async def main(args):
                                 raise RuntimeError('Fresh complete company unexpectedly pending or partial')
                             if 'COMPANY_RAW_SENTINEL' in json.dumps(result):
                                 raise RuntimeError('Company search transferred full portfolio evidence')
+                            return result
+                        if label=='game_details_cold':
+                            result=await request(path,params)
+                            if result['id']!=first_game.id or result['type']!='game':
+                                raise RuntimeError('Cold detail shell lost canonical identity')
                             return result
                         if label=='game_metadata':
                             result=await request(path,params)
@@ -957,7 +996,26 @@ async def main(args):
                             collected.extend(result['results'])
                         return {**result, 'results': collected}
 
+                    journey_started=time.perf_counter()
                     await measure(label, mode, 'cold', operation)
+                    if label=='game_details_cold':
+                        sample=samples[-1]
+                        flight=game_metadata._flights.get((id(fixture.engine),'9000000'))
+                        if flight:await flight.primary.wait()
+                        primary=await request(f'games/works/{first_game.id}/primary',{})
+                        if primary['id']!=first_game.id or primary['overview']!='Primary synopsis':
+                            raise RuntimeError('Late primary metadata lost canonical content')
+                        if any(key in primary for key in ('entry','notes','people','organizations','game_characters')):
+                            raise RuntimeError('Public primary publication transferred private or credit payloads')
+                        sample['primary_ready_ms']=round((time.perf_counter()-journey_started)*1000,2)
+                        sample['primary_payload_bytes']=len(json.dumps(primary).encode())
+                        sample['primary_journey_reads']=counters['db_reads']
+                        sample['primary_journey_provider_requests']=counters['provider_requests']
+                        if flight:await asyncio.shield(flight.task)
+                        sample['complete_journey_reads']=counters['db_reads']
+                        sample['complete_journey_writes']=counters['db_writes']
+                        sample['complete_journey_provider_requests']=counters['provider_requests']
+                        if counters['provider_requests']!=2:raise RuntimeError('Cold primary journey duplicated or skipped provider components')
                     if path == 'quick-search/contributors':
                         async def verify(operation=operation):
                             for _ in range(20):
@@ -986,6 +1044,7 @@ async def main(args):
                   'contributor_relevance': not args.skip_contributor_relevance,
                   'provider_delay_ms': args.provider_delay_ms, 'rounds': args.rounds,
                   'baseline_ref': args.baseline_ref, 'sql_patterns': sql_patterns, 'samples': samples}
+        output['primary_blocking_reference']=args.primary_blocking_reference
         target = ROOT / args.output
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(json.dumps(output, indent=2), encoding='utf-8')
@@ -1010,6 +1069,8 @@ if __name__ == '__main__':
     parser.add_argument('--baseline-ref', help='Load benchmarked modules from a trusted local commit SHA')
     parser.add_argument('--critic-blocking-reference',action='store_true',
         help='Compare the same critic workload while waiting for its full page; not a historical checkout replay')
+    parser.add_argument('--primary-blocking-reference',action='store_true',
+        help='Compare the same cold primary workload with the former 15-second SSR wait; not a full historical checkout replay')
     parser.add_argument('--edge-cases-only', action='store_true')
     parser.add_argument('--filters-only', action='store_true')
     parser.add_argument('--stress-only', action='store_true')

@@ -12,7 +12,7 @@ from core.catalogue_providers import CatalogueProviders,ProviderHTTP
 from core.game_imdb_enrichment import now
 from core.game_types import capabilities
 from core.game_release_dates import VERSION as RELEASE_VERSION
-from core.catalogue_normalize import GAME_ARTWORK_VERSION
+from core.catalogue_normalize import GAME_ARTWORK_VERSION,game_artwork
 from models.catalogue import CatalogueIdentity,MetadataSnapshot
 
 _flights={}
@@ -54,9 +54,41 @@ def status(row,expected=None):
     retry=max(1,int((row.next_attempt_at-now()).total_seconds())+1) if queued else 2
     error=row.error_code if row else None
     return {'primary_ready':usable,'entity_id':row.entity_id if usable else None,
+        'primary_revision':f'{row.fetched_at.isoformat()}:{row.artwork_policy_version}' if usable else None,
         'complete':usable and row.characters_complete is True and not active and not queued and not error,
         'state':'retry' if error else 'loading' if active else 'pending' if queued else 'ready' if usable else 'unavailable',
         'pending':active or queued,'error':error,'retry_after':min(3600,retry)}
+
+
+async def upgrade_cached_artwork(db,work,native):
+    """Re-rank already retrieved geometry without fetching credits/characters again."""
+    await catalogue.write_lock(db)
+    await db.refresh(work,with_for_update=True)
+    if await native_id(db,work)!=native:return False
+    source=(await db.execute(select(MetadataSnapshot.id,
+        MetadataSnapshot.payload['game']['id'].astext.label('native'),
+        MetadataSnapshot.payload['game']['screenshots'].label('screenshots'),
+        MetadataSnapshot.payload['game']['artworks'].label('artworks')).where(
+            MetadataSnapshot.provider=='igdb',MetadataSnapshot.kind=='game',MetadataSnapshot.external_id==native,
+            MetadataSnapshot.entity_id==work.id,MetadataSnapshot.fetched_at.is_not(None),
+            MetadataSnapshot.coverage['artwork_policy_version'].as_integer()==1).with_for_update())).one_or_none()
+    if not source or source.native!=native or any(value is not None and not isinstance(value,list)
+        for value in (source.screenshots,source.artworks)):return False
+    raw={'screenshots':source.screenshots or [],'artworks':source.artworks or []}
+    images=[value for rows in raw.values() for value in rows]
+    if images and not any(isinstance(value,dict) and all(type(value.get(key)) is int and value[key]>0
+        for key in ('width','height')) for value in images):return False
+    ranked=game_artwork(raw)
+    attrs=dict(work.attributes or {});fields=dict(work.field_sources or {})
+    if 'attributes.scene_artwork' not in (work.protected_fields or []) and fields.get('attributes.scene_artwork') in (None,'igdb'):
+        attrs['scene_artwork']=ranked['scene_artwork'];fields['attributes.scene_artwork']='igdb'
+    # Preserve the complete gallery, selected backdrop, source timestamps,
+    # retry/lease state and all private tracking. Only presentation policy moves.
+    attrs['artwork_policy_version']=GAME_ARTWORK_VERSION
+    work.attributes=attrs;work.field_sources=fields
+    await db.execute(update(MetadataSnapshot).where(MetadataSnapshot.id==source.id).values(
+        coverage=MetadataSnapshot.coverage.op('||')({'artwork_policy_version':GAME_ARTWORK_VERSION})))
+    return True
 
 
 async def request(db,work,*,identities=None):
@@ -66,6 +98,9 @@ async def request(db,work,*,identities=None):
     row=await header(db,native);stamp=now()
     if row and row.entity_id not in (None,work.id):
         return None,{'state':'unavailable','primary_ready':False,'pending':False,'complete':False,'error':'identity_conflict','retry_after':0}
+    if row and row.fetched_at and row.artwork_policy_version==1:
+        await upgrade_cached_artwork(db,work,native)
+        row=await header(db,native)
     if (row and row.fetched_at and (row.release_precision_version!=RELEASE_VERSION or row.artwork_policy_version!=GAME_ARTWORK_VERSION) and not row.next_attempt_at
             and not (row.lease_until and row.lease_until>stamp) and row.expires_at and row.expires_at>stamp):
         await db.execute(update(MetadataSnapshot).where(MetadataSnapshot.provider=='igdb',MetadataSnapshot.kind=='game',
@@ -168,7 +203,6 @@ class GameMetadata:
                 MetadataSnapshot.provider=='igdb',MetadataSnapshot.kind=='game',MetadataSnapshot.entity_id.is_not(None),
                 MetadataSnapshot.next_attempt_at<=now(),or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=now()))
                 .order_by(MetadataSnapshot.next_attempt_at,MetadataSnapshot.id).limit(2))).all()
-        tasks=[]
         for native,expected in jobs:
             async with self.factory() as db:
                 from models.catalogue import CatalogueEntity
@@ -178,9 +212,10 @@ class GameMetadata:
                         MetadataSnapshot.external_id==native,or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=now()))
                         .values(next_attempt_at=None,error_code='identity_conflict',expires_at=now()+timedelta(days=1)))
                     await db.commit();continue
-            flight=self.start(native,expected)
-            if flight:tasks.append(flight.task)
-        if tasks:await asyncio.gather(*(asyncio.shield(task) for task in tasks))
+            # Flights own their leases, exceptions and lifecycle. Waiting for
+            # optional characters here would block the next scheduler tick and
+            # starve unrelated primary jobs despite free primary slots.
+            self.start(native,expected)
 
 
 async def scheduler():

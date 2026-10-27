@@ -37,3 +37,17 @@ test('partial data is published before another batch, with one request in flight
     signal.abort();assert.equal(timer.tasks.size,0);
   }finally{globalThis.fetch=nativeFetch;timer.restore();}
 });
+
+test('async publication shares its request and navigation suppresses late ready state',async()=>{
+  const nativeFetch=globalThis.fetch,controller=new AbortController(),statuses=[];
+  let release,entered;const applying=new Promise(resolve=>entered=resolve);
+  globalThis.fetch=async()=>Response.json({state:'ready'});
+  try{
+    const resource=detailBackground('/fixture',controller.signal,async()=>{
+      entered();await new Promise(resolve=>release=resolve);return {state:'ready'};
+    },state=>statuses.push(state));
+    const first=resource.load();await applying;assert.equal(resource.load(),first);
+    controller.abort();release();await first;
+    assert.deepEqual(statuses,['loading']);
+  }finally{controller.abort();globalThis.fetch=nativeFetch;}
+});

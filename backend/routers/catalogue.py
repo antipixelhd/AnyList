@@ -316,7 +316,7 @@ async def media_detail(entity_id: Annotated[int, Path(gt=0)], db: DB, current_us
         from sqlalchemy.ext.asyncio import async_sessionmaker
         identities=list(await db.scalars(select(CatalogueIdentity).where(CatalogueIdentity.entity_id==work.id)))
         service=GameMetadata(async_sessionmaker(db.bind,expire_on_commit=False),scope=db.bind)
-        metadata_status,changed=await service.ensure(db,work,identities=identities)
+        metadata_status,changed=await service.ensure(db,work,identities=identities,wait_seconds=.25)
         if changed:await db.refresh(work);identities=None
     try:data=await catalogue_title(db, work, current_user.id if current_user else None,store_country=country,enqueue_offers=True,enqueue_ratings=True,enqueue_info=True,identities=identities)
     except ProviderError as error:raise safe_error(error) from None
