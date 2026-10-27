@@ -1,4 +1,25 @@
-const BROWSE_STORAGE_PREFIX = 'anylist:browse:v1:';
+const BROWSE_STORAGE_PREFIX = 'anylist:browse:v2:';
+
+const MINUTE = 60_000;
+
+/** Bound client reuse on top of TMDB's 30-minute response cache. */
+export function browseResultTtl(path: string, now: number): number {
+  const url = new URL(path, 'https://anylist.invalid');
+  const sort = url.searchParams.get('sort');
+  const status = url.searchParams.get('status');
+  const dateSensitive = url.pathname.endsWith('/sections') ||
+    !!url.searchParams.get('q') ||
+    ['trending', 'newest', 'upcoming'].includes(sort || '') ||
+    ['airing', 'returning', 'upcoming'].includes(status || '') ||
+    url.searchParams.has('timeline') || url.searchParams.has('cinema') ||
+    url.searchParams.has('provider');
+  const duration = (dateSensitive ? 30 : 60) * MINUTE;
+  if (!dateSensitive) return duration;
+  const nextUtcDay = Math.floor(now / 86_400_000) * 86_400_000 + 86_400_000;
+  return Math.min(duration, nextUtcDay - now);
+}
+
+export const BROWSE_FACET_TTL = 6 * 60 * MINUTE;
 
 export function clearStoredBrowseCache(storage: Storage) {
   try {
@@ -7,7 +28,7 @@ export function clearStoredBrowseCache(storage: Storage) {
 }
 
 /** Bounded cache; persistence is optional and scoped to one viewer and browser tab. */
-export function createBrowseCache<T>(now = () => Date.now(), ttl = 5 * 60_000, limit = 40,
+export function createBrowseCache<T>(now = () => Date.now(), ttl: number | ((key: string, now: number) => number) = 5 * MINUTE, limit = 40,
   persistence?: {storage: Storage; name: 'results' | 'facets'; viewer: string}) {
   const entries = new Map<string, {value: T; expires: number}>();
   const storageKey = persistence && BROWSE_STORAGE_PREFIX + persistence.name;
@@ -48,7 +69,9 @@ export function createBrowseCache<T>(now = () => Date.now(), ttl = 5 * 60_000, l
       return entry.value;
     },
     set(key: string, value: T, refresh = true) {
-      const expires = !refresh && entries.get(key)?.expires || now() + ttl;
+      const stamp = now();
+      const duration = typeof ttl === 'function' ? ttl(key, stamp) : ttl;
+      const expires = !refresh && entries.get(key)?.expires || stamp + duration;
       entries.delete(key);
       entries.set(key, {value, expires});
       while (entries.size > limit) entries.delete(entries.keys().next().value!);

@@ -1238,6 +1238,31 @@ async def account_cinema_country(db, viewer):
     return country_code(value) if isinstance(value,str) else None
 
 
+class BrowseContextItem(BaseModel):
+    id: int | None = Field(None, gt=0)
+    tmdb_id: int | None = Field(None, gt=0)
+    type: Literal['movie', 'series']
+
+
+class BrowseContextRequest(BaseModel):
+    items: list[BrowseContextItem] = Field(max_length=80)
+
+
+@router.post('/browse/context')
+async def browse_context(body: BrowseContextRequest, response: Response, db: AsyncSession = Depends(get_db),
+                         viewer: User = Depends(get_current_user_or_api_key)):
+    """Refresh only viewer-owned state for an already rendered browse selection."""
+    response.headers['Cache-Control'] = 'private, no-store'
+    await catalog_access(db, viewer)
+    if not viewer or not body.items:
+        return {'items': []}
+    from core.tracking_editor import attach_editor_context
+    rows = [{**item.model_dump(), 'id': None if item.tmdb_id else item.id}
+            for item in body.items if item.id or item.tmdb_id]
+    await attach_editor_context(db, viewer, rows)
+    return {'items': rows}
+
+
 @router.get('/browse/facets')
 async def browse_facets(media_type: Literal['movie', 'series'] = 'movie', region: str | None = Query(None, pattern='^[A-Z]{2}$'), genres: Annotated[str, Query(max_length=200)] = '', db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user_or_api_key)):
     from core.browse import GENRES, MOVIE_GENRES, TV_GENRES, local_providers

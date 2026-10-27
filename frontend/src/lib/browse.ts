@@ -14,7 +14,7 @@ import { createBrowseLoading, prepareBrowsePoster } from "./browse-loading";
 import { initializeBrowseRanges } from "./browse-ranges";
 import { createBrowsePaginationDemand } from "./browse-pagination";
 import { initializeMobileBrowseFilters } from "./browse-mobile-filters";
-import { createBrowseCache, waitForBrowseRequest } from "./browse-cache";
+import { BROWSE_FACET_TTL, browseResultTtl, createBrowseCache, waitForBrowseRequest } from "./browse-cache";
 import {createPrediction, paginationPosition} from "./predictive-loading";
 import { initializeBrowseSort } from "./browse-sort";
 import { createBrowseOverride } from './browse-override';
@@ -92,12 +92,17 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   let storage: Storage | undefined;
   try { storage = window.sessionStorage; } catch { /* Continue with a page-local cache. */ }
   const viewer = document.body.dataset.cacheUser || 'anonymous';
-  const responseCache = createBrowseCache<Payload | SectionsPayload>(undefined, undefined, undefined,
+  const responseCache = createBrowseCache<Payload | SectionsPayload>(undefined, browseResultTtl, undefined,
     storage && {storage, name: 'results', viewer});
   const prediction=createPrediction<Payload | SectionsPayload>(async(path,requestSignal)=>json(path,{signal:requestSignal}),signal);
-  const facetCache = createBrowseCache<typeof facets>(undefined, undefined, undefined,
+  const facetCache = createBrowseCache<typeof facets>(undefined, BROWSE_FACET_TTL, undefined,
     storage && {storage, name: 'facets', viewer});
-  document.addEventListener('anylist:cache-invalidated',()=>{prediction.cancel();responseCache.clear();facetCache.clear();},{signal});
+  let contextRevision = 0;
+  document.addEventListener('anylist:editor-state', () => { contextRevision++; }, {signal});
+  document.addEventListener('anylist:cache-invalidated',()=>{
+    contextRevision++;
+    prediction.cancel();responseCache.clear();facetCache.clear();
+  },{signal});
   const readyPosters = new Set<string>();
   let currentPath: string | undefined;
   let refreshingSelect = false;
@@ -205,7 +210,8 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   });
   const syncItem = (updated: Item) => {
     const entryState = {id: updated.id, entry: updated.entry, list_status: updated.list_status,
-      score: updated.score, rating_mode: updated.rating_mode};
+      score: updated.score, rating_mode: updated.rating_mode, favorite: updated.favorite,
+      editor_library: updated.editor_library};
     for (const cached of responseCache.values()) {
       const cachedItems = 'sections' in cached ? cached.sections.flatMap(section => section.results) : cached.results;
       for (const item of cachedItems) if (titleKey(item) === titleKey(updated)) Object.assign(item, entryState);
@@ -218,6 +224,33 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       });
       paintState(card, item);
     }
+  };
+  const refreshViewerContext = async (response: Payload | SectionsPayload, current: AbortController) => {
+    if (viewer === 'anonymous') return;
+    const selection = 'sections' in response
+      ? response.sections.flatMap(section => section.results) : response.results;
+    const unique = new Map<string, Item>();
+    for (const item of selection) if (item.id || item.tmdb_id) unique.set(titleKey(item), item);
+    if (!unique.size) return;
+    const revision = contextRevision;
+    try {
+      const fresh = await json('browse/context', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({items: [...unique.values()].slice(0, 80).map(({id, tmdb_id, type}) => ({
+          id: tmdb_id ? null : id, tmdb_id, type,
+        }))}),
+        signal: current.signal,
+      }) as {items: Item[]};
+      if (current.signal.aborted || signal.aborted || request !== current || revision !== contextRevision) return;
+      for (const row of fresh.items) {
+        const displayed = unique.get(titleKey(row));
+        if (!displayed) continue;
+        const title = editorStore.seed({...displayed, ...row} as EditorTitle);
+        syncItem({...displayed, ...row, ...title,
+          list_status: title.entry?.status ?? null, score: title.entry?.score ?? null,
+          rating_mode: title.entry?.rating_mode ?? 'manual'});
+      }
+    } catch { /* Cached public results remain usable if viewer-state refresh fails. */ }
   };
   const render = (results: Item[], destination = grid, deduplicate = true) => {
     const fragment = document.createDocumentFragment();
@@ -539,6 +572,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
         payload = response;
       }
       notice.textContent = response.notice || "";
+      if (cached) void refreshViewerContext(response, current);
     } catch (cause) {
       await loadingView.settle(current.signal);
       if (current.signal.aborted || request !== current || signal.aborted)

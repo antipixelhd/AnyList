@@ -7,6 +7,7 @@ export type BrowseItem = {
   poster?: string | null; backdrop?: string | null; year?: string; release_date?: string | null;
   release_event?: string | null; release_season?: number | null; release_country?: string | null;
   list_status?: string | null; score?: number | null; rating_mode?: string;
+  favorite?: boolean;
   entry?: Record<string, any> | null; editor_library?: EditorTitle['editor_library'];
 };
 const labels: Record<string, string> = {watching:'Watching',completed:'Completed',planning:'Planning',paused:'Paused',dropped:'Dropped'};

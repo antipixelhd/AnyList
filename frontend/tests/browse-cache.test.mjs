@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {createBrowseCache, clearStoredBrowseCache, waitForBrowseRequest} from '../src/lib/browse-cache.ts';
+import {BROWSE_FACET_TTL, browseResultTtl, createBrowseCache, clearStoredBrowseCache, waitForBrowseRequest} from '../src/lib/browse-cache.ts';
+
+test('stable browse selections outlive release-sensitive views without crossing a UTC date boundary', () => {
+  const midday = Date.UTC(2026, 9, 27, 12);
+  assert.equal(browseResultTtl('browse?sort=popular', midday), 60 * 60_000);
+  assert.equal(browseResultTtl('browse/sections?media_type=movie', midday), 30 * 60_000);
+  assert.equal(browseResultTtl('browse?sort=upcoming', Date.UTC(2026, 9, 27, 23, 50)), 10 * 60_000);
+  assert.equal(BROWSE_FACET_TTL, 6 * 60 * 60_000);
+});
 
 test('reloads reuse only the same viewer’s unexpired results and invalidation removes them', () => {
   let now = 0;
