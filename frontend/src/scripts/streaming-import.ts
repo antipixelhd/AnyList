@@ -565,12 +565,11 @@ function mountStreamingImport(app: HTMLElement) {
         workflow.classList.remove('hidden'); uploadControls.classList.add('hidden');
         const title = restoringSession ? 'Loading your import' : 'Checking your history';
         const total = Math.max(0,connectionProgress.total);
-        const current = Math.max(0,connectionProgress.current);
-        const percent = total ? Math.min(100,Math.round(current / total * 100)) : 0;
-        const status = restoringSession ? 'Restoring your review…' : connectionProgress.message;
-        const track = '<div class="streaming-loading-track ' + (total ? '' : 'is-indeterminate') + '" role="progressbar" aria-label="' + title + '"' + (total ? ' aria-valuenow="' + percent + '" aria-valuemin="0" aria-valuemax="100"' : '') + '><span' + (total ? ' style="width:' + percent + '%"' : '') + '></span></div>';
+        const status = restoringSession ? 'Restoring your review…'
+          : total ? `Pulling ${total.toLocaleString()} ${total === 1 ? 'entry' : 'entries'}` : connectionProgress.message;
+        const track = '<div class="streaming-loading-track is-indeterminate" role="progressbar" aria-label="' + title + '"><span></span></div>';
         const content = connectionError ? '<p class="streaming-check-error" role="alert">' + esc(connectionError) + '</p>'
-          : '<div class="streaming-preparing">' + track + '<p role="status">' + esc(status) + (total ? ' · ' + current.toLocaleString() + ' / ' + total.toLocaleString() : '') + '</p></div>';
+          : '<div class="streaming-preparing">' + track + '<p role="status">' + esc(status) + '</p></div>';
         const action = connectionId ? 'cancel' : 'close-loading';
         const label = connectionId ? 'Cancel import' : 'Close';
         setWorkflow('<div class="streaming-flow">' + heading(title) + content + '<footer class="streaming-footer"><button type="button" data-streaming-action="' + action + '" class="streaming-button streaming-secondary" ' + (cancelling ? 'disabled' : '') + '>' + label + '</button>' + (connectionError && connectionId ? '<button type="button" data-streaming-action="retry-connection" class="streaming-button streaming-primary">Try again</button>' : '') + '</footer></div>',
