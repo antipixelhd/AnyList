@@ -8,6 +8,7 @@
   import {editorStore,type EditorTitle} from '../lib/editor-store';
   import {isFailureHandled} from '../lib/handled-failures';
   import {responsiveArtwork} from '../lib/responsive-artwork';
+  import {clearStoredBrowseCache} from '../lib/browse-cache';
   wirePasswordToggles();
 
   type CachedPage = { html: string; bytes: number; storedAt: number; predicted?:boolean };
@@ -210,6 +211,9 @@
 
   if (!state.initialized) {
     state.initialized = true;
+    document.addEventListener('anylist:cache-invalidated', () => {
+      try { clearStoredBrowseCache(window.sessionStorage); } catch { /* Storage is optional. */ }
+    });
     state.originalFetch = window.fetch.bind(window);
     const lifetime=new AbortController();
     state.prediction=createPrediction<CachedPage>(async(href,signal)=>{
