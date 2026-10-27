@@ -14,7 +14,8 @@ import { createBrowseLoading, prepareBrowsePoster } from "./browse-loading";
 import { initializeBrowseRanges } from "./browse-ranges";
 import { createBrowsePaginationDemand } from "./browse-pagination";
 import { initializeMobileBrowseFilters } from "./browse-mobile-filters";
-import { createBrowseCache, waitForBrowseRequest } from "./browse-cache";
+import { BROWSE_FACET_TTL, browseResultTtl, createBrowseCache, waitForBrowseRequest } from "./browse-cache";
+import { refreshBrowseContextBatches } from './browse-context';
 import {createPrediction, paginationPosition} from "./predictive-loading";
 import { initializeBrowseSort } from "./browse-sort";
 import { createBrowseOverride } from './browse-override';
@@ -89,10 +90,20 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   let payload: Payload = initial.payload;
   let displayedCategories = initial.pending ? initial.categories : !sections.hidden;
   let facets: { genres: Facet[]; providers: Facet[] } = initial.facets;
-  const responseCache = createBrowseCache<Payload | SectionsPayload>();
+  let storage: Storage | undefined;
+  try { storage = window.sessionStorage; } catch { /* Continue with a page-local cache. */ }
+  const viewer = document.body.dataset.cacheUser || 'anonymous';
+  const responseCache = createBrowseCache<Payload | SectionsPayload>(undefined, browseResultTtl, undefined,
+    storage && {storage, name: 'results', viewer});
   const prediction=createPrediction<Payload | SectionsPayload>(async(path,requestSignal)=>json(path,{signal:requestSignal}),signal);
-  document.addEventListener('anylist:cache-invalidated',()=>{prediction.cancel();responseCache.clear();},{signal});
-  const facetCache = createBrowseCache<typeof facets>();
+  const facetCache = createBrowseCache<typeof facets>(undefined, BROWSE_FACET_TTL, undefined,
+    storage && {storage, name: 'facets', viewer});
+  let contextRevision = 0;
+  document.addEventListener('anylist:editor-state', () => { contextRevision++; }, {signal});
+  document.addEventListener('anylist:cache-invalidated',()=>{
+    contextRevision++;
+    prediction.cancel();responseCache.clear();facetCache.clear();
+  },{signal});
   const readyPosters = new Set<string>();
   let currentPath: string | undefined;
   let refreshingSelect = false;
@@ -200,7 +211,8 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   });
   const syncItem = (updated: Item) => {
     const entryState = {id: updated.id, entry: updated.entry, list_status: updated.list_status,
-      score: updated.score, rating_mode: updated.rating_mode};
+      score: updated.score, rating_mode: updated.rating_mode, favorite: updated.favorite,
+      editor_library: updated.editor_library};
     for (const cached of responseCache.values()) {
       const cachedItems = 'sections' in cached ? cached.sections.flatMap(section => section.results) : cached.results;
       for (const item of cachedItems) if (titleKey(item) === titleKey(updated)) Object.assign(item, entryState);
@@ -213,6 +225,34 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       });
       paintState(card, item);
     }
+  };
+  const refreshViewerContext = async (response: Payload | SectionsPayload, current: AbortController) => {
+    if (viewer === 'anonymous') return;
+    const selection = 'sections' in response
+      ? response.sections.flatMap(section => section.results) : response.results;
+    const unique = new Map<string, Item>();
+    for (const item of selection) if (item.id || item.tmdb_id) unique.set(titleKey(item), item);
+    if (!unique.size) return;
+    const revision = contextRevision;
+    await refreshBrowseContextBatches([...unique.values()], async batch => {
+      const fresh = await json('browse/context', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({items: batch.map(({id, tmdb_id, type}) => ({
+          id: tmdb_id ? null : id, tmdb_id, type,
+        }))}),
+        signal: current.signal,
+      }) as {items: Item[]};
+      return fresh.items;
+    }, rows => {
+      for (const row of rows) {
+        const displayed = unique.get(titleKey(row));
+        if (!displayed) continue;
+        const title = editorStore.seed({...displayed, ...row} as EditorTitle);
+        syncItem({...displayed, ...row, ...title,
+          list_status: title.entry?.status ?? null, score: title.entry?.score ?? null,
+          rating_mode: title.entry?.rating_mode ?? 'manual'});
+      }
+    }, () => !current.signal.aborted && !signal.aborted && request === current && revision === contextRevision);
   };
   const render = (results: Item[], destination = grid, deduplicate = true) => {
     const fragment = document.createDocumentFragment();
@@ -488,9 +528,10 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
           next.set('page', String(response.page + 1)); next.set('source', response.source);
           if (response.cursor) next.set('cursor', response.cursor);
           const nextPath = requestPath(next);
-          const batch = responseCache.get(nextPath) as Payload | undefined ?? await json(nextPath, {signal: current.signal}) as Payload;
+          const cachedBatch = responseCache.get(nextPath) as Payload | undefined;
+          const batch = cachedBatch ?? await json(nextPath, {signal: current.signal}) as Payload;
           if (current.signal.aborted || signal.aborted || request !== current) throw new DOMException('Search changed', 'AbortError');
-          responseCache.set(nextPath, batch);
+          responseCache.set(nextPath, batch, !cachedBatch);
           batch.results.forEach(item => merged.set(key(item), item));
           response = {...batch, results: [...merged.values()]};
         }
@@ -499,18 +540,19 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       }
       if (!append && response && 'results' in response) {
         response = await fillViewport(response, values);
-        responseCache.set(path, response);
+        responseCache.set(path, response, !cached);
         if (shouldBroadenSearch(values, response) && automaticExpansion.allowed(values)) {
           const broad = broadSearchParams(values);
           const broadPath = requestPath(broad);
-          const first = responseCache.get(broadPath) as Payload | undefined ?? await json(broadPath, {signal: current.signal}) as Payload;
+          const cachedBroad = responseCache.get(broadPath) as Payload | undefined;
+          const first = cachedBroad ?? await json(broadPath, {signal: current.signal}) as Payload;
           if (current.signal.aborted || signal.aborted || request !== current) return;
           response = await fillViewport(first, broad);
-          responseCache.set(broadPath, response);
+          responseCache.set(broadPath, response, !cachedBroad);
           expanded = true;
         }
       }
-      if (!expanded) responseCache.set(path, response!);
+      if (!expanded) responseCache.set(path, response!, !cached);
       if (!cached) await loadingView.settle(current.signal);
       if (request !== current || epoch !== generation || signal.aborted) return;
       if (expanded) automaticExpansion.activate(values);
@@ -532,6 +574,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
         payload = response;
       }
       notice.textContent = response.notice || "";
+      if (cached) void refreshViewerContext(response, current);
     } catch (cause) {
       await loadingView.settle(current.signal);
       if (current.signal.aborted || request !== current || signal.aborted)
@@ -602,12 +645,13 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     facetRequest = current;
     const cacheKey = `${field('type').value}:${field('region').value}:${field('genres').value}`;
     try {
-      const result = facetCache.get(cacheKey) ?? await json(
+      const cachedFacets = facetCache.get(cacheKey);
+      const result = cachedFacets ?? await json(
         `browse/facets?${new URLSearchParams({ media_type: field("type").value, region: field("region").value, genres: field("genres").value })}`,
         { signal: current.signal },
       );
       if (current !== facetRequest || current.signal.aborted || signal.aborted) return;
-      facetCache.set(cacheKey, result);
+      facetCache.set(cacheKey, result, !cachedFacets);
       facets = result;
       find("[id=browse-genres-value]").textContent = genreSelectionLabel(field("genres").value, facets.genres);
       const options = find<HTMLElement>("[data-genre-options]");

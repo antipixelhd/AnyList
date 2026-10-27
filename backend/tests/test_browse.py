@@ -478,6 +478,26 @@ class BrowseFilterApiTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         await self.client.aclose()
 
+    async def test_cached_browse_context_refreshes_viewer_state_without_discovery(self):
+        async def attach(_db, viewer, rows):
+            self.assertEqual(viewer.id, 1)
+            self.assertIsNone(rows[0]['id'])
+            rows[0].update(list_status='watching', score=8, entry={'status': 'watching'})
+        with patch('core.tracking_editor.attach_editor_context', AsyncMock(side_effect=attach)) as context, \
+             patch('core.browse.browse_page', AsyncMock()) as discovery:
+            response = await self.client.post('/tracking/browse/context', json={
+                'items': [{'id': 999, 'tmdb_id': 12, 'type': 'movie'}],
+            })
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.headers['cache-control'], 'private, no-store')
+        self.assertEqual(response.json()['items'][0]['list_status'], 'watching')
+        self.assertEqual(context.await_count, 1)
+        discovery.assert_not_awaited()
+        too_many = await self.client.post('/tracking/browse/context', json={
+            'items': [{'tmdb_id': index + 1, 'type': 'movie'} for index in range(81)],
+        })
+        self.assertEqual(too_many.status_code, 422)
+
     async def test_quick_search_broadening_only_relaxes_personal_curation(self):
         with patch('core.browse.browse_page', AsyncMock(return_value={'results': [], 'has_more': False})) as browse, \
              patch('routers.tracking.result_filters', AsyncMock(return_value={'min_runtime': 30, 'excluded_genres': [99]})), \

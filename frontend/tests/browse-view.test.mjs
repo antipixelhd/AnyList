@@ -68,6 +68,13 @@ test("view-all links retain category dates and the selected media type and strea
   );
 });
 
+test('category links preserve the no-JavaScript fallback when active', () => {
+  const staticUrl = new URL(sectionHref('series', 'DE', {sort: 'popular'}, true), 'https://anylist.test');
+  assert.equal(staticUrl.searchParams.get('static'), '1');
+  assert.equal(staticUrl.searchParams.get('sort'), 'popular');
+  assert.equal(new URL(sectionHref('series', 'DE', {sort: 'popular'}), 'https://anylist.test').searchParams.has('static'), false);
+});
+
 test('country rerelease opt-in survives timeline requests and pagination', () => {
   const values = new URLSearchParams('include_rereleases=true&view=timeline&region=DE&page=2');
   const request = browseRequestParams(values);
