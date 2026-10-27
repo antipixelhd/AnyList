@@ -19,6 +19,18 @@
   background:color-mix(in srgb,var(--blue) 88%,black);
   outline:none;
 }
+@media (hover:none), (max-width:650px) {
+  .tracker #entry-groups .entry-row:not([data-editor-deselected]):is(:hover,:has(:focus-visible)) .entry-score-button {
+    color:#f7b731;
+  }
+  .tracker #entry-groups .entry-row:not([data-editor-deselected]):is(:hover,:has(:focus-visible)) .entry-thumbnail .row-menu {
+    color:#fff;
+    opacity:1;
+  }
+  .tracker #entry-groups .entry-row:not([data-editor-deselected]):is(:hover,:has(:focus-visible)) .entry-thumbnail .row-menu .ui-icon {
+    opacity:1;
+  }
+}
 .tracker[data-theme-active] .settings-app .settings-content input:focus,
 .tracker[data-theme-active] .settings-app .settings-content select:focus,
 .tracker[data-theme-active] .settings-app .settings-content textarea:focus,
