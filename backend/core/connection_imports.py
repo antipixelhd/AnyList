@@ -19,6 +19,35 @@ from models import Media, MediaServerConnection, NetflixImportSession, Show, Use
 from models.tracking import StreamBaseline, TrackedEntry
 
 
+def _connection_drafts(conn):
+    return select(NetflixImportSession).where(
+        NetflixImportSession.user_id == conn.user_id,
+        NetflixImportSession.payload['connection_id'].as_integer() == conn.id,
+        NetflixImportSession.status.in_(('preparing', 'review', 'committing', 'failed')),
+    )
+
+
+async def signal_connection_import_cancellation(db, conn):
+    """Let an in-process commit roll back before removal waits for the user lock."""
+    ids = await db.scalars(_connection_drafts(conn).with_only_columns(NetflixImportSession.id)
+                           .where(NetflixImportSession.status == 'committing'))
+    netflix_sessions._cancelled.update(session_id for session_id in ids if session_id in netflix_sessions._committing)
+
+
+async def cancel_connection_imports(db, conn):
+    """Called under the user lock before this connection's snapshot is cleared."""
+    drafts = (await db.scalars(_connection_drafts(conn).with_for_update())).all()
+    for draft in drafts:
+        draft.status = 'cancelled'
+        draft.phase = 'complete'
+        draft.source_csv = None
+        draft.payload = {}
+        draft.error_message = None
+        draft.progress = {'current': 0, 'total': 0, 'message': 'Import cancelled'}
+        draft.revision += 1
+        draft.updated_at = netflix_sessions._now()
+
+
 def observations(watched, progress):
     """Prefer actual viewing time when available; watched flags remain explicit evidence."""
     result = []
@@ -308,7 +337,8 @@ async def finish_import(db, session, *, validate=False):
     if connection_id is None:
         return
     conn = await db.get(MediaServerConnection, connection_id, populate_existing=True)
-    if not conn or conn.user_id != session.user_id or conn.identity_version != payload.get('identity_version'):
+    if (not conn or conn.user_id != session.user_id or conn.type != payload.get('source')
+            or conn.identity_version != payload.get('identity_version')):
         if validate:
             raise ValueError('This connection changed. Cancel this import and sync the connection again.')
         return

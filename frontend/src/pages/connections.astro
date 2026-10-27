@@ -1773,6 +1773,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
             }
             document.querySelector(`[data-connection-id="${connId}"]`)?.remove();
             showMessage('Connection deleted.');
+            document.dispatchEvent(new Event('media-tracker:notifications-changed'));
             return;
           } else if (action === 'scan_libraries') {
             const connId = newBtn.getAttribute('data-conn-id');
