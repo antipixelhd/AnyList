@@ -19,7 +19,9 @@ async function refresh(signal?: AbortSignal) {
 
 function paint() {
   const params = new URL(location.href).searchParams;
-  const resumed = !!active?.import_id && (params.get('import') === active.import_id ||
+  const checking = active?.connection_id != null && Array.from(document.querySelectorAll<HTMLElement>('[data-connection-import][data-import-active="true"]'))
+    .some(app => app.dataset.connectionImport === String(active!.connection_id) && !app.hidden);
+  const resumed = checking || !!active?.import_id && (params.get('import') === active.import_id ||
     Array.from(document.querySelectorAll<HTMLElement>('[data-streaming-import][data-import-session]'))
       .some(app => app.dataset.importSession === active!.import_id && !app.hidden));
   document.querySelectorAll<HTMLElement>('[data-import-admission]').forEach(notice => {

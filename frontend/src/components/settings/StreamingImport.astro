@@ -1,13 +1,13 @@
 ---
 import Icon from "../Icon.astro";
 import CalendarDateInput from "../CalendarDateInput.astro";
-interface Props { hasTmdbKey: boolean; service: "netflix" | "amazon" | "nuvio" | "stremio"; connectionId?: number; connectionName?: string }
-const { hasTmdbKey, service, connectionId, connectionName } = Astro.props;
+interface Props { hasTmdbKey: boolean; service: "netflix" | "amazon" | "nuvio" | "stremio"; connectionId?: number; connectionName?: string; connectionPending?: boolean }
+const { hasTmdbKey, service, connectionId, connectionName, connectionPending = false } = Astro.props;
 const serviceName = connectionName || ({amazon: 'Amazon Prime Video', netflix: 'Netflix', nuvio: 'Nuvio', stremio: 'Stremio'}[service]);
 const instance = connectionId ? `connection-${connectionId}` : service;
 const extension = service === "amazon" ? ".zip" : ".csv";
 ---
-    <div data-streaming-import data-service={service} data-connection-import={connectionId} data-service-name={serviceName} data-extension={extension} data-has-tmdb-key={String(hasTmdbKey)} hidden={!!connectionId}>
+    <div data-streaming-import data-service={service} data-connection-import={connectionId} data-service-name={serviceName} data-extension={extension} data-has-tmdb-key={String(hasTmdbKey)} data-connection-pending={String(connectionPending)} data-import-active={connectionPending ? "true" : undefined} hidden={!!connectionId && !connectionPending}>
       <template data-role="streaming-disclosure-arrow"><Icon name="chevron-down" class="streaming-disclosure-arrow" /></template>
       <template data-role="streaming-poster-placeholder"><Icon name="film" /></template>
       <template data-role="streaming-match-arrow"><Icon name="arrow-right" /></template>
@@ -27,7 +27,9 @@ const extension = service === "amazon" ? ".zip" : ".csv";
       <div class="streaming-upload-options"><label for={`${instance}-streaming-import-language`}><span>File language</span><select id={`${instance}-streaming-import-language`} data-role="streaming-import-language" aria-label="File language" class="streaming-language-select"><option value="auto">Detect automatically</option><option value="en">English</option><option value="de">Deutsch</option></select></label><p>Anime imports are not supported yet.</p></div>
       <input id={`${instance}-streaming-skip-anime`} data-role="streaming-skip-anime" type="checkbox" checked disabled hidden />
       </div>
-      <section id={`${instance}-streaming-import-workflow`} data-role="streaming-import-workflow" class="mt-5 hidden" aria-live="polite"></section>
+      <section id={`${instance}-streaming-import-workflow`} data-role="streaming-import-workflow" class:list={['mt-5', {hidden: !connectionPending}]} aria-live="polite">
+        {connectionPending && <div class="streaming-flow"><header class="streaming-heading"><div><p class="streaming-step">{serviceName} · Step 1 of 5</p><h2>Checking your history</h2></div></header><div class="streaming-preparing"><div class="streaming-loading-track is-indeterminate" role="progressbar" aria-label="Checking history"><span/></div></div><footer class="streaming-footer"><button type="button" data-streaming-action="cancel" class="streaming-button streaming-secondary">Cancel import</button></footer></div>}
+      </section>
       <dialog data-role="streaming-finish-dialog" class="streaming-finish-dialog" aria-labelledby={`${instance}-finish-title`} data-motion-static>
         <form method="dialog">
           <h2 id={`${instance}-finish-title`} tabindex="-1" autofocus>When did you finish this series?</h2>

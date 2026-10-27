@@ -378,11 +378,15 @@ async def get_connection_import(
             return {'session': _public_session(session), 'checking': False}
     if not conn.sync_watched:
         return {'session': None, 'checking': False}
-    running = await db.scalar(select(SyncJob.id).where(
+    if baseline is not None:
+        return {'session': None, 'checking': False}
+    latest = await db.scalar(select(SyncJob).where(
         SyncJob.user_id == current_user.id, SyncJob.connection_id == connection_id,
-        SyncJob.status.in_((SyncStatus.pending, SyncStatus.running)),
-    ).limit(1))
-    return {'session': None, 'checking': baseline is None and running is not None}
+    ).order_by(SyncJob.id.desc()).limit(1))
+    if latest and latest.status in (SyncStatus.failed, SyncStatus.cancelled):
+        return {'session': None, 'checking': False, 'error': latest.error_message or 'History checking stopped. Try again.'}
+    # Account-level onboarding can be queued before the per-connection job exists.
+    return {'session': None, 'checking': True}
 
 
 @router.patch("/{session_id}/items/{item_id}")

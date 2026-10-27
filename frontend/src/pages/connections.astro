@@ -50,9 +50,10 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
       <div class="settings-stack" hidden={section !== "connections"}>
       <section data-connection-imports>
         {connections.filter(conn => conn.type === 'nuvio' || conn.type === 'stremio').map(conn => (
-          <StreamingImport hasTmdbKey={hasTmdbKey} service={conn.type as 'nuvio' | 'stremio'} connectionId={conn.id} connectionName={conn.name} />
+          <StreamingImport hasTmdbKey={hasTmdbKey} service={conn.type as 'nuvio' | 'stremio'} connectionId={conn.id} connectionName={conn.name} connectionPending={activeImport?.connection_id === conn.id} />
         ))}
       </section>
+      {(['stremio', 'nuvio'] as const).map(service => <template data-connection-import-template={service}><StreamingImport hasTmdbKey={hasTmdbKey} service={service} connectionId={-1} connectionPending={true} /></template>)}
       {!me.is_admin && <MetadataConnections settings={settings} />}
       <section class="space-y-3">
         <h2 class="section-headline border-b border-zinc-800 pb-2">Synchronization</h2>
@@ -977,6 +978,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
 <script>
   import { formatDateTime, timestamp } from '../lib/date-time';
   import { canStartImport } from "../lib/import-admission";
+  import { launchConnectionImport } from "../scripts/streaming-import";
   import { escapeHtml as esc, errorMessage, showMessage } from '../lib/settings-feedback';
   import {showActionFailure} from '../lib/action-failure';
   import { readTrackingServiceSettings } from '../lib/tracking-service-settings';
@@ -2571,7 +2573,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
             if (result.status === 'connected') {
               stremioPollTimer = null;
               if (status) status.textContent = 'Connected. Reloading…';
-              showMessage('Stremio connected.');
+              if (launchConnectionImport(result.connection)) return;
               window.location.reload();
               return;
             }
@@ -2763,6 +2765,8 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
             const err = await res.json();
             throw new Error(err.detail || 'Failed to create connection');
           }
+          const created = await res.json();
+          if (launchConnectionImport(created)) return;
           showMessage('Connection added! Reloading…');
           setTimeout(() => window.location.reload(), 1000);
         } catch (e: any) {

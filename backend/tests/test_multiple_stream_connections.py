@@ -655,6 +655,22 @@ class MultipleStreamConnectionsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(draft.status, 'cancelled')
         self.assertEqual(conn.identity_version, 1)
 
+    async def test_import_step_one_covers_queued_checks_and_reports_failure(self):
+        from routers.netflix_import import get_connection_import
+        conn = await self._connection(provider='stremio', account_id='queued')
+        response = await get_connection_import(conn.id, self.db, self.owner)
+        self.assertTrue(response['checking'])
+        self.db.add(SyncJob(user_id=self.owner.id, connection_id=conn.id, source='stremio',
+            status=SyncStatus.failed, error_message='Provider unavailable', created_at=datetime(2026, 9, 1), updated_at=datetime(2026, 9, 1)))
+        await self.db.flush()
+        response = await get_connection_import(conn.id, self.db, self.owner)
+        self.assertFalse(response['checking'])
+        self.assertEqual(response['error'], 'Provider unavailable')
+        conn.sync_watched = False
+        response = await get_connection_import(conn.id, self.db, self.owner)
+        self.assertFalse(response['checking'])
+        self.assertNotIn('error', response)
+
     async def test_wrong_connection_or_generation_cannot_resume_draft(self):
         from routers.netflix_import import get_connection_import, _load_owned
         conn = await self._connection(provider='stremio', account_id='one')

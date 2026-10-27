@@ -63,6 +63,7 @@ type StreamingItem = {
 };
 
 type StreamingSession = {
+  source: string;
   id: string;
   expires_at?: string;
   connection_id?: number | null;
@@ -151,6 +152,9 @@ function mountStreamingImport(app: HTMLElement) {
   let idempotencyKey = "";
   let busy = false;
   let loadingConnection = false;
+  let checkingConnection = !!connectionId && app.dataset.connectionPending === "true";
+  let connectionError = "";
+  let positionedConnection = false;
   let uploadController: AbortController | null = null;
   const esc = (value: unknown) => String(value ?? "").replace(/[&<>"']/g, (char) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
@@ -480,7 +484,7 @@ function mountStreamingImport(app: HTMLElement) {
   }
 
   function updateImportActivity() {
-    const active = busy || !!session && !['committed', 'cancelled', 'failed'].includes(session.status);
+    const active = checkingConnection || busy || !!session && !['committed', 'cancelled', 'failed'].includes(session.status);
     app.dataset.importActive = String(active);
     if (active) document.querySelectorAll<HTMLElement>('[data-mobile-navigation] [popover]:popover-open')
       .forEach(panel => panel.hidePopover());
@@ -514,7 +518,7 @@ function mountStreamingImport(app: HTMLElement) {
   function render() {
     syncReviewSequences();
     checkpoint();
-    const nextAdmissionState = session ? `${session.id}:${session.status}` : "";
+    const nextAdmissionState = session ? `${session.id}:${session.status}` : checkingConnection ? `connection:${connectionId}:checking` : "";
     if (nextAdmissionState !== admissionState) {
       admissionState = nextAdmissionState;
       document.dispatchEvent(new CustomEvent('streaming:session-changed'));
@@ -526,6 +530,18 @@ function mountStreamingImport(app: HTMLElement) {
     updateImportActivity();
     document.dispatchEvent(new CustomEvent('streaming:activity-changed'));
     if (!session) {
+      if (connectionId && checkingConnection) {
+        step = 1; app.dataset.importStep = '1'; app.hidden = false;
+        workflow.classList.remove('hidden'); uploadControls.classList.add('hidden');
+        const content = connectionError ? '<p class="streaming-check-error" role="alert">' + esc(connectionError) + '</p>'
+          : '<div class="streaming-preparing"><div class="streaming-loading-track is-indeterminate" role="progressbar" aria-label="Checking history"><span></span></div></div>';
+        const checkState = JSON.stringify([connectionError,cancelling]);
+        if (workflow.dataset.connectionCheckState !== checkState) {
+        workflow.dataset.connectionCheckState = checkState;
+        workflow.innerHTML = '<div class="streaming-flow">' + heading('Checking your history') + content + '<footer class="streaming-footer"><button type="button" data-streaming-action="cancel" class="streaming-button streaming-secondary" ' + (cancelling ? 'disabled' : '') + '>Cancel import</button>' + (connectionError ? '<button type="button" data-streaming-action="retry-connection" class="streaming-button streaming-primary">Try again</button>' : '') + '</footer></div>';
+        }
+        return;
+      }
       if (connectionId) {
         app.hidden = true;
         if (activeConnectionImport === app) {
@@ -823,7 +839,26 @@ function mountStreamingImport(app: HTMLElement) {
   }
 
   async function cancelSession() {
-    if (!session || cancelling) return;
+    if (cancelling) return;
+    if (!session && connectionId && checkingConnection) {
+      if (!await confirmImportCancellation(true, dateSignal.signal)) return;
+      cancelling = true;
+      window.clearTimeout(pollTimer);
+      render();
+      try {
+        await request('/auth/connections/' + encodeURIComponent(connectionId), {method:'DELETE'});
+        const url = new URL(location.href);
+        for (const key of ['import', 'source', 'connection']) url.searchParams.delete(key);
+        history.replaceState(history.state, '', url);
+        location.reload();
+      } catch (error) {
+        cancelling = false;
+        connectionError = error instanceof Error ? error.message : 'Could not cancel the import.';
+        render();
+      }
+      return;
+    }
+    if (!session) return;
     if (connectionId && !await confirmImportCancellation(true, dateSignal.signal)) return;
     const cancelledId = session.id;
     if (pollTimer) window.clearTimeout(pollTimer);
@@ -910,6 +945,12 @@ function mountStreamingImport(app: HTMLElement) {
     const id = button.dataset.itemId;
     const item = id ? byId(id) : undefined;
     clearError();
+    if (action === 'retry-connection' && connectionId) {
+      connectionError = ''; render();
+      try { await request('/sync/connection/' + encodeURIComponent(connectionId), {method:'POST'}); void loadConnectionImport(); }
+      catch (error) { connectionError = error instanceof Error ? error.message : 'Could not check your history.'; render(); }
+      return;
+    }
     if (action === "cancel-upload") { cancelUpload(); return; }
     if (action === "cancel") { await cancelSession(); return; }
     if (action === "restart") {
@@ -918,6 +959,7 @@ function mountStreamingImport(app: HTMLElement) {
       const url = new URL(location.href);
       for (const key of ['import', 'source', 'connection']) url.searchParams.delete(key);
       history.replaceState(history.state, '', url);
+      if (app.dataset.connectionCreated === 'true') { location.reload(); return; }
       render(); return;
     }
     if (saving) return;
@@ -1073,27 +1115,61 @@ function mountStreamingImport(app: HTMLElement) {
     if (remapped && wasPending) await advanceAfterLastMatch();
   });
 
+  function positionConnectionImport() {
+    if (positionedConnection || !connectionId || app.hidden) return;
+    positionedConnection = true;
+    const visit = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined;
+    if (app.dataset.connectionCreated !== 'true' && (visit?.type === 'reload' || visit?.type === 'back_forward')) return;
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (!app.isConnected || dateSignal.signal.aborted || app.hidden) return;
+      workflow.scrollIntoView({block:'start'});
+      const title = workflow.querySelector('h2');
+      if (title) { title.tabIndex = -1; title.focus({preventScroll:true}); }
+    }));
+  }
+
   async function loadConnectionImport() {
-    if (!connectionId || !app.isConnected || dateSignal.signal.aborted || session || loadingConnection) return;
+    if (!connectionId || !app.isConnected || dateSignal.signal.aborted || session || loadingConnection || cancelling) return;
     if (app.parentElement?.closest('[hidden]')) return;
     if (activeConnectionImport?.isConnected && activeConnectionImport !== app) return;
     const requestedConnection = new URL(location.href).searchParams.get('connection');
     if (requestedConnection && requestedConnection !== connectionId) return;
     loadingConnection = true;
+    if (checkingConnection) { activeConnectionImport = app; render(); positionConnectionImport(); }
     try {
-      const result = await request<{session: StreamingSession | null; checking: boolean}>(`/imports/connections/${encodeURIComponent(connectionId)}`, {signal: dateSignal.signal});
-      if (dateSignal.signal.aborted) return;
+      const result = await request<{session: StreamingSession | null; checking: boolean; error?: string}>(
+        '/imports/connections/' + encodeURIComponent(connectionId), {signal: dateSignal.signal});
+      if (dateSignal.signal.aborted || cancelling) return;
       if (result.session) {
         if (activeConnectionImport?.isConnected && activeConnectionImport !== app) return;
+        if (result.session.connection_id !== Number(connectionId) || result.session.source !== service)
+          throw new Error('This import belongs to another connection. Refresh to check this account again.');
         activeConnectionImport = app;
+        checkingConnection = false; connectionError = '';
         restoreSession(result.session);
-        render();
+        render(); positionConnectionImport();
         if (result.session.status === 'committing') void commit();
-      } else if (result.checking) {
-        pollTimer = window.setTimeout(loadConnectionImport, 1500);
+      } else if (result.checking || result.error) {
+        checkingConnection = true; connectionError = result.error || '';
+        activeConnectionImport = app;
+        render(); positionConnectionImport();
+        if (!connectionError) pollTimer = window.setTimeout(loadConnectionImport, 1500);
+      } else {
+        checkingConnection = false;
+        render();
+        if (app.dataset.connectionCreated === 'true') {
+          const url = new URL(location.href);
+          for (const key of ['import', 'source', 'connection']) url.searchParams.delete(key);
+          history.replaceState(history.state, '', url);
+          location.reload();
+        }
       }
     } catch (error) {
-      if (!dateSignal.signal.aborted) showError(error instanceof Error ? error.message : 'Could not load connection history.');
+      if (!dateSignal.signal.aborted && !cancelling) {
+        checkingConnection = true;
+        connectionError = error instanceof Error ? error.message : 'Could not load connection history.';
+        render(); positionConnectionImport();
+      }
     } finally { loadingConnection = false; }
   }
   document.addEventListener('connections:sync-updated', () => { void loadConnectionImport(); }, {signal: dateSignal.signal});
@@ -1134,6 +1210,35 @@ function mountStreamingImport(app: HTMLElement) {
     void uploadFile(event.dataTransfer?.files?.[0]);
   });
 
+}
+
+/** Start onboarding in the same page using the canonical importer markup. */
+export function launchConnectionImport(connection: {id:number; type:string; name:string; sync_watched?:boolean}) {
+  if (!connection || !Number.isInteger(connection.id) || connection.id <= 0 || !['stremio', 'nuvio'].includes(connection.type) || connection.sync_watched === false) return false;
+  const host = document.querySelector<HTMLElement>('[data-connection-imports]');
+  const template = document.querySelector<HTMLTemplateElement>('[data-connection-import-template="' + connection.type + '"]');
+  if (!host || !template) return false;
+  const app = template.content.firstElementChild!.cloneNode(true) as HTMLElement;
+  const prefix = 'connection-' + connection.id;
+  for (const element of [app, ...app.querySelectorAll<HTMLElement>('*')]) {
+    for (const name of ['id','for','aria-controls','aria-labelledby']) {
+      const value = element.getAttribute(name);
+      if (value) element.setAttribute(name, value.replaceAll('connection--1', prefix));
+    }
+  }
+  app.dataset.connectionImport = String(connection.id);
+  app.dataset.serviceName = connection.name;
+  app.dataset.connectionPending = 'true';
+  app.dataset.connectionCreated = 'true';
+  const url = new URL(location.href);
+  url.searchParams.delete('import'); url.searchParams.delete('section');
+  url.searchParams.set('connection', String(connection.id)); url.searchParams.set('source', connection.type);
+  history.replaceState(history.state, '', url);
+  host.append(app);
+  const form = document.querySelector<HTMLElement>('[data-import-start-connection]');
+  if (form) form.hidden = true;
+  mountStreamingImport(app);
+  return true;
 }
 
 function mountStreamingImports() { document.querySelectorAll<HTMLElement>("[data-streaming-import]").forEach(mountStreamingImport); }
