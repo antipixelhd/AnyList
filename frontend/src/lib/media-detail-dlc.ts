@@ -54,6 +54,7 @@ export function mountDetailDlc(root:HTMLElement,id:number,signal:AbortSignal){
   };
   const load=async()=>{
     if(busy||!hasMore||signal.aborted)return;
+    const focusedAtStart=document.activeElement;
     started=true;busy=true;more.disabled=true;status.hidden=offset>0;status.textContent='Loading DLC…';
     try{
       const response=await fetch(`/api/proxy/tracking/games/works/${id}/children?offset=${offset}&limit=24`,{signal,cache:'no-store'});
@@ -63,7 +64,8 @@ export function mountDetailDlc(root:HTMLElement,id:number,signal:AbortSignal){
       const empty=data.total===0&&data.coverage==='complete';
       const tab=root.querySelector<HTMLButtonElement>('[data-detail-tab="dlc"]');
       if(tab&&empty){
-        const focused=document.activeElement===tab||host.contains(document.activeElement);
+        const focused=document.activeElement===tab||host.contains(document.activeElement)||
+          document.activeElement===document.body&&host.contains(focusedAtStart);
         if(tab.getAttribute('aria-selected')==='true')root.querySelector<HTMLButtonElement>('[data-detail-tab="overview"]')?.click();
         tab.hidden=true;tab.disabled=true;tab.tabIndex=-1;
         if(focused)root.querySelector<HTMLButtonElement>('[data-detail-tab="overview"]')?.focus({preventScroll:true});
