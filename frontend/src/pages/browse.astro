@@ -357,9 +357,9 @@ if(params.has('cinema'))initialChips.push(cinemaLabel);
         {sections.map((section: any) => (
           <section class="browse-category" aria-label={section.title}>
             <header>
-              <h2><a href={sectionHref(type, region, section.filters)} data-view-all>{section.title}</a></h2>
+              <h2><a href={sectionHref(type, region, section.filters, staticBrowse)} data-view-all>{section.title}</a></h2>
               <a
-                href={sectionHref(type, region, section.filters)}
+                href={sectionHref(type, region, section.filters, staticBrowse)}
                 data-view-all
               >
                 View all

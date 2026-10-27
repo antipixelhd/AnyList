@@ -15,6 +15,7 @@ import { initializeBrowseRanges } from "./browse-ranges";
 import { createBrowsePaginationDemand } from "./browse-pagination";
 import { initializeMobileBrowseFilters } from "./browse-mobile-filters";
 import { BROWSE_FACET_TTL, browseResultTtl, createBrowseCache, waitForBrowseRequest } from "./browse-cache";
+import { refreshBrowseContextBatches } from './browse-context';
 import {createPrediction, paginationPosition} from "./predictive-loading";
 import { initializeBrowseSort } from "./browse-sort";
 import { createBrowseOverride } from './browse-override';
@@ -233,16 +234,17 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     for (const item of selection) if (item.id || item.tmdb_id) unique.set(titleKey(item), item);
     if (!unique.size) return;
     const revision = contextRevision;
-    try {
+    await refreshBrowseContextBatches([...unique.values()], async batch => {
       const fresh = await json('browse/context', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({items: [...unique.values()].slice(0, 80).map(({id, tmdb_id, type}) => ({
+        body: JSON.stringify({items: batch.map(({id, tmdb_id, type}) => ({
           id: tmdb_id ? null : id, tmdb_id, type,
         }))}),
         signal: current.signal,
       }) as {items: Item[]};
-      if (current.signal.aborted || signal.aborted || request !== current || revision !== contextRevision) return;
-      for (const row of fresh.items) {
+      return fresh.items;
+    }, rows => {
+      for (const row of rows) {
         const displayed = unique.get(titleKey(row));
         if (!displayed) continue;
         const title = editorStore.seed({...displayed, ...row} as EditorTitle);
@@ -250,7 +252,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
           list_status: title.entry?.status ?? null, score: title.entry?.score ?? null,
           rating_mode: title.entry?.rating_mode ?? 'manual'});
       }
-    } catch { /* Cached public results remain usable if viewer-state refresh fails. */ }
+    }, () => !current.signal.aborted && !signal.aborted && request === current && revision === contextRevision);
   };
   const render = (results: Item[], destination = grid, deduplicate = true) => {
     const fragment = document.createDocumentFragment();
