@@ -294,6 +294,23 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
         missing = await self.client.patch(f'/tracking/games/entries/{self.base}', json={'score': 9})
         self.assertEqual(missing.status_code, 409)
 
+    async def test_correcting_known_first_time_preserves_explicitly_unknown_total(self):
+        row=await self.save(status='completed',completion_seconds=36000)
+        row=await self.save(revision=row['revision'],total_seconds=None)
+        self.assertIsNone(row['total_seconds']);self.assertEqual(row['completion_seconds'],36000)
+        row=await self.save(revision=row['revision'],completion_seconds=28800)
+        self.assertIsNone(row['total_seconds']);self.assertEqual(row['completion_seconds'],28800)
+
+    async def test_unknown_first_completion_survives_status_round_trip_and_later_total(self):
+        row=await self.save(status='completed',completion_seconds=None,total_seconds=36000)
+        self.assertEqual(row['completion_source'],'unknown')
+        row=await self.save(revision=row['revision'],status='playing',total_seconds=72000)
+        row=await self.save(revision=row['revision'],status='completed')
+        self.assertIsNone(row['completion_seconds']);self.assertEqual(row['total_seconds'],72000)
+        self.assertEqual(row['completion_source'],'unknown')
+        row=await self.save(revision=row['revision'],completion_seconds=18000)
+        self.assertEqual(row['completion_seconds'],18000);self.assertEqual(row['total_seconds'],72000)
+
     async def test_favorite_does_not_require_membership_and_editor_save_is_atomic(self):
         favorite = await self.client.put(f'/tracking/games/favorites/{self.base}', json={'favorite': True})
         self.assertEqual(favorite.status_code, 200, favorite.text)

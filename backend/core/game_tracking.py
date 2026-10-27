@@ -256,6 +256,9 @@ async def save_entry(db, user_id, work_id, patch):
     progress_changed = bool(patch.model_fields_set & {'achievement_mode', 'achievement_count', 'achievement_percentage', 'unlocked_ids', 'unlock_updates'})
     before = await game_activity.snapshot(db, entity, row, achievements=progress_changed)
     previous = row.status if row else None
+    previous_completion = row.completion_seconds if row else None
+    if row and previous=='completed' and previous_completion is None:
+        row.completion_source='unknown'
     if row is None:
         row = GameEntry(user_id=user_id, work_id=work_id, status='planning', revision=0)
         db.add(row)
@@ -270,15 +273,17 @@ async def save_entry(db, user_id, work_id, patch):
         row.completion_seconds = patch.completion_seconds
         row.completion_observed_at = datetime.now(timezone.utc).replace(tzinfo=None) if patch.completion_seconds is not None else None
         row.completion_source = 'manual' if patch.completion_seconds is not None else None
-        if row.total_seconds is None and patch.completion_seconds is not None:
+        if row.total_seconds is None and previous_completion is None and patch.completion_seconds is not None:
             row.total_seconds = patch.completion_seconds
-    elif row.status == 'completed' and previous != 'completed' and row.completion_seconds is None:
+    elif row.status == 'completed' and previous != 'completed' and row.completion_seconds is None and row.completion_source!='unknown':
         # Only a new completion observed today can capture the current actual
         # total. Historical/imported first-completion measurements stay unknown.
         if row.finish_date == date.today() and row.total_seconds is not None:
             row.completion_seconds = row.total_seconds
             row.completion_observed_at = datetime.now(timezone.utc).replace(tzinfo=None)
             row.completion_source = 'current_total'
+    if row.status=='completed' and row.completion_seconds is None:
+        row.completion_source='unknown'
     row.revision += 1
     row.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
     await db.flush()  # Owner FK for exact achievements; all changes still atomic.

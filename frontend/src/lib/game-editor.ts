@@ -1,5 +1,5 @@
 import type {EditorTitle} from './editor-store';
-import {gameTimePatch,hoursInput,achievementCountInput} from './game-editor-data';
+import {gameTimePatch,hoursInput,achievementCountInput,firstTimeCanFillTotal} from './game-editor-data';
 import {localToday} from './date-time';
 import {setupEditorSelect} from './editor-select';
 import {watchAchievementCatalogue,type AchievementCatalogue} from './game-achievement-catalogue';
@@ -185,8 +185,8 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
   const syncFirst=()=>{
     const finish=input('finish_date').value;
     const observedToday=finish?finish===localToday():!datesTouched.has('finish_date');
-    if(title?.type==='game'&&!child&&status==='completed'&&!firstTouched&&current.completion_seconds==null&&current.status!=='completed')first.value=observedToday?total.value:'';
-    if(status==='completed'&&!totalTouched&&current.total_seconds==null&&first.value)total.value=first.value;
+    if(title?.type==='game'&&!child&&status==='completed'&&!firstTouched&&current.completion_seconds==null&&current.completion_source!=='unknown'&&current.status!=='completed')first.value=observedToday?total.value:'';
+    if(status==='completed'&&firstTimeCanFillTotal(current,totalTouched)&&first.value)total.value=first.value;
     renderFirst();
   };
   let firstCorrection: {first:string;total:string;firstTouched:boolean;totalTouched:boolean}|undefined;
@@ -205,7 +205,7 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
     }
   },{signal});
   total.addEventListener('input',()=>{totalTouched=true;syncFirst();},{signal});
-  first.addEventListener('input',()=>{firstTouched=true;if(!totalTouched&&current.total_seconds==null)total.value=first.value;renderFirst();},{signal});
+  first.addEventListener('input',()=>{firstTouched=true;if(firstTimeCanFillTotal(current,totalTouched))total.value=first.value;renderFirst();},{signal});
   form.addEventListener('input',event=>{
     const name=(event.target as HTMLInputElement).name;
     if(title?.type==='game'&&['start_date','finish_date'].includes(name)){datesTouched.add(name);syncFirst();}

@@ -15,6 +15,10 @@ export function achievementCountInput(raw:string,total:number|null|undefined):nu
   return value;
 }
 
+export function firstTimeCanFillTotal(current:Record<string,any>,totalTouched:boolean) {
+  return !totalTouched&&current.total_seconds==null&&current.completion_seconds==null;
+}
+
 export function actualSeconds(value:string):number|null {
   if(!value.trim())return null;
   const hours=Number(value);
