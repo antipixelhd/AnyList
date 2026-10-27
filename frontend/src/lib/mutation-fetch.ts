@@ -9,8 +9,10 @@ export function mutationFetch(
     const request = input instanceof Request ? input : null;
     const method = String(init?.method || request?.method || 'GET').toUpperCase();
     const url = new URL(request?.url || String(input), origin);
+    // This POST carries a bounded list of identities but only reads viewer state.
+    const readOnlyPost = method === 'POST' && url.pathname === '/api/proxy/tracking/browse/context';
     const mutation = method !== 'GET' && method !== 'HEAD'
-      && url.origin === new URL(origin).origin && url.pathname.startsWith('/api/proxy/');
+      && !readOnlyPost && url.origin === new URL(origin).origin && url.pathname.startsWith('/api/proxy/');
     let response: Response;
     try {
       response = await fetcher(input, init);
