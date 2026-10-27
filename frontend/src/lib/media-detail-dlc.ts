@@ -63,7 +63,7 @@ export function mountDetailDlc(root:HTMLElement,id:number,signal:AbortSignal){
       const empty=data.total===0&&data.coverage==='complete';
       const tab=root.querySelector<HTMLButtonElement>('[data-detail-tab="dlc"]');
       if(tab&&empty){
-        const focused=document.activeElement===tab;
+        const focused=document.activeElement===tab||host.contains(document.activeElement);
         if(tab.getAttribute('aria-selected')==='true')root.querySelector<HTMLButtonElement>('[data-detail-tab="overview"]')?.click();
         tab.hidden=true;tab.disabled=true;tab.tabIndex=-1;
         if(focused)root.querySelector<HTMLButtonElement>('[data-detail-tab="overview"]')?.focus({preventScroll:true});

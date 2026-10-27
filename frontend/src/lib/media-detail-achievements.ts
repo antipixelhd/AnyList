@@ -74,7 +74,7 @@ export function mountDetailAchievements(root:HTMLElement,id:number,signal:AbortS
     if(known){tab.hidden=false;tab.disabled=false;}
     if(empty){
       if(visible())root.querySelector<HTMLButtonElement>('[data-detail-tab="overview"]')?.click();
-      const focused=document.activeElement===tab;tab.hidden=true;tab.disabled=true;tab.tabIndex=-1;
+      const focused=document.activeElement===tab||host.contains(document.activeElement);tab.hidden=true;tab.disabled=true;tab.tabIndex=-1;
       if(focused)root.querySelector<HTMLButtonElement>('[data-detail-tab="overview"]')?.focus({preventScroll:true});
     }
     paintStatus();
