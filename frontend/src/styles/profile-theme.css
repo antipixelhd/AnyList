@@ -20,26 +20,14 @@
   outline:none;
 }
 @media (hover:none), (max-width:650px) {
-  .tracker #entry-groups .entry-row:not([data-editor-deselected]) .entry-score-button,
   .tracker #entry-groups .entry-row:not([data-editor-deselected]):is(:hover,:has(:focus-visible)) .entry-score-button {
     color:#f7b731;
   }
-  .tracker #entry-groups .entry-row:not([data-editor-deselected]) .entry-thumbnail .row-menu,
   .tracker #entry-groups .entry-row:not([data-editor-deselected]):is(:hover,:has(:focus-visible)) .entry-thumbnail .row-menu {
-    background:transparent;
     color:#fff;
     opacity:1;
   }
-  .tracker #entry-groups .entry-row:not([data-editor-deselected]) .entry-thumbnail .row-menu .ui-icon {
-    opacity:1;
-    filter:drop-shadow(0 1px 3px #000);
-  }
-  .tracker #entry-groups.grid-view .entry-row:not([data-editor-deselected]) .entry-thumbnail .row-menu {
-    place-items:start end;
-    padding:12px;
-  }
-  .tracker #entry-groups .entry-row:not([data-editor-deselected]):is(:hover,:has(:focus-visible)) .entry-cover,
-  .tracker #entry-groups .entry-row:not([data-editor-deselected]):is(:hover,:has(:focus-visible)) .entry-thumbnail::after {
+  .tracker #entry-groups .entry-row:not([data-editor-deselected]):is(:hover,:has(:focus-visible)) .entry-thumbnail .row-menu .ui-icon {
     opacity:1;
   }
 }
