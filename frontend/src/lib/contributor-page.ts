@@ -217,7 +217,16 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     changed();
   });
   const sourceButton=root.querySelector<HTMLButtonElement>('[data-contributor-source-refresh]');
-  const sourceRefresh=contributorSourceRefresh(signal,available=>{if(sourceButton)sourceButton.hidden=!available;},data.kind==='studio'?undefined:{
+  let automaticSourceRefresh=false;
+  const sourceRefresh=contributorSourceRefresh(signal,available=>{
+    if(sourceButton)sourceButton.hidden=!available;
+    // A cold empty portfolio has no usable cards to reorder or replace. Publish
+    // its first source result through the normal filtered/private-read flow,
+    // retaining the document, biography, editor, focus and scroll position.
+    if(available&&!items.size&&!filterRequest&&params.get('media_type')==='game'){
+      automaticSourceRefresh=true;form.requestSubmit();
+    }
+  },data.kind==='studio'?undefined:{
     kind:data.kind,ids:()=>[...items.values()].filter(item=>item.type==='game'&&item.id).map(item=>item.id!),
     apply:rows=>{
       const captions=new Map(rows.map(row=>[row.id,row]));
@@ -288,7 +297,8 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
   form.addEventListener('submit',event=>{
     event.preventDefault();prediction.cancel();filterRequest?.abort();
     sourceRefresh.stop();
-    const worksAnchor = new URL(form.action).hash === '#contributor-works';
+    const worksAnchor = !automaticSourceRefresh&&new URL(form.action).hash === '#contributor-works';
+    automaticSourceRefresh=false;
     const request=new AbortController(),current=++revision;
     filterRequest=request;error.hidden=true;region.setAttribute('aria-busy','true');
     const submitted=new URLSearchParams();
