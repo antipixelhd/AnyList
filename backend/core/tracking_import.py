@@ -11,10 +11,11 @@ from core.tracking_rules import observed_status
 from core.status_provenance import mark_status_change
 
 
-def _imported_finish_date(media_type, dates):
-    if not dates:
+def _imported_finish_date(media_type, dates, completed_dates=()):
+    candidates = completed_dates if media_type == MediaType.movie else dates
+    if not candidates:
         return None
-    return min(dates) if media_type == MediaType.movie else max(dates)
+    return min(candidates) if media_type == MediaType.movie else max(candidates)
 
 
 async def import_tracking_history(db, user_id: int, added_media_ids: set[int] | None = None,
@@ -101,7 +102,8 @@ async def import_tracking_history(db, user_id: int, added_media_ids: set[int] | 
             manual_score=item['scores'].get(None),rating_mode='manual' if None in item['scores'] or not item['scores'] else 'average',
             season_scores={str(k):v for k,v in item['scores'].items() if k is not None},
             start_date=min(item['dates']) if item['dates'] and not (media.media_type==MediaType.movie and complete) else None,
-            finish_date=_imported_finish_date(media.media_type, item['dates']) if complete else None)
+            finish_date=_imported_finish_date(media.media_type, item['dates'],
+                [watched_at.date() for watched_at in item.get('episode_dates', {}).get(media.id, [])]) if complete else None)
         mark_status_change(entry,'history-import')
         if initial_import and status == 'completed':
             entry.initial_import_completed_at = datetime.now(timezone.utc).replace(tzinfo=None)

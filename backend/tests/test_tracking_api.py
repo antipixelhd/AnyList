@@ -448,6 +448,8 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_history_import_uses_first_completed_movie_watch_date(self):
         from core.tracking_import import import_tracking_history
 
+        self.db.add(WatchEvent(user_id=self.owner.id, media_id=self.movie.id,
+                               completed=False, watched_at=datetime(2019, 1, 1)))
         for watched_at in (datetime(2022, 6, 4), datetime(2020, 3, 2)):
             self.db.add(WatchEvent(user_id=self.owner.id, media_id=self.movie.id,
                                    completed=True, watched_at=watched_at))

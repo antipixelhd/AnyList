@@ -24,7 +24,9 @@ class EvidenceTests(unittest.TestCase):
         from models.base import MediaType
 
         days = [date(2022, 6, 4), date(2020, 3, 2)]
-        self.assertEqual(_imported_finish_date(MediaType.movie, days), days[1])
+        self.assertEqual(_imported_finish_date(MediaType.movie, days, days), days[1])
+        self.assertEqual(_imported_finish_date(MediaType.movie, days, [days[0]]), days[0],
+                         'an earlier incomplete play does not establish completion')
         self.assertEqual(_imported_finish_date(MediaType.series, days), days[0])
 
     def test_merged_source_aliases_keep_the_earliest_equal_strength_episode_watch(self):
