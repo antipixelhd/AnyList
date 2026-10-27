@@ -62,7 +62,7 @@ const availabilityLabel=(reason:string|undefined)=>reason==='airing'?'Currently 
           <span class="entry-progress">
             <span data-progress-label>{entry.type==='movie' ? entry.progress : entry.released_episodes===undefined?entry.progress:(entry.season_position||'—')}</span>
             <span class="entry-mobile-progress" data-mobile-progress-label>{compactListProgress(entry)}</span>
-            {data.owner && canIncrement(entry) && <button type="button" class="progress-increment" data-progress-increment={entry.id} data-next-progress={entry.type==='movie'?1:entry.progress+1} aria-label={entry.type==='movie'?`Mark ${entry.title} watched`:`Mark the next episode of ${entry.title} watched`} title={entry.type==='movie'?'Mark movie watched':'Mark next episode watched'}>+</button>}
+            {data.owner && <button type="button" class="progress-increment" data-progress-increment={entry.id} data-next-progress={entry.type==='movie'?1:entry.progress+1} aria-label={entry.type==='movie'?`Mark ${entry.title} watched`:`Mark the next episode of ${entry.title} watched`} title={entry.type==='movie'?'Mark movie watched':'Mark next episode watched'} hidden={!canIncrement(entry)} disabled={!canIncrement(entry)}>+</button>}
           </span>
           {isCombined&&<span class="entry-type">{entry.type==='movie'?'Movie':'Series'}</span>}
         </article>)}
@@ -400,7 +400,8 @@ function mountProfileList() {
             if (increment) {
               increment.dataset.nextProgress = String(progress + 1);
               const released = entry.released_episodes ?? (title.type === 'movie' ? 1 : null);
-              increment.hidden = released != null && progress >= released;
+              increment.hidden = released == null || progress >= released ||
+                title.type === 'movie' && !!title.release_date && title.release_date.slice(0, 10) > new Date().toISOString().slice(0, 10);
               increment.disabled = increment.hidden;
             }
             syncAvailability(row, entry);
