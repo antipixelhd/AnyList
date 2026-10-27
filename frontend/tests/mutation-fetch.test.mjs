@@ -38,3 +38,13 @@ test('HTTP errors are left for the calling control and are not reported as offli
   assert.equal((await wrapped(new Request('https://beta.example/api/proxy/tracking/1', {method:'POST'}))).status, 403);
   assert.equal(calls, 0);
 });
+
+test('read-only Browse context POST does not invalidate cached results', async () => {
+  let invalidations = 0;
+  const wrapped = mutationFetch(async () => new Response('{}'), 'https://beta.example/browse',
+    () => invalidations++, () => invalidations++);
+  await wrapped('/api/proxy/tracking/browse/context', {method:'POST', body:'{}'});
+  assert.equal(invalidations, 0);
+  await wrapped('/api/proxy/tracking/browse/update', {method:'POST', body:'{}'});
+  assert.equal(invalidations, 1);
+});
