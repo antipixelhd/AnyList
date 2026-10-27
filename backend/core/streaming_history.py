@@ -1,8 +1,23 @@
 """Source-independent observations consumed by streaming-history matching."""
 from dataclasses import asdict, dataclass, field
 from typing import Any
+from math import isfinite
 
 MIN_WATCH_SECONDS = 600
+
+
+def observed_watch_seconds(row):
+    """Prefer actual viewing time; providers without a counter expose offsets.
+
+    A present but missing/invalid watch-time counter must never fall back to a seek.
+    All normalized connection times are milliseconds.
+    """
+    value = row.get('watched_time') if 'watched_time' in row else row.get('position')
+    seconds = float(value or 0) / 1000
+    if not isfinite(seconds):
+        raise ValueError('Invalid watch time')
+    return max(0., seconds)
+
 
 @dataclass(slots=True)
 class WatchObservation:

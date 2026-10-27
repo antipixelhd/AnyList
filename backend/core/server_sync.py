@@ -3344,6 +3344,10 @@ async def _stremio_records(
         if not item.get("removed") and not item.get("temp"):
             library_records.append(base)
         last_watched = stremio_payloads.epoch_ms(state.get("lastWatched"))
+        try:
+            watched_time = max(0, int(state.get("timeWatched") or 0))
+        except (TypeError, ValueError, OverflowError):
+            watched_time = 0
 
         if content_type == "movie":
             try:
@@ -3357,11 +3361,12 @@ async def _stremio_records(
                 duration = int(state.get("duration") or 0)
             except (TypeError, ValueError):
                 position = duration = 0
-            if position > 0 and duration > 0:
+            if (position > 0 or watched_time > 0) and duration > 0:
                 progress_records.append(
                     {
                         **base,
                         "position": position,
+                        "watched_time": watched_time,
                         "duration": duration,
                         "last_watched": last_watched,
                     }
@@ -3404,7 +3409,7 @@ async def _stremio_records(
         # Stremio can retain a stale timeOffset after the same episode has
         # already been marked watched. That offset is historical residue, not
         # active Continue Watching progress, so it must not recreate Watching.
-        if current_parts and current_video_id not in watched_ids and position > 0 and duration > 0:
+        if current_parts and current_video_id not in watched_ids and (position > 0 or watched_time > 0) and duration > 0:
             season, episode = current_parts
             progress_records.append(
                 {
@@ -3413,6 +3418,7 @@ async def _stremio_records(
                     "season": season,
                     "episode": episode,
                     "position": position,
+                    "watched_time": watched_time,
                     "duration": duration,
                     "last_watched": last_watched,
                 }

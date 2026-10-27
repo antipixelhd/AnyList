@@ -48,7 +48,7 @@ class ConnectionEvidenceTests(unittest.IsolatedAsyncioTestCase):
                     'season': 1, 'episode': n, 'watched_at': 1578009600000,
                     'date_shared': n < 3} for n in range(1, 4)]
         progress = [{**movie(), 'content_id': 'tmdb:99', 'content_type': 'series', 'title': 'Show',
-                     'season': 1, 'episode': n, 'position': 1200000} for n in (4, 5)]
+                     'season': 1, 'episode': n, 'position': 3300000, 'watched_time': 1200000} for n in (4, 5)]
         with patch('core.connection_imports.tmdb.get_show_light', AsyncMock(return_value=show)), \
              patch('core.connection_imports.tmdb.get_season', AsyncMock(return_value=catalog)):
             item = (await prepare_items(watched, progress, {'tmdb:99': 99}, 'fixture'))[0]
@@ -60,6 +60,44 @@ class ConnectionEvidenceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([e['watch_qualified'] for e in item['episodes']], [True, True, True, False, False])
         self.assertEqual(item['episodes'][0]['dates'], [])
         self.assertFalse(any(e['key'] == 'episode:1:1' for e in activity_plan(item)))
+
+    async def test_stremio_watch_time_not_seek_position_controls_movie_evidence(self):
+        details = {'id': 42, 'title': 'Movie', 'runtime': 60, 'release_date': '2019-01-01'}
+        with patch('core.connection_imports.tmdb.get_movie_light', AsyncMock(return_value=details)):
+            for counter in (None, 0, 599999, 'invalid', float('nan'), float('inf')):
+                with self.subTest(counter=counter):
+                    self.assertEqual(await prepare_items([], [movie(position=3500000, watched_time=counter)], {'tmdb:42': 42}, 'fixture'), [])
+            weak = (await prepare_items([], [movie(position=3500000, watched_time=600000)], {'tmdb:42': 42}, 'fixture'))[0]
+            self.assertFalse(weak['progress_reviewed'])
+            self.assertEqual(weak['outcome']['tracking_status'], 'dropped')
+            # Rewinding does not erase the actual time already spent watching.
+            strong = (await prepare_items([], [movie(position=0, watched_time=2520000)], {'tmdb:42': 42}, 'fixture'))[0]
+            self.assertTrue(strong['progress_reviewed'])
+            explicit = (await prepare_items([movie(watched_time=0)], [], {'tmdb:42': 42}, 'fixture'))[0]
+            self.assertTrue(explicit['progress_reviewed'])
+
+    async def test_stremio_seek_cannot_become_completion_on_later_sync(self):
+        from core.tracking_snapshot import completed_rows
+        seek = movie(position=3500000, watched_time=1000)
+        unknown = movie(position=3500000, watched_time=None)
+        watched = movie(position=1000, watched_time=3500000)
+        nuvio = movie(position=3500000)
+        self.assertEqual(completed_rows([seek, unknown, watched, nuvio]), [watched, nuvio])
+
+    async def test_stremio_resume_keeps_offset_separate_from_watch_evidence(self):
+        from datetime import datetime
+        from core.connection_imports import apply_resume
+        from unittest.mock import MagicMock
+        baseline = SimpleNamespace(observed_at=datetime(2026, 1, 1), snapshot={
+            'mappings': {'tmdb:42': 42}, 'records': {'progress': [movie(position=3300000, watched_time=1200000)]}})
+        db = SimpleNamespace(get=AsyncMock(return_value=baseline), scalar=AsyncMock(return_value=None),
+                             add=MagicMock(), flush=AsyncMock())
+        session = SimpleNamespace(payload={'connection_id': 1}, user_id=1)
+        item = {'outcome': {'status': 'partial'}, 'match': {'candidate': {'tmdb_id': 42}}}
+        await apply_resume(db, session, item, SimpleNamespace(id=42), SimpleNamespace(status='watching'), None, {})
+        playback = db.add.call_args.args[0]
+        self.assertEqual(playback.progress_seconds, 3300)
+        self.assertAlmostEqual(playback.progress_percent, 3300 / 3600)
 
     async def test_unresolved_identifiers_never_trigger_name_search(self):
         with patch('core.connection_imports.tmdb.get_movie_light', AsyncMock()) as details:
