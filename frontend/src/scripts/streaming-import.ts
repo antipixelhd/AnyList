@@ -421,9 +421,10 @@ function mountStreamingImport(app: HTMLElement) {
     const showItems = visibleItems().filter(item => item.decision?.action !== 'skip');
     const incomplete = showItems.filter(item => isIncomplete(item) || item.outcome.status === 'completed' && !!item.completion_evidence && needsImportFinishDate(item));
     progressSequence.sync(incomplete.map(item => item.id));
-    const visible = (showingCompleted ? showItems : incomplete).slice().sort((a, b) =>
+    const reviewIds = new Set(progressSequence.ids);
+    const visible = (showingCompleted ? showItems : showItems.filter(item => reviewIds.has(String(item.id)))).slice().sort((a, b) =>
       (a.match.candidate?.title ?? a.source_title).localeCompare(b.match.candidate?.title ?? b.source_title));
-    const completedCount = showItems.length - incomplete.length;
+    const completedCount = showItems.filter(item => !reviewIds.has(String(item.id))).length;
     if (mobileReview.matches) {
       const current = progressCurrent();
       const index = current ? progressSequence.ids.indexOf(String(current.id)) : -1;
@@ -1074,6 +1075,8 @@ function mountStreamingImport(app: HTMLElement) {
     }
     if (action === "open-search") { openRemap(item); return; }
     if (action === "outcome") {
+      // Keep edited automatic titles reachable after changing their progress choice.
+      progressSequence.sync([item.id]);
       const status = button.dataset.status as StreamingItem["outcome"]["status"];
       if (status === "completed") await confirmFinishDate(item, item.outcome.status !== 'completed');
       if (status === 'partial' && (!item.outcome.latest_season || !item.outcome.latest_episode)) {

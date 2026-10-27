@@ -37,3 +37,25 @@ test('connection reviews expose three steps while setup stays unnumbered',()=>{
  const file=heading(3,undefined);assert.match(file,/Step 3 of 5/);
  assert.equal((file.match(/<span class=/g)||[]).length,5);
 });
+
+
+test('desktop progress rows stay reachable after Skip or Completed removes their review requirement',()=>{
+ const series={id:'series',kind:'show',decision:{action:'confirm'},outcome:{status:'completed'},match:{candidate:{title:'Series'}},missingDate:true};
+ const movie={id:'movie',kind:'movie',decision:{action:'confirm'},outcome:{status:'dropped'},match:{candidate:{title:'Movie'}},progress_reviewed:false};
+ const automatic={id:'automatic',kind:'show',decision:{action:'confirm'},outcome:{status:'completed'},match:{candidate:{title:'Automatic'}}};
+ const ids=[];
+ const context={visibleItems:()=>[series,movie,automatic],isIncomplete:item=>item===movie&&!item.progress_reviewed,
+  needsImportFinishDate:item=>item.missingDate,progressSequence:{ids,sync:values=>{for(const id of values)if(!ids.includes(id))ids.push(id)}},
+  showingCompleted:false,mobileReview:{matches:false},heading:()=>'',showCard:item=>`<row>${item.id}:${item.outcome.status}</row>`};
+ // A fully represented series may still need its completed date reviewed.
+ series.completion_evidence={finish_date:null};
+ const start=source.indexOf('  function progressView()'),end=source.indexOf('  function summaryView()',start);
+ runInNewContext(stripTypeScriptTypes(source.slice(start,end))+';globalThis.render=progressView;',context);
+ assert.match(context.render(),/<row>series:completed<\/row>/);
+ series.outcome.status='skip';movie.outcome.status='completed';movie.progress_reviewed=true;
+ const changed=context.render();
+ assert.match(changed,/<row>series:skip<\/row>/);assert.match(changed,/<row>movie:completed<\/row>/);
+ assert.doesNotMatch(changed,/<row>automatic:/);
+ series.outcome.status='completed';series.missingDate=false;
+ assert.match(context.render(),/<row>series:completed<\/row>/);
+});
