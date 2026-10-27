@@ -6,6 +6,7 @@
   import { showToast as notify } from '../lib/toasts';
   import {createPrediction,bindPredictionIntent,predictionManifest,predictivePage,predictionAllowed,type PredictionArtwork} from '../lib/predictive-loading';
   import {editorStore,type EditorTitle} from '../lib/editor-store';
+  import {isFailureHandled} from '../lib/handled-failures';
   import {responsiveArtwork} from '../lib/responsive-artwork';
   wirePasswordToggles();
 
@@ -265,7 +266,10 @@
     window.fetch = mutationFetch(navigationFetch, location.href, () => {
       clearPages();
       document.dispatchEvent(new Event('anylist:data-changed'));
-    }, () => showToast('Could not reach the server. This change was not queued.'));
+    }, error => {
+      // Give the initiating control time to show its more useful, action-specific error.
+      window.setTimeout(() => { if (!isFailureHandled(error)) showToast('Could not reach the server. This change was not queued.'); }, 250);
+    });
 
     document.addEventListener('submit', event => {
       const form = event.target as HTMLFormElement;

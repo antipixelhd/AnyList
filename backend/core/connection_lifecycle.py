@@ -13,12 +13,18 @@ async def delete_connection(db, conn):
     if conn.type in ("stremio", "nuvio"):
         from core import stremio, nuvio
         from core.connection_identity import reset_stream_connection_state
+        from core.connection_imports import signal_connection_import_cancellation
+        await signal_connection_import_cancellation(db, conn)
         await db.execute(select(User.id).where(User.id == conn.user_id).with_for_update())
         provider = stremio if conn.type == "stremio" else nuvio
         async with provider.connection_lock(conn.id):
-            await db.refresh(conn)
-            await reset_stream_connection_state(db, conn)
-            return await _delete_connection_fields(db, conn)
+            current = await db.get(MediaServerConnection, conn.id, populate_existing=True)
+            if current is None:
+                # A cancelled commit may have already removed its provisional connection.
+                await db.commit()
+                return {"status": "deleted"}
+            await reset_stream_connection_state(db, current)
+            return await _delete_connection_fields(db, current)
     return await _delete_connection_fields(db, conn)
 
 

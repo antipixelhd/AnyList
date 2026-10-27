@@ -95,7 +95,7 @@ document.addEventListener('astro:page-load', () => {
     if (!showNewRatingsPopup) writeAcknowledged(allRatings.map(token));
     const ratings = showNewRatingsPopup ? allRatings : [];
     const imports = (data.results || []).filter((item: any) => item.kind === 'import_ready'
-      && !document.querySelector('[data-import-session]'));
+      && !document.querySelector('[data-import-session], [data-connection-import][data-import-active="true"]:not([hidden])'));
     const eligible = [...imports, ...conflicts, ...ratings];
     // Being on Notifications acknowledges items present in each live snapshot.
     // A later snapshot after leaving will still contain fresh, unacknowledged IDs.

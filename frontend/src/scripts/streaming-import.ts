@@ -1,5 +1,5 @@
 import { canStartImport } from "../lib/import-admission";
-import { showDialog, closeDialog } from '../lib/ui-motion';
+import { showDialog, closeDialog, reveal, cancelUiMotion } from '../lib/ui-motion';
 import { showMessage } from '../lib/settings-feedback';
 import { setupCalendarDateInputs } from '../lib/calendar-date-input';
 import { confirmImportCancellation } from '../lib/import-cancel';
@@ -37,7 +37,7 @@ type StreamingItem = {
   requires_watch_confirmation?: boolean;
   progress_reviewed?: boolean;
   suggested_movie_status?: "completed" | "dropped";
-  completion_evidence?: {finish_date: string | null; suggested_date: string | null};
+  completion_evidence?: {finish_date: string | null; suggested_date: string | null; default_completed?: boolean};
   source_title: string;
   source_dates?: string[];
   source_rows?: number;
@@ -63,6 +63,7 @@ type StreamingItem = {
 };
 
 type StreamingSession = {
+  source: string;
   id: string;
   expires_at?: string;
   connection_id?: number | null;
@@ -151,6 +152,31 @@ function mountStreamingImport(app: HTMLElement) {
   let idempotencyKey = "";
   let busy = false;
   let loadingConnection = false;
+  let checkingConnection = !!connectionId && app.dataset.connectionPending === "true";
+  let connectionError = "";
+  let positionedWorkflow = false;
+  const launchParams = new URL(location.href).searchParams;
+  let restoringSession = !!app.dataset.resumeImport || !!launchParams.get('import') && (
+    connectionId ? launchParams.get('connection') === connectionId : launchParams.get('source') === service && !launchParams.has('connection'));
+  let restoreController: AbortController | null = null;
+  let connectionProgress = {current:0, total:0, message:'Waiting to start…'};
+  let currentViewKey = '';
+  let currentViewHtml = '';
+  let renderedView: HTMLElement | null = null;
+
+  function setWorkflow(html: string, key: string) {
+    if (currentViewHtml === html) return;
+    const changed = currentViewKey !== key;
+    if (renderedView) cancelUiMotion(renderedView);
+    workflow.innerHTML = html;
+    renderedView = workflow.firstElementChild as HTMLElement | null;
+    currentViewHtml = html;
+    currentViewKey = key;
+    if (changed && renderedView) {
+      renderedView.setAttribute('data-motion-fade', '');
+      reveal(renderedView);
+    }
+  }
   let uploadController: AbortController | null = null;
   const esc = (value: unknown) => String(value ?? "").replace(/[&<>"']/g, (char) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
@@ -225,7 +251,12 @@ function mountStreamingImport(app: HTMLElement) {
   }
 
   function heading(title: string, description = '', remaining?: number, position = ''): string {
-    return `<header class="streaming-heading"><div><div class="streaming-heading-top"><p class="streaming-step">${connectionId ? `${esc(serviceName)} · ` : ""}Step ${step} of 5</p>${step > 1 ? '<button type="button" data-streaming-action="cancel" class="streaming-text-action streaming-muted streaming-mobile-cancel">Cancel</button>' : ''}</div><h2>${title}</h2>${description ? `<p class="streaming-description">${description}</p>` : ''}${position ? `<p class="streaming-position">${esc(position)}</p>` : ''}</div><div class="streaming-step-progress">${remaining != null ? `<span role="status">${remaining ? `${remaining} title${remaining === 1 ? '' : 's'} left` : 'All matches checked'}</span>` : ''}<div class="streaming-step-bars" role="img" aria-label="Step ${step} of 5">${Array.from({length: 5}, (_, index) => `<span class="${index < step ? 'is-reached' : ''}"></span>`).join('')}</div></div></header>`;
+    const total = connectionId ? 3 : 5;
+    const displayStep = connectionId ? Math.max(0,step - 2) : step;
+    const label = displayStep ? `Step ${displayStep} of ${total}` : '';
+    const prefix = connectionId ? esc(serviceName) + (label ? ' · ' : '') : '';
+    const bars = label ? `<div class="streaming-step-bars" role="img" aria-label="${label}">${Array.from({length:total}, (_,index) => `<span class="${index < displayStep ? 'is-reached' : ''}"></span>`).join('')}</div>` : '';
+    return `<header class="streaming-heading"><div><div class="streaming-heading-top"><p class="streaming-step">${prefix}${label}</p>${step > 1 ? '<button type="button" data-streaming-action="cancel" class="streaming-text-action streaming-muted streaming-mobile-cancel">Cancel</button>' : ''}</div><h2>${title}</h2>${description ? `<p class="streaming-description">${description}</p>` : ''}${position ? `<p class="streaming-position">${esc(position)}</p>` : ''}</div><div class="streaming-step-progress">${remaining != null ? `<span role="status">${remaining ? `${remaining} title${remaining === 1 ? '' : 's'} left` : 'All matches checked'}</span>` : ''}${bars}</div></header>`;
   }
 
   function artwork(path?: string | null): string {
@@ -390,9 +421,10 @@ function mountStreamingImport(app: HTMLElement) {
     const showItems = visibleItems().filter(item => item.decision?.action !== 'skip');
     const incomplete = showItems.filter(item => isIncomplete(item) || item.outcome.status === 'completed' && !!item.completion_evidence && needsImportFinishDate(item));
     progressSequence.sync(incomplete.map(item => item.id));
-    const visible = (showingCompleted ? showItems : incomplete).slice().sort((a, b) =>
+    const reviewIds = new Set(progressSequence.ids);
+    const visible = (showingCompleted ? showItems : showItems.filter(item => reviewIds.has(String(item.id)))).slice().sort((a, b) =>
       (a.match.candidate?.title ?? a.source_title).localeCompare(b.match.candidate?.title ?? b.source_title));
-    const completedCount = showItems.length - incomplete.length;
+    const completedCount = showItems.filter(item => !reviewIds.has(String(item.id))).length;
     if (mobileReview.matches) {
       const current = progressCurrent();
       const index = current ? progressSequence.ids.indexOf(String(current.id)) : -1;
@@ -480,7 +512,7 @@ function mountStreamingImport(app: HTMLElement) {
   }
 
   function updateImportActivity() {
-    const active = busy || !!session && !['committed', 'cancelled', 'failed'].includes(session.status);
+    const active = restoringSession || checkingConnection || busy || !!session && !['committed', 'cancelled', 'failed'].includes(session.status);
     app.dataset.importActive = String(active);
     if (active) document.querySelectorAll<HTMLElement>('[data-mobile-navigation] [popover]:popover-open')
       .forEach(panel => panel.hidePopover());
@@ -512,9 +544,11 @@ function mountStreamingImport(app: HTMLElement) {
   }
 
   function render() {
+    uploadControls.hidden = !!connectionId;
+    workflow.setAttribute('aria-busy', String(restoringSession || checkingConnection || saving || cancelling || busy || session?.status === 'preparing'));
     syncReviewSequences();
     checkpoint();
-    const nextAdmissionState = session ? `${session.id}:${session.status}` : "";
+    const nextAdmissionState = session ? `${session.id}:${session.status}` : checkingConnection ? `connection:${connectionId}:checking` : "";
     if (nextAdmissionState !== admissionState) {
       admissionState = nextAdmissionState;
       document.dispatchEvent(new CustomEvent('streaming:session-changed'));
@@ -522,10 +556,27 @@ function mountStreamingImport(app: HTMLElement) {
     app.dataset.reviewLayout = mobileReview.matches ? 'single' : 'list';
     app.dataset.importStep = String(step);
     if (session && !['cancelled', 'committed'].includes(session.status)) app.dataset.importSession = session.id;
+    else if (restoringSession && (app.dataset.resumeImport || launchParams.get('import'))) app.dataset.importSession = app.dataset.resumeImport || launchParams.get('import')!;
     else delete app.dataset.importSession;
     updateImportActivity();
     document.dispatchEvent(new CustomEvent('streaming:activity-changed'));
     if (!session) {
+      if (restoringSession || connectionId && checkingConnection) {
+        step = 1; app.dataset.importStep = '1'; app.hidden = false;
+        workflow.classList.remove('hidden'); uploadControls.classList.add('hidden');
+        const title = restoringSession ? 'Loading your import' : 'Checking your history';
+        const total = Math.max(0,connectionProgress.total);
+        const status = restoringSession ? 'Restoring your review…'
+          : total ? `Pulling ${total.toLocaleString()} ${total === 1 ? 'entry' : 'entries'}` : connectionProgress.message;
+        const track = '<div class="streaming-loading-track is-indeterminate" role="progressbar" aria-label="' + title + '"><span></span></div>';
+        const content = connectionError ? '<p class="streaming-check-error" role="alert">' + esc(connectionError) + '</p>'
+          : '<div class="streaming-preparing">' + track + '<p role="status">' + esc(status) + '</p></div>';
+        const action = connectionId ? 'cancel' : 'close-loading';
+        const label = connectionId ? 'Cancel import' : 'Close';
+        setWorkflow('<div class="streaming-flow">' + heading(title) + content + '<footer class="streaming-footer"><button type="button" data-streaming-action="' + action + '" class="streaming-button streaming-secondary" ' + (cancelling ? 'disabled' : '') + '>' + label + '</button>' + (connectionError && connectionId ? '<button type="button" data-streaming-action="retry-connection" class="streaming-button streaming-primary">Try again</button>' : '') + '</footer></div>',
+          JSON.stringify(['loading',restoringSession,!!connectionError,cancelling]));
+        return;
+      }
       if (connectionId) {
         app.hidden = true;
         if (activeConnectionImport === app) {
@@ -574,7 +625,9 @@ function mountStreamingImport(app: HTMLElement) {
       ? `<button type="button" data-streaming-action="cancel" class="streaming-text-action streaming-muted">Cancel</button>`
       : isCommitted ? `<button type="button" data-streaming-action="restart" class="streaming-button streaming-primary">${connectionId ? 'Done' : 'Import another file'}</button>`
       : reviewNavigation() ?? `<button type="button" data-streaming-action="cancel" class="streaming-text-action streaming-muted streaming-cancel">Cancel import</button><div class="streaming-nav-actions">${decisionStep(step - 1, -1) !== null ? '<button type="button" data-streaming-action="back" class="streaming-button streaming-secondary">Back</button>' : ''}${step < 5 ? `<button type="button" data-streaming-action="next" ${step === 2 && !titleReviewComplete() ? 'disabled' : ''} class="streaming-button streaming-primary">Continue</button>` : `<button type="button" data-streaming-action="commit" ${busy || saving ? 'disabled' : ''} class="streaming-button streaming-primary">${busy ? 'Importing…' : 'Import history'}</button>`}</div>`;
-    workflow.innerHTML = `<div class="streaming-flow">${content}<footer class="streaming-footer">${nav}</footer></div>`;
+    const card = mobileReview.matches ? step === 2 ? matchCurrent()?.id : step === 3 ? progressCurrent()?.id : null : null;
+    setWorkflow(`<div class="streaming-flow">${content}<footer class="streaming-footer">${nav}</footer></div>`,
+      JSON.stringify([session.id, step, session.status, transitioning ? cancelling ? 'cancel' : busy ? 'commit' : 'save' : 'review', card]));
 
   }
 
@@ -659,7 +712,8 @@ function mountStreamingImport(app: HTMLElement) {
     uploadControls.classList.add("hidden");
     workflow.classList.remove("hidden");
     step = 1;
-    workflow.innerHTML = `<div class="streaming-uploading"><h2>Uploading your history…</h2><p>${esc(file.name)}</p><div class="streaming-loading-track"><span class="animate-pulse" style="width:35%"></span></div><button type="button" data-streaming-action="cancel-upload" class="streaming-text-action streaming-muted">Cancel</button></div>`;
+    workflow.setAttribute('aria-busy', 'true');
+    setWorkflow(`<div class="streaming-uploading"><h2>Uploading your history…</h2><p>${esc(file.name)}</p><div class="streaming-loading-track"><span class="animate-pulse" style="width:35%"></span></div><button type="button" data-streaming-action="cancel-upload" class="streaming-text-action streaming-muted">Cancel</button></div>`, 'upload');
     const form = new FormData();
     form.append("file", file);
     if (languageInput.value !== "auto") form.append("language", languageInput.value);
@@ -690,7 +744,7 @@ function mountStreamingImport(app: HTMLElement) {
     busy = false;
     updateImportActivity();
     workflow.classList.add("hidden");
-    workflow.innerHTML = "";
+    setWorkflow("", "idle");
     uploadControls.classList.remove("hidden");
     fileInput.value = "";
   }
@@ -806,13 +860,19 @@ function mountStreamingImport(app: HTMLElement) {
     window.clearTimeout(searchTimer);
     searchController?.abort();
     uploadController?.abort();
+    restoreController?.abort();
+    if (renderedView) cancelUiMotion(renderedView);
   }, {once: true});
   window.addEventListener('pagehide', checkpoint, {signal: dateSignal.signal});
   mobileReview.addEventListener('change', () => render(), {signal: dateSignal.signal});
   const refreshFinishDate = setupCalendarDateInputs(finishDialog, dateSignal.signal, {returnFocus: 'trigger'});
+  finishDialog.addEventListener('click', event => {
+    if (event.target === finishDialog) void closeDialog(finishDialog, 'skip');
+  }, {signal: dateSignal.signal});
   async function confirmFinishDate(item: StreamingItem, reselectingCompleted = false) {
     if (!needsImportFinishDate(item, reselectingCompleted)) return;
     const input = finishDialog.querySelector<HTMLInputElement>('[data-date-iso]')!;
+    finishDialog.querySelector<HTMLElement>('h2')!.textContent = `When did you finish this ${item.kind === 'movie' ? 'movie' : 'series'}?`;
     input.value = importFinishDateSuggestion(item);
     refreshFinishDate();
     finishDialog.returnValue = '';
@@ -823,7 +883,26 @@ function mountStreamingImport(app: HTMLElement) {
   }
 
   async function cancelSession() {
-    if (!session || cancelling) return;
+    if (cancelling) return;
+    if (!session && connectionId && (checkingConnection || restoringSession)) {
+      if (!await confirmImportCancellation(true, dateSignal.signal)) return;
+      cancelling = true;
+      window.clearTimeout(pollTimer);
+      render();
+      try {
+        await request('/auth/connections/' + encodeURIComponent(connectionId), {method:'DELETE'});
+        const url = new URL(location.href);
+        for (const key of ['import', 'source', 'connection']) url.searchParams.delete(key);
+        history.replaceState(history.state, '', url);
+        location.reload();
+      } catch (error) {
+        cancelling = false;
+        connectionError = error instanceof Error ? error.message : 'Could not cancel the import.';
+        render();
+      }
+      return;
+    }
+    if (!session) return;
     if (connectionId && !await confirmImportCancellation(true, dateSignal.signal)) return;
     const cancelledId = session.id;
     if (pollTimer) window.clearTimeout(pollTimer);
@@ -866,7 +945,7 @@ function mountStreamingImport(app: HTMLElement) {
       if (epoch !== requestEpoch || session?.id !== committingId || dateSignal.signal.aborted) return;
       session = updated;
       if (session.status === "committing") {
-        workflow.innerHTML = `<div class="streaming-uploading"><h2>Importing your history…</h2><p>Keep this page open while we save your history.</p><div class="streaming-loading-track"><span class="animate-pulse" style="width:65%"></span></div><button type="button" data-streaming-action="cancel" class="streaming-text-action streaming-muted">Cancel import</button></div>`;
+        setWorkflow(`<div class="streaming-uploading"><h2>Importing your history…</h2><p>Keep this page open while we save your history.</p><div class="streaming-loading-track"><span class="animate-pulse" style="width:65%"></span></div><button type="button" data-streaming-action="cancel" class="streaming-text-action streaming-muted">Cancel import</button></div>`, 'committing');
         const waitForCommit = async () => {
           if (!session || epoch !== requestEpoch || dateSignal.signal.aborted) return;
           try {
@@ -910,6 +989,20 @@ function mountStreamingImport(app: HTMLElement) {
     const id = button.dataset.itemId;
     const item = id ? byId(id) : undefined;
     clearError();
+    if (action === 'retry-connection' && connectionId) {
+      connectionError = ''; render();
+      try { await request('/sync/connection/' + encodeURIComponent(connectionId), {method:'POST'}); void loadConnectionImport(); }
+      catch (error) { connectionError = error instanceof Error ? error.message : 'Could not check your history.'; render(); }
+      return;
+    }
+    if (action === 'close-loading') {
+      restoreController?.abort(); restoreController = null;
+      restoringSession = false;
+      const url = new URL(location.href);
+      for (const key of ['import', 'source']) url.searchParams.delete(key);
+      history.replaceState(history.state, '', url);
+      render(); return;
+    }
     if (action === "cancel-upload") { cancelUpload(); return; }
     if (action === "cancel") { await cancelSession(); return; }
     if (action === "restart") {
@@ -918,6 +1011,7 @@ function mountStreamingImport(app: HTMLElement) {
       const url = new URL(location.href);
       for (const key of ['import', 'source', 'connection']) url.searchParams.delete(key);
       history.replaceState(history.state, '', url);
+      if (app.dataset.connectionCreated === 'true') { location.reload(); return; }
       render(); return;
     }
     if (saving) return;
@@ -985,6 +1079,8 @@ function mountStreamingImport(app: HTMLElement) {
     }
     if (action === "open-search") { openRemap(item); return; }
     if (action === "outcome") {
+      // Keep edited automatic titles reachable after changing their progress choice.
+      progressSequence.sync([item.id]);
       const status = button.dataset.status as StreamingItem["outcome"]["status"];
       if (status === "completed") await confirmFinishDate(item, item.outcome.status !== 'completed');
       if (status === 'partial' && (!item.outcome.latest_season || !item.outcome.latest_episode)) {
@@ -1073,27 +1169,62 @@ function mountStreamingImport(app: HTMLElement) {
     if (remapped && wasPending) await advanceAfterLastMatch();
   });
 
+  function positionImport() {
+    if (positionedWorkflow || app.hidden) return;
+    positionedWorkflow = true;
+    const visit = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined;
+    if (app.dataset.connectionCreated !== 'true' && (visit?.type === 'reload' || visit?.type === 'back_forward')) return;
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (!app.isConnected || dateSignal.signal.aborted || app.hidden) return;
+      workflow.scrollIntoView({block:'start'});
+      const title = workflow.querySelector('h2');
+      if (title) { title.tabIndex = -1; title.focus({preventScroll:true}); }
+    }));
+  }
+
   async function loadConnectionImport() {
-    if (!connectionId || !app.isConnected || dateSignal.signal.aborted || session || loadingConnection) return;
+    if (!connectionId || !app.isConnected || dateSignal.signal.aborted || session || loadingConnection || cancelling) return;
     if (app.parentElement?.closest('[hidden]')) return;
     if (activeConnectionImport?.isConnected && activeConnectionImport !== app) return;
     const requestedConnection = new URL(location.href).searchParams.get('connection');
     if (requestedConnection && requestedConnection !== connectionId) return;
     loadingConnection = true;
+    if (checkingConnection || restoringSession) { activeConnectionImport = app; render(); positionImport(); }
     try {
-      const result = await request<{session: StreamingSession | null; checking: boolean}>(`/imports/connections/${encodeURIComponent(connectionId)}`, {signal: dateSignal.signal});
-      if (dateSignal.signal.aborted) return;
+      const result = await request<{session: StreamingSession | null; checking: boolean; error?: string; progress?: {current:number; total:number; message:string}}>(
+        '/imports/connections/' + encodeURIComponent(connectionId), {signal: dateSignal.signal});
+      if (dateSignal.signal.aborted || cancelling) return;
       if (result.session) {
         if (activeConnectionImport?.isConnected && activeConnectionImport !== app) return;
+        if (result.session.connection_id !== Number(connectionId) || result.session.source !== service)
+          throw new Error('This import belongs to another connection. Refresh to check this account again.');
         activeConnectionImport = app;
+        restoringSession = false; checkingConnection = false; connectionError = '';
         restoreSession(result.session);
-        render();
+        render(); positionImport();
         if (result.session.status === 'committing') void commit();
-      } else if (result.checking) {
-        pollTimer = window.setTimeout(loadConnectionImport, 1500);
+      } else if (result.checking || result.error) {
+        restoringSession = false; checkingConnection = true; connectionError = result.error || '';
+        if (result.progress) connectionProgress = result.progress;
+        activeConnectionImport = app;
+        render(); positionImport();
+        if (!connectionError) pollTimer = window.setTimeout(loadConnectionImport, 1500);
+      } else {
+        restoringSession = false; checkingConnection = false;
+        render();
+        if (app.dataset.connectionCreated === 'true') {
+          const url = new URL(location.href);
+          for (const key of ['import', 'source', 'connection']) url.searchParams.delete(key);
+          history.replaceState(history.state, '', url);
+          location.reload();
+        }
       }
     } catch (error) {
-      if (!dateSignal.signal.aborted) showError(error instanceof Error ? error.message : 'Could not load connection history.');
+      if (!dateSignal.signal.aborted && !cancelling) {
+        restoringSession = false; checkingConnection = true;
+        connectionError = error instanceof Error ? error.message : 'Could not load connection history.';
+        render(); positionImport();
+      }
     } finally { loadingConnection = false; }
   }
   document.addEventListener('connections:sync-updated', () => { void loadConnectionImport(); }, {signal: dateSignal.signal});
@@ -1106,14 +1237,19 @@ function mountStreamingImport(app: HTMLElement) {
       for (let parent = app.parentElement; parent; parent = parent.parentElement) {
         if (parent instanceof HTMLDetailsElement) parent.open = true;
       }
-      workflow.classList.remove('hidden'); uploadControls.classList.add('hidden');
-      workflow.innerHTML = '<div class="streaming-uploading" role="status"><h2>Loading your import…</h2></div>';
-      void request<StreamingSession>(`/imports/${encodeURIComponent(id)}`).then(updated => {
-        if (dateSignal.signal.aborted) return;
+      restoringSession = true; render(); positionImport();
+      restoreController = new AbortController();
+      const restoring = restoreController;
+      void request<StreamingSession>(`/imports/${encodeURIComponent(id)}`, {signal:restoring.signal}).then(updated => {
+        if (dateSignal.signal.aborted || restoring.signal.aborted) return;
+        restoringSession = false;
         restoreSession(updated); render();
         if (session?.status === 'preparing') void poll();
         if (session?.status === 'committing') void commit();
-      }).catch(error => { workflow.classList.add('hidden'); uploadControls.classList.remove('hidden'); showError(error.message); });
+      }).catch(error => {
+        if (dateSignal.signal.aborted || restoring.signal.aborted) return;
+        restoringSession = false; render(); showError(error.message);
+      });
     }
   }
 
@@ -1134,6 +1270,35 @@ function mountStreamingImport(app: HTMLElement) {
     void uploadFile(event.dataTransfer?.files?.[0]);
   });
 
+}
+
+/** Start onboarding in the same page using the canonical importer markup. */
+export function launchConnectionImport(connection: {id:number; type:string; name:string; sync_watched?:boolean}) {
+  if (!connection || !Number.isInteger(connection.id) || connection.id <= 0 || !['stremio', 'nuvio'].includes(connection.type) || connection.sync_watched === false) return false;
+  const host = document.querySelector<HTMLElement>('[data-connection-imports]');
+  const template = document.querySelector<HTMLTemplateElement>('[data-connection-import-template="' + connection.type + '"]');
+  if (!host || !template) return false;
+  const app = template.content.firstElementChild!.cloneNode(true) as HTMLElement;
+  const prefix = 'connection-' + connection.id;
+  for (const element of [app, ...app.querySelectorAll<HTMLElement>('*')]) {
+    for (const name of ['id','for','aria-controls','aria-labelledby']) {
+      const value = element.getAttribute(name);
+      if (value) element.setAttribute(name, value.replaceAll('connection--1', prefix));
+    }
+  }
+  app.dataset.connectionImport = String(connection.id);
+  app.dataset.serviceName = connection.name;
+  app.dataset.connectionPending = 'true';
+  app.dataset.connectionCreated = 'true';
+  const url = new URL(location.href);
+  url.searchParams.delete('import'); url.searchParams.delete('section');
+  url.searchParams.set('connection', String(connection.id)); url.searchParams.set('source', connection.type);
+  history.replaceState(history.state, '', url);
+  host.append(app);
+  const form = document.querySelector<HTMLElement>('[data-import-start-connection]');
+  if (form) form.hidden = true;
+  mountStreamingImport(app);
+  return true;
 }
 
 function mountStreamingImports() { document.querySelectorAll<HTMLElement>("[data-streaming-import]").forEach(mountStreamingImport); }

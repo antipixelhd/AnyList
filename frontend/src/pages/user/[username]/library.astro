@@ -38,7 +38,7 @@ const sections = profileMediaGroups(entries, profile?.combine_lists !== false);
           <div class="library-grid">
             {section.items.map(entry => {
               const image = responsiveArtwork(entry.poster, {size:'w342', sizes:'(max-width:650px) 30vw, 150px', route:'direct'});
-              return <article class="library-card" data-library-entry>
+              return <article class="library-card" data-library-entry data-title={entry.title}>
                 <a class="library-poster" href={`/title/${entry.id}`} aria-label={entry.title} title={entry.title}>
                   {image?.src && <img src={image.src} srcset={image.srcset} sizes={image.sizes} alt="" loading="lazy"/>}
                 </a>
@@ -57,6 +57,7 @@ const sections = profileMediaGroups(entries, profile?.combine_lists !== false);
   </div>
 </Tracker>
 <script>
+import {showActionFailure} from '../../../lib/action-failure';
 let libraryListeners: AbortController;
 document.addEventListener('astro:page-load', () => {
   libraryListeners?.abort();
@@ -87,8 +88,7 @@ document.addEventListener('astro:page-load', () => {
       page.querySelector<HTMLElement>('.library-sections')!.hidden = !hasEntries;
       page.querySelector<HTMLElement>('[data-library-empty]')!.hidden = hasEntries;
     } catch (cause) {
-      error.textContent = cause instanceof Error ? cause.message : 'Could not remove this title from your library.';
-      error.hidden = false;
+      showActionFailure('library',button.closest<HTMLElement>('[data-library-entry]')?.dataset.title,cause);
       button.disabled = false;
     }
   }, {signal: libraryListeners.signal});

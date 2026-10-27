@@ -518,6 +518,190 @@ class MultipleStreamConnectionsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(recreated.provider_account_id, "remote-a")
         self.assertEqual(await self._count(StreamBaseline), 0)
 
+    async def _import_draft(self, conn=None, *, status='review', user_id=None):
+        from uuid import uuid4
+        from datetime import timedelta
+        from core import netflix_sessions
+        now = netflix_sessions._now()
+        draft = NetflixImportSession(id=str(uuid4()), user_id=user_id or (conn.user_id if conn else self.owner.id),
+            status=status, phase='review', progress={}, revision=0, source_csv=b'private-source',
+            payload={'source': conn.type, 'connection_id': conn.id, 'identity_version': conn.identity_version}
+                if conn else {'source': 'netflix'},
+            created_at=now, updated_at=now, expires_at=now + timedelta(days=7))
+        self.db.add(draft)
+        await self.db.flush()
+        return draft
+
+    async def test_connection_delete_cancels_only_its_active_drafts(self):
+        from routers.netflix_import import _load_owned
+        conn = await self._connection(provider='stremio', account_id='remove-me')
+        peer = await self._connection(provider='stremio', account_id='keep-me')
+        own = [await self._import_draft(conn, status=status) for status in ('preparing', 'review', 'committing', 'failed')]
+        peer_draft = await self._import_draft(peer)
+        file_draft = await self._import_draft()
+        foreign_draft = await self._import_draft(conn, user_id=self.other.id)
+        committed = await self._import_draft(conn, status='committed')
+        self.db.add(StreamBaseline(connection_id=conn.id, user_id=self.owner.id,
+            snapshot={'import_session_id': own[1].id}, approved=False))
+        self.db.add(StreamBaseline(connection_id=peer.id, user_id=self.owner.id,
+            snapshot={'import_session_id': peer_draft.id}, approved=False))
+        await self.db.commit()
+        from core import netflix_sessions
+        self.addCleanup(lambda: netflix_sessions._cancelled.difference_update(d.id for d in own))
+        with patch.object(stremio, 'logout', AsyncMock()):
+            await auth.delete_connection(conn.id, db=self.db, current_user=self.owner)
+        for draft in own:
+            await self.db.refresh(draft)
+            self.assertEqual(draft.status, 'cancelled')
+            self.assertEqual(draft.payload, {})
+            self.assertIsNone(draft.source_csv)
+            self.assertEqual(draft.revision, 1)
+            self.assertEqual((await _load_owned(self.db, draft.id, self.owner.id)).status, 'cancelled')
+        for draft in (peer_draft, file_draft, foreign_draft):
+            await self.db.refresh(draft)
+            self.assertEqual(draft.status, 'review')
+        self.assertEqual(committed.status, 'committed')
+        self.assertIsNotNone(await self.db.get(StreamBaseline, peer.id))
+
+    async def test_removal_signals_only_its_own_in_process_commit(self):
+        from core import netflix_sessions
+        from core.connection_imports import signal_connection_import_cancellation
+        conn = await self._connection(provider='stremio', account_id='one')
+        peer = await self._connection(provider='stremio', account_id='two')
+        own = await self._import_draft(conn, status='committing')
+        other = await self._import_draft(peer, status='committing')
+        await self.db.commit()
+        with patch.object(netflix_sessions, '_committing', {own.id, other.id}), \
+             patch.object(netflix_sessions, '_cancelled', set()):
+            await signal_connection_import_cancellation(self.db, conn)
+            self.assertEqual(netflix_sessions._cancelled, {own.id})
+
+    async def test_cancellation_during_handoff_rolls_back_the_import(self):
+        from contextlib import asynccontextmanager
+        from collections import defaultdict
+        from core import netflix_sessions
+        conn = await self._connection(provider='stremio', account_id='one')
+        draft = await self._import_draft(conn, status='committing')
+        draft.idempotency_key = 'cancel-at-final-commit'
+        self.db.add(StreamBaseline(connection_id=conn.id, user_id=self.owner.id,
+            snapshot={'import_session_id': draft.id}, approved=False))
+        await self.db.commit()
+        draft_id, owner_id = draft.id, self.owner.id
+        @asynccontextmanager
+        async def session():
+            try:
+                yield self.db
+            except BaseException:
+                await self.db.rollback()
+                raise
+        async def cancel_at_handoff(db, current):
+            netflix_sessions._cancelled.add(current.id)
+        with patch.object(netflix_sessions, 'async_sessionmaker', return_value=session), \
+             patch.object(netflix_sessions, '_apply_import', AsyncMock(return_value=defaultdict(int))), \
+             patch('core.connection_imports.finish_import', AsyncMock(side_effect=cancel_at_handoff)), \
+             patch.object(netflix_sessions, '_pull_committed_import', AsyncMock()) as pull, \
+             patch.object(netflix_sessions, '_cancelled', set()):
+            await netflix_sessions._commit_session(draft_id, owner_id, 'cancel-at-final-commit')
+            pull.assert_not_awaited()
+        refreshed = await self.db.get(NetflixImportSession, draft_id, populate_existing=True)
+        self.assertEqual(refreshed.status, 'cancelled')
+        self.assertEqual(refreshed.payload, {})
+        self.assertIsNone(refreshed.result)
+
+    async def test_removal_is_successful_if_cancelled_worker_already_deleted_connection(self):
+        from contextlib import asynccontextmanager
+        conn = await self._connection(provider='stremio', account_id='one')
+        await self.db.commit()
+        @asynccontextmanager
+        async def already_removed(connection_id):
+            await self.db.delete(conn)
+            await self.db.commit()
+            yield
+        with patch.object(stremio, 'connection_lock', already_removed):
+            response = await auth.delete_connection(conn.id, db=self.db, current_user=self.owner)
+        self.assertEqual(response, {'status': 'deleted'})
+
+    async def test_readded_account_has_no_old_draft_and_creates_a_new_session(self):
+        from core import netflix_sessions
+        from core.connection_imports import stage_first_snapshot
+        from routers.netflix_import import get_connection_import
+        conn = await self._connection(provider='stremio', account_id='readded')
+        old = await self._import_draft(conn)
+        self.db.add(StreamBaseline(connection_id=conn.id, user_id=self.owner.id,
+            snapshot={'import_session_id': old.id}, approved=False))
+        await self.db.commit()
+        with patch.object(stremio, 'logout', AsyncMock()):
+            await auth.delete_connection(conn.id, db=self.db, current_user=self.owner)
+        fresh = await self._connection(provider='stremio', account_id='readded')
+        await self.db.commit()
+        # SQLite may reuse the deleted integer ID: a new row still must not revive its draft.
+        response = await get_connection_import(fresh.id, self.db, self.owner)
+        self.assertIsNone(response['session'])
+        with patch('core.connection_imports.prepare_items', AsyncMock(return_value=[{'id': 'fresh-progress'}])), \
+             patch('core.connection_imports.remove_covered_items', AsyncMock(side_effect=lambda db, uid, items: items)), \
+             patch.object(netflix_sessions, 'hydrate_existing_items', AsyncMock()):
+            await stage_first_snapshot(self.db, fresh, [], [], [], {}, 'fixture')
+        baseline = await self.db.get(StreamBaseline, fresh.id)
+        self.assertNotEqual(baseline.snapshot['import_session_id'], old.id)
+        new = await self.db.get(NetflixImportSession, baseline.snapshot['import_session_id'])
+        self.assertEqual(new.payload['connection_id'], fresh.id)
+        self.assertEqual(new.payload['items'], [{'id': 'fresh-progress'}])
+
+    async def test_changed_connection_identity_cancels_its_draft(self):
+        conn = await self._connection(provider='nuvio', account_id='old-profile')
+        draft = await self._import_draft(conn)
+        await reset_stream_connection_state(self.db, conn)
+        await self.db.commit()
+        self.assertEqual(draft.status, 'cancelled')
+        self.assertEqual(conn.identity_version, 1)
+
+    async def test_import_step_one_covers_queued_checks_and_reports_failure(self):
+        from routers.netflix_import import get_connection_import
+        conn = await self._connection(provider='stremio', account_id='queued')
+        response = await get_connection_import(conn.id, self.db, self.owner)
+        self.assertTrue(response['checking'])
+        self.assertEqual(response['progress']['message'], 'Waiting to start…')
+        self.db.add(SyncJob(user_id=self.owner.id, connection_id=conn.id, source='stremio',
+            status=SyncStatus.failed, error_message='Provider unavailable', created_at=datetime(2026, 9, 1), updated_at=datetime(2026, 9, 1)))
+        await self.db.flush()
+        response = await get_connection_import(conn.id, self.db, self.owner)
+        self.assertFalse(response['checking'])
+        self.assertEqual(response['error'], 'Provider unavailable')
+        job = await self.db.scalar(select(SyncJob).where(SyncJob.connection_id == conn.id))
+        job.status = SyncStatus.running
+        job.current_step = 'Comparing your history'
+        job.processed_items = 3
+        job.total_items = 10
+        await self.db.flush()
+        response = await get_connection_import(conn.id, self.db, self.owner)
+        self.assertTrue(response['checking'])
+        self.assertEqual(response['progress'], {'message':'Comparing your history','current':3,'total':10})
+        conn.sync_watched = False
+        response = await get_connection_import(conn.id, self.db, self.owner)
+        self.assertFalse(response['checking'])
+        self.assertNotIn('error', response)
+
+    async def test_wrong_connection_or_generation_cannot_resume_draft(self):
+        from routers.netflix_import import get_connection_import, _load_owned
+        conn = await self._connection(provider='stremio', account_id='one')
+        peer = await self._connection(provider='stremio', account_id='two')
+        draft = await self._import_draft(conn)
+        baseline = StreamBaseline(connection_id=peer.id, user_id=self.owner.id,
+            snapshot={'import_session_id': draft.id}, approved=False)
+        self.db.add(baseline)
+        await self.db.commit()
+        self.assertIsNone((await get_connection_import(peer.id, self.db, self.owner))['session'])
+        with self.assertRaises(HTTPException) as wrong:
+            await _load_owned(self.db, draft.id, self.owner.id)
+        self.assertEqual(wrong.exception.status_code, 410)
+        baseline.connection_id = conn.id
+        conn.identity_version += 1
+        await self.db.commit()
+        self.assertIsNone((await get_connection_import(conn.id, self.db, self.owner))['session'])
+        with self.assertRaises(HTTPException) as changed:
+            await _load_owned(self.db, draft.id, self.owner.id)
+        self.assertEqual(changed.exception.status_code, 410)
+
     async def test_watch_fanout_delivers_to_each_stremio_account(self):
 
         first = MediaServerConnection(

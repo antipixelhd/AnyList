@@ -158,6 +158,8 @@ class StremioSyncTests(unittest.IsolatedAsyncioTestCase):
                 "watched": watched,
                 "video_id": "tt0944947:1:2",
                 "timeOffset": 120_000,
+                "timeWatched": 600_000,
+                "overallTimeWatched": 99_000_000,
                 "duration": 3_600_000,
                 "lastWatched": "2026-07-26T12:00:00Z",
             },
@@ -177,8 +179,25 @@ class StremioSyncTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual((progress[0]["season"], progress[0]["episode"]), (1, 2))
         self.assertEqual(progress[0]["position"], 120_000)
+        self.assertEqual(progress[0]["watched_time"], 600_000)
         self.assertTrue(all(row['date_shared'] for row in watched_records))
         self.assertEqual(removed, set())
+
+    async def test_movie_watch_time_is_not_replaced_with_offset_or_overall_time(self):
+        from core.connection_imports import observations
+        for counter in (None, 0, 'invalid', float('inf')):
+            with self.subTest(counter=counter):
+                item = {'_id': 'tt0133093', 'type': 'movie', 'name': 'Movie', 'state': {
+                    'timeOffset': 3500000, 'duration': 3600000, 'timeWatched': counter,
+                    'overallTimeWatched': 99000000}}
+                _, watched, progress, _ = await server_sync._stremio_records([item])
+                self.assertEqual(progress[0]['position'], 3500000)
+                self.assertEqual(progress[0]['watched_time'], 0)
+                self.assertEqual(observations(watched, progress), [])
+        item['state'].update(timeOffset=0, timeWatched=2520000)
+        _, _, progress, _ = await server_sync._stremio_records([item])
+        self.assertEqual(progress[0]['position'], 0)
+        self.assertEqual(progress[0]['watched_time'], 2520000)
 
     async def test_series_stale_resume_offset_is_ignored_when_current_episode_is_watched(self) -> None:
         videos = [

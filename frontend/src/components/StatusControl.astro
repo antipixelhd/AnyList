@@ -15,7 +15,7 @@ const {mediaId,status}=Astro.props;
 import { showMenu, hideMenu } from '../lib/ui-motion';
 import {editorStore,seedEditorPage} from '../lib/editor-store';
 import {statuses} from '../lib/tracker';
-import {showToast} from '../lib/toasts';
+import {showActionFailure} from '../lib/action-failure';
 let pageListeners: AbortController;
 document.addEventListener('astro:page-load', () => {
 pageListeners?.abort();
@@ -46,8 +46,7 @@ document.querySelectorAll<HTMLElement>('[data-status-control]').forEach(control=
       const id=Number(control.dataset.media);
       const title=editorStore.find(id)||await editorStore.load(id);
       await editorStore.write(title,{status});
-      showToast('List status updated.','success');
-    }catch(e){showToast((e as Error).message,'error');arrow.focus();}
+    }catch(e){showActionFailure('status',editorStore.find(Number(control.dataset.media))?.title,e);arrow.focus();}
     finally{buttons.forEach(b=>b.disabled=false);}
   }));
   document.addEventListener('anylist:editor-state',event=>{

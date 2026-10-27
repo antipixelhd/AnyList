@@ -22,7 +22,10 @@ function picker(score, onScore) {
     painted: null,
     closing: [],
     opened: 0,
+    failures: [],
+    markFailureHandled() {},
   };
+  context.showActionFailure = (...args) => context.failures.push(args);
   context.paint = score => { context.painted = score; };
   context.showDialog = () => { context.opened++; };
   context.closeDialog = () => { context.closing.push(context.remove.hidden); };
@@ -68,8 +71,9 @@ test('failed asynchronous callback rating restores the previous score and reopen
   assert.equal(detail.score, null);
   assert.equal(context.painted, null);
   assert.equal(context.remove.hidden, true);
-  assert.equal(context.error.hidden, false);
-  assert.equal(context.error.textContent, 'Save failed');
+  assert.equal(context.error.hidden, true);
+  assert.equal(context.failures[0][0], 'rating');
+  assert.equal(context.failures[0][1], 'A show');
 });
 
 test('synchronous callback failure leaves the picker open with its previous rating', async () => {
@@ -79,5 +83,6 @@ test('synchronous callback failure leaves the picker open with its previous rati
   assert.equal(context.savedScore, 7);
   assert.equal(detail.score, 7);
   assert.equal(context.remove.hidden, false);
-  assert.equal(context.error.hidden, false);
+  assert.equal(context.error.hidden, true);
+  assert.equal(context.failures[0][0], 'rating');
 });

@@ -2,21 +2,21 @@
   color: var(--blue);
   background: color-mix(in srgb, var(--blue) 17%, var(--panel));
 }
-.tracker[data-theme-active] .entry-row:is(:hover, :has(:focus-visible)) {
-  background: color-mix(in srgb, var(--blue) 14%, var(--panel));
+/* Opaque list highlights preserve the profile accent and hide the cover beneath editing controls. */
+.tracker #entry-groups .entry-row:not([data-editor-deselected]):is(:hover,:has(:focus-visible)) {
+  --text:#fff;
+  --text-data:#fff;
+  --muted:#fff;
+  --bright:#fff;
+  background:var(--blue);
+  color:#fff;
 }
-.tracker[data-theme-active] .entry-thumbnail .row-menu,
-.tracker[data-theme-active] .entry-thumbnail .row-menu:is(:hover, :focus-visible, :focus, :active) {
-  background: color-mix(in srgb, var(--blue) 85%, transparent);
-}
-@media (hover: none), (max-width: 650px) {
-  .tracker[data-theme-active] .entry-thumbnail .row-menu,
-  .tracker[data-theme-active] .entry-thumbnail .row-menu:hover {
-    background: transparent;
-  }
-  .tracker[data-theme-active] .entry-thumbnail .row-menu:is(:focus-visible, :focus, :active) {
-    background: color-mix(in srgb, var(--blue) 85%, transparent);
-  }
+.tracker #entry-groups .entry-row:not([data-editor-deselected]):is(:hover,:has(:focus-visible)) :is(a,button,.entry-score,.entry-progress,.entry-type,.unwatched-indicator) { color:#fff; }
+.tracker #entry-groups .entry-row:not([data-editor-deselected]):is(:hover,:has(:focus-visible)) .entry-cover,
+.tracker #entry-groups .entry-row:not([data-editor-deselected]):is(:hover,:has(:focus-visible)) .entry-thumbnail::after { opacity:0; }
+.tracker #entry-groups .entry-row:not([data-editor-deselected]):is(:hover,:has(:focus-visible)) .row-menu {
+  background:color-mix(in srgb,var(--blue) 88%,black);
+  outline:none;
 }
 .tracker[data-theme-active] .settings-app .settings-content input:focus,
 .tracker[data-theme-active] .settings-app .settings-content select:focus,
@@ -39,4 +39,10 @@
 .tracker[data-theme-active] .route-progress { background: var(--blue); }
 .tracker[data-theme-active] .topbar.appbar-fade-capable.appbar-at-top:not(.appbar-hidden) .appbar-nav a.active {
   color: var(--blue);
+}
+
+/* Match the gentle list highlight without delaying pointer feedback. */
+@media (prefers-reduced-motion:no-preference) {
+  .tracker #entry-groups .entry-row { transition:background-color .15s ease,color .15s ease; }
+  .tracker #entry-groups .entry-row :is(a,.entry-score,.entry-progress,.entry-type,.unwatched-indicator) { transition:color .15s ease; }
 }

@@ -18,6 +18,17 @@ def show():
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_existing_history_import_uses_earliest_movie_completion(self):
+        from datetime import date
+        from core.tracking_import import _imported_finish_date
+        from models.base import MediaType
+
+        days = [date(2022, 6, 4), date(2020, 3, 2)]
+        self.assertEqual(_imported_finish_date(MediaType.movie, days, days), days[1])
+        self.assertEqual(_imported_finish_date(MediaType.movie, days, [days[0]]), days[0],
+                         'an earlier incomplete play does not establish completion')
+        self.assertEqual(_imported_finish_date(MediaType.series, days), days[0])
+
     def test_merged_source_aliases_keep_the_earliest_equal_strength_episode_watch(self):
         from core.streaming_evidence import prepare_evidence
         from core.streaming_history import WatchObservation
@@ -124,6 +135,22 @@ class EvidenceTests(unittest.TestCase):
         self.assertIsNone(completion_evidence(item)['finish_date'])
         item['episodes'].append({'season_number': 2, 'episode_number': 6, 'dates': ['2020-02-01']})
         self.assertEqual(completion_evidence(item)['finish_date'], '2020-02-01')
+
+    def test_inferred_finish_only_bypasses_review_for_default_completed_titles(self):
+        partial = show()
+        partial['seasons'][-1]['catalogue_complete'] = True
+        partial['episodes'].append({'season_number': 2, 'episode_number': 6, 'dates': ['2020-02-01']})
+        evidence = completion_evidence(partial)
+        self.assertEqual(evidence['finish_date'], '2020-02-01')
+        self.assertFalse(evidence['default_completed'])
+        movie = {'kind': 'movie', 'source_dates': ['2020-01-03', '2020-01-01'],
+                 'suggested_movie_status': 'dropped', 'requires_watch_confirmation': True}
+        evidence = completion_evidence(movie)
+        self.assertEqual(evidence['finish_date'], '2020-01-01')
+        self.assertFalse(evidence['default_completed'])
+        movie['suggested_movie_status'] = 'completed'
+        movie['requires_watch_confirmation'] = False
+        self.assertTrue(completion_evidence(movie)['default_completed'])
 
     def test_season_card_uses_latest_season_evidence_even_when_not_final_episode(self):
         events = activity_plan(show())

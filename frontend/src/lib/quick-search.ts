@@ -2,6 +2,9 @@
 import { editorStore, type EditorTitle } from './editor-store';
   import { showDialog, closeDialog } from './ui-motion';
 import { responsiveArtwork } from './responsive-artwork';
+import { quickSearchShortcut } from './quick-search-shortcut';
+import { wireSearchWordCapitalization } from './search-word-capitalization';
+import { mountQuickSearchLayout } from './quick-search-layout';
 import {quickSearchRequests,rankCombinedMedia,readQuickTitles,createQuickSearchReader,visibleQuickSearchSections,availableQuickSearchTabs,resolvedQuickSearchTab,steppedQuickSearchTab,mergeContributorResults,type SearchSection} from './quick-search-data';
 import { animate } from 'motion/mini';
 
@@ -34,7 +37,9 @@ export function mountQuickSearch() {
   type ContributorResult={key:string;name:string;image?:string|null;roles:string[];url:string};
   const closeButton = dialog?.querySelector<HTMLButtonElement>('[data-quick-search-close]');
   const input = dialog?.querySelector<HTMLInputElement>('#quick-search-input');
+  if (input) wireSearchWordCapitalization(input, pageListeners.signal);
   const resultShell = dialog?.querySelector<HTMLElement>('.quick-search-results');
+  const scheduleLayout = resultShell ? mountQuickSearchLayout(resultShell, pageListeners.signal) : () => {};
   const state = dialog?.querySelector<HTMLElement>('[data-search-state]');
   const announcement = dialog?.querySelector<HTMLElement>('[data-search-announcement]');
   const progress = dialog?.querySelector<HTMLElement>('[data-search-progress]');
@@ -162,6 +167,7 @@ export function mountQuickSearch() {
     }
     if (resultShell) {
       resultShell.hidden = !visible.length;
+      scheduleLayout();
     }
     dialog!.style.setProperty('--search-columns',String(Math.max(1,Math.min(4,visible.length))));
     dialog!.toggleAttribute('data-search-expanded',visible.length>1&&!mobile.matches);
@@ -256,9 +262,8 @@ export function mountQuickSearch() {
     if (!title || !dialog?.open) return;
     const image = button.closest('.quick-search-result')?.querySelector<HTMLImageElement>('img');
     editorStore.warmArtwork(title, image?.currentSrc || image?.src);
-    dialog.close();
-    const opener=mobile.matches?document.querySelector<HTMLElement>('[data-mobile-navigation] .mobile-navigation-trigger')||openButton:openButton;
-    document.dispatchEvent(new CustomEvent('anylist:open-editor', {detail:{mediaId:title.id, title, opener}}));
+    // Keep results underneath the editor: cancel returns here; saving closes both.
+    document.dispatchEvent(new CustomEvent('anylist:open-editor', {detail:{mediaId:title.id, title, opener:button}}));
   }, {signal: pageListeners.signal});
   const prepareEditor = (event: Event) => {
     const button = (event.target as Element).closest<HTMLButtonElement>('[data-search-add]');
@@ -269,7 +274,18 @@ export function mountQuickSearch() {
   };
   resultShell?.addEventListener('pointerover', prepareEditor, {signal:pageListeners.signal});
   resultShell?.addEventListener('focusin', prepareEditor, {signal:pageListeners.signal});
-  dialog?.addEventListener('click', event => { if (event.target === dialog) void closeDialog(dialog); },{signal:pageListeners.signal});
+  // A click can target the dialog after a drag starts in a child and ends outside it.
+  // Dismiss only when the pointer also started on the backdrop.
+  let pointerStartedOnBackdrop = false;
+  dialog.addEventListener('pointerdown', event => {
+    pointerStartedOnBackdrop = event.isPrimary && event.button === 0 && event.target === dialog;
+  }, {signal:pageListeners.signal});
+  dialog.addEventListener('pointercancel', () => { pointerStartedOnBackdrop = false; }, {signal:pageListeners.signal});
+  dialog.addEventListener('click', event => {
+    const dismiss = pointerStartedOnBackdrop && event.target === dialog;
+    pointerStartedOnBackdrop = false;
+    if (dismiss) void closeDialog(dialog);
+  }, {signal:pageListeners.signal});
   dialog.addEventListener('keydown', event => {
     if (event.key !== 'Escape') return;
     event.preventDefault();
@@ -284,7 +300,7 @@ export function mountQuickSearch() {
     if (announcement) announcement.textContent = '';
     showState('');
     updateTabs();
-    timer = window.setTimeout(search, 60);
+    timer = window.setTimeout(search, 300);
   },{signal:pageListeners.signal});
   tabButtons.forEach(button=>button.addEventListener('click',()=>{
     const direction=Number(button.dataset.searchTabStep);
@@ -316,6 +332,10 @@ export function mountQuickSearch() {
   },{signal:pageListeners.signal});
   pageListeners.signal.addEventListener('abort',()=>{clearTimeout(timer);clearTimeout(progressTimer);controller?.abort();tabAnimations.forEach(control=>control.cancel());},{once:true});
   document.addEventListener('keydown', event => {
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); open(); }
+    const action = quickSearchShortcut(event, dialog.open, !!document.querySelector('dialog[open]:not([data-quick-search])'));
+    if (!action) return;
+    event.preventDefault();
+    if (action === 'close') void closeDialog(dialog, 'cancel');
+    else if (action === 'open') open();
   }, { signal: pageListeners.signal });
 }

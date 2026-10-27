@@ -1,5 +1,6 @@
 import { bindBrowseCardActions, bindBrowseCardTouch, paintBrowseCardState, type BrowseItem } from './browse-card-actions';
 import { formatDate } from './date-time';
+import { wireSearchWordCapitalization } from './search-word-capitalization';
 import { STREAMING_REGION_COOKIE, deviceStreamingCountry, streamingRegionPreference } from './streaming-region';
 import {
   isCategoryView,
@@ -60,6 +61,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   const searchClear = find<HTMLButtonElement>("[data-browse-search-clear]");
   const field = (name: string) =>
     form.elements.namedItem(name) as HTMLInputElement | HTMLSelectElement;
+  wireSearchWordCapitalization(field('q') as HTMLInputElement, signal);
   const grid = find<HTMLElement>("[data-browse-results]");
   const sections = find<HTMLElement>("[data-browse-sections]");
   const paintRanges = initializeBrowseRanges(form, signal);
@@ -85,7 +87,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     find<HTMLElement>("#browse-data").textContent || "{}",
   );
   let payload: Payload = initial.payload;
-  let displayedCategories = !sections.hidden;
+  let displayedCategories = initial.pending ? initial.categories : !sections.hidden;
   let facets: { genres: Facet[]; providers: Facet[] } = initial.facets;
   const responseCache = createBrowseCache<Payload | SectionsPayload>();
   const prediction=createPrediction<Payload | SectionsPayload>(async(path,requestSignal)=>json(path,{signal:requestSignal}),signal);
@@ -139,9 +141,9 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     : `browse?${browseRequestParams(values)}`;
   const initialValues = params();
   initialValues.set('page', '1');
-  if (error.hidden) responseCache.set(requestPath(initialValues), displayedCategories
+  if (!initial.pending && error.hidden) responseCache.set(requestPath(initialValues), displayedCategories
     ? {sections: initial.sections, notice: payload.notice} : payload);
-  facetCache.set(`${field('type').value}:${field('region').value}`, facets);
+  if (!initial.pending) facetCache.set(`${field('type').value}:${field('region').value}:${field('genres').value}`, facets);
   const updateUrl = () => {
     const values = params();
     values.delete('unfiltered');
@@ -569,7 +571,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     }
     searchClear.hidden = !field("q").value;
     // Update immediately; only network requests from typing/dragging are debounced.
-    const debounce = event?.type === 'input' ? 100 : 0;
+    const debounce = event?.type === 'input' ? 300 : 0;
     void load(false, debounce);
   }
   function clear() {
@@ -869,12 +871,14 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
         }
         select.value = detected;
         refreshSelect(select);
-        void loadFacets();
-        changed();
+        if (!initial.pending) { void loadFacets(); changed(); }
       }
     }
   }
-  if (!displayedCategories && payload.has_more && error.hidden && sentinel.getBoundingClientRect().top < innerHeight + 260) void load(false);
+  if (initial.pending) {
+    void loadFacets();
+    void load();
+  } else if (!displayedCategories && payload.has_more && error.hidden && sentinel.getBoundingClientRect().top < innerHeight + 260) void load(false);
   if (error.hidden === false) suspended = true;
   if (
     field("start").value ||

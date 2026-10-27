@@ -14,30 +14,59 @@ from sqlalchemy import select
 
 from core import netflix_sessions, tmdb
 from core.streaming_evidence import prepare_evidence
-from core.streaming_history import WatchObservation, MIN_WATCH_SECONDS
+from core.streaming_history import WatchObservation, MIN_WATCH_SECONDS, observed_watch_seconds
 from models import Media, MediaServerConnection, NetflixImportSession, Show, User, WatchEvent
 from models.tracking import StreamBaseline, TrackedEntry
 
 
+def _connection_drafts(conn):
+    return select(NetflixImportSession).where(
+        NetflixImportSession.user_id == conn.user_id,
+        NetflixImportSession.payload['connection_id'].as_integer() == conn.id,
+        NetflixImportSession.status.in_(('preparing', 'review', 'committing', 'failed')),
+    )
+
+
+async def signal_connection_import_cancellation(db, conn):
+    """Let an in-process commit roll back before removal waits for the user lock."""
+    ids = await db.scalars(_connection_drafts(conn).with_only_columns(NetflixImportSession.id)
+                           .where(NetflixImportSession.status == 'committing'))
+    netflix_sessions._cancelled.update(session_id for session_id in ids if session_id in netflix_sessions._committing)
+
+
+async def cancel_connection_imports(db, conn):
+    """Called under the user lock before this connection's snapshot is cleared."""
+    drafts = (await db.scalars(_connection_drafts(conn).with_for_update())).all()
+    for draft in drafts:
+        draft.status = 'cancelled'
+        draft.phase = 'complete'
+        draft.source_csv = None
+        draft.payload = {}
+        draft.error_message = None
+        draft.progress = {'current': 0, 'total': 0, 'message': 'Import cancelled'}
+        draft.revision += 1
+        draft.updated_at = netflix_sessions._now()
+
+
 def observations(watched, progress):
-    """A watched flag is explicit evidence; an offset alone must meet the ratio."""
+    """Prefer actual viewing time when available; watched flags remain explicit evidence."""
     result = []
     for complete, rows in ((True, watched), (False, progress)):
         for row in rows:
             if row.get('content_type') not in ('movie', 'series'):
                 continue
             try:
-                position = max(0., float(row.get('position') or 0) / 1000)
+                seconds = observed_watch_seconds(row) if not complete else 0.
                 duration = max(0., float(row.get('duration') or 0) / 1000)
                 season = int(row['season']) if row.get('season') is not None else None
                 episode = int(row['episode']) if row.get('episode') is not None else None
             except (ValueError, TypeError, OverflowError):
                 continue
-            if not isfinite(position) or not isfinite(duration):
+            if not isfinite(seconds) or not isfinite(duration):
                 continue
             if row['content_type'] == 'series' and (not season or season < 1 or not episode or episode < 1):
                 continue
-            if not complete and (duration <= 0 or position < MIN_WATCH_SECONDS):
+            if not complete and (duration <= 0 or seconds < MIN_WATCH_SECONDS):
                 continue
             from core.watch_dates import normalize_watch_datetime
             stamp = normalize_watch_datetime(row.get('watched_at') if complete else row.get('last_watched'))
@@ -46,7 +75,7 @@ def observations(watched, progress):
             result.append((row, WatchObservation(
                 row=len(result) + 1, source_title=str(row.get('title') or row['content_id']),
                 watched_at=day, season_number=season, episode_number=episode,
-                watched_seconds=None if complete else position,
+                watched_seconds=None if complete else seconds,
                 duration_seconds=duration or None, completed_evidence=complete,
             )))
     return result
@@ -274,12 +303,13 @@ async def apply_resume(db, session, item, root, entry, show, episode_mappings):
     for row in rows:
         try:
             seconds, duration = float(row.get('position') or 0) / 1000, float(row.get('duration') or 0) / 1000
+            watched_seconds = observed_watch_seconds(row)
             position = int(row.get('season') or 0), int(row.get('episode') or 0)
         except (ValueError, TypeError, OverflowError):
             continue
-        if not isfinite(seconds) or not isfinite(duration) or seconds < MIN_WATCH_SECONDS or duration <= 0:
+        if not isfinite(seconds) or not isfinite(duration) or seconds <= 0 or watched_seconds < MIN_WATCH_SECONDS or duration <= 0:
             continue
-        if completed_viewing({'watched_seconds': seconds, 'duration_seconds': duration}):
+        if completed_viewing({'watched_seconds': watched_seconds, 'duration_seconds': duration}):
             continue
         media = root
         if show:
@@ -307,7 +337,8 @@ async def finish_import(db, session, *, validate=False):
     if connection_id is None:
         return
     conn = await db.get(MediaServerConnection, connection_id, populate_existing=True)
-    if not conn or conn.user_id != session.user_id or conn.identity_version != payload.get('identity_version'):
+    if (not conn or conn.user_id != session.user_id or conn.type != payload.get('source')
+            or conn.identity_version != payload.get('identity_version')):
         if validate:
             raise ValueError('This connection changed. Cancel this import and sync the connection again.')
         return

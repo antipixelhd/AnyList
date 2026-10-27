@@ -222,7 +222,7 @@ def _summary(items: list[dict], parsed_counts: dict | None = None, errors: list 
 
 
 async def _load_owned(db: AsyncSession, session_id: str, user_id: int, *, lock: bool = False) -> NetflixImportSession:
-    query = select(NetflixImportSession).where(NetflixImportSession.id == session_id, NetflixImportSession.user_id == user_id)
+    query = select(NetflixImportSession).where(NetflixImportSession.id == session_id, NetflixImportSession.user_id == user_id).execution_options(populate_existing=True)
     if lock:
         query = query.with_for_update().execution_options(populate_existing=True)
     session = (await db.execute(query)).scalar_one_or_none()
@@ -239,6 +239,12 @@ async def _load_owned(db: AsyncSession, session_id: str, user_id: int, *, lock: 
         session.phase = "complete"
         await db.commit()
         raise HTTPException(status_code=410, detail="Import session expired")
+    if session.status in ('preparing', 'review', 'committing', 'failed') and (session.payload or {}).get('connection_id') is not None:
+        from core.connection_imports import finish_import
+        try:
+            await finish_import(db, session, validate=True)
+        except ValueError as exc:
+            raise HTTPException(status_code=410, detail='This connection import is no longer available.') from exc
     return session
 
 
@@ -364,16 +370,28 @@ async def get_connection_import(
     baseline = await db.get(StreamBaseline, connection_id)
     session_id = (baseline.snapshot or {}).get('import_session_id') if baseline else None
     session = await db.get(NetflixImportSession, session_id) if session_id else None
-    if session and session.user_id == current_user.id and session.status in ('review', 'committing', 'failed'):
+    payload = (session.payload or {}) if session else {}
+    if (session and session.user_id == current_user.id and session.status in ('review', 'committing', 'failed')
+            and payload.get('connection_id') == conn.id and payload.get('source') == conn.type
+            and payload.get('identity_version') == conn.identity_version):
         if session.expires_at > netflix_sessions._now():
             return {'session': _public_session(session), 'checking': False}
     if not conn.sync_watched:
         return {'session': None, 'checking': False}
-    running = await db.scalar(select(SyncJob.id).where(
+    if baseline is not None:
+        return {'session': None, 'checking': False}
+    latest = await db.scalar(select(SyncJob).where(
         SyncJob.user_id == current_user.id, SyncJob.connection_id == connection_id,
-        SyncJob.status.in_((SyncStatus.pending, SyncStatus.running)),
-    ).limit(1))
-    return {'session': None, 'checking': baseline is None and running is not None}
+    ).order_by(SyncJob.id.desc()).limit(1))
+    if latest and latest.status in (SyncStatus.failed, SyncStatus.cancelled):
+        return {'session': None, 'checking': False, 'error': latest.error_message or 'History checking stopped. Try again.'}
+    # Account-level onboarding can be queued before the per-connection job exists.
+    return {'session': None, 'checking': True, 'progress': {
+        'current': max(0, latest.processed_items or 0) if latest else 0,
+        'total': max(0, latest.total_items or 0) if latest else 0,
+        'message': ('Waiting to start…' if latest is None or latest.status == SyncStatus.pending
+                    else latest.current_step or 'Comparing your history…'),
+    }}
 
 
 @router.patch("/{session_id}/items/{item_id}")

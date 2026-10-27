@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {dropdownPlacement} from '../src/lib/dropdown-position.ts';
+import {dropdownPlacement,placeDropdown} from '../src/lib/dropdown-position.ts';
 
 const viewport = {left: 0, top: 0, width: 390, height: 844};
 const anchor = (top, width = 200, left = 16) => ({left, top, bottom: top + 40, width});
@@ -48,4 +48,19 @@ test('visual viewport offsets and keyboard height are respected', () => {
   assert.equal(placed.top, 258);
   assert.equal(placed.top + placed.maxHeight, 445);
   assert.equal(placed.left + placed.width, 332);
+});
+
+
+test('opening a menu measures its natural fractional height instead of a stale cap', t => {
+  const previousStyle = globalThis.getComputedStyle;
+  globalThis.getComputedStyle = menu => {assert.equal(menu.style.maxHeight,'none');return {height:'93.375px',boxSizing:'border-box',borderTopWidth:'0',borderBottomWidth:'0'};};
+  t.after(() => {if(previousStyle === undefined) delete globalThis.getComputedStyle; else globalThis.getComputedStyle=previousStyle;});
+  const previousWindow = globalThis.window;
+  globalThis.window = {visualViewport:{offsetLeft:0,offsetTop:0,width:390,height:844}};
+  t.after(() => {if(previousWindow === undefined) delete globalThis.window; else globalThis.window=previousWindow;});
+  const menu={hidden:true,style:{maxHeight:'40px'},dataset:{},classList:{add(){}},scrollHeight:93};
+  const trigger={getBoundingClientRect:()=>anchor(100)};
+  placeDropdown(trigger,menu);
+  assert.equal(menu.style.maxHeight,'94px');
+  assert.equal(menu.hidden,true);
 });

@@ -1040,7 +1040,6 @@
   box-shadow: none;
 }
 .tracker .browse-page .browse-filters :is(
-  .browse-search > div:has(input:focus-visible),
   select:focus-visible,
   .tracker-select-trigger:focus-visible,
   .browse-filter-menu > summary:focus-visible,

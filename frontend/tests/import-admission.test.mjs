@@ -7,6 +7,7 @@ import test from 'node:test';
 test('inline admission replaces starts, disappears on resume, and unlocks on completion', async () => {
   const connection = {hidden: false};
   const app = {dataset: {}, hidden: false};
+  const checkingApp = {dataset:{connectionImport:'55'},hidden:false};
   const service = {hidden: false, dataset: {service: 'netflix'}, querySelector: () => app};
   const banner = {dataset: {}, hidden: true, querySelector: () => null};
   const document = Object.assign(new EventTarget(), {
@@ -17,6 +18,7 @@ test('inline admission replaces starts, disappears on resume, and unlocks on com
       '[data-import-start-service]': [service],
       '[data-streaming-import][data-import-session]': app.dataset.importSession ? [app] : [],
       '[data-import-admission-cancel]': [],
+      '[data-connection-import][data-import-active="true"]': checkingApp.hidden ? [] : [checkingApp],
     })[selector] || [],
   });
   const location = {href: 'http://example.test/connections?section=imports'};
@@ -54,6 +56,12 @@ test('inline admission replaces starts, disappears on resume, and unlocks on com
   document.dispatchEvent(new Event('streaming:activity-changed'));
   await settle();
   assert.equal(banner.hidden, true, 'an already open workflow suppresses the notice without URL parameters');
+
+  current = {import_id:null,connection_id:55,title:'Nuvio import',resolve_url:'/connections?connection=55'};
+  document.dispatchEvent(new Event('streaming:session-changed'));
+  await settle();
+  assert.equal(banner.hidden,true,'step one already contains checking and cancellation');
+  assert.equal(connection.hidden,true,'a second connection cannot be started during checking');
 
   const previous = current;
   delayNext = true;

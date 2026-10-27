@@ -1,6 +1,6 @@
 export type ToastKind = 'success' | 'error' | 'info' | 'warning';
 export type ToastOptions = {
-  message: string; kind?: ToastKind; key?: string; duration?: number;
+  message: string; shortMessage?: string; kind?: ToastKind; key?: string; duration?: number;
   action?: {label: string; run: () => void | Promise<void>};
 };
 export type Toast = ToastOptions & {id: number; kind: ToastKind};

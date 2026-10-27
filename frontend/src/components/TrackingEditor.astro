@@ -52,6 +52,8 @@ import { setupScoreSteppers } from '../lib/scoreStepper';
 import { setupCalendarDateInputs } from '../lib/calendar-date-input';
 import { editorStore, seedEditorPage, type EditorTitle } from '../lib/editor-store';
 import { showDialog, closeDialog, showMenu, hideMenu } from '../lib/ui-motion';
+import {showActionFailure} from '../lib/action-failure';
+import {markFailureHandled} from '../lib/handled-failures';
 import {confirmEntryAction as confirmAction,watchRollbackWarning} from '../lib/entry-confirmation';
 let pageListeners: AbortController;
 document.addEventListener('astro:before-swap', () => pageListeners?.abort());
@@ -129,10 +131,12 @@ document.addEventListener('astro:page-load', () => {
     void closeDialog(dialog);
   };
   function finishEditing() {
-    // Close immediately; background writes keep their own snapshot for retry.
+    // Keep the write optimistic while both dialogs use their normal close motion.
     const search = document.querySelector<HTMLDialogElement>('[data-quick-search]');
-    if (dialog.open) dialog.close();
-    if (search?.open) search.close();
+    return Promise.all([
+      dialog.open ? closeDialog(dialog) : Promise.resolve(),
+      search?.open ? closeDialog(search) : Promise.resolve(),
+    ]);
   }
   function populateEditor(title: any) {
     const entry = title.entry;
@@ -200,8 +204,7 @@ document.addEventListener('astro:page-load', () => {
     const editing = currentTitle!;
     void editorStore.writeLibrary(editing, !libraryDesired).catch(cause => {
       if (sessionSignal.aborted) return;
-      if (!dialog.open || currentTitle !== editing) { window.anyListToast?.(cause.message); return; }
-      error.textContent = cause.message; error.hidden = false;
+      showActionFailure('library', editing.title, cause);
     });
   });
   document.addEventListener('anylist:editor-state', event => {
@@ -209,6 +212,17 @@ document.addEventListener('astro:page-load', () => {
     if (dialog.open && currentTitle && (title === currentTitle || title.id && title.id === currentTitle.id)) {
       libraryDesired = title.editor_library?.desired === true;
       renderLibraryButton();
+      // If the editor was opened while a progress write was pending, reconcile
+      // its untouched fields when that write confirms or rolls back.
+      if (current && title.entry && !dialog.hasAttribute('data-motion-closing')) {
+        for (const name of ['status','progress','start_date','finish_date']) {
+          if (!(name in title.entry)) continue;
+          const previous = current[name] ?? (name === 'progress' ? 0 : '');
+          if (field(name).value === String(previous)) field(name).value = String(title.entry[name] ?? '');
+          current[name] = title.entry[name];
+        }
+        syncStatus(); refreshDateInputs();
+      }
     }
   }, {signal:pageListeners.signal});
   async function openEditor(mediaId: number | null, button: HTMLElement, supplied?: EditorTitle) {
@@ -241,7 +255,7 @@ document.addEventListener('astro:page-load', () => {
       if (loadController !== controller || opener !== button || sessionSignal.aborted) return;
       populateEditor(title);
       showDialog(dialog);
-    } catch(e) { if ((e as Error).name !== 'AbortError') window.anyListToast?.((e as Error).message); }
+    } catch(e) { if ((e as Error).name !== 'AbortError') showActionFailure('open', supplied?.title, e); }
   }
   document.addEventListener('click', event => {
     const button = (event.target as HTMLElement).closest<HTMLElement>('[data-edit-entry]');
@@ -266,6 +280,8 @@ document.addEventListener('astro:page-load', () => {
   dialog.querySelectorAll('.editor-close').forEach(button => button.addEventListener('click', closeEditor));
   dialog.addEventListener('click', event => { if (event.target === dialog) closeEditor(); });
   dialog.addEventListener('close', () => {
+    // The native close event is queued; a failed save may already have reopened the editor.
+    if (dialog.open) return;
     loadController?.abort(); loadController = null; libraryButton.hidden = true; current = null; currentTitle = null; displayedScore = ''; form.reset();
     const listRow = opener?.closest<HTMLElement>('.entry-row');
     if (listRow) {
@@ -275,7 +291,7 @@ document.addEventListener('astro:page-load', () => {
         sectionHeading.focus({preventScroll:true});
       } else opener?.blur();
       if (!listRow.matches(':hover')) delete listRow.dataset.editorDeselected;
-    } else opener?.focus();
+    } else if (!document.querySelector('[data-quick-search][data-motion-closing]')) opener?.focus();
     opener = null;
   });
   document.querySelector<HTMLButtonElement>('#delete-tracked-entry')!.addEventListener('click',async event=>{
@@ -284,7 +300,24 @@ document.addEventListener('astro:page-load', () => {
     if(!current||!editing||!await confirmEntryAction('Are you sure you want to delete this list entry?'))return;
     if(sessionSignal.aborted || currentTitle !== editing || !dialog.open)return;
     button.disabled=true;
-    try{const id=await editorStore.remove(editing);if(sessionSignal.aborted)return;finishEditing();if(document.querySelector('[data-browse-page]'))document.dispatchEvent(new CustomEvent('anylist:entry-saved',{detail:{id,status:null,score:null}}));else location.reload();}catch(e){if(sessionSignal.aborted)return;error.textContent=(e as Error).message;error.hidden=false;button.disabled=false;}
+    const previous = {...current};
+    const previousOpener = opener;
+    const closing = finishEditing();
+    try {
+      const id = await editorStore.remove(editing);
+      if (!sessionSignal.aborted) document.dispatchEvent(new CustomEvent('anylist:entry-saved',{detail:{id,status:null,score:null}}));
+    } catch (e) {
+      markFailureHandled(e);
+      await closing;
+      if (sessionSignal.aborted) return;
+      if (dialog.open) { showActionFailure('remove', editing.title, e); return; }
+      opener = previousOpener;
+      populateEditor({...editing, entry:previous});
+      const detail = e instanceof Error && !(e instanceof TypeError) && e.message !== 'Unable to save this entry. Try again.' ? e.message : '';
+      error.textContent = detail; error.hidden = !detail; button.disabled = false;
+      showDialog(dialog);
+      showActionFailure('remove', editing.title, e);
+    }
   });
   form.addEventListener('keydown', event => {
     if (event.key !== 'Enter' || event.isComposing || !(event.target instanceof HTMLInputElement)) return;
@@ -318,25 +351,29 @@ document.addEventListener('astro:page-load', () => {
       }
     }
     const editing = currentTitle!;
+    const wasNew = !editing.entry;
     const previous = {...current};
     const previousScore = displayedScore;
     const previousOpener = opener;
-    finishEditing();
+    const closing = finishEditing();
     try {
       const saved = await editorStore.write(editing, body);
       if (sessionSignal.aborted) return;
       document.dispatchEvent(new CustomEvent('anylist:entry-saved',{detail:saved}));
-      if(!document.querySelector('[data-browse-page]')) location.reload();
     } catch(e) {
+      markFailureHandled(e);
+      await closing;
       if (sessionSignal.aborted) return;
-      if (dialog.open) { window.anyListToast?.((e as Error).message); return; }
+      if (dialog.open) { showActionFailure(wasNew ? 'add' : 'update', editing.title, e); return; }
       opener = previousOpener;
       populateEditor({...editing, entry:{...previous,...body}});
       current = {...previous, id:editing.id};
       document.querySelector<HTMLButtonElement>('#delete-tracked-entry')!.hidden = !editing.entry;
       displayedScore = previousScore;
-      error.textContent = (e as Error).message; error.hidden = false;
+      const detail = e instanceof Error && !(e instanceof TypeError) && e.message !== 'Unable to save this entry. Try again.' ? e.message : '';
+      error.textContent = detail; error.hidden = !detail;
       showDialog(dialog);
+      showActionFailure(wasNew ? 'add' : 'update', editing.title, e);
     }
   });
   const prepare = (event: Event) => {

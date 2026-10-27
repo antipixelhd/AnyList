@@ -1,4 +1,5 @@
 import { editorStore, type EditorTitle } from './editor-store';
+import {showActionFailure} from './action-failure';
 import {predictionAllowed} from './predictive-loading';
 
 export type BrowseItem = {
@@ -67,6 +68,7 @@ export function bindBrowseCardActions<T extends BrowseItem>(
     const item = card && items.get(card);
     if (!button || !card || !item || button.disabled) return;
     const title = titleFor(item);
+    const wasNew = !title.entry;
     const saved = (entry: any) => { if (!signal.aborted) document.dispatchEvent(new CustomEvent('anylist:entry-saved', {detail:entry})); };
     try {
       if (button.dataset.browseAction === 'edit') {
@@ -80,7 +82,7 @@ export function bindBrowseCardActions<T extends BrowseItem>(
           onScore: async (score: number | null) => saved(await editorStore.write(title, {manual_score:score ?? 0,...(score != null ? {status:'completed',rating_mode:'manual'} : {})})),
         });
       }
-    } catch (error) { if (!signal.aborted) onError(error instanceof Error ? error.message : 'Could not update your list.'); }
+    } catch (error) { if (!signal.aborted) showActionFailure(wasNew ? 'add' : 'status', item.title, error); }
     finally { if (!signal.aborted) button.disabled = false; }
   }, {signal});
 }

@@ -1100,6 +1100,8 @@ async def _commit_session(session_id: str, user_id: int, idempotency_key: str) -
             session.revision += 1
             session.error_message = None
             session.expires_at = _now() + timedelta(days=36500)
+            if session_id in _cancelled:
+                raise ImportCancelled()
             await db.commit()
         await _pull_committed_import(session_id, user_id)
     except ImportCancelled:

@@ -1,6 +1,6 @@
 type CompletionItem = {
   kind: 'movie' | 'show';
-  completion_evidence?: {finish_date: string | null; suggested_date: string | null};
+  completion_evidence?: {finish_date: string | null; suggested_date: string | null; default_completed?: boolean};
   outcome: {finish_date?: string | null};
 };
 
@@ -26,8 +26,10 @@ export function needsImportProgressReview(item: ProgressItem): boolean {
 
 /** A new Completed choice may revise a previous answer; step submission must not prompt twice. */
 export function needsImportFinishDate(item: CompletionItem, reselectingCompleted = false): boolean {
-  return item.kind === 'show' && !item.completion_evidence?.finish_date
-    && (reselectingCompleted || !Object.hasOwn(item.outcome, 'finish_date'));
+  if (reselectingCompleted) {
+    return !(item.completion_evidence?.finish_date && item.completion_evidence.default_completed);
+  }
+  return !item.completion_evidence?.finish_date && !Object.hasOwn(item.outcome, 'finish_date');
 }
 
 export function importFinishDateSuggestion(item: CompletionItem): string {

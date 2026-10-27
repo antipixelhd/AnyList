@@ -269,3 +269,79 @@ test('curated artwork updates preserve optimistic intent and ignore an old decod
     assert.equal(title.poster,'/new-poster.jpg');assert.equal(title.favorite,true);
   }finally{globalThis.Image=previous;}
 });
+
+
+test('pending writes stay visible to page reconciliation until each queued edit settles', async () => {
+  const first=deferred(), second=deferred(); let calls=0;
+  const store=new EditorStore(()=> (++calls===1 ? first.promise : second.promise));
+  const title=store.seed({...draft(),id:1,entry:{status:'planning',progress:0}});
+  assert.equal(store.hasPendingWrites(),false);
+  const a=store.write(title,{status:'watching'});
+  const b=store.write(title,{manual_score:8});
+  assert.equal(store.hasPendingWrites(),true);
+  await turn(); first.resolve({id:1,status:'watching'}); await a;
+  assert.equal(store.hasPendingWrites(),true);
+  await turn(); second.resolve({id:1,status:'watching',score:8}); await b;
+  assert.equal(store.hasPendingWrites(),false);
+});
+
+ test('progress writes optimistically update status, position and roll back on failure',async()=>{
+  const pending=deferred();const store=new EditorStore(()=>pending.promise);
+  const title=store.seed({...draft(),id:1,type:'series',entry:{status:'planning',progress:0,released_episodes:12,season_position:null}});
+  const write=store.write(title,{progress:1});
+  assert.equal(title.entry.progress,1);assert.equal(title.entry.status,'watching');
+  assert.equal(title.entry.season_position,null);assert.ok(title.entry.start_date);
+  await turn();pending.reject(new Error('offline'));await assert.rejects(write,/offline/);
+  assert.equal(title.entry.progress,0);assert.equal(title.entry.status,'planning');
+ });
+
+ test('queued progress uses latest optimistic progress and final episode marks completion',async()=>{
+  const first=deferred(),second=deferred();let calls=0;
+  const store=new EditorStore(()=>++calls===1?first.promise:second.promise);
+  const title=store.seed({...draft(),id:1,type:'series',entry:{status:'dropped',progress:1,released_episodes:3,season_position:'S1E1'}});
+  const a=store.write(title,{progress:title.entry.progress+1});
+  const b=store.write(title,{progress:title.entry.progress+1});
+  assert.equal(title.entry.progress,3);assert.equal(title.entry.status,'completed');
+  await turn();first.resolve({id:1,status:'watching',progress:2,released_episodes:3,season_position:'S1E2'});await a;
+  assert.equal(title.entry.progress,3);assert.equal(title.entry.status,'completed');
+  await turn();second.resolve({id:1,status:'completed',progress:3,released_episodes:3,season_position:'S1E3'});await b;
+  assert.equal(title.entry.season_position,'S1E3');
+ });
+
+ test('explicit status in the editor stays authoritative when progress changes',async()=>{
+  const pending=deferred();const store=new EditorStore(()=>pending.promise);
+  const title=store.seed({...draft(),id:1,type:'series',entry:{status:'dropped',progress:1,released_episodes:10}});
+  const write=store.write(title,{status:'dropped',progress:2});
+  assert.equal(title.entry.status,'dropped');assert.equal(title.entry.progress,2);
+  await turn();pending.resolve({id:1,status:'dropped',progress:2});await write;
+ });
+
+test('a completed editor status projects released series progress immediately',async()=>{
+  const pending=deferred();const store=new EditorStore(()=>pending.promise);
+  const title=store.seed({...draft(),id:1,type:'series',entry:{status:'watching',progress:1,released_episodes:3,season_position:'S1E1'}});
+  const write=store.write(title,{status:'completed'});
+  assert.equal(title.entry.progress,3);assert.equal(title.entry.season_position,null);
+  assert.equal(store.hasPendingEntryWrites(title),true);
+  await turn();pending.resolve({id:1,status:'completed',progress:3,released_episodes:3,season_position:'S1E3'});await write;
+  assert.equal(store.hasPendingEntryWrites(title),false);assert.equal(title.entry.season_position,'S1E3');
+});
+
+test('movie progress and status changes project a completed watch immediately',async()=>{
+  const pending=deferred();const store=new EditorStore(()=>pending.promise);
+  const title=store.seed({...draft(),id:1,entry:{status:'planning',progress:0}});
+  const write=store.write(title,{progress:1});
+  assert.equal(title.entry.progress,1);assert.equal(title.entry.status,'completed');
+  await turn();pending.resolve({id:1,status:'completed',progress:1});await write;
+});
+
+
+test('optimistic progress follows ordered episodes across season boundaries and rolls back', async () => {
+  const pending=deferred(); const store=new EditorStore(()=>pending.promise);
+  const title=store.seed({...draft(),id:1,type:'series',progress_positions:['S1E1','S1E2','S2E1','S2E2'],entry:{status:'watching',progress:2,released_episodes:4,season_position:'S1E2'}});
+  const write=store.write(title,{progress:3});
+  assert.equal(title.entry.season_position,'S2E1');
+  assert.equal(title.entry.released_episodes,4);
+  await turn(); pending.reject(new Error('offline')); await assert.rejects(write,/offline/);
+  assert.equal(title.entry.season_position,'S1E2');
+  assert.equal(title.entry.released_episodes,4);
+});
