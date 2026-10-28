@@ -19,6 +19,7 @@ from models.catalogue import CatalogueIdentity,MetadataSnapshot
 JOB='game_person_discovery'
 MAP='game_person_title_map'
 VERSION=5
+MAX_ACQUIRE=4
 _slots=asyncio.Semaphore(1)
 
 
@@ -91,6 +92,15 @@ class GamePersonDiscovery:
                     MetadataSnapshot.expires_at>now()))).all()) if ids else []
                 cached={key:value for key,value in retained if value.get('status')!='verified' and value.get('matcher_version')==VERSION}
             missing=[value for value in ids if value not in known and value not in cached]
+            # One title can require many alias queries. Publish small fresh
+            # batches within the shared deadline while advancing cached rows
+            # at the normal page size; never truncate the saved connection.
+            if len(missing)>MAX_ACQUIRE:
+                stop=next(index for index,row in enumerate(batch) if row['id']==missing[MAX_ACQUIRE])
+                batch=batch[:stop]
+                missing=missing[:MAX_ACQUIRE]
+                batch_ids={row['id'] for row in batch}
+                cached={key:value for key,value in cached.items() if key in batch_ids}
             async with asyncio.timeout(55):
                 if missing and isinstance(self.source,GameIMDbDiscoverySource):
                     result=await self.source.page(missing,titles={row['id']:row for row in batch if row['id'] in missing})

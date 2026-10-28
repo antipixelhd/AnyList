@@ -266,7 +266,7 @@ class PortfolioDiscoveryTests(unittest.IsolatedAsyncioTestCase):
                     job.next_attempt_at=now()-timedelta(seconds=1);await db.commit()
 
     async def test_large_portfolio_progresses_in_bounded_batches_and_reuses_prior_outcomes(self):
-        # 53 titles span two saved source pages and four discovery batches.
+        # Full source traversal survives the smaller fresh-acquisition budget.
         self.connection.credits.return_value=page([credit(f'tt{i}') for i in range(1,54)],53)
         async with self.Session() as db:
             from core.game_imdb_person import JOB as PERSON_JOB
@@ -277,7 +277,7 @@ class PortfolioDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         self.source.page.side_effect=load
         await self.admit()
         self.assertEqual(await self.service.run('nm1'),'changed')
-        for expected in (20,40,50,53):
+        for expected in (*range(5,50,4),50,53):
             result=await self.service.run('nm1')
             self.assertEqual(result,'ready' if expected==53 else 'partial')
             async with self.Session() as db:
@@ -285,5 +285,5 @@ class PortfolioDiscoveryTests(unittest.IsolatedAsyncioTestCase):
                 if expected<53:job.next_attempt_at=now()-timedelta(seconds=1)
                 await db.commit()
         calls=[call.args[0] for call in self.source.page.await_args_list]
-        self.assertEqual(list(map(len,calls)),[19,20,10,3])
+        self.assertEqual(list(map(len,calls)),[4]*12+[1,3])
         self.assertEqual(len({value for ids in calls for value in ids}),52)
