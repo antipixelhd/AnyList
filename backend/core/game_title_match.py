@@ -59,7 +59,14 @@ def supported(row,title):
     if not store_agrees(proof,title):return False
     people={person.get('id') for person in proof.get('people',[]) if isinstance(person,dict) and re.fullmatch(r'nm[0-9]+',str(person.get('id','')))}
     early=proof.get('early_access') or {}
-    return bool(proof.get('characters') or len(people)>=2 or proof.get('cast_character') or early.get('year')==title.get('year')
+    full=proof.get('full_release') or {}
+    try:
+        launch=date.fromisoformat(full['date']);initial=date.fromisoformat(full['initial_date'])
+        full_agrees=(initial<launch<=datetime.now(timezone.utc).date() and launch.year==title.get('year')
+            and initial.year in row.get('years',[]) and launch.year>initial.year
+            and type(full.get('announcement')) is str and bool(full['announcement']))
+    except (KeyError,TypeError,ValueError):full_agrees=False
+    return bool(full_agrees or proof.get('characters') or len(people)>=2 or proof.get('cast_character') or early.get('year')==title.get('year')
         and type(early.get('year')) is int and early.get('release_year') in row.get('years',[]) and early['year']<early['release_year'])
 
 

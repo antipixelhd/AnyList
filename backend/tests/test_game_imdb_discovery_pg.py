@@ -85,6 +85,30 @@ class PortfolioDiscoveryTests(unittest.IsolatedAsyncioTestCase):
             review=await review_titles(db,'nm1',scope='all')
             self.assertEqual(next(r for r in review['results'] if r['imdb_id']=='tt2')['status'],'bound')
 
+    async def test_reviewed_edition_uses_parent_and_preserves_the_variant_evidence(self):
+        from core.game_credit_parents import review_parent,KIND
+        from core.game_contributor_works import works_page
+        from core.game_imdb_person import queue_projection
+        from models import User
+        async with self.Session() as db:
+            user=await db.get(User,self.user.id);user.is_admin=True
+            await review_parent(db,'tt2',self.base,title='Main game: Complete Edition',kind='edition',
+                source_url='https://www.igdb.com/games/complete-edition',reviewer_id=user.id,
+                evidence={'method':'unique_title_year_parent','child':{'id':100},'parents':[{'id':10}]})
+            await queue_projection(db,'nm1');await db.commit()
+        self.assertEqual(await self.person_service.run('nm1'),'ready')
+        async with self.Session() as db:
+            from sqlalchemy import delete
+            await db.execute(delete(CatalogueCredit).where(CatalogueCredit.contributor_id==self.person,
+                CatalogueCredit.attributes['imdb_title_id'].astext=='tt1'))
+            result=await works_page(db,None,self.person,'actor',key='test',list_scope='all',status='',page=1,cursor=None)
+            self.assertEqual(result['works'][0]['credit_sources'],[{'kind':'edition','title':'Main game: Complete Edition'}])
+            self.assertEqual(result['works'][0]['id'],self.base)
+            record=await db.scalar(snapshot(KIND,'tt2'))
+            self.assertEqual(record.payload['evidence']['child']['id'],100)
+            primary=await db.scalar(select(CatalogueIdentity.external_id).where(CatalogueIdentity.entity_id==self.base,CatalogueIdentity.namespace=='imdb.title'))
+            self.assertEqual(primary,'tt1')
+
     async def test_title_fallback_publishes_person_work_and_character_without_opening_the_game(self):
         from core.game_imdb_discovery_source import GameIMDbDiscoverySource
         from core.game_imdb_person import JOB as PERSON_JOB

@@ -7,6 +7,8 @@ test('confirmed child credits label the source and retain the parent game destin
   assert.equal(contributorCreditScope(game),'Update: Tau');
   assert.equal(workHref(game),'/games/12');
   assert.equal(contributorCreditScope({title:'Warframe'}),'');
+  assert.equal(contributorCreditScope({title:'Example',credit_sources:[{kind:'edition',title:'Example: Complete Edition'}]}),'Edition: Complete Edition');
+  assert.equal(contributorCreditScope({title:'Example',credit_sources:[{kind:'port',title:'Example Mobile'}]}),'Port: Example Mobile');
 });
 
 test('contributor filters whitelist scopes and never send viewer IDs', () => {

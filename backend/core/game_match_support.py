@@ -24,6 +24,13 @@ def contains(text, value):
     return bool(value and any(f' {form} ' in f' {spelling(text)} ' for form in (value,value+'s')))
 
 
+def store_date(value):
+    for form in ('%b %d, %Y','%d %b, %Y'):
+        try:return datetime.strptime(value,form).date()
+        except (TypeError,ValueError):pass
+    return None
+
+
 async def cached(sources, provider, kind, key, loader):
     async def load():
         value=await loader()
@@ -44,6 +51,7 @@ async def corroborate(sources,title,candidates):
     launch_scope=any(igdb_game_class(raw)=='port'
         and raw.get('release_dates') and all(isinstance(row.get('status'),dict) and row['status'].get('name','').casefold() in ('cancelled','canceled')
             for row in raw['release_dates']) for raw in selected)
+    later_scope=type(title.get('year')) is int and any(years(raw) and min(years(raw))<title['year'] for raw in selected)
 
     async def load_credits():
         source=IMDbGameSource(sources.api.http)
@@ -96,14 +104,12 @@ async def corroborate(sources,title,candidates):
             if row.get('developer') and isinstance(row.get('company'),dict) and row['company'].get('name')}
         if not developers.intersection(spelling(name) for name in store.get('developers') or []):continue
         if credits is None:
-            credits,snapshot=await cached(sources,'imdb','game_match_credits',title['id']+(':launch-v1' if launch_scope else ''),load_credits)
+            credits,snapshot=await cached(sources,'imdb','game_match_credits',title['id']+(':release-v1' if later_scope else ':launch-v1' if launch_scope else ''),load_credits)
             snapshots.append(snapshot)
         support={'app':app,'developer_agreement':True,'store_title':store['name'],'people':[],'characters':[]}
         if launch_scope and (store.get('release_date') or {}).get('coming_soon') is False:
-            store_day=None
-            for form in ('%b %d, %Y','%d %b, %Y'):
-                try:store_day=datetime.strptime(store['release_date']['date'],form).date().isoformat();break
-                except (KeyError,TypeError,ValueError):pass
+            store_day=store_date((store.get('release_date') or {}).get('date'))
+            store_day=store_day.isoformat() if store_day else None
             normal=game_release(raw)
             if store_day and store_day==credits.get('release_date')==normal.get('release_date') and normal.get('release_date_precision')=='day':
                 support['release_scope']={'imdb_date':store_day,'store_date':store_day,'igdb_date':store_day}
@@ -153,6 +159,26 @@ async def corroborate(sources,title,candidates):
                 unavailable=re.search(r'(?i)\bnot (?:yet )?(?:available|released)\b',plain(article['contents']))
                 if actual and not planned and not unavailable and re.search(r'(?i)early\s+access',headline):
                     support['early_access']={'year':year,'release_year':full_year,'announcement':article['gid']};break
-        if support['characters'] or len(support['people'])>=2 or support.get('cast_character') or support.get('early_access') or support.get('release_scope'):
+        # Store dates often retain the first early-access launch. A publisher
+        # announcement on IMDb's exact full-release day explains that mismatch.
+        if not support['people'] and not support.get('cast_character') and later_scope:
+            try:
+                launch=datetime.strptime(credits['release_date'],'%Y-%m-%d').date()
+                initial=store_date(release.get('date'))
+            except (KeyError,TypeError,ValueError):launch=initial=None
+            if (launch and initial and release.get('coming_soon') is False and initial.year in years(raw)
+                    and initial.year<launch.year==year and launch<=datetime.now(timezone.utc).date()):
+                end=int(datetime.combine(launch+timedelta(days=1),datetime.min.time(),timezone.utc).timestamp())
+                historical,snapshot=await news(app,end);snapshots.append(snapshot)
+                for article in historical['rows']:
+                    if type(article.get('date')) is not int or datetime.fromtimestamp(article['date'],timezone.utc).date()!=launch:continue
+                    lead=plain(article['title'])+' '+plain(article['contents'])[:600]
+                    own=any(contains(lead,name) for name in [title['title'],*title.get('aliases',[])])
+                    actual=re.search(r'(?i)\b(out of (?:early access|beta)|full release|version 1\.0)\b',lead)
+                    present=re.search(r'(?i)\b(today|now|with this launch)\b',lead)
+                    planned=re.search(r'(?i)\b(will|tomorrow|next (?:week|month|year)|in \d+ days|delay\w*|postpon\w*|not (?:yet )?(?:out|available|released))\b',lead)
+                    if own and actual and present and not planned:
+                        support['full_release']={'date':launch.isoformat(),'initial_date':initial.isoformat(),'announcement':str(article['gid'])};break
+        if support['characters'] or len(support['people'])>=2 or support.get('cast_character') or support.get('early_access') or support.get('full_release') or support.get('release_scope'):
             evidence[raw['id']]=support
     return evidence,snapshots

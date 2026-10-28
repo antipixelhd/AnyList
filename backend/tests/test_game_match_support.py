@@ -74,6 +74,40 @@ class SupportTests(unittest.IsolatedAsyncioTestCase):
             'title':'Meet Preach','contents':'Preach is voiced by First Actor.','date':1700000000}]}}
         result,_=await self.decision();self.assertEqual(result['status'],'verified')
 
+    async def test_exact_imdb_full_release_day_and_publisher_launch_explain_earlier_store_year(self):
+        self.title['year']=2020
+        self.game=game(name='Example Game',year=2019,external_games=self.game['external_games'],involved_companies=self.game['involved_companies'])
+        self.store['42']['data'].update(detailed_description='A strategy game',release_date={'coming_soon':False,'date':'Jun 20, 2019'})
+        self.credits.return_value['header']={'releaseDate':{'year':2020,'month':2,'day':25}}
+        self.http.request.return_value={'appnews':{'appid':42,'newsitems':[{
+            'gid':'full-launch','feedname':'steam_community_announcements','title':'Example Game Season One',
+            'contents':'Example Game is coming out of Early Access, and today officially marks Season One. With this launch, play now.',
+            'date':1582652671}]}}
+        result,snapshots=await self.decision()
+        self.assertEqual(result['status'],'verified')
+        self.assertEqual(result['evidence']['candidates'][0]['years'],[2019])
+        proof=result['evidence']['candidates'][0]['corroboration']['full_release']
+        self.assertEqual(proof['date'],'2020-02-25')
+        self.assertTrue(valid_binding_evidence({'matcher_version':VERSION,'igdb_id':'10','matching':result['evidence']},'tt1'))
+        # Reuse the complete public evidence rather than replaying provider calls.
+        before=self.http.request.await_count
+        await self.decision();self.assertEqual(self.http.request.await_count,before)
+
+    async def test_full_release_requires_exact_day_actual_launch_and_the_same_game(self):
+        for text,stamp in [('Example Game is out of Early Access today.',1582560000),
+                ('Example Game will be out of Early Access next week. Play today.',1582652671),
+                ('Another Game is out of Early Access today.',1582652671),
+                ('Example Game is not out of Early Access today.',1582652671)]:
+            with self.subTest(text=text,stamp=stamp):
+                self.sources.cache.rows.clear()
+                self.title['year']=2020
+                self.game=game(name='Example Game',year=2019,external_games=self.game['external_games'],involved_companies=self.game['involved_companies'])
+                self.store['42']['data'].update(detailed_description='A strategy game',release_date={'coming_soon':False,'date':'Jun 20, 2019'})
+                self.credits.return_value['header']={'releaseDate':{'year':2020,'month':2,'day':25}}
+                self.http.request.return_value={'appnews':{'appid':42,'newsitems':[{
+                    'gid':'other','feedname':'steam_community_announcements','title':'Release notes','contents':text,'date':stamp}]}}
+                result,_=await self.decision();self.assertEqual(result['status'],'unresolved')
+
     async def test_year_disagreement_without_explaining_evidence_is_not_a_match(self):
         self.title['year']=2018
         result,_=await self.decision();self.assertEqual(result['status'],'unresolved')

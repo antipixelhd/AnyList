@@ -5,6 +5,34 @@ from core.game_types import CREDIT_CHILDREN,INDEPENDENT
 from models.catalogue import CatalogueEntity,CatalogueIdentity,MetadataSnapshot
 
 KIND='game_credit_parent'
+PARENT_CREDIT_KINDS=CREDIT_CHILDREN|{'edition','port'}
+
+
+def variant_parent(raw):
+    from core.game_types import igdb_game_class
+    version=raw.get('version_parent')
+    kind='edition' if version else 'port' if igdb_game_class(raw)=='port' else None
+    if not kind or igdb_game_class(raw)=='unknown':return None
+    parent=version if version else raw.get('parent_game')
+    parent=parent.get('id') if isinstance(parent,dict) else parent
+    if type(parent) is not int or not 0<parent<=2147483647 or parent==raw['id']:return None
+    return {'child_igdb_id':raw['id'],'parent_igdb_id':parent,'kind':kind}
+
+
+def parent_proposal(title,candidates,*,complete):
+    """A precise variant can establish participation without a primary binding."""
+    from core.game_title_match import decide
+    if type(title.get('year')) is not int or not complete:return None
+    decision=decide(title,candidates,complete=True,branches=[])
+    rows=decision['evidence']['candidates']
+    plausible=[row for row in rows if row['year_match'] or not row['years']]
+    # Missing years and same-year namesakes still require independent evidence.
+    if len(plausible)!=1 or not plausible[0]['year_match']:return None
+    raw=next(row for row in candidates if row['id']==plausible[0]['id'])
+    result=variant_parent(raw)
+    if not result:return None
+    return {**result,
+        'evidence':{'method':'unique_title_year_parent','imdb':title,'candidate':plausible[0]}}
 
 
 def person_bindings(ids):
@@ -19,7 +47,7 @@ def person_bindings(ids):
         MetadataSnapshot.payload['kind'].astext.label('credit_kind'),MetadataSnapshot.payload['title'].astext.label('credit_title')).join(
         CatalogueEntity,CatalogueEntity.id==MetadataSnapshot.entity_id).where(
         MetadataSnapshot.provider=='imdb',MetadataSnapshot.kind==KIND,
-        MetadataSnapshot.payload['kind'].astext.in_(CREDIT_CHILDREN),
+        MetadataSnapshot.payload['kind'].astext.in_(PARENT_CREDIT_KINDS),
         CatalogueEntity.kind=='game',CatalogueEntity.attributes['game_class'].astext.in_(INDEPENDENT-{'port'}),
         select(CatalogueIdentity.id).where(CatalogueIdentity.entity_id==CatalogueEntity.id,
             CatalogueIdentity.namespace=='igdb.game').exists(),
@@ -28,7 +56,7 @@ def person_bindings(ids):
     return direct.union_all(reviewed).cte('person_game_bindings')
 
 
-async def review_parent(db,title_id,parent_id,*,title,kind,source_url,reviewer_id):
+async def review_parent(db,title_id,parent_id,*,title,kind,source_url,reviewer_id,evidence=None):
     from urllib.parse import urlsplit
     from core import catalogue
     from core.game_imdb_source import identifier
@@ -38,7 +66,7 @@ async def review_parent(db,title_id,parent_id,*,title,kind,source_url,reviewer_i
     identifier(title_id)
     url=urlsplit(source_url)
     reviewer=await db.get(User,reviewer_id)
-    if kind not in CREDIT_CHILDREN or not title.strip() or url.scheme!='https' or not url.hostname or not reviewer or not reviewer.is_admin:
+    if kind not in PARENT_CREDIT_KINDS or not title.strip() or url.scheme!='https' or not url.hostname or not reviewer or not reviewer.is_admin:
         raise ValueError('A reviewed child title, public evidence URL and administrator are required')
     await catalogue.write_lock(db)
     parent=await db.get(CatalogueEntity,parent_id)
@@ -47,7 +75,8 @@ async def review_parent(db,title_id,parent_id,*,title,kind,source_url,reviewer_i
     if not await db.scalar(select(CatalogueIdentity.id).where(CatalogueIdentity.entity_id==parent_id,CatalogueIdentity.namespace=='igdb.game')):
         raise ValueError('The parent must have an IGDB identity')
     statement=insert(MetadataSnapshot).values(provider='imdb',kind=KIND,external_id=title_id,entity_id=parent_id,
-        payload={'title':title.strip(),'kind':kind,'source_url':source_url,'reviewer_id':reviewer_id},
+        payload={'title':title.strip(),'kind':kind,'source_url':source_url,'reviewer_id':reviewer_id,
+            **({'evidence':evidence} if evidence else {})},
         coverage={'reviewed':True},fetched_at=now())
     await db.execute(statement.on_conflict_do_update(constraint='uq_catalogue_snapshot',set_={
         'entity_id':statement.excluded.entity_id,'payload':statement.excluded.payload,'coverage':statement.excluded.coverage,

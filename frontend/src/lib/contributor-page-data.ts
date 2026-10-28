@@ -8,7 +8,7 @@ export interface ContributorWork extends BrowseItem {
 }
 export function contributorCreditScope(work: Pick<ContributorWork,'title'|'credit_sources'>) {
   const sources=work.credit_sources||[];
-  const labels:Record<string,string>={dlc:'DLC',expansion:'Expansion',update:'Update'};
+  const labels:Record<string,string>={dlc:'DLC',expansion:'Expansion',update:'Update',edition:'Edition',port:'Port'};
   return sources.map(source=>{
     const title=source.title.startsWith(work.title+':')?source.title.slice(work.title.length+1).trim():source.title;
     return `${labels[source.kind]||source.kind}: ${title}`;

@@ -53,7 +53,7 @@ def project_game(title_id,raw,games,evidence):
     if raw.get('version_parent') or kind=='port':
         # Preserve source identity; an edition-specific IMDb record must not
         # replace the base game's primary IMDb identity.
-        return {'id':title_id,'status':'unresolved','reason':'edition_or_port','igdb_id':raw['id']}
+        return {'id':title_id,'status':'unresolved','reason':'edition_or_port','igdb_id':raw['id'],'evidence':evidence}
     if kind=='unknown':return {'id':title_id,'status':'unresolved','reason':'unknown_type','igdb_id':raw['id']}
     if not capabilities({'game_class':kind}).searchable and kind not in CREDIT_CHILDREN:
         return {'id':title_id,'status':'excluded','reason':kind,'igdb_id':raw['id'],'game_title':raw['name'],'evidence':evidence}
