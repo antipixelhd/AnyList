@@ -178,6 +178,69 @@ class PortfolioDiscoveryTests(unittest.IsolatedAsyncioTestCase):
             state=await view(db,'nm1');self.assertEqual(state['mapping']['unmapped_games'],0)
             entry=await db.scalar(select(GameEntry));self.assertEqual((entry.notes,entry.total_seconds),('Pending private state',3600))
 
+    async def test_confirmed_episode_is_automatic_and_projects_one_parent_card(self):
+        from core.game_imdb_discovery_source import GameIMDbDiscoverySource
+        from core.game_imdb_person import JOB as PERSON_JOB
+        from core.game_source_cache import GameSourceCache
+        from core.game_contributor_works import works_page
+        rows=[credit('tt2')]
+        rows[0]['title'].update(titleText={'text':'Small Town: The Stories - Episode III'},releaseYear={'year':2017})
+        self.connection.credits.return_value=page(rows,1)
+        async with self.Session() as db:
+            job=await db.scalar(snapshot(PERSON_JOB,'nm1'));job.next_attempt_at=now();job.expires_at=None;job.payload={};await db.commit()
+        self.assertEqual(await self.person_service.run('nm1'),'ready')
+        parent={'id':100,'name':'Small Town: The Stories','game_type':{'id':0}}
+        child={'id':30,'name':'Small Town: Episode III','game_type':{'id':6},'first_release_date':1506038400,'parent_game':parent}
+        sources=SimpleNamespace(cache=GameSourceCache(self.Session),igdb=AsyncMock(side_effect=[[],[],[child],[],[parent]]),
+            api=SimpleNamespace(http=SimpleNamespace(request=AsyncMock(return_value={'results':{'bindings':[]}}))))
+        service=GamePersonDiscovery(self.Session,source=GameIMDbDiscoverySource(self.Session,sources=sources))
+        self.assertEqual(await service.run('nm1'),'changed')
+        status=await service.run('nm1')
+        async with self.Session() as db:
+            job=await db.scalar(snapshot(JOB,'nm1'))
+            self.assertEqual(status,'ready',job.error_code)
+        self.assertEqual(await self.person_service.run('nm1'),'ready')
+        async with self.Session() as db:
+            mapped=await db.scalar(snapshot(MAP,'tt2',provider='wikidata'))
+            self.assertEqual((mapped.payload['status'],mapped.payload['igdb_id']),('verified',30))
+            result=await works_page(db,None,self.person,'actor',key='test',list_scope='all',status='',page=1,cursor=None)
+            from schemas_contributors import ContributorPage
+            response=ContributorPage.model_validate({**result,'kind':'actor','key':'test','name':'Actor'})
+            self.assertEqual(response.works[0].credit_sources[0].kind,'episode')
+            self.assertEqual(len(result['works']),1)
+            card=result['works'][0]
+            self.assertEqual(card['title'],parent['name'])
+            self.assertEqual(card['credit_sources'],[{'kind':'episode','title':child['name']}])
+            self.assertEqual(card['href'],f'/games/{card["id"]}')
+            self.assertNotEqual(card['id'],mapped.entity_id)
+            self.assertEqual(await db.scalar(select(func.count()).select_from(GameEntry)),1)
+            db.add(CatalogueCredit(work_id=card['id'],contributor_id=self.person,provider='imdb',
+                source_key='main-game-participation',scope='person',role='actor',attributes={'source_active':True}))
+            await db.flush()
+            main=await works_page(db,None,self.person,'actor',key='test',list_scope='all',status='',page=1,cursor=None)
+            self.assertEqual(len(main['works']),1)
+            self.assertFalse(main['works'][0].get('credit_sources'))
+
+    async def test_episode_migration_preserves_edges_and_refuses_lossy_downgrade(self):
+        from alembic.migration import MigrationContext
+        from alembic.operations import Operations
+        from sqlalchemy import text
+        from migrations.versions import mt073_game_episode_credits as migration
+        def verify(conn):
+            with Operations.context(MigrationContext.configure(conn)):
+                migration.downgrade()
+                migration.upgrade()
+                conn.execute(text("INSERT INTO catalogue_relationships(source_id,target_id,relation,provider,attributes) VALUES (:source,:target,'episode','igdb','{}')"),
+                    {'source':self.pack,'target':self.base})
+                with self.assertRaisesRegex(RuntimeError,'existing data was preserved'):
+                    migration.downgrade()
+                self.assertEqual(conn.scalar(text("SELECT count(*) FROM catalogue_relationships WHERE relation='episode'")),1)
+                conn.execute(text("DELETE FROM catalogue_relationships WHERE relation='episode'"))
+                migration.downgrade()
+                migration.upgrade()
+        async with self.engine.begin() as conn:
+            await conn.run_sync(verify)
+
     async def test_fresh_actor_and_crew_work_is_added_to_the_existing_catalogue_without_private_tracking(self):
         # Completing the initial source fetch already schedules discovery;
         # neither a second page visit nor a game-details visit is required.

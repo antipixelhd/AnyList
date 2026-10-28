@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 from core.game_types import igdb_game_class
 from core.game_release_dates import game_release, release
 
-VERSION = 5
+VERSION = 6
 
 
 def same_game_port(other,winner):
@@ -19,10 +19,21 @@ def same_game_port(other,winner):
 
 def scoped_title(raw,title):
     """A decorated child title needs its explicit parent, not a loose suffix."""
-    if igdb_game_class(raw) not in ('dlc','expansion','standalone_expansion'):return False
+    kind=igdb_game_class(raw)
+    if kind not in ('dlc','expansion','standalone_expansion','episode'):return False
     parent=raw.get('parent_game')
     if not isinstance(parent,dict) or type(parent.get('id')) is not int or parent['id']<=0:return False
     if igdb_game_class(parent) not in ('game','standalone_expansion','remake','remaster','expanded_game'):return False
+    if kind=='episode':
+        # The source may spell out the series subtitle before the numbered
+        # episode. Require the actual provider parent and the same episode,
+        # rather than discarding arbitrary subtitles or numbers.
+        pattern=r'^(.*?)(?::\s*|\s+[-–—]\s+)(episode\s+(?:[0-9]+|[a-z]+))\s*$'
+        source=re.fullmatch(pattern,title.get('title',''),re.IGNORECASE)
+        candidate=re.fullmatch(pattern,raw.get('name',''),re.IGNORECASE)
+        return bool(source and candidate and title_formats(source[1]) & title_formats(parent.get('name'))
+            and title_formats(candidate[1]) & title_formats(parent.get('name','').split(':',1)[0])
+            and title_formats(source[2]) & title_formats(candidate[2]))
     source=title.get('title','').split(':',1);candidate=raw.get('name','').split(':',1)
     if len(source)!=2:return False
     if spelling(source[0])!=spelling(parent.get('name')):return False

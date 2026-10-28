@@ -14,11 +14,12 @@ from core.game_company_works import primary_game
 from core.game_imdb_bindings import GameIMDbBindings,verified_bindings
 from core.game_imdb_discovery_source import GameIMDbDiscoverySource,SIZE
 from core.game_imdb_enrichment import now,snapshot,status_view
+from core.game_types import CREDIT_CHILDREN
 from models.catalogue import CatalogueIdentity,MetadataSnapshot
 
 JOB='game_person_discovery'
 MAP='game_person_title_map'
-VERSION=9
+VERSION=10
 MAX_ACQUIRE=4
 _slots=asyncio.Semaphore(1)
 
@@ -181,7 +182,7 @@ class GamePersonDiscovery:
             projected={**doc,'work':await prepare_values(db,primary_game(doc['work']),'igdb'),
                 'relationships':[],'releases':[],'editions':[]}
             for edge in doc['relationships']:
-                if edge['relation'] in ('dlc','expansion','update') and not edge.get('reverse'):
+                if edge['relation'] in CREDIT_CHILDREN and not edge.get('reverse'):
                     projected['relationships'].append({**edge,'target':await prepare_values(db,primary_game(edge['target']),'igdb')})
             work=await catalogue.ingest_document(db,projected,'igdb');await db.commit()
             return work.id

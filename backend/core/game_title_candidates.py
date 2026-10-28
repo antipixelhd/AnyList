@@ -34,6 +34,7 @@ async def retrieve(sources, title):
     key = hashlib.sha256(json.dumps([RETRIEVAL_VERSION,names], ensure_ascii=True).encode()).hexdigest()
     source_names={spelling(name) for name in names}
     source_formats=set().union(*(title_formats(name) for name in names))
+    episode=re.fullmatch(r'(.+?)(?::\s*|\s+[-–—]\s+)(episode\s+(?:[0-9]+|[a-z]+))\s*',title['title'],re.IGNORECASE)
     def format_only(raw):
         labels=[raw['name'],*[row.get('name') for row in raw.get('alternative_names') or [] if isinstance(row,dict)]]
         return (not any(spelling(value) in source_names for value in labels)
@@ -70,10 +71,10 @@ async def retrieve(sources, title):
                 branches.append({'name': name, 'kind': branch, 'complete': complete, 'pages': page + 1})
             if position==len(names)-1 and not any(spelling(row['name']) in {spelling(name) for name in names}
                 or any(isinstance(alias,dict) and spelling(alias.get('name')) in {spelling(name) for name in names} for alias in row.get('alternative_names') or []) for row in found.values()):
-                parts=title['title'].split(':',1)
+                parts=[episode[1],episode[2]] if episode else title['title'].split(':',1)
                 if len(parts)==2:
                     tail=re.split(r'\s+in\s+',parts[1],flags=re.IGNORECASE)[-1].strip()
-                    if tail not in expanded and parts[0].strip() and len(spelling(tail).split())>=3 and 12<=len(tail)<=500:
+                    if tail not in expanded and parts[0].strip() and (episode or len(spelling(tail).split())>=3 and 12<=len(tail)<=500):
                         parents[tail]=parts[0].strip();expanded.append(tail)
             # A zero-hit or newly formatted title needs a wider family search.
             # One keyword proposes candidates; full title/year rules still
@@ -99,12 +100,13 @@ async def retrieve(sources, title):
         fingerprint=hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()
         return {'rows': list(found.values()), 'complete': all(row['complete'] for row in branches), 'branches': branches,
             'scope_key':key,'scope_names':sorted({spelling(name) for name in [*expanded,*parents.values()]}),
-            'scope_fingerprint':fingerprint,'keyword_scope_version':1}
+            'scope_fingerprint':fingerprint,'keyword_scope_version':1,'episode_scope_version':1}
 
     result=await sources.cache.get('igdb', 'game_title_candidates', key, load,
                                    ttl=timedelta(days=1), max_stale=timedelta(days=7),
-                                   accept=lambda data:data.get('keyword_scope_version')==1 or (
-                                       bool(data.get('rows')) and not any(format_only(raw) for raw in data['rows'])))
+                                   accept=lambda data:(not episode or data.get('episode_scope_version')==1) and (
+                                       data.get('keyword_scope_version')==1 or (
+                                       bool(data.get('rows')) and not any(format_only(raw) for raw in data['rows']))))
     # Older cached scopes can supply the same compact facts without a provider
     # refetch or renewing their observation/expiry timestamps.
     if 'scope_observations' not in result['data']:

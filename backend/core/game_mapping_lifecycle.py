@@ -1,7 +1,7 @@
 """Targeted evidence invalidation without rewriting reviewed or private state."""
 import uuid
 
-from sqlalchemy import func, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.dialects.postgresql import array, insert
 
 from core.game_imdb_enrichment import now
@@ -55,7 +55,10 @@ async def changed_generation(db, generation):
     previous = await db.scalar(select(Generation.id).where(Generation.source == generation.source,
         Generation.id != generation.id, Generation.published_at.is_not(None))
         .order_by(Generation.published_at.desc()).limit(1))
-    new = select(Reference.native,Reference.names,Reference.imdb_ids, Reference.data['fingerprint'].astext.label('fingerprint')).where(
+    # Read only identity claims, never the potentially large credit graph.
+    claims=func.jsonb_build_object(*[part for prop in ('P345','P5794','P9043')
+        for part in (prop,Reference.data['value']['claims'][prop])])
+    new = select(Reference.native,Reference.names,Reference.imdb_ids,claims.label('claims'), Reference.data['fingerprint'].astext.label('fingerprint')).where(
         Reference.generation == generation.id).subquery()
     old = select(Reference.native,Reference.names,Reference.imdb_ids, Reference.data['fingerprint'].astext.label('fingerprint')).where(
         Reference.generation == previous).subquery()
@@ -63,16 +66,31 @@ async def changed_generation(db, generation):
     # or expiry is unknown evidence, not a provider deleting an identity claim.
     cached_scope=generation.source=='wikidata' and (generation.coverage or {}).get('scope')=='retrieved_game_evidence'
     stream = await db.stream(select(func.coalesce(new.c.native, old.c.native),new.c.names,old.c.names,
-        new.c.imdb_ids,old.c.imdb_ids).select_from(
+        new.c.imdb_ids,old.c.imdb_ids,new.c.claims,old.c.native).select_from(
         new.join(old, new.c.native == old.c.native, full=True)).where(
             new.c.fingerprint.is_distinct_from(old.c.fingerprint),
             new.c.native.is_not(None) if cached_scope else True))
     async for batch in stream.partitions(500):
-        keys=[]
-        for native,new_names,old_names,new_imdb,old_imdb in batch:
-            keys.append(f'{generation.source}:{native}')
+        conditions=[]
+        for native,new_names,old_names,new_imdb,old_imdb,new_claims,old_native in batch:
+            keys=[f'{generation.source}:{native}']
             keys.extend(f'{generation.source}-name:{name}' for name in [*(new_names or []),*(old_names or [])])
-            if generation.source=='wikidata':keys.extend(f'wikidata-imdb:{native}' for native in [*(new_imdb or []),*(old_imdb or [])])
-        await invalidate(db,keys)
+            affected=CatalogueIdentity.evidence['dependencies'].op('?|')(array(sorted(set(keys))))
+            if generation.source=='wikidata':
+                imdb_ids=sorted(set([*(new_imdb or []),*(old_imdb or [])]))
+                # Include legacy explicit bindings that predate reverse-ID dependencies.
+                affected=or_(affected,CatalogueIdentity.external_id.in_(imdb_ids),
+                    CatalogueIdentity.evidence['dependencies'].op('?|')(array([f'wikidata-imdb:{value}' for value in imdb_ids])))
+                if cached_scope and old_native is None:
+                    from core.wikidata_claims import best_claims
+                    proof=CatalogueIdentity.evidence['wikidata']
+                    unchanged=and_(CatalogueIdentity.source=='wikidata',proof['wikidata_id'].astext==native,
+                        *[proof[prop]==best_claims({'claims':{key:value or [] for key,value in new_claims.items()}},prop)
+                            for prop in ('P345','P5794','P9043')])
+                    # A returning cache row is already known by its own saved
+                    # proof. Other items/changed claims still invalidate it.
+                    affected=affected & ~func.coalesce(unchanged,False)
+            conditions.append(affected)
+        await invalidate(db,identity_ids=select(CatalogueIdentity.id).where(or_(*conditions)))
     # Marked evidence is not available for new verified participation; old public
     # credits are retained until a worker establishes a real contradiction.

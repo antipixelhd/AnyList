@@ -33,7 +33,7 @@ class ContributorLink(BaseModel):
 
 
 class ContributorCreditSource(BaseModel):
-    kind: Literal['dlc','expansion','update','edition','port']
+    kind: Literal['dlc','expansion','update','episode','edition','port']
     title: str
 
 

@@ -77,7 +77,7 @@ class DiscoverySourceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((result['outcomes'][0]['status'],result['outcomes'][0]['reason']),('unresolved','credit_parent'))
 
     async def test_confirmed_dlc_and_updates_preserve_child_identity_and_full_parent(self):
-        for kind in (1,14):
+        for kind in (1,14,6):
             with self.subTest(kind=kind):
                 self.response([]);self.sources.cache.rows.clear()
                 self.sources.igdb.side_effect=[[raw(10,kind,name='Example DLC',first_release_date=1506038400,
@@ -87,7 +87,7 @@ class DiscoverySourceTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((row['status'],row['igdb_id']),('verified',10))
                 edge=row['document']['relationships'][0]
                 self.assertEqual(edge['target']['name'],'Main game')
-                self.assertEqual(edge['relation'],'dlc' if kind==1 else 'update')
+                self.assertEqual(edge['relation'],{1:'dlc',14:'update',6:'episode'}[kind])
 
     async def test_title_fallback_cannot_override_an_incompatible_explicit_imdb_identity(self):
         self.response([('tt1','Q1')])

@@ -23,6 +23,21 @@ class TitleDecisionTests(unittest.TestCase):
     def decide(self, rows, **kwargs):
         return decide(self.title, rows, complete=kwargs.get('complete', True), branches=[])
 
+    def test_episode_title_requires_confirmed_series_parent_number_and_release(self):
+        title={'id':'tt1','title':'Vader Immortal: A Star Wars VR Series - Episode III','year':2019}
+        parent={'id':100,'name':'Vader Immortal: A Star Wars VR Series','game_type':{'id':0}}
+        episode=game(30,'Vader Immortal: Episode III',year=2019,game_type={'id':6},parent_game=parent)
+        result=decide(title,[episode],complete=True,branches=[])
+        self.assertEqual(result['igdb_id'],30)
+        self.assertTrue(valid_binding_evidence({'matcher_version':VERSION,'igdb_id':'30','matching':result['evidence']},'tt1'))
+        for extra in ({'name':'Vader Immortal: Episode II'},{'parent_game':None},
+                {'parent_game':{**parent,'name':'Other Series'}},{'game_type':{'id':0}},
+                {'first_release_date':None},{'version_parent':100}):
+            self.assertNotEqual(decide(title,[{**episode,**extra}],complete=True,branches=[])['status'],'verified')
+        self.assertNotEqual(decide(title,[episode],complete=False,branches=[])['status'],'verified')
+        self.assertNotEqual(decide(title,[episode,{**episode,'id':31}],complete=True,branches=[])['status'],'verified')
+        self.assertNotEqual(decide({**title,'title':title['title']+' Remastered'},[episode],complete=True,branches=[])['status'],'verified')
+
     def test_exact_primary_ranks_over_a_historical_alias_without_merging_games(self):
         result = self.decide([game(20, 'Raiders of the Broken Planet', alternative_names=[{'name': 'Spacelords'}],
             websites=[{'url':'https://store.steampowered.com/app/436180/'}]),
@@ -161,6 +176,15 @@ class TitleDecisionTests(unittest.TestCase):
 
 
 class CandidateRetrievalTests(unittest.IsolatedAsyncioTestCase):
+    async def test_numbered_episode_search_is_scoped_to_the_full_parent_title(self):
+        child=game(30,'Vader Immortal: Episode III',year=2019,game_type={'id':6},
+            parent_game={'id':100,'name':'Vader Immortal: A Star Wars VR Series','game_type':{'id':0}})
+        self.sources.igdb.side_effect=[[],[],[child],[]]
+        title={'id':'tt1','title':'Vader Immortal: A Star Wars VR Series - Episode III','year':2019}
+        data=(await retrieve(self.sources,title))['data']
+        self.assertTrue(data['complete'])
+        self.assertEqual(decide(title,data['rows'],complete=data['complete'],branches=data['branches'])['igdb_id'],30)
+        self.assertIn('parent_game.name ~ "Vader Immortal: A Star Wars VR Series"',self.sources.igdb.await_args_list[2].args[1])
     async def test_unicode_names_are_sent_as_real_utf8_not_json_escape_sequences(self):
         self.sources.igdb.return_value=[]
         await retrieve(self.sources,{'id':'tt2','title':'Déraciné','year':2018})

@@ -157,6 +157,65 @@ class MappingIndexTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(binding.evidence['mapping_state'],'stale')
             self.assertIsNotNone(await db.scalar(snapshot('game_credit_job',self.base)))
 
+    async def test_returning_cache_identity_preserves_its_saved_proof_but_not_conflicting_items(self):
+        from core.game_mapping_import import wiki_record
+        from core.game_imdb_mapping import game_mapping
+        from test_game_credit_sources import item,claim
+        own=item('Q1','Example',{'P345':[claim('tt1')],'P9043':[claim('10')]})
+        other=item('Q2','Other',{'P345':[claim('tt2')],'P9043':[claim('20')]})
+        async def publish(items):
+            generation=await index.begin(self.Session,'wikidata')
+            await index.write(self.Session,generation,[wiki_record(value) for value in items])
+            await index.publish(self.Session,generation,{'complete':True,'rows':len(items),'scope':'retrieved_game_evidence'})
+        await publish([other])
+        evidence={'wikidata':game_mapping(own,'10',None)['evidence'],
+            'dependencies':['wikidata:Q1'],'mapping_state':'active'}
+        async with self.Session() as db:
+            db.add(CatalogueIdentity(entity_id=self.base,namespace='imdb.title',external_id='tt1',source='wikidata',evidence=evidence))
+            # The same new IMDb claim must still invalidate a title-matched game.
+            db.add(CatalogueIdentity(entity_id=self.pack,namespace='imdb.title',external_id='tt2',source='matched',
+                evidence={'dependencies':['wikidata-imdb:tt1'],'mapping_state':'active'}))
+            await db.commit()
+        await publish([own,other])
+        async with self.Session() as db:
+            values={row.external_id:row for row in await db.scalars(select(CatalogueIdentity).where(CatalogueIdentity.namespace=='imdb.title'))}
+            self.assertEqual(values['tt1'].evidence['mapping_state'],'active')
+            self.assertEqual(values['tt2'].evidence['mapping_state'],'stale')
+            self.assertIsNone(await db.scalar(snapshot('game_credit_job',self.base)))
+        # Eviction and reappearance alone cannot keep cycling an accepted proof.
+        await publish([other]);await publish([own,other])
+        async with self.Session() as db:
+            self.assertEqual((await db.scalar(select(CatalogueIdentity).where(CatalogueIdentity.external_id=='tt1'))).evidence,evidence)
+        await publish([other])
+        conflict=item('Q3','Example',{'P345':[claim('tt1')],'P9043':[claim('30')]})
+        # Same batch: own unchanged proof cannot exempt a competing item.
+        await publish([own,other,conflict])
+        async with self.Session() as db:
+            binding=await db.scalar(select(CatalogueIdentity).where(CatalogueIdentity.external_id=='tt1'))
+            self.assertEqual(binding.evidence['mapping_state'],'stale')
+            self.assertIsNotNone(await db.scalar(snapshot('game_credit_job',self.base)))
+
+    async def test_returning_cache_identity_with_changed_qualifiers_revalidates(self):
+        from core.game_mapping_import import wiki_record
+        from core.game_imdb_mapping import game_mapping
+        from test_game_credit_sources import item,claim
+        own=item('Q1','Example',{'P345':[claim('tt1')],'P9043':[claim('10')]})
+        other=item('Q2','Other',{'P345':[claim('tt2')],'P9043':[claim('20')]})
+        generation=await index.begin(self.Session,'wikidata')
+        await index.write(self.Session,generation,[wiki_record(other)])
+        await index.publish(self.Session,generation,{'complete':True,'rows':1,'scope':'retrieved_game_evidence'})
+        async with self.Session() as db:
+            db.add(CatalogueIdentity(entity_id=self.base,namespace='imdb.title',external_id='tt1',source='wikidata',
+                evidence={'wikidata':game_mapping(own,'10',None)['evidence'],'dependencies':['wikidata:Q1'],'mapping_state':'active'}))
+            await db.commit()
+        own['claims']['P9043'][0]['qualifiers']={'P580':[{'snaktype':'somevalue'}]}
+        generation=await index.begin(self.Session,'wikidata')
+        await index.write(self.Session,generation,[wiki_record(own)])
+        await index.publish(self.Session,generation,{'complete':True,'rows':1,'scope':'retrieved_game_evidence'})
+        async with self.Session() as db:
+            binding=await db.scalar(select(CatalogueIdentity).where(CatalogueIdentity.external_id=='tt1'))
+            self.assertEqual(binding.evidence['mapping_state'],'stale')
+
     async def test_confirmed_quarantine_retires_only_public_evidence_and_preserves_tracking(self):
         from core.game_mapping_lifecycle import quarantine
         async with self.Session() as db:
