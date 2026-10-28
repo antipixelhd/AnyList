@@ -13,6 +13,22 @@ COMPANIES = ('developer', 'publisher', 'supporting', 'porting')
 PAGE_SIZE = 24
 
 
+def coverage_notice(kind, *, person=None, company=None):
+    """Describe gaps in the selected portfolio, not unrelated credit roles."""
+    if kind == 'studio':
+        return None if company and company.get('coverage') == 'complete' else 'Game credits may be incomplete.'
+    from core.game_imdb_person import VERSION
+    coverage = (person or {}).get('mapping') or {}
+    role = (coverage.get('role_coverage') or {}).get(kind) or {}
+    if (coverage.get('person_version') == VERSION and coverage.get('source_complete')
+            and not coverage.get('omitted_rows')
+            and type(role.get('unmapped')) is int and role['unmapped'] == 0):
+        return None
+    if role.get('unmapped', 0):
+        return 'Some game credits could not be matched.'
+    return 'Game credits may be incomplete.'
+
+
 class GameWorksChanged(ValueError):
     """A continuation must restart after its eligible collection changes."""
 
@@ -96,8 +112,7 @@ async def works_page(db, viewer, entity_id, kind, *, key, list_scope, status, pa
         if cursor:
             raise ValueError('No saved game works')
         return {'works': [], 'known_works': 0, 'list_count': 0 if viewer else None, 'roles': [],
-            'total': 0, 'page': page, 'has_more': False, 'next_cursor': None, 'source': 'local',
-            'notice': 'No verified saved game credits are available. Coverage may be incomplete.'}
+            'total': 0, 'page': page, 'has_more': False, 'next_cursor': None, 'source': 'local'}
     credits = game_credits(entity_id, kind)
     public = select(credits.c.id, credits.c.title, credits.c.poster, credits.c.backdrop,
         credits.c.released, credits.c.game_class, credits.c.base_work_id).distinct().cte('game_contributor_titles')
@@ -173,5 +188,4 @@ async def works_page(db, viewer, entity_id, kind, *, key, list_scope, status, pa
         'after': [rows[-1]['released'], rows[-1]['id']]}, separators=(',', ':')) if has_more else None
     return {'works': result, 'known_works': counts[0], 'list_count': counts[1] if viewer else None,
         'roles': sorted(set(counts[2] or [])),
-        'total': total, 'page': page, 'has_more': has_more, 'next_cursor': next_cursor, 'source': 'local',
-        'notice': 'Showing verified saved game credits. Coverage may be incomplete.'}
+        'total': total, 'page': page, 'has_more': has_more, 'next_cursor': next_cursor, 'source': 'local'}

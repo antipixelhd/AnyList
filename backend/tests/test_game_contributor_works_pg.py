@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 import test_contributor_details_pg as fixture
 from dependencies import get_current_user_or_api_key
 from models import User
-from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueRelationship
+from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity, CatalogueRelationship
 from models.games import GameChildState, GameEntry
 
 
@@ -229,6 +229,28 @@ class GameContributorTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn('Restricted game biography',public.text)
             self.assertIsNone(public.json()['game_person_status'])
             source.assert_not_awaited()
+
+    async def test_notice_uses_selected_role_coverage_on_real_page(self):
+        from core.game_imdb_person import VERSION
+        await self.seed(2)
+        async with self.Session() as db:
+            db.add(CatalogueIdentity(entity_id=self.person_id, namespace='imdb.person',
+                external_id='nm1', source='tmdb'))
+            await db.commit()
+        state = {'id': 'nm1', 'pending': False, 'complete': True, 'mapping': {
+            'source_complete': True, 'person_version': VERSION, 'state': 'partial',
+            'role_coverage': {'actor': {'source': 2, 'unmapped': 0},
+                'staff': {'source': 2, 'unmapped': 1}}}}
+        with patch('core.game_imdb_enrichment.request', AsyncMock(return_value={})), \
+                patch('core.game_imdb_person.view', AsyncMock(return_value=state)):
+            actor = await self.request(media_type='game')
+            self.assertEqual(actor.status_code, 200, actor.text)
+            self.assertIsNone(actor.json()['notice'])
+            staff = await self.request('staff', media_type='game')
+            self.assertEqual(staff.status_code, 200, staff.text)
+            self.assertEqual(staff.json()['notice'], 'Some game credits could not be matched.')
+            state.update(pending=True, complete=False)
+            self.assertIsNone((await self.request(media_type='game')).json()['notice'])
 
     async def test_title_roles_take_display_precedence_over_sparse_person_connection_evidence(self):
         games,_,_=await self.seed(2)

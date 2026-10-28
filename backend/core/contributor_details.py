@@ -375,7 +375,7 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
         raise RuntimeError("Unable to load more studio works")
     game_result = None
     if games:
-        from core.game_contributor_works import works_page
+        from core.game_contributor_works import works_page, coverage_notice
         game_result = await works_page(db, viewer, entity.id if entity else None, kind,
             key=f'catalogue:{entity.id}' if entity else key, list_scope=list_scope, status=status,
             page=page, cursor=cursor)
@@ -386,7 +386,8 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
             released = [row for row in works if '0000' < (row.get('release_date') or '') <= date.today().isoformat()]
             latest = next((row for row in released if row.get('backdrop') or row.get('poster')), {})
             share_summary = {'games': game_result['known_works'], 'background': latest.get('backdrop') or latest.get('poster')}
-        notice = ' '.join(filter(None, (notice, None if company_state and company_state['coverage']=='complete' else game_result['notice'])))
+        notice = ' '.join(filter(None, (notice,
+            coverage_notice(kind, person=imdb_state, company=company_state)))) or None
     else:
         # The caller supplies the current instance preference, including when metadata is offline.
         from models import GlobalSettings
