@@ -234,6 +234,7 @@ class GameIMDbDiscoverySource:
                     *[f'support:{row["provider"]}:{row["kind"]}:{row["key"]}' for row in deeper]],
                 'support':{'imdb_generation':local['generation'] if local else None,
                     'candidate_key':data.get('scope_key'),'candidate_fingerprint':data.get('scope_fingerprint'),
+                    'candidate_observations':data.get('scope_observations',{}),
                     'check_wikidata_generation':True,'wikidata_generation':wiki_generation,
                     'wiki_snapshots':result.get('support_snapshots',[]),'snapshots':deeper}}
             projected=project_game(native,raw,games,evidence)

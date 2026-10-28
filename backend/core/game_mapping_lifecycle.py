@@ -28,11 +28,12 @@ async def quarantine(db, binding, reason):
     await revision(db)
 
 
-async def invalidate(db,keys=(),*,outdated=False):
+async def invalidate(db,keys=(),*,outdated=False,identity_ids=None):
     from core.game_title_match import VERSION
-    condition=(CatalogueIdentity.source=='matched') & (
-        func.coalesce(CatalogueIdentity.evidence['matcher_version'].as_integer(),0)!=VERSION) if outdated else \
-        CatalogueIdentity.evidence['dependencies'].op('?|')(array(sorted(set(keys))))
+    if identity_ids is not None:condition=CatalogueIdentity.id.in_(identity_ids)
+    elif outdated:condition=(CatalogueIdentity.source=='matched') & (
+        func.coalesce(CatalogueIdentity.evidence['matcher_version'].as_integer(),0)!=VERSION)
+    else:condition=CatalogueIdentity.evidence['dependencies'].op('?|')(array(sorted(set(keys))))
     marker=uuid.uuid4().hex
     work_ids=list(await db.scalars(update(CatalogueIdentity).where(
         CatalogueIdentity.namespace=='imdb.title',CatalogueIdentity.source!='reviewed',condition,

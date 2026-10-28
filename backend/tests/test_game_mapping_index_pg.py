@@ -14,7 +14,7 @@ import test_games_pg as fixture
 from core import game_mapping_index as index
 from core.game_imdb_bindings import GameIMDbBindings, verified_bindings
 from core.game_mapping_import import import_jsonl
-from core.game_imdb_enrichment import now
+from core.game_imdb_enrichment import now,snapshot
 from models.catalogue import CatalogueIdentity, CatalogueEntity, CatalogueCredit, MetadataSnapshot
 from models.games import GameEntry
 from models.game_mapping import GameMappingGeneration
@@ -210,6 +210,33 @@ class MappingIndexTests(unittest.IsolatedAsyncioTestCase):
             job=await db.scalar(snapshot(JOB,self.base))
             self.assertTrue(job.coverage['mapping_revalidation']);self.assertIsNotNone(job.next_attempt_at)
             self.assertIsNone(job.lease_token)
+
+    async def test_new_query_with_same_facts_does_not_requeue_an_accepted_mapping(self):
+        from core.game_source_cache import GameSourceCache
+        from core.game_title_candidates import observations
+        cache=GameSourceCache(self.Session)
+        raw={'id':10,'name':'Example','game_type':{'id':0},'first_release_date':1577836800}
+        async with self.Session() as db:
+            db.add_all([CatalogueIdentity(entity_id=self.base,namespace='igdb.game',external_id='10',source='igdb'),
+                CatalogueIdentity(entity_id=self.base,namespace='imdb.title',external_id='tt1',source='matched',
+                    evidence={'igdb_id':'10','title_type':'videoGame','mapping_state':'active',
+                        'dependencies':['igdb-query:old','igdb-name:example'],
+                        'matching':{'imdb':{'id':'tt1','title':'Example','year':2020},'support':{
+                            'candidate_key':'old','candidate_fingerprint':'old','candidate_observations':observations([raw])}}})])
+            await db.commit()
+        initial={'rows':[raw],'scope_names':['example'],'scope_fingerprint':'new'}
+        await cache.get('igdb','game_title_candidates','new',AsyncMock(return_value=initial))
+        async with self.Session() as db:
+            binding=await db.scalar(select(CatalogueIdentity).where(CatalogueIdentity.namespace=='imdb.title'))
+            self.assertEqual(binding.evidence['mapping_state'],'active')
+            self.assertIsNone(await db.scalar(snapshot('game_credit_job',str(self.base))))
+        rival={**raw,'id':20}
+        await cache.get('igdb','game_title_candidates','another',AsyncMock(return_value={**initial,
+            'rows':[raw,rival],'scope_fingerprint':'with-rival'}))
+        async with self.Session() as db:
+            binding=await db.scalar(select(CatalogueIdentity).where(CatalogueIdentity.namespace=='imdb.title'))
+            self.assertEqual(binding.evidence['mapping_state'],'stale')
+            self.assertIsNotNone(await db.scalar(snapshot('game_credit_job',str(self.base))))
 
     async def test_changed_candidate_scope_invalidates_automatic_evidence_and_old_policy_is_not_verified(self):
         from core.game_source_cache import GameSourceCache

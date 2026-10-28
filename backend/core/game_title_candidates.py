@@ -11,6 +11,18 @@ from core.game_title_match import VERSION, spelling
 FIELDS = FIELDS + ',alternative_names.name,release_dates.date,release_dates.status.name,remakes,remasters,websites.url,external_games.platform,external_games.countries,platforms.id,parent_game.id'
 PAGE = 100
 MAX_PAGES = 3
+IDENTITY_FIELDS=('id','name','alternative_names','first_release_date','release_dates','game_type',
+    'version_parent','parent_game','websites','external_games','involved_companies','platforms')
+
+
+def observations(rows):
+    """Order-insensitive public identity facts, shared across query spellings."""
+    def normalized(value):
+        if isinstance(value,dict):return {key:normalized(item) for key,item in value.items()}
+        if isinstance(value,list):return sorted((normalized(item) for item in value),key=lambda item:json.dumps(item,sort_keys=True))
+        return value
+    return {str(row['id']):hashlib.sha256(json.dumps(normalized({field:row[field] for field in IDENTITY_FIELDS if field in row}),
+        sort_keys=True).encode()).hexdigest() for row in rows}
 
 
 async def retrieve(sources, title):
@@ -51,12 +63,16 @@ async def retrieve(sources, title):
                     tail=re.split(r'\s+in\s+',parts[1],flags=re.IGNORECASE)[-1].strip()
                     if tail not in expanded and parts[0].strip() and len(spelling(tail).split())>=3 and 12<=len(tail)<=500:
                         parents[tail]=parts[0].strip();expanded.append(tail)
-        identity_fields=('id','name','alternative_names','first_release_date','release_dates','game_type',
-            'version_parent','parent_game','websites','external_games','involved_companies','platforms')
-        identity=[{field:row[field] for field in identity_fields if field in row} for _,row in sorted(found.items())]
+        identity=[{field:row[field] for field in IDENTITY_FIELDS if field in row} for _,row in sorted(found.items())]
         fingerprint=hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()
         return {'rows': list(found.values()), 'complete': all(row['complete'] for row in branches), 'branches': branches,
             'scope_key':key,'scope_names':sorted({spelling(name) for name in [*expanded,*parents.values()]}), 'scope_fingerprint':fingerprint}
 
-    return await sources.cache.get('igdb', 'game_title_candidates', key, load,
+    result=await sources.cache.get('igdb', 'game_title_candidates', key, load,
                                    ttl=timedelta(days=1), max_stale=timedelta(days=7))
+    # Older cached scopes can supply the same compact facts without a provider
+    # refetch or renewing their observation/expiry timestamps.
+    if 'scope_observations' not in result['data']:
+        import asyncio
+        result={**result,'data':{**result['data'],'scope_observations':await asyncio.to_thread(observations,result['data']['rows'])}}
+    return result

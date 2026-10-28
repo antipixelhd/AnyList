@@ -209,7 +209,8 @@ class GameIMDbBindings:
         projected=project_game(title_id,raw,games,proof['evidence'])
         if projected['status']!='verified':return projected
         proof['evidence'].update(direction='igdb_to_imdb',support={**wiki_support,'imdb_generation':generation,
-            'candidate_key':candidate['data'].get('scope_key'),'candidate_fingerprint':candidate['data'].get('scope_fingerprint'),'snapshots':deeper},
+            'candidate_key':candidate['data'].get('scope_key'),'candidate_fingerprint':candidate['data'].get('scope_fingerprint'),
+            'candidate_observations':candidate['data'].get('scope_observations',{}),'snapshots':deeper},
             dependencies=[f'wikidata-imdb:{title_id}',
             f'igdb-query:{candidate["data"].get("scope_key","")}',
             *[f'igdb-name:{name}' for name in candidate['data'].get('scope_names',[])],

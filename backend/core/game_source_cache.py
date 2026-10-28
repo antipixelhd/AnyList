@@ -165,6 +165,9 @@ class GameSourceCache:
             data = await asyncio.wait_for(loader(publish) if progressive else loader(), 60)
             if not isinstance(data, dict) or len(json.dumps(data).encode()) > 2_000_000:
                 raise ProviderError('bad_response')
+            if provider=='igdb' and kind=='game_title_candidates':
+                from core.game_title_candidates import observations
+                data={**data,'scope_observations':await asyncio.to_thread(observations,data.get('rows',[]))}
         except (ProviderError, asyncio.TimeoutError) as cause:
             error = cause.code if isinstance(cause, ProviderError) else 'unavailable'
         except Exception:
@@ -191,10 +194,12 @@ class GameSourceCache:
                 if support_kind and (row.payload or {}).get('fingerprint')!=data.get('fingerprint'):
                     from core.game_mapping_lifecycle import invalidate
                     await invalidate(db,[f'support:{provider}:{kind}:{key}'])
-                if provider=='igdb' and kind=='game_title_candidates' and (row.payload or {}).get('scope_fingerprint')!=data.get('scope_fingerprint'):
-                    from core.game_mapping_lifecycle import invalidate
-                    names=set(data.get('scope_names',[]))|set((row.payload or {}).get('scope_names',[]))
-                    await invalidate(db,[f'igdb-query:{key}',*[f'igdb-name:{name}' for name in names]])
+                if provider=='igdb' and kind=='game_title_candidates' and (
+                        (row.payload or {}).get('scope_fingerprint')!=data.get('scope_fingerprint')
+                        or (row.payload or {}).get('complete')!=data.get('complete')):
+                    from core.game_candidate_observations import invalidate_observed
+                    observed={**data,'scope_names':sorted(set(data.get('scope_names',[]))|set((row.payload or {}).get('scope_names',[])))}
+                    await invalidate_observed(db,key,observed)
                 row.payload, row.fetched_at, row.expires_at = data, now, now+ttl
                 row.error_code, row.next_attempt_at, row.attempts = None, None, 0
                 if progressive:row.coverage={**(row.coverage or {}),'page_complete':True}
