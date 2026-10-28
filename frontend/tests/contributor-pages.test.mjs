@@ -9,7 +9,10 @@ test('confirmed child credits label the source and retain the parent game destin
   assert.equal(contributorCreditScope({title:'Warframe'}),'');
   assert.equal(contributorCreditScope({title:'Example',credit_sources:[{kind:'edition',title:'Example: Complete Edition'}]}),'Edition: Complete Edition');
   assert.equal(contributorCreditScope({title:'Example',credit_sources:[{kind:'port',title:'Example Mobile'}]}),'Port: Example Mobile');
-  assert.equal(contributorCreditScope({title:'Example',credit_sources:[{kind:'episode',title:'Example: Episode III'}]}),'Episode: Episode III');
+  assert.equal(contributorCreditScope({title:'Example',credit_sources:[{kind:'episode',title:'Example: Episode III'}]}),'Episode III');
+  assert.equal(contributorCreditScope({title:'Vader Immortal: A Star Wars VR Series',credit_sources:[
+    {kind:'episode',title:'Vader Immortal: Episode I'},{kind:'episode',title:'Vader Immortal: Episode III'}]}),'Episode I · Episode III');
+  assert.equal(contributorCreditScope({title:'Example: The Story',credit_sources:[{kind:'episode',title:'Other: Episode III'}]}),'Episode: Other: Episode III');
 });
 
 test('contributor filters whitelist scopes and never send viewer IDs', () => {

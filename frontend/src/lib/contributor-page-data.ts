@@ -10,6 +10,10 @@ export function contributorCreditScope(work: Pick<ContributorWork,'title'|'credi
   const sources=work.credit_sources||[];
   const labels:Record<string,string>={dlc:'DLC',expansion:'Expansion',update:'Update',episode:'Episode',edition:'Edition',port:'Port'};
   return sources.map(source=>{
+    if(source.kind==='episode'){
+      const episode=/^(.+?):\s*(Episode\s+.+)$/i.exec(source.title);
+      if(episode&&(work.title===episode[1]||work.title.startsWith(episode[1]+':')))return episode[2];
+    }
     const title=source.title.startsWith(work.title+':')?source.title.slice(work.title.length+1).trim():source.title;
     return `${labels[source.kind]||source.kind}: ${title}`;
   }).join(' · ');
