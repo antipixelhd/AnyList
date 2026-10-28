@@ -16,6 +16,8 @@ Trusted `--baseline-ref` comparisons load the affected contributor identity/deta
 
 Run `game_credits` separately from Games search/browse cases when measuring only the cached credit projection. Combining them gives the shared first-game fixture an IGDB identity and can admit unrelated primary metadata hydration, including its wait budget. Report that combined workload explicitly rather than interpreting its latency as credit-projection cost. The source tests also cover bounded exact-ID Wikidata statement-search recovery, independent WDQS/Action API cooldowns and verification against actual claims; the cached-person benchmark does not exercise that fallback.
 
+Normal Games Browse cases establish ranking, pagination and request cost with usable source observations. They do not seed a recently fetched ranking whose provider timestamp has expired. `test_game_ranking_cache_pg` covers that recovery separately: unusable observations must await a shared refresh, usable stale rankings may paint immediately, and failures preserve cooldowns without presenting outdated evidence.
+
 | Affected path | Useful existing cases |
 |---|---|
 | Title retrieval/ranking/runtime | `movie_exact`, `movie_typo`, `series_exact`, `combined_titles`, `empty_query`, `runtime_timeout` |

@@ -42,8 +42,8 @@ class GameSourceCache:
             MetadataSnapshot.kind == kind, MetadataSnapshot.external_id == f'{SCHEMA_VERSION}:{key}')
 
     @staticmethod
-    def view(row, now, max_stale):
-        if row and row.payload is not None and row.fetched_at and now-row.fetched_at <= max_stale:
+    def view(row, now, max_stale, accept=None):
+        if row and row.payload is not None and row.fetched_at and now-row.fetched_at <= max_stale and (accept is None or accept(row.payload)):
             return dict(data=row.payload, fetched_at=row.fetched_at.isoformat(),
                 stale=not bool(row.expires_at and row.expires_at > now), error=row.error_code)
         return None
@@ -69,13 +69,13 @@ class GameSourceCache:
             raise ProviderError('cursor_expired')
         return row[0]
 
-    async def get(self, provider, kind, key, loader, *, ttl=timedelta(hours=6), max_stale=timedelta(days=3), progressive=False):
+    async def get(self, provider, kind, key, loader, *, ttl=timedelta(hours=6), max_stale=timedelta(days=3), progressive=False, accept=None):
         if not kind.startswith('game_'):
             raise ProviderError('invalid_request')
         async with self.sessions() as db:
             row = await db.scalar(self.query(provider, kind, key))
         now = utcnow()
-        previous = self.view(row, now, max_stale)
+        previous = self.view(row, now, max_stale, accept)
         if previous and not previous['stale']:
             return previous
         if row and row.next_attempt_at and row.next_attempt_at > now:
@@ -91,7 +91,7 @@ class GameSourceCache:
                 if previous:
                     return previous
                 raise ProviderError('rate_limited')
-            task = asyncio.create_task(self.refresh(provider, kind, key, loader, ttl, max_stale, progressive=progressive))
+            task = asyncio.create_task(self.refresh(provider, kind, key, loader, ttl, max_stale, progressive=progressive, accept=accept))
             _flights[flight_key] = task
             def finished(done):
                 if _flights.get(flight_key) is done:
@@ -115,7 +115,7 @@ class GameSourceCache:
         except TimeoutError:
             async with self.sessions() as db:
                 row=await db.scalar(self.query(provider,kind,key))
-            return self.view(row,utcnow(),kwargs.get('max_stale',timedelta(days=3))) or {
+            return self.view(row,utcnow(),kwargs.get('max_stale',timedelta(days=3)),kwargs.get('accept')) or {
                 'data':None,'stale':True,'error':None}
 
     async def publish(self,provider,kind,key,token,data,max_stale):
@@ -133,7 +133,7 @@ class GameSourceCache:
             row.coverage={**(row.coverage or {}),'page_complete':False}
             await db.commit()
 
-    async def refresh(self, provider, kind, key, loader, ttl, max_stale, *, progressive=False):
+    async def refresh(self, provider, kind, key, loader, ttl, max_stale, *, progressive=False, accept=None):
         self.query(provider,kind,key)  # Validate the persisted namespace before INSERT.
         token = uuid.uuid4().hex
         async with self.sessions() as db:
@@ -141,7 +141,7 @@ class GameSourceCache:
                 .on_conflict_do_nothing())
             row = await db.scalar(self.query(provider, kind, key).with_for_update())
             now = utcnow()
-            previous = self.view(row, now, max_stale)
+            previous = self.view(row, now, max_stale, accept)
             if row.expires_at and row.expires_at > now and previous:
                 await db.commit()
                 return previous
@@ -177,7 +177,7 @@ class GameSourceCache:
             row = await db.scalar(self.query(provider, kind, key).with_for_update())
             now = utcnow()
             if row.lease_token != token:
-                previous = self.view(row, now, max_stale)
+                previous = self.view(row, now, max_stale, accept)
                 await db.commit()
                 if previous:
                     return previous
@@ -200,7 +200,7 @@ class GameSourceCache:
                 if progressive:row.coverage={**(row.coverage or {}),'page_complete':True}
             await self.prune(db, provider, kind, now)
             await db.commit()
-            result = self.view(row, now, max_stale)
+            result = self.view(row, now, max_stale, accept)
         if result:
             return result
         raise ProviderError(error or 'unavailable')

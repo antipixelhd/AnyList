@@ -172,7 +172,8 @@ class GameBrowseSources:
                 self.require_source_time(row['calculated_at'], 3*86400)
             return {'rows': rows, 'has_more': len(rows) == 100, 'offset': offset,
                     'source': f'{source_name} {name}', 'source_at': min((row['calculated_at'] for row in rows), default=None)}
-        result = await self.cache.get('igdb', 'game_browse_ranks', f'{matches[0]}:{offset}', load)
+        result = await self.cache.get('igdb', 'game_browse_ranks', f'{matches[0]}:{offset}', load,
+            accept=lambda data:self.current_source(data,3*86400,allow_empty=True))
         self.require_source_time(result['data'].get('source_at'), 3*86400, empty=not result['data']['rows'])
         return result
 
@@ -181,6 +182,14 @@ class GameBrowseSources:
         now = datetime.now(timezone.utc).timestamp()
         if not empty and (not positive(observed) or not now-maximum_age <= observed <= now+300):
             raise ProviderError('unavailable')
+
+    @classmethod
+    def current_source(cls,data,maximum_age,*,allow_empty=False):
+        # Cache residence age and provider observation age are independent.
+        # Only a ranking the consumer can still display is a usable fallback.
+        try:cls.require_source_time(data.get('source_at'),maximum_age,empty=allow_empty and not data.get('rows'))
+        except ProviderError:return False
+        return True
 
     async def games(self, identifiers=(), slugs=()):
         clauses = []
@@ -300,7 +309,8 @@ class GameBrowseSources:
             return concurrent_chart(await self.request('steam',
                 'https://api.steampowered.com/ISteamChartsService/GetGamesByConcurrentPlayers/v1/'))
         result = await self.cache.get('steam', 'game_browse_ranks', 'concurrent', load,
-            ttl=timedelta(hours=4), max_stale=timedelta(hours=24))
+            ttl=timedelta(hours=4), max_stale=timedelta(hours=24),
+            accept=lambda data:self.current_source(data,86400))
         self.require_source_time(result['data'].get('source_at'), 86400)
         return result
 
