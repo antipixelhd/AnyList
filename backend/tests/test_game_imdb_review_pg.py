@@ -6,7 +6,8 @@ from sqlalchemy import delete,select
 import test_catalogue_pg as fixture
 import test_game_imdb_person_pg as person_fixture
 from test_game_imdb_person_pg import credit,page
-from core.game_imdb_enrichment import snapshot
+from core.game_imdb_enrichment import snapshot,now
+from datetime import timedelta
 from core.game_imdb_person import COMPONENT
 from core.game_imdb_review import review_titles,ReviewChanged,INDEX
 from models.catalogue import CatalogueIdentity,MetadataSnapshot
@@ -16,6 +17,20 @@ from models.catalogue import CatalogueIdentity,MetadataSnapshot
 class ReviewTests(unittest.IsolatedAsyncioTestCase):
     asyncSetUp=person_fixture.PersonEnrichmentTests.asyncSetUp
     asyncTearDown=fixture.CatalogueDatabaseTests.asyncTearDown
+
+    async def test_current_excluded_matches_are_classified_and_do_not_need_a_manual_binding(self):
+        from core.game_imdb_discovery import MAP,VERSION
+        await self.service.run('nm1')
+        async with self.Session() as db:
+            row=MetadataSnapshot(provider='wikidata',kind=MAP,external_id='tt2',expires_at=now()+timedelta(days=1),
+                payload={'status':'excluded','reason':'dlc','igdb_id':30,'game_title':'Known parent: Known DLC','matcher_version':VERSION})
+            db.add(row);await db.commit()
+            self.assertEqual((await review_titles(db,'nm1'))['results'][0]['status'],'excluded')
+            classified=(await review_titles(db,'nm1',scope='all',title_id='tt2'))['results'][0]
+            self.assertEqual((classified['status'],classified['igdb_id'],classified['reason']),('excluded','30','dlc'))
+            self.assertIsNone(classified['work_id']);self.assertNotIn('match_status',classified)
+            row.expires_at=now()-timedelta(seconds=1);await db.commit()
+            self.assertEqual((await review_titles(db,'nm1'))['results'][0]['status'],'unmapped')
 
     async def test_unmapped_titles_preserve_roles_and_exclude_movies(self):
         rows=[credit(),credit('tt2'),credit('tt2',role='writer'),credit('tt3','movie')]

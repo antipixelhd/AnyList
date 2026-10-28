@@ -14,7 +14,7 @@ PERSON_ID = re.compile(r'nm[0-9]+\Z')
 ENDPOINT = 'https://caching.graphql.imdb.com/'
 HEADERS = {'Content-Type':'application/json', 'User-Agent':'AnyList catalogue/1',
            'Origin':'https://www.imdb.com', 'Referer':'https://www.imdb.com/'}
-TITLE_FIELDS = 'id titleText { text } titleType { id } releaseYear { year }'
+TITLE_FIELDS = 'id titleText { text } titleType { id } releaseYear { year } releaseDate { year month day }'
 TITLE_QUERY = 'query GameIdentity($id: ID!) { title(id: $id) { '+TITLE_FIELDS+' } }'
 TITLE_CREDITS = '''query GameCredits($id: ID!, $after: ID) {
   title(id: $id) {
@@ -59,7 +59,7 @@ def game_header(raw, native):
         raise ProviderError('identity_conflict')
     name=(raw.get('titleText') or {}).get('text')
     if not isinstance(name,str) or not name.strip():raise ProviderError('bad_response')
-    return {key:raw.get(key) for key in ('id','titleText','titleType','releaseYear')}
+    return {key:raw.get(key) for key in ('id','titleText','titleType','releaseYear','releaseDate')}
 
 
 def page(raw, maximum):
@@ -94,6 +94,8 @@ class IMDbGameSource:
         denied=[key for key,value in fields.items() if value=='DENY'] if isinstance(fields,dict) else []
         if 'credits(' in query and any(key.startswith(('Title.credits','Name.credits')) for key in denied):
             raise ProviderError('not_entitled')
+        if any(key=='Title.releaseDate' or key.startswith('Title.releaseDate.') for key in denied) and isinstance(body['data'].get('title'),dict):
+            body['data']['title']={**body['data']['title'],'releaseDate':None}
         return {**body['data'],'_denied_fields':denied}
 
     async def title(self,native):

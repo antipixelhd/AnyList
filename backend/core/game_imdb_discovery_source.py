@@ -56,7 +56,7 @@ def project_game(title_id,raw,games,evidence):
         return {'id':title_id,'status':'unresolved','reason':'edition_or_port','igdb_id':raw['id']}
     if kind=='unknown':return {'id':title_id,'status':'unresolved','reason':'unknown_type','igdb_id':raw['id']}
     if not capabilities({'game_class':kind}).searchable:
-        return {'id':title_id,'status':'excluded','reason':kind,'igdb_id':raw['id']}
+        return {'id':title_id,'status':'excluded','reason':kind,'igdb_id':raw['id'],'game_title':raw['name'],'evidence':evidence}
     parent=None
     if kind=='expansion':
         value=raw.get('parent_game');native=value.get('id') if isinstance(value,dict) else value
@@ -205,8 +205,8 @@ class GameIMDbDiscoverySource:
                 if title.get('year') is None:title['year']=local['value'].get('year')
             try:acquired=await retrieve(self.sources,title)
             except ProviderError as error:
-                if error.code!='coverage_limited':raise
-                outputs.append({'id':native,'status':'unresolved','reason':'coverage_limited'});continue
+                outputs.append({'id':native,'status':'unresolved','reason':error.code,
+                    **({'retry_after':60} if error.code!='coverage_limited' else {})});continue
             data=acquired['data']
             decision=decide(title,data['rows'],complete=data['complete'] and not acquired['stale'],branches=data['branches'])
             deeper=[]

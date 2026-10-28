@@ -98,6 +98,31 @@ class PortfolioDiscoveryTests(unittest.IsolatedAsyncioTestCase):
             gap=await db.scalar(snapshot(MAP,'tt3',provider='wikidata'))
             self.assertLess((gap.expires_at-now()).total_seconds(),61)
 
+    async def test_decorated_child_title_matches_its_parent_and_stays_excluded_from_participation(self):
+        from core.game_imdb_discovery_source import GameIMDbDiscoverySource
+        from core.game_imdb_person import JOB as PERSON_JOB
+        from core.game_source_cache import GameSourceCache
+        rows=[credit(),credit('tt2')]
+        rows[1]['title'].update(titleText={'text':'Small Town: Alice & Bob in The Long Dark Night'},releaseYear={'year':2017})
+        self.connection.credits.return_value=page(rows,2)
+        async with self.Session() as db:
+            job=await db.scalar(snapshot(PERSON_JOB,'nm1'));job.next_attempt_at=now();job.expires_at=None;job.payload={};await db.commit()
+        self.assertEqual(await self.person_service.run('nm1'),'ready')
+        child={'id':30,'name':'Small Town: The Long Dark Night','game_type':{'id':1},'first_release_date':1506038400,
+            'parent_game':{'id':100,'name':'Small Town','game_type':{'id':0}}}
+        sources=SimpleNamespace(cache=GameSourceCache(self.Session),igdb=AsyncMock(side_effect=[[],[],[child],[child]]),
+            api=SimpleNamespace(http=SimpleNamespace(request=AsyncMock(return_value={'results':{'bindings':[]}}))))
+        service=GamePersonDiscovery(self.Session,source=GameIMDbDiscoverySource(self.Session,sources=sources))
+        self.assertEqual(await service.run('nm1'),'changed');self.assertEqual(await service.run('nm1'),'ready')
+        self.assertEqual(await self.person_service.run('nm1'),'ready')
+        async with self.Session() as db:
+            result=await db.scalar(snapshot(MAP,'tt2',provider='wikidata'))
+            self.assertEqual((result.payload['status'],result.payload['igdb_id']),('excluded',30))
+            self.assertEqual(result.payload['evidence']['candidates'][0]['parent_title_scope']['parent'],100)
+            self.assertIsNone(await db.scalar(select(CatalogueIdentity).where(CatalogueIdentity.namespace=='imdb.title',CatalogueIdentity.external_id=='tt2')))
+            state=await view(db,'nm1');self.assertEqual(state['mapping']['unmapped_games'],0)
+            entry=await db.scalar(select(GameEntry));self.assertEqual((entry.notes,entry.total_seconds),('Pending private state',3600))
+
     async def test_fresh_actor_and_crew_work_is_added_to_the_existing_catalogue_without_private_tracking(self):
         # Completing the initial source fetch already schedules discovery;
         # neither a second page visit nor a game-details visit is required.

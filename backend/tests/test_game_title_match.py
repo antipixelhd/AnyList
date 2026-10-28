@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 
 os.environ.setdefault('SECRET_KEY', 'mapping-test-only')
 os.environ.setdefault('DATABASE_URL', 'postgresql+asyncpg://test:test@localhost/test')
-from core.game_title_match import decide, spelling
+from core.game_title_match import decide, spelling,valid_binding_evidence,VERSION
 from core.game_title_candidates import retrieve, PAGE, MAX_PAGES
 from core.catalogue_providers import ProviderError
 
@@ -71,6 +71,39 @@ class TitleDecisionTests(unittest.TestCase):
     def test_version_parent_is_not_collapsed_into_its_base(self):
         self.assertEqual(self.decide([game(version_parent=100)])['status'], 'unresolved')
 
+    def test_exact_past_launch_disambiguates_a_cancelled_port_with_distinct_parent_and_platform(self):
+        main=game(platforms=[{'id':6}])
+        prototype=game(20,first_release_date=None,game_type={'id':11},parent_game={'id':100},
+            platforms=[{'id':19}],release_dates=[{'status':{'name':'Cancelled'}}])
+        scope={'app':'42','developer_agreement':True,'store_title':'Spacelords',
+            'release_scope':dict.fromkeys(('imdb_date','store_date','igdb_date'),'2017-09-22')}
+        result=decide(self.title,[main,prototype],complete=True,branches=[],corroboration={10:scope})
+        self.assertEqual(result['igdb_id'],10)
+        self.assertTrue(valid_binding_evidence({'matcher_version':VERSION,'igdb_id':'10','matching':result['evidence']},'tt1'))
+        scheduled={**prototype,'release_dates':[{'date':1506038400,'date_format':{'format':'YYYYMMDD'},'status':{'name':'Cancelled'}}]}
+        result=decide(self.title,[main,scheduled],complete=True,branches=[],corroboration={10:scope})
+        self.assertTrue(next(row for row in result['evidence']['candidates'] if row['id']==20)['year_match'])
+        self.assertEqual(result['igdb_id'],10)
+        self.assertTrue(valid_binding_evidence({'matcher_version':VERSION,'igdb_id':'10','matching':result['evidence']},'tt1'))
+        for extra in ({'platforms':[{'id':6}]},{'parent_game':{'id':10}},{'parent_game':None},
+                {'release_dates':[{'status':{'name':'Full Release'}}]},{'game_type':{'id':0}}):
+            self.assertEqual(decide(self.title,[main,{**prototype,**extra}],complete=True,branches=[],corroboration={10:scope})['status'],'unresolved')
+        wrong={**scope,'release_scope':{**scope['release_scope'],'imdb_date':'2017-09-23'}}
+        self.assertEqual(decide(self.title,[main,prototype],complete=True,branches=[],corroboration={10:wrong})['status'],'unresolved')
+
+    def test_parent_scoped_decorated_titles_preserve_identity_and_edition_words(self):
+        title={'id':'tt2','title':'Small Town: Alice & Bob in The Long Dark Night','year':2017}
+        child=game(30,'Small Town: The Long Dark Night',game_type={'id':1},parent_game={'id':100,'name':'Small Town','game_type':{'id':0}})
+        other=game(40,'The Long Dark Night')
+        result=decide(title,[other,child],complete=True,branches=[])
+        self.assertEqual(result['igdb_id'],30)
+        self.assertEqual(result['evidence']['candidates'][0]['parent_title_scope']['parent'],100)
+        for raw in ({**child,'parent_game':None},{**child,'parent_game':{'id':200,'name':'Other Town','game_type':{'id':0}}}):
+            self.assertNotEqual(decide(title,[other,raw],complete=True,branches=[])['status'],'verified')
+        for name in ('Small Town: Remastered and Deluxe in The Long Dark Night','Small Town: Alice and Bob in The Long Dark Night Part II'):
+            self.assertNotEqual(decide({**title,'title':name},[child],complete=True,branches=[])['status'],'verified')
+        self.assertEqual(decide(title,[child,{**child,'id':31}],complete=True,branches=[])['status'],'unresolved')
+
 
 class CandidateRetrievalTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
@@ -93,6 +126,15 @@ class CandidateRetrievalTests(unittest.IsolatedAsyncioTestCase):
         result = (await retrieve(self.sources, self.title))['data']
         self.assertFalse(result['complete'])
         self.assertEqual(self.sources.igdb.await_count, 2 * MAX_PAGES)
+
+    async def test_fallback_queries_are_bounded_to_the_named_parent_and_consume_both_branches(self):
+        title={'id':'tt2','title':'Small Town: Alice and Bob in The Long Dark Night','year':2017}
+        child=game(30,'Small Town: The Long Dark Night',game_type={'id':1},parent_game={'id':100,'name':'Small Town','game_type':{'id':0}})
+        self.sources.igdb.side_effect=[[],[],[child],[child]]
+        data=(await retrieve(self.sources,title))['data']
+        self.assertEqual(self.sources.igdb.await_count,4);self.assertTrue(data['complete'])
+        for call in self.sources.igdb.await_args_list[2:]:self.assertIn('parent_game.name ~ "Small Town"',call.args[1])
+        self.assertEqual(decide(title,data['rows'],complete=data['complete'],branches=data['branches'])['igdb_id'],30)
 
     async def test_provider_failure_and_oversized_branches_are_not_negatives(self):
         self.sources.igdb.side_effect = ProviderError('timeout')

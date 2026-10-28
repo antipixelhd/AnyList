@@ -21,6 +21,12 @@ def connection(rows,total=None,more=False,cursor=None):
 
 
 class IMDbSourceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_optional_denied_release_date_never_becomes_identity_evidence(self):
+        raw={**title(),'releaseDate':{'year':2020,'month':1,'day':1}}
+        self.http.request.return_value={'data':{'title':raw},'extensions':{'entitlements':{'fields':{'Title.releaseDate':'DENY'}}}}
+        result=await self.source.title('tt123')
+        self.assertIsNone(result['releaseDate'])
+
     async def test_person_suggestions_keep_namesake_ids_and_ignore_unrelated_fuzzy_hits(self):
         self.http.request.return_value = {'d': [
             {'id': 'nm1', 'l': 'Cissy Jones', 's': 'Actress, Firewatch'},

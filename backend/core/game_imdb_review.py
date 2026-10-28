@@ -1,7 +1,7 @@
 """Compact cached title references for explicit admin review, not another catalogue."""
 import asyncio
 
-from sqlalchemy import Integer, Text, column, delete, func, select, true
+from sqlalchemy import Integer, Text, and_, column, delete, func, select, true
 from sqlalchemy.dialects.postgresql import JSONB, insert
 from sqlalchemy.orm import aliased
 
@@ -49,6 +49,7 @@ async def write_index(db,native,generation,rows,*,entity_id):
 
 async def review_titles(db,native,*,page=1,query='',scope='unmapped',generation=None,title_id=None,bindings=None):
     from core.game_imdb_person import JOB,COMPONENT,queue_projection
+    from core.game_imdb_discovery import MAP,VERSION as MATCH_VERSION
     identifier(native,person=True)
     if title_id:identifier(title_id)
     mapping=await catalogue.resolve_identity(db,'imdb.person',native)
@@ -76,9 +77,14 @@ async def review_titles(db,native,*,page=1,query='',scope='unmapped',generation=
     prior=select(CatalogueIdentity.external_id.label('imdb_id'),CatalogueIdentity.entity_id.label('review_work_id')).join(
         CatalogueEntity,CatalogueEntity.id==CatalogueIdentity.entity_id).where(
         CatalogueIdentity.namespace=='imdb.title',CatalogueEntity.kind=='game').subquery('existing_binding')
+    classified=aliased(MetadataSnapshot)
     query_rows=select(entries.c.id.label('imdb_id'),entries.c.title,entries.c.year,entries.c.roles,entries.c.position,
-        valid.c.work_id,valid.c.game_title,valid.c.igdb_id,prior.c.review_work_id).select_from(MetadataSnapshot).join(entries,true()).outerjoin(
-            valid,valid.c.imdb_id==entries.c.id).outerjoin(prior,prior.c.imdb_id==entries.c.id).where(
+        valid.c.work_id,valid.c.game_title,valid.c.igdb_id,prior.c.review_work_id,
+        classified.payload['status'].astext.label('match_status'),classified.payload['reason'].astext.label('match_reason'),
+        classified.payload['igdb_id'].astext.label('match_igdb'),classified.payload['game_title'].astext.label('match_title')).select_from(MetadataSnapshot).join(entries,true()).outerjoin(
+            valid,valid.c.imdb_id==entries.c.id).outerjoin(prior,prior.c.imdb_id==entries.c.id).outerjoin(classified,and_(
+                classified.provider=='wikidata',classified.kind==MAP,classified.external_id==entries.c.id,
+                classified.expires_at>now(),classified.payload['matcher_version'].as_integer()==MATCH_VERSION)).where(
         MetadataSnapshot.provider=='imdb',MetadataSnapshot.kind==INDEX,
         MetadataSnapshot.external_id.like(f'{native}:{header.generation}:%'))
     if title_id:query_rows=query_rows.where(entries.c.id==title_id)
@@ -102,8 +108,13 @@ async def review_titles(db,native,*,page=1,query='',scope='unmapped',generation=
     result['bindings']=rows[0]['bindings'] or 'none'
     if bindings is not None and bindings!=result['bindings']:raise ReviewChanged('Game mappings changed. Refresh this review.')
     result['total']=rows[0]['total']
-    result['results']=[{key:row[key] for key in portion.c.keys() if key!='position'} for row in rows if row['imdb_id']]
-    for row in result['results']:
+    result['results']=[]
+    for source in rows:
+        if not source['imdb_id']:continue
+        row={key:source[key] for key in portion.c.keys() if key!='position' and not key.startswith('match_')}
         row['status']='bound' if row['work_id'] else 'review_required' if row['review_work_id'] else 'unmapped'
+        if row['status']=='unmapped' and source['match_status']=='excluded':
+            row.update(status='excluded',reason=source['match_reason'],igdb_id=source['match_igdb'],game_title=source['match_title'])
+        result['results'].append(row)
     result['has_more']=(page-1)*SIZE+len(result['results'])<result['total']
     return result

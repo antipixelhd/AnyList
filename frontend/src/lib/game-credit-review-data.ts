@@ -10,5 +10,5 @@ export function reviewMatch(work:number,title:string,native:string,kind:string='
 }
 export interface GameReviewTitle {
   imdb_id:string;title:string;year:number|null;roles:string[];work_id:number|null;game_title:string|null;
-  igdb_id:string|null;review_work_id:number|null;status:'bound'|'review_required'|'unmapped';
+  igdb_id:string|null;review_work_id:number|null;status:'bound'|'review_required'|'unmapped'|'excluded';reason?:string;
 }

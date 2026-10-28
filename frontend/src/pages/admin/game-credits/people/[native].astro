@@ -76,13 +76,13 @@ const next=new URLSearchParams({kind,page:String(Math.floor(page)+1),q:query,sco
         <form method="get" class="browse-filters match-search review-filters" data-astro-reload>
           <input type="hidden" name="kind" value={kind}/>
           <BrowseSearchField query={query} placeholder="Filter cached titles…" ariaLabel="Filter cached IMDb game titles"/>
-          <BrowseSelect name="scope" aria-label="Game mappings" valueLabel={scope==='all'?'All games':'Unmapped games'}><option value="unmapped" selected={scope==='unmapped'}>Unmapped games</option><option value="all" selected={scope==='all'}>All games</option></BrowseSelect>
+          <BrowseSelect name="scope" aria-label="Game mappings" valueLabel={scope==='all'?'All games':'Unbound games'}><option value="unmapped" selected={scope==='unmapped'}>Unbound games</option><option value="all" selected={scope==='all'}>All games</option></BrowseSelect>
           <button type="submit" class="button-primary match-submit">Apply</button>
         </form>
-        <p class="review-count">{data.total} {scope==='unmapped'?'unmapped':'cached'} {data.total===1?'game':'games'}</p>
+        <p class="review-count">{data.total} {scope==='unmapped'?'unbound':'cached'} {data.total===1?'game':'games'}</p>
         <div class="review-list">
           {data.results.map((row:GameReviewTitle)=><article class="review-row"><div><h2>{row.title}</h2><p>{row.year||'—'} · <a href={`https://www.imdb.com/title/${row.imdb_id}/`} target="_blank" rel="noreferrer">{row.imdb_id}</a></p>{row.status==='bound'&&<p><a href={`/games/${row.work_id}`}>{row.game_title}</a></p>}</div>
-            <a class="review-action" href={`${home}&${new URLSearchParams({title:row.imdb_id,generation:data.generation})}`}>{row.status==='bound'?'Review binding':'Review'}</a>
+            {row.status==='excluded'?<span class="review-current">Excluded{row.reason&&` · ${row.reason==='dlc'?'DLC':row.reason.replaceAll('_',' ')}`}</span>:<a class="review-action" href={`${home}&${new URLSearchParams({title:row.imdb_id,generation:data.generation})}`}>{row.status==='bound'?'Review binding':'Review'}</a>}
           </article>)}
         </div>
         {!data.results.length&&<p class="review-empty">No cached game titles need review with these filters.</p>}

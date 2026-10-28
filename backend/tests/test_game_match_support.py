@@ -105,3 +105,15 @@ class SupportTests(unittest.IsolatedAsyncioTestCase):
         self.game.pop('external_games')
         result,_=await self.decision();self.assertEqual(result['status'],'unresolved')
         self.http.request.assert_not_awaited();self.credits.assert_not_awaited();self.request.assert_not_awaited()
+
+    async def test_exact_imdb_store_and_igdb_dates_supply_a_scoped_launch_proof(self):
+        self.title['year']=2017
+        self.game['platforms']=[{'id':6}]
+        self.game['release_dates']=[{'date':self.game['first_release_date'],'date_format':{'format':'YYYYMMDD'},'status':{'name':'Full Release'}}]
+        self.credits.return_value['header']={'releaseDate':{'year':2017,'month':9,'day':22}}
+        self.store['42']['data']['release_date']={'coming_soon':False,'date':'Sep 22, 2017'}
+        port=game(20,'Example Game',first_release_date=None,game_type={'id':11},parent_game={'id':100},
+            platforms=[{'id':19}],release_dates=[{'status':{'name':'Cancelled'}}])
+        extra,_=await corroborate(self.sources,self.title,[self.game,port])
+        self.assertEqual(extra[10]['release_scope']['imdb_date'],'2017-09-22')
+        self.assertEqual(decide(self.title,[self.game,port],complete=True,branches=[],corroboration=extra)['igdb_id'],10)

@@ -9,6 +9,8 @@ from core.catalogue_providers import ProviderError
 from core.game_imdb_source import IMDbGameSource
 from core.game_store_source import store_request, store_data
 from core.game_title_match import products, spelling, years
+from core.game_release_dates import game_release
+from core.game_types import igdb_game_class
 
 KINDS={'game_match_credits','game_match_store','game_match_news'}
 
@@ -39,6 +41,9 @@ async def corroborate(sources,title,candidates):
     if not selected or len(selected)>4:return {},[]
     evidence={};snapshots=[]
     credits=None
+    launch_scope=any(igdb_game_class(raw)=='port'
+        and raw.get('release_dates') and all(isinstance(row.get('status'),dict) and row['status'].get('name','').casefold() in ('cancelled','canceled')
+            for row in raw['release_dates']) for raw in selected)
 
     async def load_credits():
         source=IMDbGameSource(sources.api.http)
@@ -52,7 +57,12 @@ async def corroborate(sources,title,candidates):
                     'role':row['category']['id'],'characters':[r['name'] for r in row.get('characters') or [] if isinstance(r.get('name'),str)]})
             if not page['has_next']:break
             cursor=page['cursor']
-        return {'people':rows,'complete':not page['has_next']}
+        point=(page.get('header') or {}).get('releaseDate') or {}
+        try:
+            if any(type(point.get(key)) is not int for key in ('year','month','day')):raise ValueError()
+            day=datetime(point['year'],point['month'],point['day']).date().isoformat()
+        except (KeyError,TypeError,ValueError):day=None
+        return {'people':rows,'complete':not page['has_next'],'release_date':day}
 
     async def news(app,end=None):
         key=f'{app}:{end or "latest"}'
@@ -86,9 +96,17 @@ async def corroborate(sources,title,candidates):
             if row.get('developer') and isinstance(row.get('company'),dict) and row['company'].get('name')}
         if not developers.intersection(spelling(name) for name in store.get('developers') or []):continue
         if credits is None:
-            credits,snapshot=await cached(sources,'imdb','game_match_credits',title['id'],load_credits)
+            credits,snapshot=await cached(sources,'imdb','game_match_credits',title['id']+(':launch-v1' if launch_scope else ''),load_credits)
             snapshots.append(snapshot)
         support={'app':app,'developer_agreement':True,'store_title':store['name'],'people':[],'characters':[]}
+        if launch_scope and (store.get('release_date') or {}).get('coming_soon') is False:
+            store_day=None
+            for form in ('%b %d, %Y','%d %b, %Y'):
+                try:store_day=datetime.strptime(store['release_date']['date'],form).date().isoformat();break
+                except (KeyError,TypeError,ValueError):pass
+            normal=game_release(raw)
+            if store_day and store_day==credits.get('release_date')==normal.get('release_date') and normal.get('release_date_precision')=='day':
+                support['release_scope']={'imdb_date':store_day,'store_date':store_day,'igdb_date':store_day}
         description=plain(store.get('detailed_description'))
         # A distinctive full character name corroborates an undated exact
         # title. Generic/single-word labels cannot establish this tier.
@@ -135,6 +153,6 @@ async def corroborate(sources,title,candidates):
                 unavailable=re.search(r'(?i)\bnot (?:yet )?(?:available|released)\b',plain(article['contents']))
                 if actual and not planned and not unavailable and re.search(r'(?i)early\s+access',headline):
                     support['early_access']={'year':year,'release_year':full_year,'announcement':article['gid']};break
-        if support['characters'] or len(support['people'])>=2 or support.get('cast_character') or support.get('early_access'):
+        if support['characters'] or len(support['people'])>=2 or support.get('cast_character') or support.get('early_access') or support.get('release_scope'):
             evidence[raw['id']]=support
     return evidence,snapshots

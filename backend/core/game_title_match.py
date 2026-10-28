@@ -1,17 +1,55 @@
 """Versioned game-title evidence; discovery spelling never merges catalogue roots."""
 import re
 import unicodedata
+from datetime import date, datetime, timezone
 from urllib.parse import urlsplit
 from core.game_types import igdb_game_class
 from core.game_release_dates import game_release, release
 
-VERSION = 2
+VERSION = 3
+
+
+def scoped_title(raw,title):
+    """A decorated child title needs its explicit parent, not a loose suffix."""
+    if igdb_game_class(raw) not in ('dlc','expansion','standalone_expansion'):return False
+    parent=raw.get('parent_game')
+    if not isinstance(parent,dict) or type(parent.get('id')) is not int or parent['id']<=0:return False
+    if igdb_game_class(parent) not in ('game','standalone_expansion','remake','remaster','expanded_game'):return False
+    source=title.get('title','').split(':',1);candidate=raw.get('name','').split(':',1)
+    if len(source)!=2:return False
+    if spelling(source[0])!=spelling(parent.get('name')):return False
+    if len(candidate)==2 and spelling(candidate[0])!=spelling(parent.get('name')):return False
+    tail=re.fullmatch(r"\s*([^:]+?)\s+in\s+(.+)",source[1],re.IGNORECASE)
+    if not tail:return False
+    decoration=spelling(tail[1].replace('&',' and '));suffix=spelling(tail[2])
+    if not re.fullmatch(r'[^\W\d_]+(?: [^\W\d_]+){0,2} and [^\W\d_]+(?: [^\W\d_]+){0,2}',decoration,re.UNICODE):return False
+    if re.search(r'\b(remake|remastered|remaster|edition|deluxe|collection|complete|part|episode|chapter|season)\b',decoration):return False
+    return len(suffix.split())>=3 and len(suffix)>=12 and suffix==spelling(candidate[-1])
+
+
+def cancelled_scope(other,winner,title):
+    """An exact past launch identifies a released work against a scoped prototype."""
+    scope=(winner.get('corroboration') or {}).get('release_scope') or {}
+    if not store_agrees(winner.get('corroboration') or {},title):return False
+    stamp=scope.get('imdb_date')
+    try:released=date.fromisoformat(stamp)
+    except (TypeError,ValueError):return False
+    return (stamp==scope.get('store_date')==scope.get('igdb_date') and released<=datetime.now(timezone.utc).date()
+        and released.year==title.get('year') and winner.get('game_class') in ('game','remake','remaster','expanded_game','standalone_expansion')
+        and other.get('game_class')=='port' and other.get('cancelled') is True
+        and type(other.get('parent')) is int and other['parent']>0 and other['parent']!=winner.get('id')
+        and bool(other.get('platforms')) and bool(winner.get('platforms'))
+        and not set(other['platforms']).intersection(winner['platforms']))
+
+
+def store_agrees(proof,title):
+    if proof.get('developer_agreement') is not True or not re.fullmatch(r'[1-9][0-9]*',str(proof.get('app',''))):return False
+    return spelling(proof.get('store_title')) in {spelling(title.get('title')),*[spelling(name) for name in title.get('aliases',[])]}
 
 
 def supported(row,title):
     proof=row.get('corroboration') or {}
-    if proof.get('developer_agreement') is not True or not re.fullmatch(r'[1-9][0-9]*',str(proof.get('app',''))):return False
-    if spelling(proof.get('store_title')) not in {spelling(title.get('title')),*[spelling(name) for name in title.get('aliases',[])]}:return False
+    if not store_agrees(proof,title):return False
     people={person.get('id') for person in proof.get('people',[]) if isinstance(person,dict) and re.fullmatch(r'nm[0-9]+',str(person.get('id','')))}
     early=proof.get('early_access') or {}
     return bool(proof.get('characters') or len(people)>=2 or proof.get('cast_character') or early.get('year')==title.get('year')
@@ -23,6 +61,7 @@ def valid_binding_evidence(evidence, imdb_id):
     eligible=[row for row in proof.get('candidates',[]) if isinstance(row,dict)
         and (row.get('year_match') is True or supported(row,proof.get('imdb') or {}))
         and row.get('game_class')!='unknown' and row.get('rank') in (1,2,3) and not row.get('edition')]
+    eligible=[row for row in eligible if not any(other['id']!=row['id'] and cancelled_scope(row,other,proof.get('imdb') or {}) for other in eligible)]
     winners=[row for row in eligible if row['rank']==max((entry['rank'] for entry in eligible),default=0)]
     winner=winners[0] if len(winners)==1 else {}
     renamed={row.get('id') for row in proof.get('rename_scope',[]) if row.get('shared_products')}
@@ -32,7 +71,7 @@ def valid_binding_evidence(evidence, imdb_id):
     return (evidence.get('matcher_version')==VERSION and proof.get('version')==VERSION
         and proof.get('retrieval_complete') is True and (proof.get('imdb') or {}).get('id')==imdb_id
         and len(winners)==1 and str(winner.get('id'))==evidence.get('igdb_id')
-        and all(row.get('years') and row.get('game_class')!='unknown' and row.get('id') in renamed for row in competitors))
+        and all(cancelled_scope(row,winner,proof.get('imdb') or {}) or row.get('years') and row.get('game_class')!='unknown' and row.get('id') in renamed for row in competitors))
 
 
 def spelling(value):
@@ -86,7 +125,8 @@ def decide(title, candidates, *, complete, branches, corroboration=None):
     for raw in candidates:
         primary = spelling(raw.get('name'))
         aliases = {spelling(row.get('name')) for row in raw.get('alternative_names') or [] if isinstance(row, dict)}
-        matched = primary in names or bool(aliases & names.keys())
+        scoped=scoped_title(raw,title)
+        matched = primary in names or bool(aliases & names.keys()) or scoped
         if not matched:
             continue
         score = 3 if primary == spelling(title.get('title')) else 2 if primary in names else 1
@@ -94,6 +134,11 @@ def decide(title, candidates, *, complete, branches, corroboration=None):
         ranked.append({'id': raw['id'], 'name': raw['name'], 'rank': score,
                        'year_match': compatible, 'years':sorted(years(raw)), 'game_class': igdb_game_class(raw),
                        'edition': bool(raw.get('version_parent')),
+                       'parent':(raw.get('parent_game') or {}).get('id') if isinstance(raw.get('parent_game'),dict) else raw.get('parent_game'),
+                       'platforms':sorted({row['id'] for row in raw.get('platforms') or [] if type(row.get('id')) is int and row['id']>0}),
+                       'cancelled':bool(raw.get('release_dates')) and all(isinstance(row.get('status'),dict)
+                           and row['status'].get('name','').casefold() in ('cancelled','canceled') for row in raw.get('release_dates') or []),
+                       **({'parent_title_scope':{'parent':raw['parent_game']['id'],'title':raw['parent_game']['name']}} if scoped else {}),
                        **({'corroboration':corroboration[raw['id']]} if corroboration and raw['id'] in corroboration else {})})
     ranked.sort(key=lambda row: (-row['rank'], -row['year_match'], row['id']))
     evidence = {'version': VERSION, 'retrieval_complete': complete, 'branches': branches,
@@ -101,6 +146,7 @@ def decide(title, candidates, *, complete, branches, corroboration=None):
     if not complete:
         return {'status': 'unresolved', 'reason': 'incomplete_candidates', 'evidence': evidence}
     eligible = [row for row in ranked if (row['year_match'] or supported(row,title)) and not row['edition'] and row['game_class'] != 'unknown']
+    eligible=[row for row in eligible if not any(other['id']!=row['id'] and cancelled_scope(row,other,title) for other in eligible)]
     if not eligible:
         return {'status': 'unmapped' if not ranked else 'unresolved', 'reason': 'title_year_evidence', 'evidence': evidence}
     best = eligible[0]
@@ -110,6 +156,7 @@ def decide(title, candidates, *, complete, branches, corroboration=None):
     rename=[]
     for other in ranked:
         if other['id']==best['id'] or other['edition']:continue
+        if cancelled_scope(other,best,title):continue
         if best['year_match'] and other['years'] and year not in other['years'] and not supported(other,title):continue
         if not other['years'] or other['game_class']=='unknown':
             return {'status':'unresolved','reason':'unknown_competitor','evidence':evidence}
