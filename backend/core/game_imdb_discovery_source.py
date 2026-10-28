@@ -191,7 +191,7 @@ class GameIMDbDiscoverySource:
             if error.code not in ('rate_limited','unavailable','timeout','retry_pending','stale_mapping'):raise
             result={'outcomes':[{'id':native,'status':'unresolved','reason':error.code} for native in ids],'stale':False}
         outputs=[]
-        deep_deadline=monotonic()+8
+        deep_remaining=8
         indexed={row['native']:row for row in await lookup(self.sessions,'imdb',natives=ids)}
         for outcome in result['outcomes']:
             native=outcome['id'];title=dict(titles[native]);local=indexed.get(native)
@@ -222,14 +222,19 @@ class GameIMDbDiscoverySource:
             deeper=[]
             if decision['status'] in ('unresolved','unmapped') and data['rows'] and data['complete'] and not acquired['stale']:
                 from core.game_match_support import corroborate
-                budget=min(4,deep_deadline-monotonic())
+                # Retrieval has its own bounded query/worker timeout. Only
+                # corroboration spends this shared deep-work allowance.
+                budget=min(4,deep_remaining)
+                if budget<=.05:
+                    outputs.append({'id':native,'status':'unresolved','reason':'corroboration_deferred','retry_after':2});continue
+                started=monotonic()
                 try:
-                    if budget<=.05:
-                        outputs.append({'id':native,'status':'unresolved','reason':'corroboration_deferred','retry_after':2});continue
                     async with asyncio.timeout(budget):extra,deeper=await corroborate(self.sources,title,data['rows'])
                     decision=decide(title,data['rows'],complete=True,branches=data['branches'],corroboration=extra)
                 except (ProviderError,TimeoutError) as error:
                     outputs.append({'id':native,'status':'unresolved','reason':getattr(error,'code','timeout'),'retry_after':60});continue
+                finally:
+                    deep_remaining=max(0,deep_remaining-(monotonic()-started))
             if decision['status']!='verified':
                 outputs.append({'id':native,**decision});continue
             if scope_parent and decision['igdb_id']!=scope_parent:

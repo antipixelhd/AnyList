@@ -27,6 +27,29 @@ class Cache:
 
 
 class DiscoverySourceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_candidate_acquisition_cannot_spend_the_bounded_deep_verification_allowance(self):
+        from test_game_title_match import game
+        for failure in (False,True):
+            with self.subTest(failure=failure):
+                self.response([]);clock=[0]
+                async def retrieve(sources,title):
+                    clock[0]+=20
+                    return {'data':{'rows':[game(int(title['id'][2:]),title['title'],year=2018)],
+                        'complete':True,'branches':[]},'stale':False}
+                async def support(*args):
+                    clock[0]+=4
+                    if failure:raise ProviderError('unavailable')
+                    return {},[]
+                with patch('core.game_imdb_discovery_source.monotonic',side_effect=lambda:clock[0]), \
+                     patch('core.game_title_candidates.retrieve',AsyncMock(side_effect=retrieve)), \
+                     patch('core.game_match_support.corroborate',AsyncMock(side_effect=support)) as deeper:
+                    result=await self.api.page(['tt1','tt2','tt3'],titles={f'tt{i}':{
+                        'id':f'tt{i}','title':f'Example {i}','year':2017} for i in range(1,4)})
+                self.assertEqual(deeper.await_count,2)
+                self.assertEqual([row['reason'] for row in result['outcomes']],
+                    ['unavailable' if failure else 'title_year_evidence']*2+['corroboration_deferred'])
+                self.assertEqual(result['outcomes'][2]['retry_after'],2)
+
     def test_version_scope_requires_a_known_later_version_and_matching_parent_name(self):
         from core.game_version_scope import original_parent
         from test_game_title_match import game
