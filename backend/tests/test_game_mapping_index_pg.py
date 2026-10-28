@@ -84,6 +84,26 @@ class MappingIndexTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row['value']['claims']['P345'][0]['mainsnak']['datavalue']['value'],'tt1')
         self.assertTrue((await refresh_cached_wikidata(self.Session))['skipped'])
 
+    async def test_title_rule_upgrade_reuses_positive_candidates_and_refreshes_old_empty_scope_once(self):
+        import hashlib
+        from core.game_source_cache import GameSourceCache
+        from core.game_title_candidates import retrieve,RETRIEVAL_VERSION
+        from test_game_title_match import game
+        cache=GameSourceCache(self.Session)
+        for state in ('exact','empty','format'):
+            title={'id':'tt1','title':{'exact':'ClueFinders','empty':'The Clue Finders','format':'Clue Finders'}[state],'year':2017}
+            raw=game(30,'ClueFinders')
+            key=hashlib.sha256(json.dumps([RETRIEVAL_VERSION,[title['title']]],ensure_ascii=True).encode()).hexdigest()
+            seed={'rows':[] if state=='empty' else [raw],'complete':True,'branches':[],
+                'scope_key':key,'scope_fingerprint':'legacy'}
+            await cache.get('igdb','game_title_candidates',key,AsyncMock(return_value=seed))
+            sources=SimpleNamespace(cache=cache,igdb=AsyncMock(side_effect=[[],[],[raw]]))
+            first=await retrieve(sources,title)
+            self.assertEqual(first['data']['rows'],[raw])
+            self.assertEqual(sources.igdb.await_count,0 if state=='exact' else 3)
+            self.assertEqual((await retrieve(sources,title))['data']['rows'],[raw])
+            self.assertEqual(sources.igdb.await_count,0 if state=='exact' else 3)
+
     async def test_cache_eviction_is_not_a_removed_wikidata_mapping(self):
         from core.game_mapping_import import refresh_cached_wikidata
         from test_game_credit_sources import item,claim

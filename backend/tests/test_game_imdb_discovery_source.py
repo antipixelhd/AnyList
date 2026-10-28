@@ -48,6 +48,21 @@ class DiscoverySourceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(outcome['evidence']['source_outcome']['status'],'unmapped')
         self.assertTrue({'imdb:tt1','igdb:10','wikidata-imdb:tt1','igdb-name:spacelords'}.issubset(outcome['evidence']['dependencies']))
 
+    async def test_title_formats_are_used_by_automatic_discovery_without_manual_or_deep_support(self):
+        for title,year,provider,stamp,discovery in [
+            ('Pryzm, Chapter 1: The Dark Unicorn',2002,'Pryzm Chapter One: The Dark Unicorn',1023667200,[]),
+            ('The Clue Finders: The Incredible Toy Store Adventure!',2001,'ClueFinders: The Incredible Toy Store Adventure',1001808000,[[raw(99,name='Clue')]])]:
+            with self.subTest(title=title):
+                self.response([]);self.sources.cache.rows.clear()
+                self.sources.igdb.side_effect=[[],[],[],[],*discovery,[raw(10,name=provider,first_release_date=stamp)]]
+                with patch('core.game_match_support.corroborate',AsyncMock()) as deeper:
+                    result=await self.api.page(['tt1'],titles={'tt1':{'id':'tt1','title':title,'year':year}})
+                outcome=result['outcomes'][0]
+                self.assertEqual((outcome['status'],outcome['igdb_id'],outcome['binding_source']),('verified',10,'matched'))
+                self.assertTrue(next(r for r in outcome['evidence']['candidates'] if r['id']==10).get('title_format'))
+                self.assertFalse(outcome['evidence']['support']['snapshots'])
+                deeper.assert_not_awaited()
+
     async def test_wikidata_outage_does_not_prevent_fresh_title_evidence(self):
         self.http.request.side_effect=ProviderError('unavailable')
         self.sources.igdb.side_effect=[[raw(10,name='Spacelords',first_release_date=1506038400)],[]]

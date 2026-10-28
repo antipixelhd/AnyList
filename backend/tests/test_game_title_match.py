@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 
 os.environ.setdefault('SECRET_KEY', 'mapping-test-only')
 os.environ.setdefault('DATABASE_URL', 'postgresql+asyncpg://test:test@localhost/test')
-from core.game_title_match import decide, spelling,valid_binding_evidence,VERSION
+from core.game_title_match import decide, spelling,title_formats,valid_binding_evidence,VERSION
 from core.game_title_candidates import retrieve, PAGE, MAX_PAGES
 from core.catalogue_providers import ProviderError
 
@@ -43,6 +43,51 @@ class TitleDecisionTests(unittest.TestCase):
         self.assertNotEqual(spelling('AB C'), spelling('A BC'))
         self.assertNotEqual(spelling('Example: Remastered'), spelling('Example'))
         self.assertNotEqual(spelling('Example+'),spelling('Example'))
+
+    def test_reviewed_title_format_examples_can_be_matched_without_reviewed_bindings(self):
+        examples=[('BladeStorm: Hundred Years War',"Bladestorm: The Hundred Years' War",2007),
+            ('Pryzm, Chapter 1: The Dark Unicorn','Pryzm Chapter One: The Dark Unicorn',2002),
+            ('The Clue Finders: The Incredible Toy Store Adventure!','ClueFinders: The Incredible Toy Store Adventure',2001),
+            ("Ten'gai Makyou: Dai-yon no Mokushiroku: The Apocalypse IV",'Tengai Makyou: Daiyon no Mokushiroku - The Apocalypse IV',1997)]
+        for source,name,year in examples:
+            with self.subTest(source=source):
+                title={'id':'tt1','title':source,'year':year}
+                result=decide(title,[game(name=name,year=year)],complete=True,branches=[])
+                self.assertEqual(result['igdb_id'],10)
+                self.assertEqual(result['evidence']['candidates'][0]['title_format']['version'],1)
+                self.assertTrue(valid_binding_evidence({'matcher_version':VERSION,'igdb_id':'10','matching':result['evidence']},'tt1'))
+
+    def test_title_format_rules_generalize_and_preserve_semantic_differences(self):
+        for one,two in [('ClueFinders & Friends','Clue Finders and Friends'),('The Outpost: The Return','Outpost: Return'),
+                        ('Star-Fall: Episode IV','Starfall: Episode 4'),('Stories: Part Two','Stories: Part 2'),
+                        ('Lineage2M','Lineage 2M'),('NBA2K24','NBA 2K24')]:
+            with self.subTest(one=one):self.assertTrue(title_formats(one)&title_formats(two))
+        for one,two in [('AB C','A BC'),('Game II','Game 2'),('Game+','Game'),('Game: Remastered','Game'),
+                        ('Game: Complete Edition','Game'),('Game: Chapter One','Game: Chapter Two'),
+                        ('Game: Episode IV','Game: Episode V'),('Main Game: DLC','Main Game'),
+                        ('NBA2K24','NBA2K23'),('Game64','Game6 4')]:
+            with self.subTest(one=one):self.assertFalse(title_formats(one)&title_formats(two))
+
+    def test_title_format_matching_keeps_year_completeness_and_edition_guards(self):
+        title={'id':'tt1','title':'Stories: Chapter 1','year':2002}
+        main=game(name='Stories: Chapter One',year=2002)
+        for candidate in [game(name=main['name'],year=2003),{**main,'first_release_date':None},
+                          {**main,'version_parent':99},{**main,'game_type':None}]:
+            self.assertNotEqual(decide(title,[candidate],complete=True,branches=[])['status'],'verified')
+        self.assertNotEqual(decide({**title,'year':None},[main],complete=True,branches=[])['status'],'verified')
+        self.assertEqual(decide(title,[main],complete=False,branches=[])['reason'],'incomplete_candidates')
+        for other in [{**main,'id':20},{**main,'id':20,'first_release_date':None}]:
+            for rows in ([main,other],[other,main]):
+                self.assertEqual(decide(title,rows,complete=True,branches=[])['status'],'unresolved')
+
+    def test_typographic_port_variants_require_an_explicit_matching_parent(self):
+        title={'id':'tt1','title':'Stories: Chapter 1','year':2002}
+        main=game(name='Stories: Chapter One',year=2002)
+        port=game(20,name='The Stories: Chapter 1',year=2002,game_type={'id':11},parent_game={'id':10})
+        result=decide(title,[port,main],complete=True,branches=[])
+        self.assertEqual(result['igdb_id'],10)
+        self.assertTrue(valid_binding_evidence({'matcher_version':VERSION,'igdb_id':'10','matching':result['evidence']},'tt1'))
+        self.assertEqual(decide(title,[main,{**port,'parent_game':{'id':99}}],complete=True,branches=[])['status'],'unresolved')
 
     def test_incomplete_pool_cannot_turn_one_returned_hit_into_a_unique_mapping(self):
         result = self.decide([game()], complete=False)
@@ -143,6 +188,49 @@ class CandidateRetrievalTests(unittest.IsolatedAsyncioTestCase):
         result = (await retrieve(self.sources, self.title))['data']
         self.assertFalse(result['complete'])
         self.assertEqual(self.sources.igdb.await_count, 2 * MAX_PAGES)
+
+    async def test_empty_full_title_uses_one_keyword_but_not_as_identity_evidence(self):
+        title={'id':'tt2','title':'The Clue Finders','year':2017}
+        self.sources.igdb.side_effect=[[],[],[game(30,'ClueFinders',year=2018)]]
+        data=(await retrieve(self.sources,title))['data']
+        self.assertEqual(self.sources.igdb.await_count,3)
+        self.assertIn('search "Clue";',self.sources.igdb.await_args_list[-1].args[1])
+        self.assertEqual(data['branches'][-1]['kind'],'keyword')
+        self.assertTrue(data['complete'])
+        self.assertNotEqual(decide(title,data['rows'],complete=True,branches=data['branches'])['status'],'verified')
+
+    async def test_truncated_keyword_pool_cannot_turn_a_format_match_into_a_unique_identity(self):
+        title={'id':'tt2','title':'The Clue Finders','year':2017}
+        rows=[game(30,'ClueFinders'),*[game(i,'Unrelated') for i in range(100,100+PAGE-1)]]
+        self.sources.igdb.side_effect=[[],[],*[rows for _ in range(MAX_PAGES)]]
+        data=(await retrieve(self.sources,title))['data']
+        self.assertEqual(self.sources.igdb.await_count,2+MAX_PAGES)
+        self.assertFalse(data['complete'])
+        self.assertEqual(decide(title,data['rows'],complete=data['complete'],branches=data['branches'])['reason'],'incomplete_candidates')
+
+    async def test_joined_written_words_are_retrieved_after_an_unrelated_keyword_pool(self):
+        title={'id':'tt2','title':'The Clue Finders','year':2017}
+        self.sources.igdb.side_effect=[[],[],[game(40,'Clue')],[game(30,'ClueFinders')]]
+        data=(await retrieve(self.sources,title))['data']
+        self.assertEqual(self.sources.igdb.await_count,4)
+        self.assertIn('search "ClueFinders";',self.sources.igdb.await_args_list[-1].args[1])
+        self.assertEqual(data['branches'][-1]['kind'],'joined_keyword')
+        self.assertEqual(decide(title,data['rows'],complete=data['complete'],branches=data['branches'])['igdb_id'],30)
+
+    async def test_nonempty_format_match_still_retrieves_competing_family_versions(self):
+        title={'id':'tt2','title':'The Clue Finders','year':2017}
+        main=game(30,'ClueFinders');other=game(40,'Clue Finders')
+        self.sources.igdb.side_effect=[[main],[],[other]]
+        data=(await retrieve(self.sources,title))['data']
+        self.assertEqual(self.sources.igdb.await_count,3)
+        self.assertEqual(decide(title,data['rows'],complete=data['complete'],branches=data['branches'])['status'],'unresolved')
+
+    async def test_empty_joined_digit_title_can_discover_its_written_word_family(self):
+        title={'id':'tt2','title':'Lineage2M','year':2017}
+        self.sources.igdb.side_effect=[[],[],[game(30,'Lineage 2M')]]
+        data=(await retrieve(self.sources,title))['data']
+        self.assertIn('search "Lineage";',self.sources.igdb.await_args_list[-1].args[1])
+        self.assertEqual(decide(title,data['rows'],complete=data['complete'],branches=data['branches'])['igdb_id'],30)
 
     async def test_fallback_queries_are_bounded_to_the_named_parent_and_consume_both_branches(self):
         title={'id':'tt2','title':'Small Town: Alice and Bob in The Long Dark Night','year':2017}

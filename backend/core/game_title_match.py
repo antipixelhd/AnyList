@@ -6,14 +6,15 @@ from urllib.parse import urlsplit
 from core.game_types import igdb_game_class
 from core.game_release_dates import game_release, release
 
-VERSION = 4
+VERSION = 5
 
 
 def same_game_port(other,winner):
     """An explicit port parent shares the displayed game, not another namesake."""
     return (other.get('game_class')=='port' and not other.get('cancelled') and other.get('parent')==winner.get('id')
         and winner.get('game_class') in ('game','standalone_expansion','remake','remaster','expanded_game')
-        and spelling(other.get('name'))==spelling(winner.get('name')))
+        and (spelling(other.get('name'))==spelling(winner.get('name'))
+            or bool(title_formats(other.get('name')) & title_formats(winner.get('name')))))
 
 
 def scoped_title(raw,title):
@@ -106,6 +107,32 @@ def spelling(value):
     return ' '.join(re.findall(r'[^\W_]+|\+', re.sub("['’]", '', value), re.UNICODE))
 
 
+_STEP_NUMBERS={name:str(number) for names in (
+    'one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty',
+    'i ii iii iv v vi vii viii ix x xi xii xiii xiv xv xvi xvii xviii xix xx')
+    for number,name in enumerate(names.split(),1)}
+
+
+def written_words(value):
+    value=re.sub(r'(?<=[a-z])(?=[A-Z])',' ',value)
+    return re.sub(r'(?<=[^\W\d_])(?=\d)|(?<=\d)(?=[^\W\d_])',' ',value)
+
+
+def title_formats(value):
+    """Written variants only; retain word boundaries and edition/part meaning."""
+    if not isinstance(value,str):return set()
+    forms=set()
+    for text in {value,written_words(value)}:
+        text=re.sub(r'(^|:\s*|[-–—]\s+)the\s+',r'\1',text,flags=re.IGNORECASE)
+        text=text.replace('&',' and ')
+        for variant in {text,re.sub(r'(?<=\w)[-–](?=\w)','',text)}:
+            key=spelling(variant)
+            key=re.sub(r'\b(chapter|part|episode|volume|vol|season|book|act)\s+([a-z]+)\b',
+                lambda match:match[1]+' '+_STEP_NUMBERS.get(match[2],match[2]),key)
+            if key:forms.add(key)
+    return forms
+
+
 def products(raw):
     result=set()
     for row in raw.get('external_games') or []:
@@ -144,6 +171,7 @@ def decide(title, candidates, *, complete, branches, corroboration=None):
     names = {spelling(title.get('title')): 'primary'}
     names.update({spelling(name): 'alias' for name in title.get('aliases', []) if isinstance(name, str)})
     names.pop('', None)
+    source_formats=set().union(*(title_formats(name) for name in [title.get('title'),*title.get('aliases',[])]))
     year = title.get('year')
     ranked = []
     from core.game_wikidata_title_support import agrees as wiki_agrees
@@ -153,6 +181,9 @@ def decide(title, candidates, *, complete, branches, corroboration=None):
         scoped=scoped_title(raw,title)
         wiki_match=wiki_agrees({'id':raw['id'],'corroboration':(corroboration or {}).get(raw['id'],{})},title)
         matched = primary in names or bool(aliases & names.keys()) or scoped or wiki_match
+        format_keys=set() if matched else source_formats.intersection(set().union(*(title_formats(name) for name in
+            [raw.get('name'),*[row.get('name') for row in raw.get('alternative_names') or [] if isinstance(row,dict)]])))
+        matched=matched or bool(format_keys)
         if not matched:
             continue
         score = 3 if primary == spelling(title.get('title')) else 2 if primary in names else 1
@@ -164,6 +195,7 @@ def decide(title, candidates, *, complete, branches, corroboration=None):
                        'platforms':sorted({row['id'] for row in raw.get('platforms') or [] if type(row.get('id')) is int and row['id']>0}),
                        'cancelled':bool(raw.get('release_dates')) and all(isinstance(row.get('status'),dict)
                            and row['status'].get('name','').casefold() in ('cancelled','canceled') for row in raw.get('release_dates') or []),
+                       **({'title_format':{'version':1,'key':min(format_keys)}} if format_keys else {}),
                        **({'parent_title_scope':{'parent':raw['parent_game']['id'],'title':raw['parent_game']['name']}} if scoped else {}),
                        **({'corroboration':corroboration[raw['id']]} if corroboration and raw['id'] in corroboration else {})})
     ranked.sort(key=lambda row: (-row['rank'], -row['year_match'], row['id']))
