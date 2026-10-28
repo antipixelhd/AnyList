@@ -1,4 +1,5 @@
 # app/models/__init__.py
+from .game_mapping import GameMappingGeneration, GameMappingReference
 from .base import Base, UserRole, MediaType, CollectionSource
 from .users import User, UserSettings, TotpBackupCode
 from .account_security import OidcIdentity, EmailChangeToken

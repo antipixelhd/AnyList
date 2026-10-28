@@ -18,6 +18,7 @@ from models.catalogue import CatalogueIdentity,MetadataSnapshot
 
 JOB='game_person_discovery'
 MAP='game_person_title_map'
+VERSION=2
 _slots=asyncio.Semaphore(1)
 
 
@@ -39,7 +40,7 @@ async def request(db,native,generation,entity_id):
     stamp=now()
     if row and (row.lease_until and row.lease_until>stamp or row.next_attempt_at):
         return status(row)
-    if row and row.generation==generation and row.expires_at and row.expires_at>stamp:
+    if row and row.generation==generation and row.coverage.get('matcher_version')==VERSION and row.expires_at and row.expires_at>stamp:
         return status(row)
     statement=insert(MetadataSnapshot).values(provider='imdb',kind=JOB,external_id=native,entity_id=entity_id,
         payload={'generation':generation,'page':0,'offset':0,'processed':0},coverage={'complete':False},next_attempt_at=stamp)
@@ -87,10 +88,13 @@ class GamePersonDiscovery:
                 retained=list((await db.execute(select(MetadataSnapshot.external_id,MetadataSnapshot.payload).where(
                     MetadataSnapshot.provider=='wikidata',MetadataSnapshot.kind==MAP,MetadataSnapshot.external_id.in_(ids),
                     MetadataSnapshot.expires_at>now()))).all()) if ids else []
-                cached={key:value for key,value in retained if value.get('status')!='verified'}
+                cached={key:value for key,value in retained if value.get('status')!='verified' and value.get('matcher_version')==VERSION}
             missing=[value for value in ids if value not in known and value not in cached]
             async with asyncio.timeout(55):
-                result=await self.source.page(missing) if missing else {'outcomes':[],'stale':False}
+                if missing and isinstance(self.source,GameIMDbDiscoverySource):
+                    result=await self.source.page(missing,titles={row['id']:row for row in batch if row['id'] in missing})
+                else:
+                    result=await self.source.page(missing) if missing else {'outcomes':[],'stale':False}
             if result.get('stale'):
                 raise ProviderError('stale_mapping')  # Existing catalogue content remains available.
             supplied=result.get('outcomes')
@@ -106,8 +110,11 @@ class GamePersonDiscovery:
                     try:
                         work_id=await self.ingest(value['document'])
                         title=next(row for row in batch if row['id']==value['id'])
-                        await self.bindings.save(work_id,value['id'],'wikidata',{
-                            'title_type':'videoGame','igdb_id':str(value['igdb_id']),'wikidata':value['evidence'],
+                        matched=value.get('binding_source')=='matched'
+                        await self.bindings.save(work_id,value['id'],'matched' if matched else 'wikidata',{
+                            'title_type':'videoGame','igdb_id':str(value['igdb_id']),
+                            'matching' if matched else 'wikidata':value['evidence'],
+                            'dependencies':value['evidence'].get('dependencies',[]),'mapping_state':'active',
                             'person_connection':{'id':native,'generation':component.generation},
                             'imdb_identity':{'id':value['id'],'titleType':{'id':'videoGame'},
                                 'titleText':{'text':title['title']},'releaseYear':{'year':title['year']}}},
@@ -115,7 +122,7 @@ class GamePersonDiscovery:
                         value['work_id']=work_id
                     except catalogue.IdentityConflict:
                         value={'id':value['id'],'status':'conflict'}
-                value.pop('document',None);outcomes.append(value)
+                value.pop('document',None);value['matcher_version']=VERSION;outcomes.append(value)
             async with self.sessions() as db:
                 job=await db.scalar(snapshot(JOB,native).with_for_update())
                 if not job or job.lease_token!=token:return 'superseded'
@@ -133,7 +140,7 @@ class GamePersonDiscovery:
                 if offset>=len(records):page+=1;offset=0
                 complete=page>=(component.pages or 0)
                 state.update(page=page,offset=offset,processed=state.get('processed',0)+len(batch))
-                job.payload=state;job.coverage={'complete':complete,'state':'complete' if complete else 'partial','received':state['processed']}
+                job.payload=state;job.coverage={'complete':complete,'state':'complete' if complete else 'partial','received':state['processed'],'matcher_version':VERSION}
                 job.error_code=None;job.attempts=0;job.lease_token=job.lease_until=None
                 job.next_attempt_at=None if complete else now()+timedelta(seconds=2)
                 job.expires_at=now()+timedelta(days=1) if complete else None

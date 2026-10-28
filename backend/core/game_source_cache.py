@@ -23,7 +23,8 @@ def session_factory(engine):
 
 
 def utcnow():
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    stamp=datetime.now(timezone.utc).replace(tzinfo=None)
+    return stamp.replace(microsecond=stamp.microsecond//1000*1000)
 
 
 class GameSourceCache:
@@ -169,6 +170,9 @@ class GameSourceCache:
         except Exception:
             error = 'unavailable'
         async with self.sessions() as db:
+            if provider=='igdb' and kind=='game_title_candidates':
+                from core import catalogue
+                await catalogue.write_lock(db)
             row = await db.scalar(self.query(provider, kind, key).with_for_update())
             now = utcnow()
             if row.lease_token != token:
@@ -183,6 +187,10 @@ class GameSourceCache:
                 row.error_code = error
                 row.next_attempt_at = now+timedelta(seconds=min(3600, 60*2**min(row.attempts-1, 6)))
             else:
+                if provider=='igdb' and kind=='game_title_candidates' and (row.payload or {}).get('scope_fingerprint')!=data.get('scope_fingerprint'):
+                    from core.game_mapping_lifecycle import invalidate
+                    names=set(data.get('scope_names',[]))|set((row.payload or {}).get('scope_names',[]))
+                    await invalidate(db,[f'igdb-query:{key}',*[f'igdb-name:{name}' for name in names]])
                 row.payload, row.fetched_at, row.expires_at = data, now, now+ttl
                 row.error_code, row.next_attempt_at, row.attempts = None, None, 0
                 if progressive:row.coverage={**(row.coverage or {}),'page_complete':True}

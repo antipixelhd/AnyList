@@ -109,9 +109,11 @@ async def bind_identity(db, entity_id, namespace, external_id, source, evidence=
                 "Identifier already belongs to another entity; review before merging"
             )
         return previous
-    if namespace=='imdb.title' and entity.kind=='game' and (
-            source not in ('reviewed','wikidata') or (evidence or {}).get('title_type')!='videoGame'):
-        raise IdentityConflict('Game IMDb identity requires verified or reviewed videoGame evidence')
+    if namespace=='imdb.title' and entity.kind=='game':
+        from core.game_title_match import valid_binding_evidence
+        supported=source in ('reviewed','wikidata') or source=='matched' and valid_binding_evidence(evidence or {},external_id)
+        if not supported or (evidence or {}).get('title_type')!='videoGame':
+            raise IdentityConflict('Game IMDb identity requires verified or reviewed videoGame evidence')
     row = CatalogueIdentity(
         entity_id=entity_id,
         namespace=namespace,

@@ -43,7 +43,11 @@ def game_reference(item):
 def project(title_id,item,raw,games):
     mapped=game_mapping(item,str(raw['id']),raw.get('slug'))
     if mapped['status']!='verified' or mapped['imdb_id']!=title_id:
-        return {'id':title_id,'status':'conflict'}
+        return {'id':title_id,'status':'conflict','reason':'explicit_identity_conflict'}
+    return project_game(title_id,raw,games,mapped['evidence'])
+
+
+def project_game(title_id,raw,games,evidence):
     kind=igdb_game_class(raw)
     if raw.get('version_parent') or kind=='port':
         # Preserve source identity; an edition-specific IMDb record must not
@@ -64,15 +68,28 @@ def project(title_id,item,raw,games):
             if edge['relation']=='expansion' and not edge.get('reverse'):edge['target']=normalize_igdb(parent)['work']
     doc['coverage']={'person_discovery':True,'credits_complete':False,'characters_complete':False}
     return {'id':title_id,'status':'verified','igdb_id':raw['id'],'document':doc,
-        'evidence':mapped['evidence']}
+        'evidence':evidence}
 
 
 class GameIMDbDiscoverySource:
     def __init__(self,sessions,*,sources=None,wiki=None):
+        self.sessions=sessions
         self.sources=sources or GameBrowseSources(sessions)
         self.wiki=wiki or GameCreditSources(self.sources)
 
     async def items(self,ids):
+        if self.sessions is not None:
+            from core.game_mapping_index import lookup
+            records=await lookup(self.sessions,'wikidata',imdb_ids=ids,max_age=timedelta(days=7))
+            if records and len(records)<101 and all(row['coverage'].get('scope')=='complete_wikidata_dump' for row in records):
+                known={native:[] for native in ids}
+                for record in records:
+                    item=record['value']
+                    claims={snak_value(row.get('mainsnak')) for row in best_claims(item,'P345')}
+                    for native in ids:
+                        if native in claims:known[native].append(item['id'])
+                if all(known.values()):
+                    return {'data':{'items':known},'stale':False,'fetched_at':records[0]['observed_at'].isoformat()}
         key=hashlib.sha256(json.dumps(sorted(ids)).encode()).hexdigest()
         async def load():
             values=' '.join(json.dumps(value) for value in sorted(ids))
@@ -99,8 +116,24 @@ class GameIMDbDiscoverySource:
                 item=match[1]
                 if item not in result[title]:result[title].append(item)
             return {'items':result}
-        return await self.sources.cache.get('wikidata','game_imdb_reverse',key,load,
+        result=await self.sources.cache.get('wikidata','game_imdb_reverse',key,load,
             ttl=timedelta(days=7),max_stale=timedelta(days=30))
+        return {**result,'support_snapshots':[{'kind':'game_imdb_reverse','key':key,'fetched_at':result['fetched_at']}]
+            if result.get('fetched_at') else []}
+
+    async def entities(self,ids):
+        if self.sessions is None:return await self.wiki.entities(ids)
+        from core.game_mapping_index import lookup
+        records=await lookup(self.sessions,'wikidata',natives=ids,max_age=timedelta(days=7))
+        known={record['native']:record['value'] for record in records}
+        missing=set(ids)-set(known)
+        if missing:
+            result=await self.wiki.entities(missing)
+            key=hashlib.sha256(json.dumps(['identity-v2',sorted(missing)]).encode()).hexdigest()
+            return {**result,'data':{'entities':{**known,**result['data']['entities']}},
+                'support_snapshots':[{'kind':'game_credit_items','key':key,'fetched_at':result['fetched_at']}]
+                    if result.get('fetched_at') else []}
+        return {'data':{'entities':known},'stale':False}
 
     async def indexed_items(self,ids):
         # WikibaseCirrusSearch supports exact external-ID statement queries.
@@ -118,7 +151,7 @@ class GameIMDbDiscoverySource:
         qids=[row.get('title') for row in rows if isinstance(row,dict)]
         if len(qids)!=len(rows) or any(not isinstance(q,str) or not re.fullmatch(r'Q[1-9][0-9]*',q) for q in qids) or len(set(qids))!=len(qids):
             raise ProviderError('bad_response')
-        fetched=await self.wiki.entities(qids) if qids else {'data':{'entities':{}},'stale':False}
+        fetched=await self.entities(qids) if qids else {'data':{'entities':{}},'stale':False}
         if fetched.get('stale'):raise ProviderError('stale_mapping')
         entities=fetched['data']['entities'];result={value:[] for value in ids}
         if any(q not in entities for q in qids):raise ProviderError('incomplete_cache')
@@ -143,13 +176,63 @@ class GameIMDbDiscoverySource:
             result[row['id']]=row
         return result
 
-    async def page(self,ids):
+    async def page(self,ids,*,titles=None):
+        if titles is None:
+            return await self.explicit_page(ids)
+        from core.game_title_candidates import retrieve
+        from core.game_title_match import decide
+        from core.game_mapping_index import lookup,wikidata_generation
+        if not isinstance(titles,dict) or set(titles)!=set(ids):raise ProviderError('invalid_request')
+        wiki_generation=await wikidata_generation(self.sessions)
+        try:
+            result=await self.explicit_page(ids)
+        except ProviderError as error:
+            if error.code not in ('rate_limited','unavailable','timeout','retry_pending','stale_mapping'):raise
+            result={'outcomes':[{'id':native,'status':'unresolved','reason':error.code} for native in ids],'stale':False}
+        outputs=[]
+        indexed={row['native']:row for row in await lookup(self.sessions,'imdb',natives=ids)}
+        for outcome in result['outcomes']:
+            if outcome['status'] in ('verified','excluded') or outcome.get('reason')=='explicit_identity_conflict':
+                outputs.append(outcome);continue
+            native=outcome['id'];title=dict(titles[native])
+            if title.get('id')!=native or not isinstance(title.get('title'),str) or not title['title'].strip():
+                raise ProviderError('bad_response')
+            local=indexed.get(native)
+            if local:
+                title['aliases']=local['value'].get('aliases',[])
+                if title.get('year') is None:title['year']=local['value'].get('year')
+            try:acquired=await retrieve(self.sources,title)
+            except ProviderError as error:
+                if error.code!='coverage_limited':raise
+                outputs.append({'id':native,'status':'unresolved','reason':'coverage_limited'});continue
+            data=acquired['data']
+            decision=decide(title,data['rows'],complete=data['complete'] and not acquired['stale'],branches=data['branches'])
+            if decision['status']!='verified':
+                outputs.append({'id':native,**decision});continue
+            games={row['id']:row for row in data['rows']}
+            raw=games[decision['igdb_id']]
+            parent=raw.get('parent_game')
+            if igdb_game_class(raw)=='expansion' and isinstance(parent,dict) and positive(parent.get('id')) and parent['id'] not in games:
+                games.update(await self.games({parent['id']}))
+            evidence={**decision['evidence'],'method':'title_match','source_outcome':{key:value for key,value in outcome.items() if key in ('status','reason')},
+                'direction':'imdb_to_igdb','scope':'primary_title','dependencies':[f'imdb:{native}',f'igdb:{raw["id"]}',
+                    f'wikidata-imdb:{native}',*[f'wikidata:{qid}' for qid in result.get('consulted',{}).get(native,[])],
+                    f'igdb-query:{data.get("scope_key","")}',*[f'igdb-name:{name}' for name in data.get('scope_names',[])]],
+                'support':{'imdb_generation':local['generation'] if local else None,
+                    'candidate_key':data.get('scope_key'),'candidate_fingerprint':data.get('scope_fingerprint'),
+                    'check_wikidata_generation':True,'wikidata_generation':wiki_generation,
+                    'wiki_snapshots':result.get('support_snapshots',[])}}
+            projected=project_game(native,raw,games,evidence)
+            projected['binding_source']='matched';outputs.append(projected)
+        return {**result,'outcomes':outputs}
+
+    async def explicit_page(self,ids):
         if not isinstance(ids,list) or not ids or len(ids)>SIZE or any(
             not isinstance(value,str) or not TITLE_ID.fullmatch(value) for value in ids) or len(set(ids))!=len(ids):raise ProviderError('invalid_request')
         reverse=await self.items(ids);candidates=reverse['data']['items']
         qids=sorted({q for values in candidates.values() for q in values})
         if len(qids)>50:raise ProviderError('coverage_limited')
-        fetched=await self.wiki.entities(qids) if qids else {'data':{'entities':{}},'stale':False}
+        fetched=await self.entities(qids) if qids else {'data':{'entities':{}},'stale':False}
         entities=fetched['data']['entities'];references={};outcomes={}
         for native,items in candidates.items():
             found=[entities.get(q) for q in items]
@@ -172,4 +255,5 @@ class GameIMDbDiscoverySource:
                     'id':native,'status':'unresolved','reason':'igdb_metadata'}
             return [outcomes[native] for native in ids]
         return {'outcomes':await asyncio.to_thread(resolve),'stale':reverse['stale'] or fetched['stale'],
-            'fetched_at':reverse.get('fetched_at')}
+            'fetched_at':reverse.get('fetched_at'),'consulted':candidates,
+            'support_snapshots':[*reverse.get('support_snapshots',[]),*fetched.get('support_snapshots',[])]}

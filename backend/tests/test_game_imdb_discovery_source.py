@@ -1,4 +1,4 @@
-"""Reverse game discovery never establishes identity through a title search."""
+"""Explicit mappings and calibrated title/year fallback preserve work scope."""
 import os
 import unittest
 from types import SimpleNamespace
@@ -27,6 +27,36 @@ class Cache:
 
 
 class DiscoverySourceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_complete_title_year_fallback_accepts_primary_name_and_retains_provenance(self):
+        self.response([])
+        self.sources.igdb.side_effect=[[raw(10,name='Spacelords',first_release_date=1506038400)],[]]
+        result=await self.api.page(['tt1'],titles={'tt1':{'id':'tt1','title':'Spacelords','year':2017}})
+        outcome=result['outcomes'][0]
+        self.assertEqual((outcome['status'],outcome['igdb_id'],outcome['binding_source']),('verified',10,'matched'))
+        self.assertTrue(outcome['evidence']['retrieval_complete'])
+        self.assertEqual(outcome['evidence']['source_outcome']['status'],'unmapped')
+        self.assertTrue({'imdb:tt1','igdb:10','wikidata-imdb:tt1','igdb-name:spacelords'}.issubset(outcome['evidence']['dependencies']))
+
+    async def test_wikidata_outage_does_not_prevent_fresh_title_evidence(self):
+        self.http.request.side_effect=ProviderError('unavailable')
+        self.sources.igdb.side_effect=[[raw(10,name='Spacelords',first_release_date=1506038400)],[]]
+        result=await self.api.page(['tt1'],titles={'tt1':{'id':'tt1','title':'Spacelords','year':2017}})
+        self.assertEqual(result['outcomes'][0]['status'],'verified')
+        self.assertFalse(result['stale'])
+
+    async def test_title_match_does_not_make_an_ordinary_dlc_eligible(self):
+        self.response([])
+        self.sources.igdb.side_effect=[[raw(10,1,name='Example DLC',first_release_date=1506038400)],[]]
+        result=await self.api.page(['tt1'],titles={'tt1':{'id':'tt1','title':'Example DLC','year':2017}})
+        self.assertEqual((result['outcomes'][0]['status'],result['outcomes'][0]['reason']),('excluded','dlc'))
+
+    async def test_title_fallback_cannot_override_an_incompatible_explicit_imdb_identity(self):
+        self.response([('tt1','Q1')])
+        self.wiki.entities.return_value={'data':{'entities':{'Q1':mapped('Q1','tt999',10)}},'stale':False}
+        self.sources.igdb.return_value=[raw(10,name='Spacelords',first_release_date=1506038400)]
+        result=await self.api.page(['tt1'],titles={'tt1':{'id':'tt1','title':'Spacelords','year':2017}})
+        self.assertEqual(result['outcomes'][0]['reason'],'explicit_identity_conflict')
+        self.sources.igdb.assert_awaited_once()
     async def asyncSetUp(self):
         self.http=SimpleNamespace(request=AsyncMock())
         self.sources=SimpleNamespace(api=SimpleNamespace(http=self.http),cache=Cache(),igdb=AsyncMock())

@@ -849,6 +849,7 @@ async def background_jobs():
     from core.game_info import scheduler as game_info
     from core.game_metadata import scheduler as game_metadata
     from core.game_achievements import scheduler as game_achievements
+    from core.game_mapping_scheduler import scheduler as game_mapping_index
 
     jobs = (
         statistics_scheduler,
@@ -864,6 +865,7 @@ async def background_jobs():
         game_info,
         game_metadata,
         game_achievements,
+        game_mapping_index,
         _auto_sync_scheduler,
         _stream_action_retry_scheduler,
         _rating_push_scheduler,

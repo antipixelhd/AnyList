@@ -36,6 +36,7 @@ from core import (
     contributor_evidence,
     contributor_search,
     game_person_identity,
+    game_imdb_discovery,
     tmdb,
 )
 from dependencies import get_current_user, get_current_user_or_api_key
@@ -148,7 +149,7 @@ async def main(args):
                     # including unresolved external identities, not first admission.
                     db.add(MetadataSnapshot(provider='imdb',kind='game_person_discovery',external_id='nm8000000',
                         entity_id=performer.id,payload={'generation':'fixture','page':20,'offset':0,'processed':1000},
-                        coverage={'state':'complete','complete':True,'received':1000},fetched_at=stamp,expires_at=stamp+timedelta(days=1)))
+                        coverage={'state':'complete','complete':True,'received':1000,'matcher_version':game_imdb_discovery.VERSION},fetched_at=stamp,expires_at=stamp+timedelta(days=1)))
                     for page in range(20):
                         db.add(MetadataSnapshot(provider='imdb',kind='game_person_index',external_id=f'nm8000000:fixture:{page}',
                             entity_id=performer.id,coverage={'page':page},payload={'titles':[{'id':f'tt{page*50+i}',
@@ -284,6 +285,28 @@ async def main(args):
                     'role_coverage':{'actor':{'source':args.local_titles,'unmapped':0}}}
             await db.commit()
         fixture.app.include_router(games_router)
+        if args.case and 'game_title_mapping' in args.case:
+            from core.game_browse_sources import GameBrowseSources
+            from core.game_imdb_discovery_source import GameIMDbDiscoverySource
+            mapping_sources=GameBrowseSources(fixture.Session)
+            async def mapping_igdb(endpoint,query):
+                counters['provider_requests']+=1
+                counters['igdb_title_requests']+=1
+                await asyncio.sleep(args.provider_delay_ms/1000)
+                return [{'id':9000999,'name':'Benchmark mapping game','slug':'benchmark-mapping-game',
+                    'game_type':{'id':0},'first_release_date':1506038400}]
+            mapping_sources.igdb=mapping_igdb
+            mapping_service=GameIMDbDiscoverySource(fixture.Session,sources=mapping_sources)
+            mapping_service.explicit_page=AsyncMock(return_value={'outcomes':[{'id':'tt9000999','status':'unmapped'}],'stale':False})
+            @fixture.app.get('/tracking/benchmark/game-title-mapping')
+            async def mapping_route():
+                result=await mapping_service.page(['tt9000999'],titles={'tt9000999':{
+                    'id':'tt9000999','title':'Benchmark mapping game','year':2017}})
+                outcome=result['outcomes'][0]
+                if outcome['status']!='verified' or outcome['igdb_id']!=9000999 or not outcome['evidence']['retrieval_complete']:
+                    raise RuntimeError('Title mapping lost exact identity or retrieval completeness')
+                return {'results':[{'id':outcome['igdb_id'],'type':'game','title':'Benchmark mapping game'}],
+                    'method':outcome['binding_source'],'complete':True}
         if not args.case or any(case in args.case for case in ('game_credits','game_details_cold')):
             from routers.catalogue import router as catalogue_router
             fixture.app.include_router(catalogue_router,prefix='/tracking')
@@ -522,6 +545,8 @@ async def main(args):
         feed = [{**title(1000 + i), 'imdb_votes': 10000, 'imdb_id': f'tt{1000+i}', 'imdb_score': 8} for i in range(120)]
         cases = [
             ('game_credits',f'catalogue/entities/{game_credits_id}/details',{})] if not args.case or 'game_credits' in args.case else []
+        if args.case and 'game_title_mapping' in args.case:
+            cases += [('game_title_mapping','benchmark/game-title-mapping',{})]
         if game_contributor_id:
             path=f'contributors/actor/catalogue:{game_contributor_id}'
             cases += [('game_contributor',path,{'media_type':'game'}),
@@ -689,6 +714,11 @@ async def main(args):
                 for label, path, values in cases:
                     current_case = label
                     reset()
+                    if label=='game_title_mapping':
+                        async with fixture.Session() as db:
+                            await db.execute(delete(MetadataSnapshot).where(MetadataSnapshot.provider=='igdb',
+                                MetadataSnapshot.kind=='game_title_candidates'))
+                            await db.commit()
                     if label=='game_details_cold':
                         async with fixture.Session() as db:
                             await db.execute(delete(MetadataSnapshot).where(MetadataSnapshot.provider=='igdb',

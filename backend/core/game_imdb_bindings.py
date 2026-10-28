@@ -4,7 +4,7 @@ import json
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import aliased
 
@@ -23,10 +23,13 @@ BINDING_REVISION='game_binding_revision'
 def verified_bindings(title_ids=None):
     """Explicit bindings whose current IGDB root still agrees with their evidence."""
     igdb=aliased(CatalogueIdentity)
+    from core.game_title_match import VERSION
     query=select(CatalogueIdentity.external_id.label('imdb_id'),CatalogueIdentity.entity_id.label('work_id'),
         CatalogueEntity.name.label('game_title'),CatalogueIdentity.evidence['igdb_id'].astext.label('igdb_id')).join(
         CatalogueEntity,CatalogueEntity.id==CatalogueIdentity.entity_id).where(CatalogueEntity.kind=='game',
-        CatalogueIdentity.namespace=='imdb.title',CatalogueIdentity.source.in_(('reviewed','wikidata')),
+        CatalogueIdentity.namespace=='imdb.title',CatalogueIdentity.source.in_(('reviewed','wikidata','matched')),
+        func.coalesce(CatalogueIdentity.evidence['mapping_state'].astext,'active')=='active',
+        or_(CatalogueIdentity.source!='matched',CatalogueIdentity.evidence['matcher_version'].as_integer()==VERSION),
         CatalogueIdentity.evidence['title_type'].astext=='videoGame',
         or_(CatalogueEntity.attributes['igdb_id'].astext.is_(None),
             CatalogueEntity.attributes['igdb_id'].astext==CatalogueIdentity.evidence['igdb_id'].astext),
@@ -83,9 +86,20 @@ class GameIMDbBindings:
                 # A reviewed selection is never remapped by background lookup.
                 bound_native=(binding.evidence or {}).get('igdb_id')
                 if bound_native is not None and str(bound_native)!=native:
+                    if binding.source!='reviewed':
+                        from core.game_mapping_lifecycle import quarantine
+                        await quarantine(db,binding,'changed_igdb_root');await db.commit()
                     return {'status':'conflict','imdb_id':None}
-                return {'status':'bound','binding':binding_view(binding)}
+                from core.game_title_match import VERSION
+                pending=binding.source!='reviewed' and ((binding.evidence or {}).get('mapping_state','active')!='active'
+                    or binding.source=='matched' and (binding.evidence or {}).get('matcher_version')!=VERSION)
+                if not pending:return {'status':'bound','binding':binding_view(binding)}
+                retained={'id':binding.external_id,'source':binding.source,'evidence':dict(binding.evidence or {})}
+            else:retained=None
             slug=(work.attributes or {}).get('slug') or (work.attributes or {}).get('igdb_slug')
+        if retained:return await self.revalidate(work_id,native,retained)
+        from core.game_mapping_index import wikidata_generation
+        wiki_generation=await wikidata_generation(self.sessions)
         key=hashlib.sha256(json.dumps([native,slug,sorted(items)]).encode()).hexdigest()
         async def lookup():
             candidates=items
@@ -108,7 +122,10 @@ class GameIMDbBindings:
         cached=await self.cache.get('wikidata','game_imdb_mapping',key,lookup,
             ttl=timedelta(days=7),max_stale=timedelta(days=30))
         mapped=cached['data']
-        if mapped['status']!='verified':return mapped
+        if cached.get('stale'):return {'status':'unresolved','reason':'mapping_support_stale'}
+        mapped={**mapped,'_support':{'check_wikidata_generation':True,'wikidata_generation':wiki_generation,
+            'wiki_snapshots':[{'kind':'game_imdb_mapping','key':key,'fetched_at':cached['fetched_at']}] if cached.get('fetched_at') else []}}
+        if mapped['status']!='verified':return await self.reverse_lookup(work_id,native,mapped)
         title_id=mapped['imdb_id']
         header=await self.cache.get('imdb','game_imdb_identity',title_id,
             lambda:self.source.title(title_id),ttl=timedelta(days=30),max_stale=timedelta(days=90))
@@ -117,6 +134,97 @@ class GameIMDbBindings:
             'title_type':'videoGame','igdb_id':native,'wikidata':mapped['evidence'],
             'mapping_fetched_at':cached['fetched_at'],'identity_fetched_at':header['fetched_at'],
             'imdb_identity':header['data']},expected_igdb=native)
+
+    async def reverse_lookup(self,work_id,native,previous):
+        from core.game_mapping_index import lookup,wikidata_generation
+        from core.game_title_candidates import FIELDS,retrieve
+        from core.game_title_match import decide
+        from models.game_mapping import GameMappingGeneration
+        if previous.get('reason')=='explicit_identity_conflict':return previous
+        wiki_support=previous.get('_support') or {'check_wikidata_generation':True,
+            'wikidata_generation':await wikidata_generation(self.sessions),'wiki_snapshots':[]}
+        async with self.sessions() as db:
+            generation=await db.scalar(select(GameMappingGeneration.id).where(GameMappingGeneration.source=='imdb',
+                GameMappingGeneration.active.is_(True),GameMappingGeneration.observed_at>=now()-timedelta(days=2)))
+        if not generation:return previous
+        rows=await self.wiki.sources.igdb('games',f'fields {FIELDS}; where id={int(native)}; limit 1;')
+        if len(rows)!=1 or str(rows[0].get('id'))!=native:raise ProviderError('identity_conflict')
+        raw=rows[0];names=[raw['name'],*[row['name'] for row in raw.get('alternative_names',[]) if isinstance(row.get('name'),str)]]
+        titles=await lookup(self.sessions,'imdb',names=names)
+        if len(titles)>=101:return {'status':'unresolved','reason':'incomplete_candidates'}
+        accepted=[]
+        uncertain=False
+        for title in titles:
+            decision=decide(title['value'],[raw],complete=True,branches=[{'kind':'local_imdb_index','generation':generation,'complete':True}])
+            if decision['status']=='verified':accepted.append((title,decision))
+            elif decision['evidence']['candidates'] and (title['value'].get('year') is None or not decision['evidence']['candidates'][0]['years']):
+                uncertain=True
+        if len(accepted)!=1 or uncertain:return {'status':'unresolved' if accepted or uncertain else 'unmapped','reason':'local_title_candidates'}
+        title,decision=accepted[0];title_id=title['native']
+        from core.wikidata_claims import snak_value
+        for mapping in previous.get('mappings',[]):
+            claims={snak_value(row.get('mainsnak')) for row in mapping.get('evidence',{}).get('P345',[])}-{None}
+            if claims and claims!={title_id}:return previous
+        current=await self.source.title(title_id)
+        current_title={**title['value'],'id':title_id,'title':current['titleText']['text'],'year':(current.get('releaseYear') or {}).get('year')}
+        candidate=await retrieve(self.wiki.sources,current_title)
+        proof=decide(current_title,candidate['data']['rows'],complete=candidate['data']['complete'] and not candidate['stale'],branches=candidate['data']['branches'])
+        if proof['status']!='verified' or str(proof['igdb_id'])!=native:
+            return {'status':'unresolved','reason':'changed_imdb_identity'}
+        if previous.get('status')=='conflict':
+            from core.wikidata_claims import qualified
+            scope={int(native),*[row['id'] for row in proof['evidence'].get('rename_scope',[])]}
+            slugs={row.get('slug') for row in candidate['data']['rows'] if row['id'] in scope}-{None}
+            mappings=previous.get('mappings',[])
+            if not mappings:return previous
+            for mapping in mappings:
+                evidence=mapping.get('evidence',{})
+                ids=[snak_value(row.get('mainsnak')) for row in evidence.get('P9043',[])]
+                ids.extend(value for row in evidence.get('P5794',[]) for value in qualified(row,'P9043'))
+                names=[snak_value(row.get('mainsnak')) for row in evidence.get('P5794',[])]
+                if not ids and not names:return previous
+                if any(not isinstance(value,str) or not value.isdigit() or int(value) not in scope for value in ids):return previous
+                if not ids and any(value not in slugs for value in names):return previous
+        from core.game_imdb_discovery_source import GameIMDbDiscoverySource,project_game
+        from core.game_types import igdb_game_class
+        games={row['id']:row for row in candidate['data']['rows']}
+        parent=raw.get('parent_game')
+        if igdb_game_class(raw)=='expansion' and isinstance(parent,dict) and parent.get('id') not in games:
+            games.update(await GameIMDbDiscoverySource(self.sessions,sources=self.wiki.sources,wiki=self.wiki).games({parent['id']}))
+        projected=project_game(title_id,raw,games,proof['evidence'])
+        if projected['status']!='verified':return projected
+        proof['evidence'].update(direction='igdb_to_imdb',support={**wiki_support,'imdb_generation':generation,
+            'candidate_key':candidate['data'].get('scope_key'),'candidate_fingerprint':candidate['data'].get('scope_fingerprint')},
+            dependencies=[f'wikidata-imdb:{title_id}',
+            f'igdb-query:{candidate["data"].get("scope_key","")}',
+            *[f'igdb-name:{name}' for name in candidate['data'].get('scope_names',[])],
+            *[f'wikidata:{mapping["evidence"]["wikidata_id"]}' for mapping in previous.get('mappings',[])
+                if mapping.get('evidence',{}).get('wikidata_id')]])
+        return await self.save(work_id,title_id,'matched',{'title_type':'videoGame','igdb_id':native,
+            'matching':proof['evidence'],'imdb_identity':current},expected_igdb=native)
+
+    async def revalidate(self,work_id,native,previous):
+        from core.game_imdb_discovery_source import GameIMDbDiscoverySource
+        header=await self.source.title(previous['id'])
+        title={'id':previous['id'],'title':header['titleText']['text'],'year':(header.get('releaseYear') or {}).get('year')}
+        result=await GameIMDbDiscoverySource(self.sessions,sources=self.wiki.sources,wiki=self.wiki).page([previous['id']],titles={previous['id']:title})
+        outcome=result['outcomes'][0]
+        if not result.get('stale') and outcome['status']=='verified' and str(outcome['igdb_id'])==native:
+            matched=outcome.get('binding_source')=='matched'
+            if matched and (previous.get('evidence',{}).get('matching') or {}).get('direction')=='igdb_to_imdb':
+                return await self.reverse_lookup(work_id,native,{'status':'unmapped'})
+            return await self.save(work_id,previous['id'],'matched' if matched else 'wikidata',{
+                'title_type':'videoGame','igdb_id':native,'matching' if matched else 'wikidata':outcome['evidence'],
+                'imdb_identity':header},expected_igdb=native)
+        if not result.get('stale') and outcome['status'] in ('verified','conflict','excluded'):
+            async with self.sessions() as db:
+                await catalogue.write_lock(db)
+                _,current,binding,_=await context(db,work_id)
+                if current==native and binding and binding.external_id==previous['id'] and binding.source!='reviewed':
+                    from core.game_mapping_lifecycle import quarantine
+                    await quarantine(db,binding,'incompatible_current_evidence');await db.commit()
+            return {'status':'conflict','imdb_id':None}
+        return {'status':'unresolved','reason':'mapping_support_stale'}
 
     async def review(self,work_id,title_id,reviewer_id,reason):
         identifier(title_id)
@@ -132,8 +240,40 @@ class GameIMDbBindings:
 
     async def save(self,work_id,title_id,source,evidence,*,expected_igdb):
         identifier(title_id)
+        from core.game_title_match import VERSION
+        dependencies=[f'imdb:{title_id}',f'igdb:{expected_igdb}']
+        if item:=(evidence.get('wikidata') or {}).get('wikidata_id'):dependencies.append(f'wikidata:{item}')
+        proof=evidence.get('matching') or {}
+        from core.game_title_match import spelling
+        for name in [(proof.get('imdb') or {}).get('title'),*(proof.get('imdb') or {}).get('aliases',[])]:
+            if spelling(name):dependencies.extend([f'imdb-name:{spelling(name)}',f'igdb-name:{spelling(name)}'])
+        dependencies.extend(proof.get('dependencies',[]))
+        evidence={**evidence,'mapping_state':'active','matcher_version':VERSION,'evidence_revision':uuid.uuid4().hex,
+            'dependencies':sorted(set([*dependencies,*evidence.get('dependencies',[])]))}
         async with self.sessions() as db:
             await catalogue.write_lock(db)
+            if source=='matched':
+                support=proof.get('support') or {}
+                if support.get('check_wikidata_generation'):
+                    from models.game_mapping import GameMappingGeneration
+                    current=await db.scalar(select(GameMappingGeneration.id).where(GameMappingGeneration.source=='wikidata',
+                        GameMappingGeneration.active.is_(True)))
+                    if current!=support.get('wikidata_generation'):raise ProviderError('stale_mapping')
+                from core.game_source_cache import GameSourceCache
+                for snapshot in support.get('wiki_snapshots',[]):
+                    fetched=await db.scalar(GameSourceCache.query('wikidata',snapshot['kind'],snapshot['key'])
+                        .with_only_columns(MetadataSnapshot.fetched_at).with_for_update(read=True))
+                    if not fetched or fetched.isoformat()!=snapshot['fetched_at']:raise ProviderError('stale_mapping')
+                if generation:=support.get('imdb_generation'):
+                    from models.game_mapping import GameMappingGeneration
+                    if not await db.scalar(select(GameMappingGeneration.id).where(GameMappingGeneration.id==generation,
+                        GameMappingGeneration.active.is_(True),GameMappingGeneration.observed_at>=now()-timedelta(days=2))):
+                        raise ProviderError('stale_mapping')
+                if candidate_key:=support.get('candidate_key'):
+                    from core.game_source_cache import GameSourceCache
+                    fingerprint=await db.scalar(GameSourceCache.query('igdb','game_title_candidates',candidate_key)
+                        .with_only_columns(MetadataSnapshot.payload['scope_fingerprint'].astext))
+                    if fingerprint!=support.get('candidate_fingerprint'):raise ProviderError('stale_mapping')
             _,native,old,_=await context(db,work_id)
             if native!=expected_igdb:
                 raise catalogue.IdentityConflict('Game identity changed during verification')
@@ -142,7 +282,7 @@ class GameIMDbBindings:
             if old and old.source=='reviewed' and source!='reviewed':
                 return {'status':'bound','binding':binding_view(old)}
             changed=source=='reviewed' and (not old or old.external_id!=title_id)
-            mapping_changed=not old or old.external_id!=title_id or (old.evidence or {}).get('igdb_id')!=evidence.get('igdb_id')
+            mapping_changed=not old or old.external_id!=title_id or (old.evidence or {}).get('igdb_id')!=evidence.get('igdb_id') or (old.evidence or {}).get('mapping_state','active')!='active'
             if source=='reviewed':
                 db.add(MetadataSnapshot(provider='imdb',kind='game_binding_review',external_id=uuid.uuid4().hex,
                     entity_id=work_id,payload={'previous':binding_view(old) if old else None,
@@ -157,6 +297,11 @@ class GameIMDbBindings:
                 old=None
             if old:
                 if source=='reviewed':
+                    old.source=source
+                    old.evidence=evidence
+                elif old.source!='reviewed' and source in ('matched','wikidata'):
+                    # Refresh only automatic evidence. The reviewed guard above
+                    # and this independent check both preserve pinned decisions.
                     old.source=source
                     old.evidence=evidence
                 binding=old

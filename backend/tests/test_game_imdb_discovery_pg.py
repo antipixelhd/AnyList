@@ -55,6 +55,37 @@ class PortfolioDiscoveryTests(unittest.IsolatedAsyncioTestCase):
             data=await view(db,'nm1',check_mapping=True);await db.commit()
         return data
 
+    async def test_title_fallback_publishes_person_work_and_character_without_opening_the_game(self):
+        from core.game_imdb_discovery_source import GameIMDbDiscoverySource
+        from core.game_imdb_person import JOB as PERSON_JOB
+        from test_game_imdb_discovery_source import raw
+        from core.game_source_cache import GameSourceCache
+        rows=[credit(),credit('tt2')]
+        rows[1]['title'].update(titleText={'text':'Spacelords'},releaseYear={'year':2017})
+        rows[1]['characters']=[{'name':'Explorer'}]
+        self.connection.credits.return_value=page(rows,2)
+        async with self.Session() as db:
+            job=await db.scalar(snapshot(PERSON_JOB,'nm1'))
+            job.next_attempt_at=now();job.expires_at=None;job.payload={};await db.commit()
+        self.assertEqual(await self.person_service.run('nm1'),'ready')
+        sources=SimpleNamespace(cache=GameSourceCache(self.Session),igdb=AsyncMock(side_effect=[
+            [raw(20,name='Spacelords',first_release_date=1506038400)],[]]),
+            api=SimpleNamespace(http=SimpleNamespace(request=AsyncMock(return_value={'results':{'bindings':[]}}))))
+        service=GamePersonDiscovery(self.Session,source=GameIMDbDiscoverySource(self.Session,sources=sources,
+            wiki=SimpleNamespace(entities=AsyncMock())))
+        self.assertEqual(await service.run('nm1'),'changed')
+        self.assertEqual(await service.run('nm1'),'ready')
+        self.assertEqual(await self.person_service.run('nm1'),'ready')
+        async with self.Session() as db:
+            binding=await db.scalar(select(CatalogueIdentity).where(CatalogueIdentity.namespace=='imdb.title',CatalogueIdentity.external_id=='tt2'))
+            self.assertIsNotNone(binding,await db.scalar(snapshot(MAP,'tt2',provider='wikidata').with_only_columns(MetadataSnapshot.payload)))
+            self.assertEqual(binding.source,'matched')
+            role=await db.scalar(select(CatalogueCredit).where(CatalogueCredit.work_id==binding.entity_id,
+                CatalogueCredit.scope=='person',CatalogueCredit.attributes['imdb_person_id'].astext=='nm1'))
+            self.assertEqual(role.character_label,'Explorer')
+            entry=await db.scalar(select(GameEntry))
+            self.assertEqual((entry.work_id,entry.notes,entry.total_seconds),(self.base,'Pending private state',3600))
+
     async def test_fresh_actor_and_crew_work_is_added_to_the_existing_catalogue_without_private_tracking(self):
         # Completing the initial source fetch already schedules discovery;
         # neither a second page visit nor a game-details visit is required.

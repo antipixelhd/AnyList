@@ -108,6 +108,7 @@ class GameIMDbEnrichment:
             job.lease_token=token
             job.lease_until=now()+timedelta(minutes=3)
             state=dict(job.payload or {})
+            state['_mapping_request']=(job.coverage or {}).get('mapping_revalidation')
             await db.commit()
             return token,state
 
@@ -115,21 +116,24 @@ class GameIMDbEnrichment:
         claimed=await self.claim(work_id)
         if not claimed:return 'cached'
         token,state=claimed
+        expected_request=state.get('_mapping_request')
         try:
             binding=await self.bindings.resolve(work_id)
             if binding['status']!='bound':
-                await self.finish_unmatched(work_id,token,binding['status'])
+                await self.finish_unmatched(work_id,token,binding['status'],expected_request=expected_request)
                 return binding['status']
             title_id=binding['binding']['id']
+            binding_revision=(binding['binding'].get('evidence') or {}).get('evidence_revision')
             started=state.get('started_at')
             recent=False
             if isinstance(started,str):
                 try:recent=now()-datetime.fromisoformat(started)<timedelta(days=1)
                 except ValueError:pass
-            if not recent or state.get('title_id')!=title_id or 'cursor' not in state:
+            if not recent or state.get('title_id')!=title_id or 'cursor' not in state or state.get('binding_revision')!=binding_revision:
                 state={'state':'partial','title_id':title_id,'generation':uuid.uuid4().hex,
                     'started_at':now().isoformat(),'cursor':None,'seen_cursors':[],
                     'received':0,'total':None,'pages':0,'occurrences':{},'omitted':0,'complete':False}
+            state.update(binding_revision=binding_revision,_mapping_request=expected_request)
             deadline=monotonic()+55
             for _ in range(self.page_budget):
                 async with asyncio.timeout(max(1,deadline-monotonic())):
@@ -167,6 +171,17 @@ class GameIMDbEnrichment:
             job=await db.scalar(snapshot(JOB,work_id).with_for_update())
             if not job or job.lease_token!=token:return False
             work,native,binding,_=await context(db,work_id)
+            from core.game_title_match import VERSION
+            evidence=(binding.evidence or {}) if binding else {}
+            if ((job.coverage or {}).get('mapping_revalidation')!=state.get('_mapping_request')
+                or evidence.get('evidence_revision')!=state.get('binding_revision')
+                or evidence.get('mapping_state','active')!='active'
+                or binding and binding.source=='matched' and evidence.get('matcher_version')!=VERSION):
+                job.lease_token=job.lease_until=None
+                job.error_code='mapping_changed'
+                job.next_attempt_at=now();job.expires_at=None
+                await db.commit()
+                return False
             if not binding or binding.external_id!=state['title_id']:
                 job.lease_token=job.lease_until=None
                 job.error_code='identity_conflict'
@@ -241,7 +256,8 @@ class GameIMDbEnrichment:
                 established=bool(release and release[:4].isdigit() and int(release[:4])<now().year)
                 job.expires_at=now()+timedelta(days=(30 if established else 7) if state['complete'] else 1)
             job.payload=dict(state)
-            job.coverage={key:state.get(key) for key in ('state','complete','received','total')}
+            job.coverage={**{key:state.get(key) for key in ('state','complete','received','total')},
+                'mapping_revalidation':state.get('_mapping_request')}
             job.fetched_at=now()
             job.error_code=None
             job.attempts=0
@@ -252,16 +268,26 @@ class GameIMDbEnrichment:
         async with self.sessions() as db:
             job=await db.scalar(snapshot(JOB,work_id).with_for_update())
             if job and job.lease_token==token:
+                if (job.coverage or {}).get('mapping_revalidation')!=state.get('_mapping_request'):
+                    job.lease_token=job.lease_until=None;job.next_attempt_at=now();job.expires_at=None
+                    await db.commit();return
                 job.payload=dict(state)
-                job.coverage={key:state.get(key) for key in ('state','complete','received','total')}
+                job.coverage={**{key:state.get(key) for key in ('state','complete','received','total')},
+                    'mapping_revalidation':state.get('_mapping_request')}
                 job.lease_token=job.lease_until=None
                 job.next_attempt_at=now()+timedelta(seconds=2)
                 await db.commit()
 
-    async def finish_unmatched(self,work_id,token,state):
+    async def finish_unmatched(self,work_id,token,state,*,expected_request=None):
         async with self.sessions() as db:
             job=await db.scalar(snapshot(JOB,work_id).with_for_update())
             if job and job.lease_token==token:
+                marker=(job.coverage or {}).get('mapping_revalidation')
+                if marker!=expected_request or marker and state not in ('conflict','excluded'):
+                    job.lease_token=job.lease_until=None
+                    job.next_attempt_at=now()+timedelta(seconds=0 if marker!=expected_request else 3600)
+                    job.expires_at=None
+                    await db.commit();return
                 job.payload={'state':state,'complete':False}
                 job.coverage={'state':state,'complete':False}
                 job.lease_token=job.lease_until=job.next_attempt_at=None
@@ -274,7 +300,7 @@ class GameIMDbEnrichment:
             if job and job.lease_token==token:
                 if restart:
                     job.payload={'state':'partial','complete':False}
-                    job.coverage={'state':'partial','complete':False}
+                    job.coverage={**(job.coverage or {}),'state':'partial','complete':False}
                 job.lease_token=job.lease_until=None
                 job.attempts+=1
                 job.error_code=code
