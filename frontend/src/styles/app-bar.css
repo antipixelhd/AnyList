@@ -57,6 +57,7 @@ html.appbar-nav-transition-cursor {
 
   .tracker .account-nav .appbar-icon-link:is(:hover, :focus-visible, .active) {
     background: transparent;
+    color: var(--blue);
   }
 
   .tracker .account-nav .appbar-icon-link:focus-visible {
@@ -85,7 +86,7 @@ html.appbar-nav-transition-cursor {
   }
 
   .tracker .topbar.appbar-fade-capable.appbar-at-top .brand,
-  .tracker .topbar.appbar-fade-capable.appbar-at-top .appbar-icon-link {
+  .tracker .topbar.appbar-fade-capable.appbar-at-top .appbar-icon-link:not(:hover, :focus-visible, .active) {
     color: #e1effb;
     text-shadow: 0 1px 4px rgb(3 13 24 / 60%);
   }
