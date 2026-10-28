@@ -7,6 +7,12 @@ test('viewer domain opt-out hides the whole movie/series domain while preserving
   assert.deepEqual(domainListLinks('/user/alex',hidden).map(row=>row.href),['/user/alex/games']);
   assert.deepEqual(domainListLinks('/user/alex',{...hidden,show_movies_series:true}).map(row=>row.href),['/user/alex/movies','/user/alex/series','/user/alex/games']);
 });
+
+test('erotic game filtering defaults on and retains an explicit opt-out',()=>{
+  assert.equal(mediaDomains(null).hide_erotic_games,true);
+  assert.equal(mediaDomains({}).hide_erotic_games,true);
+  assert.equal(mediaDomains({hide_erotic_games:false}).hide_erotic_games,false);
+});
 test('viewer visibility never removes another users public profile sections',()=>{
   const viewer=mediaDomains({show_movies_series:false,show_games:false});
   assert.deepEqual(domainListLinks('/user/alex',profileMediaDomains(true,viewer)),[]);

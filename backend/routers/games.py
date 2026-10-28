@@ -288,7 +288,10 @@ async def search_games(db: DB, viewer: Viewer, q: Annotated[str, Query(min_lengt
     if len(q.strip()) < 2:
         raise HTTPException(422, 'Enter at least two characters')
     try:
-        return await game_discovery.search(db, q.strip())
+        from core.game_content import hide_erotic_games
+        hide_erotic=await hide_erotic_games(db,viewer.id if viewer else None)
+        await db.close()
+        return await game_discovery.search(db, q.strip(),hide_erotic_games=hide_erotic)
     except ProviderError:
         raise HTTPException(503, 'Game search is temporarily unavailable') from None
 
@@ -337,13 +340,15 @@ async def browse_games(db: DB, viewer: Viewer,
     from core.catalogue_providers import ProviderError
     await catalog_access(db, viewer)
     viewer_id = viewer.id if viewer else None
+    from core.game_content import hide_erotic_games
+    hide_erotic=await hide_erotic_games(db,viewer_id)
     # Authentication/catalog policy reads must not occupy a pooled connection
     # while a cold public ranking is waiting on providers.
     await db.close()
     service = game_browse.GameBrowse()
     try:
         query = await game_browse.filters(service.sources, category=category,genres=genres,platforms=platforms,
-            start=start,end=end,q=q,min_metacritic=min_metacritic,timeline=timeline)
+            start=start,end=end,q=q,min_metacritic=min_metacritic,timeline=timeline,hide_erotic_games=hide_erotic)
         page = await service.page(query,limit=limit,cursor=cursor,
             wait_seconds=.15 if min_metacritic else None)
         return await game_browse.project(db,viewer_id,page)

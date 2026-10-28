@@ -62,7 +62,7 @@ def capabilities(attributes: dict | None) -> GameCapabilities:
 
 def candidate_fields(fields: str) -> str:
     """Project authoritative edition/port parents without per-result fan-out."""
-    fields += ',version_parent,parent_game.game_type.type'
+    fields += ',themes,version_parent,parent_game.game_type.type'
     return ','.join(prefix+field for prefix in ('','version_parent.','parent_game.','version_parent.parent_game.')
                     for field in fields.split(','))
 
@@ -99,6 +99,7 @@ def search_candidate(raw: dict) -> dict | None:
     """Resolve verified edition/port identity before evaluating eligibility."""
     from core.catalogue_normalize import image
     from core.game_release_dates import game_release
+    from core.game_content import erotic_game
     work=canonical_game(raw)
     if work is None:
         return None
@@ -116,7 +117,8 @@ def search_candidate(raw: dict) -> dict | None:
             return None
     released = game_release(work)
     return dict(external_id=str(identifier), name=work['name'], image_url=image(work.get('cover')),
-                **{key:released[key] for key in ('release_date','release_date_precision','release_quarter')}, game_class=kind)
+                **{key:released[key] for key in ('release_date','release_date_precision','release_quarter')},
+                game_class=kind,is_erotic=erotic_game(work))
 
 
 def platform_group(platform: dict) -> str:

@@ -18,7 +18,7 @@ test('unknown connection categories fall back to Connections', () => {
 
 test('unrelated query parameters do not clear the current category', () => {
   assert.deepEqual(selected('/user-settings?section=apps'), ['Profile']);
-  assert.deepEqual(selected('/settings/media?source=profile'), ['Movies & series']);
+  assert.deepEqual(selected('/settings/media?source=profile'), ['Media']);
   assert.deepEqual(selected('/settings/lists'), ['Lists']);
   assert.deepEqual(selected('/settings/notifications'), ['Notifications']);
   assert.deepEqual(selected('/settings'), ['Account']);

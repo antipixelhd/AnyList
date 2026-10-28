@@ -1757,7 +1757,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(initial.json(),{
             'minimum_popularity':25,'include_rereleases':False,
             'auto_confirm':False,'combine_lists':True,
-            'show_movies_series':True,'show_games':True,'show_game_achievements':True,
+            'show_movies_series':True,'show_games':True,'show_game_achievements':True,'hide_erotic_games':True,
             'default_sort':'title',
             'low_priority_notifications':True,'low_priority_retention_days':7,
             'show_new_ratings_popup':True,

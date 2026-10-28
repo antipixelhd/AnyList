@@ -261,6 +261,10 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
       </section>
       <section>
         <h2 class="section-headline mb-4 border-b border-zinc-800 pb-2">Results filters</h2>
+        <label class="setting-switch-row" for="hide-erotic-games">
+          <span><strong>Hide erotic games</strong><small>Mature age ratings remain visible.</small></span>
+          <input id="hide-erotic-games" type="checkbox" checked={trackingPrefs.hide_erotic_games !== false}/>
+        </label>
         <p class="text-sm text-zinc-400">Titles qualify with enough votes or enough popularity.</p>
         <div class="space-y-2 max-w-xs mt-5">
           <div class="setting-label-line"><label for="minimum_movie_runtime" class="block text-sm font-medium text-zinc-400">Minimum movie runtime (minutes)</label></div>
@@ -706,7 +710,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
     });
     const trackingChains = new Map<string, Promise<void>>();
     const trackingRevisions = new Map<string, number>();
-    for(const [id,field] of [['show-movies-series','show_movies_series'],['show-games','show_games'],['show-game-achievements','show_game_achievements']]){
+    for(const [id,field] of [['show-movies-series','show_movies_series'],['show-games','show_games'],['show-game-achievements','show_game_achievements'],['hide-erotic-games','hide_erotic_games']]){
       const control=document.getElementById(id) as HTMLInputElement|null;if(!control)continue;
       control.dataset.savedValue=String(control.checked);
       control.addEventListener('change',()=>saveTrackingPreferences({[field]:control.checked},control,field));

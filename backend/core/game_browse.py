@@ -20,7 +20,7 @@ from models.games import GameChildState, GameEntry
 CATEGORIES = {'trending':'Trending','most_played':'Most Played','sellers':'Top sellers',
     'newest':'Newest','popular':'All-time popular','score':'Highest rated'}
 PAGE_AGE = timedelta(hours=2)
-RELEASE_POLICY='release-precision-v2'
+RELEASE_POLICY='game-content-v1'
 
 
 def digest(value):
@@ -53,7 +53,7 @@ def decode_cursor(value, scope):
         raise ProviderError('invalid_cursor') from None
 
 
-async def filters(sources, *, category, genres='', platforms='', start=None, end=None, q='', min_metacritic=0,timeline=False):
+async def filters(sources, *, category, genres='', platforms='', start=None, end=None, q='', min_metacritic=0,timeline=False,hide_erotic_games=True):
     if category not in CATEGORIES or not 0<=min_metacritic<=100 or min_metacritic and category!='trending':
         raise ProviderError('invalid_request')
     if timeline and category!='newest':
@@ -88,10 +88,11 @@ async def filters(sources, *, category, genres='', platforms='', start=None, end
             values = selected_devices or ({device['id'] for device in group['devices']} if group['id'] in chosen else set())
             identifiers.update(int(value.split(':')[1]) for value in values)
     return {'category':category,'genres':chosen_genres,'platforms':sorted(identifiers),
-        'start':start,'end':end,'q':q.strip(),'min_metacritic':min_metacritic,'timeline':timeline}
+        'start':start,'end':end,'q':q.strip(),'min_metacritic':min_metacritic,'timeline':timeline,'hide_erotic_games':hide_erotic_games}
 
 
 def matches(row, query):
+    if query.get('hide_erotic_games',True) and row.get('is_erotic'):return False
     if query['genres'] and not set(query['genres']).intersection(g['id'] for g in row.get('genres',[])):
         return False
     if query['platforms'] and not {f'igdb.platform:{p}' for p in query['platforms']}.intersection(row.get('platform_ids',[])):
@@ -257,7 +258,7 @@ async def project(db, viewer_id, page):
     cards = []
     for row in rows:
         identity = known.get(str(row['igdb_id']))
-        cards.append({key:value for key,value in row.items() if key not in {'identity_evidence','platform_ids'}} | {
+        cards.append({key:value for key,value in row.items() if key not in {'identity_evidence','platform_ids','is_erotic'}} | {
             'id':identity[1] if identity else None,'list_status':(identity[2] or identity[4]) if identity else None,
             'score':(identity[3] if identity[2] else identity[5]) if identity else None})
     return {key:value for key,value in page.items() if key!='rows'} | {'results':cards}

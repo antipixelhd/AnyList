@@ -42,7 +42,7 @@ def card(raw, *, expansions=False):
         igdb_slug=work.get('slug'),
         poster=candidate['image_url'], release_date=candidate['release_date'],
         release_date_precision=candidate['release_date_precision'], release_quarter=candidate['release_quarter'],
-        year=(candidate['release_date'] or '')[:4] or None, game_class=candidate['game_class'],
+        year=(candidate['release_date'] or '')[:4] or None, game_class=candidate['game_class'],is_erotic=candidate['is_erotic'],
         genres=[{'id': f'igdb.genre:{g["id"]}', 'name': g['name']} for g in work.get('genres') or []
                 if positive(g.get('id')) and isinstance(g.get('name'), str)],
         platforms=platforms, platform_ids=[f'igdb.platform:{p["id"]}' for p in available])
@@ -243,7 +243,7 @@ class GameBrowseSources:
                 conditions.append(f'(first_release_date<{exact} | release_dates.date<{year_end})')
             else:
                 conditions.append(f'first_release_date<{exact}')
-        version='release-precision-v2'
+        version='game-content-v1'
         key = hashlib.sha256(json.dumps([version,sort,offset,sorted(genres),sorted(platforms),start,end]).encode()).hexdigest()
         async def load():
             # Search resolves editions first, then filters canonical metadata.
@@ -318,7 +318,7 @@ class GameBrowseSources:
         """Finalize a bounded canonical search window before chronological paging."""
         if not q or not isinstance(snapshot,int) or isinstance(snapshot,bool) or snapshot<0 or not 0<=offset<=1000:
             raise ProviderError('invalid_request')
-        key=hashlib.sha256(json.dumps(['release-precision-v2',snapshot,q,sorted(genres),sorted(platforms),start,end]).encode()).hexdigest()
+        key=hashlib.sha256(json.dumps(['game-content-v1',snapshot,q,sorted(genres),sorted(platforms),start,end]).encode()).hexdigest()
         async def load():
             rows,seen,more=[],set(),True
             position=0;search_mode=0
@@ -516,7 +516,7 @@ class GameBrowseSources:
                 rows.append({**value, 'source_rank':position['rank'], 'steam_app_id':position['appid']})
             return {'rows':rows, 'source':ranking['data']['source'], 'source_at':observed,
                 'universe':'Steam top 100', 'partial':unresolved > 0 or len(native) >= 500}
-        result = await self.cache.get('steam', 'game_browse_cards', f'precision-v1:{observed}', load,
+        result = await self.cache.get('steam', 'game_browse_cards', f'content-v1:{observed}', load,
             ttl=timedelta(hours=4), max_stale=timedelta(hours=24))
         result['stale'] = result['stale'] or ranking['stale']
         self.require_source_time(result['data']['source_at'], 86400)
@@ -538,7 +538,7 @@ class GameBrowseSources:
                 rows.append({**value, 'source_rank':index})
             return {'rows':rows, 'source':ranking['data']['source'], 'source_at':observed,
                 'has_more':ranking['data']['has_more'], 'next_offset':offset+len(positions)}
-        result = await self.cache.get('igdb', 'game_browse_cards', f'precision-v1:{"sellers" if sellers else "attention"}:{observed}:{offset}', load)
+        result = await self.cache.get('igdb', 'game_browse_cards', f'content-v1:{"sellers" if sellers else "attention"}:{observed}:{offset}', load)
         result['stale'] = result['stale'] or ranking['stale']
         self.require_source_time(observed, 3*86400, empty=not ranking['data']['rows'])
         return result
@@ -588,7 +588,7 @@ class GameBrowseSources:
                 'has_more':next_start < len(ranking['data']['rows']) or ranking['data']['has_more'],
                 'next_page':page if next_start < len(ranking['data']['rows']) else page+1,
                 'next_start':next_start if next_start < len(ranking['data']['rows']) else 0}
-        result = await self.cache.get('rawg', 'game_browse_cards', f'precision-v1:{page}:{start}:{digest}', load,
+        result = await self.cache.get('rawg', 'game_browse_cards', f'content-v1:{page}:{start}:{digest}', load,
             ttl=timedelta(days=1), max_stale=timedelta(days=7))
         result['stale'] = result['stale'] or ranking['stale']
         return result

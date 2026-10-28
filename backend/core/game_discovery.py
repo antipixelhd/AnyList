@@ -55,8 +55,8 @@ async def candidates(query):
             flight.task.cancel()
 
 
-async def search(db, query, limit=8):
-    rows = (await candidates(query))[:limit]
+async def search(db, query, limit=8,*,hide_erotic_games=True):
+    rows = [row for row in await candidates(query) if not hide_erotic_games or not row.get('is_erotic')][:limit]
     ids = [row['external_id'] for row in rows]
     mappings = dict((await db.execute(select(CatalogueIdentity.external_id, CatalogueIdentity.entity_id)
         .join(CatalogueEntity, CatalogueEntity.id == CatalogueIdentity.entity_id)

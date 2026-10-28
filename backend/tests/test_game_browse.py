@@ -104,6 +104,21 @@ class BrowseTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ProviderError,'invalid_cursor'):
             await self.service.page(self.query,limit=1,cursor=old)
 
+    async def test_erotic_filter_precedes_critic_work_and_binds_cursor_visibility(self):
+        self.sources.attention.return_value={'data':{'rows':[row(1,is_erotic=True),row(2),row(3)],
+            'has_more':False,'source':'IGDB Visits'},'stale':False}
+        self.sources.critic_scores.return_value={1:90,2:90,3:95}
+        filtered=await self.service.page({**self.query,'min_metacritic':80},limit=1)
+        self.assertEqual([r['igdb_id'] for r in filtered['rows']],[2])
+        self.assertEqual([r['igdb_id'] for r in self.sources.critic_scores.call_args.args[0]],[2,3])
+        visible={**self.query,'min_metacritic':80,'hide_erotic_games':False}
+        unfiltered=await self.service.page(visible,limit=1)
+        self.assertEqual([r['igdb_id'] for r in unfiltered['rows']],[1])
+        with self.assertRaisesRegex(ProviderError,'invalid_cursor'):
+            await self.service.page(visible,limit=1,cursor=filtered['cursor'])
+        second=await self.service.page({**self.query,'min_metacritic':80},limit=1,cursor=filtered['cursor'])
+        self.assertEqual([r['igdb_id'] for r in second['rows']],[3])
+
     async def test_critic_unknown_is_excluded_with_partial_coverage_and_exact_zero_is_preserved(self):
         self.sources.attention.return_value={'data':{'rows':[row(i) for i in range(1,6)],'has_more':False,
             'source':'IGDB Visits'},'stale':True}
