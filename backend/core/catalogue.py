@@ -516,7 +516,7 @@ async def ingest_document(db, doc, provider, *, entities=None, project_screen_ro
         }
         if old:
             values = {k: v for k, v in values.items() if has_value(v)}
-        if provider=='igdb' and (release.attributes or {}).get('release_date_projection')==1:
+        if provider=='igdb' and (release.attributes or {}).get('release_date_projection') in (1,2):
             values['release_date']=(release.attributes or {}).get('release_date')
         await upsert(db, GameRelease, values, ["entity_id"])
     child_edges={'dlc':set(),'expansion':set()}

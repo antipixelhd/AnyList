@@ -2,7 +2,7 @@
 import os
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock,patch
 
 os.environ.setdefault('SECRET_KEY','discovery-source-test-only')
 os.environ.setdefault('DATABASE_URL','postgresql+asyncpg://test:test@localhost/test')
@@ -27,6 +27,17 @@ class Cache:
 
 
 class DiscoverySourceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_optional_deep_timeout_keeps_an_ordinary_verified_title_in_the_same_batch(self):
+        self.response([])
+        self.sources.igdb.side_effect=[[raw(10,name='Fast Game',first_release_date=1506038400)],[],
+            [raw(20,name='Gap Game')],[]]
+        with patch('core.game_match_support.corroborate',AsyncMock(side_effect=TimeoutError)):
+            result=await self.api.page(['tt1','tt2'],titles={'tt1':{'id':'tt1','title':'Fast Game','year':2017},
+                'tt2':{'id':'tt2','title':'Gap Game','year':None}})
+        self.assertEqual(result['outcomes'][0]['status'],'verified')
+        self.assertEqual(result['outcomes'][1]['status'],'unresolved')
+        self.assertEqual(result['outcomes'][1]['retry_after'],60)
+
     async def test_complete_title_year_fallback_accepts_primary_name_and_retains_provenance(self):
         self.response([])
         self.sources.igdb.side_effect=[[raw(10,name='Spacelords',first_release_date=1506038400)],[]]

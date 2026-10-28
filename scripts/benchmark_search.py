@@ -39,6 +39,7 @@ from core import (
     game_imdb_discovery,
     tmdb,
 )
+from core.game_release_dates import VERSION as RELEASE_VERSION
 from dependencies import get_current_user, get_current_user_or_api_key
 from models import GlobalSettings, Media, User, UserProfileData
 from models.base import MediaType
@@ -264,7 +265,7 @@ async def main(args):
                 db.add(CatalogueIdentity(entity_id=first_game.id,namespace='igdb.game',external_id='9000000',source='igdb'))
                 stamp=datetime.now(timezone.utc).replace(tzinfo=None)
                 db.add(MetadataSnapshot(provider='igdb',kind='game',external_id='9000000',entity_id=first_game.id,
-                    fetched_at=stamp,expires_at=stamp+timedelta(days=7),coverage={'primary_complete':True,'characters_complete':True,'release_precision_version':1,'artwork_policy_version':2},
+                    fetched_at=stamp,expires_at=stamp+timedelta(days=7),coverage={'primary_complete':True,'characters_complete':True,'release_precision_version':RELEASE_VERSION,'artwork_policy_version':2},
                     payload={'raw':'PRIMARY_METADATA_SENTINEL '*50000}))
             if args.case and 'game_details_cold' in args.case:
                 first_game.attributes={**first_game.attributes,'igdb_id':'9000000'}
@@ -307,6 +308,39 @@ async def main(args):
                     raise RuntimeError('Title mapping lost exact identity or retrieval completeness')
                 return {'results':[{'id':outcome['igdb_id'],'type':'game','title':'Benchmark mapping game'}],
                     'method':outcome['binding_source'],'complete':True}
+        if args.case and 'game_title_mapping_deep' in args.case:
+            from core.game_browse_sources import GameBrowseSources
+            from core.game_imdb_discovery_source import GameIMDbDiscoverySource
+            deep_sources=GameBrowseSources(fixture.Session)
+            async def deep_igdb(endpoint,query):
+                counters['provider_requests']+=1
+                counters['igdb_title_requests']+=1
+                await asyncio.sleep(args.provider_delay_ms/1000)
+                return [{'id':9000998,'name':'Benchmark undated game','slug':'benchmark-undated-game','game_type':{'id':0},
+                    'external_games':[{'uid':'9000998','external_game_source':{'name':'Steam'}}],
+                    'involved_companies':[{'id':9,'developer':True,'company':{'id':9,'name':'Benchmark Studio'}}]}]
+            async def deep_http(provider,method,url,**kwargs):
+                counters['provider_requests']+=1
+                counters[f'{provider}_support_requests']+=1
+                await asyncio.sleep(args.provider_delay_ms/1000)
+                if provider=='steam':
+                    return {'9000998':{'success':True,'data':{'steam_appid':9000998,'type':'game','name':'Benchmark undated game',
+                        'developers':['Benchmark Studio'],'detailed_description':'Take control of Chelsea Williams in this game.'}}}
+                return {'data':{'title':{'id':'tt9000998','titleText':{'text':'Benchmark undated game'},'titleType':{'id':'videoGame'},
+                    'releaseYear':None,'credits':{'total':1,'pageInfo':{'hasNextPage':False,'endCursor':None},'edges':[{'node':{
+                        'name':{'id':'nm9000998','nameText':{'text':'Benchmark Performer'}},'category':{'id':'actress'},
+                        'characters':[{'name':'Chelsea Williams'}]}}]}}}}
+            deep_sources.igdb=deep_igdb
+            deep_sources.api.http=SimpleNamespace(request=deep_http,session_factory=fixture.Session,client=None)
+            deep_service=GameIMDbDiscoverySource(fixture.Session,sources=deep_sources)
+            deep_service.explicit_page=AsyncMock(return_value={'outcomes':[{'id':'tt9000998','status':'unmapped'}],'stale':False})
+            @fixture.app.get('/tracking/benchmark/game-title-mapping-deep')
+            async def deep_mapping_route():
+                result=await deep_service.page(['tt9000998'],titles={'tt9000998':{'id':'tt9000998','title':'Benchmark undated game','year':None}})
+                outcome=result['outcomes'][0]
+                if outcome['status']!='verified' or outcome['igdb_id']!=9000998 or not outcome['evidence']['candidates'][0].get('corroboration'):
+                    raise RuntimeError('Undated mapping lost independent corroboration')
+                return {'results':[{'id':9000998,'type':'game','title':'Benchmark undated game'}],'method':'corroborated','complete':True}
         if not args.case or any(case in args.case for case in ('game_credits','game_details_cold')):
             from routers.catalogue import router as catalogue_router
             fixture.app.include_router(catalogue_router,prefix='/tracking')
@@ -500,8 +534,29 @@ async def main(args):
             if endpoint=='popularity_primitives':
                 offset=int(re.search(r'offset (\d+)',query).group(1))
                 return [{'game_id':8000000+i,'value':1000-i,'calculated_at':int(time.time())} for i in range(offset,min(offset+100,300))]
+            if endpoint=='release_dates':
+                offset=int(re.search(r'offset (\d+)',query).group(1));rows=[]
+                for index in range(offset,min(offset+100,300)):
+                    stamp=1704067200+(299-index)*86400
+                    point={'date':stamp,'date_format':{'format':'YYYYMMDD'},'status':{'name':'Full Release'}}
+                    early={'date':1519257600,'date_format':{'format':'YYYYMMDD'},'status':{'name':'Early Access'}}
+                    game={'id':8000000+index,'name':f'Benchmark release {index}','game_type':{'id':0},
+                        'first_release_date':early['date'] if index%3==0 else stamp,
+                        'release_dates':[early,point] if index%3==0 else [point]}
+                    rows.append({'id':index+1,'game':game,**point})
+                return rows
             if endpoint=='games':
                 searching=query.startswith('search ')
+                if not searching and 'id=(' not in query:
+                    offset=int(re.search(r'offset (\d+)',query).group(1));rows=[]
+                    for index in range(300):
+                        stamp=1704067200+(299-index)*86400
+                        point={'date':stamp,'date_format':{'format':'YYYYMMDD'},'status':{'name':'Full Release'}}
+                        early={'date':1519257600,'date_format':{'format':'YYYYMMDD'},'status':{'name':'Early Access'}}
+                        rows.append({'id':8000000+index,'name':f'Benchmark release {index}','game_type':{'id':0},
+                            'first_release_date':early['date'] if index%3==0 else stamp,
+                            'release_dates':[early,point] if index%3==0 else [point]})
+                    return sorted(rows,key=lambda row:row['first_release_date'],reverse=True)[offset:offset+100]
                 if query.startswith('search "Elden R";'):return []
                 broader=query.startswith('search "Elden";')
                 if searching:
@@ -547,6 +602,8 @@ async def main(args):
             ('game_credits',f'catalogue/entities/{game_credits_id}/details',{})] if not args.case or 'game_credits' in args.case else []
         if args.case and 'game_title_mapping' in args.case:
             cases += [('game_title_mapping','benchmark/game-title-mapping',{})]
+        if args.case and 'game_title_mapping_deep' in args.case:
+            cases += [('game_title_mapping_deep','benchmark/game-title-mapping-deep',{})]
         if game_contributor_id:
             path=f'contributors/actor/catalogue:{game_contributor_id}'
             cases += [('game_contributor',path,{'media_type':'game'}),
@@ -579,6 +636,8 @@ async def main(args):
             ('game_browse_preview','games/browse',{'limit':6}),
             ('game_browse_grid','games/browse',{'limit':24}),
             ('game_browse_pages','games/browse',{'limit':24}),
+            *([('game_browse_newest','games/browse',{'limit':24,'category':'newest'})]
+                if args.case and 'game_browse_newest' in args.case else []),
             ('game_browse_timeline','games/browse',{'limit':24,'category':'newest','timeline':'true','q':'Benchmark'}),
             ('game_browse_partial_search','games/browse',{'limit':24,'q':'Elden R'}),
             ('game_browse_genre_platform','games/browse',{'limit':24,'genres':'igdb.genre:5','platforms':'pc'}),
@@ -662,7 +721,7 @@ async def main(args):
                     await asyncio.sleep(args.provider_delay_ms/1000)
                     raw={'id':int(native),'name':'Benchmark game 00000','summary':'Primary synopsis',
                         'game_type':{'id':0,'type':'Main Game'},'_coverage':{'primary_complete':True,
-                            'characters_complete':False,'release_precision_version':1,'artwork_policy_version':GAME_ARTWORK_VERSION}}
+                            'characters_complete':False,'release_precision_version':RELEASE_VERSION,'artwork_policy_version':GAME_ARTWORK_VERSION}}
                     if on_primary:await on_primary(normalize_igdb(raw),{'game':raw})
                     counters['provider_requests']+=1;counters['provider:igdb/characters']+=1
                     await asyncio.sleep(args.provider_delay_ms/1000)
@@ -714,10 +773,11 @@ async def main(args):
                 for label, path, values in cases:
                     current_case = label
                     reset()
-                    if label=='game_title_mapping':
+                    if label in ('game_title_mapping','game_title_mapping_deep'):
                         async with fixture.Session() as db:
-                            await db.execute(delete(MetadataSnapshot).where(MetadataSnapshot.provider=='igdb',
-                                MetadataSnapshot.kind=='game_title_candidates'))
+                            await db.execute(delete(MetadataSnapshot).where(MetadataSnapshot.kind.in_(
+                                ('game_title_candidates','game_match_store','game_match_credits','game_match_news')
+                                if label=='game_title_mapping_deep' else ('game_title_candidates',))))
                             await db.commit()
                     if label=='game_details_cold':
                         async with fixture.Session() as db:

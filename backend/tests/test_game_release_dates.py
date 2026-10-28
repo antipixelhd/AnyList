@@ -22,6 +22,20 @@ def game(form='YYYYMM', value='2027-03-01'):
 
 
 class GameReleasePrecisionTests(unittest.TestCase):
+    def test_display_uses_normal_release_while_mapping_can_retain_early_access_year(self):
+        from core.game_title_match import years
+        raw=game('YYYYMMDD','2018-02-21')
+        raw['release_dates'][0]['status']={'name':'Early Access'}
+        raw['release_dates'].append({'date':stamp('2019-10-22'),'date_format':{'format':'YYYYMMDD'},'status':{'name':'Full Release'}})
+        self.assertEqual(game_release(raw)['release_date'],'2019-10-22')
+        self.assertEqual(years(raw),{2018,2019})
+        raw['release_dates'].append({'date':stamp('2023-06-28'),'date_format':{'format':'YYYYMMDD'},'status':{'name':'Full Release'}})
+        raw['release_dates'][1].pop('status')
+        self.assertEqual(game_release(raw)['release_date'],'2019-10-22')
+
+    def test_early_access_only_does_not_invent_a_full_release_year(self):
+        raw=game('YYYYMMDD','2027-01-07');raw['release_dates'][0]['status']={'name':'Early Access'}
+        self.assertIsNone(game_release(raw)['release_date'])
     def test_live_placeholder_shapes_remain_partial_in_work_release_and_card(self):
         for form,value,expected,precision in (('YYYYMM','2027-03-01','2027-03','month'),
                 ('YYYY','2027-12-31','2027','year'), ('YYYYMMDD','2027-03-11','2027-03-11','day')):

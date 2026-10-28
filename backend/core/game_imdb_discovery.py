@@ -18,7 +18,7 @@ from models.catalogue import CatalogueIdentity,MetadataSnapshot
 
 JOB='game_person_discovery'
 MAP='game_person_title_map'
-VERSION=2
+VERSION=3
 _slots=asyncio.Semaphore(1)
 
 
@@ -104,6 +104,7 @@ class GamePersonDiscovery:
                 or any(row.get('status') not in ('verified','excluded','unresolved','unmapped','conflict') for row in supplied)):
                 raise ProviderError('bad_response')
             outcomes=[]
+            retry_after=max([state.get('retry_after',0),*[value.get('retry_after',0) for value in cached.values()]],default=0)
             for outcome in supplied:
                 value=dict(outcome)
                 if value['status']=='verified':
@@ -123,6 +124,7 @@ class GamePersonDiscovery:
                     except catalogue.IdentityConflict:
                         value={'id':value['id'],'status':'conflict'}
                 value.pop('document',None);value['matcher_version']=VERSION;outcomes.append(value)
+                retry_after=max(retry_after,value.get('retry_after',0))
             async with self.sessions() as db:
                 job=await db.scalar(snapshot(JOB,native).with_for_update())
                 if not job or job.lease_token!=token:return 'superseded'
@@ -132,24 +134,28 @@ class GamePersonDiscovery:
                 for outcome in outcomes:
                     statement=insert(MetadataSnapshot).values(provider='wikidata',kind=MAP,external_id=outcome['id'],
                         entity_id=outcome.get('work_id'),payload=outcome,coverage={'verified':outcome['status'] in ('verified','excluded')},
-                        fetched_at=now(),expires_at=now()+timedelta(days=7 if outcome['status'] in ('verified','excluded') else 1))
+                        fetched_at=now(),expires_at=now()+(timedelta(seconds=outcome['retry_after']) if outcome.get('retry_after')
+                            else timedelta(days=7 if outcome['status'] in ('verified','excluded') else 1)))
                     await db.execute(statement.on_conflict_do_update(constraint='uq_catalogue_snapshot',set_={
                         'payload':statement.excluded.payload,'coverage':statement.excluded.coverage,
                         'entity_id':statement.excluded.entity_id,'fetched_at':statement.excluded.fetched_at,'expires_at':statement.excluded.expires_at}))
                 offset+=len(batch)
                 if offset>=len(records):page+=1;offset=0
                 complete=page>=(component.pages or 0)
-                state.update(page=page,offset=offset,processed=state.get('processed',0)+len(batch))
-                job.payload=state;job.coverage={'complete':complete,'state':'complete' if complete else 'partial','received':state['processed'],'matcher_version':VERSION}
+                state.update(page=page,offset=offset,processed=state.get('processed',0)+len(batch),retry_after=retry_after)
+                repeat=complete and retry_after>0
+                job.coverage={'complete':complete and not repeat,'state':'complete' if complete and not repeat else 'partial','received':state['processed'],'matcher_version':VERSION}
+                if repeat:state.update(page=0,offset=0,processed=0,retry_after=0)
+                job.payload=state
                 job.error_code=None;job.attempts=0;job.lease_token=job.lease_until=None
-                job.next_attempt_at=None if complete else now()+timedelta(seconds=2)
-                job.expires_at=now()+timedelta(days=1) if complete else None
+                job.next_attempt_at=now()+timedelta(seconds=retry_after) if repeat else None if complete else now()+timedelta(seconds=2)
+                job.expires_at=now()+timedelta(days=1) if complete and not repeat else None
                 # Publish each verified batch. A later provider failure must
                 # not hold already discovered participation behind completion.
                 from core.game_imdb_person import queue_projection
                 await queue_projection(db,native)
                 await db.commit()
-            return 'ready' if complete else 'partial'
+            return 'ready' if complete and not repeat else 'partial'
         except asyncio.CancelledError:
             await self.release(native,token);raise
         except Exception as error:

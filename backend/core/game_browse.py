@@ -20,6 +20,7 @@ from models.games import GameChildState, GameEntry
 CATEGORIES = {'trending':'Trending','most_played':'Most Played','sellers':'Top sellers',
     'newest':'Newest','popular':'All-time popular','score':'Highest rated'}
 PAGE_AGE = timedelta(hours=2)
+RELEASE_POLICY='release-precision-v2'
 
 
 def digest(value):
@@ -122,7 +123,7 @@ class GameBrowse:
     async def page(self, query, *, limit=24, cursor=None, wait_seconds=None):
         if not 1<=limit<=48:
             raise ProviderError('invalid_request')
-        scope = digest(['release-precision-v1',query,limit])
+        scope = digest([RELEASE_POLICY,query,limit])
         previous = None
         if cursor:
             parent,expires = decode_cursor(cursor,scope)

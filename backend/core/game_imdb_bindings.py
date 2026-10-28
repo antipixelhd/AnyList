@@ -152,13 +152,15 @@ class GameIMDbBindings:
         raw=rows[0];names=[raw['name'],*[row['name'] for row in raw.get('alternative_names',[]) if isinstance(row.get('name'),str)]]
         titles=await lookup(self.sessions,'imdb',names=names)
         if len(titles)>=101:return {'status':'unresolved','reason':'incomplete_candidates'}
-        accepted=[]
+        accepted=[];possible=[]
         uncertain=False
         for title in titles:
             decision=decide(title['value'],[raw],complete=True,branches=[{'kind':'local_imdb_index','generation':generation,'complete':True}])
             if decision['status']=='verified':accepted.append((title,decision))
-            elif decision['evidence']['candidates'] and (title['value'].get('year') is None or not decision['evidence']['candidates'][0]['years']):
-                uncertain=True
+            elif decision['evidence']['candidates']:
+                possible.append((title,decision))
+                if title['value'].get('year') is None or not decision['evidence']['candidates'][0]['years']:uncertain=True
+        if not accepted and len(possible)==1:accepted=possible;uncertain=False
         if len(accepted)!=1 or uncertain:return {'status':'unresolved' if accepted or uncertain else 'unmapped','reason':'local_title_candidates'}
         title,decision=accepted[0];title_id=title['native']
         from core.wikidata_claims import snak_value
@@ -169,6 +171,11 @@ class GameIMDbBindings:
         current_title={**title['value'],'id':title_id,'title':current['titleText']['text'],'year':(current.get('releaseYear') or {}).get('year')}
         candidate=await retrieve(self.wiki.sources,current_title)
         proof=decide(current_title,candidate['data']['rows'],complete=candidate['data']['complete'] and not candidate['stale'],branches=candidate['data']['branches'])
+        deeper=[]
+        if proof['status']=='unresolved' and candidate['data']['complete'] and not candidate['stale']:
+            from core.game_match_support import corroborate
+            extra,deeper=await corroborate(self.wiki.sources,current_title,candidate['data']['rows'])
+            proof=decide(current_title,candidate['data']['rows'],complete=True,branches=candidate['data']['branches'],corroboration=extra)
         if proof['status']!='verified' or str(proof['igdb_id'])!=native:
             return {'status':'unresolved','reason':'changed_imdb_identity'}
         if previous.get('status')=='conflict':
@@ -194,10 +201,11 @@ class GameIMDbBindings:
         projected=project_game(title_id,raw,games,proof['evidence'])
         if projected['status']!='verified':return projected
         proof['evidence'].update(direction='igdb_to_imdb',support={**wiki_support,'imdb_generation':generation,
-            'candidate_key':candidate['data'].get('scope_key'),'candidate_fingerprint':candidate['data'].get('scope_fingerprint')},
+            'candidate_key':candidate['data'].get('scope_key'),'candidate_fingerprint':candidate['data'].get('scope_fingerprint'),'snapshots':deeper},
             dependencies=[f'wikidata-imdb:{title_id}',
             f'igdb-query:{candidate["data"].get("scope_key","")}',
             *[f'igdb-name:{name}' for name in candidate['data'].get('scope_names',[])],
+            *[f'support:{row["provider"]}:{row["kind"]}:{row["key"]}' for row in deeper],
             *[f'wikidata:{mapping["evidence"]["wikidata_id"]}' for mapping in previous.get('mappings',[])
                 if mapping.get('evidence',{}).get('wikidata_id')]])
         return await self.save(work_id,title_id,'matched',{'title_type':'videoGame','igdb_id':native,
@@ -260,6 +268,11 @@ class GameIMDbBindings:
                         GameMappingGeneration.active.is_(True)))
                     if current!=support.get('wikidata_generation'):raise ProviderError('stale_mapping')
                 from core.game_source_cache import GameSourceCache
+                for snapshot in support.get('snapshots',[]):
+                    row=(await db.execute(GameSourceCache.query(snapshot['provider'],snapshot['kind'],snapshot['key'])
+                        .with_only_columns(MetadataSnapshot.payload['fingerprint'].astext,MetadataSnapshot.expires_at)
+                        .with_for_update(read=True))).one_or_none()
+                    if not row or row[0]!=snapshot['fingerprint'] or not row[1] or row[1]<=now():raise ProviderError('stale_mapping')
                 for snapshot in support.get('wiki_snapshots',[]):
                     fetched=await db.scalar(GameSourceCache.query('wikidata',snapshot['kind'],snapshot['key'])
                         .with_only_columns(MetadataSnapshot.fetched_at).with_for_update(read=True))

@@ -86,6 +86,18 @@ class PortfolioDiscoveryTests(unittest.IsolatedAsyncioTestCase):
             entry=await db.scalar(select(GameEntry))
             self.assertEqual((entry.work_id,entry.notes,entry.total_seconds),(self.base,'Pending private state',3600))
 
+    async def test_retryable_gap_publishes_ready_matches_and_retains_queued_continuation(self):
+        self.source.page.return_value={'outcomes':[outcome(),{'id':'tt3','status':'unresolved','reason':'timeout','retry_after':60}],'stale':False}
+        self.assertEqual(await self.service.run('nm1'),'partial')
+        async with self.Session() as db:
+            binding=await db.scalar(select(CatalogueIdentity).where(CatalogueIdentity.namespace=='imdb.title',CatalogueIdentity.external_id=='tt2'))
+            self.assertIsNotNone(binding)
+            job=await db.scalar(snapshot(JOB,'nm1'))
+            self.assertFalse(job.coverage['complete']);self.assertIsNotNone(job.next_attempt_at)
+            self.assertIsNone(job.lease_token);self.assertEqual(job.payload['page'],0)
+            gap=await db.scalar(snapshot(MAP,'tt3',provider='wikidata'))
+            self.assertLess((gap.expires_at-now()).total_seconds(),61)
+
     async def test_fresh_actor_and_crew_work_is_added_to_the_existing_catalogue_without_private_tracking(self):
         # Completing the initial source fetch already schedules discovery;
         # neither a second page visit nor a game-details visit is required.

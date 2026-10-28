@@ -2,8 +2,8 @@
 import calendar
 from datetime import date, datetime, timezone
 
-VERSION = 1
-FIELDS = 'release_dates.date,release_dates.date_format.format,release_dates.y,release_dates.m,release_dates.d'
+VERSION = 2
+FIELDS = 'release_dates.date,release_dates.date_format.format,release_dates.y,release_dates.m,release_dates.d,release_dates.status.name'
 FORMATS = {0:'YYYYMMDD',1:'YYYYMM',2:'YYYY',3:'YYYYQ1',4:'YYYYQ2',5:'YYYYQ3',6:'YYYYQ4',7:'TBD'}
 KEYS = {'release_date','release_date_precision','release_quarter','release_date_evidence','release_date_projection'}
 
@@ -52,6 +52,17 @@ def release(row):
 def game_release(raw):
     stamp = timestamp_day(raw.get('first_release_date'))
     rows = [row for row in raw.get('release_dates') or [] if isinstance(row, dict)]
+    # Unlabelled historical releases remain valid. A later full-release port
+    # does not supersede the original release on another platform.
+    public=[row for row in rows if str(row['status'].get('name','') if isinstance(row.get('status'),dict) else '').casefold()
+        not in ('early access','alpha','beta','cancelled','canceled','prerelease','pre-release')]
+    if rows and not public:
+        return {'release_date':None,'release_date_precision':'unknown','release_quarter':None,
+            'release_date_evidence':'release_dates','release_date_projection':VERSION}
+    if len(public)!=len(rows):
+        rows=public
+        dated=[timestamp_day(row.get('date')) for row in rows if timestamp_day(row.get('date'))]
+        stamp=min(dated) if dated else None
     matching = [row for row in rows if stamp and timestamp_day(row.get('date')) == stamp]
     if not stamp:
         dated = [row for row in rows if timestamp_day(row.get('date'))]

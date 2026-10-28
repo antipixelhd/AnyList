@@ -11,7 +11,7 @@ from core.catalogue_providers import CatalogueProviders, ProviderHTTP, ProviderE
 from core.config import settings
 from core.game_source_cache import GameSourceCache
 from core.game_search import broader_query, matches_partial
-from core.game_release_dates import FIELDS as RELEASE_FIELDS, in_range
+from core.game_release_dates import FIELDS as RELEASE_FIELDS, in_range, game_release, release
 from core.game_types import INDEPENDENT, platform_group, search_candidate, canonical_game, candidate_fields, game_platforms
 from db import AsyncSessionLocal
 
@@ -225,22 +225,45 @@ class GameBrowseSources:
         if first:
             exact=int(datetime(first.year,first.month,first.day,tzinfo=timezone.utc).timestamp())
             year_start=int(datetime(first.year,1,1,tzinfo=timezone.utc).timestamp())
-            conditions.append(f'(first_release_date>={exact} | (first_release_date>={year_start} & release_dates.date_format=(1,2,3,4,5,6)))')
+            conditions.append(f'(first_release_date>={exact} | release_dates.date>={year_start})')
         if last:
             stamp = datetime(last.year,last.month,last.day,tzinfo=timezone.utc)+timedelta(days=1)
             exact=int(stamp.timestamp())
             if end:
                 year_end=int(datetime(last.year+1,1,1,tzinfo=timezone.utc).timestamp())
-                conditions.append(f'(first_release_date<{exact} | (first_release_date<{year_end} & release_dates.date_format=(1,2,3,4,5,6)))')
+                conditions.append(f'(first_release_date<{exact} | release_dates.date<{year_end})')
             else:
                 conditions.append(f'first_release_date<{exact}')
-        version='release-precision-v1'
+        version='release-precision-v2'
         key = hashlib.sha256(json.dumps([version,sort,offset,sorted(genres),sorted(platforms),start,end]).encode()).hexdigest()
         async def load():
             # Search resolves editions first, then filters canonical metadata.
             # Non-search queries push globally supported filters to IGDB.
             ordering = '' if q else f'sort {"rating_count" if sort == "popular" else "first_release_date"} desc;'
             async def fetch(query):
+                if not query and sort=='newest':
+                    filters=['game.version_parent=null','game.game_type=(0,4,8,9,10,11)','(status=null | status.name="Full Release")']
+                    if genres:filters.append('game.genres=('+','.join(map(str,sorted(set(genres))))+')')
+                    if platforms:
+                        choices='('+','.join(map(str,sorted(set(platforms))))+')'
+                        filters.append(f'(game.platforms={choices} | game.ports.platforms={choices})')
+                    if first:filters.append(f'date>={int(datetime(first.year,1,1,tzinfo=timezone.utc).timestamp())}')
+                    if last:
+                        ceiling=datetime(last.year+1,1,1,tzinfo=timezone.utc) if end else datetime(last.year,last.month,last.day,tzinfo=timezone.utc)+timedelta(days=1)
+                        filters.append(f'date<{int(ceiling.timestamp())}')
+                    fields='id,date,date_format.format,y,m,d,status.name,'+','.join('game.'+field for field in CARD_FIELDS.split(','))
+                    events=await self.igdb('release_dates',f'fields {fields}; where '+ ' & '.join(filters)+f'; sort date desc; limit 100; offset {offset};')
+                    if not isinstance(events,list) or len(events)>100:raise ProviderError('bad_response')
+                    result=[]
+                    for event in events:
+                        if not isinstance(event,dict) or not isinstance(event.get('game'),dict):raise ProviderError('bad_response')
+                        work=canonical_game(event['game'])
+                        primary=game_release(work) if work else {}
+                        point=release(event).get('release_date')
+                        # Later platform releases must not reintroduce an old
+                        # game. Keep raw event offsets even for discarded rows.
+                        result.append(event['game'] if point and primary.get('release_date') and point.startswith(primary['release_date']) else {})
+                    return result
                 prefix=f'search {json.dumps(query)};' if query else 'where '+' & '.join(conditions)+';'
                 raw=await self.igdb('games',f'{prefix} fields {CARD_FIELDS}; {ordering} limit 100; offset {offset};')
                 if not isinstance(raw,list) or len(raw)>100:raise ProviderError('bad_response')
@@ -285,7 +308,7 @@ class GameBrowseSources:
         """Finalize a bounded canonical search window before chronological paging."""
         if not q or not isinstance(snapshot,int) or isinstance(snapshot,bool) or snapshot<0 or not 0<=offset<=1000:
             raise ProviderError('invalid_request')
-        key=hashlib.sha256(json.dumps(['release-precision-v1',snapshot,q,sorted(genres),sorted(platforms),start,end]).encode()).hexdigest()
+        key=hashlib.sha256(json.dumps(['release-precision-v2',snapshot,q,sorted(genres),sorted(platforms),start,end]).encode()).hexdigest()
         async def load():
             rows,seen,more=[],set(),True
             position=0;search_mode=0

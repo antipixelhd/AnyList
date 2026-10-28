@@ -326,7 +326,7 @@ class ProviderHTTP:
 
 IGDB_FIELDS = (
     'age_ratings.organization.name,age_ratings.rating_category.rating,'
-    "id,slug,name,summary,first_release_date,version_parent,parent_game.name,parent_game.game_type.type,game_type.type,cover.url,genres.name,artworks.url,artworks.width,artworks.height,screenshots.url,screenshots.width,screenshots.height,platforms.name,platforms.platform_family.name,involved_companies.developer,involved_companies.publisher,involved_companies.supporting,involved_companies.porting,involved_companies.company.name,involved_companies.company.country,involved_companies.company.description,involved_companies.company.logo.url,external_games.uid,external_games.url,external_games.external_game_source.name,release_dates.date,release_dates.date_format.format,release_dates.y,release_dates.m,release_dates.d,release_dates.region,release_dates.platform.name,collections.name,"
+    "id,slug,name,summary,first_release_date,version_parent,parent_game.name,parent_game.game_type.type,game_type.type,cover.url,genres.name,artworks.url,artworks.width,artworks.height,screenshots.url,screenshots.width,screenshots.height,platforms.name,platforms.platform_family.name,involved_companies.developer,involved_companies.publisher,involved_companies.supporting,involved_companies.porting,involved_companies.company.name,involved_companies.company.country,involved_companies.company.description,involved_companies.company.logo.url,external_games.uid,external_games.url,external_games.external_game_source.name,release_dates.date,release_dates.date_format.format,release_dates.y,release_dates.m,release_dates.d,release_dates.status.name,release_dates.region,release_dates.platform.name,collections.name,"
     + ",".join(
         f"{field}.{projection}"
         for field in (
@@ -338,7 +338,7 @@ IGDB_FIELDS = (
             "ports",
             "similar_games",
         )
-        for projection in ("name", "summary", "cover.url", "first_release_date", "game_type.type", "release_dates.date", "release_dates.date_format.format", "release_dates.y", "release_dates.m", "release_dates.d", "version_parent.name", "version_parent.summary", "version_parent.cover.url", "version_parent.first_release_date", "version_parent.game_type.type")
+        for projection in ("name", "summary", "cover.url", "first_release_date", "game_type.type", "release_dates.date", "release_dates.date_format.format", "release_dates.y", "release_dates.m", "release_dates.d", "release_dates.status.name", "version_parent.name", "version_parent.summary", "version_parent.cover.url", "version_parent.first_release_date", "version_parent.game_type.type")
     )
     + ',ports.platforms.name,ports.platforms.platform_family.name'
 )

@@ -77,25 +77,44 @@ class RankingTests(unittest.IsolatedAsyncioTestCase):
             value=int(datetime.fromisoformat(when).replace(tzinfo=timezone.utc).timestamp())
             return {'id':ident,'name':'Game','game_type':{'id':0},'first_release_date':value,
                 'release_dates':[{'date':value,'date_format':{'format':form}}]}
-        self.api.igdb=AsyncMock(return_value=[raw(1,'2027-12-31','YYYY'),raw(2,'2027-03-01','YYYYMM'),
-            raw(3,'2027-03-17','YYYYMMDD'),raw(4,'2027-04-01','YYYYMMDD')])
+        games=[raw(1,'2027-12-31','YYYY'),raw(2,'2027-03-01','YYYYMM'),raw(3,'2027-03-17','YYYYMMDD'),raw(4,'2027-04-01','YYYYMMDD')]
+        self.api.igdb=AsyncMock(return_value=[{'id':game['id'],'game':game,**game['release_dates'][0]} for game in games])
         result=await self.api.catalogue_feed('newest',start='2027-03-15',end='2027-03-20')
         self.assertEqual([(row['igdb_id'],row['release_date']) for row in result['data']['rows']],
             [(1,'2027'),(2,'2027-03'),(3,'2027-03-17')])
-        self.assertIn('release_dates.date_format=(1,2,3,4,5,6)',self.api.igdb.await_args.args[1])
+        self.assertEqual(self.api.igdb.await_args.args[0],'release_dates')
+        self.assertIn('sort date desc',self.api.igdb.await_args.args[1])
 
     async def test_newest_defaults_to_released_but_respects_an_explicit_future_range(self):
         today=date.today();first=date(today.year+1,1,1);last=first+timedelta(days=30)
         stamp=lambda value:int(datetime(value.year,value.month,value.day,tzinfo=timezone.utc).timestamp())
         self.api.igdb=AsyncMock(return_value=[])
         await self.api.catalogue_feed('newest')
-        self.assertIn(f'first_release_date<{stamp(today+timedelta(days=1))}',self.api.igdb.await_args.args[1])
+        self.assertIn(f'date<{stamp(today+timedelta(days=1))}',self.api.igdb.await_args.args[1])
         await self.api.catalogue_feed('newest',start=first.isoformat())
         query=self.api.igdb.await_args.args[1]
-        self.assertIn(f'first_release_date>={stamp(first)}',query)
+        self.assertIn(f'date>={stamp(first)}',query)
         self.assertNotIn('first_release_date<',query)
         await self.api.catalogue_feed('newest',end=last.isoformat())
-        self.assertIn(f'first_release_date<{stamp(last+timedelta(days=1))}',self.api.igdb.await_args.args[1])
+        self.assertIn(f'date<{stamp(date(last.year+1,1,1))}',self.api.igdb.await_args.args[1])
+
+    async def test_normal_release_event_feed_finds_early_access_games_in_correct_year_and_keeps_raw_offsets(self):
+        stamp=lambda value:int(datetime.fromisoformat(value).replace(tzinfo=timezone.utc).timestamp())
+        early={'date':stamp('2018-02-21'),'date_format':{'format':'YYYYMMDD'},'status':{'name':'Early Access'}}
+        full={'date':stamp('2019-10-22'),'date_format':{'format':'YYYYMMDD'},'status':{'name':'Full Release'}}
+        game={'id':1,'name':'Abandon Ship','game_type':{'id':0},'first_release_date':early['date'],'release_dates':[early,full]}
+        newer={**game,'id':2,'name':'Later Release','first_release_date':stamp('2019-12-01'),'release_dates':[{**full,'date':stamp('2019-12-01')}]}
+        later_port={**full,'date':stamp('2023-06-28')}
+        self.api.igdb=AsyncMock(return_value=[{'id':1,'game':game,**later_port},{'id':2,'game':newer,**newer['release_dates'][0]},
+            *[{'id':number,'game':game,**full} for number in range(3,101)]])
+        first=(await self.api.catalogue_feed('newest',start='2019-01-01',end='2019-12-31'))['data']
+        self.assertEqual([(row['igdb_id'],row['year']) for row in first['rows']],[(2,'2019'),(1,'2019')])
+        self.assertTrue(first['has_more']);self.assertEqual(first['next_offset'],100)
+        self.assertEqual(self.api.igdb.await_args.args[0],'release_dates')
+        self.assertNotIn('first_release_date>=',self.api.igdb.await_args.args[1])
+        self.api.igdb.return_value=[]
+        last=(await self.api.catalogue_feed('newest',offset=100,start='2019-01-01',end='2019-12-31'))['data']
+        self.assertFalse(last['has_more']);self.assertEqual(last['next_offset'],100)
 
     async def test_newest_text_search_applies_the_effective_default_or_explicit_date_cutoff(self):
         today=date.today();future=date(today.year+1,1,1);past=today-timedelta(days=10)

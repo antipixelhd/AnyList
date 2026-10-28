@@ -7,7 +7,7 @@ from core.catalogue_providers import ProviderError
 from core.game_imdb_discovery_source import FIELDS
 from core.game_title_match import VERSION, spelling
 
-FIELDS = FIELDS + ',alternative_names.name,release_dates.date,remakes,remasters,websites.url,external_games.platform,external_games.countries'
+FIELDS = FIELDS + ',alternative_names.name,release_dates.date,release_dates.status.name,remakes,remasters,websites.url,external_games.platform,external_games.countries'
 PAGE = 100
 MAX_PAGES = 3
 
@@ -39,7 +39,7 @@ async def retrieve(sources, title):
                         break
                 branches.append({'name': name, 'kind': branch, 'complete': complete, 'pages': page + 1})
         identity_fields=('id','name','alternative_names','first_release_date','release_dates','game_type',
-            'version_parent','parent_game','websites','external_games')
+            'version_parent','parent_game','websites','external_games','involved_companies')
         identity=[{field:row[field] for field in identity_fields if field in row} for _,row in sorted(found.items())]
         fingerprint=hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()
         return {'rows': list(found.values()), 'complete': all(row['complete'] for row in branches), 'branches': branches,

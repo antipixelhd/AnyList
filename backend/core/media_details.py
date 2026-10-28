@@ -1,4 +1,5 @@
 """Read existing catalogue metadata for the shared media detail composition."""
+from core.game_release_dates import VERSION as GAME_RELEASE_VERSION
 import re
 from fastapi import HTTPException
 from urllib.parse import urlsplit
@@ -217,7 +218,7 @@ def primary_details(work,artwork=None):
     backdrop=selected or next(iter(scenes if work.kind=='game' and attrs.get('artwork_policy_version') in (1,GAME_ARTWORK_VERSION) else gallery),None)
     preview=next((url for url in scenes if url!=backdrop),backdrop) if work.kind=='game' else None
     released=attrs.get('release_date')
-    if (work.kind=='game' and attrs.get('release_date_projection')!=1
+    if (work.kind=='game' and attrs.get('release_date_projection')!=GAME_RELEASE_VERSION
         and (work.field_sources or {}).get('attributes.release_date')=='igdb'
         and 'attributes.release_date' not in (work.protected_fields or [])):
         released=released[:4] if isinstance(released,str) else None
@@ -235,7 +236,7 @@ def primary_details(work,artwork=None):
 async def catalogue_title(db, work, viewer_id=None, *, store_country=None, enqueue_offers=False,enqueue_ratings=False,enqueue_info=False,identities=None):
     details = await work_details(db, work)
     attrs = work.attributes or {}
-    legacy_game_date = (work.kind=='game' and attrs.get('release_date_projection')!=1
+    legacy_game_date = (work.kind=='game' and attrs.get('release_date_projection')!=GAME_RELEASE_VERSION
         and (work.field_sources or {}).get('attributes.release_date')=='igdb')
     if legacy_game_date and 'attributes.release_date' not in (work.protected_fields or []):
         # Old IGDB timestamps did not retain precision. Keep their known year

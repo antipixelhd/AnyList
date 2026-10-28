@@ -29,6 +29,8 @@ These extend the active work; they are not covered by earlier acceptance evidenc
 
 ## User-reported beta URLs
 
+Follow-up requested 28 October: [ ] **F01 — Independent mapping evidence and normal release years.** Resolve missing/early-access year gaps with independent cast, character, store and release-history evidence; keep ordinary matching fast, isolate bounded deeper failures, preserve identity/private state and display normal release years. Verification is recorded in [the refinement report](mapping-evidence-refinement-2026-10-28.md). This is additional work after the 15 original review items above.
+
 - Contributor with only BG3 visible: https://instance-20260813-1501.tailf7212b.ts.net:8001/actors/catalogue:37799?media_type=game&view=timeline
 - BG3 details/artwork: https://instance-20260813-1501.tailf7212b.ts.net:8001/games/36823
 - Also inspect Elden Ring for background/In the frame artwork and the shared editor. Resolve its current canonical beta URL; do not assume local fixture IDs match beta.

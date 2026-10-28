@@ -170,7 +170,8 @@ class GameSourceCache:
         except Exception:
             error = 'unavailable'
         async with self.sessions() as db:
-            if provider=='igdb' and kind=='game_title_candidates':
+            support_kind=kind in ('game_match_credits','game_match_store','game_match_news')
+            if provider=='igdb' and kind=='game_title_candidates' or support_kind:
                 from core import catalogue
                 await catalogue.write_lock(db)
             row = await db.scalar(self.query(provider, kind, key).with_for_update())
@@ -187,6 +188,9 @@ class GameSourceCache:
                 row.error_code = error
                 row.next_attempt_at = now+timedelta(seconds=min(3600, 60*2**min(row.attempts-1, 6)))
             else:
+                if support_kind and (row.payload or {}).get('fingerprint')!=data.get('fingerprint'):
+                    from core.game_mapping_lifecycle import invalidate
+                    await invalidate(db,[f'support:{provider}:{kind}:{key}'])
                 if provider=='igdb' and kind=='game_title_candidates' and (row.payload or {}).get('scope_fingerprint')!=data.get('scope_fingerprint'):
                     from core.game_mapping_lifecycle import invalidate
                     names=set(data.get('scope_names',[]))|set((row.payload or {}).get('scope_names',[]))

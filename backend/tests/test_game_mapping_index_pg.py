@@ -18,6 +18,7 @@ from core.game_imdb_enrichment import now
 from models.catalogue import CatalogueIdentity, CatalogueEntity, CatalogueCredit, MetadataSnapshot
 from models.games import GameEntry
 from models.game_mapping import GameMappingGeneration
+from core.game_title_match import VERSION as MATCHER_VERSION
 
 
 @unittest.skipUnless(fixture.URL, 'Requires explicit disposable Games PostgreSQL')
@@ -54,7 +55,7 @@ class MappingIndexTests(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as db:
             db.add(CatalogueIdentity(entity_id=self.base,namespace='igdb.game',external_id='10',source='igdb'))
             db.add(CatalogueIdentity(entity_id=self.base, namespace='imdb.title', external_id='tt1', source='matched',
-                evidence={'igdb_id': '10', 'title_type': 'videoGame', 'matcher_version':1,'dependencies': ['imdb:tt1'], 'mapping_state': 'active'}))
+                evidence={'igdb_id': '10', 'title_type': 'videoGame', 'matcher_version':MATCHER_VERSION,'dependencies': ['imdb:tt1'], 'mapping_state': 'active'}))
             db.add(CatalogueIdentity(entity_id=self.pack, namespace='imdb.title', external_id='tt2', source='reviewed',
                 evidence={'igdb_id': '20', 'title_type': 'videoGame', 'dependencies': ['imdb:tt1'], 'mapping_state': 'active'}))
             await db.commit()
@@ -196,7 +197,7 @@ class MappingIndexTests(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as db:
             db.add_all([CatalogueIdentity(entity_id=self.base,namespace='igdb.game',external_id='10',source='igdb'),
                 CatalogueIdentity(entity_id=self.base,namespace='imdb.title',external_id='tt1',source='matched',
-                    evidence={'igdb_id':'10','mapping_state':'active','matcher_version':1,'dependencies':['imdb:tt1'],'evidence_revision':'old'}),
+                    evidence={'igdb_id':'10','mapping_state':'active','matcher_version':MATCHER_VERSION,'dependencies':['imdb:tt1'],'evidence_revision':'old'}),
                 MetadataSnapshot(provider='imdb',kind=JOB,external_id=str(self.base),entity_id=self.base,next_attempt_at=now())])
             await db.commit()
         service=GameIMDbEnrichment(self.Session)
@@ -295,6 +296,34 @@ class MappingIndexTests(unittest.IsolatedAsyncioTestCase):
             completed,_=await asyncio.wait([refreshing],timeout=.05)
             release.set();await saving;await refreshing
         self.assertFalse(completed,'A source refresh must wait for binding acceptance to commit')
+
+    async def test_independent_support_is_validated_and_changed_support_cannot_reactivate_old_proof(self):
+        from core.game_match_support import cached
+        from core.game_source_cache import GameSourceCache
+        from core.game_title_match import decide
+        from core.catalogue_providers import ProviderError
+        sources=SimpleNamespace(cache=GameSourceCache(self.Session))
+        data,support=await cached(sources,'steam','game_match_store','42',AsyncMock(return_value={'name':'Example'}))
+        title={'id':'tt1','title':'Example','year':None}
+        raw={'id':10,'name':'Example','game_type':{'id':0}}
+        proof=decide(title,[raw],complete=True,branches=[],corroboration={10:{'app':'42',
+            'store_title':'Example','developer_agreement':True,'characters':['Chelsea Williams']}})['evidence']
+        dependency='support:steam:game_match_store:42'
+        proof.update(support={'snapshots':[support]},dependencies=[dependency])
+        async with self.Session() as db:
+            db.add(CatalogueIdentity(entity_id=self.base,namespace='igdb.game',external_id='10',source='igdb'));await db.commit()
+        service=GameIMDbBindings(self.Session)
+        self.assertEqual((await service.save(self.base,'tt1','matched',
+            {'igdb_id':'10','title_type':'videoGame','matching':proof},expected_igdb='10'))['status'],'bound')
+        async with self.Session() as db:
+            row=await db.scalar(sources.cache.query('steam','game_match_store','42'));row.expires_at=now()-timedelta(seconds=1);await db.commit()
+        await sources.cache.refresh('steam','game_match_store','42',AsyncMock(return_value={**data,'fingerprint':'changed'}),
+            timedelta(days=7),timedelta(days=30))
+        async with self.Session() as db:
+            binding=await db.scalar(select(CatalogueIdentity).where(CatalogueIdentity.namespace=='imdb.title'))
+            self.assertEqual(binding.evidence['mapping_state'],'stale')
+        with self.assertRaisesRegex(ProviderError,'stale_mapping'):
+            await service.save(self.base,'tt1','matched',{'igdb_id':'10','title_type':'videoGame','matching':proof},expected_igdb='10')
 
     async def test_reverse_lookup_does_not_accept_one_of_two_identical_imdb_records(self):
         generation=await index.begin(self.Session,'imdb')

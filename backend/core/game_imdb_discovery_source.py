@@ -3,6 +3,7 @@ import asyncio
 import hashlib
 import json
 import re
+from time import monotonic
 from datetime import timedelta
 
 from core.catalogue_normalize import normalize_igdb
@@ -190,6 +191,7 @@ class GameIMDbDiscoverySource:
             if error.code not in ('rate_limited','unavailable','timeout','retry_pending','stale_mapping'):raise
             result={'outcomes':[{'id':native,'status':'unresolved','reason':error.code} for native in ids],'stale':False}
         outputs=[]
+        deep_deadline=monotonic()+8
         indexed={row['native']:row for row in await lookup(self.sessions,'imdb',natives=ids)}
         for outcome in result['outcomes']:
             if outcome['status'] in ('verified','excluded') or outcome.get('reason')=='explicit_identity_conflict':
@@ -207,6 +209,17 @@ class GameIMDbDiscoverySource:
                 outputs.append({'id':native,'status':'unresolved','reason':'coverage_limited'});continue
             data=acquired['data']
             decision=decide(title,data['rows'],complete=data['complete'] and not acquired['stale'],branches=data['branches'])
+            deeper=[]
+            if decision['status']=='unresolved' and data['complete'] and not acquired['stale']:
+                from core.game_match_support import corroborate
+                budget=min(4,deep_deadline-monotonic())
+                try:
+                    if budget<=.05:
+                        outputs.append({'id':native,'status':'unresolved','reason':'corroboration_deferred','retry_after':2});continue
+                    async with asyncio.timeout(budget):extra,deeper=await corroborate(self.sources,title,data['rows'])
+                    decision=decide(title,data['rows'],complete=True,branches=data['branches'],corroboration=extra)
+                except (ProviderError,TimeoutError) as error:
+                    outputs.append({'id':native,'status':'unresolved','reason':getattr(error,'code','timeout'),'retry_after':60});continue
             if decision['status']!='verified':
                 outputs.append({'id':native,**decision});continue
             games={row['id']:row for row in data['rows']}
@@ -217,11 +230,12 @@ class GameIMDbDiscoverySource:
             evidence={**decision['evidence'],'method':'title_match','source_outcome':{key:value for key,value in outcome.items() if key in ('status','reason')},
                 'direction':'imdb_to_igdb','scope':'primary_title','dependencies':[f'imdb:{native}',f'igdb:{raw["id"]}',
                     f'wikidata-imdb:{native}',*[f'wikidata:{qid}' for qid in result.get('consulted',{}).get(native,[])],
-                    f'igdb-query:{data.get("scope_key","")}',*[f'igdb-name:{name}' for name in data.get('scope_names',[])]],
+                    f'igdb-query:{data.get("scope_key","")}',*[f'igdb-name:{name}' for name in data.get('scope_names',[])],
+                    *[f'support:{row["provider"]}:{row["kind"]}:{row["key"]}' for row in deeper]],
                 'support':{'imdb_generation':local['generation'] if local else None,
                     'candidate_key':data.get('scope_key'),'candidate_fingerprint':data.get('scope_fingerprint'),
                     'check_wikidata_generation':True,'wikidata_generation':wiki_generation,
-                    'wiki_snapshots':result.get('support_snapshots',[])}}
+                    'wiki_snapshots':result.get('support_snapshots',[]),'snapshots':deeper}}
             projected=project_game(native,raw,games,evidence)
             projected['binding_source']='matched';outputs.append(projected)
         return {**result,'outcomes':outputs}

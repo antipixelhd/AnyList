@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock,patch
 from sqlalchemy import select,func,event,delete
 import test_games_pg as fixture
 from core.game_metadata import GameMetadata,_flights,header,status,request
+from core.game_release_dates import VERSION as RELEASE_VERSION
 from core.game_imdb_enrichment import now
 from core.catalogue_providers import ProviderError,CatalogueProviders
 from core.catalogue_normalize import normalize_igdb,GAME_ARTWORK_VERSION
@@ -27,7 +28,7 @@ class Provider:
             'game_type':{'id':0,'type':'Main Game'},'cover':{'url':'https://images.igdb.com/igdb/image/upload/t_thumb/source.jpg'},
             'genres':[{'id':5,'name':'Adventure'}],'platforms':[{'id':6,'name':'PC (Microsoft Windows)'}],
             '_coverage':{'primary_complete':True,'source_game_id':native,'characters_complete':False,
-                'release_precision_version':1,'artwork_policy_version':GAME_ARTWORK_VERSION,'children_complete':True}}
+                'release_precision_version':RELEASE_VERSION,'artwork_policy_version':GAME_ARTWORK_VERSION,'children_complete':True}}
         raw.update(self.dates)
         if on_primary:await on_primary(normalize_igdb(raw),{'game':deepcopy(raw)})
         self.optional_active+=1;self.optional_max=max(self.optional_max,self.optional_active)
@@ -113,7 +114,7 @@ class GameMetadataTests(unittest.IsolatedAsyncioTestCase):
             db.add(MetadataSnapshot(provider='igdb',kind='game',external_id='119133',entity_id=self.base,
                 fetched_at=stamp,expires_at=expires,next_attempt_at=now()+timedelta(minutes=2) if queued else None,
                 error_code='unavailable' if queued else None,
-                coverage={'characters_complete':True,'release_precision_version':1,'artwork_policy_version':1},
+                coverage={'characters_complete':True,'release_precision_version':RELEASE_VERSION,'artwork_policy_version':1},
                 payload={'game':{'id':119133,'screenshots':[{'url':small,'width':1920,'height':1080},
                     {'url':large,'width':3840,'height':2160}],'artworks':[],
                     '_characters':'RAW_CHARACTER_SENTINEL '*50000}}))

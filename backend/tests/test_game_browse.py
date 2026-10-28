@@ -94,10 +94,15 @@ class BrowseTests(unittest.IsolatedAsyncioTestCase):
         self.sources.attention.return_value={'data':{'rows':[row(1),row(2)],'has_more':False,
             'source':'IGDB Visits'},'stale':False}
         first=await self.service.page(self.query,limit=1)
-        key,_=browse.decode_cursor(first['cursor'],browse.digest(['release-precision-v1',self.query,1]))
+        key,_=browse.decode_cursor(first['cursor'],browse.digest([browse.RELEASE_POLICY,self.query,1]))
         self.sources.cache.rows[key].pop('projection')
         with self.assertRaisesRegex(ProviderError,'cursor_expired'):
             await self.service.page(self.query,limit=1,cursor=first['cursor'])
+
+    async def test_old_release_policy_cannot_reuse_game_offsets_in_release_event_feed(self):
+        old=browse.encode_cursor(browse.digest(['release-precision-v1',self.query,1]),'a'*64,int(time.time()+100))
+        with self.assertRaisesRegex(ProviderError,'invalid_cursor'):
+            await self.service.page(self.query,limit=1,cursor=old)
 
     async def test_critic_unknown_is_excluded_with_partial_coverage_and_exact_zero_is_preserved(self):
         self.sources.attention.return_value={'data':{'rows':[row(i) for i in range(1,6)],'has_more':False,
