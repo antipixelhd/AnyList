@@ -183,7 +183,7 @@ class PortfolioDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         from core.game_imdb_person import JOB as PERSON_JOB
         from core.game_source_cache import GameSourceCache
         from core.game_contributor_works import works_page
-        rows=[credit('tt2')]
+        rows=[credit('tt2',role='archive_sound')]
         rows[0]['title'].update(titleText={'text':'Small Town: The Stories - Episode III'},releaseYear={'year':2017})
         self.connection.credits.return_value=page(rows,1)
         async with self.Session() as db:

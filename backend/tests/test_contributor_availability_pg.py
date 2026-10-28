@@ -1,5 +1,6 @@
 """Verified empty controls use compact evidence and respect Games approval."""
 import unittest
+import re
 from datetime import timedelta
 from unittest.mock import AsyncMock,patch
 
@@ -10,7 +11,9 @@ import test_game_contributor_works_pg as fixture
 from core import contributor_evidence as evidence
 from core.contributor_availability import movie_job
 from core.game_imdb_enrichment import now
-from core.game_imdb_person import JOB,COMPONENT
+from core.game_imdb_person import JOB,COMPONENT,VERSION as PERSON_VERSION
+from core.game_credit_roles import CREDIT_POLICY_VERSION
+from core.game_person_identity import VERSION as IDENTITY_VERSION
 from models.catalogue import CatalogueEntity,CatalogueIdentity,CatalogueCredit,MetadataSnapshot,ContributorEvidence
 
 
@@ -32,13 +35,17 @@ class AvailabilityDatabaseTests(unittest.IsolatedAsyncioTestCase):
     async def person_cache(self,entity,*,unmapped=0,legacy=False):
         async with self.Session() as db:
             from core.game_imdb_bindings import revision
-            coverage={'source_complete':True,'state':'mapped'}
+            coverage={'source_complete':True,'state':'mapped','person_version':PERSON_VERSION}
             coverage['binding_revision']=await revision(db)
-            if not legacy:coverage['role_coverage']={kind:{'source':unmapped,'unmapped':unmapped} for kind in ('actor','staff')}
+            if not legacy:
+                coverage['credit_policy_version']=CREDIT_POLICY_VERSION
+                coverage['role_coverage']={kind:{'source':unmapped,'unmapped':unmapped} for kind in ('actor','staff')}
             db.add_all([MetadataSnapshot(provider='imdb',kind=JOB,external_id='nm777',entity_id=entity,
                 coverage={'complete':True,'state':'complete'},expires_at=now()+timedelta(days=1)),
                 MetadataSnapshot(provider='imdb',kind=COMPONENT,external_id='nm777',entity_id=entity,
-                    coverage=coverage,payload={'raw':'LARGE_PERSON_EVIDENCE '*50000},fetched_at=now(),expires_at=now()+timedelta(days=1))])
+                    coverage=coverage,payload={'raw':'LARGE_PERSON_EVIDENCE '*50000,
+                        'identity_bridge':{'version':IDENTITY_VERSION,'state':'unresolved','next_check_at':(now()+timedelta(days=1)).isoformat()}},
+                    fetched_at=now(),expires_at=now()+timedelta(days=1))])
             await db.commit()
 
     async def test_background_admission_is_shared_and_reads_never_fetch_providers(self):
@@ -73,7 +80,11 @@ class AvailabilityDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(actor.json()['pending'])
         self.assertEqual(actor.headers['cache-control'],'private, no-store')
         self.assertNotIn('LARGE_',actor.text+staff.text)
-        self.assertFalse(any('catalogue_metadata_snapshots.payload ' in sql or 'catalogue_contributor_evidence.payload ' in sql for sql in statements))
+        # JSON scalar reads such as payload ->> generation are compact headers,
+        # not a transfer of the full source blob.
+        payload_reads=[sql for sql in statements if re.search(
+            r'catalogue_(?:metadata_snapshots|contributor_evidence)\.payload\s*(?:AS\s+\w+\s*)?(?:,|FROM\b|$)',sql,re.I)]
+        self.assertFalse(payload_reads,'\n'.join(payload_reads))
 
     async def test_unmapped_or_partial_games_never_disable_and_legacy_cache_reprojects_in_background(self):
         entity=await self.person(tmdb=False);await self.person_cache(entity,unmapped=1)
@@ -87,7 +98,7 @@ class AvailabilityDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.read(entity)).json()['domains']['game'],'unknown')
         async with self.Session() as db:
             component=await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.kind==COMPONENT))
-            component.coverage={'source_complete':True,'state':'mapped'};await db.commit()
+            component.coverage={key:value for key,value in component.coverage.items() if key not in ('credit_policy_version','role_coverage')};await db.commit()
         result=(await self.read(entity)).json()
         self.assertEqual(result['domains']['game'],'unknown');self.assertTrue(result['pending'])
         async with self.Session() as db:

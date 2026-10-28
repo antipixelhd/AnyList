@@ -5,10 +5,10 @@ from sqlalchemy import String, and_, case, cast, func, literal, or_, select, tup
 from sqlalchemy.orm import aliased
 
 from core.game_types import INDEPENDENT,CREDIT_CHILDREN
+from core.game_credit_roles import ACTING
 from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueRelationship
 from models.games import GameChildState, GameEntry
 
-ACTING = ('actor', 'voice_actor', 'narrator')
 COMPANIES = ('developer', 'publisher', 'supporting', 'porting')
 PAGE_SIZE = 24
 

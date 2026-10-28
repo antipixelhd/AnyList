@@ -3,9 +3,8 @@ from types import SimpleNamespace
 from sqlalchemy import select,func,or_
 from sqlalchemy.orm import load_only
 from core.catalogue_normalize import image
+from core.game_credit_roles import ACTING
 from models.catalogue import CatalogueEntity, CatalogueCredit, CharacterAppearance, CharacterPerformance
-
-ACTING=frozenset({'actor','voice_actor','narrator'})
 
 
 async def displayed_credits(db,work_id):

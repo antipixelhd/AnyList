@@ -11,6 +11,7 @@ import test_catalogue_pg as fixture
 from core.catalogue_providers import ProviderError
 from core.game_imdb_enrichment import now,snapshot
 from core.game_imdb_person import GameIMDbPersonEnrichment,request,view,JOB,PAGE,COMPONENT
+from core.game_credit_roles import CREDIT_POLICY_VERSION
 from core.media_details import work_details
 from models.catalogue import CatalogueCredit,CatalogueEntity,CatalogueIdentity,MetadataSnapshot
 
@@ -98,12 +99,46 @@ class PersonEnrichmentTests(unittest.IsolatedAsyncioTestCase):
             captions=await role_captions(db,self.person_id,'actor',{self.game_id})
             self.assertEqual(captions,[{'id':self.game_id,'roles':['Voice Actor'],'characters':['First role / Second role']}])
 
+    async def test_archived_performances_are_actor_works_with_source_roles_and_characters(self):
+        from core.game_contributor_works import works_page
+        for role in ('archive_sound','archive_footage'):
+            row={**credit(role=role),'characters':[{'name':'Padmé Amidala'}]}
+            self.source.credits.return_value=page([row],1)
+            # Refresh the source fixture for the second distinct source role.
+            if role=='archive_footage':
+                async with self.Session() as db:
+                    job=await db.scalar(snapshot(JOB,'nm1'));job.expires_at=None;job.next_attempt_at=now();job.payload={}
+                    await db.commit()
+            self.assertEqual(await self.service.run('nm1'),'ready')
+            async with self.Session() as db:
+                component=await db.scalar(snapshot(COMPONENT,'nm1'))
+                self.assertEqual(component.coverage['role_coverage']['actor']['source'],1)
+                self.assertEqual(component.coverage['role_coverage']['staff']['source'],0)
+                actor=await works_page(db,None,self.person_id,'actor',key='test',list_scope='all',status='',page=1,cursor=None)
+                self.assertEqual(actor['works'][0]['roles'],[role.replace('_',' ').title()])
+                self.assertEqual(actor['works'][0]['characters'],['Padmé Amidala'])
+                staff=await works_page(db,None,self.person_id,'staff',key='test',list_scope='all',status='',page=1,cursor=None)
+                self.assertEqual(staff['works'],[])
+
+    async def test_title_archived_performance_keeps_its_role_on_the_actor_detail_link(self):
+        async with self.Session() as db:
+            db.add(CatalogueCredit(work_id=self.game_id,contributor_id=self.person_id,provider='imdb',
+                source_key='archive-title',scope='title',role='archive_sound',role_label='Archive Sound',
+                character_label='Padmé Amidala',attributes={'source_active':True}))
+            await db.flush()
+            detail=await work_details(db,await db.get(CatalogueEntity,self.game_id),extras=False)
+            performer=detail['people'][0]
+            self.assertEqual(performer['kind'],'actor')
+            self.assertEqual(performer['roles'],['Archive Sound'])
+            self.assertEqual(performer['characters'],['Padmé Amidala'])
+            self.assertEqual(performer['url'],f'/actors/catalogue:{self.person_id}?media_type=game')
+
     async def test_old_credit_policy_reprojects_saved_pages_without_refetching_source(self):
         from core.game_imdb_discovery import MAP,VERSION as DISCOVERY_VERSION
         await self.service.run('nm1')
         async with self.Session() as db:
             component=await db.scalar(snapshot(COMPONENT,'nm1'))
-            component.coverage={key:value for key,value in component.coverage.items() if key!='credit_policy_version'}
+            component.coverage={**component.coverage,'credit_policy_version':CREDIT_POLICY_VERSION-1}
             db.add(MetadataSnapshot(provider='wikidata',kind=MAP,external_id='tt2',
                 payload={'status':'excluded','matcher_version':DISCOVERY_VERSION-1},expires_at=now()+timedelta(days=1)))
             await db.commit()
@@ -113,7 +148,7 @@ class PersonEnrichmentTests(unittest.IsolatedAsyncioTestCase):
         self.source.credits.assert_awaited_once()
         async with self.Session() as db:
             component=await db.scalar(snapshot(COMPONENT,'nm1'))
-            self.assertEqual(component.coverage['credit_policy_version'],1)
+            self.assertEqual(component.coverage['credit_policy_version'],CREDIT_POLICY_VERSION)
             self.assertEqual(component.coverage['unmapped_games'],1)
 
     async def test_legacy_connection_is_refetched_once_and_retains_usable_works(self):

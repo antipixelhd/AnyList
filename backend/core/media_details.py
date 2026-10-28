@@ -1,5 +1,6 @@
 """Read existing catalogue metadata for the shared media detail composition."""
 from core.game_release_dates import VERSION as GAME_RELEASE_VERSION
+from core.game_credit_roles import ACTING as GAME_ACTING
 import re
 from fastapi import HTTPException
 from urllib.parse import urlsplit
@@ -104,7 +105,7 @@ async def work_details(db, work, *, extras=True):
     image_role_ids = {credit.id for credit in image_roles}
     for credit, contributor in credits:
         contributor = canonical.get(contributor.id, contributor)
-        actor = credit.role == 'actor' or work.kind=='game' and credit.role in ('voice_actor','narrator')
+        actor = credit.role == 'actor' or work.kind=='game' and credit.role in GAME_ACTING
         kind = 'studio' if contributor.kind == 'organization' else 'actor' if actor else 'staff'
         group = organizations if kind == 'studio' else people
         key = (contributor.id, kind)

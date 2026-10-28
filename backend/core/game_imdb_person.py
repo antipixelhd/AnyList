@@ -17,6 +17,7 @@ from core.game_imdb_enrichment import now, snapshot, request as admit, status as
 from core.game_imdb_source import IMDbGameSource, identifier, TITLE_ID
 from core.game_imdb_projection import ROLE,texts,VERSIONS
 from core.game_imdb_bindings import revision as binding_revision, verified_bindings
+from core.game_credit_roles import ACTING,SOURCE_ACTING,CREDIT_POLICY_VERSION
 from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity, MetadataSnapshot, CharacterPerformance
 
 JOB='game_person_job'
@@ -63,7 +64,7 @@ async def view(db,native,*,state=None,include_profile=True,check_mapping=False):
         state=await admit(db,native,kind=JOB,entity_id=row.entity_id)
     if check_mapping and row and row.coverage.get('source_complete') and not state['pending']:
         current=await binding_revision(db)
-        if row.coverage.get('binding_revision')!=current or row.coverage.get('credit_policy_version')!=1:
+        if row.coverage.get('binding_revision')!=current or row.coverage.get('credit_policy_version')!=CREDIT_POLICY_VERSION:
             # A reviewed/new game mapping can unlock cached person works.
             # Replay the saved connection instead of refetching IMDb for it.
             if await queue_projection(db,native):state={**state,'state':'pending','pending':True,'complete':False,'error':None,'retry_after':2}
@@ -177,7 +178,7 @@ async def project_mapped(db,native,rows,generation,*,source_generation=None):
         work=bindings.get(row['title_id']) or retained.get((row['title_id'],row['category']))
         if not work:continue
         role='actor' if row['category'] in ('actor','actress','cast') else row['category']
-        characters=row['characters'] if role in ('actor','voice_actor','narrator') else []
+        characters=row['characters'] if role in ACTING else []
         attributes=row['attributes']
         credits.append({'work_id':work,'contributor_id':root,'role':role,'provider':'imdb','scope':'person',
             'role_label':'Actor' if role=='actor' else role.replace('_',' ').title(),
@@ -209,13 +210,12 @@ async def project_mapped(db,native,rows,generation,*,source_generation=None):
         ~select(CharacterPerformance.id).where(CharacterPerformance.credit_id==CatalogueCredit.id,
             CharacterPerformance.source=='reviewed').exists()).values(
                 attributes=CatalogueCredit.attributes.op('||')({'source_active':False})).execution_options(synchronize_session=False))
-    acting={'actor','actress','cast','voice_actor','narrator'}
     role_coverage={}
     for kind in ('actor','staff'):
-        titles={row['title_id'] for row in games if (row['category'] in acting)==(kind=='actor') and row['category']!='thanks'}
+        titles={row['title_id'] for row in games if (row['category'] in SOURCE_ACTING)==(kind=='actor') and row['category']!='thanks'}
         role_coverage[kind]={'source':len(titles-excluded),'raw_source':len(titles),'excluded':len(titles&excluded),
             'unmapped':len(titles-set(bindings)-excluded)}
-    return {'credit_policy_version':1,'role_coverage':role_coverage,'state':'partial' if omitted or ids-set(bindings)-excluded else 'mapped','source_games':len(ids),
+    return {'credit_policy_version':CREDIT_POLICY_VERSION,'role_coverage':role_coverage,'state':'partial' if omitted or ids-set(bindings)-excluded else 'mapped','source_games':len(ids),
         'mapped_games':len(set(bindings)&ids),'excluded_games':len(excluded),'unmapped_games':len(ids-set(bindings)-excluded),'omitted_rows':omitted,
         'scope':'retrieved_person_connection','official_filmography_complete':False}
 

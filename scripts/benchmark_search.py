@@ -40,6 +40,7 @@ from core import (
     tmdb,
 )
 from core.game_release_dates import VERSION as RELEASE_VERSION
+from core.game_credit_roles import CREDIT_POLICY_VERSION
 from dependencies import get_current_user, get_current_user_or_api_key
 from models import GlobalSettings, Media, User, UserProfileData
 from models.base import MediaType
@@ -144,7 +145,7 @@ async def main(args):
                                 'identity_bridge':{'version':game_person_identity.VERSION,
                                     'state':'unresolved','next_check_at':(stamp+timedelta(days=7)).isoformat()},
                                 'index_generation':'fixture','index_pages':20,'index_titles':1000},
-                            coverage={'person_version':2,'credit_policy_version':1,'source_complete':True,'state':'partial','projection_revision':'fixture-v1','binding_revision':None,
+                            coverage={'person_version':2,'credit_policy_version':CREDIT_POLICY_VERSION,'source_complete':True,'state':'partial','projection_revision':'fixture-v1','binding_revision':None,
                                 'source_games':1000,'mapped_games':0,'unmapped_games':1000},fetched_at=stamp,expires_at=stamp+timedelta(days=30))])
                     # This case measures an already cached discovery attempt,
                     # including unresolved external identities, not first admission.
