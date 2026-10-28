@@ -80,6 +80,45 @@ class WikiTitleTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await corroborate(sources,self.title,[{**self.raw,'id':i} for i in range(1,5)]),({},[]))
             factory.assert_not_called()
 
+    async def test_similar_dlc_titles_cannot_exhaust_the_exact_game_corroboration_slots(self):
+        title={'id':'tt1855429','title':'ZEN Pinball','year':2008}
+        base=game(20730,'Zen Pinball',year=2009,slug='zen-pinball')
+        port=game(260831,'Zen Pinball',year=2011,slug='zen-pinball-mobile',game_type={'id':11},parent_game={'id':20730})
+        dlcs=[game(100+i,'Zen Pinball: '+name,year=2009,slug='table-'+str(i),game_type={'id':1})
+            for i,name in enumerate(('Pasha','Thor','Mars','X-Men','Rome','Portal','Venom','Blade','Tesla','Shaman','Biolab','Inferno'))]
+        record=item('Q3575187','Zen Pinball',claims={'P9043':[claim('20730')],
+            'P577':[claim({'time':'+2008-07-07T00:00:00Z','precision':11})]})
+        sources=SimpleNamespace(cache=Cache())
+        wiki=SimpleNamespace(game_item=AsyncMock(return_value={'data':{'item':record['id']},'stale':False}),
+            entities=AsyncMock(return_value={'data':{'entities':{record['id']:record}},'stale':False}))
+        with patch('core.game_wikidata_title_support.GameCreditSources',return_value=wiki):
+            evidence,snapshots=await corroborate(sources,title,[*dlcs,port,base])
+        self.assertEqual(set(evidence),{20730});self.assertEqual(len(snapshots),1)
+        wiki.game_item.assert_awaited_once_with(20730,'zen-pinball')
+        result=decide(title,[*dlcs,port,base],complete=True,branches=[],corroboration=evidence)
+        self.assertEqual((result['status'],result['igdb_id']),('verified',20730))
+        self.assertEqual(next(r for r in result['evidence']['candidates'] if r['id']==20730)['years'],[2009])
+        self.assertTrue(valid_binding_evidence({'matcher_version':VERSION,'igdb_id':'20730','matching':result['evidence']},title['id']))
+
+    async def test_exact_unknown_competitors_and_excess_exact_candidates_are_not_discarded(self):
+        title={'id':'tt1','title':'Example Game','year':2017}
+        base=game(10,title['title'],year=2017,slug='example')
+        record=item('Q1',title['title'],claims={'P9043':[claim('10')],
+            'P577':[claim({'time':'+2017-00-00T00:00:00Z','precision':9})]})
+        competitor={**base,'id':20,'first_release_date':None,'slug':'namesake'}
+        fuzzy=game(30,'Example Game: Extras',year=2017,slug='extras')
+        sources=SimpleNamespace(cache=Cache())
+        wiki=SimpleNamespace(game_item=AsyncMock(side_effect=[{'data':{'item':'Q1'},'stale':False},
+            {'data':{'item':None},'stale':False}]),
+            entities=AsyncMock(return_value={'data':{'entities':{'Q1':record}},'stale':False}))
+        with patch('core.game_wikidata_title_support.GameCreditSources',return_value=wiki):
+            evidence,_=await corroborate(sources,title,[base,competitor,fuzzy])
+            self.assertEqual(wiki.game_item.await_count,2)
+            self.assertEqual(decide(title,[base,competitor,fuzzy],complete=True,branches=[],corroboration=evidence)['reason'],'unknown_competitor')
+            wiki.game_item.reset_mock()
+            self.assertEqual(await corroborate(sources,title,[{**base,'id':i} for i in range(1,5)]+[fuzzy]),({},[]))
+            wiki.game_item.assert_not_awaited()
+
     async def test_optional_conflicting_identity_is_cached_but_outages_are_not_negatives(self):
         sources=SimpleNamespace(cache=Cache())
         wiki=SimpleNamespace(game_item=AsyncMock(side_effect=ProviderError('identity_conflict')),entities=AsyncMock())

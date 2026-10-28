@@ -6,7 +6,7 @@ from difflib import SequenceMatcher
 
 from core.catalogue_providers import ProviderError
 from core.game_credit_sources import GameCreditSources,verify_game
-from core.game_title_match import spelling
+from core.game_title_match import spelling,decide
 from core.game_types import INDEPENDENT,CREDIT_CHILDREN,igdb_game_class
 from core.wikidata_claims import best_claims,claims,snak_value
 
@@ -53,7 +53,13 @@ def project(item,raw,title):
 async def corroborate(sources,title,candidates):
     from core.game_match_support import cached
     selected=[raw for raw in candidates if discovery_candidate(raw,title)]
-    if type(title.get('year')) is not int or not selected or len(selected)>3:return {},[]
+    if type(title.get('year')) is not int or not selected:return {},[]
+    # Loose DLC/sequel similarities must not consume the exact title's bounded
+    # lookup slots. This only chooses lookups: the caller still decides against
+    # its complete pool, including exact aliases and unknown-year competitors.
+    matched={row['id'] for row in decide(title,selected,complete=False,branches=[])['evidence']['candidates']}
+    if matched:selected=[raw for raw in selected if raw['id'] in matched]
+    if len(selected)>3:return {},[]
     wiki=GameCreditSources(sources);evidence={};snapshots=[]
     for raw in selected:
         async def load():
