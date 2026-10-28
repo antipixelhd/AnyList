@@ -27,6 +27,53 @@ class Cache:
 
 
 class DiscoverySourceTests(unittest.IsolatedAsyncioTestCase):
+    def test_version_scope_requires_a_known_later_version_and_matching_parent_name(self):
+        from core.game_version_scope import original_parent
+        from test_game_title_match import game
+        title={'id':'tt1','title':'Original','year':2000}
+        later=game(20,'Original HD',year=2015,game_type={'id':9},
+            parent_game={'id':10,'name':'Original','game_type':{'id':0}})
+        self.assertEqual(original_parent(title,later),10)
+        self.assertEqual(original_parent({**title,'title':'Localized','aliases':['Original']},later),10)
+        for extra in ({'version_parent':10},{'game_type':{'id':1}},{'game_type':{'id':0}},
+                {'first_release_date':None},{'parent_game':None},
+                {'parent_game':{**later['parent_game'],'name':'Other'}},
+                {'parent_game':{**later['parent_game'],'game_type':{'id':11}}}):
+            self.assertIsNone(original_parent(title,{**later,**extra}))
+        self.assertIsNone(original_parent({**title,'year':2015},later))
+        self.assertIsNone(original_parent({**title,'year':None},later))
+        self.assertIsNone(original_parent({**title,'title':'Original Complete Edition'},later))
+
+    async def test_original_scope_survives_a_wikidata_reference_to_its_later_remaster(self):
+        from test_game_title_match import game
+        self.response([('tt1','Q1')])
+        self.wiki.entities.return_value={'data':{'entities':{'Q1':mapped('Q1','tt1',20)}},'stale':False}
+        base=game(10,'Grandia II',year=2000)
+        remaster=game(20,'Grandia II HD Remaster',year=2015,game_type={'id':9},
+            parent_game={'id':10,'name':'Grandia II','game_type':{'id':0}})
+        self.sources.igdb.side_effect=[[remaster],[base,remaster],[]]
+        result=await self.api.page(['tt1'],titles={'tt1':{'id':'tt1','title':'Grandia II','year':2000}})
+        value=result['outcomes'][0]
+        self.assertEqual((value['status'],value['igdb_id'],value['binding_source']),('verified',10,'matched'))
+        self.assertEqual(value['evidence']['version_reference']['game']['id'],20)
+        self.assertEqual(value['evidence']['source_outcome']['reason'],'cross_version_reference')
+        self.assertIn('igdb:20',value['evidence']['dependencies'])
+
+    async def test_original_scope_cannot_bypass_ambiguity_or_a_different_parent(self):
+        from test_game_title_match import game
+        for state in ('ambiguous','wrong_parent','missing_version'):
+            with self.subTest(state=state):
+                self.response([('tt1','Q1')]);self.sources.cache.rows.clear()
+                self.wiki.entities.return_value={'data':{'entities':{'Q1':mapped('Q1','tt1',20)}},'stale':False}
+                base=game(30 if state=='wrong_parent' else 10,'Example',year=2000)
+                remaster=game(20,'Example Remastered',year=2015,game_type={'id':9},
+                    parent_game={'id':10,'name':'Example','game_type':{'id':0}})
+                pool=[base]+([] if state=='missing_version' else [remaster])+([game(40,'Example',year=2000)] if state=='ambiguous' else [])
+                self.sources.igdb.side_effect=[[remaster],pool,[]]
+                with patch('core.game_match_support.corroborate',AsyncMock(return_value=({},[]))):
+                    value=(await self.api.page(['tt1'],titles={'tt1':{'id':'tt1','title':'Example','year':2000}}))['outcomes'][0]
+                self.assertNotEqual(value['status'],'verified')
+
     async def test_optional_deep_timeout_keeps_an_ordinary_verified_title_in_the_same_batch(self):
         self.response([])
         self.sources.igdb.side_effect=[[raw(10,name='Fast Game',first_release_date=1506038400)],[],

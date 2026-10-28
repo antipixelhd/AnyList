@@ -5,7 +5,7 @@ from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.dialects.postgresql import array, insert
 
 from core.game_imdb_enrichment import now
-from models.catalogue import CatalogueCredit, CatalogueIdentity, MetadataSnapshot
+from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity, MetadataSnapshot
 from models.game_mapping import GameMappingGeneration as Generation, GameMappingReference as Reference
 
 
@@ -31,8 +31,12 @@ async def quarantine(db, binding, reason):
 async def invalidate(db,keys=(),*,outdated=False,identity_ids=None):
     from core.game_title_match import VERSION
     if identity_ids is not None:condition=CatalogueIdentity.id.in_(identity_ids)
-    elif outdated:condition=(CatalogueIdentity.source=='matched') & (
-        func.coalesce(CatalogueIdentity.evidence['matcher_version'].as_integer(),0)!=VERSION)
+    elif outdated:
+        from core.game_version_scope import legacy_scope_condition
+        condition=or_((CatalogueIdentity.source=='matched') & (
+            func.coalesce(CatalogueIdentity.evidence['matcher_version'].as_integer(),0)!=VERSION),
+            select(CatalogueEntity.id).where(CatalogueEntity.id==CatalogueIdentity.entity_id,
+                legacy_scope_condition(CatalogueIdentity,CatalogueEntity)).exists())
     else:condition=CatalogueIdentity.evidence['dependencies'].op('?|')(array(sorted(set(keys))))
     marker=uuid.uuid4().hex
     work_ids=list(await db.scalars(update(CatalogueIdentity).where(

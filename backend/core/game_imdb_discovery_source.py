@@ -194,20 +194,30 @@ class GameIMDbDiscoverySource:
         deep_deadline=monotonic()+8
         indexed={row['native']:row for row in await lookup(self.sessions,'imdb',natives=ids)}
         for outcome in result['outcomes']:
-            if outcome['status'] in ('verified','excluded') or outcome.get('reason')=='explicit_identity_conflict':
-                outputs.append(outcome);continue
-            native=outcome['id'];title=dict(titles[native])
-            if title.get('id')!=native or not isinstance(title.get('title'),str) or not title['title'].strip():
-                raise ProviderError('bad_response')
-            local=indexed.get(native)
+            native=outcome['id'];title=dict(titles[native]);local=indexed.get(native)
             if local:
                 title['aliases']=local['value'].get('aliases',[])
                 if title.get('year') is None:title['year']=local['value'].get('year')
+            from core.game_version_scope import original_parent
+            reference=result.get('version_references',{}).get(outcome['id'])
+            scope_parent=original_parent(title,reference) if reference else None
+            version_reference={'version':1,'game':reference,'wikidata':outcome.get('evidence')} if scope_parent else None
+            if scope_parent:outcome={**outcome,'status':'unresolved','reason':'cross_version_reference'}
+            if outcome['status'] in ('verified','excluded') or outcome.get('reason')=='explicit_identity_conflict':
+                outputs.append(outcome);continue
+            if title.get('id')!=native or not isinstance(title.get('title'),str) or not title['title'].strip():
+                raise ProviderError('bad_response')
             try:acquired=await retrieve(self.sources,title)
             except ProviderError as error:
                 outputs.append({'id':native,'status':'unresolved','reason':error.code,
                     **({'retry_after':60} if error.code!='coverage_limited' else {})});continue
             data=acquired['data']
+            if scope_parent:
+                current=next((row for row in data['rows'] if row['id']==reference['id']),None)
+                if not current or original_parent(title,current)!=scope_parent:
+                    outputs.append({'id':native,'status':'unresolved','reason':'incomplete_version_scope'});continue
+                from core.game_version_scope import reference_game
+                version_reference['game']=reference_game(current)
             decision=decide(title,data['rows'],complete=data['complete'] and not acquired['stale'],branches=data['branches'])
             deeper=[]
             if decision['status'] in ('unresolved','unmapped') and data['rows'] and data['complete'] and not acquired['stale']:
@@ -222,13 +232,17 @@ class GameIMDbDiscoverySource:
                     outputs.append({'id':native,'status':'unresolved','reason':getattr(error,'code','timeout'),'retry_after':60});continue
             if decision['status']!='verified':
                 outputs.append({'id':native,**decision});continue
+            if scope_parent and decision['igdb_id']!=scope_parent:
+                outputs.append({'id':native,'status':'conflict','reason':'version_parent_mismatch'});continue
             games={row['id']:row for row in data['rows']}
             raw=games[decision['igdb_id']]
             parent=raw.get('parent_game')
             if igdb_game_class(raw) in CREDIT_CHILDREN and isinstance(parent,dict) and positive(parent.get('id')) and parent['id'] not in games:
                 games.update(await self.games({parent['id']}))
             evidence={**decision['evidence'],'method':'title_match','source_outcome':{key:value for key,value in outcome.items() if key in ('status','reason')},
+                **({'version_reference':version_reference} if version_reference else {}),
                 'direction':'imdb_to_igdb','scope':'primary_title','dependencies':[f'imdb:{native}',f'igdb:{raw["id"]}',
+                    *([f'igdb:{reference["id"]}'] if scope_parent else []),
                     f'wikidata-imdb:{native}',*[f'wikidata:{qid}' for qid in result.get('consulted',{}).get(native,[])],
                     f'igdb-query:{data.get("scope_key","")}',*[f'igdb-name:{name}' for name in data.get('scope_names',[])],
                     *[f'support:{row["provider"]}:{row["kind"]}:{row["key"]}' for row in deeper]],
@@ -263,12 +277,17 @@ class GameIMDbDiscoverySource:
         parents={value['parent_game']['id'] for value in games.values() if igdb_game_class(value) in CREDIT_CHILDREN
             and isinstance(value.get('parent_game'),dict) and positive(value['parent_game'].get('id'))}-set(games)
         if parents:games.update(await self.games(parents))
+        version_references={}
         def resolve():
             for native,(item,reference) in references.items():
                 matches=[value for value in games.values() if value['id']==reference.get('id') or value.get('slug')==reference.get('slug') and 'slug' in reference]
                 outcomes[native]=project(native,item,matches[0],games) if len(matches)==1 else {
                     'id':native,'status':'unresolved','reason':'igdb_metadata'}
+                if len(matches)==1 and outcomes[native]['status']=='verified' and igdb_game_class(matches[0]) in ('remake','remaster'):
+                    from core.game_version_scope import reference_game
+                    version_references[native]=reference_game(matches[0])
             return [outcomes[native] for native in ids]
         return {'outcomes':await asyncio.to_thread(resolve),'stale':reverse['stale'] or fetched['stale'],
+            'version_references':version_references,
             'fetched_at':reverse.get('fetched_at'),'consulted':candidates,
             'support_snapshots':[*reverse.get('support_snapshots',[]),*fetched.get('support_snapshots',[])]}

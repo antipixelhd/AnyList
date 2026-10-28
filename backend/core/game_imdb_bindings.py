@@ -99,8 +99,11 @@ class GameIMDbBindings:
                         await quarantine(db,binding,'changed_igdb_root');await db.commit()
                     return {'status':'conflict','imdb_id':None}
                 from core.game_title_match import VERSION
+                from core.game_version_scope import predates_version,VERSION as SCOPE_VERSION
                 pending=binding.source!='reviewed' and ((binding.evidence or {}).get('mapping_state','active')!='active'
-                    or binding.source=='matched' and (binding.evidence or {}).get('matcher_version')!=VERSION)
+                    or binding.source=='matched' and (binding.evidence or {}).get('matcher_version')!=VERSION
+                    or binding.source=='wikidata' and (binding.evidence or {}).get('version_scope_policy')!=SCOPE_VERSION
+                        and predates_version((binding.evidence or {}).get('imdb_identity') or {},work.attributes or {}))
                 if not pending:return {'status':'bound','binding':binding_view(binding)}
                 retained={'id':binding.external_id,'source':binding.source,'evidence':dict(binding.evidence or {})}
             else:retained=None
@@ -138,6 +141,15 @@ class GameIMDbBindings:
         header=await self.cache.get('imdb','game_imdb_identity',title_id,
             lambda:self.source.title(title_id),ttl=timedelta(days=30),max_stale=timedelta(days=90))
         game_header(header['data'],title_id)
+        from core.game_version_scope import predates_version
+        if predates_version(header['data'],work.attributes or {}):
+            from core.game_imdb_discovery_source import GameIMDbDiscoverySource
+            checked=await GameIMDbDiscoverySource(self.sessions,sources=self.wiki.sources,wiki=self.wiki).page(
+                [title_id],titles={title_id:{'id':title_id,'title':header['data']['titleText']['text'],
+                    'year':(header['data'].get('releaseYear') or {}).get('year')}})
+            outcome=checked['outcomes'][0]
+            if checked.get('stale') or outcome['status']!='verified' or str(outcome.get('igdb_id'))!=native:
+                return {'status':'unresolved','reason':'version_scope_mismatch'}
         return await self.save(work_id,title_id,'wikidata',{
             'title_type':'videoGame','igdb_id':native,'wikidata':mapped['evidence'],
             'mapping_fetched_at':cached['fetched_at'],'identity_fetched_at':header['fetched_at'],
@@ -265,7 +277,8 @@ class GameIMDbBindings:
         for name in [(proof.get('imdb') or {}).get('title'),*(proof.get('imdb') or {}).get('aliases',[])]:
             if spelling(name):dependencies.extend([f'imdb-name:{spelling(name)}',f'igdb-name:{spelling(name)}'])
         dependencies.extend(proof.get('dependencies',[]))
-        evidence={**evidence,'mapping_state':'active','matcher_version':VERSION,'evidence_revision':uuid.uuid4().hex,
+        from core.game_version_scope import VERSION as SCOPE_VERSION
+        evidence={**evidence,'mapping_state':'active','matcher_version':VERSION,'version_scope_policy':SCOPE_VERSION,'evidence_revision':uuid.uuid4().hex,
             'dependencies':sorted(set([*dependencies,*evidence.get('dependencies',[])]))}
         async with self.sessions() as db:
             await catalogue.write_lock(db)
@@ -303,6 +316,22 @@ class GameIMDbBindings:
                 raise catalogue.IdentityConflict('IMDb mapping conflict requires review')
             if old and old.source=='reviewed' and source!='reviewed':
                 return {'status':'bound','binding':binding_view(old)}
+            if not old and source=='matched' and proof.get('version_reference'):
+                previous=await db.scalar(select(CatalogueIdentity).where(CatalogueIdentity.namespace=='imdb.title',
+                    CatalogueIdentity.external_id==title_id))
+                if previous and previous.entity_id!=work_id:
+                    from core.game_version_scope import correction_reference
+                    valid_root=await db.scalar(select(CatalogueIdentity.id).where(CatalogueIdentity.entity_id==previous.entity_id,
+                        CatalogueIdentity.namespace=='igdb.game',CatalogueIdentity.external_id==(previous.evidence or {}).get('igdb_id')))
+                    if previous.source!='wikidata' or not valid_root or not correction_reference(proof,previous.evidence or {},native):
+                        raise catalogue.IdentityConflict('Version identity correction requires matching automatic source evidence')
+                    db.add(MetadataSnapshot(provider='imdb',kind='game_binding_correction',external_id=uuid.uuid4().hex,
+                        entity_id=work_id,payload={'previous_work_id':previous.entity_id,'previous':binding_view(previous),
+                            'matching':proof},fetched_at=now()))
+                    from core.game_mapping_lifecycle import quarantine
+                    await quarantine(db,previous,'verified_original_version')
+                    previous.entity_id=work_id
+                    old=previous
             changed=source=='reviewed' and (not old or old.external_id!=title_id)
             mapping_changed=not old or old.external_id!=title_id or (old.evidence or {}).get('igdb_id')!=evidence.get('igdb_id') or (old.evidence or {}).get('mapping_state','active')!='active'
             if source=='reviewed':

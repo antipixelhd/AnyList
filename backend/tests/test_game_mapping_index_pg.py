@@ -28,6 +28,86 @@ class MappingIndexTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         await fixture.GamesDatabaseTests.asyncSetUp(self)
 
+    async def version_correction_fixture(self):
+        from core.game_imdb_mapping import game_mapping
+        from core.game_title_match import decide
+        from test_game_credit_sources import item,claim
+        from test_game_title_match import game
+        base=game(10,'Grandia II',year=2000)
+        remaster=game(20,'Grandia II HD Remaster',year=2015,game_type={'id':9},
+            parent_game={'id':10,'name':'Grandia II','game_type':{'id':0}})
+        wiki=game_mapping(item('Q1',claims={'P345':[claim('tt1')],'P9043':[claim('20')]}),'20',None)['evidence']
+        title={'id':'tt1','title':'Grandia II','year':2000}
+        proof=decide(title,[base,remaster],complete=True,branches=[])['evidence']
+        proof['version_reference']={'version':1,'game':remaster,'wikidata':wiki}
+        async with self.Session() as db:
+            for work_id,native,kind,year in ((self.base,'10','game',2000),(self.pack,'20','remaster',2015)):
+                work=await db.get(CatalogueEntity,work_id)
+                work.attributes={**work.attributes,'igdb_id':native,'game_class':kind,'release_date':f'{year}-08-01'}
+                db.add(CatalogueIdentity(entity_id=work_id,namespace='igdb.game',external_id=native,source='igdb'))
+            person=CatalogueEntity(kind='person',name='Source actor');db.add(person);await db.flush()
+            db.add(CatalogueIdentity(entity_id=self.pack,namespace='imdb.title',external_id='tt1',source='wikidata',
+                evidence={'igdb_id':'20','title_type':'videoGame','wikidata':wiki,'mapping_state':'active',
+                    'imdb_identity':{'id':'tt1','releaseYear':{'year':2000}}}))
+            db.add(CatalogueCredit(work_id=self.pack,contributor_id=person.id,provider='imdb',scope='title',
+                source_key='old-version-credit',role='actor',attributes={'source_active':True}))
+            db.add(GameEntry(user_id=self.user.id,work_id=self.pack,status='playing',total_seconds=3600,notes='Private remaster notes'))
+            await db.commit()
+        return proof
+
+    async def test_verified_original_correction_moves_only_the_automatic_imdb_identity(self):
+        proof=await self.version_correction_fixture()
+        await GameIMDbBindings(self.Session).save(self.base,'tt1','matched',
+            {'igdb_id':'10','title_type':'videoGame','matching':proof},expected_igdb='10')
+        async with self.Session() as db:
+            binding=await db.scalar(select(CatalogueIdentity).where(CatalogueIdentity.namespace=='imdb.title'))
+            self.assertEqual((binding.entity_id,binding.source,binding.evidence['mapping_state']),(self.base,'matched','active'))
+            self.assertEqual((await db.scalar(select(CatalogueIdentity).where(CatalogueIdentity.namespace=='igdb.game',
+                CatalogueIdentity.external_id=='20'))).entity_id,self.pack)
+            entry=await db.scalar(select(GameEntry))
+            self.assertEqual((entry.work_id,entry.notes,entry.total_seconds),(self.pack,'Private remaster notes',3600))
+            self.assertFalse((await db.scalar(select(CatalogueCredit).where(CatalogueCredit.source_key=='old-version-credit'))).attributes['source_active'])
+            audit=await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.kind=='game_binding_correction'))
+            self.assertEqual(audit.payload['previous_work_id'],self.pack)
+            self.assertEqual((await db.execute(verified_bindings(['tt1']))).one().work_id,self.base)
+
+    async def test_original_correction_cannot_override_reviews_or_changed_source_claims(self):
+        from copy import deepcopy
+        from core import catalogue
+        proof=await self.version_correction_fixture()
+        for state in ('reviewed','changed_claim','wrong_parent','incomplete'):
+            changed=deepcopy(proof)
+            async with self.Session() as db:
+                old=await db.scalar(select(CatalogueIdentity).where(CatalogueIdentity.namespace=='imdb.title'))
+                old.source='reviewed' if state=='reviewed' else 'wikidata';await db.commit()
+            if state=='changed_claim':changed['version_reference']['wikidata']['wikidata_id']='Q2'
+            if state=='wrong_parent':changed['version_reference']['game']['parent_game']['id']=30
+            if state=='incomplete':changed['retrieval_complete']=False
+            with self.subTest(state=state),self.assertRaises(catalogue.IdentityConflict):
+                await GameIMDbBindings(self.Session).save(self.base,'tt1','matched',
+                    {'igdb_id':'10','title_type':'videoGame','matching':changed},expected_igdb='10')
+            async with self.Session() as db:
+                old=await db.scalar(select(CatalogueIdentity).where(CatalogueIdentity.namespace=='imdb.title'))
+                self.assertEqual(old.entity_id,self.pack)
+                self.assertTrue((await db.scalar(select(CatalogueCredit).where(CatalogueCredit.source_key=='old-version-credit'))).attributes['source_active'])
+                self.assertIsNone(await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.kind=='game_binding_correction')))
+
+    async def test_legacy_version_policy_revalidates_only_older_cross_version_wikidata_bindings(self):
+        from core.game_mapping_lifecycle import invalidate
+        proof=await self.version_correction_fixture()
+        async with self.Session() as db:
+            db.add(CatalogueIdentity(entity_id=self.base,namespace='imdb.title',external_id='tt2',source='wikidata',
+                evidence={'mapping_state':'active','imdb_identity':{'releaseYear':{'year':2000}}}))
+            await db.commit()
+        async with self.Session() as db:
+            await invalidate(db,outdated=True);await db.commit()
+            rows={row.external_id:row for row in await db.scalars(select(CatalogueIdentity).where(CatalogueIdentity.namespace=='imdb.title'))}
+            self.assertEqual(rows['tt1'].evidence['mapping_state'],'stale')
+            self.assertEqual(rows['tt2'].evidence['mapping_state'],'active')
+            rows['tt1'].evidence={**rows['tt1'].evidence,'mapping_state':'active','version_scope_policy':1};await db.commit()
+            await invalidate(db,outdated=True);await db.commit()
+            await db.refresh(rows['tt1']);self.assertEqual(rows['tt1'].evidence['mapping_state'],'active')
+
     def record(self, title='Example'):
         return {'id': 'tt1', 'title': title, 'year': 2020, 'aliases': ['Alternative'], 'imdb_ids': ['tt1'],
                 'data': {'id': 'tt1', 'title': title, 'year': 2020, 'aliases': ['Alternative']}}

@@ -1,7 +1,7 @@
 """Binding provenance, protected review and actual game identity constraints."""
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock,patch
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -50,6 +50,20 @@ class IMDbBindingTests(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as db:
             self.assertEqual(await db.scalar(select(func.count()).select_from(CatalogueEntity).where(CatalogueEntity.kind=='game')),1)
             self.assertEqual((await catalogue.resolve_identity(db,'imdb.title','tt123')).entity_id,work)
+
+    async def test_remaster_resolver_does_not_rebind_an_original_verified_for_its_parent(self):
+        work=await self.setup_game()
+        async with self.Session() as db:
+            entity=await db.get(CatalogueEntity,work)
+            entity.attributes={**entity.attributes,'game_class':'remaster','release_date':'2021-01-01'};await db.commit()
+        service=self.service()
+        with patch('core.game_imdb_discovery_source.GameIMDbDiscoverySource.page',AsyncMock(return_value={
+                'outcomes':[{'id':'tt123','status':'verified','igdb_id':11}],'stale':False})) as verify:
+            result=await service.resolve(work)
+        self.assertEqual(result,{'status':'unresolved','reason':'version_scope_mismatch'})
+        verify.assert_awaited_once()
+        async with self.Session() as db:
+            self.assertIsNone(await catalogue.resolve_identity(db,'imdb.title','tt123'))
 
     async def test_reviewed_binding_survives_background_remapping(self):
         work=await self.setup_game()
