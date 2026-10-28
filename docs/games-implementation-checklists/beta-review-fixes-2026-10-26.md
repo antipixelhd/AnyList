@@ -27,9 +27,11 @@ These extend the active work; they are not covered by earlier acceptance evidenc
 - [x] **R14 — Cold Games details and skeletons.** Reproduce slow piecemeal cold details and characters that require a manual refresh. Use shared skeleton/loading patterns and automatically publish ready component data into the current page. Primary metadata, viewer state and primary artwork must remain the priority. Preserve usable content, pending writes and selected artwork; do not hide the whole page, invent empty states, or use route-wide refresh to reveal completed background work. Verify real authenticated desktop/mobile cold and warm pages, failures, repeat switches, nonzero-scroll reload and history traversal.
 - [x] **R15 — Broad cold-loading performance improvement.** Profile and improve cold Games details and cold actor portfolios across retrieval, provider acquisition, eligibility, caching, SQL/payload transfer, rendering and polling. Apply search-results-performance and web-perf guidance. Capture equivalent before/after benchmark and real-browser evidence; distinguish controlled fixture costs from live-provider/VPS/browser latency. Keep provider work, concurrency and VPS CPU/event-loop work bounded. Preserve complete domain data, correctness, privacy and identity; warm caches or skeletons alone do not close the cold-performance defects.
 
-## User-reported beta URLs
+## Follow-up — 28 October 2026
 
-Follow-up requested 28 October: [ ] **F01 — Independent mapping evidence and normal release years.** Resolve missing/early-access year gaps with independent cast, character, store and release-history evidence; keep ordinary matching fast, isolate bounded deeper failures, preserve identity/private state and display normal release years. Verification is recorded in [the refinement report](mapping-evidence-refinement-2026-10-28.md). This is additional work after the 15 original review items above.
+- [x] **F01 — Independent mapping evidence and normal release years.** Resolve missing/early-access year gaps with independent cast, character, store and release-history evidence; keep ordinary matching fast, isolate bounded deeper failures, preserve identity/private state and display normal release years. Verification is recorded in [the refinement report](mapping-evidence-refinement-2026-10-28.md): four year gaps now resolved, ordinary-path costs unchanged, two distinct source ambiguities remain honestly partial. This is additional work after the 15 original review items above.
+
+## User-reported beta URLs
 
 - Contributor with only BG3 visible: https://instance-20260813-1501.tailf7212b.ts.net:8001/actors/catalogue:37799?media_type=game&view=timeline
 - BG3 details/artwork: https://instance-20260813-1501.tailf7212b.ts.net:8001/games/36823

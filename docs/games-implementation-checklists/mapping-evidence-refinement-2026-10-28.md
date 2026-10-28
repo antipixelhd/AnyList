@@ -1,6 +1,6 @@
 # Mapping evidence and release-year refinement — 28 October 2026
 
-Follow-up to the completed beta review: release year is supporting identity evidence, not a mandatory gate when independent facts establish the game. An early-access year can differ normally from a full-release year. Display uses the normal/full release; matching retains the underlying dated evidence. Deployment and authenticated acceptance are pending below.
+Follow-up to the completed beta review: release year is supporting identity evidence, not a mandatory gate when independent facts establish the game. An early-access year can differ normally from a full-release year. Display uses the normal/full release; matching retains the underlying dated evidence. The refinement is deployed and authenticated acceptance is recorded below.
 
 ## Implementation
 
@@ -32,4 +32,16 @@ Cached person cards/status/100-work captions retain exact fingerprints, counts a
 
 Full-release browse was additionally compared against the exact committed backend in a separate disposable source directory with the same synthetic data/harness. Both arms cost 13 cold reads, 16 writes and three provider calls; warm reads are four with zero writes/calls. The final curated cold/warm times are 221.69/14.79 ms versus 298.81/37.00 ms in that baseline diagnostic arm. Membership/order intentionally changes to normal release instead of early access; opaque cursor bytes also change with the new policy. This is correctness with comparable bounded work, not identical-result optimization. Live IGDB range probes returned 65/69 unique canonical candidates per 100 raw release events in the inspected 2019/2021 pages. Duplicates/later ports are skipped while raw offsets and the outer cursor's seen set remain authoritative.
 
-Deployment and authenticated desktop/mobile results remain pending.
+## Deployed authenticated acceptance
+
+Commit `5b9daa8f` is pushed to beta and deployment `40617033340` succeeded. No schema migration is required and main was not merged. Normal visits to the two reported actor pages admitted matcher-version-3 discovery; no game page visits, manual bindings or provider seeds were needed to acquire the four new works. Both jobs settled with no error or pending work.
+
+Neil Newbon now has 32 mapped source game connections, three exclusions and zero unresolved connections in the retrieved source; his actor page displays all 26 verified actor works through normal paging. Evolutis: Duality (`catalogue:79356`, IGDB 129170) displays Royal Snake / Corrupt Doctor / Royal Animal / Hospital Patient. Starfinder: Afterlight (`catalogue:78783`, IGDB 358807) displays Preach. The remaining six mapped connections are crew participation. Global official-filmography completeness remains false; zero unresolved in one retrieved connection is not a claim of universal source completeness.
+
+Amelia Tyler now has 51 mapped source game connections, two exclusions and two unresolved connections. All 51 actor cards are displayed through normal paging. Abandon Ship (`catalogue:79256`, IGDB 30647) shows Female captain under **2019**, with canonical date `2019-10-22`; IMDb's 2018 early-access year is retained as identity support rather than displayed as the normal release. Emberville (`catalogue:79346`, IGDB 272981) appears without an invented character label or release year. Evolutis also remains undated. Starfinder displays IGDB's stated full-release year 2026 at year precision rather than copying IMDb's 2027; external release plans remain provider evidence, not a fabricated exact date.
+
+Both identities were exercised at 1365×900 and 390×844. Screenshots of desktop Evolutis, mobile Evolutis and desktop Emberville were visually inspected. Available captions wrap correctly with no horizontal overflow. Existing public cards remain while automatic bindings revalidate; new content is offered through the established refresh/paging flow. The authenticated newest-browse request for 2019 returns HTTP 200 and six normal-release-year cards with no partial/error result in that sampled page. The first games were acquired through actor discovery before any individual game detail was opened.
+
+Comanche and Roger & James in They Came from Below remain the two unresolved Amelia records, for different reasons than the four closed year gaps: an undated competing port, and missing exact source identity. They remain honestly partial. Existing mod/ordinary-DLC exclusions are unchanged. The refinement closes the four gaps supported by independent current evidence and does not force the other two.
+
+Cleanup completed: the reused dedicated test account is retained with its temporary admin access removed, password randomized and sessions verified revoked; original accounts were untouched. Both owned browser sessions were closed and exact private authentication-state files removed. Four raw synthetic benchmark records were retained in ignored local archives, then only the verified disposable PostgreSQL container/volume and review source directories were removed.
