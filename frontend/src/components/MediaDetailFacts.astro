@@ -16,3 +16,5 @@ const age=title.type==='game'?gameAgeRating(title.game_info,title.game_offer_con
   {facts.filter(fact=>lowerFacts.has(fact.label)).map(fact=><div><dt>{fact.label}</dt><dd>{fact.value}</dd></div>)}
   {organizations.filter(group=>finalGroups.has(group.label)).map(group=><div><dt>{group.label}</dt><dd>{group.rows.map(person=><span class="media-fact-entry">{person.url?<a href={person.url}>{person.name}</a>:person.name}</span>)}</dd></div>)}
 </dl>
+
+{title.type==='game'&&title.game_metadata_status?.primary_ready===false&&!facts.length&&<div class="game-section-skeleton" data-game-primary-facts aria-hidden="true"><span></span><span></span><span></span></div>}

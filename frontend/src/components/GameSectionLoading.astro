@@ -1,0 +1,8 @@
+---
+interface Props {loading:boolean;kind?:'price'|'ratings'|'times'|'requirements'}
+const {loading,kind='times'}=Astro.props;
+---
+<div class:list={['game-section-skeleton',`game-section-skeleton-${kind}`]} data-game-section-loading hidden={!loading} aria-hidden="true">
+  {Array.from({length:kind==='requirements'?12:3},()=> <span></span>)}
+</div>
+<p class="detail-load-status" data-game-section-error role="status" hidden><span data-game-section-message></span> <button type="button" class="lab-text-button" data-game-section-retry>Retry</button></p>

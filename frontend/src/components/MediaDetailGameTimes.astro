@@ -1,10 +1,15 @@
 ---
 import {completionCategories,estimatedHours,type CompletionEstimates} from '../lib/game-time-to-beat';
-interface Props {estimates?:CompletionEstimates|null}
-const {estimates}=Astro.props;
+import GameSectionLoading from './GameSectionLoading.astro';
+import {gameSectionPending} from '../lib/game-section-loading';
+import type {DetailLoadState} from '../lib/detail-background';
+interface Props {estimates?:CompletionEstimates|null;status?:DetailLoadState;primaryPending?:boolean}
+const {estimates,status,primaryPending=false}=Astro.props;
 const rows=completionCategories.map(([field,label])=>({field,label,value:estimatedHours(estimates?.[field])}));
+const available=rows.some(row=>row.value),loading=!available&&gameSectionPending(status,primaryPending);
 ---
-<section class="lab-module lab-game-times" data-game-time-to-beat hidden={!rows.some(row=>row.value)}>
+<section class="lab-module lab-game-times" data-game-time-to-beat hidden={!available&&!loading} aria-busy={loading}>
   <div class="lab-section-title"><h2>Time to beat</h2><span data-time-estimate-source title={estimates?.samples!=null?`${estimates.samples} IGDB submissions`:undefined}>IGDB</span></div>
-  <dl>{rows.map(row=><div data-time-estimate={row.field} hidden={!row.value}><dt>{row.label}</dt><dd>{row.value}</dd></div>)}</dl>
+  <GameSectionLoading {loading} kind="times"/>
+  <dl data-game-section-content hidden={!available}>{rows.map(row=><div data-time-estimate={row.field} hidden={!row.value}><dt>{row.label}</dt><dd>{row.value}</dd></div>)}</dl>
 </section>

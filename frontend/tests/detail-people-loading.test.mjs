@@ -18,7 +18,7 @@ test('a game connection polls its own progress without a second character reques
         source:{people:'/api/proxy/tracking/games/works/7/credits'}});
     resource.start(true);await resource.characters();
     assert.deepEqual(calls,['/api/proxy/tracking/games/works/7/credits']);
-    assert.equal(timers[0].ms,3000);
+    assert.equal(timers[0].ms,2000);
     timers.shift().callback();await resource.characters();
     assert.deepEqual(calls,Array(2).fill('/api/proxy/tracking/games/works/7/credits'));
     assert.equal(timers.length,0);

@@ -79,8 +79,6 @@ export function mountDetailDlc(root:HTMLElement,id:number,signal:AbortSignal){
   document.addEventListener('anylist:editor-state',event=>{
     const title=(event as CustomEvent<EditorTitle>).detail;if(title.type==='game')paint(title);
   },{signal});
-  // Optional child metadata never holds up primary title/artwork/tracking.
-  const timer=setTimeout(()=>{if(!started&&!signal.aborted)void load();},1500);
-  signal.addEventListener('abort',()=>clearTimeout(timer),{once:true});
+  // Fetch only when the DLC tab is exposed; primary content owns startup work.
   return ()=>{if(!started)void load();};
 }

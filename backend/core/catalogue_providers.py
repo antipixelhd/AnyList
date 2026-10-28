@@ -922,20 +922,15 @@ class CatalogueProviders:
         gid = game_id(lookup)
         # Steam is shop 61 in the current official catalogue, verified live.
         params.update(country=country.upper(), shops="61")
-        prices = await self.http.request(
-            "itad",
-            "POST",
-            "https://api.isthereanydeal.com/games/prices/v3",
-            params=params,
-            json=[gid],
-        )
-        lows = await self.http.request(
-            "itad",
-            "POST",
-            "https://api.isthereanydeal.com/games/storelow/v2",
-            params=params,
-            json=[gid],
-        )
+        # Independent components share the existing provider budget. Overlap
+        # network latency rather than waiting for prices before requesting lows.
+        tasks=[asyncio.create_task(self.http.request('itad','POST',f'https://api.isthereanydeal.com/games/{path}',
+            params=params,json=[gid])) for path in ('prices/v3','storelow/v2')]
+        try:prices,lows=await asyncio.gather(*tasks)
+        finally:
+            for task in tasks:
+                if not task.done():task.cancel()
+            await asyncio.gather(*tasks,return_exceptions=True)
         return {
             **normalized(gid,prices,lows),
             "payload": {"lookup": lookup, "prices": prices, "storelow": lows},

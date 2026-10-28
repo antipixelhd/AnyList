@@ -4,6 +4,8 @@ import {mountContributorBiography,unmountContributorBiography} from './contribut
 /** Publish public metadata into owned slots; never re-seed editor/private state. */
 export function publishGamePrimary(root:HTMLElement,data:Record<string,any>,id:number,signal:AbortSignal) {
   if(signal.aborted||data.id!==id||data.type!=='game')return false;
+  root.dataset.gamePrimaryPending='false';
+  root.querySelectorAll('[data-game-primary-facts]').forEach(node=>node.remove());
   const title=prepareDetail(data);
   const heading=root.querySelector('.lab-heading h1');if(heading)heading.textContent=title.title;
   const year=root.querySelector<HTMLElement>('[data-game-year]');
@@ -16,7 +18,7 @@ export function publishGamePrimary(root:HTMLElement,data:Record<string,any>,id:n
     genres.replaceChildren(...title.genres.slice(0,6).map(genre=>{
       const node=document.createElement('a');node.textContent=genre;
       node.href=detailBrowseHref('game',{genre})||'/browse/games';return node;
-    }));genres.hidden=!title.genres.length;
+    }));genres.hidden=!title.genres.length;genres.removeAttribute('aria-busy');
   }
   const synopsis=root.querySelector<HTMLElement>('[data-detail-synopsis]');
   if(synopsis){

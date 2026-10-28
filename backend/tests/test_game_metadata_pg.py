@@ -61,6 +61,13 @@ class GameMetadataTests(unittest.IsolatedAsyncioTestCase):
         for field in ('entry','notes','people','organizations','game_characters','achievement_unlocks','total_seconds','completion_seconds'):
             self.assertNotIn(field,data)
         self.assertEqual(response.headers['cache-control'],'private, no-store')
+        combined=await self.client.get(f'/tracking/games/works/{self.base}/metadata?primary=true')
+        self.assertEqual(combined.status_code,200,combined.text)
+        self.assertEqual(combined.json()['primary']['title'],'Hydrated game')
+        self.assertNotIn('entry',combined.json()['primary'])
+        revision=combined.json()['primary_revision']
+        unchanged=await self.client.get(f'/tracking/games/works/{self.base}/metadata',params={'primary':'true','revision':revision})
+        self.assertNotIn('primary',unchanged.json())
 
     async def test_scheduler_admits_later_primary_while_optional_character_slots_are_busy(self):
         ids=[]

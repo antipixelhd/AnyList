@@ -1,4 +1,5 @@
 import {detailBackground} from './detail-background.ts';
+import {paintGameSection,bindGameSection,gameSectionFailure} from './game-section-loading.ts';
 
 export interface CompletionEstimates {
   main_story_seconds:number|null;main_sides_seconds:number|null;completionist_seconds:number|null;
@@ -13,7 +14,7 @@ export function estimatedHours(seconds:unknown):string|null {
   return minutes<60?`${Math.max(1,minutes)}m`:`${new Intl.NumberFormat(undefined,{maximumFractionDigits:1}).format(hours)}h`;
 }
 
-export function mountGameTimeToBeat(root:HTMLElement,id:number,signal:AbortSignal) {
+export function mountGameTimeToBeat(root:HTMLElement,id:number,signal:AbortSignal,initial?:import('./detail-background').DetailLoadState) {
   const section=root.querySelector<HTMLElement>('[data-game-time-to-beat]');
   if(!section)return;
   const resource=detailBackground<{estimates:CompletionEstimates|null;status:import('./detail-background').DetailLoadState}>(
@@ -23,10 +24,10 @@ export function mountGameTimeToBeat(root:HTMLElement,id:number,signal:AbortSigna
         const value=estimatedHours(data.estimates?.[field]);item.hidden=!value;
         item.querySelector('dd')!.textContent=value||'';return !!value;
       });
-      section.hidden=!rows.some(Boolean);
+      paintGameSection(section,rows.some(Boolean),data.status,root.dataset.gamePrimaryPending==='true');
       const source=section.querySelector<HTMLElement>('[data-time-estimate-source]')!;
       source.title=data.estimates?.samples!=null?`${data.estimates.samples} IGDB submissions`:'';
       return data.status;
-    },()=>{});
-  resource.start();
+    },(state,error)=>gameSectionFailure(section,state,error));
+  bindGameSection(root,section,signal,resource,initial);
 }

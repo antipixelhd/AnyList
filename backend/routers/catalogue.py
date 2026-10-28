@@ -331,6 +331,8 @@ async def media_detail(entity_id: Annotated[int, Path(gt=0)], db: DB, current_us
         await db.commit()
         data['completion_estimates']=times['estimates']
         data['game_estimate_status']=times['status']
+        from core.game_offers import notify_refresh
+        notify_refresh(data.get('game_offer_context') or {})
     return data
 
 

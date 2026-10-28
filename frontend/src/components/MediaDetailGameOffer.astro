@@ -3,13 +3,17 @@ import Icon from './Icon.astro';
 import LocalDateTime from './LocalDateTime.astro';
 import {moneyLabel} from '../lib/media-detail-data';
 import {selectedGameOffer,offerLink,type GameOffers} from '../lib/game-offer-data';
-interface Props {data:GameOffers|null}
-const {data}=Astro.props,price=selectedGameOffer(data,true),low=moneyLabel(price?.historical_low),url=offerLink(price?.url||null);
+import GameSectionLoading from './GameSectionLoading.astro';
+import {gameSectionPending} from '../lib/game-section-loading';
+interface Props {data:GameOffers|null;primaryPending?:boolean}
+const {data,primaryPending=false}=Astro.props,price=selectedGameOffer(data,true),low=moneyLabel(price?.historical_low),url=offerLink(price?.url||null);
+const loading=!price&&(gameSectionPending(data?.status,primaryPending)||!!data?.steam_app_id&&data.country_source==='fallback');
 ---
-<section class="lab-game-offer lab-module" data-game-offer data-game-offer-source={data?.country_source} data-game-offer-region={data?.country} hidden={!price}>
-  <div class="lab-offer-edition"><h2>Steam · <span data-game-offer-country>{price?.country}</span></h2><p>Updated <LocalDateTime value={price?.fetched_at} style="timestamp-date" class="game-offer-updated"/></p></div>
-  <div class="lab-offer-pricing"><strong data-game-offer-price>{moneyLabel(price?.current)}</strong></div>
+<section class="lab-game-offer lab-module" data-game-offer data-game-offer-source={data?.country_source} data-game-offer-region={data?.country} hidden={!price&&!loading} aria-busy={loading}>
+  <div class="lab-offer-edition"><h2>Steam<span data-game-section-content hidden={!price}> · <span data-game-offer-country>{price?.country}</span></span></h2><p data-game-section-content hidden={!price}>Updated <LocalDateTime value={price?.fetched_at} style="timestamp-date" class="game-offer-updated"/></p></div>
+  <GameSectionLoading {loading} kind="price"/>
+  <div class="lab-offer-pricing" data-game-section-content hidden={!price}><strong data-game-offer-price>{moneyLabel(price?.current)}</strong></div>
   <p class="media-price-low" data-game-offer-low hidden={!low}>Lowest <span data-game-offer-low-price>{low}</span><span data-game-offer-low-date hidden={!price?.historical_low_at}> · <LocalDateTime value={price?.historical_low_at}/></span></p>
   <a class="lab-primary-button" data-game-offer-link href={url||undefined} target="_blank" rel="noreferrer" hidden={!url}>View on Steam <Icon name="external"/></a>
-  <a class="lab-text-button" href="https://isthereanydeal.com/" target="_blank" rel="noreferrer">IsThereAnyDeal <Icon name="external"/></a>
+  <a class="lab-text-button" data-game-section-content hidden={!price} href="https://isthereanydeal.com/" target="_blank" rel="noreferrer">IsThereAnyDeal <Icon name="external"/></a>
 </section>

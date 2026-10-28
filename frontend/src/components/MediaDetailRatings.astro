@@ -1,11 +1,14 @@
 ---
+import GameSectionLoading from './GameSectionLoading.astro';
 interface Row {name:string;field:string;value:string|number|null|undefined;detail?:string;url?:string|null;hidden?:boolean}
 interface Props {rows:Row[];game?:boolean;pending?:boolean}
 const {rows,game=false,pending=false}=Astro.props;
+const available=rows.some(row=>!row.hidden&&row.value!=null),loading=game&&pending&&!available;
 ---
-<section class="lab-public-score lab-module" aria-labelledby="detail-audience-heading" data-game-ratings={game?true:undefined} hidden={game&&!rows.some(row=>!row.hidden&&row.value!=null)}>
+<section class="lab-public-score lab-module" aria-labelledby="detail-audience-heading" data-game-ratings={game?true:undefined} hidden={game&&!available&&!loading} aria-busy={loading||undefined}>
   <div class="lab-section-title"><h2 id="detail-audience-heading">Audience score</h2></div>
-  <div class="media-provider-ratings">{rows.map(({name,field,value,detail,url,hidden})=><p title={detail} data-game-rating-row={game?field:undefined} hidden={hidden}>
+  {game&&<GameSectionLoading {loading} kind="ratings"/>}
+  <div class="media-provider-ratings" data-game-section-content={game?true:undefined} hidden={game&&!available}>{rows.map(({name,field,value,detail,url,hidden})=><p title={detail} data-game-rating-row={game?field:undefined} hidden={hidden}>
     {game||url?<a href={url||undefined} target="_blank" rel="noreferrer" data-rating-source>{name}</a>:<span>{name}</span>}
     <strong data-detail-score={field} class:list={{'detail-value-skeleton':!game&&value==null&&pending}}>{value==null?'':value}</strong>
   </p>)}</div>

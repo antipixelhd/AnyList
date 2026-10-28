@@ -47,12 +47,13 @@ async def game_statistics(username:str,response:Response,db:DB,viewer:Reader,sec
 @router.get('/works/{work_id}/offers')
 async def game_offers(work_id:WorkId,db:DB,viewer:Reader,
     country:Annotated[str|None,Query(pattern=r'^[A-Za-z]{2}$')]=None) -> dict:
-    from core.game_offers import view
+    from core.game_offers import view,notify_refresh
     from core.catalogue_providers import ProviderError
     work=await tracking.work(db,work_id)
     try:result=await view(db,work,viewer.id,hint=country,enqueue=True)
     except ProviderError:raise HTTPException(422,'Invalid store country') from None
     await db.commit()
+    notify_refresh(result)
     return result
 
 
@@ -185,7 +186,8 @@ async def game_credits(work_id: WorkId, db: DB, viewer: Reader) -> dict:
 
 
 @router.get('/works/{work_id}/metadata')
-async def game_metadata_status(work_id:WorkId,db:DB,viewer:Reader) -> dict:
+async def game_metadata_status(work_id:WorkId,db:DB,viewer:Reader,
+    primary:bool=False,revision:Annotated[str|None,Query(max_length=100)]=None) -> dict:
     from core.game_metadata import GameMetadata
     from sqlalchemy.ext.asyncio import async_sessionmaker
     work=await tracking.work(db,work_id)
@@ -194,6 +196,10 @@ async def game_metadata_status(work_id:WorkId,db:DB,viewer:Reader) -> dict:
     # Ready data need not wait for another browser polling interval. Warm reads
     # still return immediately and never acquire optional character payloads.
     state,_=await service.ensure(db,work,wait_seconds=2)
+    if primary and state['primary_ready'] and state.get('primary_revision')!=revision:
+        from core.media_details import primary_details
+        await db.refresh(work)
+        return {**state,'primary':primary_details(work)}
     return state
 
 

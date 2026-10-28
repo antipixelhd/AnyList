@@ -43,6 +43,9 @@ export type DetailMedia = EditorTitle & {
   game_character_status?:{complete?:boolean;source?:string;pending?:boolean};
   game_credit_status?: {state:string;pending?:boolean;error?:string|null;retry_after?:number;complete?:boolean;coverage?:string};
   completion_estimates?:import('./game-time-to-beat').CompletionEstimates|null;
+  game_estimate_status?:import('./detail-background').DetailLoadState;
+  game_rating_status?:import('./detail-background').DetailLoadState;
+  game_info_status?:import('./detail-background').DetailLoadState;
   game_offer_context?:Omit<import('./game-offer-data').GameOffers,'offers'>;
   game_ratings?:import('./game-ratings-data').GameRatings|null;
   game_metadata_status?:{primary_ready:boolean;primary_revision?:string|null;state:string;pending?:boolean;error?:string|null;retry_after?:number};

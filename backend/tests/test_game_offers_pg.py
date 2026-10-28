@@ -129,6 +129,33 @@ class GameOffersDatabaseTests(unittest.IsolatedAsyncioTestCase):
             count=await db.scalar(select(func.count()).select_from(MetadataSnapshot).where(MetadataSnapshot.provider=='itad',MetadataSnapshot.external_id=='1245620:DE'))
             self.assertEqual(count,1)
 
+    async def test_committed_admission_wakes_the_price_worker(self):
+        await self.set_country('DE');await self.expire()
+        wake=asyncio.Event()
+        with patch.object(offers,'_wake',wake):
+            self.assertTrue((await self.request()).json()['status']['pending'])
+            self.assertTrue(wake.is_set())
+            async with self.Session() as db:
+                row=await offers.price_header(db,'1245620:DE')
+                self.assertIsNotNone(row.next_attempt_at)
+
+    async def test_two_regions_refresh_concurrently_with_bounded_shared_leases(self):
+        await self.set_country(None)
+        for country in ('DE','GB'):
+            await self.expire(country);await self.request(country)
+        entered,release=asyncio.Event(),asyncio.Event();countries=[]
+        async def fetch(app,country):
+            countries.append(country)
+            if len(countries)==2:entered.set()
+            await release.wait();return source_price()
+        client=AsyncMock();client.steam_prices.side_effect=fetch
+        task=asyncio.create_task(offers.run_due(self.Session,client=client,limit=2))
+        try:
+            await asyncio.wait_for(entered.wait(),5)
+            self.assertCountEqual(countries,['DE','GB'])
+        finally:release.set();await task
+        self.assertEqual(task.result(),2)
+
     async def test_failure_preserves_current_and_low_with_bounded_retry(self):
         await self.set_country('DE');await self.expire();await self.request()
         client=AsyncMock();client.steam_prices.side_effect=ProviderError('timeout')
@@ -184,3 +211,23 @@ class GameOffersDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await offers.run_due(self.Session,client=client),0)
         async with self.Session() as db:
             self.assertEqual(await db.scalar(select(func.count()).select_from(SteamPriceSnapshot).where(SteamPriceSnapshot.work_id==game_id)),0)
+
+class OfferSchedulerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_new_demand_wakes_an_idle_worker_without_the_five_second_tick(self):
+        wake,first,second=asyncio.Event(),asyncio.Event(),asyncio.Event()
+        calls=0
+        async def run_due(factory):
+            nonlocal calls
+            calls+=1
+            (first if calls==1 else second).set()
+            return 0
+        with patch.object(offers,'_wake',wake),patch.object(offers,'run_due',run_due):
+            task=asyncio.create_task(offers.scheduler())
+            try:
+                await asyncio.wait_for(first.wait(),1)
+                offers.notify_refresh({'status':{'state':'pending','pending':True}})
+                await asyncio.wait_for(second.wait(),1)
+                self.assertEqual(calls,2)
+            finally:
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError):await task

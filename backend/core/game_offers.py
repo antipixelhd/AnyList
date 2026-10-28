@@ -17,6 +17,13 @@ from models import UserProfileData
 from models.catalogue import CatalogueEntity,CatalogueIdentity,MetadataSnapshot,SteamPriceSnapshot
 
 log=logging.getLogger(__name__)
+_wake=asyncio.Event()
+
+
+def notify_refresh(result):
+    """Wake only after the caller committed admission; the durable queue owns work."""
+    state=result.get('status') or {}
+    if state.get('pending') and state.get('state')=='pending' and not state.get('error'):_wake.set()
 
 
 def now():return datetime.now(timezone.utc).replace(tzinfo=None)
@@ -31,7 +38,7 @@ async def price_header(db,key):
 def status_view(row):
     if not row:return {'state':'unavailable','pending':False,'retry_after':0}
     active=bool(row.lease_until and row.lease_until>now());pending=active or bool(row.next_attempt_at)
-    delay=max(1,int((row.next_attempt_at-now()).total_seconds())+1) if row.next_attempt_at else 3
+    delay=max(1,int((row.next_attempt_at-now()).total_seconds())+1) if row.next_attempt_at else 1
     return {'state':'loading' if active else 'retry' if row.error_code and pending else 'pending' if pending else 'ready',
         'pending':pending,'retry_after':min(3600,delay),'error':row.error_code,'complete':bool(row.fetched_at) and not pending}
 
@@ -47,7 +54,7 @@ async def admit(db,key,work_id):
             or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=stamp)
             & or_(MetadataSnapshot.entity_id.is_distinct_from(work_id),
                 MetadataSnapshot.next_attempt_at.is_(None)&or_(MetadataSnapshot.expires_at.is_(None),MetadataSnapshot.expires_at<=stamp)))))
-    return {'state':'pending','pending':True,'retry_after':3,'error':None,'complete':False}
+    return {'state':'pending','pending':True,'retry_after':1,'error':None,'complete':False}
 
 
 async def country(db,user_id,hint=None):
@@ -110,20 +117,19 @@ async def run_due(factory,*,client=None,limit=2):
             MetadataSnapshot.provider=='itad',MetadataSnapshot.kind=='price',MetadataSnapshot.next_attempt_at<=stamp,
             or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=stamp))
             .order_by(MetadataSnapshot.next_attempt_at,MetadataSnapshot.id).limit(limit))).all()
-    completed=0
-    for key,work_id in jobs:
+    async def refresh(key,work_id):
         match=re.fullmatch(r'([1-9][0-9]{0,18}):([A-Z]{2})',key)
         async with factory() as db:
             work=await db.get(CatalogueEntity,work_id) if work_id else None
             if not match or not country_code(match[2]) or not work or work.kind!='game' or not capabilities(work.attributes).searchable:
                 await db.execute(update(MetadataSnapshot).where(MetadataSnapshot.provider=='itad',
                     MetadataSnapshot.kind=='price',MetadataSnapshot.external_id==key).values(next_attempt_at=None,error_code='identity_conflict'))
-                await db.commit();continue
+                await db.commit();return 0
             # refresh_prices owns the existing durable app/country lease and
             # provider budget, also shared with explicit refresh requests.
             try:
                 result=await catalogue.refresh_prices(db,client,work_id,match[1],match[2])
-                completed+=result['status']=='updated'
+                return int(result['status']=='updated')
             except catalogue.IdentityConflict:
                 await db.rollback()
                 # Identity changed: retire admission, never invent a new app.
@@ -131,13 +137,22 @@ async def run_due(factory,*,client=None,limit=2):
                     MetadataSnapshot.kind=='price',MetadataSnapshot.external_id==key).values(
                         next_attempt_at=None,error_code='identity_conflict'))
                 await db.commit()
-    return completed
+                return 0
+    # One worker owns at most `limit` independent app/country leases. A slow
+    # regional price must not hold up the other admitted price in the batch.
+    async with asyncio.TaskGroup() as group:
+        tasks=[group.create_task(refresh(key,work_id)) for key,work_id in jobs]
+    return sum(task.result() for task in tasks)
 
 
 async def scheduler():
     from db import AsyncSessionLocal
     while True:
-        try:await run_due(AsyncSessionLocal)
+        _wake.clear()
+        completed=0
+        try:completed=await run_due(AsyncSessionLocal)
         except asyncio.CancelledError:raise
         except Exception:log.warning('Steam offer refresh is temporarily unavailable')
-        await asyncio.sleep(5)
+        if completed>=2:continue
+        try:await asyncio.wait_for(_wake.wait(),timeout=5)
+        except TimeoutError:pass

@@ -29,7 +29,7 @@ export function detailBackground<T>(path:string, signal:AbortSignal, apply:(data
         attempts=0;
         if(state.state==='deferred'||state.state==='partial'||state.pending||state.state==='pending'){
           status(state.error?'retry':'loading',state.error?'Provider data is temporarily unavailable. Retrying automatically.':undefined);
-          schedule(Math.max(3,state.retry_after||10));
+          schedule(Math.max(1,state.retry_after||10));
         }else {done=true;status('ready');}
       }catch(error){
         if(signal.aborted)return;
@@ -40,7 +40,7 @@ export function detailBackground<T>(path:string, signal:AbortSignal, apply:(data
     return request;
   };
   signal.addEventListener('abort',()=>clearTimeout(timer),{once:true});
-  return {load, retry:()=>{done=false;return load();}, start:()=>requestAnimationFrame(()=>requestAnimationFrame(()=>{
-    if(!signal.aborted)schedule(.5);
+  return {load, retry:async(afterCurrent=false)=>{if(afterCurrent&&request)await request;done=false;return load();}, start:()=>requestAnimationFrame(()=>requestAnimationFrame(()=>{
+    if(!signal.aborted)void load();
   }))};
 }

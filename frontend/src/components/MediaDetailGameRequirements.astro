@@ -1,12 +1,17 @@
 ---
 import {requirementRows,type GameInfo} from '../lib/game-info-data';
-interface Props {info?:GameInfo|null}
-const {info}=Astro.props;
+import GameSectionLoading from './GameSectionLoading.astro';
+import {gameSectionPending} from '../lib/game-section-loading';
+import type {DetailLoadState} from '../lib/detail-background';
+interface Props {info?:GameInfo|null;status?:DetailLoadState;primaryPending?:boolean}
+const {info,status,primaryPending=false}=Astro.props;
 const groups=[['minimum','Minimum'],['recommended','Recommended']] as const;
+const available=groups.some(([part])=>requirementRows(info,part).length),loading=!available&&gameSectionPending(status,primaryPending);
 ---
-<section class="lab-module game-requirements" data-game-requirements hidden={!groups.some(([part])=>requirementRows(info,part).length)} aria-labelledby="game-requirements-heading">
+<section class="lab-module game-requirements" data-game-requirements hidden={!available&&!loading} aria-busy={loading} aria-labelledby="game-requirements-heading">
   <div class="lab-section-title"><h2 id="game-requirements-heading">PC requirements</h2><a class="lab-text-button" href={info?.steam_app_id?`https://store.steampowered.com/app/${info.steam_app_id}/#app_system_requirements`:undefined} hidden={!info?.steam_app_id} target="_blank" rel="noreferrer" data-game-requirements-source>Steam</a></div>
-  <div class="game-requirements-grid">{groups.map(([part,name])=><div data-requirements-part={part} hidden={!requirementRows(info,part).length}><h3>{name}</h3><dl>{requirementRows(info,part).map(row=><div>{row.label&&<dt>{row.label}</dt>}<dd>{row.value}</dd></div>)}</dl></div>)}</div>
+  <GameSectionLoading {loading} kind="requirements"/>
+  <div class="game-requirements-grid" data-game-section-content hidden={!available}>{groups.map(([part,name])=><div data-requirements-part={part} hidden={!requirementRows(info,part).length}><h3>{name}</h3><dl>{requirementRows(info,part).map(row=><div>{row.label&&<dt>{row.label}</dt>}<dd>{row.value}</dd></div>)}</dl></div>)}</div>
 </section>
 <style is:global>
   .game-requirements{grid-column:1/-1}

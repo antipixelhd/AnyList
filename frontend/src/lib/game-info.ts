@@ -2,9 +2,10 @@ import {detailBackground,type DetailLoadState} from './detail-background';
 import {gameAgeRating,requirementRows,type GameInfo} from './game-info-data';
 import {deviceStoreCountry} from './store-country';
 import {reveal} from './ui-motion';
+import {paintGameSection,bindGameSection,gameSectionFailure} from './game-section-loading';
 
 type InfoResponse={info:GameInfo|null;status:DetailLoadState;country:string;country_source:string};
-export function mountGameInfo(root:HTMLElement,id:number,signal:AbortSignal,initial?:{info:GameInfo|null;country:string;country_source:string}) {
+export function mountGameInfo(root:HTMLElement,id:number,signal:AbortSignal,initial?:{info:GameInfo|null;country:string;country_source:string;status?:DetailLoadState}) {
   const section=root.querySelector<HTMLElement>('[data-game-requirements]');if(!section)return;
   const ages=[...root.querySelectorAll<HTMLElement>('[data-game-age-rating]')];
   const age=(info:GameInfo|null,country:string)=>{
@@ -21,11 +22,11 @@ export function mountGameInfo(root:HTMLElement,id:number,signal:AbortSignal,init
       for(const row of rows){const group=document.createElement('div');if(row.label){const term=document.createElement('dt');term.textContent=row.label;group.append(term);}const value=document.createElement('dd');value.textContent=row.value;group.append(value);content.append(group);}
       list.replaceChildren(content);
     }
-    section.hidden=!requirementRows(data.info,'minimum').length&&!requirementRows(data.info,'recommended').length;
+    paintGameSection(section,!!(requirementRows(data.info,'minimum').length||requirementRows(data.info,'recommended').length),data.status,root.dataset.gamePrimaryPending==='true');
     const link=section.querySelector<HTMLAnchorElement>('[data-game-requirements-source]');
     if(link){link.hidden=!data.info?.steam_app_id;if(data.info?.steam_app_id)link.href=`https://store.steampowered.com/app/${data.info.steam_app_id}/#app_system_requirements`;}
     if(entering&&!section.hidden)reveal(section);
     return data.status;
-  },()=>{});
-  resource.start();
+  },(state,error)=>gameSectionFailure(section,state,error));
+  bindGameSection(root,section,signal,resource,initial?.status);
 }

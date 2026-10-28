@@ -43,7 +43,7 @@ export function mountMediaDetail() {
   const loadAchievements=mountDetailAchievements(root,info.id,signal);
   const deferArtwork=observeDeferredArtwork(root,signal);
   mountDetailCast(root,signal,info);
-  if(root.dataset.mediaKind==='game'){mountGameMetadata(root,info.id,signal);mountGameTimeToBeat(root,info.id,signal);mountGameOffers(root,info.id,signal);mountGameRatings(root,info.id,signal);mountGameInfo(root,info.id,signal,info.gameInfo);}
+  if(root.dataset.mediaKind==='game'){mountGameMetadata(root,info.id,signal);mountGameTimeToBeat(root,info.id,signal,info.gameEstimateStatus);mountGameOffers(root,info.id,signal,info.gameOffers);mountGameRatings(root,info.id,signal,info.gameRatingStatus);mountGameInfo(root,info.id,signal,info.gameInfo);}
   if(info.backgroundAvailable){
     const scoreStatus=root.querySelector<HTMLElement>('[data-detail-score-status]');
     const scores=detailBackground<Record<string,any>>(`/api/proxy/tracking/title/${info.id}/scores`,signal,data=>{
