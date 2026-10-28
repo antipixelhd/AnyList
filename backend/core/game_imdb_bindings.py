@@ -15,7 +15,7 @@ from core.game_credit_sources import GameCreditSources
 from core.game_imdb_mapping import game_mapping
 from core.game_imdb_source import IMDbGameSource, identifier, game_header
 from core.game_types import capabilities
-from models.catalogue import CatalogueEntity, CatalogueIdentity, CatalogueCredit, MetadataSnapshot
+from models.catalogue import CatalogueEntity, CatalogueIdentity, CatalogueCredit, CatalogueRelationship, MetadataSnapshot
 
 BINDING_REVISION='game_binding_revision'
 
@@ -47,9 +47,17 @@ def now():
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-async def context(db,work_id):
+async def context(db,work_id,*,participation=False):
     work=await db.get(CatalogueEntity,work_id)
-    if not work or work.kind!='game' or not capabilities(work.attributes).searchable:
+    from core.game_types import CREDIT_CHILDREN,INDEPENDENT
+    child = bool(work and participation and (work.attributes or {}).get('game_class') in CREDIT_CHILDREN)
+    if child:
+        parent=aliased(CatalogueEntity)
+        parents=(await db.execute(select(CatalogueRelationship.target_id,parent.kind,parent.attributes['game_class'].astext).join(parent,parent.id==CatalogueRelationship.target_id).where(
+            CatalogueRelationship.source_id==work_id,CatalogueRelationship.relation==(work.attributes or {})['game_class'],
+            CatalogueRelationship.attributes['source_active'].astext.is_distinct_from('false')))).all()
+        child=len(parents)==1 and parents[0][1]=='game' and parents[0][2] in INDEPENDENT-{'port'}
+    if not work or work.kind!='game' or not (capabilities(work.attributes).searchable or child):
         raise catalogue.IdentityConflict('A searchable IGDB game or expansion is required')
     identities=list(await db.scalars(select(CatalogueIdentity).where(CatalogueIdentity.entity_id==work_id)))
     game_ids=[row for row in identities if row.namespace=='igdb.game']
@@ -81,7 +89,7 @@ class GameIMDbBindings:
 
     async def resolve(self,work_id):
         async with self.sessions() as db:
-            work,native,binding,items=await context(db,work_id)
+            work,native,binding,items=await context(db,work_id,participation=True)
             if binding:
                 # A reviewed selection is never remapped by background lookup.
                 bound_native=(binding.evidence or {}).get('igdb_id')
@@ -193,10 +201,10 @@ class GameIMDbBindings:
                 if any(not isinstance(value,str) or not value.isdigit() or int(value) not in scope for value in ids):return previous
                 if not ids and any(value not in slugs for value in names):return previous
         from core.game_imdb_discovery_source import GameIMDbDiscoverySource,project_game
-        from core.game_types import igdb_game_class
+        from core.game_types import igdb_game_class,CREDIT_CHILDREN
         games={row['id']:row for row in candidate['data']['rows']}
         parent=raw.get('parent_game')
-        if igdb_game_class(raw)=='expansion' and isinstance(parent,dict) and parent.get('id') not in games:
+        if igdb_game_class(raw) in CREDIT_CHILDREN and isinstance(parent,dict) and parent.get('id') not in games:
             games.update(await GameIMDbDiscoverySource(self.sessions,sources=self.wiki.sources,wiki=self.wiki).games({parent['id']}))
         projected=project_game(title_id,raw,games,proof['evidence'])
         if projected['status']!='verified':return projected
@@ -209,7 +217,7 @@ class GameIMDbBindings:
             *[f'wikidata:{mapping["evidence"]["wikidata_id"]}' for mapping in previous.get('mappings',[])
                 if mapping.get('evidence',{}).get('wikidata_id')]])
         return await self.save(work_id,title_id,'matched',{'title_type':'videoGame','igdb_id':native,
-            'matching':proof['evidence'],'imdb_identity':current},expected_igdb=native)
+            'matching':proof['evidence'],'imdb_identity':current},expected_igdb=native,participation=True)
 
     async def revalidate(self,work_id,native,previous):
         from core.game_imdb_discovery_source import GameIMDbDiscoverySource
@@ -223,11 +231,11 @@ class GameIMDbBindings:
                 return await self.reverse_lookup(work_id,native,{'status':'unmapped'})
             return await self.save(work_id,previous['id'],'matched' if matched else 'wikidata',{
                 'title_type':'videoGame','igdb_id':native,'matching' if matched else 'wikidata':outcome['evidence'],
-                'imdb_identity':header},expected_igdb=native)
+                'imdb_identity':header},expected_igdb=native,participation=True)
         if not result.get('stale') and outcome['status'] in ('verified','conflict','excluded'):
             async with self.sessions() as db:
                 await catalogue.write_lock(db)
-                _,current,binding,_=await context(db,work_id)
+                _,current,binding,_=await context(db,work_id,participation=True)
                 if current==native and binding and binding.external_id==previous['id'] and binding.source!='reviewed':
                     from core.game_mapping_lifecycle import quarantine
                     await quarantine(db,binding,'incompatible_current_evidence');await db.commit()
@@ -246,7 +254,7 @@ class GameIMDbBindings:
             'title_type':'videoGame','igdb_id':native,'reviewer_id':reviewer_id,'reason':reason.strip(),
             'validated_at':now().isoformat(),'imdb_identity':header},expected_igdb=native)
 
-    async def save(self,work_id,title_id,source,evidence,*,expected_igdb):
+    async def save(self,work_id,title_id,source,evidence,*,expected_igdb,participation=False):
         identifier(title_id)
         from core.game_title_match import VERSION
         dependencies=[f'imdb:{title_id}',f'igdb:{expected_igdb}']
@@ -287,7 +295,7 @@ class GameIMDbBindings:
                     fingerprint=await db.scalar(GameSourceCache.query('igdb','game_title_candidates',candidate_key)
                         .with_only_columns(MetadataSnapshot.payload['scope_fingerprint'].astext))
                     if fingerprint!=support.get('candidate_fingerprint'):raise ProviderError('stale_mapping')
-            _,native,old,_=await context(db,work_id)
+            _,native,old,_=await context(db,work_id,participation=participation)
             if native!=expected_igdb:
                 raise catalogue.IdentityConflict('Game identity changed during verification')
             if old and old.external_id!=title_id and source!='reviewed':

@@ -52,6 +52,16 @@ class TitleDecisionTests(unittest.TestCase):
         for rows in ([game(), game(20)], [game(20), game()]):
             self.assertEqual(self.decide(rows)['reason'], 'ambiguous_candidates')
 
+    def test_explicit_same_title_port_parent_resolves_to_one_main_game(self):
+        port=game(20,game_type={'id':11},parent_game={'id':10})
+        result=self.decide([port,game()])
+        self.assertEqual(result['igdb_id'],10)
+        self.assertTrue(valid_binding_evidence({'matcher_version':VERSION,'igdb_id':'10','matching':result['evidence']},'tt1'))
+        self.assertEqual(self.decide([game(),{**port,'parent_game':{'id':99}}])['reason'],'ambiguous_candidates')
+
+    def test_different_release_year_namesake_does_not_tie(self):
+        self.assertEqual(self.decide([game(20,year=2002),game()])['igdb_id'],10)
+
     def test_missing_year_and_known_wrong_year_stay_unresolved(self):
         self.assertEqual(self.decide([game(year=2018)])['status'], 'unresolved')
         result = decide({**self.title, 'year': None}, [game()], complete=True, branches=[])
@@ -106,6 +116,13 @@ class TitleDecisionTests(unittest.TestCase):
 
 
 class CandidateRetrievalTests(unittest.IsolatedAsyncioTestCase):
+    async def test_unicode_names_are_sent_as_real_utf8_not_json_escape_sequences(self):
+        self.sources.igdb.return_value=[]
+        await retrieve(self.sources,{'id':'tt2','title':'Déraciné','year':2018})
+        for call in self.sources.igdb.await_args_list:
+            self.assertIn('Déraciné',call.args[1])
+            self.assertNotIn('\\u00e9',call.args[1])
+
     async def asyncSetUp(self):
         class Cache:
             async def get(self, provider, kind, key, loader, **kwargs):

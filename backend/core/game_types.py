@@ -21,6 +21,7 @@ TYPE_NAMES = {
 }
 INDEPENDENT = frozenset({'game', 'standalone_expansion', 'remake', 'remaster', 'expanded_game', 'port'})
 PLAYABLE_CHILDREN = frozenset({'dlc', 'expansion'})
+CREDIT_CHILDREN = frozenset({'dlc', 'expansion', 'update'})
 # IGDB's general DLC type also contains item/cosmetic products. Keep source
 # identity/type intact; conservatively omit those products from playable lists.
 # Explicit Expansions take precedence over ambiguous product-name exclusions.

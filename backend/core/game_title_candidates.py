@@ -25,10 +25,10 @@ async def retrieve(sources, title):
         for position,name in enumerate(expanded):
             # Search supplies punctuation/alias candidates; exact case-insensitive
             # name filters are a separate branch, rather than a top-hit decision.
-            quoted = json.dumps(name)
+            quoted = json.dumps(name,ensure_ascii=False)
             queries=[('search', f'search {quoted};'),('exact', f'where name ~ {quoted} | alternative_names.name ~ {quoted};')]
             if name in parents:
-                parent=json.dumps(parents[name]);full=json.dumps(parents[name]+': '+name)
+                parent=json.dumps(parents[name],ensure_ascii=False);full=json.dumps(parents[name]+': '+name,ensure_ascii=False)
                 queries=[('search',f'search {quoted}; where parent_game.name ~ {parent};'),
                     ('exact',f'where parent_game.name ~ {parent} & (name ~ {quoted} | name ~ {full} | alternative_names.name ~ {quoted} | alternative_names.name ~ {full});')]
             for branch, query in queries:

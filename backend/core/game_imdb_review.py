@@ -73,7 +73,8 @@ async def review_titles(db,native,*,page=1,query='',scope='unmapped',generation=
     entries=func.jsonb_to_recordset(MetadataSnapshot.payload['titles']).table_valued(
         column('id',Text),column('title',Text),column('year',Integer),column('roles',JSONB),column('position',Integer)
     ).render_derived(name='review_title',with_types=True).lateral()
-    valid=verified_bindings().subquery('verified_game')
+    from core.game_credit_parents import person_bindings
+    valid=person_bindings(None)
     prior=select(CatalogueIdentity.external_id.label('imdb_id'),CatalogueIdentity.entity_id.label('review_work_id')).join(
         CatalogueEntity,CatalogueEntity.id==CatalogueIdentity.entity_id).where(
         CatalogueIdentity.namespace=='imdb.title',CatalogueEntity.kind=='game').subquery('existing_binding')

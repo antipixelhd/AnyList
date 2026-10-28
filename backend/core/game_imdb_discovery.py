@@ -18,7 +18,7 @@ from models.catalogue import CatalogueIdentity,MetadataSnapshot
 
 JOB='game_person_discovery'
 MAP='game_person_title_map'
-VERSION=4
+VERSION=5
 _slots=asyncio.Semaphore(1)
 
 
@@ -83,8 +83,9 @@ class GamePersonDiscovery:
                 batch=records[offset:offset+SIZE]
                 if not batch and page<(component.pages or 0):raise ProviderError('incomplete_cache')
                 ids=[row['id'] for row in batch if any(role!='thanks' for role in row['roles'])]
-                known=dict((await db.execute(verified_bindings(ids).with_only_columns(
-                    CatalogueIdentity.external_id,CatalogueIdentity.entity_id))).all()) if ids else {}
+                from core.game_credit_parents import person_bindings
+                bound=person_bindings(ids)
+                known=dict((await db.execute(select(bound.c.imdb_id,bound.c.work_id))).all()) if ids else {}
                 retained=list((await db.execute(select(MetadataSnapshot.external_id,MetadataSnapshot.payload).where(
                     MetadataSnapshot.provider=='wikidata',MetadataSnapshot.kind==MAP,MetadataSnapshot.external_id.in_(ids),
                     MetadataSnapshot.expires_at>now()))).all()) if ids else []
@@ -119,7 +120,7 @@ class GamePersonDiscovery:
                             'person_connection':{'id':native,'generation':component.generation},
                             'imdb_identity':{'id':value['id'],'titleType':{'id':'videoGame'},
                                 'titleText':{'text':title['title']},'releaseYear':{'year':title['year']}}},
-                            expected_igdb=str(value['igdb_id']))
+                            expected_igdb=str(value['igdb_id']),participation=True)
                         value['work_id']=work_id
                     except catalogue.IdentityConflict:
                         value={'id':value['id'],'status':'conflict'}
@@ -170,7 +171,7 @@ class GamePersonDiscovery:
             projected={**doc,'work':await prepare_values(db,primary_game(doc['work']),'igdb'),
                 'relationships':[],'releases':[],'editions':[]}
             for edge in doc['relationships']:
-                if edge['relation']=='expansion' and not edge.get('reverse'):
+                if edge['relation'] in ('dlc','expansion','update') and not edge.get('reverse'):
                     projected['relationships'].append({**edge,'target':await prepare_values(db,primary_game(edge['target']),'igdb')})
             work=await catalogue.ingest_document(db,projected,'igdb');await db.commit()
             return work.id

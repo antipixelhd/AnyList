@@ -149,6 +149,9 @@ html.light .contributor-banner.is-logo img { filter:brightness(0); }
   .contributor-view-switch button { padding:7px 10px; gap:6px; }
 }
 @media(max-width:650px),(pointer:coarse) { .contributor-scroll-reveal { translate:0 8px; } }
+.contributor-credit-scope { color:var(--text-muted); font-size:12px; font-weight:500; line-height:1.4; margin-left:8px; }
+.browse-card-title:has(.contributor-credit-scope:not([hidden])) h2 { display:inline; }
+.contributor-credit-scope[hidden] { display:none; }
 @media(prefers-reduced-motion:reduce) {
   .contributor-scroll-reveal { translate:none; opacity:1; }
   .contributor-page * { animation:none!important; transition:none!important; }

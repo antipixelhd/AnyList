@@ -32,6 +32,11 @@ class ContributorLink(BaseModel):
     href: str
 
 
+class ContributorCreditSource(BaseModel):
+    kind: Literal['dlc','expansion','update']
+    title: str
+
+
 class ContributorWork(BaseModel):
     key: str
     id: int | None = None
@@ -46,6 +51,7 @@ class ContributorWork(BaseModel):
     release_date: str | None = None
     roles: list[str] = Field(default_factory=list)
     characters: list[str] = Field(default_factory=list)
+    credit_sources: list[ContributorCreditSource] = Field(default_factory=list,exclude_if=lambda value:not value)
     list_status: str | None = None
     score: float | None = None
     rating_mode: str = "manual"

@@ -79,6 +79,7 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 importlib.import_module('migrations.versions.mt069_game_achievement_catalogue').upgrade()
                 importlib.import_module('migrations.versions.mt070_game_mapping_index').upgrade()
                 importlib.import_module('migrations.versions.mt071_achievement_order').upgrade()
+                importlib.import_module('migrations.versions.mt072_game_update_credits').upgrade()
 
         async with self.engine.begin() as conn:
             await conn.run_sync(setup)

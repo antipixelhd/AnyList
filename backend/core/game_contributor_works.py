@@ -4,7 +4,7 @@ import json
 from sqlalchemy import String, and_, case, cast, func, literal, or_, select, tuple_
 from sqlalchemy.orm import aliased
 
-from core.game_types import INDEPENDENT
+from core.game_types import INDEPENDENT,CREDIT_CHILDREN
 from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueRelationship
 from models.games import GameChildState, GameEntry
 
@@ -42,7 +42,7 @@ def game_credits(entity_id, kind):
     parents = select(CatalogueRelationship.source_id.label('child'),
         CatalogueRelationship.relation.label('relation'),
         func.min(CatalogueRelationship.target_id).label('parent')).where(
-        CatalogueRelationship.relation.in_(('port', 'expansion')),
+        CatalogueRelationship.relation.in_(('port', *CREDIT_CHILDREN)),
         CatalogueRelationship.attributes['source_active'].astext.is_distinct_from('false')).group_by(
         CatalogueRelationship.source_id, CatalogueRelationship.relation).having(
         func.count(func.distinct(CatalogueRelationship.target_id)) == 1).subquery()
@@ -66,7 +66,7 @@ def game_credits(entity_id, kind):
         person_credit.attributes['source_active'].astext.is_distinct_from('false'),
         person_credit.character_label.is_not(None),person_credit.character_label!='').correlate(CatalogueCredit).scalar_subquery()
     independent = INDEPENDENT - {'port'}
-    def projected(work):
+    def projected(work, *, child=False):
         expansion_base = select(expansions.c.parent).join(base, base.id == expansions.c.parent).where(
             expansions.c.child == work.id, expansions.c.relation == 'expansion', base.kind == 'game',
             base.attributes['game_class'].astext.in_(independent)).correlate(work)
@@ -75,6 +75,8 @@ def game_credits(entity_id, kind):
             func.coalesce(work.attributes['release_date'].astext, '').label('released'),
             work.attributes['game_class'].astext.label('game_class'),
             expansion_base.scalar_subquery().label('base_work_id'),
+            (credited.attributes['game_class'].astext if child else CatalogueCredit.attributes['credited_child']['kind'].astext).label('credit_kind'),
+            (credited.name if child else CatalogueCredit.attributes['credited_child']['title'].astext).label('credit_title'),
             role.label('role'), CatalogueCredit.role_label.label('role_label'),
             case((role.in_(ACTING),func.coalesce(func.nullif(CatalogueCredit.character_label,''),person_characters)),
                 else_=CatalogueCredit.character_label).label('character_label')).where(
@@ -82,14 +84,32 @@ def game_credits(entity_id, kind):
             CatalogueCredit.attributes['source_active'].astext.is_distinct_from('false'),
             work.kind == 'game', work.attributes['adult'].astext.is_distinct_from('true'),
             or_(work.attributes['game_class'].astext.in_(independent), and_(
-                work.attributes['game_class'].astext == 'expansion', expansion_base.exists())))
+                work.attributes['game_class'].astext == 'expansion', expansion_base.exists(), literal(kind!='actor'))))
     main = projected(credited).select_from(CatalogueCredit).join(credited, credited.id == CatalogueCredit.work_id)
+    if kind=='actor':
+        direct=aliased(CatalogueCredit)
+        main=main.where(or_(CatalogueCredit.attributes['credited_child']['kind'].astext.is_(None),
+            ~select(direct.id).where(direct.work_id==credited.id,direct.contributor_id.in_(aliases),direct.role.in_(ACTING),
+                direct.attributes['credited_child']['kind'].astext.is_(None),
+                direct.attributes['source_active'].astext.is_distinct_from('false')).correlate(credited).exists()))
     # Separate branches retain indexed PK joins. A CASE in the root join caused
     # quadratic scans of game metadata even when no port existed (measured).
     port = projected(work).select_from(CatalogueCredit).join(credited,
         credited.id == CatalogueCredit.work_id).join(ports, and_(ports.c.child == credited.id,
         ports.c.relation == 'port')).join(work, work.id == ports.c.parent).where(
         credited.kind == 'game', credited.attributes['game_class'].astext == 'port')
+    if kind == 'actor':
+        direct=aliased(CatalogueCredit)
+        direct_participation=select(direct.id).where(direct.work_id==work.id,
+            direct.contributor_id.in_(aliases),direct.role.in_(ACTING),
+            direct.attributes['credited_child']['kind'].astext.is_(None),
+            direct.attributes['source_active'].astext.is_distinct_from('false')).correlate(work).exists()
+        child = projected(work,child=True).select_from(CatalogueCredit).join(credited,
+            credited.id==CatalogueCredit.work_id).join(ports,and_(ports.c.child==credited.id,
+            ports.c.relation==credited.attributes['game_class'].astext)).join(work,work.id==ports.c.parent).where(
+            credited.kind=='game',credited.attributes['game_class'].astext.in_(CREDIT_CHILDREN),
+            credited.attributes['adult'].astext.is_distinct_from('true'),~direct_participation)
+        return main.union_all(port,child).cte('game_contributor_credits')
     return main.union_all(port).cte('game_contributor_credits')
 
 
@@ -171,14 +191,18 @@ async def works_page(db, viewer, entity_id, kind, *, key, list_scope, status, pa
     displayed = {row['id']: {**dict(row), 'roles': [], 'characters': []} for row in rows}
     if displayed:
         associations = (await db.execute(select(credits.c.id, credits.c.role, credits.c.role_label,
-            credits.c.character_label).where(credits.c.id.in_(displayed)).distinct())).all()
-        for identifier, role, label, character in associations:
+            credits.c.character_label,credits.c.credit_kind,credits.c.credit_title).where(credits.c.id.in_(displayed)).distinct())).all()
+        for identifier, role, label, character,credit_kind,credit_title in associations:
             item = displayed[identifier]
+            if credit_kind:
+                source={'kind':credit_kind,'title':credit_title}
+                if source not in item.setdefault('credit_sources',[]):item['credit_sources'].append(source)
             item['roles'].append(label or role.replace('_', ' ').title())
             if character and role in ACTING:
                 item['characters'].append(character)
     result = []
     for item in displayed.values():
+        if item.get('credit_sources'):item['credit_sources'].sort(key=lambda row:(row['kind'],row['title']))
         released = item.pop('released')
         result.append({**item, 'key': f'game:{item["id"]}', 'type': 'game', 'href': f'/games/{item["id"]}',
             'year': released[:4], 'release_date': released or None,

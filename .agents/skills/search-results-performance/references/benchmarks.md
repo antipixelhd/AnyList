@@ -65,6 +65,9 @@ For frontend loading/view changes, use these backend cases where relevant and ve
 
 ## Compare equivalent profiles and stages
 
+Cached game-person fixtures carry the current credit policy version. Legacy policy reprojection is a separate correctness path; it must not be mistaken for a warm source cache hit.
+Baseline replay includes the game contributor works projection; response models, routes and database fixtures still use the current checkout.
+
 The harness runs three profiles automatically:
 
 - `curated`: votes 250 OR popularity 25, movie runtime 30, documentary exclusion.

@@ -98,6 +98,24 @@ class PersonEnrichmentTests(unittest.IsolatedAsyncioTestCase):
             captions=await role_captions(db,self.person_id,'actor',{self.game_id})
             self.assertEqual(captions,[{'id':self.game_id,'roles':['Voice Actor'],'characters':['First role / Second role']}])
 
+    async def test_old_credit_policy_reprojects_saved_pages_without_refetching_source(self):
+        from core.game_imdb_discovery import MAP,VERSION as DISCOVERY_VERSION
+        await self.service.run('nm1')
+        async with self.Session() as db:
+            component=await db.scalar(snapshot(COMPONENT,'nm1'))
+            component.coverage={key:value for key,value in component.coverage.items() if key!='credit_policy_version'}
+            db.add(MetadataSnapshot(provider='wikidata',kind=MAP,external_id='tt2',
+                payload={'status':'excluded','matcher_version':DISCOVERY_VERSION-1},expires_at=now()+timedelta(days=1)))
+            await db.commit()
+            state=await view(db,'nm1',check_mapping=True);await db.commit()
+            self.assertTrue(state['pending'])
+        self.assertEqual(await self.service.run('nm1'),'ready')
+        self.source.credits.assert_awaited_once()
+        async with self.Session() as db:
+            component=await db.scalar(snapshot(COMPONENT,'nm1'))
+            self.assertEqual(component.coverage['credit_policy_version'],1)
+            self.assertEqual(component.coverage['unmapped_games'],1)
+
     async def test_legacy_connection_is_refetched_once_and_retains_usable_works(self):
         await self.service.run('nm1')
         async with self.Session() as db:

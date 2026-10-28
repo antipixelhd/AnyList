@@ -521,7 +521,7 @@ def normalize_igdb(raw):
                 }
             )
     parent = raw.get("parent_game")
-    relation = {kind:kind for kind in ('dlc','expansion','standalone_expansion','remake','remaster','port')}.get(igdb_game_class(raw))
+    relation = {kind:kind for kind in ('dlc','expansion','update','standalone_expansion','remake','remaster','port')}.get(igdb_game_class(raw))
     if isinstance(parent, dict) and relation:
         doc["relationships"].append(
             {"target": entity("game", "igdb.game", parent, attributes={

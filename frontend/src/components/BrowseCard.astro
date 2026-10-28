@@ -2,7 +2,7 @@
 import Icon from "./Icon.astro";
 import { responsiveArtwork } from "../lib/responsive-artwork";
 import { formatDateTime, requestDateLocale } from '../lib/date-time';
-import { contributorMediaLabel } from '../lib/contributor-page-data';
+import { contributorMediaLabel,contributorCreditScope } from '../lib/contributor-page-data';
 import {browseCardHref,browseCardKey,browseStatusLabel,browseActionLabel,expansionCard} from '../lib/browse-card-data';
 const {
   item = { title: "", type: "movie" },
@@ -112,6 +112,7 @@ const href=browseCardHref(item);
   <div class="browse-card-caption">
   <a class="browse-card-title" href={template ? "#" : href}>
     <h2>{item.title}</h2>
+    {credits && <span class="contributor-credit-scope" data-work-scope hidden={!item.credit_sources?.length}>{contributorCreditScope(item)}</span>}
   </a>
   <div class="browse-card-meta">
     <span data-year title={item.release_event ? item.release_country ? `Release date · ${item.release_country}` : 'Worldwide release date' : undefined}>{item.year}</span>

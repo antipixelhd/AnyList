@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { contributorParams, contributorYear, workHref } from '../src/lib/contributor-page-data.ts';
+import { contributorParams, contributorYear,contributorCreditScope, workHref } from '../src/lib/contributor-page-data.ts';
+
+test('confirmed child credits label the source and retain the parent game destination',()=>{
+  const game={id:12,type:'game',title:'Warframe',credit_sources:[{kind:'update',title:'Warframe: Tau'}]};
+  assert.equal(contributorCreditScope(game),'Update: Tau');
+  assert.equal(workHref(game),'/games/12');
+  assert.equal(contributorCreditScope({title:'Warframe'}),'');
+});
 
 test('contributor filters whitelist scopes and never send viewer IDs', () => {
   const input = new URLSearchParams('media_type=series&list_scope=in&status=completed&page=2&view=grid&user_id=99&cursor=abc&source=provider');

@@ -55,6 +55,36 @@ class PortfolioDiscoveryTests(unittest.IsolatedAsyncioTestCase):
             data=await view(db,'nm1',check_mapping=True);await db.commit()
         return data
 
+    async def test_reviewed_update_uses_parent_without_overwriting_primary_identity(self):
+        from core.game_credit_parents import review_parent
+        from core.game_contributor_works import works_page
+        from core.game_imdb_person import queue_projection
+        async with self.Session() as db:
+            user=await db.get(__import__('models',fromlist=['User']).User,self.user.id)
+            user.is_admin=True
+            await review_parent(db,'tt2',self.base,title='Main game: Update',kind='update',
+                source_url='https://example.test/official-update',reviewer_id=user.id)
+            await queue_projection(db,'nm1');await db.commit()
+        self.assertEqual(await self.person_service.run('nm1'),'ready')
+        async with self.Session() as db:
+            state=await view(db,'nm1')
+            self.assertEqual(state['mapping']['unmapped_games'],1)  # tt3 remains unknown.
+            identity=await db.scalar(select(CatalogueIdentity).where(CatalogueIdentity.namespace=='imdb.title',CatalogueIdentity.entity_id==self.base))
+            self.assertEqual(identity.external_id,'tt1')
+            # tt1 already credits this actor: one main-game row, no duplicate update tag.
+            result=await works_page(db,None,self.person,'actor',key='test',list_scope='all',status='',page=1,cursor=None)
+            self.assertEqual(len(result['works']),1)
+            self.assertFalse(result['works'][0].get('credit_sources'))
+            from sqlalchemy import delete
+            await db.execute(delete(CatalogueCredit).where(CatalogueCredit.contributor_id==self.person,
+                CatalogueCredit.attributes['imdb_title_id'].astext=='tt1'))
+            only_update=await works_page(db,None,self.person,'actor',key='test',list_scope='all',status='',page=1,cursor=None)
+            self.assertEqual(only_update['works'][0]['credit_sources'],[{'kind':'update','title':'Main game: Update'}])
+            self.assertEqual(only_update['works'][0]['href'],f'/games/{self.base}')
+            from core.game_imdb_review import review_titles
+            review=await review_titles(db,'nm1',scope='all')
+            self.assertEqual(next(r for r in review['results'] if r['imdb_id']=='tt2')['status'],'bound')
+
     async def test_title_fallback_publishes_person_work_and_character_without_opening_the_game(self):
         from core.game_imdb_discovery_source import GameIMDbDiscoverySource
         from core.game_imdb_person import JOB as PERSON_JOB
@@ -98,7 +128,7 @@ class PortfolioDiscoveryTests(unittest.IsolatedAsyncioTestCase):
             gap=await db.scalar(snapshot(MAP,'tt3',provider='wikidata'))
             self.assertLess((gap.expires_at-now()).total_seconds(),61)
 
-    async def test_decorated_child_title_matches_its_parent_and_stays_excluded_from_participation(self):
+    async def test_decorated_child_title_preserves_participation_and_parent(self):
         from core.game_imdb_discovery_source import GameIMDbDiscoverySource
         from core.game_imdb_person import JOB as PERSON_JOB
         from core.game_source_cache import GameSourceCache
@@ -110,16 +140,17 @@ class PortfolioDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.person_service.run('nm1'),'ready')
         child={'id':30,'name':'Small Town: The Long Dark Night','game_type':{'id':1},'first_release_date':1506038400,
             'parent_game':{'id':100,'name':'Small Town','game_type':{'id':0}}}
-        sources=SimpleNamespace(cache=GameSourceCache(self.Session),igdb=AsyncMock(side_effect=[[],[],[child],[child]]),
+        sources=SimpleNamespace(cache=GameSourceCache(self.Session),igdb=AsyncMock(side_effect=[[],[],[child],[child],
+            [{'id':100,'name':'Small Town','game_type':{'id':0}}]]),
             api=SimpleNamespace(http=SimpleNamespace(request=AsyncMock(return_value={'results':{'bindings':[]}}))))
         service=GamePersonDiscovery(self.Session,source=GameIMDbDiscoverySource(self.Session,sources=sources))
         self.assertEqual(await service.run('nm1'),'changed');self.assertEqual(await service.run('nm1'),'ready')
         self.assertEqual(await self.person_service.run('nm1'),'ready')
         async with self.Session() as db:
             result=await db.scalar(snapshot(MAP,'tt2',provider='wikidata'))
-            self.assertEqual((result.payload['status'],result.payload['igdb_id']),('excluded',30))
+            self.assertEqual((result.payload['status'],result.payload['igdb_id']),('verified',30))
             self.assertEqual(result.payload['evidence']['candidates'][0]['parent_title_scope']['parent'],100)
-            self.assertIsNone(await db.scalar(select(CatalogueIdentity).where(CatalogueIdentity.namespace=='imdb.title',CatalogueIdentity.external_id=='tt2')))
+            self.assertIsNotNone(await db.scalar(select(CatalogueIdentity).where(CatalogueIdentity.namespace=='imdb.title',CatalogueIdentity.external_id=='tt2')))
             state=await view(db,'nm1');self.assertEqual(state['mapping']['unmapped_games'],0)
             entry=await db.scalar(select(GameEntry));self.assertEqual((entry.notes,entry.total_seconds),('Pending private state',3600))
 

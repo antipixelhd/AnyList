@@ -6,7 +6,14 @@ from urllib.parse import urlsplit
 from core.game_types import igdb_game_class
 from core.game_release_dates import game_release, release
 
-VERSION = 3
+VERSION = 4
+
+
+def same_game_port(other,winner):
+    """An explicit port parent shares the displayed game, not another namesake."""
+    return (other.get('game_class')=='port' and not other.get('cancelled') and other.get('parent')==winner.get('id')
+        and winner.get('game_class') in ('game','standalone_expansion','remake','remaster','expanded_game')
+        and spelling(other.get('name'))==spelling(winner.get('name')))
 
 
 def scoped_title(raw,title):
@@ -61,7 +68,7 @@ def valid_binding_evidence(evidence, imdb_id):
     eligible=[row for row in proof.get('candidates',[]) if isinstance(row,dict)
         and (row.get('year_match') is True or supported(row,proof.get('imdb') or {}))
         and row.get('game_class')!='unknown' and row.get('rank') in (1,2,3) and not row.get('edition')]
-    eligible=[row for row in eligible if not any(other['id']!=row['id'] and cancelled_scope(row,other,proof.get('imdb') or {}) for other in eligible)]
+    eligible=[row for row in eligible if not any(other['id']!=row['id'] and (same_game_port(row,other) or cancelled_scope(row,other,proof.get('imdb') or {})) for other in eligible)]
     winners=[row for row in eligible if row['rank']==max((entry['rank'] for entry in eligible),default=0)]
     winner=winners[0] if len(winners)==1 else {}
     renamed={row.get('id') for row in proof.get('rename_scope',[]) if row.get('shared_products')}
@@ -71,7 +78,7 @@ def valid_binding_evidence(evidence, imdb_id):
     return (evidence.get('matcher_version')==VERSION and proof.get('version')==VERSION
         and proof.get('retrieval_complete') is True and (proof.get('imdb') or {}).get('id')==imdb_id
         and len(winners)==1 and str(winner.get('id'))==evidence.get('igdb_id')
-        and all(cancelled_scope(row,winner,proof.get('imdb') or {}) or row.get('years') and row.get('game_class')!='unknown' and row.get('id') in renamed for row in competitors))
+        and all(same_game_port(row,winner) or cancelled_scope(row,winner,proof.get('imdb') or {}) or row.get('years') and row.get('game_class')!='unknown' and row.get('id') in renamed for row in competitors))
 
 
 def spelling(value):
@@ -146,7 +153,7 @@ def decide(title, candidates, *, complete, branches, corroboration=None):
     if not complete:
         return {'status': 'unresolved', 'reason': 'incomplete_candidates', 'evidence': evidence}
     eligible = [row for row in ranked if (row['year_match'] or supported(row,title)) and not row['edition'] and row['game_class'] != 'unknown']
-    eligible=[row for row in eligible if not any(other['id']!=row['id'] and cancelled_scope(row,other,title) for other in eligible)]
+    eligible=[row for row in eligible if not any(other['id']!=row['id'] and (same_game_port(row,other) or cancelled_scope(row,other,title)) for other in eligible)]
     if not eligible:
         return {'status': 'unmapped' if not ranked else 'unresolved', 'reason': 'title_year_evidence', 'evidence': evidence}
     best = eligible[0]
@@ -156,6 +163,7 @@ def decide(title, candidates, *, complete, branches, corroboration=None):
     rename=[]
     for other in ranked:
         if other['id']==best['id'] or other['edition']:continue
+        if same_game_port(other,best):continue
         if cancelled_scope(other,best,title):continue
         if best['year_match'] and other['years'] and year not in other['years'] and not supported(other,title):continue
         if not other['years'] or other['game_class']=='unknown':

@@ -55,11 +55,24 @@ class DiscoverySourceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['outcomes'][0]['status'],'verified')
         self.assertFalse(result['stale'])
 
-    async def test_title_match_does_not_make_an_ordinary_dlc_eligible(self):
+    async def test_dlc_without_confirmed_parent_remains_unresolved(self):
         self.response([])
         self.sources.igdb.side_effect=[[raw(10,1,name='Example DLC',first_release_date=1506038400)],[]]
         result=await self.api.page(['tt1'],titles={'tt1':{'id':'tt1','title':'Example DLC','year':2017}})
-        self.assertEqual((result['outcomes'][0]['status'],result['outcomes'][0]['reason']),('excluded','dlc'))
+        self.assertEqual((result['outcomes'][0]['status'],result['outcomes'][0]['reason']),('unresolved','credit_parent'))
+
+    async def test_confirmed_dlc_and_updates_preserve_child_identity_and_full_parent(self):
+        for kind in (1,14):
+            with self.subTest(kind=kind):
+                self.response([]);self.sources.cache.rows.clear()
+                self.sources.igdb.side_effect=[[raw(10,kind,name='Example DLC',first_release_date=1506038400,
+                    parent_game={'id':20,'game_type':{'id':0}})],[],[raw(20,name='Main game')]]
+                result=await self.api.page(['tt1'],titles={'tt1':{'id':'tt1','title':'Example DLC','year':2017}})
+                row=result['outcomes'][0]
+                self.assertEqual((row['status'],row['igdb_id']),('verified',10))
+                edge=row['document']['relationships'][0]
+                self.assertEqual(edge['target']['name'],'Main game')
+                self.assertEqual(edge['relation'],'dlc' if kind==1 else 'update')
 
     async def test_title_fallback_cannot_override_an_incompatible_explicit_imdb_identity(self):
         self.response([('tt1','Q1')])
@@ -115,12 +128,12 @@ class DiscoverySourceTests(unittest.IsolatedAsyncioTestCase):
         self.wiki.entities.return_value={'data':{'entities':{}},'stale':False}
         with self.assertRaises(ProviderError):await self.api.indexed_items(['tt1'])
 
-    async def test_verified_expansion_fetches_its_typed_parent_and_ordinary_dlc_is_excluded(self):
+    async def test_verified_expansion_fetches_parent_and_orphan_dlc_remains_unresolved(self):
         self.response([('tt1','Q1'),('tt2','Q2')])
         self.wiki.entities.return_value={'data':{'entities':{'Q1':mapped('Q1','tt1',10),'Q2':mapped('Q2','tt2',20)}},'stale':False}
         self.sources.igdb.side_effect=[[raw(10,2,parent_game={'id':30}),raw(20,1)], [raw(30)]]
         result=await self.api.page(['tt1','tt2']);expansion,dlc=result['outcomes']
-        self.assertEqual((expansion['status'],dlc['status'],dlc['reason']),('verified','excluded','dlc'))
+        self.assertEqual((expansion['status'],dlc['status'],dlc['reason']),('verified','unresolved','credit_parent'))
         parent=next(edge for edge in expansion['document']['relationships'] if edge['relation']=='expansion')
         self.assertEqual(parent['target']['attributes']['game_class'],'game')
         self.assertEqual(self.sources.igdb.await_count,2)

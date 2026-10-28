@@ -12,7 +12,7 @@ from core.game_browse_sources import GameBrowseSources,positive,SLUG
 from core.game_credit_sources import GameCreditSources
 from core.game_imdb_mapping import game_mapping
 from core.game_imdb_source import TITLE_ID
-from core.game_types import capabilities,igdb_game_class
+from core.game_types import capabilities,igdb_game_class,CREDIT_CHILDREN
 from core.game_release_dates import FIELDS as RELEASE_FIELDS
 from core.wikidata_claims import best_claims,qualified,snak_value
 
@@ -55,18 +55,18 @@ def project_game(title_id,raw,games,evidence):
         # replace the base game's primary IMDb identity.
         return {'id':title_id,'status':'unresolved','reason':'edition_or_port','igdb_id':raw['id']}
     if kind=='unknown':return {'id':title_id,'status':'unresolved','reason':'unknown_type','igdb_id':raw['id']}
-    if not capabilities({'game_class':kind}).searchable:
+    if not capabilities({'game_class':kind}).searchable and kind not in CREDIT_CHILDREN:
         return {'id':title_id,'status':'excluded','reason':kind,'igdb_id':raw['id'],'game_title':raw['name'],'evidence':evidence}
     parent=None
-    if kind=='expansion':
+    if kind in CREDIT_CHILDREN:
         value=raw.get('parent_game');native=value.get('id') if isinstance(value,dict) else value
         parent=games.get(native)
-        if not parent or parent.get('version_parent') or not capabilities({'game_class':igdb_game_class(parent)}).independent:
-            return {'id':title_id,'status':'unresolved','reason':'expansion_parent','igdb_id':raw['id']}
+        if not parent or parent.get('version_parent') or igdb_game_class(parent) not in {'game','standalone_expansion','remake','remaster','expanded_game'}:
+            return {'id':title_id,'status':'unresolved','reason':'expansion_parent' if kind=='expansion' else 'credit_parent','igdb_id':raw['id']}
     doc=normalize_igdb(raw)
     if parent:
         for edge in doc['relationships']:
-            if edge['relation']=='expansion' and not edge.get('reverse'):edge['target']=normalize_igdb(parent)['work']
+            if edge['relation']==kind and not edge.get('reverse'):edge['target']=normalize_igdb(parent)['work']
     doc['coverage']={'person_discovery':True,'credits_complete':False,'characters_complete':False}
     return {'id':title_id,'status':'verified','igdb_id':raw['id'],'document':doc,
         'evidence':evidence}
@@ -225,7 +225,7 @@ class GameIMDbDiscoverySource:
             games={row['id']:row for row in data['rows']}
             raw=games[decision['igdb_id']]
             parent=raw.get('parent_game')
-            if igdb_game_class(raw)=='expansion' and isinstance(parent,dict) and positive(parent.get('id')) and parent['id'] not in games:
+            if igdb_game_class(raw) in CREDIT_CHILDREN and isinstance(parent,dict) and positive(parent.get('id')) and parent['id'] not in games:
                 games.update(await self.games({parent['id']}))
             evidence={**decision['evidence'],'method':'title_match','source_outcome':{key:value for key,value in outcome.items() if key in ('status','reason')},
                 'direction':'imdb_to_igdb','scope':'primary_title','dependencies':[f'imdb:{native}',f'igdb:{raw["id"]}',
@@ -259,7 +259,7 @@ class GameIMDbDiscoverySource:
             references[native]=(item,reference)
         games=await self.games({value['id'] for _,value in references.values() if 'id' in value},
             {value['slug'] for _,value in references.values() if 'slug' in value})
-        parents={value['parent_game']['id'] for value in games.values() if igdb_game_class(value)=='expansion'
+        parents={value['parent_game']['id'] for value in games.values() if igdb_game_class(value) in CREDIT_CHILDREN
             and isinstance(value.get('parent_game'),dict) and positive(value['parent_game'].get('id'))}-set(games)
         if parents:games.update(await self.games(parents))
         def resolve():

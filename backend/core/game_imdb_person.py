@@ -63,7 +63,7 @@ async def view(db,native,*,state=None,include_profile=True,check_mapping=False):
         state=await admit(db,native,kind=JOB,entity_id=row.entity_id)
     if check_mapping and row and row.coverage.get('source_complete') and not state['pending']:
         current=await binding_revision(db)
-        if row.coverage.get('binding_revision')!=current:
+        if row.coverage.get('binding_revision')!=current or row.coverage.get('credit_policy_version')!=1:
             # A reviewed/new game mapping can unlock cached person works.
             # Replay the saved connection instead of refetching IMDb for it.
             if await queue_projection(db,native):state={**state,'state':'pending','pending':True,'complete':False,'error':None,'retry_after':2}
@@ -145,8 +145,11 @@ async def project_mapped(db,native,rows,generation,*,source_generation=None):
     games,omitted=await asyncio.to_thread(game_rows,rows)
     if omitted:raise ProviderError('bad_response')
     ids={row['title_id'] for row in games}
-    bindings=dict((await db.execute(verified_bindings(ids).with_only_columns(
-        CatalogueIdentity.external_id,CatalogueIdentity.entity_id))).all()) if ids else {}
+    from core.game_credit_parents import person_bindings
+    source_bindings=person_bindings(ids)
+    bound=(await db.execute(select(source_bindings))).all() if ids else []
+    bindings={row.imdb_id:row.work_id for row in bound}
+    child_credits={row.imdb_id:{'kind':row.credit_kind,'title':row.credit_title} for row in bound if row.credit_kind}
     # Unknown support is not a confirmed identity contradiction. Retain only
     # this person's already published participation; a stale binding cannot
     # create participation for another person or a newly observed role.
@@ -163,9 +166,10 @@ async def project_mapped(db,native,rows,generation,*,source_generation=None):
                 CatalogueCredit.attributes['imdb_person_id'].astext==native,
                 CatalogueCredit.attributes['source_active'].astext=='true',
                 CatalogueCredit.attributes['imdb_title_id'].astext.in_(ids)))).all())
-    from core.game_imdb_discovery import MAP
+    from core.game_imdb_discovery import MAP,VERSION as DISCOVERY_VERSION
     excluded=set(await db.scalars(select(MetadataSnapshot.external_id).where(MetadataSnapshot.provider=='wikidata',
         MetadataSnapshot.kind==MAP,MetadataSnapshot.external_id.in_(ids),MetadataSnapshot.payload['status'].astext=='excluded',
+        MetadataSnapshot.payload['matcher_version'].as_integer()==DISCOVERY_VERSION,
         MetadataSnapshot.expires_at>now()))) if ids else set()
     excluded|=ids-{row['title_id'] for row in games if row['category']!='thanks'}
     credits=[]
@@ -182,6 +186,7 @@ async def project_mapped(db,native,rows,generation,*,source_generation=None):
                 'imdb_person_id':native,'imdb_person_evidence':True,'imdb_person_generation':generation,
                 'imdb_person_source_generation':source_generation or generation,
                 'imdb_title_id':row['title_id'],'imdb_category':row['category'],
+                'credited_child':child_credits.get(row['title_id']),
                 'person_credit_order':row['position'],'voice':True if any(value.casefold()=='voice' for value in attributes) else None,
                 'languages':list(dict.fromkeys(VERSIONS[value] for value in attributes if value in VERSIONS)),
                 'game_role':{'characters':characters,'text_characters':characters},
@@ -210,7 +215,7 @@ async def project_mapped(db,native,rows,generation,*,source_generation=None):
         titles={row['title_id'] for row in games if (row['category'] in acting)==(kind=='actor') and row['category']!='thanks'}
         role_coverage[kind]={'source':len(titles-excluded),'raw_source':len(titles),'excluded':len(titles&excluded),
             'unmapped':len(titles-set(bindings)-excluded)}
-    return {'role_coverage':role_coverage,'state':'partial' if omitted or ids-set(bindings)-excluded else 'mapped','source_games':len(ids),
+    return {'credit_policy_version':1,'role_coverage':role_coverage,'state':'partial' if omitted or ids-set(bindings)-excluded else 'mapped','source_games':len(ids),
         'mapped_games':len(set(bindings)&ids),'excluded_games':len(excluded),'unmapped_games':len(ids-set(bindings)-excluded),'omitted_rows':omitted,
         'scope':'retrieved_person_connection','official_filmography_complete':False}
 

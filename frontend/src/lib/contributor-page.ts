@@ -1,5 +1,5 @@
 import { bindBrowseCardActions, bindBrowseCardTouch, paintBrowseCardState, sameBrowseTitle } from './browse-card-actions';
-import { contributorParams, contributorYear, contributorMediaLabel, workHref, type ContributorPage, type ContributorWork } from './contributor-page-data';
+import { contributorParams, contributorYear, contributorMediaLabel,contributorCreditScope, workHref, type ContributorPage, type ContributorWork } from './contributor-page-data';
 import { editorStore } from './editor-store';
 import { applyResponsiveArtwork } from './responsive-artwork';
 import { prepareBrowsePoster } from './browse-loading';
@@ -181,6 +181,8 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
       card.dataset.key = browseCardKey({...item,href:item.href||undefined});
       card.dataset.workKey = item.key;
       card.querySelector('h2')!.textContent = item.title;
+      const scope=card.querySelector<HTMLElement>('[data-work-scope]');
+      if(scope){scope.textContent=contributorCreditScope(item);scope.hidden=!item.credit_sources?.length;}
       card.querySelector('.browse-poster-link')!.setAttribute('aria-label', item.title);
       card.querySelector('[data-year]')!.textContent = item.year || '';
       const credit = card.querySelector<HTMLElement>('[data-work-credit]')!;

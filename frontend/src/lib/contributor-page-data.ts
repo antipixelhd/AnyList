@@ -4,6 +4,15 @@ import {browseCardHref} from './browse-card-data.ts';
 export interface ContributorWork extends BrowseItem {
   entry: Record<string, any> | null;
   key: string; href: string | null; release_date: string | null; roles: string[]; characters: string[];
+  credit_sources?:{kind:string;title:string}[];
+}
+export function contributorCreditScope(work: Pick<ContributorWork,'title'|'credit_sources'>) {
+  const sources=work.credit_sources||[];
+  const labels:Record<string,string>={dlc:'DLC',expansion:'Expansion',update:'Update'};
+  return sources.map(source=>{
+    const title=source.title.startsWith(work.title+':')?source.title.slice(work.title.length+1).trim():source.title;
+    return `${labels[source.kind]||source.kind}: ${title}`;
+  }).join(' · ');
 }
 export interface ContributorPage {
   kind: 'actor' | 'staff' | 'studio'; key: string; name: string; image: string | null; description: string | null;

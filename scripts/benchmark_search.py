@@ -89,7 +89,7 @@ async def main(args):
         # Execute trusted repository source in this process only; never switch
         # branches or overwrite the user's checkout to compare revisions.
         for name in ('tmdb', 'discovery_policy', 'catalog_search', 'release_browse', 'browse',
-                     'person_identities', 'game_imdb_person', 'contributor_evidence', 'studio_discovery', 'contributor_details', 'contributor_search'):
+                     'person_identities', 'game_imdb_person', 'game_contributor_works', 'contributor_evidence', 'studio_discovery', 'contributor_details', 'contributor_search'):
             module = importlib.import_module('core.' + name)
             process = await asyncio.to_thread(subprocess.run, ['git', 'show', f'{args.baseline_ref}:backend/core/{name}.py'],
                 cwd=ROOT, check=True, capture_output=True, text=True, encoding='utf-8')
@@ -144,7 +144,7 @@ async def main(args):
                                 'identity_bridge':{'version':game_person_identity.VERSION,
                                     'state':'unresolved','next_check_at':(stamp+timedelta(days=7)).isoformat()},
                                 'index_generation':'fixture','index_pages':20,'index_titles':1000},
-                            coverage={'person_version':2,'source_complete':True,'state':'partial','projection_revision':'fixture-v1','binding_revision':None,
+                            coverage={'person_version':2,'credit_policy_version':1,'source_complete':True,'state':'partial','projection_revision':'fixture-v1','binding_revision':None,
                                 'source_games':1000,'mapped_games':0,'unmapped_games':1000},fetched_at=stamp,expires_at=stamp+timedelta(days=30))])
                     # This case measures an already cached discovery attempt,
                     # including unresolved external identities, not first admission.
