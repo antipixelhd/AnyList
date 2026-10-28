@@ -17,6 +17,67 @@ def person(native,name,characters=None):
 
 
 class SupportTests(unittest.IsolatedAsyncioTestCase):
+    async def test_exact_publisher_and_historical_official_cast_verify_identity_without_inventing_a_release_year(self):
+        self.title['year']=2016
+        self.game['involved_companies'].append({'publisher':True,'company':{'name':'Example Publisher'}})
+        self.store['42']['data'].update(developers=['Different Developer Inc.'],publishers=['Example Publisher'],
+            detailed_description='A game',release_date={'coming_soon':False,'date':'Sep 22, 2017'})
+        # A legacy cached store projection omitted publishers. Upgrade only
+        # this failed developer gate; ordinary positive caches stay reusable.
+        self.sources.cache.rows['42']={
+            **{k:v for k,v in self.store['42']['data'].items() if k!='publishers'},'fingerprint':'legacy'}
+        self.credits.return_value['rows']=[person('nm1','First Actor'),person('nm2','Second Actor')]
+        def news(*args,**kwargs):
+            return {'appnews':{'appid':42,'newsitems':[{'gid':'old-cast','feedname':'steam_community_announcements',
+                'title':'Example Game English Dub Trailer','contents':'Voice cast: First Actor and Second Actor.',
+                'date':1451606400}] if kwargs['params'].get('enddate') else []}}
+        self.http.request.side_effect=news
+        result,snapshots=await self.decision()
+        self.assertEqual(result['status'],'verified')
+        proof=result['evidence']['candidates'][0]['corroboration']
+        self.assertFalse(proof['developer_agreement']);self.assertTrue(proof['publisher_agreement'])
+        self.assertEqual(proof['publishers'],['example publisher'])
+        self.assertEqual(proof['announcement'],'old-cast')
+        self.assertEqual(result['evidence']['candidates'][0]['years'],[2017])
+        self.assertNotIn('early_access',proof)
+        self.assertTrue(valid_binding_evidence({'matching':result['evidence'],'matcher_version':VERSION,'igdb_id':'10'},'tt1'))
+        legacy={**result['evidence'],'version':6}
+        self.assertFalse(valid_binding_evidence({'matching':legacy,'matcher_version':6,'igdb_id':'10'},'tt1'))
+        self.assertIn('42:publishers-v1',[r['key'] for r in snapshots if r['kind']=='game_match_store'])
+        await self.decision();self.request.assert_awaited_once();self.credits.assert_awaited_once()
+        extra,_=await corroborate(self.sources,self.title,[self.game,{**self.game,'id':20}])
+        ambiguous=decide(self.title,[self.game,{**self.game,'id':20}],complete=True,branches=[],corroboration=extra)
+        self.assertEqual(ambiguous['reason'],'ambiguous_candidates')
+
+    async def test_publisher_only_needs_two_cast_members_on_a_trusted_own_title_announcement(self):
+        self.game['involved_companies'].append({'publisher':True,'company':{'name':'Example Publisher'}})
+        self.store['42']['data'].update(developers=['Different Developer'],publishers=['Example Publisher'])
+        for state in ('one_actor','untrusted','cross_promotion','different_publisher'):
+            with self.subTest(state=state):
+                self.sources.cache.rows.clear()
+                self.credits.return_value['rows']=[person('nm1','First Actor',[{'name':'Chelsea Williams'}])]+(
+                    [] if state=='one_actor' else [person('nm2','Second Actor')])
+                self.store['42']['data']['publishers']=['Other Publisher' if state=='different_publisher' else 'Example Publisher']
+                self.http.request.return_value={'appnews':{'appid':42,'newsitems':[{'gid':'cast',
+                    'feedname':'pcgamer' if state=='untrusted' else 'steam_community_announcements',
+                    'title':'Another Game' if state=='cross_promotion' else 'Example Game Voice Cast',
+                    'contents':'Voice cast: First Actor and Second Actor.'}]}}
+                result,_=await self.decision()
+                self.assertNotEqual(result['status'],'verified')
+
+    def test_publisher_proof_cannot_use_duplicate_people_or_weaker_character_evidence(self):
+        proof={'app':'42','store_title':'Example Game','publisher_agreement':True,'developer_agreement':False,
+            'characters':['Chelsea Williams']}
+        for people in ([],[{'id':'nm1'}],[{'id':'nm1'},{'id':'nm1'}],[{'id':'nm1'},{'id':'not-a-person-id'}]):
+            result=decide(self.title,[self.game],complete=True,branches=[],corroboration={10:{**proof,'people':people}})
+            self.assertNotEqual(result['status'],'verified')
+
+    async def test_company_names_must_agree_in_the_same_role(self):
+        self.store['42']['data'].update(developers=['Different Developer'],publishers=['Example Studio'])
+        result,_=await self.decision()
+        self.assertNotEqual(result['status'],'verified')
+        self.credits.assert_not_awaited()
+
     async def asyncSetUp(self):
         self.title={'id':'tt1','title':'Example Game','year':None}
         self.game=game(name='Example Game',external_games=[{'uid':'42','external_game_source':{'name':'Steam'}}],

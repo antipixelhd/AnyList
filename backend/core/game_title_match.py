@@ -6,7 +6,10 @@ from urllib.parse import urlsplit
 from core.game_types import igdb_game_class
 from core.game_release_dates import game_release, release
 
-VERSION = 6
+VERSION = 7
+# Version 7 adds publisher/cast corroboration; existing v6 positives retain
+# their unchanged title, year, developer and independent-identity criteria.
+SUPPORTED_VERSIONS = (6, VERSION)
 
 
 def same_game_port(other,winner):
@@ -62,7 +65,9 @@ def cancelled_scope(other,winner,title):
 
 
 def store_agrees(proof,title):
-    if proof.get('developer_agreement') is not True or not re.fullmatch(r'[1-9][0-9]*',str(proof.get('app',''))):return False
+    people={person.get('id') for person in proof.get('people',[]) if isinstance(person,dict) and re.fullmatch(r'nm[0-9]+',str(person.get('id','')))}
+    company=proof.get('developer_agreement') is True or proof.get('publisher_agreement') is True and len(people)>=2
+    if not company or not re.fullmatch(r'[1-9][0-9]*',str(proof.get('app',''))):return False
     return spelling(proof.get('store_title')) in {spelling(title.get('title')),*[spelling(name) for name in title.get('aliases',[])]}
 
 
@@ -94,9 +99,14 @@ def supported(row,title):
 
 def valid_binding_evidence(evidence, imdb_id):
     proof=evidence.get('matching') or {}
+    version=evidence.get('matcher_version')
     eligible=[row for row in proof.get('candidates',[]) if isinstance(row,dict)
         and (row.get('year_match') is True or supported(row,proof.get('imdb') or {}))
         and row.get('game_class')!='unknown' and row.get('rank') in (1,2,3) and not row.get('edition')]
+    if version==6:
+        eligible=[row for row in eligible if row.get('year_match') is True
+            or not (row.get('corroboration') or {}).get('publisher_agreement')
+            or (row.get('corroboration') or {}).get('developer_agreement') is True]
     eligible=[row for row in eligible if not any(other['id']!=row['id'] and (same_game_port(row,other) or cancelled_scope(row,other,proof.get('imdb') or {})) for other in eligible)]
     winners=[row for row in eligible if row['rank']==max((entry['rank'] for entry in eligible),default=0)]
     winner=winners[0] if len(winners)==1 else {}
@@ -104,7 +114,7 @@ def valid_binding_evidence(evidence, imdb_id):
     year=(proof.get('imdb') or {}).get('year')
     competitors=[row for row in proof.get('candidates',[]) if row.get('id')!=winner.get('id') and not row.get('edition')
         and (not winner.get('year_match') or not row.get('years') or year in row['years'])]
-    return (evidence.get('matcher_version')==VERSION and proof.get('version')==VERSION
+    return (version in SUPPORTED_VERSIONS and proof.get('version')==version
         and proof.get('retrieval_complete') is True and (proof.get('imdb') or {}).get('id')==imdb_id
         and len(winners)==1 and str(winner.get('id'))==evidence.get('igdb_id')
         and all(same_game_port(row,winner) or cancelled_scope(row,winner,proof.get('imdb') or {}) or row.get('years') and row.get('game_class')!='unknown' and row.get('id') in renamed for row in competitors))

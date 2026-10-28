@@ -23,13 +23,13 @@ BINDING_REVISION='game_binding_revision'
 def verified_bindings(title_ids=None):
     """Explicit bindings whose current IGDB root still agrees with their evidence."""
     igdb=aliased(CatalogueIdentity)
-    from core.game_title_match import VERSION
+    from core.game_title_match import SUPPORTED_VERSIONS
     query=select(CatalogueIdentity.external_id.label('imdb_id'),CatalogueIdentity.entity_id.label('work_id'),
         CatalogueEntity.name.label('game_title'),CatalogueIdentity.evidence['igdb_id'].astext.label('igdb_id')).join(
         CatalogueEntity,CatalogueEntity.id==CatalogueIdentity.entity_id).where(CatalogueEntity.kind=='game',
         CatalogueIdentity.namespace=='imdb.title',CatalogueIdentity.source.in_(('reviewed','wikidata','matched')),
         func.coalesce(CatalogueIdentity.evidence['mapping_state'].astext,'active')=='active',
-        or_(CatalogueIdentity.source!='matched',CatalogueIdentity.evidence['matcher_version'].as_integer()==VERSION),
+        or_(CatalogueIdentity.source!='matched',CatalogueIdentity.evidence['matcher_version'].as_integer().in_(SUPPORTED_VERSIONS)),
         CatalogueIdentity.evidence['title_type'].astext=='videoGame',
         or_(CatalogueEntity.attributes['igdb_id'].astext.is_(None),
             CatalogueEntity.attributes['igdb_id'].astext==CatalogueIdentity.evidence['igdb_id'].astext),
@@ -98,10 +98,10 @@ class GameIMDbBindings:
                         from core.game_mapping_lifecycle import quarantine
                         await quarantine(db,binding,'changed_igdb_root');await db.commit()
                     return {'status':'conflict','imdb_id':None}
-                from core.game_title_match import VERSION
+                from core.game_title_match import SUPPORTED_VERSIONS
                 from core.game_version_scope import predates_version,VERSION as SCOPE_VERSION
                 pending=binding.source!='reviewed' and ((binding.evidence or {}).get('mapping_state','active')!='active'
-                    or binding.source=='matched' and (binding.evidence or {}).get('matcher_version')!=VERSION
+                    or binding.source=='matched' and (binding.evidence or {}).get('matcher_version') not in SUPPORTED_VERSIONS
                     or binding.source=='wikidata' and (binding.evidence or {}).get('version_scope_policy')!=SCOPE_VERSION
                         and predates_version((binding.evidence or {}).get('imdb_identity') or {},work.attributes or {}))
                 if not pending:return {'status':'bound','binding':binding_view(binding)}

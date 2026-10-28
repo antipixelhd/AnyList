@@ -30,6 +30,18 @@ def page(rows,total,more=False,cursor=None):
 
 @unittest.skipUnless(fixture.URL,'Requires explicit disposable catalogue PostgreSQL')
 class IMDbEnrichmentTests(unittest.IsolatedAsyncioTestCase):
+    async def test_supported_v6_binding_accepts_new_title_credit_publication(self):
+        from core.game_title_match import decide
+        from test_game_title_match import game
+        proof={**decide({'id':'tt123','title':'IGDB game','year':2020},
+            [game(name='IGDB game',year=2020)],complete=True,branches=[])['evidence'],'version':6}
+        async with self.Session() as db:
+            binding=await db.scalar(select(CatalogueIdentity).where(CatalogueIdentity.namespace=='imdb.title',CatalogueIdentity.external_id=='tt123'))
+            binding.source='matched';binding.evidence={'title_type':'videoGame','igdb_id':'10','matcher_version':6,'matching':proof,'mapping_state':'active'}
+            await db.commit()
+        self.assertEqual(await self.service.run(self.work_id),'ready')
+        self.assertEqual(len(await self.active()),2)
+
     async def asyncSetUp(self):
         await fixture.CatalogueDatabaseTests.asyncSetUp(self)
         async with self.engine.begin() as conn:

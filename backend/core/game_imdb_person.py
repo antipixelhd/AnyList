@@ -156,13 +156,13 @@ async def project_mapped(db,native,rows,generation,*,source_generation=None):
     # create participation for another person or a newly observed role.
     retained={}
     if ids:
-        from core.game_title_match import VERSION as MATCHER_VERSION
+        from core.game_title_match import SUPPORTED_VERSIONS
         retained=dict(((title,category),work) for title,category,work in (await db.execute(select(
             CatalogueCredit.attributes['imdb_title_id'].astext,
             CatalogueCredit.attributes['imdb_category'].astext,CatalogueCredit.work_id).join(
             CatalogueIdentity,CatalogueIdentity.entity_id==CatalogueCredit.work_id).where(
                 CatalogueIdentity.namespace=='imdb.title',or_(CatalogueIdentity.evidence['mapping_state'].astext=='stale',
-                    (CatalogueIdentity.source=='matched') & (func.coalesce(CatalogueIdentity.evidence['matcher_version'].as_integer(),0)!=MATCHER_VERSION)),
+                    (CatalogueIdentity.source=='matched') & (func.coalesce(CatalogueIdentity.evidence['matcher_version'].as_integer(),0).not_in(SUPPORTED_VERSIONS))),
                 CatalogueCredit.provider=='imdb',CatalogueCredit.scope=='person',
                 CatalogueCredit.attributes['imdb_person_id'].astext==native,
                 CatalogueCredit.attributes['source_active'].astext=='true',

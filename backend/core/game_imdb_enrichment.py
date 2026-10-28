@@ -171,12 +171,12 @@ class GameIMDbEnrichment:
             job=await db.scalar(snapshot(JOB,work_id).with_for_update())
             if not job or job.lease_token!=token:return False
             work,native,binding,_=await context(db,work_id)
-            from core.game_title_match import VERSION
+            from core.game_title_match import SUPPORTED_VERSIONS
             evidence=(binding.evidence or {}) if binding else {}
             if ((job.coverage or {}).get('mapping_revalidation')!=state.get('_mapping_request')
                 or evidence.get('evidence_revision')!=state.get('binding_revision')
                 or evidence.get('mapping_state','active')!='active'
-                or binding and binding.source=='matched' and evidence.get('matcher_version')!=VERSION):
+                or binding and binding.source=='matched' and evidence.get('matcher_version') not in SUPPORTED_VERSIONS):
                 job.lease_token=job.lease_until=None
                 job.error_code='mapping_changed'
                 job.next_attempt_at=now();job.expires_at=None

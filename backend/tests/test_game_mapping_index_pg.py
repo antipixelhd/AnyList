@@ -28,6 +28,23 @@ class MappingIndexTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         await fixture.GamesDatabaseTests.asyncSetUp(self)
 
+    async def test_supported_v6_binding_remains_visible_without_provider_revalidation(self):
+        from core.game_mapping_lifecycle import invalidate
+        from core.game_title_match import decide
+        from test_game_title_match import game
+        proof={**decide({'id':'tt1','title':'Spacelords','year':2017},[game()],complete=True,branches=[])['evidence'],'version':6}
+        async with self.Session() as db:
+            db.add_all([CatalogueIdentity(entity_id=self.base,namespace='igdb.game',external_id='10',source='igdb'),
+                CatalogueIdentity(entity_id=self.base,namespace='imdb.title',external_id='tt1',source='matched',
+                    evidence={'matcher_version':6,'matching':proof,'title_type':'videoGame','igdb_id':'10','mapping_state':'active'})])
+            await db.commit()
+            await invalidate(db,outdated=True);await db.commit()
+            self.assertEqual(len(list(await db.scalars(verified_bindings(['tt1'])))),1)
+            self.assertIsNone(await db.scalar(snapshot('game_credit_job',self.base)))
+        source=SimpleNamespace(title=AsyncMock(side_effect=AssertionError('Supported proof must not refetch')))
+        result=await GameIMDbBindings(self.Session,source=source).resolve(self.base)
+        self.assertEqual(result['status'],'bound');source.title.assert_not_awaited()
+
     async def version_correction_fixture(self):
         from core.game_imdb_mapping import game_mapping
         from core.game_title_match import decide

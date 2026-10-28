@@ -23,6 +23,16 @@ class TitleDecisionTests(unittest.TestCase):
     def decide(self, rows, **kwargs):
         return decide(self.title, rows, complete=kwargs.get('complete', True), branches=[])
 
+    def test_unchanged_v6_proofs_remain_supported_but_unknown_or_mixed_versions_do_not(self):
+        proof=self.decide([game()])['evidence']
+        for version in (6,VERSION):
+            self.assertTrue(valid_binding_evidence({'matching':{**proof,'version':version},
+                'matcher_version':version,'igdb_id':'10'},'tt1'))
+        for version in (5,VERSION+1,None):
+            self.assertFalse(valid_binding_evidence({'matching':{**proof,'version':version},
+                'matcher_version':version,'igdb_id':'10'},'tt1'))
+        self.assertFalse(valid_binding_evidence({'matching':proof,'matcher_version':6,'igdb_id':'10'},'tt1'))
+
     def test_episode_title_requires_confirmed_series_parent_number_and_release(self):
         title={'id':'tt1','title':'Vader Immortal: A Star Wars VR Series - Episode III','year':2019}
         parent={'id':100,'name':'Vader Immortal: A Star Wars VR Series','game_type':{'id':0}}

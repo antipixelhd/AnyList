@@ -29,12 +29,12 @@ async def quarantine(db, binding, reason):
 
 
 async def invalidate(db,keys=(),*,outdated=False,identity_ids=None):
-    from core.game_title_match import VERSION
+    from core.game_title_match import SUPPORTED_VERSIONS
     if identity_ids is not None:condition=CatalogueIdentity.id.in_(identity_ids)
     elif outdated:
         from core.game_version_scope import legacy_scope_condition
         condition=or_((CatalogueIdentity.source=='matched') & (
-            func.coalesce(CatalogueIdentity.evidence['matcher_version'].as_integer(),0)!=VERSION),
+            func.coalesce(CatalogueIdentity.evidence['matcher_version'].as_integer(),0).not_in(SUPPORTED_VERSIONS)),
             select(CatalogueEntity.id).where(CatalogueEntity.id==CatalogueIdentity.entity_id,
                 legacy_scope_condition(CatalogueIdentity,CatalogueEntity)).exists())
     else:condition=CatalogueIdentity.evidence['dependencies'].op('?|')(array(sorted(set(keys))))

@@ -27,6 +27,22 @@ def page(rows,total,more=False,cursor=None,bio='A biography mentioning game work
 
 @unittest.skipUnless(fixture.URL,'Requires explicit disposable catalogue PostgreSQL')
 class PersonEnrichmentTests(unittest.IsolatedAsyncioTestCase):
+    async def test_supported_v6_binding_can_publish_new_person_participation(self):
+        from core.game_title_match import decide
+        from core.game_contributor_works import works_page
+        from test_game_title_match import game
+        proof={**decide({'id':'tt1','title':'Identical title','year':2017},
+            [game(name='Identical title')],complete=True,branches=[])['evidence'],'version':6}
+        async with self.Session() as db:
+            binding=await db.scalar(select(CatalogueIdentity).where(CatalogueIdentity.namespace=='imdb.title',CatalogueIdentity.external_id=='tt1'))
+            binding.source='matched';binding.evidence={'title_type':'videoGame','igdb_id':'10','matcher_version':6,'matching':proof,'mapping_state':'active'}
+            await db.commit()
+        self.assertEqual(await self.service.run('nm1'),'ready')
+        async with self.Session() as db:
+            result=await works_page(db,None,self.person_id,'actor',key='test',list_scope='all',status='',page=1,cursor=None)
+            self.assertEqual([row['id'] for row in result['works']],[self.game_id])
+        self.source.credits.assert_awaited_once()
+
     async def asyncSetUp(self):
         await fixture.CatalogueDatabaseTests.asyncSetUp(self)
         async with self.Session() as db:
