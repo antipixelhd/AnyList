@@ -7,6 +7,7 @@ os.environ.setdefault('SECRET_KEY','wiki-title-test')
 os.environ.setdefault('DATABASE_URL','postgresql+asyncpg://test:test@localhost/test')
 from core.game_wikidata_title_support import project,agrees,corroborate,discovery_candidate
 from core.game_title_match import decide,valid_binding_evidence,VERSION
+from core.catalogue_providers import ProviderError
 from test_game_credit_sources import item,claim,snak
 from test_game_title_match import game
 from test_game_imdb_discovery_source import Cache
@@ -78,3 +79,17 @@ class WikiTitleTests(unittest.IsolatedAsyncioTestCase):
         with patch('core.game_wikidata_title_support.GameCreditSources') as factory:
             self.assertEqual(await corroborate(sources,self.title,[{**self.raw,'id':i} for i in range(1,5)]),({},[]))
             factory.assert_not_called()
+
+    async def test_optional_conflicting_identity_is_cached_but_outages_are_not_negatives(self):
+        sources=SimpleNamespace(cache=Cache())
+        wiki=SimpleNamespace(game_item=AsyncMock(side_effect=ProviderError('identity_conflict')),entities=AsyncMock())
+        with patch('core.game_wikidata_title_support.GameCreditSources',return_value=wiki):
+            result=await corroborate(sources,self.title,[self.raw])
+            self.assertFalse(result[0])
+            self.assertEqual(await corroborate(sources,self.title,[self.raw]),result)
+            wiki.game_item.assert_awaited_once();wiki.entities.assert_not_awaited()
+            self.assertEqual(next(iter(sources.cache.rows.values()))['state'],'identity_conflict')
+            sources.cache.rows.clear();wiki.game_item.side_effect=ProviderError('unavailable')
+            for _ in range(2):
+                with self.assertRaisesRegex(ProviderError,'unavailable'):await corroborate(sources,self.title,[self.raw])
+            self.assertFalse(sources.cache.rows)

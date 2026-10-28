@@ -57,7 +57,10 @@ async def corroborate(sources,title,candidates):
     wiki=GameCreditSources(sources);evidence={};snapshots=[]
     for raw in selected:
         async def load():
-            bridge=await wiki.game_item(raw['id'],raw['slug'])
+            try:bridge=await wiki.game_item(raw['id'],raw['slug'])
+            except ProviderError as error:
+                if error.code!='identity_conflict':raise
+                return {'proof':{},'state':'identity_conflict'}
             if bridge.get('stale'):raise ProviderError('stale_mapping')
             q=bridge['data']['item']
             if not q:return {'proof':{}}
@@ -65,7 +68,8 @@ async def corroborate(sources,title,candidates):
             if fetched.get('stale'):raise ProviderError('stale_mapping')
             item=fetched['data']['entities'].get(q)
             if not item:raise ProviderError('incomplete_cache')
-            return {'proof':project(item,raw,title)}
+            proof=project(item,raw,title)
+            return {'proof':proof,'state':'supported' if proof else 'unmatched'}
         key=hashlib.sha256(json.dumps([title['id'],title['title'],title.get('aliases',[]),title.get('year'),raw['id'],raw['slug']],ensure_ascii=True).encode()).hexdigest()
         value,snapshot=await cached(sources,'wikidata','game_match_wiki',key,load)
         snapshots.append(snapshot)
