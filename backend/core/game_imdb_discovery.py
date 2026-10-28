@@ -19,7 +19,7 @@ from models.catalogue import CatalogueIdentity,MetadataSnapshot
 
 JOB='game_person_discovery'
 MAP='game_person_title_map'
-VERSION=12
+VERSION=13
 MAX_ACQUIRE=4
 _slots=asyncio.Semaphore(1)
 
@@ -124,7 +124,11 @@ class GamePersonDiscovery:
                         work_id=await self.ingest(value['document'])
                         title=next(row for row in batch if row['id']==value['id'])
                         matched=value.get('binding_source')=='matched'
-                        await self.bindings.save(work_id,value['id'],'matched' if matched else 'wikidata',{
+                        if value.get('credit_parent'):
+                            from core.game_credit_parents import save_automatic_parent
+                            async with self.sessions() as db:
+                                await save_automatic_parent(db,value['id'],work_id,value['evidence']);await db.commit()
+                        else:await self.bindings.save(work_id,value['id'],'matched' if matched else 'wikidata',{
                             'title_type':'videoGame','igdb_id':str(value['igdb_id']),
                             'matching' if matched else 'wikidata':value['evidence'],
                             'dependencies':value['evidence'].get('dependencies',[]),'mapping_state':'active',
@@ -143,6 +147,8 @@ class GamePersonDiscovery:
                 generation=await db.scalar(snapshot(COMPONENT,native).with_only_columns(MetadataSnapshot.payload['generation'].astext))
                 if generation!=component.generation:
                     await db.rollback();await self.release(native,token,restart=generation);return 'changed'
+                from core.game_credit_parents import reject_automatic_parents
+                await reject_automatic_parents(db,[row['id'] for row in outcomes if row['status'] in ('conflict','excluded')])
                 for outcome in outcomes:
                     statement=insert(MetadataSnapshot).values(provider='wikidata',kind=MAP,external_id=outcome['id'],
                         entity_id=outcome.get('work_id'),payload=outcome,coverage={'verified':outcome['status'] in ('verified','excluded')},

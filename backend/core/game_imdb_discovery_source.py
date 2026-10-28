@@ -219,8 +219,11 @@ class GameIMDbDiscoverySource:
                 from core.game_version_scope import reference_game
                 version_reference['game']=reference_game(current)
             decision=decide(title,data['rows'],complete=data['complete'] and not acquired['stale'],branches=data['branches'])
+            from core.game_credit_parents import parent_proposal
+            proposal=parent_proposal(title,data['rows'],complete=data['complete'] and not acquired['stale']) if not scope_parent and any(
+                row.get('version_parent') or igdb_game_class(row)=='port' for row in data['rows']) else None
             deeper=[]
-            if decision['status'] in ('unresolved','unmapped') and data['rows'] and data['complete'] and not acquired['stale']:
+            if not proposal and decision['status'] in ('unresolved','unmapped') and data['rows'] and data['complete'] and not acquired['stale']:
                 from core.game_match_support import corroborate
                 # Retrieval has its own bounded query/worker timeout. Only
                 # corroboration spends this shared deep-work allowance.
@@ -235,12 +238,12 @@ class GameIMDbDiscoverySource:
                     outputs.append({'id':native,'status':'unresolved','reason':getattr(error,'code','timeout'),'retry_after':60});continue
                 finally:
                     deep_remaining=max(0,deep_remaining-(monotonic()-started))
-            if decision['status']!='verified':
+            if decision['status']!='verified' and not proposal:
                 outputs.append({'id':native,**decision});continue
             if scope_parent and decision['igdb_id']!=scope_parent:
                 outputs.append({'id':native,'status':'conflict','reason':'version_parent_mismatch'});continue
             games={row['id']:row for row in data['rows']}
-            raw=games[decision['igdb_id']]
+            raw=games[proposal['child_igdb_id'] if proposal else decision['igdb_id']]
             parent=raw.get('parent_game')
             if igdb_game_class(raw) in CREDIT_CHILDREN and isinstance(parent,dict) and positive(parent.get('id')) and parent['id'] not in games:
                 games.update(await self.games({parent['id']}))
@@ -256,6 +259,21 @@ class GameIMDbDiscoverySource:
                     'candidate_observations':data.get('scope_observations',{}),
                     'check_wikidata_generation':True,'wikidata_generation':wiki_generation,
                     'wiki_snapshots':result.get('support_snapshots',[]),'snapshots':deeper}}
+            if proposal:
+                from core.game_credit_parents import automatic_parent_valid,VERSION as PARENT_VERSION
+                from core.game_title_candidates import IDENTITY_FIELDS
+                parent_id=proposal['parent_igdb_id']
+                if parent_id not in games:games.update(await self.games({parent_id}))
+                parent=games.get(parent_id,{})
+                evidence.update(scope='parent_participation',variant={'version':PARENT_VERSION,
+                    'child':{key:raw[key] for key in IDENTITY_FIELDS if key in raw},
+                    'parent':{key:parent[key] for key in IDENTITY_FIELDS if key in parent}})
+                evidence['dependencies'].append(f'igdb:{parent_id}')
+                if not automatic_parent_valid(evidence):
+                    outputs.append({'id':native,'status':'unresolved','reason':'variant_parent_scope'});continue
+                projected=project_game(native,parent,games,evidence)
+                projected['credit_parent']=True
+                outputs.append(projected);continue
             projected=project_game(native,raw,games,evidence)
             projected['binding_source']='matched';outputs.append(projected)
         return {**result,'outcomes':outputs}

@@ -1,7 +1,7 @@
 """Invalidate accepted evidence for changed facts, not merely another query."""
-from sqlalchemy import select,func
+from sqlalchemy import select,func,literal
 from sqlalchemy.dialects.postgresql import array
-from models.catalogue import CatalogueIdentity
+from models.catalogue import CatalogueIdentity,MetadataSnapshot
 
 
 def changes_binding(evidence,key,data):
@@ -29,19 +29,33 @@ async def invalidate_observed(db,key,data):
     keys=[f'igdb-query:{key}',*[f'igdb-name:{name}' for name in data.get('scope_names',[])]]
     # Only the public proof header is needed; no private entries or full credits.
     evidence=CatalogueIdentity.evidence
-    rows=(await db.execute(select(CatalogueIdentity.id,evidence['igdb_id'].astext.label('igdb_id'),
+    query=select(CatalogueIdentity.id,evidence['igdb_id'].astext.label('igdb_id'),
         evidence['matching']['imdb'].label('imdb'),
         evidence['matching']['support']['candidate_fingerprint'].astext.label('fingerprint'),
         evidence['matching']['support']['candidate_observations'].label('observations'),
-        evidence['dependencies'].op('?')(f'igdb-query:{key}').label('own')).where(
+        evidence['dependencies'].op('?')(f'igdb-query:{key}').label('own'),literal('binding').label('kind')).where(
         CatalogueIdentity.namespace=='imdb.title',CatalogueIdentity.source=='matched',
         func.coalesce(CatalogueIdentity.evidence['mapping_state'].astext,'active').not_in(('quarantined','stale')),
-        CatalogueIdentity.evidence['dependencies'].op('?|')(array(keys))))).all()
+        CatalogueIdentity.evidence['dependencies'].op('?|')(array(keys)))
+    from core.game_credit_parents import KIND
+    proof=MetadataSnapshot.payload['evidence']
+    parents=select(MetadataSnapshot.id,proof['variant']['child']['id'].astext,
+        proof['imdb'],proof['support']['candidate_fingerprint'].astext,
+        proof['support']['candidate_observations'],MetadataSnapshot.payload['dependencies'].op('?')(f'igdb-query:{key}'),literal('parent')).where(
+        MetadataSnapshot.provider=='imdb',MetadataSnapshot.kind==KIND,
+        MetadataSnapshot.coverage['automatic'].astext=='true',MetadataSnapshot.coverage['mapping_state'].astext=='active',
+        MetadataSnapshot.payload['dependencies'].op('?|')(array(keys)))
+    rows=(await db.execute(query.union_all(parents))).all()
     import asyncio
     def affected():
-        return [row.id for row in rows if changes_binding({'igdb_id':row.igdb_id,
+        return [(row.kind,row.id) for row in rows if changes_binding({'igdb_id':row.igdb_id,
             'dependencies':[f'igdb-query:{key}'] if row.own else [],
             'matching':{'imdb':row.imdb,'support':{'candidate_fingerprint':row.fingerprint,
                 'candidate_observations':row.observations}}},key,data)]
     changed=await asyncio.to_thread(affected)
-    if changed:await invalidate(db,identity_ids=changed)
+    bindings=[identifier for kind,identifier in changed if kind=='binding']
+    parents=[identifier for kind,identifier in changed if kind=='parent']
+    if bindings:await invalidate(db,identity_ids=bindings)
+    if parents:
+        from core.game_mapping_lifecycle import invalidate_parents
+        await invalidate_parents(db,snapshot_ids=parents)

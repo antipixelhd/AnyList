@@ -55,6 +55,150 @@ class PortfolioDiscoveryTests(unittest.IsolatedAsyncioTestCase):
             data=await view(db,'nm1',check_mapping=True);await db.commit()
         return data
 
+    async def automatic_edition(self):
+        from core.game_imdb_discovery_source import GameIMDbDiscoverySource
+        from core.game_source_cache import GameSourceCache
+        from core.game_imdb_person import JOB as PERSON_JOB
+        from test_game_parent_proposals import automatic_proof
+        proof=automatic_proof();source_credit=credit('tt2')
+        source_credit['title'].update(titleText={'text':proof['imdb']['title']},releaseYear={'year':2017})
+        self.connection.credits.return_value=page([source_credit],1)
+        async with self.Session() as db:
+            job=await db.scalar(snapshot(PERSON_JOB,'nm1'));job.next_attempt_at=now();job.expires_at=None;job.payload={};await db.commit()
+        self.assertEqual(await self.person_service.run('nm1'),'ready')
+        async def games(endpoint,query):
+            return [proof['variant']['parent']] if 'where (id=(10))' in query else [proof['variant']['child']]
+        sources=SimpleNamespace(cache=GameSourceCache(self.Session),igdb=AsyncMock(side_effect=games),
+            api=SimpleNamespace(http=SimpleNamespace(request=AsyncMock(return_value={'results':{'bindings':[]}}))))
+        self.variant_service=GamePersonDiscovery(self.Session,source=GameIMDbDiscoverySource(self.Session,sources=sources))
+        self.assertEqual(await self.variant_service.run('nm1'),'changed')
+        self.assertEqual(await self.variant_service.run('nm1'),'ready')
+        self.assertEqual(await self.person_service.run('nm1'),'ready')
+        async with self.Session() as db:
+            result=await db.scalar(snapshot(MAP,'tt2',provider='wikidata').with_only_columns(MetadataSnapshot.payload))
+        self.assertEqual(result['status'],'verified',result)
+        self.assertTrue(result['credit_parent']);self.assertEqual(result['work_id'],self.base)
+        return result,sources
+
+    async def test_automatic_edition_projects_one_parent_card_without_replacing_its_identity(self):
+        from core.game_contributor_works import works_page
+        from core.game_credit_parents import KIND
+        result,sources=await self.automatic_edition()
+        async with self.Session() as db:
+            primary=await db.scalar(select(CatalogueIdentity.external_id).where(CatalogueIdentity.entity_id==self.base,CatalogueIdentity.namespace=='imdb.title'))
+            self.assertEqual(primary,'tt1')
+            self.assertIsNone(await db.scalar(select(CatalogueIdentity.id).where(CatalogueIdentity.namespace=='imdb.title',CatalogueIdentity.external_id=='tt2')))
+            record=await db.scalar(snapshot(KIND,'tt2'))
+            self.assertTrue(record.coverage['automatic']);self.assertNotIn('reviewer_id',record.payload)
+            works=await works_page(db,None,self.person,'actor',key='automatic',list_scope='all',status='',page=1,cursor=None)
+            self.assertEqual(len(works['works']),1)
+            self.assertEqual(works['works'][0]['href'],f'/games/{self.base}')
+            self.assertEqual(works['works'][0]['credit_sources'],[{'kind':'edition','title':'Main game: Complete Edition'}])
+            from core.game_imdb_person import project_mapped
+            await project_mapped(db,'nm1',[credit('tt1'),credit('tt2')],'with-main-credit')
+            both=await works_page(db,None,self.person,'actor',key='with-main',list_scope='all',status='',page=1,cursor=None)
+            self.assertEqual(len(both['works']),1);self.assertFalse(both['works'][0].get('credit_sources'))
+            entry=await db.scalar(select(GameEntry))
+            self.assertEqual((entry.work_id,entry.notes,entry.total_seconds),(self.base,'Pending private state',3600))
+        self.assertEqual(sources.igdb.await_count,3)
+        self.assertEqual(sources.api.http.request.await_count,1)  # Reverse Wiki check, no cast/store fan-out.
+
+    async def test_stale_automatic_parent_retains_existing_role_but_cannot_create_new_participation(self):
+        from core.game_credit_parents import person_bindings,KIND
+        from core.game_mapping_lifecycle import invalidate
+        from core.game_imdb_person import queue_projection,project_mapped
+        await self.automatic_edition()
+        async with self.Session() as db:
+            await invalidate(db,['igdb:20']);await db.commit()
+            self.assertFalse((await db.execute(select(person_bindings(['tt2'])))).all())
+            discovery=await db.scalar(snapshot(JOB,'nm1'))
+            self.assertIsNone(discovery.expires_at)
+            await queue_projection(db,'nm1');await db.commit()
+        self.assertEqual(await self.person_service.run('nm1'),'ready')
+        async with self.Session() as db:
+            old=await db.scalar(select(CatalogueCredit).where(CatalogueCredit.scope=='person',CatalogueCredit.contributor_id==self.person,
+                CatalogueCredit.attributes['imdb_title_id'].astext=='tt2'))
+            self.assertTrue(old.attributes['source_active']);self.assertEqual(old.attributes['credited_child']['kind'],'edition')
+            newcomer=CatalogueEntity(kind='person',name='New performer');db.add(newcomer);await db.flush()
+            db.add(CatalogueIdentity(entity_id=newcomer.id,namespace='imdb.person',external_id='nm2',source='imdb'));await db.flush()
+            result=await project_mapped(db,'nm2',[credit('tt2')],'new-generation')
+            self.assertEqual(result['unmapped_games'],1)
+            self.assertFalse(await db.scalar(select(CatalogueCredit.id).where(CatalogueCredit.contributor_id==newcomer.id)))
+            await db.commit()
+
+    async def test_automatic_parent_support_change_and_review_race_are_rejected(self):
+        from core.game_credit_parents import save_automatic_parent,review_parent,reject_automatic_parents,KIND
+        from core.game_source_cache import GameSourceCache
+        from core import catalogue
+        from models import User
+        result,_=await self.automatic_edition();proof=result['evidence']
+        async with self.Session() as db:
+            candidate=await db.scalar(GameSourceCache.query('igdb','game_title_candidates',proof['support']['candidate_key']))
+            saved=candidate.payload;candidate.payload={**saved,'scope_fingerprint':'changed'};await db.commit()
+            with self.assertRaises(ProviderError):await save_automatic_parent(db,'tt2',self.base,proof)
+            await db.rollback()
+            candidate=await db.scalar(GameSourceCache.query('igdb','game_title_candidates',proof['support']['candidate_key']))
+            candidate.payload=saved
+            user=await db.get(User,self.user.id);user.is_admin=True
+            await review_parent(db,'tt2',self.base,title='Reviewed edition',kind='edition',source_url='https://example.test/edition',reviewer_id=user.id)
+            await db.commit()
+            with self.assertRaises(catalogue.IdentityConflict):await save_automatic_parent(db,'tt2',self.base,proof)
+            await db.rollback()
+            from core.game_mapping_lifecycle import invalidate
+            await invalidate(db,['igdb:20']);await reject_automatic_parents(db,['tt2']);await db.commit()
+            record=await db.scalar(snapshot(KIND,'tt2'))
+            self.assertTrue(record.coverage['reviewed']);self.assertEqual(record.payload['title'],'Reviewed edition')
+
+    async def test_changed_candidate_scope_invalidates_automatic_parent_but_identical_scope_does_not(self):
+        from core.game_candidate_observations import invalidate_observed
+        from core.game_credit_parents import person_bindings
+        from core.game_source_cache import GameSourceCache
+        from core.game_title_candidates import observations
+        result,_=await self.automatic_edition();key=result['evidence']['support']['candidate_key']
+        async with self.Session() as db:
+            row=await db.scalar(GameSourceCache.query('igdb','game_title_candidates',key));data=dict(row.payload)
+            await invalidate_observed(db,key,data);await db.commit()
+            self.assertTrue((await db.execute(select(person_bindings(['tt2'])))).all())
+            await invalidate_observed(db,'different-query',data);await db.commit()
+            self.assertTrue((await db.execute(select(person_bindings(['tt2'])))).all())
+            data={**data,'scope_fingerprint':'new','rows':[dict(r) for r in data['rows']]}
+            data['rows'][0]['version_parent']=99;data['scope_observations']=observations(data['rows'])
+            await invalidate_observed(db,'different-query',data);await db.commit()
+            self.assertFalse((await db.execute(select(person_bindings(['tt2'])))).all())
+
+    async def test_source_generation_changes_invalidate_automatic_parent_participation(self):
+        from core import game_mapping_index as index
+        from core.game_credit_parents import person_bindings,KIND
+        await self.automatic_edition()
+        generation=await index.begin(self.Session,'imdb')
+        await index.write(self.Session,generation,[{'id':'tt2','title':'Corrected source title','year':2024,
+            'data':{'id':'tt2','title':'Corrected source title','year':2024,'aliases':[]}}])
+        await index.publish(self.Session,generation,{'complete':True,'rows':1})
+        async with self.Session() as db:
+            self.assertFalse((await db.execute(select(person_bindings(['tt2'])))).all())
+            record=await db.scalar(snapshot(KIND,'tt2'));self.assertEqual(record.coverage['mapping_state'],'stale')
+
+    async def test_changed_parent_root_cannot_be_saved_or_used_for_new_participation(self):
+        from core.game_credit_parents import save_automatic_parent,person_bindings
+        from core import catalogue
+        result,_=await self.automatic_edition()
+        async with self.Session() as db:
+            parent=await db.get(CatalogueEntity,self.base);parent.attributes={**parent.attributes,'igdb_id':99};await db.commit()
+            self.assertFalse((await db.execute(select(person_bindings(['tt2'])))).all())
+            with self.assertRaises(catalogue.IdentityConflict):await save_automatic_parent(db,'tt2',self.base,result['evidence'])
+            await db.rollback()
+
+    async def test_confirmed_conflict_retires_automatic_participation(self):
+        from core.game_credit_parents import reject_automatic_parents,KIND,person_bindings
+        await self.automatic_edition()
+        async with self.Session() as db:
+            await reject_automatic_parents(db,['tt2']);await db.commit()
+            self.assertFalse((await db.execute(select(person_bindings(['tt2'])))).all())
+            record=await db.scalar(snapshot(KIND,'tt2'));self.assertEqual(record.coverage['mapping_state'],'quarantined')
+            role=await db.scalar(select(CatalogueCredit).where(CatalogueCredit.scope=='person',CatalogueCredit.contributor_id==self.person,
+                CatalogueCredit.attributes['imdb_title_id'].astext=='tt2'))
+            self.assertFalse(role.attributes['source_active'])
+
     async def test_reviewed_update_uses_parent_without_overwriting_primary_identity(self):
         from core.game_credit_parents import review_parent
         from core.game_contributor_works import works_page

@@ -30,6 +30,7 @@ async def quarantine(db, binding, reason):
 
 async def invalidate(db,keys=(),*,outdated=False,identity_ids=None):
     from core.game_title_match import SUPPORTED_VERSIONS
+    await invalidate_parents(db,keys,outdated=outdated)
     if identity_ids is not None:condition=CatalogueIdentity.id.in_(identity_ids)
     elif outdated:
         from core.game_version_scope import legacy_scope_condition
@@ -55,6 +56,27 @@ async def invalidate(db,keys=(),*,outdated=False,identity_ids=None):
         'coverage':MetadataSnapshot.coverage.op('||')({'mapping_revalidation':marker})}))
 
 
+async def invalidate_parents(db,keys=(),*,outdated=False,snapshot_ids=None,title_ids=()):
+    from core.game_credit_parents import KIND,VERSION
+    from core.game_title_match import SUPPORTED_VERSIONS
+    if snapshot_ids is not None:condition=MetadataSnapshot.id.in_(snapshot_ids)
+    elif outdated:condition=or_(MetadataSnapshot.coverage['policy_version'].as_integer()!=VERSION,
+        MetadataSnapshot.payload['evidence']['version'].as_integer().not_in(SUPPORTED_VERSIONS))
+    elif keys or title_ids:condition=or_(MetadataSnapshot.payload['dependencies'].op('?|')(array(sorted(set(keys)))),
+        MetadataSnapshot.external_id.in_(title_ids))
+    else:return
+    changed=list(await db.scalars(update(MetadataSnapshot).where(MetadataSnapshot.provider=='imdb',
+        MetadataSnapshot.kind==KIND,MetadataSnapshot.coverage['automatic'].astext=='true',
+        MetadataSnapshot.coverage['mapping_state'].astext=='active',condition).values(
+            coverage=MetadataSnapshot.coverage.op('||')({'mapping_state':'stale'})).returning(MetadataSnapshot.external_id)))
+    if changed:
+        people=select(CatalogueCredit.attributes['imdb_person_id'].astext).where(CatalogueCredit.provider=='imdb',
+            CatalogueCredit.scope=='person',CatalogueCredit.attributes['imdb_title_id'].astext.in_(changed))
+        await db.execute(update(MetadataSnapshot).where(MetadataSnapshot.provider=='imdb',
+            MetadataSnapshot.kind=='game_person_discovery',MetadataSnapshot.external_id.in_(people)).values(expires_at=None))
+        await revision(db)
+
+
 async def changed_generation(db, generation):
     previous = await db.scalar(select(Generation.id).where(Generation.source == generation.source,
         Generation.id != generation.id, Generation.published_at.is_not(None))
@@ -76,12 +98,16 @@ async def changed_generation(db, generation):
             new.c.native.is_not(None) if cached_scope else True))
     async for batch in stream.partitions(500):
         conditions=[]
+        parent_keys=[];parent_titles=[]
         for native,new_names,old_names,new_imdb,old_imdb,new_claims,old_native in batch:
             keys=[f'{generation.source}:{native}']
             keys.extend(f'{generation.source}-name:{name}' for name in [*(new_names or []),*(old_names or [])])
+            parent_keys.extend(keys)
             affected=CatalogueIdentity.evidence['dependencies'].op('?|')(array(sorted(set(keys))))
             if generation.source=='wikidata':
                 imdb_ids=sorted(set([*(new_imdb or []),*(old_imdb or [])]))
+                parent_titles.extend(imdb_ids)
+                parent_keys.extend(f'wikidata-imdb:{value}' for value in imdb_ids)
                 # Include legacy explicit bindings that predate reverse-ID dependencies.
                 affected=or_(affected,CatalogueIdentity.external_id.in_(imdb_ids),
                     CatalogueIdentity.evidence['dependencies'].op('?|')(array([f'wikidata-imdb:{value}' for value in imdb_ids])))
@@ -96,5 +122,6 @@ async def changed_generation(db, generation):
                     affected=affected & ~func.coalesce(unchanged,False)
             conditions.append(affected)
         await invalidate(db,identity_ids=select(CatalogueIdentity.id).where(or_(*conditions)))
+        await invalidate_parents(db,parent_keys,title_ids=parent_titles)
     # Marked evidence is not available for new verified participation; old public
     # credits are retained until a worker establishes a real contradiction.

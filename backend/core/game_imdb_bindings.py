@@ -80,6 +80,36 @@ def binding_view(binding):
             'evidence':binding.evidence,'url':f'https://www.imdb.com/title/{binding.external_id}/'}
 
 
+async def validate_support(db,proof):
+    """Reject evidence that changed between provider verification and publication."""
+    support=proof.get('support') or {}
+    if support.get('check_wikidata_generation'):
+        from models.game_mapping import GameMappingGeneration
+        current=await db.scalar(select(GameMappingGeneration.id).where(GameMappingGeneration.source=='wikidata',
+            GameMappingGeneration.active.is_(True)))
+        if current!=support.get('wikidata_generation'):raise ProviderError('stale_mapping')
+    from core.game_source_cache import GameSourceCache
+    for snapshot in support.get('snapshots',[]):
+        row=(await db.execute(GameSourceCache.query(snapshot['provider'],snapshot['kind'],snapshot['key'])
+            .with_only_columns(MetadataSnapshot.payload['fingerprint'].astext,MetadataSnapshot.expires_at)
+            .with_for_update(read=True))).one_or_none()
+        if not row or row[0]!=snapshot['fingerprint'] or not row[1] or row[1]<=now():raise ProviderError('stale_mapping')
+    for snapshot in support.get('wiki_snapshots',[]):
+        fetched=await db.scalar(GameSourceCache.query('wikidata',snapshot['kind'],snapshot['key'])
+            .with_only_columns(MetadataSnapshot.fetched_at).with_for_update(read=True))
+        if not fetched or fetched.isoformat()!=snapshot['fetched_at']:raise ProviderError('stale_mapping')
+    if generation:=support.get('imdb_generation'):
+        from models.game_mapping import GameMappingGeneration
+        if not await db.scalar(select(GameMappingGeneration.id).where(GameMappingGeneration.id==generation,
+            GameMappingGeneration.active.is_(True),GameMappingGeneration.observed_at>=now()-timedelta(days=2))):
+            raise ProviderError('stale_mapping')
+    if candidate_key:=support.get('candidate_key'):
+        from core.game_source_cache import GameSourceCache
+        fingerprint=await db.scalar(GameSourceCache.query('igdb','game_title_candidates',candidate_key)
+            .with_only_columns(MetadataSnapshot.payload['scope_fingerprint'].astext))
+        if fingerprint!=support.get('candidate_fingerprint'):raise ProviderError('stale_mapping')
+
+
 class GameIMDbBindings:
     def __init__(self,sessions,*,source=None,wiki=None):
         self.sessions=sessions
@@ -283,32 +313,7 @@ class GameIMDbBindings:
         async with self.sessions() as db:
             await catalogue.write_lock(db)
             if source=='matched':
-                support=proof.get('support') or {}
-                if support.get('check_wikidata_generation'):
-                    from models.game_mapping import GameMappingGeneration
-                    current=await db.scalar(select(GameMappingGeneration.id).where(GameMappingGeneration.source=='wikidata',
-                        GameMappingGeneration.active.is_(True)))
-                    if current!=support.get('wikidata_generation'):raise ProviderError('stale_mapping')
-                from core.game_source_cache import GameSourceCache
-                for snapshot in support.get('snapshots',[]):
-                    row=(await db.execute(GameSourceCache.query(snapshot['provider'],snapshot['kind'],snapshot['key'])
-                        .with_only_columns(MetadataSnapshot.payload['fingerprint'].astext,MetadataSnapshot.expires_at)
-                        .with_for_update(read=True))).one_or_none()
-                    if not row or row[0]!=snapshot['fingerprint'] or not row[1] or row[1]<=now():raise ProviderError('stale_mapping')
-                for snapshot in support.get('wiki_snapshots',[]):
-                    fetched=await db.scalar(GameSourceCache.query('wikidata',snapshot['kind'],snapshot['key'])
-                        .with_only_columns(MetadataSnapshot.fetched_at).with_for_update(read=True))
-                    if not fetched or fetched.isoformat()!=snapshot['fetched_at']:raise ProviderError('stale_mapping')
-                if generation:=support.get('imdb_generation'):
-                    from models.game_mapping import GameMappingGeneration
-                    if not await db.scalar(select(GameMappingGeneration.id).where(GameMappingGeneration.id==generation,
-                        GameMappingGeneration.active.is_(True),GameMappingGeneration.observed_at>=now()-timedelta(days=2))):
-                        raise ProviderError('stale_mapping')
-                if candidate_key:=support.get('candidate_key'):
-                    from core.game_source_cache import GameSourceCache
-                    fingerprint=await db.scalar(GameSourceCache.query('igdb','game_title_candidates',candidate_key)
-                        .with_only_columns(MetadataSnapshot.payload['scope_fingerprint'].astext))
-                    if fingerprint!=support.get('candidate_fingerprint'):raise ProviderError('stale_mapping')
+                await validate_support(db,proof)
             _,native,old,_=await context(db,work_id,participation=participation)
             if native!=expected_igdb:
                 raise catalogue.IdentityConflict('Game identity changed during verification')

@@ -27,6 +27,49 @@ class Cache:
 
 
 class DiscoverySourceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_unique_complete_edition_automatically_projects_its_independent_parent(self):
+        from test_game_title_match import game
+        self.response([])
+        title={'id':'tt1','title':'Final Fantasy XVI: The Complete Edition','year':2024}
+        child=game(318557,'Final Fantasy XVI: Complete Edition',year=2024,game_type={'id':3},version_parent=31551)
+        parent=game(31551,'Final Fantasy XVI',year=2023)
+        acquired={'data':{'rows':[child],'complete':True,'branches':[]},'stale':False}
+        self.sources.igdb.return_value=[parent]
+        with patch('core.game_title_candidates.retrieve',AsyncMock(return_value=acquired)), \
+             patch('core.game_match_support.corroborate',AsyncMock(side_effect=AssertionError('Unique editions need no cast fan-out'))):
+            value=(await self.api.page(['tt1'],titles={'tt1':title}))['outcomes'][0]
+        self.assertEqual((value['status'],value['igdb_id'],value['credit_parent']),('verified',31551,True))
+        self.assertEqual(value['document']['work']['name'],'Final Fantasy XVI')
+        self.assertEqual(value['evidence']['variant']['child']['id'],318557)
+        self.assertIn('igdb:318557',value['evidence']['dependencies'])
+        self.assertIn('igdb:31551',value['evidence']['dependencies'])
+        self.assertEqual(value['evidence']['scope'],'parent_participation')
+
+    async def test_edition_parent_must_be_current_independent_and_not_another_edition(self):
+        from test_game_title_match import game
+        for extra in ({'game_type':{'id':3}},{'version_parent':99},{'first_release_date':None},
+                {'first_release_date':game(year=2025)['first_release_date']}):
+            self.response([])
+            title={'id':'tt1','title':'Example: Complete Edition','year':2024}
+            child=game(20,title['title'],year=2024,version_parent=10)
+            self.sources.igdb.return_value=[game(10,'Example',year=2020,**extra)]
+            with patch('core.game_title_candidates.retrieve',AsyncMock(return_value={
+                    'data':{'rows':[child],'complete':True,'branches':[]},'stale':False})):
+                value=(await self.api.page(['tt1'],titles={'tt1':title}))['outcomes'][0]
+            self.assertEqual(value['reason'],'variant_parent_scope')
+
+    async def test_unique_port_uses_parent_participation_instead_of_a_primary_imdb_binding(self):
+        from test_game_title_match import game
+        self.response([])
+        title={'id':'tt1','title':'Example Portable','year':2024}
+        child=game(20,title['title'],year=2024,game_type={'id':11},parent_game={'id':10})
+        self.sources.igdb.return_value=[game(10,'Example',year=2020)]
+        with patch('core.game_title_candidates.retrieve',AsyncMock(return_value={
+                'data':{'rows':[child],'complete':True,'branches':[]},'stale':False})):
+            value=(await self.api.page(['tt1'],titles={'tt1':title}))['outcomes'][0]
+        self.assertEqual((value['status'],value['igdb_id'],value['credit_parent']),('verified',10,True))
+        self.assertEqual(value['evidence']['variant']['child']['game_type']['id'],11)
+
     async def test_candidate_acquisition_cannot_spend_the_bounded_deep_verification_allowance(self):
         from test_game_title_match import game
         for failure in (False,True):

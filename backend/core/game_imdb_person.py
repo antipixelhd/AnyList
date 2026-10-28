@@ -8,7 +8,7 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 from time import monotonic
 
-from sqlalchemy import Integer, cast, delete, func, or_, select, update
+from sqlalchemy import Integer, String, cast, delete, func, literal, or_, select, update
 from sqlalchemy.dialects.postgresql import insert,JSONB
 
 from core import catalogue
@@ -157,16 +157,35 @@ async def project_mapped(db,native,rows,generation,*,source_generation=None):
     retained={}
     if ids:
         from core.game_title_match import SUPPORTED_VERSIONS
-        retained=dict(((title,category),work) for title,category,work in (await db.execute(select(
+        retained_query=select(
             CatalogueCredit.attributes['imdb_title_id'].astext,
-            CatalogueCredit.attributes['imdb_category'].astext,CatalogueCredit.work_id).join(
+            CatalogueCredit.attributes['imdb_category'].astext,CatalogueCredit.work_id,
+            literal(None,String),literal(None,String)).join(
             CatalogueIdentity,CatalogueIdentity.entity_id==CatalogueCredit.work_id).where(
                 CatalogueIdentity.namespace=='imdb.title',or_(CatalogueIdentity.evidence['mapping_state'].astext=='stale',
                     (CatalogueIdentity.source=='matched') & (func.coalesce(CatalogueIdentity.evidence['matcher_version'].as_integer(),0).not_in(SUPPORTED_VERSIONS))),
                 CatalogueCredit.provider=='imdb',CatalogueCredit.scope=='person',
                 CatalogueCredit.attributes['imdb_person_id'].astext==native,
                 CatalogueCredit.attributes['source_active'].astext=='true',
-                CatalogueCredit.attributes['imdb_title_id'].astext.in_(ids)))).all())
+                CatalogueCredit.attributes['imdb_title_id'].astext.in_(ids))
+        from core.game_credit_parents import KIND as PARENT_KIND,VERSION as PARENT_VERSION
+        retained_parents=select(CatalogueCredit.attributes['imdb_title_id'].astext,
+            CatalogueCredit.attributes['imdb_category'].astext,CatalogueCredit.work_id,
+            MetadataSnapshot.payload['kind'].astext,MetadataSnapshot.payload['title'].astext).join(
+                MetadataSnapshot,(MetadataSnapshot.entity_id==CatalogueCredit.work_id) &
+                (MetadataSnapshot.external_id==CatalogueCredit.attributes['imdb_title_id'].astext)).where(
+                    MetadataSnapshot.provider=='imdb',MetadataSnapshot.kind==PARENT_KIND,
+                    MetadataSnapshot.coverage['automatic'].astext=='true',
+                    or_(MetadataSnapshot.coverage['mapping_state'].astext=='stale',
+                        MetadataSnapshot.coverage['policy_version'].as_integer()!=PARENT_VERSION,
+                        MetadataSnapshot.payload['evidence']['version'].as_integer().not_in(SUPPORTED_VERSIONS)),
+                    CatalogueCredit.provider=='imdb',CatalogueCredit.scope=='person',
+                    CatalogueCredit.attributes['imdb_person_id'].astext==native,
+                    CatalogueCredit.attributes['source_active'].astext=='true',
+                    CatalogueCredit.attributes['imdb_title_id'].astext.in_(ids))
+        for title,category,work,kind,label in (await db.execute(retained_query.union_all(retained_parents))).all():
+            retained[title,category]=work
+            if kind and title not in bindings:child_credits[title]={'kind':kind,'title':label}
     from core.game_imdb_discovery import MAP,VERSION as DISCOVERY_VERSION
     excluded=set(await db.scalars(select(MetadataSnapshot.external_id).where(MetadataSnapshot.provider=='wikidata',
         MetadataSnapshot.kind==MAP,MetadataSnapshot.external_id.in_(ids),MetadataSnapshot.payload['status'].astext=='excluded',
