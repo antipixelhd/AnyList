@@ -325,6 +325,33 @@ class MappingIndexTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ProviderError,'stale_mapping'):
             await service.save(self.base,'tt1','matched',{'igdb_id':'10','title_type':'videoGame','matching':proof},expected_igdb='10')
 
+    async def test_wikidata_alias_support_is_invalidated_when_the_evidence_changes(self):
+        from core.game_match_support import cached
+        from core.game_source_cache import GameSourceCache
+        from core.game_title_match import decide
+        from core.catalogue_providers import ProviderError
+        sources=SimpleNamespace(cache=GameSourceCache(self.Session))
+        support_value={'wikidata_title':{'imdb_id':'tt1','igdb_id':10,'item':'Q1','revision':1,
+            'names':['Example'],'years':[2020]}}
+        data,support=await cached(sources,'wikidata','game_match_wiki','alias',AsyncMock(return_value={'proof':support_value}))
+        title={'id':'tt1','title':'Example','year':2020}
+        raw={'id':10,'name':'Localized Example','game_type':{'id':0},'first_release_date':1546300800}
+        decision=decide(title,[raw],complete=True,branches=[],corroboration={10:support_value})
+        self.assertEqual(decision['status'],'verified')
+        proof=decision['evidence'];proof.update(support={'snapshots':[support]},dependencies=['support:wikidata:game_match_wiki:alias'])
+        async with self.Session() as db:
+            db.add(CatalogueIdentity(entity_id=self.base,namespace='igdb.game',external_id='10',source='igdb'));await db.commit()
+        service=GameIMDbBindings(self.Session)
+        await service.save(self.base,'tt1','matched',{'igdb_id':'10','title_type':'videoGame','matching':proof},expected_igdb='10')
+        async with self.Session() as db:
+            row=await db.scalar(sources.cache.query('wikidata','game_match_wiki','alias'));row.expires_at=now()-timedelta(seconds=1);await db.commit()
+        await sources.cache.refresh('wikidata','game_match_wiki','alias',AsyncMock(return_value={**data,'fingerprint':'changed'}),timedelta(days=7),timedelta(days=30))
+        async with self.Session() as db:
+            binding=await db.scalar(select(CatalogueIdentity).where(CatalogueIdentity.namespace=='imdb.title'))
+            self.assertEqual(binding.evidence['mapping_state'],'stale')
+        with self.assertRaisesRegex(ProviderError,'stale_mapping'):
+            await service.save(self.base,'tt1','matched',{'igdb_id':'10','title_type':'videoGame','matching':proof},expected_igdb='10')
+
     async def test_reverse_lookup_does_not_accept_one_of_two_identical_imdb_records(self):
         generation=await index.begin(self.Session,'imdb')
         second=self.record();second.update(id='tt2',imdb_ids=['tt2']);second['data']={**second['data'],'id':'tt2'}

@@ -12,7 +12,7 @@ from core.game_title_match import products, spelling, years
 from core.game_release_dates import game_release
 from core.game_types import igdb_game_class
 
-KINDS={'game_match_credits','game_match_store','game_match_news','game_match_identity'}
+KINDS={'game_match_credits','game_match_store','game_match_news','game_match_identity','game_match_wiki'}
 
 
 def plain(value):
@@ -45,8 +45,11 @@ async def corroborate(sources,title,candidates):
     """Return positive evidence; missing coverage is never negative identity proof."""
     names={spelling(title['title']),*[spelling(name) for name in title.get('aliases',[])]}
     selected=[raw for raw in candidates if spelling(raw.get('name')) in names and not raw.get('version_parent')]
-    if not selected or len(selected)>4:return {},[]
     evidence={};snapshots=[]
+    if not selected:
+        from core.game_wikidata_title_support import corroborate as wiki_corroborate
+        return await wiki_corroborate(sources,title,candidates)
+    if len(selected)>4:return {},[]
     credits=None
     launch_scope=any(igdb_game_class(raw)=='port'
         and raw.get('release_dates') and all(isinstance(row.get('status'),dict) and row['status'].get('name','').casefold() in ('cancelled','canceled')
@@ -204,4 +207,8 @@ async def corroborate(sources,title,candidates):
                         support['full_release']={'date':launch.isoformat(),'initial_date':initial.isoformat(),'announcement':str(article['gid'])};break
         if support['characters'] or len(support['people'])>=2 or support.get('cast_character') or support.get('early_access') or support.get('full_release') or support.get('release_scope'):
             evidence[raw['id']]=support
+    if not evidence:
+        from core.game_wikidata_title_support import corroborate as wiki_corroborate
+        extra,references=await wiki_corroborate(sources,title,candidates)
+        evidence.update(extra);snapshots.extend(references)
     return evidence,snapshots

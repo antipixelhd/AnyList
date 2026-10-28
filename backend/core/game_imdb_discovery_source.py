@@ -210,7 +210,7 @@ class GameIMDbDiscoverySource:
             data=acquired['data']
             decision=decide(title,data['rows'],complete=data['complete'] and not acquired['stale'],branches=data['branches'])
             deeper=[]
-            if decision['status']=='unresolved' and data['complete'] and not acquired['stale']:
+            if decision['status'] in ('unresolved','unmapped') and data['rows'] and data['complete'] and not acquired['stale']:
                 from core.game_match_support import corroborate
                 budget=min(4,deep_deadline-monotonic())
                 try:

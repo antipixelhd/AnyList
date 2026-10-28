@@ -143,12 +143,13 @@ class GameCreditSources:
         # evidence and failure backoff already used for game metadata sources.
         self.sources=sources or GameBrowseSources()
 
-    async def entities(self,ids,*,person_references=False):
+    async def entities(self,ids,*,person_references=False,release_references=False):
         if not isinstance(ids,(list,tuple,set)) or not ids or len(ids)>50 or any(not isinstance(q,str) or not ITEM.fullmatch(q) for q in ids):
             raise ProviderError('invalid_request')
         ids=sorted(set(ids))
-        properties=PROPERTIES | {'P569'} if person_references else PROPERTIES
-        key=hashlib.sha256(json.dumps(['person-reference-v1' if person_references else 'identity-v2',ids]).encode()).hexdigest()
+        properties=PROPERTIES | ({'P569'} if person_references else set()) | ({'P577'} if release_references else set())
+        scope=['release-reference-v1',ids,person_references] if release_references else ['person-reference-v1' if person_references else 'identity-v2',ids]
+        key=hashlib.sha256(json.dumps(scope).encode()).hexdigest()
         async def load():
             body=await self.sources.request('wikidata','https://www.wikidata.org/w/api.php',params={
                 'action':'wbgetentities','ids':'|'.join(ids),'props':'labels|descriptions|aliases|claims|info',

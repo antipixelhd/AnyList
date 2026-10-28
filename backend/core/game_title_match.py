@@ -56,6 +56,8 @@ def store_agrees(proof,title):
 
 def supported(row,title):
     proof=row.get('corroboration') or {}
+    from core.game_wikidata_title_support import agrees as wiki_agrees
+    if wiki_agrees(row,title):return True
     identity=proof.get('release_identity') or {}
     try:
         point=date.fromisoformat(identity['date'])
@@ -144,11 +146,13 @@ def decide(title, candidates, *, complete, branches, corroboration=None):
     names.pop('', None)
     year = title.get('year')
     ranked = []
+    from core.game_wikidata_title_support import agrees as wiki_agrees
     for raw in candidates:
         primary = spelling(raw.get('name'))
         aliases = {spelling(row.get('name')) for row in raw.get('alternative_names') or [] if isinstance(row, dict)}
         scoped=scoped_title(raw,title)
-        matched = primary in names or bool(aliases & names.keys()) or scoped
+        wiki_match=wiki_agrees({'id':raw['id'],'corroboration':(corroboration or {}).get(raw['id'],{})},title)
+        matched = primary in names or bool(aliases & names.keys()) or scoped or wiki_match
         if not matched:
             continue
         score = 3 if primary == spelling(title.get('title')) else 2 if primary in names else 1

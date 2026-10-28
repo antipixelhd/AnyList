@@ -99,6 +99,16 @@ class SourceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.api.entities(['Q200'],person_references=True),enriched)
         self.assertEqual(self.public.request.await_count,2)
 
+    async def test_release_references_have_separate_cache_and_preserve_source_precision(self):
+        raw=game();raw['claims']['P577']=[claim({'time':'+2001-00-00T00:00:00Z','precision':9})]
+        self.public.request.return_value={'entities':{'Q100':raw}}
+        regular=await self.api.entities(['Q100'])
+        self.assertNotIn('P577',regular['data']['entities']['Q100']['claims'])
+        enriched=await self.api.entities(['Q100'],release_references=True)
+        self.assertEqual(enriched['data']['entities']['Q100']['claims']['P577'],raw['claims']['P577'])
+        self.assertEqual(await self.api.entities(['Q100'],release_references=True),enriched)
+        self.assertEqual(self.public.request.await_count,2)
+
     async def test_batched_entities_preserve_all_credits_and_warm_reads_avoid_provider_calls(self):
         raw=game();raw['claims']['P725']=[voice(f'Q{i}',key=f'Q100$voice-{i}') for i in range(200,261)]
         async def request(provider,url,params):
