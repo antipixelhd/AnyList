@@ -94,12 +94,12 @@ export function bindBrowseCardActions<T extends BrowseItem>(
     const card = button?.closest<HTMLElement>('[data-browse-card]');
     const item = card && items.get(card);
     if (!button || !card || !item || button.disabled) return;
-    const title = titleFor(item);
-    const wasNew = !title.entry;
+    let wasNew = !item.list_status;
     const saved = (entry: any) => { if (!signal.aborted) document.dispatchEvent(new CustomEvent('anylist:entry-saved', {detail:entry})); };
     try {
       const game=item.type==='game';if(game)button.disabled=true;
       const title=game?await gameTitle(item):titleFor(item);
+      wasNew = !title.entry;
       if(signal.aborted)return;
       if(game)editorStore.warmArtwork(title,card.querySelector<HTMLImageElement>('[data-poster]')?.currentSrc);
       if (button.dataset.browseAction === 'edit'||expansionCard(item)) {
