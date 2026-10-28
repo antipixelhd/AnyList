@@ -12,7 +12,7 @@ from core.game_title_match import products, spelling, years
 from core.game_release_dates import game_release
 from core.game_types import igdb_game_class
 
-KINDS={'game_match_credits','game_match_store','game_match_news'}
+KINDS={'game_match_credits','game_match_store','game_match_news','game_match_identity'}
 
 
 def plain(value):
@@ -53,6 +53,28 @@ async def corroborate(sources,title,candidates):
             for row in raw['release_dates']) for raw in selected)
     later_scope=type(title.get('year')) is int and any(years(raw) and min(years(raw))<title['year'] for raw in selected)
 
+    # Non-store titles need not be forced through Steam for a regional date.
+    # IMDb's primary year and detailed release date can legitimately differ.
+    # A focused, cached current identity read preserves that evidence explicitly.
+    regional=[raw for raw in selected if not products(raw) and type(title.get('year')) is int
+        and years(raw) and title['year'] not in years(raw)]
+    if regional:
+        async def load_identity():
+            header=await IMDbGameSource(sources.api.http).title(title['id'])
+            point=header.get('releaseDate') or {}
+            try:
+                if any(type(point.get(key)) is not int for key in ('year','month','day')):raise ValueError()
+                day=datetime(point['year'],point['month'],point['day']).date().isoformat()
+            except (KeyError,TypeError,ValueError):day=None
+            return {'id':header['id'],'title':header['titleText']['text'],
+                'year':(header.get('releaseYear') or {}).get('year'),'date':day}
+        identity,snapshot=await cached(sources,'imdb','game_match_identity',title['id'],load_identity)
+        snapshots.append(snapshot)
+        from core.game_title_match import supported
+        for raw in regional:
+            proof={'release_identity':identity}
+            if supported({'years':sorted(years(raw)),'corroboration':proof},title):evidence[raw['id']]=proof
+
     async def load_credits():
         source=IMDbGameSource(sources.api.http)
         rows=[];cursor=None
@@ -91,6 +113,7 @@ async def corroborate(sources,title,candidates):
         return await cached(sources,'steam','game_match_news',key,load)
 
     for raw in selected:
+        if raw['id'] in evidence:continue
         apps=[uid for namespace,uid in products(raw) if namespace=='steam.app']
         if len(apps)!=1:continue
         app=apps[0]

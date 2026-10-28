@@ -56,6 +56,14 @@ def store_agrees(proof,title):
 
 def supported(row,title):
     proof=row.get('corroboration') or {}
+    identity=proof.get('release_identity') or {}
+    try:
+        point=date.fromisoformat(identity['date'])
+        detailed=(identity.get('id')==title.get('id') and identity.get('year')==title.get('year')
+            and type(title.get('year')) is int and point.year!=title['year'] and point.year in row.get('years',[])
+            and spelling(identity.get('title')) in {spelling(title.get('title')),*[spelling(name) for name in title.get('aliases',[])]})
+    except (KeyError,TypeError,ValueError):detailed=False
+    if detailed:return True
     if not store_agrees(proof,title):return False
     people={person.get('id') for person in proof.get('people',[]) if isinstance(person,dict) and re.fullmatch(r'nm[0-9]+',str(person.get('id','')))}
     early=proof.get('early_access') or {}

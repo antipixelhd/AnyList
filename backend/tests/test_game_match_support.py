@@ -108,6 +108,34 @@ class SupportTests(unittest.IsolatedAsyncioTestCase):
                     'gid':'other','feedname':'steam_community_announcements','title':'Release notes','contents':text,'date':stamp}]}}
                 result,_=await self.decision();self.assertEqual(result['status'],'unresolved')
 
+    async def test_non_store_detailed_identity_date_explains_the_regional_release_year(self):
+        self.title['year']=2009
+        self.game=game(name='Example Game',year=2010)
+        header={'id':'tt1','titleText':{'text':'Example Game'},'releaseYear':{'year':2009},
+            'releaseDate':{'year':2010,'month':3,'day':29}}
+        with patch('core.game_match_support.IMDbGameSource.title',AsyncMock(return_value=header)) as identity:
+            result,snapshots=await self.decision()
+            self.assertEqual(result['status'],'verified')
+            self.assertEqual(result['evidence']['imdb']['year'],2009)
+            self.assertEqual(result['evidence']['candidates'][0]['years'],[2010])
+            self.assertEqual(snapshots[0]['kind'],'game_match_identity')
+            self.assertTrue(valid_binding_evidence({'matcher_version':VERSION,'igdb_id':'10','matching':result['evidence']},'tt1'))
+            await self.decision();identity.assert_awaited_once()
+        self.request.assert_not_awaited();self.credits.assert_not_awaited()
+
+    async def test_regional_date_requires_current_same_id_name_year_and_complete_valid_date(self):
+        self.title['year']=2009;self.game=game(name='Example Game',year=2010)
+        base={'id':'tt1','titleText':{'text':'Example Game'},'releaseYear':{'year':2009},
+            'releaseDate':{'year':2010,'month':3,'day':29}}
+        for change in ({'id':'tt2'},{'titleText':{'text':'Another Game'}},{'releaseYear':{'year':2008}},
+                {'releaseDate':{'year':2010,'month':None,'day':None}},
+                {'releaseDate':{'year':2010,'month':2,'day':30}},
+                {'releaseDate':{'year':2011,'month':3,'day':29}}):
+            with self.subTest(change=change):
+                self.sources.cache.rows.clear()
+                with patch('core.game_match_support.IMDbGameSource.title',AsyncMock(return_value={**base,**change})):
+                    result,_=await self.decision();self.assertEqual(result['status'],'unresolved')
+
     async def test_year_disagreement_without_explaining_evidence_is_not_a_match(self):
         self.title['year']=2018
         result,_=await self.decision();self.assertEqual(result['status'],'unresolved')

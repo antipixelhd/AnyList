@@ -170,7 +170,7 @@ class GameSourceCache:
         except Exception:
             error = 'unavailable'
         async with self.sessions() as db:
-            support_kind=kind in ('game_match_credits','game_match_store','game_match_news')
+            support_kind=kind in ('game_match_credits','game_match_store','game_match_news','game_match_identity')
             if provider=='igdb' and kind=='game_title_candidates' or support_kind:
                 from core import catalogue
                 await catalogue.write_lock(db)

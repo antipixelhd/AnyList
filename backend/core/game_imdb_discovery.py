@@ -18,7 +18,7 @@ from models.catalogue import CatalogueIdentity,MetadataSnapshot
 
 JOB='game_person_discovery'
 MAP='game_person_title_map'
-VERSION=6
+VERSION=7
 MAX_ACQUIRE=4
 _slots=asyncio.Semaphore(1)
 
