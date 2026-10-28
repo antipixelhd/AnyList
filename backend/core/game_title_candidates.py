@@ -12,9 +12,16 @@ FIELDS = FIELDS + ',alternative_names.name,release_dates.date,release_dates.stat
 PAGE = 100
 MAX_PAGES = 3
 # Matching rules may change while the provider query and stored facts stay valid.
-RETRIEVAL_VERSION = 4
+RETRIEVAL_VERSION = 5
 IDENTITY_FIELDS=('id','name','alternative_names','first_release_date','release_dates','game_type',
     'version_parent','parent_game','websites','external_games','involved_companies','platforms')
+
+
+def identity_facts(raw):
+    result={field:raw[field] for field in IDENTITY_FIELDS if field in raw}
+    if re.search(r'\s(?:[0-9]{4}|\([0-9]{4}\))$',raw.get('name','')):
+        result['annual_genres']=sorted({row['name'] for row in raw.get('genres') or [] if isinstance(row.get('name'),str)})
+    return result
 
 
 def observations(rows):
@@ -23,7 +30,7 @@ def observations(rows):
         if isinstance(value,dict):return {key:normalized(item) for key,item in value.items()}
         if isinstance(value,list):return sorted((normalized(item) for item in value),key=lambda item:json.dumps(item,sort_keys=True))
         return value
-    return {str(row['id']):hashlib.sha256(json.dumps(normalized({field:row[field] for field in IDENTITY_FIELDS if field in row}),
+    return {str(row['id']):hashlib.sha256(json.dumps(normalized(identity_facts(row)),
         sort_keys=True).encode()).hexdigest() for row in rows}
 
 
@@ -31,7 +38,8 @@ async def retrieve(sources, title):
     names = list(dict.fromkeys([title['title'], *title.get('aliases', [])]))
     if not names or len(names) > 20 or any(not isinstance(name, str) or not 1 <= len(name) <= 500 for name in names):
         raise ProviderError('coverage_limited')
-    key = hashlib.sha256(json.dumps([RETRIEVAL_VERSION,names], ensure_ascii=True).encode()).hexdigest()
+    annual_year=title.get('year') if type(title.get('year')) is int and not re.search(r'[0-9]{4}',title['title']) else None
+    key = hashlib.sha256(json.dumps([RETRIEVAL_VERSION,names,annual_year], ensure_ascii=True).encode()).hexdigest()
     source_names={spelling(name) for name in names}
     source_formats=set().union(*(title_formats(name) for name in names))
     episode=re.fullmatch(r'(.+?)(?::\s*|\s+[-–—]\s+)(episode\s+(?:[0-9]+|[a-z]+))\s*',title['title'],re.IGNORECASE)
@@ -39,6 +47,11 @@ async def retrieve(sources, title):
         labels=[raw['name'],*[row.get('name') for row in raw.get('alternative_names') or [] if isinstance(row,dict)]]
         return (not any(spelling(value) in source_names for value in labels)
             and any(source_formats & title_formats(value) for value in labels))
+
+    def sports_family(rows):
+        return any(any(genre.get('name')=='Sport' for genre in raw.get('genres') or [])
+            and any(source_formats & title_formats(re.sub(r'\s+(?:[0-9]{4}|\([0-9]{4}\))$','',name)) for name in [raw['name'],
+                *[row.get('name') for row in raw.get('alternative_names') or [] if isinstance(row,dict)]] if isinstance(name,str)) for raw in rows)
 
     async def load():
         found, branches = {}, []
@@ -51,6 +64,8 @@ async def retrieve(sources, title):
             queries=[('search', f'search {quoted};'),('exact', f'where name ~ {quoted} | alternative_names.name ~ {quoted};')]
             if name==keyword:queries=[('keyword',f'search {quoted};')]
             if name==joined_keyword:queries=[('joined_keyword',f'search {quoted};')]
+            if name==title['title']+' '+str(annual_year):
+                queries=[('annual_'+kind,query) for kind,query in queries]
             if name in parents:
                 parent=json.dumps(parents[name],ensure_ascii=False);full=json.dumps(parents[name]+': '+name,ensure_ascii=False)
                 queries=[('search',f'search {quoted}; where parent_game.name ~ {parent};'),
@@ -96,7 +111,11 @@ async def retrieve(sources, title):
                 joined=words[0]+words[1]
                 if not matches and joined not in expanded:
                     joined_keyword=joined;expanded.append(joined)
-        identity=[{field:row[field] for field in IDENTITY_FIELDS if field in row} for _,row in sorted(found.items())]
+            annual_name=title['title']+' '+str(annual_year)
+            if (position==len(expanded)-1 and annual_year and annual_name not in expanded
+                    and all(row['complete'] for row in branches) and sports_family(found.values())):
+                expanded.append(annual_name)
+        identity=[identity_facts(row) for _,row in sorted(found.items())]
         fingerprint=hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()
         return {'rows': list(found.values()), 'complete': all(row['complete'] for row in branches), 'branches': branches,
             'scope_key':key,'scope_names':sorted({spelling(name) for name in [*expanded,*parents.values()]}),

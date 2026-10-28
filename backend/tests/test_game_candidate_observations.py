@@ -42,3 +42,11 @@ class CandidateObservationTests(unittest.TestCase):
         legacy=deepcopy(self.evidence);legacy['matching']['support'].pop('candidate_observations')
         self.assertTrue(changes_binding(legacy,'new',self.data([self.raw])))
         self.assertFalse(changes_binding(legacy,'new',self.data([])))
+
+    def test_annual_genre_changes_revalidate_without_changing_ordinary_identity_fingerprints(self):
+        raw=game(10,'Annual Sport 2017',genres=[{'name':'Sport'},{'name':'Simulator'}])
+        initial=observations([raw])
+        self.assertEqual(initial,observations([{**raw,'genres':list(reversed(raw['genres']))}]))
+        self.assertNotEqual(initial,observations([{**raw,'genres':[{'name':'Adventure'}]}]))
+        # Existing non-annual proofs need no upgrade for a field they did not use.
+        self.assertEqual(observations([self.raw]),observations([{**self.raw,'genres':[{'name':'Sport'}]}]))

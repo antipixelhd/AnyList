@@ -23,9 +23,29 @@ class TitleDecisionTests(unittest.TestCase):
     def decide(self, rows, **kwargs):
         return decide(self.title, rows, complete=kwargs.get('complete', True), branches=[])
 
+    def test_annual_sports_suffix_must_agree_with_source_and_first_release_year(self):
+        title={'id':'tt1','title':'Backyard Basketball','year':2001}
+        raw=game(50297,'Backyard Basketball 2001',year=2001,genres=[{'name':'Sport'}])
+        result=decide(title,[raw,game(20,title['title'],year=2003)],complete=True,branches=[])
+        self.assertEqual((result['status'],result['igdb_id']),('verified',50297))
+        self.assertEqual(next(row for row in result['evidence']['candidates'] if row['id']==50297)['annual_title_scope']['year'],2001)
+        self.assertTrue(valid_binding_evidence({'matcher_version':VERSION,'matching':result['evidence'],'igdb_id':'50297'},'tt1'))
+        for version in (6,7):
+            self.assertFalse(valid_binding_evidence({'matcher_version':version,
+                'matching':{**result['evidence'],'version':version},'igdb_id':'50297'},'tt1'))
+        for change in ({'genres':[]},{'name':'Backyard Basketball 2002'}, {'first_release_date':game(year=2000)['first_release_date']},
+                {'game_type':{'id':1}},{'game_type':{'id':11}},{'game_type':{'id':8}},
+                {'version_parent':50},{'parent_game':{'id':50}},{'name':'Backyard Basketball 2 2001'}):
+            with self.subTest(change=change):
+                self.assertNotEqual(decide(title,[{**raw,**change}],complete=True,branches=[])['status'],'verified')
+        self.assertEqual(decide(title,[raw],complete=False,branches=[])['reason'],'incomplete_candidates')
+        self.assertEqual(decide(title,[raw,{**raw,'id':99}],complete=True,branches=[])['reason'],'ambiguous_candidates')
+        unknown=game(20,title['title'],first_release_date=None)
+        self.assertEqual(decide(title,[raw,unknown],complete=True,branches=[])['reason'],'unknown_competitor')
+
     def test_unchanged_v6_proofs_remain_supported_but_unknown_or_mixed_versions_do_not(self):
         proof=self.decide([game()])['evidence']
-        for version in (6,VERSION):
+        for version in (6,7,VERSION):
             self.assertTrue(valid_binding_evidence({'matching':{**proof,'version':version},
                 'matcher_version':version,'igdb_id':'10'},'tt1'))
         for version in (5,VERSION+1,None):
@@ -186,6 +206,17 @@ class TitleDecisionTests(unittest.TestCase):
 
 
 class CandidateRetrievalTests(unittest.IsolatedAsyncioTestCase):
+    async def test_annual_sports_year_queries_keep_other_versions_in_the_complete_pool(self):
+        old=game(20,'Backyard Basketball',year=2003,genres=[{'name':'Sport'}],alternative_names=[{'name':None}])
+        annual=game(10,'Backyard Basketball 2001',year=2001,genres=[{'name':'Sport'}])
+        self.sources.igdb.side_effect=[[old],[old],[annual],[annual]]
+        title={'id':'tt1','title':'Backyard Basketball','year':2001}
+        result=(await retrieve(self.sources,title))['data']
+        self.assertEqual(self.sources.igdb.await_count,4)
+        self.assertEqual({row['id'] for row in result['rows']},{10,20})
+        self.assertTrue(result['complete'])
+        self.assertIn('Backyard Basketball 2001',self.sources.igdb.await_args_list[2].args[1])
+        self.assertEqual(decide(title,result['rows'],complete=True,branches=[])['igdb_id'],10)
     async def test_numbered_episode_search_is_scoped_to_the_full_parent_title(self):
         child=game(30,'Vader Immortal: Episode III',year=2019,game_type={'id':6},
             parent_game={'id':100,'name':'Vader Immortal: A Star Wars VR Series','game_type':{'id':0}})

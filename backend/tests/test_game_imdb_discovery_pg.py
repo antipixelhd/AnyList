@@ -55,6 +55,29 @@ class PortfolioDiscoveryTests(unittest.IsolatedAsyncioTestCase):
             data=await view(db,'nm1',check_mapping=True);await db.commit()
         return data
 
+    async def resume_policy(self,policy):
+        from core.game_imdb_discovery import VERSION
+        self.source.page.side_effect=lambda ids:{'outcomes':[{'id':native,'status':'unmapped'} for native in ids],'stale':False}
+        async with self.Session() as db:
+            job=await db.scalar(snapshot(JOB,'nm1'))
+            job.payload={**job.payload,'page':0,'offset':2,'processed':2}
+            job.coverage={'complete':False,'matcher_version':policy}
+            await db.commit()
+        self.assertEqual(await self.service.run('nm1'),'ready')
+        async with self.Session() as db:
+            job=await db.scalar(snapshot(JOB,'nm1'))
+            self.assertEqual(job.coverage['matcher_version'],VERSION)
+            self.assertEqual(job.payload['processed'],3)
+        return self.source.page.await_args.args[0]
+
+    async def test_policy_upgrade_rechecks_the_prefix_before_certifying_current_coverage(self):
+        from core.game_imdb_discovery import VERSION
+        self.assertEqual(await self.resume_policy(VERSION-1),['tt2','tt3'])
+
+    async def test_current_policy_resumes_its_cursor_without_reacquiring_the_prefix(self):
+        from core.game_imdb_discovery import VERSION
+        self.assertEqual(await self.resume_policy(VERSION),['tt3'])
+
     async def automatic_edition(self):
         from core.game_imdb_discovery_source import GameIMDbDiscoverySource
         from core.game_source_cache import GameSourceCache
@@ -283,6 +306,37 @@ class PortfolioDiscoveryTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(role.character_label,'Explorer')
             entry=await db.scalar(select(GameEntry))
             self.assertEqual((entry.work_id,entry.notes,entry.total_seconds),(self.base,'Pending private state',3600))
+
+    async def test_annual_sports_title_creates_verified_participation_without_manual_binding(self):
+        from core.game_imdb_discovery_source import GameIMDbDiscoverySource
+        from core.game_imdb_person import JOB as PERSON_JOB
+        from core.game_source_cache import GameSourceCache
+        from test_game_title_match import game
+        row=credit('tt2');row['title'].update(titleText={'text':'Annual Basketball'},releaseYear={'year':2001})
+        self.connection.credits.return_value=page([row],1)
+        async with self.Session() as db:
+            job=await db.scalar(snapshot(PERSON_JOB,'nm1'));job.next_attempt_at=now();job.expires_at=None;job.payload={};await db.commit()
+        self.assertEqual(await self.person_service.run('nm1'),'ready')
+        older=game(30,'Annual Basketball',year=2003,genres=[{'name':'Sport'}])
+        annual=game(20,'Annual Basketball 2001',year=2001,genres=[{'name':'Sport'}])
+        sources=SimpleNamespace(cache=GameSourceCache(self.Session),igdb=AsyncMock(side_effect=[[older],[older],[annual],[annual]]),
+            api=SimpleNamespace(http=SimpleNamespace(request=AsyncMock(return_value={'results':{'bindings':[]}}))))
+        service=GamePersonDiscovery(self.Session,source=GameIMDbDiscoverySource(self.Session,sources=sources))
+        self.assertEqual(await service.run('nm1'),'changed')
+        self.assertEqual(await service.run('nm1'),'ready')
+        self.assertEqual(await self.person_service.run('nm1'),'ready')
+        async with self.Session() as db:
+            identity=await db.scalar(select(CatalogueIdentity).where(CatalogueIdentity.namespace=='imdb.title',CatalogueIdentity.external_id=='tt2'))
+            self.assertEqual(identity.source,'matched');self.assertEqual(identity.evidence['igdb_id'],'20')
+            self.assertEqual(identity.evidence['matcher_version'],8)
+            self.assertTrue(next(r for r in identity.evidence['matching']['candidates'] if r['id']==20)['annual_title_scope'])
+            credit_id=await db.scalar(select(CatalogueCredit.id).where(CatalogueCredit.work_id==identity.entity_id,
+                CatalogueCredit.contributor_id==self.person,CatalogueCredit.attributes['source_active'].astext=='true'))
+            self.assertIsNotNone(credit_id)
+            entry=await db.scalar(select(GameEntry))
+            self.assertEqual((entry.work_id,entry.notes,entry.total_seconds),(self.base,'Pending private state',3600))
+        self.assertEqual(sources.igdb.await_count,4)
+        self.assertEqual(sources.api.http.request.await_count,1)
 
     async def test_retryable_gap_publishes_ready_matches_and_retains_queued_continuation(self):
         self.source.page.return_value={'outcomes':[outcome(),{'id':'tt3','status':'unresolved','reason':'timeout','retry_after':60}],'stale':False}

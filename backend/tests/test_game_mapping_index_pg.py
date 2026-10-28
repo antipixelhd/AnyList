@@ -190,7 +190,7 @@ class MappingIndexTests(unittest.IsolatedAsyncioTestCase):
         for state in ('exact','empty','format'):
             title={'id':'tt1','title':{'exact':'ClueFinders','empty':'The Clue Finders','format':'Clue Finders'}[state],'year':2017}
             raw=game(30,'ClueFinders')
-            key=hashlib.sha256(json.dumps([RETRIEVAL_VERSION,[title['title']]],ensure_ascii=True).encode()).hexdigest()
+            key=hashlib.sha256(json.dumps([RETRIEVAL_VERSION,[title['title']],title['year']],ensure_ascii=True).encode()).hexdigest()
             seed={'rows':[] if state=='empty' else [raw],'complete':True,'branches':[],
                 'scope_key':key,'scope_fingerprint':'legacy'}
             await cache.get('igdb','game_title_candidates',key,AsyncMock(return_value=seed))
@@ -200,6 +200,26 @@ class MappingIndexTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(sources.igdb.await_count,0 if state=='exact' else 3)
             self.assertEqual((await retrieve(sources,title))['data']['rows'],[raw])
             self.assertEqual(sources.igdb.await_count,0 if state=='exact' else 3)
+
+    async def test_annual_candidate_cache_is_year_scoped_and_warm_reads_do_not_repeat_queries(self):
+        from core.game_title_candidates import retrieve
+        from core.game_source_cache import GameSourceCache
+        from test_game_title_match import game
+        older=game(30,'Annual Basketball',year=2003,genres=[{'name':'Sport'}])
+        first=game(10,'Annual Basketball 2001',year=2001,genres=[{'name':'Sport'}])
+        second=game(20,'Annual Basketball 2002',year=2002,genres=[{'name':'Sport'}])
+        async def provider(endpoint,query):
+            return [first] if '2001' in query else [second] if '2002' in query else [older]
+        sources=SimpleNamespace(cache=GameSourceCache(self.Session),igdb=AsyncMock(side_effect=provider))
+        title={'id':'tt1','title':'Annual Basketball','year':2001}
+        a=(await retrieve(sources,title))['data']
+        self.assertEqual({r['id'] for r in a['rows']},{10,30})
+        self.assertEqual(sources.igdb.await_count,4)
+        self.assertEqual((await retrieve(sources,title))['data']['rows'],a['rows'])
+        self.assertEqual(sources.igdb.await_count,4)
+        b=(await retrieve(sources,{**title,'id':'tt2','year':2002}))['data']
+        self.assertEqual({r['id'] for r in b['rows']},{20,30})
+        self.assertNotEqual(a['scope_key'],b['scope_key']);self.assertEqual(sources.igdb.await_count,8)
 
     async def test_cache_eviction_is_not_a_removed_wikidata_mapping(self):
         from core.game_mapping_import import refresh_cached_wikidata

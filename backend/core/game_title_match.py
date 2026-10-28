@@ -6,10 +6,9 @@ from urllib.parse import urlsplit
 from core.game_types import igdb_game_class
 from core.game_release_dates import game_release, release
 
-VERSION = 7
-# Version 7 adds publisher/cast corroboration; existing v6 positives retain
-# their unchanged title, year, developer and independent-identity criteria.
-SUPPORTED_VERSIONS = (6, VERSION)
+VERSION = 8
+# Existing positives retain their criteria; annual sports scopes require v8.
+SUPPORTED_VERSIONS = (6, 7, VERSION)
 
 
 def same_game_port(other,winner):
@@ -103,6 +102,8 @@ def valid_binding_evidence(evidence, imdb_id):
     eligible=[row for row in proof.get('candidates',[]) if isinstance(row,dict)
         and (row.get('year_match') is True or supported(row,proof.get('imdb') or {}))
         and row.get('game_class')!='unknown' and row.get('rank') in (1,2,3) and not row.get('edition')]
+    eligible=[row for row in eligible if not row.get('annual_title_scope') or version in SUPPORTED_VERSIONS and version>=8
+        and isinstance(row['annual_title_scope'],dict) and row['annual_title_scope'].get('version')==1]
     if version==6:
         eligible=[row for row in eligible if row.get('year_match') is True
             or not (row.get('corroboration') or {}).get('publisher_agreement')
@@ -187,6 +188,20 @@ def years(raw):
     return result
 
 
+def annual_title(raw,title):
+    """An omitted annual sports label needs the exact year, not year tolerance."""
+    year=title.get('year');released=years(raw)
+    if (type(year) is not int or not released or min(released)!=year or igdb_game_class(raw)!='game'
+            or raw.get('parent_game') or raw.get('version_parent')
+            or not any(row.get('name')=='Sport' for row in raw.get('genres') or [])):return None
+    match=re.fullmatch(r'(.+?)\s+(?:\(([0-9]{4})\)|([0-9]{4}))',raw.get('name',''))
+    if not match or int(match[2] or match[3])!=year:return None
+    names=[title.get('title'),*title.get('aliases',[])]
+    if not any(isinstance(name,str) and not re.search(r'[0-9]{4}',name)
+            and title_formats(name)&title_formats(match[1]) for name in names):return None
+    return {'version':1,'year':year,'base':match[1],'genre':'Sport'}
+
+
 def decide(title, candidates, *, complete, branches, corroboration=None):
     """An incomplete provider result can rank candidates, but cannot accept one."""
     names = {spelling(title.get('title')): 'primary'}
@@ -202,6 +217,8 @@ def decide(title, candidates, *, complete, branches, corroboration=None):
         scoped=scoped_title(raw,title)
         wiki_match=wiki_agrees({'id':raw['id'],'corroboration':(corroboration or {}).get(raw['id'],{})},title)
         matched = primary in names or bool(aliases & names.keys()) or scoped or wiki_match
+        annual=annual_title(raw,title) if not matched else None
+        matched=matched or bool(annual)
         format_keys=set() if matched else source_formats.intersection(set().union(*(title_formats(name) for name in
             [raw.get('name'),*[row.get('name') for row in raw.get('alternative_names') or [] if isinstance(row,dict)]])))
         matched=matched or bool(format_keys)
@@ -217,6 +234,7 @@ def decide(title, candidates, *, complete, branches, corroboration=None):
                        'cancelled':bool(raw.get('release_dates')) and all(isinstance(row.get('status'),dict)
                            and row['status'].get('name','').casefold() in ('cancelled','canceled') for row in raw.get('release_dates') or []),
                        **({'title_format':{'version':1,'key':min(format_keys)}} if format_keys else {}),
+                       **({'annual_title_scope':annual} if annual else {}),
                        **({'parent_title_scope':{'parent':raw['parent_game']['id'],'title':raw['parent_game']['name']}} if scoped else {}),
                        **({'corroboration':corroboration[raw['id']]} if corroboration and raw['id'] in corroboration else {})})
     ranked.sort(key=lambda row: (-row['rank'], -row['year_match'], row['id']))

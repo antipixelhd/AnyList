@@ -19,7 +19,7 @@ from models.catalogue import CatalogueIdentity,MetadataSnapshot
 
 JOB='game_person_discovery'
 MAP='game_person_title_map'
-VERSION=14
+VERSION=15
 MAX_ACQUIRE=4
 _slots=asyncio.Semaphore(1)
 
@@ -69,6 +69,9 @@ class GamePersonDiscovery:
             if not job or not job.next_attempt_at or job.next_attempt_at>now() or job.lease_until and job.lease_until>now():return 'cached'
             token=uuid.uuid4().hex;job.lease_token=token;job.lease_until=now()+timedelta(minutes=3)
             state=dict(job.payload or {})
+            # A cursor is certified only for the policy that processed its prefix.
+            if (job.coverage or {}).get('matcher_version')!=VERSION:
+                state.update(page=0,offset=0,processed=0,retry_after=0)
             await db.commit()
         try:
             async with self.sessions() as db:
