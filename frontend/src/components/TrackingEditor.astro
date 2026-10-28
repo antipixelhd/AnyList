@@ -32,7 +32,7 @@ import EditorSelect from './EditorSelect.astro';
         <div class="game-achievement-controls" data-game-achievement-controls hidden>
           <div data-game-achievement-mode-field hidden><EditorSelect id="game-achievement-mode" name="game_achievement_mode" label="Achievement tracking"/></div>
           <input name="game_achievement_count" type="hidden"/><input name="game_achievement_percentage" type="hidden"/>
-          <div class="game-achievement-value"><NumberStepper id="game-achievement-value" name="game_achievement_value" label="Achievement progress"/><span id="game-achievement-maximum" data-game-achievement-maximum></span></div>
+          <div class="game-achievement-value editor-number-field"><NumberStepper id="game-achievement-value" name="game_achievement_value" label="Achievement progress"/><span id="game-achievement-maximum" data-game-achievement-maximum></span></div>
           <div data-game-targeted hidden><p class="game-achievement-guidance" data-game-achievement-guidance></p><div class="game-achievement-options" data-game-achievement-options></div><p role="status" data-game-achievement-status hidden></p><button type="button" class="lab-text-button" data-game-achievement-more hidden>Load more</button></div>
         </div>
       </section>
@@ -339,7 +339,7 @@ document.addEventListener('astro:page-load', () => {
     const closing = finishEditing();
     try {
       const id = await editorStore.remove(editing);
-      if (!sessionSignal.aborted) document.dispatchEvent(new CustomEvent('anylist:entry-saved',{detail:{id,status:null,score:null}}));
+      if (!sessionSignal.aborted) document.dispatchEvent(new CustomEvent('anylist:entry-saved',{detail:{id,subject:editing.subject,status:null,score:null}}));
     } catch (e) {
       markFailureHandled(e);
       await closing;

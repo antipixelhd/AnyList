@@ -106,6 +106,7 @@ class GameAchievement(Base):
     locked_icon_url: Mapped[str | None] = mapped_column(Text)
     hidden: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default='false')
     global_percentage: Mapped[float | None] = mapped_column(Float)
+    sort_order: Mapped[int | None] = mapped_column(Integer)
     active: Mapped[bool] = mapped_column(Boolean,nullable=False,default=True,server_default='true')
     fetched_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
 

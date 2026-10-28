@@ -18,7 +18,9 @@
 .editor .game-achievement-value input{width:100%;text-align:right}
 .game-achievement-value>[data-game-achievement-maximum]{flex:none;color:var(--muted);white-space:nowrap;font-size:var(--type-control-size)}
 .game-achievement-controls [data-game-achievement-mode-field]{min-width:0}
-.game-achievement-controls .game-achievement-value{grid-column:2}
+.editor .game-achievement-value>.score-stepper,.editor [data-game-achievement-mode-field] .editor-status-trigger{margin-top:0}
+.game-achievement-controls:has(>[data-game-achievement-mode-field][hidden]){grid-template-columns:minmax(0,190px)}
+.game-achievement-controls:has(>[data-game-achievement-mode-field][hidden]) .game-achievement-value{grid-column:1}
 .game-achievement-controls [data-game-targeted]{grid-column:1 / -1;min-width:0}
 .game-achievement-guidance{margin:0 0 12px;color:var(--muted)}
 .game-achievement-options{display:grid;gap:8px;max-height:320px;overflow:auto}

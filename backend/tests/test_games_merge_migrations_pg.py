@@ -51,7 +51,7 @@ class GamesMergeMigrationTests(unittest.IsolatedAsyncioTestCase):
 
     async def assert_head(self):
         self.assertEqual([dict(row) for row in await self.connection.fetch('SELECT version_num FROM alembic_version')],
-            [dict(version_num='mt069_game_achievements')])
+            [dict(version_num='mt071_achievement_order')])
         for table in ('game_entries', 'game_child_states', 'game_stats_state', 'catalogue_identities'):
             self.assertEqual(await self.connection.fetchval('SELECT to_regclass($1)::text', table), table)
         default = await self.connection.fetchval('''SELECT column_default FROM information_schema.columns

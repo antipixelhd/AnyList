@@ -436,7 +436,9 @@ async def achievement_page(work_id: WorkId, db: DB, viewer: Reader,
             GameAchievement.active.is_(True),GameAchievement.app_id==app)
     total = await db.scalar(select(func.count()).select_from(GameAchievement).where(GameAchievement.work_id==work_id,
         GameAchievement.active.is_(True),GameAchievement.app_id==app))
-    rows = (await db.execute(query.order_by(GameAchievement.id).offset(offset).limit(limit))).all()
+    listed = await db.scalar(select(GameEntry.work_id).where(GameEntry.user_id==viewer.id,GameEntry.work_id==work_id))
+    order = GameAchievement.sort_order.asc().nulls_last() if listed is not None else GameAchievement.global_percentage.desc().nulls_last()
+    rows = (await db.execute(query.order_by(order,GameAchievement.id).offset(offset).limit(limit))).all()
     return AchievementPage(results=[AchievementOut.model_validate(row).model_copy(update={'unlocked': unlocked is not None})
         for row, unlocked in rows], total=total, offset=offset, limit=limit)
 

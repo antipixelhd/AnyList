@@ -5,7 +5,9 @@ from datetime import timedelta,date
 from types import SimpleNamespace
 from unittest.mock import AsyncMock,patch
 
-from sqlalchemy import delete,select,func
+from sqlalchemy import delete,select,func,text
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
 
 import test_games_pg as fixture
 from core.catalogue_providers import ProviderError
@@ -50,6 +52,42 @@ class AchievementDatabaseTests(unittest.IsolatedAsyncioTestCase):
             for part in parts:
                 row=await db.scalar(snapshot(PREFIX+part,self.base));row.expires_at=now()-timedelta(seconds=1)
             await db.commit()
+
+    async def test_viewer_membership_selects_schema_or_global_order_before_pagination(self):
+        await self.service.run(self.base)
+        # Existing IDs must not dictate ordering after a provider schema reorder.
+        await self.due('schema')
+        self.source.fetch.side_effect=lambda app,part,stamp:globals_part() if part=='globals' else schema_part(('A2','A1','A0'))
+        await self.service.run(self.base)
+        path=f'/tracking/games/works/{self.base}/achievements'
+        async def names():
+            result=[]
+            for offset in range(3):
+                page=await self.client.get(path,params={'offset':offset,'limit':1})
+                self.assertEqual(page.status_code,200,page.text)
+                result.extend(row['name'] for row in page.json()['results'])
+            return result
+        self.assertEqual(await names(),['Name A2','Name A1','Name A0'])
+        self.viewer=self.other
+        self.assertEqual(await names(),['Name A0','Name A2','Name A1'])
+        self.viewer=self.user
+        async with self.Session() as db:
+            await db.execute(delete(GameEntry).where(GameEntry.user_id==self.user.id,GameEntry.work_id==self.base))
+            await db.commit()
+        self.assertEqual(await names(),['Name A0','Name A2','Name A1'])
+
+    async def test_migration_backfills_cached_steam_schema_order(self):
+        await self.service.run(self.base)
+        from migrations.versions import mt071_achievement_order as migration
+        def migrate(conn):
+            with Operations.context(MigrationContext.configure(conn)):
+                migration.downgrade()
+                migration.upgrade()
+        async with self.engine.begin() as conn:
+            await conn.run_sync(migrate)
+        async with self.Session() as db:
+            rows=list(await db.scalars(select(GameAchievement).order_by(GameAchievement.sort_order)))
+            self.assertEqual([(row.api_name,row.sort_order) for row in rows],[('A0',0),('A1',1),('A2',2)])
 
     async def test_complete_idempotent_source_catalogue_and_unknown_personal_progress(self):
         self.assertEqual(await self.service.run(self.base),'ready')

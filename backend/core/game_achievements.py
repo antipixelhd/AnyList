@@ -60,10 +60,11 @@ class GameAchievements(GameRatings):
         if part=='schema' and value.get('available'):
             rows=value['definitions'];names=[row['api_name'] for row in rows]
             for offset in range(0,len(rows),200):
-                batch=[{**row,'work_id':work.id,'app_id':app,'active':True,'fetched_at':now()} for row in rows[offset:offset+200]]
+                batch=[{**row,'sort_order':offset+index,'work_id':work.id,'app_id':app,'active':True,'fetched_at':now()}
+                    for index,row in enumerate(rows[offset:offset+200])]
                 statement=insert(GameAchievement).values(batch)
                 updated=await db.execute(statement.on_conflict_do_update(constraint='uq_game_achievement_identity',
-                    set_={field:getattr(statement.excluded,field) for field in ('name','description','hidden','icon_url','locked_icon_url','active','fetched_at')},
+                    set_={field:getattr(statement.excluded,field) for field in ('name','description','hidden','icon_url','locked_icon_url','sort_order','active','fetched_at')},
                     where=GameAchievement.work_id==work.id).returning(GameAchievement.id))
                 if len(updated.all())!=len(batch):raise catalogue.IdentityConflict('Achievement belongs to a different game')
             await db.execute(update(GameAchievement).where(GameAchievement.work_id==work.id,
