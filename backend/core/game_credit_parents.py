@@ -53,7 +53,9 @@ def person_bindings(ids):
             CatalogueIdentity.namespace=='igdb.game').exists(),
         ~select(verified.c.imdb_id).where(verified.c.imdb_id==MetadataSnapshot.external_id).exists())
     if ids is not None:reviewed=reviewed.where(MetadataSnapshot.external_id.in_(ids))
-    return direct.union_all(reviewed).cte('person_game_bindings')
+    from core.game_credit_aliases import alias_bindings
+    aliases=alias_bindings(ids)
+    return direct.union_all(reviewed,aliases).cte('person_game_bindings')
 
 
 async def review_parent(db,title_id,parent_id,*,title,kind,source_url,reviewer_id,evidence=None):
