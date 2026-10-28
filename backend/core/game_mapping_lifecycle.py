@@ -59,10 +59,14 @@ async def changed_generation(db, generation):
         Reference.generation == generation.id).subquery()
     old = select(Reference.native,Reference.names,Reference.imdb_ids, Reference.data['fingerprint'].astext.label('fingerprint')).where(
         Reference.generation == previous).subquery()
+    # A bounded cache rebuild is complete only for its retrieved scope. Eviction
+    # or expiry is unknown evidence, not a provider deleting an identity claim.
+    cached_scope=generation.source=='wikidata' and (generation.coverage or {}).get('scope')=='retrieved_game_evidence'
     stream = await db.stream(select(func.coalesce(new.c.native, old.c.native),new.c.names,old.c.names,
         new.c.imdb_ids,old.c.imdb_ids).select_from(
         new.join(old, new.c.native == old.c.native, full=True)).where(
-            new.c.fingerprint.is_distinct_from(old.c.fingerprint)))
+            new.c.fingerprint.is_distinct_from(old.c.fingerprint),
+            new.c.native.is_not(None) if cached_scope else True))
     async for batch in stream.partitions(500):
         keys=[]
         for native,new_names,old_names,new_imdb,old_imdb in batch:

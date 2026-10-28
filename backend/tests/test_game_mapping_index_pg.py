@@ -84,6 +84,59 @@ class MappingIndexTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row['value']['claims']['P345'][0]['mainsnak']['datavalue']['value'],'tt1')
         self.assertTrue((await refresh_cached_wikidata(self.Session))['skipped'])
 
+    async def test_cache_eviction_is_not_a_removed_wikidata_mapping(self):
+        from core.game_mapping_import import refresh_cached_wikidata
+        from test_game_credit_sources import item,claim
+        first=item('Q1','Example',{'P345':[claim('tt1')],'P9043':[claim('10')]})
+        second=item('Q2','Other',{'P345':[claim('tt2')],'P9043':[claim('20')]})
+        async with self.Session() as db:
+            cached=MetadataSnapshot(provider='wikidata',kind='game_credit_items',external_id='first',
+                payload={'entities':{'Q1':first}},fetched_at=now(),expires_at=now()+timedelta(days=1))
+            db.add_all([cached,MetadataSnapshot(provider='wikidata',kind='game_credit_items',external_id='second',
+                payload={'entities':{'Q2':second}},fetched_at=now(),expires_at=now()+timedelta(days=1))])
+            await db.flush();cache_id=cached.id;await db.commit()
+        await refresh_cached_wikidata(self.Session)
+        async with self.Session() as db:
+            db.add(CatalogueIdentity(entity_id=self.base,namespace='imdb.title',external_id='tt1',source='wikidata',
+                evidence={'dependencies':['wikidata:Q1'],'mapping_state':'active'}))
+            await db.delete(await db.get(MetadataSnapshot,cache_id));await db.commit()
+        result=await refresh_cached_wikidata(self.Session)
+        self.assertEqual(result['rows'],1)
+        async with self.Session() as db:
+            binding=await db.scalar(select(CatalogueIdentity).where(CatalogueIdentity.external_id=='tt1'))
+            self.assertEqual(binding.evidence['mapping_state'],'active')
+            self.assertEqual(await db.scalar(select(func.count()).select_from(MetadataSnapshot).where(MetadataSnapshot.kind=='game_credit_job')),0)
+            # A newly observed contradiction still requires revalidation.
+            changed=item('Q1','Example',{'P345':[claim('tt9')],'P9043':[claim('10')]})
+            db.add(MetadataSnapshot(provider='wikidata',kind='game_credit_items',external_id='first',
+                payload={'entities':{'Q1':changed}},fetched_at=now(),expires_at=now()+timedelta(days=1)))
+            await db.commit()
+        await refresh_cached_wikidata(self.Session)
+        async with self.Session() as db:
+            binding=await db.scalar(select(CatalogueIdentity).where(CatalogueIdentity.external_id=='tt1'))
+            self.assertEqual(binding.evidence['mapping_state'],'stale')
+            self.assertIsNotNone(await db.scalar(snapshot('game_credit_job',self.base)))
+
+    async def test_complete_reference_removal_still_revalidates_wikidata_mapping(self):
+        from core.game_mapping_import import wiki_record
+        from test_game_credit_sources import item,claim
+        records=[wiki_record(item('Q1','Example',{'P345':[claim('tt1')],'P9043':[claim('10')]})),
+            wiki_record(item('Q2','Other',{'P345':[claim('tt2')],'P9043':[claim('20')]}))]
+        first=await index.begin(self.Session,'wikidata')
+        await index.write(self.Session,first,records)
+        await index.publish(self.Session,first,{'complete':True,'rows':2})
+        async with self.Session() as db:
+            db.add(CatalogueIdentity(entity_id=self.base,namespace='imdb.title',external_id='tt1',source='wikidata',
+                evidence={'dependencies':['wikidata:Q1'],'mapping_state':'active'}))
+            await db.commit()
+        second=await index.begin(self.Session,'wikidata')
+        await index.write(self.Session,second,records[1:])
+        await index.publish(self.Session,second,{'complete':True,'rows':1})
+        async with self.Session() as db:
+            binding=await db.scalar(select(CatalogueIdentity).where(CatalogueIdentity.external_id=='tt1'))
+            self.assertEqual(binding.evidence['mapping_state'],'stale')
+            self.assertIsNotNone(await db.scalar(snapshot('game_credit_job',self.base)))
+
     async def test_confirmed_quarantine_retires_only_public_evidence_and_preserves_tracking(self):
         from core.game_mapping_lifecycle import quarantine
         async with self.Session() as db:
