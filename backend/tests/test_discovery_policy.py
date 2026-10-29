@@ -195,7 +195,7 @@ class ChronologicalTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_shared_selection_survives_one_cancel_but_cancels_orphaned_work(self):
         entered=asyncio.Event(); finish=asyncio.Event(); cancelled=asyncio.Event()
-        async def selection(*args):
+        async def selection(*args, **kwargs):
             entered.set()
             try:
                 await finish.wait()
@@ -221,7 +221,7 @@ class ChronologicalTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_selection_capacity_is_bounded_without_hidden_extra_work(self):
         entered=asyncio.Event();release=asyncio.Event()
-        async def selection(*args):
+        async def selection(*args, **kwargs):
             entered.set();await release.wait();return {'rows':[],'partial':False}
         with patch.object(discovery,'MAX_SELECTIONS',1),patch.object(discovery,'_selection',side_effect=selection) as build:
             first=asyncio.create_task(discovery.page('series','fixture',self.filters))

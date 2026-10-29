@@ -731,6 +731,7 @@
   height: 10px;
 }
 .browse-loading-view [data-skeleton-sections] .browse-skeletons { margin-top: 0; }
+.browse-category .browse-skeletons { margin-top: 0; }
 .browse-loading-view [data-skeleton-timeline] .browse-skeletons { margin-top: 0; }
 .browse-notice:empty {
   display: none;

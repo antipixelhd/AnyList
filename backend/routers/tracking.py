@@ -4,10 +4,13 @@ from core.catalog_search import result_filters, browse_preferences
 from core import settings_store, season_releases, tracking_projection
 import base64
 import binascii
+import json
 from datetime import date, datetime, timedelta, timezone
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query, Response
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select, delete, or_, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1351,7 +1354,7 @@ def browse_ids(value: str) -> list[int]:
 
 
 @router.get('/browse/sections')
-async def browse_sections(media_type: Literal['movie', 'series'] = 'movie', region: str | None = Query(None, pattern='^[A-Z]{2}$'), min_score: Annotated[float, Query(ge=0, le=10)] = 0, unfiltered: Annotated[bool, Query()] = False, db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user_or_api_key)):
+async def browse_sections(media_type: Literal['movie', 'series'] = 'movie', region: str | None = Query(None, pattern='^[A-Z]{2}$'), min_score: Annotated[float, Query(ge=0, le=10)] = 0, unfiltered: Annotated[bool, Query()] = False, stream: Annotated[bool, Query()] = False, db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user_or_api_key)):
     from core.browse import browse_sections as sections
     from core.external_scores import effective_mdblist_key
     await catalog_access(db, viewer)
@@ -1361,10 +1364,21 @@ async def browse_sections(media_type: Literal['movie', 'series'] = 'movie', regi
     mdblist_key = await effective_mdblist_key(db, None) or (
         await effective_mdblist_key(db, viewer.id) if viewer else None
     )
-    try:
-        return await sections(db, viewer, media_type=media_type, region=region,
+    options = dict(media_type=media_type, region=region,
                               show_anime=await anime_is_visible(db), key=key, mdblist_key=mdblist_key, **({'min_runtime': 0, 'excluded_genres': []} if unfiltered else await result_filters(db, viewer)),
                               unfiltered=unfiltered, min_score=min_score)
+    if stream:
+        from core.browse import iter_browse_sections
+        async def updates():
+            try:
+                async for update in iter_browse_sections(db, viewer, progressive=True, **options):
+                    yield json.dumps(jsonable_encoder(update), separators=(',', ':')) + '\n'
+            except Exception:
+                yield json.dumps({'error': 'Unable to load titles. Try again.'}) + '\n'
+        return StreamingResponse(updates(), media_type='application/x-ndjson',
+            headers={'Cache-Control': 'private, no-store', 'X-Accel-Buffering': 'no'})
+    try:
+        return await sections(db, viewer, **options)
     except Exception:
         raise HTTPException(502, 'Unable to load titles. Try again.')
 

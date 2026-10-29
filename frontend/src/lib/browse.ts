@@ -14,9 +14,9 @@ import { createBrowseLoading, prepareBrowsePoster } from "./browse-loading";
 import { initializeBrowseRanges } from "./browse-ranges";
 import { createBrowsePaginationDemand } from "./browse-pagination";
 import { initializeMobileBrowseFilters } from "./browse-mobile-filters";
-import { BROWSE_FACET_TTL, browseResultTtl, createBrowseCache, createBrowseSharedRequests, waitForBrowseRequest } from "./browse-cache";
+import { BROWSE_FACET_TTL, browseResultTtl, createBrowseCache, waitForBrowseRequest } from "./browse-cache";
 import { refreshBrowseContextBatches } from './browse-context';
-import {createPrediction, paginationPosition, predictionAllowed} from "./predictive-loading";
+import {createPrediction, paginationPosition} from "./predictive-loading";
 import { initializeBrowseSort } from "./browse-sort";
 import { createBrowseOverride } from './browse-override';
 import {createSearchExpansion, shouldBroadenSearch, broadSearchParams} from './search-fallback';
@@ -24,6 +24,7 @@ import { appendBrowseTimeline } from './browse-timeline';
 import { initializeScrollMotion } from "./scroll-motion";
 import { editorStore, type EditorTitle } from "./editor-store";
 import { cancelUiMotion } from "./ui-motion";
+import {readBrowseSections} from './browse-sections';
 import {initializeBrowseMenus} from "./browse-menus";
 
 type Item = BrowseItem & {search_rank?: number};
@@ -102,7 +103,8 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   document.addEventListener('anylist:editor-state', () => { contextRevision++; }, {signal});
   document.addEventListener('anylist:cache-invalidated',()=>{
     contextRevision++;
-    prediction.cancel();sectionRequests.clear();responseCache.clear();facetCache.clear();
+    prediction.cancel();responseCache.clear();facetCache.clear();
+    if(loading){request?.abort();currentPath=undefined;void load(false);}
   },{signal});
   const readyPosters = new Set<string>();
   let currentPath: string | undefined;
@@ -192,25 +194,6 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       );
     return body;
   };
-  const sectionRequests = createBrowseSharedRequests<SectionsPayload>(
-    (path, requestSignal) => json(path, {signal: requestSignal}) as Promise<SectionsPayload>,
-    (path, result) => responseCache.set(path, result), signal,
-  );
-  const prefetchAdjacentSections = (values: URLSearchParams, epoch: number) => {
-    const alternate = new URLSearchParams(values);
-    if (categoryMode(values)) alternate.set('media_type', values.get('media_type') === 'movie' ? 'series' : 'movie');
-    else if (values.get('view') === 'timeline') alternate.delete('view');
-    else return;
-    if (!categoryMode(alternate)) return;
-    const path = requestPath(alternate);
-    const revision = contextRevision;
-    const prefetch = () => {
-      if (!signal.aborted && generation === epoch && contextRevision === revision &&
-          !document.hidden && predictionAllowed() && !responseCache.get(path)) sectionRequests.prefetch(path);
-    };
-    if ('requestIdleCallback' in window) window.requestIdleCallback(prefetch, {timeout: 1500});
-    else setTimeout(prefetch, 250);
-  };
   const paintState = paintBrowseCardState;
   const initialItems = new Map<string, Item>(
     [
@@ -291,40 +274,39 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     else destination.append(fragment);
     return cards;
   };
-  const renderSections = (results: Section[]) => {
-    for (const section of results) {
-      const container = document.createElement("section");
-      container.className = "browse-category";
-      container.setAttribute("aria-label", section.title);
-      const header = document.createElement("header"),
-        heading = document.createElement("h2"),
-        link = document.createElement("a"),
-        cards = document.createElement("div");
-      const headingLink = document.createElement("a");
-      headingLink.textContent = section.title;
-      link.textContent = "View all";
-      link.dataset.viewAll = "";
-      link.href = sectionHref(
-        field("type").value,
-        field("region").value,
-        section.filters,
-      );
-      headingLink.href = link.href;
-      headingLink.dataset.viewAll = "";
-      heading.append(headingLink);
-      header.append(heading, link);
-      cards.className = "browse-grid";
-      render(section.results, cards, false);
-      container.append(header, cards);
-      if (!section.results.length) {
-        const message = document.createElement("p");
-        message.className = "browse-category-empty";
-        message.textContent = "No titles found.";
-        container.append(message);
-      }
-      sections.append(container);
+  const renderSection = (section: Section) => {
+    const container = document.createElement("section");
+    container.className = "browse-category";
+    container.setAttribute("aria-label", section.title);
+    const header = document.createElement("header"),
+      heading = document.createElement("h2"),
+      link = document.createElement("a"),
+      cards = document.createElement("div");
+    const headingLink = document.createElement("a");
+    headingLink.textContent = section.title;
+    link.textContent = "View all";
+    link.dataset.viewAll = "";
+    link.href = sectionHref(
+      field("type").value,
+      field("region").value,
+      section.filters,
+    );
+    headingLink.href = link.href;
+    headingLink.dataset.viewAll = "";
+    heading.append(headingLink);
+    header.append(heading, link);
+    cards.className = "browse-grid";
+    render(section.results, cards, false);
+    container.append(header, cards);
+    if (!section.results.length) {
+      const message = document.createElement("p");
+      message.className = "browse-category-empty";
+      message.textContent = "No titles found.";
+      container.append(message);
     }
+    return container;
   };
+  const renderSections = (results:Section[]) => sections.append(...results.map(renderSection));
   const paintChips = () => {
     paintRanges();
     chips.replaceChildren();
@@ -450,6 +432,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     error.hidden = true;
     const cached = responseCache.get(path);
     let expanded = false;
+    let streamed = false;
     empty.hidden = true;
     region.setAttribute("aria-busy", "true");
     updateFooter();
@@ -473,9 +456,21 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       let response = cached;
       if (!response) {
         await waitForBrowseRequest(debounce, current.signal);
-        response = categoryView
-          ? await sectionRequests.consume(path, current.signal)
-          : await prediction.consume(path,current.signal) ?? await json(path, {signal: current.signal}) as Payload;
+        if(categoryView){
+          const slots=[...skeleton.querySelector<HTMLElement>('[data-skeleton-sections]')!.children]
+            .map(section=>section.cloneNode(true) as HTMLElement);
+          slots.forEach(slot=>slot.setAttribute('aria-busy','true'));
+          sections.replaceChildren(...slots);
+          grid.replaceChildren();seen.clear();items.clear();
+          displayedCategories=true;streamed=true;
+          loadingView.finish();sections.hidden=false;
+          response=await readBrowseSections<Section>(path,current.signal,(index,section,message)=>{
+            if(current.signal.aborted||signal.aborted||request!==current||epoch!==generation)return;
+            const container=renderSection(section);
+            slots[index].replaceWith(container);
+            if(message)notice.textContent=message;
+          });
+        }else response=await prediction.consume(path,current.signal) ?? await json(path,{signal:current.signal}) as Payload;
         if (current.signal.aborted || signal.aborted || request !== current) return;
       }
       async function fillViewport(first: Payload, requestValues: URLSearchParams): Promise<Payload> {
@@ -516,7 +511,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       if (!cached) await loadingView.settle(current.signal);
       if (request !== current || epoch !== generation || signal.aborted) return;
       if (expanded) automaticExpansion.activate(values);
-      if (!append) {
+      if (!append && !streamed) {
         cancelUiMotion(region);
         grid.replaceChildren();
         sections.replaceChildren();
@@ -525,7 +520,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       }
       displayedCategories = categoryView;
       if ("sections" in response) {
-        renderSections(response.sections);
+        if(!streamed)renderSections(response.sections);
         loadingView.handoff([...sections.querySelectorAll<HTMLElement>('.browse-card-body')]);
         payload = { results: [], has_more: false, page: 1, source: "" };
       } else {
@@ -535,7 +530,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       }
       notice.textContent = response.notice || "";
       if (cached) void refreshViewerContext(response, current);
-      if (!append) prefetchAdjacentSections(values, epoch);
+
     } catch (cause) {
       await loadingView.settle(current.signal);
       if (current.signal.aborted || request !== current || signal.aborted)
@@ -543,7 +538,13 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       suspended = true;
       error.hidden = false;
       error.querySelector("span")!.textContent = (cause as Error).message;
-      if (!append) {
+      if(streamed)sections.querySelectorAll<HTMLElement>('[aria-busy="true"]').forEach(slot=>{
+        slot.removeAttribute('aria-busy');
+        const message=document.createElement('p');message.className='browse-category-empty';
+        message.textContent='Unable to load titles.';
+        slot.querySelector('.browse-grid')?.replaceChildren(message);
+      });
+      if (!append && !streamed) {
         cancelUiMotion(region);
         grid.replaceChildren();
         sections.replaceChildren();

@@ -23,6 +23,7 @@ from collections import Counter
 from contextlib import ExitStack
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -441,6 +442,9 @@ async def main(args):
         def reset():
             tmdb._cache._store.clear()
             chronological_discovery._cache._store.clear()
+            if hasattr(chronological_discovery, '_snapshots'):
+                for saved in chronological_discovery._snapshots.directory().glob('*.json'):
+                    saved.unlink()
             contributor_search._candidate_cache._store.clear()
             contributor_evidence._summary_cache._store.clear()
             from core import catalog_search
@@ -453,6 +457,12 @@ async def main(args):
             result = await operation()
             row = {'case': label, 'mode': mode, 'state': state,
                    'ms': round((time.perf_counter() - start) * 1000, 2), **dict(counters)}
+            if label.endswith('_sections_stream'):
+                # Foreground readiness is not eliminated work. Drain the public
+                # continuation before the next sample resets caches/counters.
+                await asyncio.gather(*(entry[0] for entry in list(chronological_discovery._pending.values())))
+                row['complete_ms'] = round((time.perf_counter() - start) * 1000, 2)
+                row['complete_provider_requests'] = counters.get('provider_requests', 0)
             if isinstance(result, dict):
                 items = result.get('results', result.get('items', []))
                 if label.startswith('game_contributor') or label in ('game_person_cached','game_company_cached'):items=result['works']
@@ -515,6 +525,12 @@ async def main(args):
                 response = await fixture.client.get('/tracking/' + path, params=params)
             if response.status_code != 200:
                 raise RuntimeError(f'{current_case}: {response.status_code}: {response.text[:200]}')
+            if params.get('stream'):
+                updates = [json.loads(line) for line in response.text.splitlines() if line]
+                if any('error' in update for update in updates) or {update['index'] for update in updates} != set(range(4)):
+                    raise RuntimeError('Incomplete category stream')
+                return {'sections': [update['section'] for update in sorted(updates, key=lambda update: update['index'])],
+                        'notice': next((update['notice'] for update in updates if update.get('notice')), None)}
             return response.json()
 
         async def game_candidates(query):
@@ -692,6 +708,10 @@ async def main(args):
             ('timeline_text', 'browse', {'media_type': 'series', 'q': 'Benchmark', 'timeline': 'true'}),
             ('default_sections', 'browse/sections', {}),
             ('series_sections', 'browse/sections', {'media_type': 'series'}),
+            *([] if args.baseline_ref else [
+                ('series_sections_stream', 'browse/sections', {'media_type': 'series', 'stream': 'true'}),
+                ('movie_sections_stream', 'browse/sections', {'media_type': 'movie', 'stream': 'true'}),
+            ]),
             ('actor', 'quick-search/contributors', {'q': 'Benchmark', 'kind': 'actor'}),
             ('crew', 'quick-search/contributors', {'q': 'Benchmark', 'kind': 'staff'}),
             ('studio', 'quick-search/contributors', {'q': 'Benchmark', 'kind': 'studio'}),
@@ -775,6 +795,19 @@ async def main(args):
             if args.case and 'game_offers' in args.case:
                 stack.enter_context(patch.object(provider_settings,'itad_api_key','fixture-itad-key'))
             stack.enter_context(patch.object(tmdb, '_request', side_effect=provider))
+            from core import browse as browse_core
+            if hasattr(chronological_discovery, '_snapshots'):
+                from core.release_snapshots import ReleaseSnapshots
+                snapshot_directory = stack.enter_context(TemporaryDirectory())
+                stack.enter_context(patch.object(chronological_discovery, '_snapshots', ReleaseSnapshots(lambda: Path(snapshot_directory))))
+            original_sections = getattr(browse_core, 'iter_browse_sections', None)
+            async def timed_sections(*values, **options):
+                started = time.perf_counter()
+                async for update in original_sections(*values, **options):
+                    counters[f'shelf:{update["index"]}:ready_ms'] = round((time.perf_counter() - started) * 1000, 2)
+                    yield update
+            if original_sections:
+                stack.enter_context(patch.object(browse_core, 'iter_browse_sections', side_effect=timed_sections))
             stack.enter_context(patch('core.game_discovery.candidates', side_effect=game_candidates))
             stack.enter_context(patch.object(game_browse,'GameBrowseSources',return_value=game_sources))
             if args.critic_blocking_reference:
