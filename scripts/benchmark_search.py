@@ -691,6 +691,7 @@ async def main(args):
             ('series_upcoming', 'browse', {'media_type': 'series', 'sort': 'upcoming'}),
             ('timeline_text', 'browse', {'media_type': 'series', 'q': 'Benchmark', 'timeline': 'true'}),
             ('default_sections', 'browse/sections', {}),
+            ('series_sections', 'browse/sections', {'media_type': 'series'}),
             ('actor', 'quick-search/contributors', {'q': 'Benchmark', 'kind': 'actor'}),
             ('crew', 'quick-search/contributors', {'q': 'Benchmark', 'kind': 'staff'}),
             ('studio', 'quick-search/contributors', {'q': 'Benchmark', 'kind': 'studio'}),
