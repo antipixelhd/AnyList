@@ -16,6 +16,7 @@ import {contributorSourceRefresh} from './contributor-source-refresh';
 import {contributorAvailability,disabledContributorOption} from './contributor-availability';
 import {mountGamePersonImages} from './game-person-images';
 import {contributorPages} from './contributor-pages';
+import {bindContributorTabIntent} from './contributor-tab-intent';
 
 export function initializeContributorPage(root: HTMLElement, signal: AbortSignal) {
   if(root.dataset.mediaType==='game')mountGamePersonImages(root,signal);
@@ -313,7 +314,17 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     form.querySelectorAll<HTMLInputElement>('input[name=domain]:checked,input[name=media_type]:checked').forEach(input=>submitted.set(input.name,input.value));
     const query=contributorParams(submitted,data.list_count!==null);
     region.hidden=(query.get('media_type')==='game')!==(params.get('media_type')==='game');
-    void pages.get(`/api/proxy/tracking/${root.dataset.endpoint}?${query}`).then(next=>{
+    const readSelection=async()=>{
+      for(;;){
+        try{return await pages.get(`/api/proxy/tracking/${root.dataset.endpoint}?${query}`,request.signal);}
+        catch(cause){
+          if((cause as Error).name!=='AbortError'||signal.aborted||request.signal.aborted)throw cause;
+          // Invalidation discarded this snapshot, not the viewer's selection.
+          // Retry with current evidence while superseded consumers stay aborted.
+        }
+      }
+    };
+    void readSelection().then(next=>{
       if(signal.aborted||current!==revision)return;
       // Replace only the works; keep biography, controls, focus and viewport intact.
       region.replaceChildren();items.clear();
@@ -321,7 +332,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
       for(const key of [...params.keys()])params.delete(key);
       query.forEach((value,key)=>params.set(key,value));
       root.dataset.mediaType=params.get('media_type')||'all';
-      if(params.get('media_type')==='game')sourceRefresh.update(next.game_company_status||next.game_person_status);
+      sourceRefresh.update(params.get('media_type')==='game'?next.game_company_status||next.game_person_status:null);
       const count=root.querySelector('[data-contributor-list-count]');
       if(count)count.textContent=String(data.list_count||0);
       const roles=root.querySelector<HTMLElement>('[data-contributor-roles]')!;
@@ -340,7 +351,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
         if (works) scrollToWorks(works);
       }
     }).catch(cause=>{
-      if(!signal.aborted&&!request.signal.aborted&&current===revision){restoreFilterControls();showError(cause instanceof Error?cause.message:'Unable to load works.');}
+      if(!signal.aborted&&!request.signal.aborted&&current===revision&&(cause as Error).name!=='AbortError'){restoreFilterControls();showError(cause instanceof Error?cause.message:'Unable to load works.');}
     }).finally(()=>{
       if(!signal.aborted&&current===revision){
         filterRequest=undefined;region.removeAttribute('aria-busy');region.hidden=false;
@@ -355,15 +366,12 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
   signal.addEventListener('abort',()=>clearTimeout(syncRetry),{once:true});
   const loading=root.querySelector<HTMLElement>('[data-contributor-loading]')!;
   const pathFor=(query:URLSearchParams)=>`/api/proxy/tracking/${root.dataset.endpoint}?${query}`;
-  const warmSibling=()=>{
+  const warmSibling=(domain:string)=>{
     if(root.dataset.contributorAvailability!=='true'||signal.aborted)return;
-    const query=new URLSearchParams();
-    query.set('media_type',params.get('media_type')==='game'?'all':'game');
-    void pages.get(pathFor(query)).then(next=>{
-      if(signal.aborted)return;
-      const state=next.game_company_status||next.game_person_status;
-      if(state)sourceRefresh.update(state);
-    }).catch(()=>{});
+    const query=new URLSearchParams(params);
+    query.delete('page');query.delete('source');query.delete('cursor');
+    query.set('media_type',domain==='game'?'game':'all');
+    void pages.get(pathFor(contributorParams(query,data.list_count!==null))).catch(()=>{});
   };
   const synchronize=async()=>{
     if(signal.aborted)return;
@@ -433,13 +441,13 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
   availabilityChanged=state=>{
     // Retry an empty active tab when background identity/availability changes.
     if(previousAvailability&&state!==previousAvailability){
-      pages.clear();warmSibling();
+      pages.clear();
       if(!items.size&&!filterRequest)form.requestSubmit();
     }
     previousAvailability=state;
   };
   sourceRefresh.update(data.game_company_status||data.game_person_status);
-  warmSibling();
+  bindContributorTabIntent(form,signal,warmSibling);
   bindPredictivePagination(region,signal,()=>!filterRequest&&!syncing&&data.has_more&&!more.disabled&&error.hidden,
     ()=>prediction.prefetch(nextPath()),()=>void loadMore());
 

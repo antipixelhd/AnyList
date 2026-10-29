@@ -70,3 +70,32 @@ test('failed reads retry and invalidation does not let an older failure evict a 
   reject(new Error('offline'));await assert.rejects(old);
   assert.equal(await pages.get('screen'),2);
 });
+
+test('superseded demand aborts its unused read without cancelling another subscriber',async()=>{
+  const lifetime=new AbortController(),a=new AbortController(),b=new AbortController(),calls=[];
+  const pages=contributorPages((path,signal)=>new Promise((resolve,reject)=>{
+    calls.push({path,signal,resolve});signal.addEventListener('abort',()=>reject(new DOMException('Aborted','AbortError')),{once:true});
+  }),lifetime.signal);
+  const first=pages.get('screen',a.signal),second=pages.get('screen',b.signal);
+  a.abort();await assert.rejects(first,{name:'AbortError'});
+  assert.equal(calls.length,1);assert.equal(calls[0].signal.aborted,false);
+  b.abort();await assert.rejects(second,{name:'AbortError'});
+  assert.equal(calls[0].signal.aborted,true);
+  const retry=pages.get('screen');calls[1].resolve('fresh');assert.equal(await retry,'fresh');
+});
+
+test('intent warming shares demand and invalidation/eviction cancel bounded background reads',async()=>{
+  const lifetime=new AbortController(),click=new AbortController(),calls=[];
+  const pages=contributorPages((path,signal)=>new Promise((resolve,reject)=>{
+    calls.push({path,signal,resolve});signal.addEventListener('abort',()=>reject(new DOMException('Aborted','AbortError')),{once:true});
+  }),lifetime.signal);
+  const warm=pages.get('games'),selected=pages.get('games',click.signal);
+  click.abort();await assert.rejects(selected,{name:'AbortError'});
+  assert.equal(calls[0].signal.aborted,false);calls[0].resolve('games');assert.equal(await warm,'games');
+  const background=Array.from({length:6},(_,i)=>pages.get(String(i)).catch(error=>error.name));
+  const extra=pages.get('extra').catch(error=>error.name);
+  assert.equal(calls[1].signal.aborted,true);
+  lifetime.abort();
+  assert.deepEqual(await Promise.all([...background,extra]),Array(7).fill('AbortError'));
+  await assert.rejects(pages.get('departed'),{name:'AbortError'});
+});

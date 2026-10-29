@@ -93,6 +93,39 @@ test('screen editor changes invalidate the warmed tab before switching away and 
   controller.abort();
 });
 
+test('cache invalidation during a tab switch retries the selected domain instead of restoring old results',async()=>{
+  const source=readFileSync(new URL('../src/lib/contributor-page.ts',import.meta.url),'utf8');
+  const start=source.indexOf("  form.addEventListener('submit',event=>{");
+  const snippet=source.slice(start,source.indexOf('  let syncing=',start));
+  const lifetime=new AbortController(),handlers={},network=[],errors=[],appended=[];
+  const pages=contributorPages((path,signal)=>new Promise((resolve,reject)=>{
+    network.push({path,resolve,signal});signal.addEventListener('abort',()=>reject(new DOMException('Aborted','AbortError')),{once:true});
+  }),lifetime.signal);
+  const node={hidden:false,textContent:'',removeAttribute(){},setAttribute(){}};
+  const root={dataset:{endpoint:'contributors/actor/catalogue:1',mediaType:'all'},querySelector:selector=>selector==='.contributor-list-link'?null:node};
+  const context=vm.createContext({Error,DOMException,AbortController,URL,URLSearchParams,
+    signal:lifetime.signal,pages,root,revision:0,filterRequest:undefined,prediction:{cancel(){}},
+    form:{action:'https://example.test/person/1',querySelectorAll:()=>[],addEventListener:(name,handler)=>handlers[name]=handler},
+    FormData:class{forEach(fn){fn('game','media_type');}},contributorParams:query=>query,
+    params:new URLSearchParams('media_type=all'),data:{kind:'actor',list_count:0},
+    region:{hidden:false,setAttribute(){},removeAttribute(){},replaceChildren(){}},items:new Map(),
+    error:{hidden:true},sourceRefresh:{update(){}},more:{},requestedView:'timeline',
+    append:works=>appended.push(...works),updateEmpty(){},syncAgain:false,
+    restoreFilterControls:()=>assert.fail('selection should be retained'),showError:message=>errors.push(message),
+    location:{href:'https://example.test/person/1'},history:{replaceState(){}},
+  });
+  vm.runInContext(stripTypeScriptTypes(snippet),context);
+  const flush=()=>new Promise(setImmediate);
+  handlers.submit({preventDefault(){}});await flush();assert.equal(network.length,1);
+  pages.clear();await flush();assert.equal(network[0].signal.aborted,true);assert.equal(network.length,2);
+  assert.equal(root.dataset.mediaType,'all');
+  network[1].resolve({kind:'actor',works:[{id:7}],roles:[],list_count:1,has_more:false});await flush();
+  assert.equal(root.dataset.mediaType,'game');assert.equal(appended.length,1);assert.deepEqual(errors,[]);
+  pages.clear();handlers.submit({preventDefault(){}});await flush();
+  context.filterRequest.abort();await flush();assert.equal(network.length,3,'superseded consumers never retry');
+  lifetime.abort();
+});
+
 test('a write overlapping the final source revision queues another synchronization',async()=>{
   const source=readFileSync(new URL('../src/lib/contributor-page.ts',import.meta.url),'utf8');
   const start=source.indexOf('  const synchronize=async()=>');
