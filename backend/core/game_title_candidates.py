@@ -5,10 +5,15 @@ import re
 from datetime import timedelta
 
 from core.catalogue_providers import ProviderError
-from core.game_imdb_discovery_source import FIELDS
+from core.game_imdb_discovery_source import FIELDS as DOCUMENT_FIELDS
 from core.game_title_match import spelling,title_formats,written_words
 
-FIELDS = FIELDS + ',alternative_names.name,release_dates.date,release_dates.status.name,remakes,remasters,websites.url,external_games.platform,external_games.countries,platforms.id,parent_game.id'
+# Identity discovery needs the primary poster for the accepted list card, but
+# optional galleries/descriptions belong to ordinary game-detail enrichment.
+# Keep identity fields unchanged so existing accepted observations stay valid.
+FIELDS = ','.join(field for field in DOCUMENT_FIELDS.split(',')
+    if field != 'summary' and not field.startswith(('artworks.', 'screenshots.')))
+FIELDS += ',alternative_names.name,release_dates.date,release_dates.status.name,remakes,remasters,websites.url,external_games.platform,external_games.countries,platforms.id,parent_game.id'
 PAGE = 100
 MAX_PAGES = 3
 # Matching rules may change while the provider query and stored facts stay valid.

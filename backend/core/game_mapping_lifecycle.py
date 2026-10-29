@@ -30,6 +30,7 @@ async def quarantine(db, binding, reason):
 
 async def invalidate(db,keys=(),*,outdated=False,identity_ids=None):
     from core.game_title_match import SUPPORTED_VERSIONS
+    if keys:await invalidate_deferred(db,keys)
     await invalidate_parents(db,keys,outdated=outdated)
     if identity_ids is not None:condition=CatalogueIdentity.id.in_(identity_ids)
     elif outdated:
@@ -75,6 +76,17 @@ async def invalidate_parents(db,keys=(),*,outdated=False,snapshot_ids=None,title
         await db.execute(update(MetadataSnapshot).where(MetadataSnapshot.provider=='imdb',
             MetadataSnapshot.kind=='game_person_discovery',MetadataSnapshot.external_id.in_(people)).values(expires_at=None))
         await revision(db)
+
+
+async def invalidate_deferred(db,keys):
+    """Changed public evidence releases only matching unknown-result cooldowns."""
+    if not keys:return
+    await db.execute(update(MetadataSnapshot).where(
+        MetadataSnapshot.provider=='wikidata',MetadataSnapshot.kind=='game_person_title_map',
+        MetadataSnapshot.payload['status'].astext.in_(('unresolved','unmapped','conflict')),
+        MetadataSnapshot.expires_at>now(),
+        MetadataSnapshot.payload['dependencies'].op('?|')(array(sorted(set(keys))))
+    ).values(expires_at=None))
 
 
 async def changed_generation(db, generation):
@@ -123,5 +135,6 @@ async def changed_generation(db, generation):
             conditions.append(affected)
         await invalidate(db,identity_ids=select(CatalogueIdentity.id).where(or_(*conditions)))
         await invalidate_parents(db,parent_keys,title_ids=parent_titles)
+        await invalidate_deferred(db,parent_keys)
     # Marked evidence is not available for new verified participation; old public
     # credits are retained until a worker establishes a real contradiction.

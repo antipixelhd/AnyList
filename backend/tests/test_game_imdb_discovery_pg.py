@@ -70,6 +70,92 @@ class PortfolioDiscoveryTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(job.payload['processed'],3)
         return self.source.page.await_args.args[0]
 
+    async def restart_discovery(self):
+        # Discovery publishes a projection job before the next page admission.
+        self.assertEqual(await self.person_service.run('nm1'),'ready')
+        async with self.Session() as db:
+            job=await db.scalar(snapshot(JOB,'nm1'))
+            job.expires_at=now()-timedelta(seconds=1)
+            job.next_attempt_at=None
+            await db.commit()
+        await self.admit()
+
+    async def test_persistent_unknowns_are_shared_across_daily_discovery_without_provider_retries(self):
+        self.source.page.side_effect=lambda ids:{'outcomes':[{'id':native,'status':'unresolved',
+            'reason':'ambiguous_candidates'} for native in ids],'stale':False}
+        self.assertEqual(await self.service.run('nm1'),'ready')
+        async with self.Session() as db:
+            gap=await db.scalar(snapshot(MAP,'tt2',provider='wikidata'))
+            self.assertGreater(gap.expires_at-now(),timedelta(days=29))
+            self.assertEqual(gap.payload['status'],'unresolved')
+            self.assertIn('imdb:tt2',gap.payload['dependencies'])
+        await self.restart_discovery()
+        self.assertEqual(await self.service.run('nm1'),'ready')
+        self.source.page.assert_awaited_once()
+
+    async def test_changed_evidence_releases_only_the_affected_unknown_cooldown(self):
+        from core.game_mapping_lifecycle import invalidate
+        self.source.page.side_effect=lambda ids:{'outcomes':[{'id':native,'status':'unresolved',
+            'reason':'variant_parent_scope' if native=='tt2' else 'title_year_evidence',
+            'dependencies':['igdb:10','igdb:20'] if native=='tt2' else []} for native in ids],'stale':False}
+        self.assertEqual(await self.service.run('nm1'),'ready')
+        async with self.Session() as db:
+            await invalidate(db,['igdb:10']);await db.commit()
+            self.assertIsNone((await db.scalar(snapshot(MAP,'tt2',provider='wikidata'))).expires_at)
+            self.assertGreater((await db.scalar(snapshot(MAP,'tt3',provider='wikidata'))).expires_at,now())
+        await self.restart_discovery()
+        self.assertEqual(await self.service.run('nm1'),'ready')
+        self.assertEqual(self.source.page.await_args.args[0],['tt2'])
+
+    async def test_transient_failure_stops_looping_after_three_attempts_and_keeps_verified_work(self):
+        self.source.page.side_effect=lambda ids:{'outcomes':[outcome() if native=='tt2' else
+            {'id':native,'status':'unresolved','reason':'timeout','retry_after':60} for native in ids],'stale':False}
+        for index in range(3):
+            self.assertEqual(await self.service.run('nm1'),'ready' if index==2 else 'partial')
+            async with self.Session() as db:
+                gap=await db.scalar(snapshot(MAP,'tt3',provider='wikidata'))
+                job=await db.scalar(snapshot(JOB,'nm1'))
+                self.assertEqual(gap.payload['retry_attempts'],index+1)
+                if index<2:
+                    gap.expires_at=now()-timedelta(seconds=1)
+                    job.next_attempt_at=now()
+                else:
+                    self.assertIsNone(job.next_attempt_at)
+                    self.assertTrue(job.coverage['complete'])
+                    self.assertFalse(gap.coverage['verified'])
+                    self.assertGreater(gap.expires_at-now(),timedelta(hours=23))
+                await db.commit()
+        self.assertEqual(self.source.page.await_count,3)
+        self.assertEqual(self.source.page.await_args.args[0],['tt3'])
+        async with self.Session() as db:
+            self.assertIsNotNone(await db.scalar(select(CatalogueIdentity).where(
+                CatalogueIdentity.namespace=='imdb.title',CatalogueIdentity.external_id=='tt2')))
+
+    async def check_failed_acquisition_stops(self):
+        for index in range(3):
+            self.assertEqual(await self.service.run('nm1'),'ready' if index==2 else 'partial')
+            async with self.Session() as db:
+                job=await db.scalar(snapshot(JOB,'nm1'))
+                for native in ('tt2','tt3'):
+                    gap=await db.scalar(snapshot(MAP,native,provider='wikidata'))
+                    self.assertEqual(gap.payload['status'],'unresolved')
+                    self.assertEqual(gap.payload['retry_attempts'],index+1)
+                    self.assertIsNone(await db.scalar(select(CatalogueIdentity.id).where(
+                        CatalogueIdentity.namespace=='imdb.title',CatalogueIdentity.external_id==native)))
+                    if index<2:gap.expires_at=now()-timedelta(seconds=1)
+                if index<2:job.next_attempt_at=now()
+                else:self.assertIsNone(job.next_attempt_at)
+                await db.commit()
+        self.assertEqual(self.source.page.await_count,3)
+
+    async def test_stale_acquisition_stops_retrying_without_publishing_stale_games(self):
+        self.source.page.return_value={'outcomes':[outcome(),outcome('tt3',30)],'stale':True}
+        await self.check_failed_acquisition_stops()
+
+    async def test_whole_batch_timeout_stops_retrying_without_publishing_empty_success(self):
+        self.source.page.side_effect=TimeoutError
+        await self.check_failed_acquisition_stops()
+
     async def test_policy_upgrade_rechecks_the_prefix_before_certifying_current_coverage(self):
         from core.game_imdb_discovery import VERSION
         self.assertEqual(await self.resume_policy(VERSION-1),['tt2','tt3'])
@@ -464,12 +550,14 @@ class PortfolioDiscoveryTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_failures_retry_without_certifying_an_empty_portfolio_or_touching_saved_source(self):
         await self.admit();self.source.page.side_effect=ProviderError('rate_limited',60)
-        self.assertEqual(await self.service.run('nm1'),'retry')
+        self.assertEqual(await self.service.run('nm1'),'partial')
         async with self.Session() as db:
-            job=await db.scalar(snapshot(JOB,'nm1'));self.assertEqual(job.error_code,'rate_limited')
+            job=await db.scalar(snapshot(JOB,'nm1'));self.assertIsNone(job.error_code)
             self.assertGreater(job.next_attempt_at,now());self.assertEqual(job.payload['processed'],0)
             self.assertTrue((await db.scalar(snapshot(COMPONENT,'nm1'))).coverage['source_complete'])
-            self.assertEqual(await db.scalar(select(func.count()).select_from(MetadataSnapshot).where(MetadataSnapshot.kind==MAP)),0)
+            gaps=list(await db.scalars(select(MetadataSnapshot).where(MetadataSnapshot.kind==MAP)))
+            self.assertEqual(len(gaps),2)
+            self.assertTrue(all(row.payload['reason']=='rate_limited' and row.payload['status']=='unresolved' for row in gaps))
         self.assertEqual(await self.service.run('nm1'),'cached');self.source.page.assert_awaited_once()
 
     async def test_complete_typed_dlc_exclusions_are_not_unresolved_or_displayed_as_games(self):
@@ -543,11 +631,11 @@ class PortfolioDiscoveryTests(unittest.IsolatedAsyncioTestCase):
             {'outcomes':[outcome(),outcome('tt3',30)],'stale':True}):
             with self.subTest(result=result):
                 self.source.page.return_value=result
-                self.assertEqual(await self.service.run('nm1'),'retry')
+                self.assertEqual(await self.service.run('nm1'),'partial' if result['stale'] else 'retry')
                 async with self.Session() as db:
                     job=await db.scalar(snapshot(JOB,'nm1'));self.assertFalse(job.coverage.get('complete'))
                     self.assertEqual(job.payload['processed'],0)
-                    self.assertEqual(await db.scalar(select(func.count()).select_from(MetadataSnapshot).where(MetadataSnapshot.kind==MAP)),0)
+                    self.assertEqual(await db.scalar(select(func.count()).select_from(MetadataSnapshot).where(MetadataSnapshot.kind==MAP)),2 if result['stale'] else 0)
                     job.next_attempt_at=now()-timedelta(seconds=1);await db.commit()
 
     async def test_large_portfolio_progresses_in_bounded_batches_and_reuses_prior_outcomes(self):

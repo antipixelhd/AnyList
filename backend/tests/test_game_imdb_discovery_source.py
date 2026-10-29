@@ -27,6 +27,18 @@ class Cache:
 
 
 class DiscoverySourceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_exact_released_namesake_tie_never_spends_deep_verification(self):
+        from test_game_title_match import game
+        self.response([])
+        title={'id':'tt1','title':'Example','year':2017}
+        pool=[game(10,'Example'),game(20,'Example')]
+        acquired={'data':{'rows':pool,'complete':True,'branches':[]},'stale':False}
+        with patch('core.game_title_candidates.retrieve',AsyncMock(return_value=acquired)), \
+             patch('core.game_match_support.corroborate',AsyncMock(side_effect=AssertionError('Cannot resolve exact independent ties'))) as deep:
+            value=(await self.api.page(['tt1'],titles={'tt1':title}))['outcomes'][0]
+        self.assertEqual((value['status'],value['reason']),('unresolved','ambiguous_candidates'))
+        deep.assert_not_awaited()
+
     async def test_unique_complete_edition_automatically_projects_its_independent_parent(self):
         from test_game_title_match import game
         self.response([])
@@ -57,6 +69,7 @@ class DiscoverySourceTests(unittest.IsolatedAsyncioTestCase):
                     'data':{'rows':[child],'complete':True,'branches':[]},'stale':False})):
                 value=(await self.api.page(['tt1'],titles={'tt1':title}))['outcomes'][0]
             self.assertEqual(value['reason'],'variant_parent_scope')
+            self.assertTrue({'igdb:10','igdb:20','imdb:tt1'}.issubset(value['dependencies']))
 
     async def test_unique_port_uses_parent_participation_instead_of_a_primary_imdb_binding(self):
         from test_game_title_match import game

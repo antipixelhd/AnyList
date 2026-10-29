@@ -27,6 +27,8 @@ def changes_binding(evidence,key,data):
 async def invalidate_observed(db,key,data):
     from core.game_mapping_lifecycle import invalidate
     keys=[f'igdb-query:{key}',*[f'igdb-name:{name}' for name in data.get('scope_names',[])]]
+    from core.game_mapping_lifecycle import invalidate_deferred
+    await invalidate_deferred(db,keys)
     # Only the public proof header is needed; no private entries or full credits.
     evidence=CatalogueIdentity.evidence
     query=select(CatalogueIdentity.id,evidence['igdb_id'].astext.label('igdb_id'),

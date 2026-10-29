@@ -222,7 +222,8 @@ class GameIMDbBindings:
         candidate=await retrieve(self.wiki.sources,current_title)
         proof=decide(current_title,candidate['data']['rows'],complete=candidate['data']['complete'] and not candidate['stale'],branches=candidate['data']['branches'])
         deeper=[]
-        if proof['status']=='unresolved' and candidate['data']['complete'] and not candidate['stale']:
+        from core.game_mapping_policy import corroboration_useful
+        if proof['status']=='unresolved' and candidate['data']['complete'] and not candidate['stale'] and corroboration_useful(proof):
             from core.game_match_support import corroborate
             extra,deeper=await corroborate(self.wiki.sources,current_title,candidate['data']['rows'])
             proof=decide(current_title,candidate['data']['rows'],complete=True,branches=candidate['data']['branches'],corroboration=extra)

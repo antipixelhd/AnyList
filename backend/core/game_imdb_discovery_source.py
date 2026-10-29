@@ -182,6 +182,7 @@ class GameIMDbDiscoverySource:
             return await self.explicit_page(ids)
         from core.game_title_candidates import retrieve
         from core.game_title_match import decide
+        from core.game_mapping_policy import corroboration_useful
         from core.game_mapping_index import lookup,wikidata_generation
         if not isinstance(titles,dict) or set(titles)!=set(ids):raise ProviderError('invalid_request')
         wiki_generation=await wikidata_generation(self.sessions)
@@ -223,7 +224,7 @@ class GameIMDbDiscoverySource:
             proposal=parent_proposal(title,data['rows'],complete=data['complete'] and not acquired['stale']) if not scope_parent and any(
                 row.get('version_parent') or igdb_game_class(row)=='port' for row in data['rows']) else None
             deeper=[]
-            if not proposal and decision['status'] in ('unresolved','unmapped') and data['rows'] and data['complete'] and not acquired['stale']:
+            if not proposal and decision['status'] in ('unresolved','unmapped') and data['rows'] and data['complete'] and not acquired['stale'] and corroboration_useful(decision):
                 from core.game_match_support import corroborate
                 # Retrieval has its own bounded query/worker timeout. Only
                 # corroboration spends this shared deep-work allowance.
@@ -238,10 +239,18 @@ class GameIMDbDiscoverySource:
                     outputs.append({'id':native,'status':'unresolved','reason':getattr(error,'code','timeout'),'retry_after':60});continue
                 finally:
                     deep_remaining=max(0,deep_remaining-(monotonic()-started))
+            dependencies=[f'imdb:{native}',f'wikidata-imdb:{native}',
+                *[f'igdb:{row["id"]}' for row in data['rows']],
+                *[f'wikidata:{qid}' for qid in result.get('consulted',{}).get(native,[])],
+                *[f'{source}-name:{name}' for name in data.get('scope_names',[]) for source in ('igdb','wikidata')],
+                f'igdb-query:{data.get("scope_key", "")}',
+                *[f'support:{row["provider"]}:{row["kind"]}:{row["key"]}' for row in deeper]]
             if decision['status']!='verified' and not proposal:
-                outputs.append({'id':native,**decision});continue
+                if outcome.get('reason') in ('rate_limited','unavailable','timeout','retry_pending','stale_mapping'):
+                    outputs.append({'id':native,'status':'unresolved','reason':outcome['reason'],'retry_after':60});continue
+                outputs.append({'id':native,**decision,'dependencies':dependencies});continue
             if scope_parent and decision['igdb_id']!=scope_parent:
-                outputs.append({'id':native,'status':'conflict','reason':'version_parent_mismatch'});continue
+                outputs.append({'id':native,'status':'conflict','reason':'version_parent_mismatch','dependencies':dependencies});continue
             games={row['id']:row for row in data['rows']}
             raw=games[proposal['child_igdb_id'] if proposal else decision['igdb_id']]
             parent=raw.get('parent_game')
@@ -270,7 +279,8 @@ class GameIMDbDiscoverySource:
                     'parent':{key:parent[key] for key in IDENTITY_FIELDS if key in parent}})
                 evidence['dependencies'].append(f'igdb:{parent_id}')
                 if not automatic_parent_valid(evidence):
-                    outputs.append({'id':native,'status':'unresolved','reason':'variant_parent_scope'});continue
+                    outputs.append({'id':native,'status':'unresolved','reason':'variant_parent_scope',
+                        'dependencies':list(dict.fromkeys([*dependencies,*evidence['dependencies']]))});continue
                 projected=project_game(native,parent,games,evidence)
                 projected['credit_parent']=True
                 outputs.append(projected);continue

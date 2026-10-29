@@ -4,7 +4,7 @@ import uuid
 from datetime import timedelta
 from types import SimpleNamespace
 
-from sqlalchemy import select,or_
+from sqlalchemy import select,or_,func
 from sqlalchemy.dialects.postgresql import insert
 
 from core import catalogue
@@ -15,6 +15,7 @@ from core.game_imdb_bindings import GameIMDbBindings,verified_bindings
 from core.game_imdb_discovery_source import GameIMDbDiscoverySource,SIZE
 from core.game_imdb_enrichment import now,snapshot,status_view
 from core.game_types import CREDIT_CHILDREN
+from core.game_mapping_policy import prepare,lifetime,source_title
 from models.catalogue import CatalogueIdentity,MetadataSnapshot
 
 JOB='game_person_discovery'
@@ -91,10 +92,19 @@ class GamePersonDiscovery:
                 from core.game_credit_parents import person_bindings
                 bound=person_bindings(ids)
                 known=dict((await db.execute(select(bound.c.imdb_id,bound.c.work_id))).all()) if ids else {}
-                retained=list((await db.execute(select(MetadataSnapshot.external_id,MetadataSnapshot.payload).where(
-                    MetadataSnapshot.provider=='wikidata',MetadataSnapshot.kind==MAP,MetadataSnapshot.external_id.in_(ids),
-                    MetadataSnapshot.expires_at>now()))).all()) if ids else []
-                cached={key:value for key,value in retained if value.get('status')!='verified' and value.get('matcher_version')==VERSION}
+                # Reuse only the scheduling header, never transfer the stored
+                # candidate/credit evidence just to decide whether to retry.
+                payload=MetadataSnapshot.payload
+                fields=('status','matcher_version','source_title','retry_after','retry_attempts')
+                retained=list((await db.execute(select(MetadataSnapshot.external_id,
+                    func.jsonb_build_object(*[part for key in fields for part in (key,payload[key])]),MetadataSnapshot.expires_at).where(
+                    MetadataSnapshot.provider=='wikidata',MetadataSnapshot.kind==MAP,MetadataSnapshot.external_id.in_(ids)))).all()) if ids else []
+                retained=[(key,{field:item for field,item in value.items() if item is not None},expiry) for key,value,expiry in retained]
+                titles={row['id']:row for row in batch}
+                previous={key:value for key,value,expiry in retained if value.get('matcher_version')==VERSION}
+                cached={key:value for key,value,expiry in retained if expiry and expiry>now()
+                    and value.get('status')!='verified' and value.get('matcher_version')==VERSION
+                    and ('source_title' not in value or value['source_title']==source_title(titles[key]))}
             missing=[value for value in ids if value not in known and value not in cached]
             # One title can require many alias queries. Publish small fresh
             # batches within the shared deadline while advancing cached rows
@@ -105,13 +115,18 @@ class GamePersonDiscovery:
                 missing=missing[:MAX_ACQUIRE]
                 batch_ids={row['id'] for row in batch}
                 cached={key:value for key,value in cached.items() if key in batch_ids}
-            async with asyncio.timeout(55):
-                if missing and isinstance(self.source,GameIMDbDiscoverySource):
-                    result=await self.source.page(missing,titles={row['id']:row for row in batch if row['id'] in missing})
-                else:
-                    result=await self.source.page(missing) if missing else {'outcomes':[],'stale':False}
-            if result.get('stale'):
-                raise ProviderError('stale_mapping')  # Existing catalogue content remains available.
+            try:
+                async with asyncio.timeout(55):
+                    if missing and isinstance(self.source,GameIMDbDiscoverySource):
+                        result=await self.source.page(missing,titles={row['id']:row for row in batch if row['id'] in missing})
+                    else:
+                        result=await self.source.page(missing) if missing else {'outcomes':[],'stale':False}
+                if result.get('stale'):raise ProviderError('stale_mapping')
+            except (ProviderError,TimeoutError) as error:
+                # Acquisition failures use the same per-title retry accounting;
+                # no stale result may publish new verified participation.
+                result={'outcomes':[{'id':native,'status':'unresolved',
+                    'reason':getattr(error,'code','timeout'),'retry_after':60} for native in missing],'stale':False}
             supplied=result.get('outcomes')
             if (not isinstance(supplied,list) or len(supplied)!=len(missing) or any(not isinstance(row,dict) for row in supplied)
                 or any(not isinstance(row.get('id'),str) for row in supplied)
@@ -142,7 +157,10 @@ class GamePersonDiscovery:
                         value['work_id']=work_id
                     except catalogue.IdentityConflict:
                         value={'id':value['id'],'status':'conflict'}
-                value.pop('document',None);value['matcher_version']=VERSION;outcomes.append(value)
+                value.pop('document',None);value['matcher_version']=VERSION
+                value=prepare(value,titles[value['id']],previous.get(value['id']))
+                value['dependencies']=list(dict.fromkeys([*value.get('dependencies',[]),f'imdb:{value["id"]}',f'wikidata-imdb:{value["id"]}']))
+                outcomes.append(value)
                 retry_after=max(retry_after,value.get('retry_after',0))
             async with self.sessions() as db:
                 job=await db.scalar(snapshot(JOB,native).with_for_update())
@@ -155,8 +173,7 @@ class GamePersonDiscovery:
                 for outcome in outcomes:
                     statement=insert(MetadataSnapshot).values(provider='wikidata',kind=MAP,external_id=outcome['id'],
                         entity_id=outcome.get('work_id'),payload=outcome,coverage={'verified':outcome['status'] in ('verified','excluded')},
-                        fetched_at=now(),expires_at=now()+(timedelta(seconds=outcome['retry_after']) if outcome.get('retry_after')
-                            else timedelta(days=7 if outcome['status'] in ('verified','excluded') else 1)))
+                        fetched_at=now(),expires_at=now()+lifetime(outcome))
                     await db.execute(statement.on_conflict_do_update(constraint='uq_catalogue_snapshot',set_={
                         'payload':statement.excluded.payload,'coverage':statement.excluded.coverage,
                         'entity_id':statement.excluded.entity_id,'fetched_at':statement.excluded.fetched_at,'expires_at':statement.excluded.expires_at}))
