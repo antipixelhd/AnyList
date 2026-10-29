@@ -216,7 +216,7 @@ def primary_details(work,artwork=None):
         [url for value in attrs.get('artwork') or [] if (url:=image(value))],limit=None if work.kind=='game' else 10)
     scenes=[url for value in attrs.get('scene_artwork') or [] if (url:=image(value))]
     selected=image(attrs.get('backdrop_path')) or (next(iter(gallery),None) if 'attributes.artwork' in (work.protected_fields or []) else None)
-    backdrop=selected or next(iter(scenes if work.kind=='game' and attrs.get('artwork_policy_version') in (1,GAME_ARTWORK_VERSION) else gallery),None)
+    backdrop=selected or next(iter(scenes if work.kind=='game' and attrs.get('artwork_policy_version') in (1,2,GAME_ARTWORK_VERSION) else gallery),None)
     preview=next((url for url in scenes if url!=backdrop),backdrop) if work.kind=='game' else None
     released=attrs.get('release_date')
     if (work.kind=='game' and attrs.get('release_date_projection')!=GAME_RELEASE_VERSION

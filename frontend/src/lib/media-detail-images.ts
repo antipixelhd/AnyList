@@ -325,7 +325,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
       const selected=galleries[active][current];
       galleries.posters=uniqueDetailImages(standalone?[info.posters?.[0],...(data.image_status?.state==='deferred'?galleries.posters:data.posters||[])]:data.posters||[]).slice(0,galleryLimit);
       galleries.artwork=uniqueDetailImages(data.artwork||[],artworkLimit);
-      if(lightbox.open&&active==='artwork'&&selected&&selected===previewInfo?.image&&!galleries.artwork.includes(selected))galleries.artwork.unshift(selected);
+      if(info.type!=='game'&&lightbox.open&&active==='artwork'&&selected&&selected===previewInfo?.image&&!galleries.artwork.includes(selected))galleries.artwork.unshift(selected);
       thumbnails={...thumbnails,...data.artwork_thumbnails};
       pending=!!data.image_status&&['pending','deferred'].includes(data.image_status.state||'');
       if(galleryStatus){galleryStatus.hidden=!!galleries.artwork.length;galleryStatus.textContent='No artwork available.';}
@@ -366,10 +366,10 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
   root.addEventListener('anylist:game-primary',event=>{
     const data=(event as CustomEvent).detail;
     if(signal.aborted||info.type!=='game'||data?.type!=='game'||data.id!==info.id)return;
-    previewInfo=data.artwork_preview||previewInfo;info.backdropFallbacks=data.backdrop_fallbacks||info.backdropFallbacks;
+    previewInfo=data.artwork_preview;info.backdropFallbacks=data.backdrop_fallbacks||info.backdropFallbacks;
     applyImages({...data,
       posters:uniqueDetailImages([...(data.posters||[]),...galleries.posters]),
-      artwork:uniqueDetailImages([...(data.artwork||[]),...galleries.artwork],artworkLimit),image_status:{state:'ready'}});
+      artwork:uniqueDetailImages(data.artwork||galleries.artwork,artworkLimit),image_status:{state:'ready'}});
     const tab=root.querySelector<HTMLButtonElement>('[data-detail-tab="artwork"]');
     if(tab){
       const empty=!galleries.artwork.length,focused=document.activeElement===tab;

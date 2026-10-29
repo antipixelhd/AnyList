@@ -270,11 +270,12 @@ async def main(args):
                         coverage={'state':'complete','complete':True,'steam_app_id':'9000000'},
                         payload={'raw':'STORE_INFO_SENTINEL '*50000},expires_at=stamp+timedelta(days=7)))
             if args.case and 'game_metadata' in args.case:
+                from core.catalogue_normalize import GAME_ARTWORK_VERSION
                 first_game.attributes={**first_game.attributes,'igdb_id':'9000000'}
                 db.add(CatalogueIdentity(entity_id=first_game.id,namespace='igdb.game',external_id='9000000',source='igdb'))
                 stamp=datetime.now(timezone.utc).replace(tzinfo=None)
                 db.add(MetadataSnapshot(provider='igdb',kind='game',external_id='9000000',entity_id=first_game.id,
-                    fetched_at=stamp,expires_at=stamp+timedelta(days=7),coverage={'primary_complete':True,'characters_complete':True,'release_precision_version':RELEASE_VERSION,'artwork_policy_version':2},
+                    fetched_at=stamp,expires_at=stamp+timedelta(days=7),coverage={'primary_complete':True,'characters_complete':True,'release_precision_version':RELEASE_VERSION,'artwork_policy_version':GAME_ARTWORK_VERSION},
                     payload={'raw':'PRIMARY_METADATA_SENTINEL '*50000}))
             if args.case and 'game_details_cold' in args.case:
                 first_game.attributes={**first_game.attributes,'igdb_id':'9000000'}

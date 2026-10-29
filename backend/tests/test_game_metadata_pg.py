@@ -167,6 +167,26 @@ class GameMetadataTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((entry.total_seconds,entry.completion_seconds,entry.score),(198000,144000,9))
         self.assertEqual(self.provider.called,0)
 
+    async def test_legacy_artwork_refreshes_missing_types_without_replacing_selected_background(self):
+        for version in (1,2):
+            with self.subTest(version=version):
+                stamp,expires,gallery,large=await self.seed_cached_artwork()
+                async with self.Session() as db:
+                    saved=await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.external_id=='119133',MetadataSnapshot.kind=='game'))
+                    saved.coverage={**saved.coverage,'artwork_policy_version':version}
+                    saved.payload={'game':{**saved.payload['game'],'artworks':[{'url':'https://cdn.test/legacy.jpg','width':1920,'height':1080}]}}
+                    work=await db.get(CatalogueEntity,self.base)
+                    work.attributes={**work.attributes,'artwork_policy_version':version,'backdrop_path':large}
+                    work.protected_fields=[*work.protected_fields,'attributes.backdrop_path']
+                    await db.commit()
+                    _,state=await request(db,work);await db.commit()
+                    row=await header(db,'119133')
+                    self.assertTrue(state['pending'])
+                    self.assertLess(row.expires_at,expires)
+                    self.assertEqual(work.attributes['backdrop_path'],large)
+                    self.assertEqual(work.attributes['artwork'],gallery)
+                    await db.delete(saved);await db.commit()
+
     async def asyncSetUp(self):
         await fixture.GamesDatabaseTests.asyncSetUp(self)
         async with self.Session() as db:

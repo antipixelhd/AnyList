@@ -19,24 +19,27 @@ export function detailEntityViewerFrame(width:number,height:number,viewportWidth
 export function bindDetailViewerFrame(dialog:HTMLDialogElement,signal:AbortSignal,compact=false) {
   if(compact)dialog.dataset.viewerCompact='';
   let selected:HTMLImageElement|undefined,group:'posters'|'artwork'='artwork';
+  let artworkWidth=1280,artworkHeight=720;
   const fit=()=>{
     const ready=selected?.naturalWidth&&selected?.naturalHeight;
+    // A source-free incoming slide must not collapse the last usable stage.
+    if(ready&&group==='artwork'){artworkWidth=selected!.naturalWidth;artworkHeight=selected!.naturalHeight;}
     const landscapeShort=window.innerWidth>650&&window.innerHeight<=650;
     const mobile=window.innerWidth<=650||landscapeShort;
-    const width=group==='posters'?780:ready?selected!.naturalWidth:1280;
-    const height=group==='posters'?1170:ready?selected!.naturalHeight:720;
+    const width=group==='posters'?780:artworkWidth;
+    const height=group==='posters'?1170:artworkHeight;
     const scale=Math.min(1,window.innerWidth/width,Math.max(1,window.innerHeight-(landscapeShort?0:48))/height);
     const dimensions=compact?detailEntityViewerFrame(ready?selected!.naturalWidth:width,ready?selected!.naturalHeight:height,window.innerWidth,window.innerHeight)
       :mobile?{width:width*scale,height:height*scale}
       :group==='posters'?detailPosterViewerFrame(window.innerWidth,window.innerHeight)
-      :detailViewerFrame(ready?selected!.naturalWidth:1280,ready?selected!.naturalHeight:720,window.innerWidth,window.innerHeight);
+      :detailViewerFrame(width,height,window.innerWidth,window.innerHeight);
     dialog.dataset.viewerPreviewsBelow=String((mobile||compact)&&window.innerHeight-dimensions.height>=124);
     dialog.style.setProperty('--viewer-image-width',`${dimensions.width}px`);
     dialog.style.setProperty('--viewer-image-height',`${dimensions.height}px`);
   };
   const fitVisible=()=>{if(dialog.open)fit();};
   window.addEventListener('resize',fitVisible,{signal,passive:true});
-  dialog.addEventListener('close',()=>{selected=undefined;},{signal});
+  dialog.addEventListener('close',()=>{selected=undefined;artworkWidth=1280;artworkHeight=720;},{signal});
   // Prepare the correct aspect ratio before showModal measures the first frame.
   return (image:HTMLImageElement|undefined,kind:'posters'|'artwork')=>{selected=image;group=kind;fit();};
 }

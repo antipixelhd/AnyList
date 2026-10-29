@@ -9,7 +9,7 @@ from core.game_release_dates import FIELDS as RELEASE_FIELDS
 SIZE=25
 ROLES=('developer','publisher','supporting','porting')
 FIELDS=('id,slug,name,summary,first_release_date,game_type.type,version_parent,parent_game.name,parent_game.game_type.type,'
-    'cover.url,artworks.url,genres.name,platforms.name,platforms.platform_family.name,ports.game_type.type,'
+    'cover.url,artworks.url,artworks.image_type,genres.name,platforms.name,platforms.platform_family.name,ports.game_type.type,'
     'ports.platforms.name,ports.platforms.platform_family.name,external_games.uid,external_games.url,'
     'external_games.external_game_source.name,involved_companies.developer,involved_companies.company.country,'+RELEASE_FIELDS)
 

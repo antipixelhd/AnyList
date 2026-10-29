@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 from core.countries import country_codes, game_countries, numeric_country, screen_countries
 from core.studio_names import studio_name, studio_attributes
 from core.movie_financials import movie_financials
-GAME_ARTWORK_VERSION = 2
+GAME_ARTWORK_VERSION = 3
 
 
 PRIMARY = {"movie": "tmdb", "series": "tmdb", "game": "igdb", "book": "hardcover"}
@@ -377,12 +377,14 @@ def game_artwork(raw):
     gallery, scenes = [], []
     for priority,field in enumerate(('screenshots','artworks')):
         for position,row in enumerate(raw.get(field) or []):
+            # IGDB distinguishes the white, black and color game logos from art.
+            if field=='artworks' and isinstance(row,dict) and row.get('image_type') in (5,6,7):continue
             url=image(row)
             if not url:continue
             if url not in gallery:gallery.append(url)
             width,height=(row.get(key) for key in ('width','height')) if isinstance(row,dict) else (None,None)
             # Asset type and source dimensions establish scene suitability.
-            # Preserve logos, portraits and unusual crops in the full gallery.
+            # Preserve portraits and unusual crops in the full gallery.
             if all(type(value) is int and value>0 for value in (width,height)) and 1.25<=width/height<=2.5:
                 scenes.append((priority,-width*height,position,url))
     ordered=list(dict.fromkeys(row[-1] for row in sorted(scenes)))
