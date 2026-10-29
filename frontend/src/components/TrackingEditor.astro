@@ -64,6 +64,7 @@ import EditorSelect from './EditorSelect.astro';
 </dialog>
 <script>
 import { setupScoreSteppers } from '../lib/scoreStepper';
+import { editorProgressMaximum } from '../lib/editor-progress';
 import { setupCalendarDateInputs } from '../lib/calendar-date-input';
 import { editorStore, seedEditorPage, type EditorTitle, type WorkSubject } from '../lib/editor-store';
 import { showDialog, closeDialog, showMenu, hideMenu } from '../lib/ui-motion';
@@ -188,6 +189,7 @@ document.addEventListener('astro:page-load', () => {
     field('favorite').checked = Boolean(current.favorite);
     loadLibraryState(title);
     field('progress').disabled = title.type !== 'series';
+    field('progress').max = String(editorProgressMaximum(title) ?? '');
     document.querySelector<HTMLElement>('#progress-field')!.hidden = title.type !== 'series';
     saveButton.disabled = false;
   }

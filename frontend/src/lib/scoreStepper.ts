@@ -16,6 +16,13 @@ export function setupScoreSteppers(root: ParentNode, signal?: AbortSignal): void
     bindings.set(input, controller);
     signal?.addEventListener('abort', () => controller.abort(), {once:true, signal:controller.signal});
 
+    const capValue = () => {
+      if (input.disabled || input.readOnly || input.max === '') return;
+      if (input.valueAsNumber > Number(input.max)) input.value = input.max;
+    };
+    input.addEventListener('input', capValue, {signal:controller.signal});
+    input.addEventListener('change', capValue, {signal:controller.signal});
+
     const step = (direction: 1 | -1) => {
       if (input.disabled || input.readOnly) return;
       const increment = stepper.hasAttribute('data-score-stepper') ? .5 : Number(input.step) || 1;
