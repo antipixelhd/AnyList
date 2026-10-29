@@ -9,7 +9,7 @@
 .overview-heading h2 { margin:0; font-size:var(--type-page-size); color:var(--bright); }
 .overview-media { display:flex; align-items:center; gap:6px; }
 .overview-media a { font-size:var(--stats-data-size); font-weight:var(--stats-data-weight); padding:8px 15px; min-height:40px; color:var(--muted); text-decoration:none; border-bottom:2px solid transparent; transition:color 240ms ease,border-color 240ms ease; }
-.overview-media a[aria-current=page] { color:var(--stats-cyan); background:var(--stats-plot); border-radius:5px; }
+.overview-media a[aria-current=page] { color:var(--stats-cyan); background:linear-gradient(var(--stats-cyan),var(--stats-cyan)) left bottom/100% 2px no-repeat; border-radius:0; }
 .overview-media a:hover { color:var(--bright); }
 .stats-overview-page :is(button,a,select,summary,canvas):focus-visible { outline:none; color:var(--stats-cyan); background-color:color-mix(in srgb,var(--stats-cyan) 15%,var(--stats-plot)); }
 .stats-domain-navigation { justify-content:flex-end; margin-bottom:24px; }

@@ -16,7 +16,7 @@ import { createBrowsePaginationDemand } from "./browse-pagination";
 import { initializeMobileBrowseFilters } from "./browse-mobile-filters";
 import { BROWSE_FACET_TTL, browseResultTtl, createBrowseCache, waitForBrowseRequest } from "./browse-cache";
 import { refreshBrowseContextBatches } from './browse-context';
-import {createPrediction, paginationPosition} from "./predictive-loading";
+import {createPrediction,bindPredictionIntent, paginationPosition} from "./predictive-loading";
 import { initializeBrowseSort } from "./browse-sort";
 import { createBrowseOverride } from './browse-override';
 import {createSearchExpansion, shouldBroadenSearch, broadSearchParams} from './search-fallback';
@@ -411,7 +411,6 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       region.setAttribute("aria-busy", "false");
       return;
     }
-    if(!append)prediction.cancel();
     const values = params();
     const categoryView = categoryMode(values);
     values.set("page", String(append ? payload.page + 1 : 1));
@@ -420,6 +419,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       if(payload.cursor)values.set('cursor',payload.cursor);
     }
     const path = requestPath(values);
+    if(!append&&!prediction.has(path))prediction.cancel();
     if (loading && currentPath === path) return;
     request?.abort();
     const current = new AbortController();
@@ -456,7 +456,9 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       let response = cached;
       if (!response) {
         await waitForBrowseRequest(debounce, current.signal);
-        if(categoryView){
+        const predicted=categoryView?prediction.peek(path):await prediction.consume(path,current.signal);
+        if(predicted)response=predicted;
+        else if(categoryView){
           const slots=[...skeleton.querySelector<HTMLElement>('[data-skeleton-sections]')!.children]
             .map(section=>section.cloneNode(true) as HTMLElement);
           slots.forEach(slot=>slot.setAttribute('aria-busy','true'));
@@ -470,7 +472,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
             slots[index].replaceWith(container);
             if(message)notice.textContent=message;
           });
-        }else response=await prediction.consume(path,current.signal) ?? await json(path,{signal:current.signal}) as Payload;
+        }else response=await json(path,{signal:current.signal}) as Payload;
         if (current.signal.aborted || signal.aborted || request !== current) return;
       }
       async function fillViewport(first: Payload, requestValues: URLSearchParams): Promise<Payload> {
@@ -714,6 +716,13 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     field('view').value=view;
     changed();
   },{signal}));
+  bindPredictionIntent(root.querySelector<HTMLElement>('.browse-types')!,signal,link=>{
+    const type=link.dataset.browseType;
+    if(!type||type==='game'||type===field('type').value)return;
+    const next=params();next.set('media_type',type);next.set('page','1');
+    for(const key of ['genres','status','cinema'])next.delete(key);
+    const path=requestPath(next);if(!responseCache.get(path))prediction.prefetch(path);
+  });
   root
     .querySelectorAll<HTMLAnchorElement>("[data-browse-type]")
     .forEach((link) =>

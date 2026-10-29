@@ -4,10 +4,16 @@ export function snapshotHasGames(html:string) {
 }
 
 /** Mixed snapshots retain game content only after a fresh viewer/approval check. */
-export async function authorizeGameSnapshot(viewer:string,signal:AbortSignal,fetcher:typeof fetch=fetch) {
+export async function authorizeGameSnapshot(viewer:string,signal:AbortSignal,fetcher:typeof fetch=fetch,url?:URL) {
   if(viewer==='anonymous'||signal.aborted)return false;
   try{
-    const response=await fetcher('/api/proxy/auth/me',{signal,credentials:'same-origin',cache:'no-store'});
+    const options:RequestInit={signal,credentials:'same-origin',cache:'no-store'};
+    const profile=url?.pathname.match(/^\/user\/([^/]+)\/(?:games|stats\/games)\/?$/);
+    const [response,visibility]=await Promise.all([
+      fetcher('/api/proxy/auth/me',options),
+      profile?fetcher(`/api/proxy/tracking/people/${encodeURIComponent(decodeURIComponent(profile[1]))}/header`,options):Promise.resolve(null),
+    ]);
+    if(visibility&&(!visibility.ok||visibility.redirected))return false;
     if(!response.ok||response.redirected)return false;
     const user=await response.json();
     return !signal.aborted&&String(user.id)===viewer&&user.can_access_games===true;

@@ -14,7 +14,7 @@ import {createBrowsePaginationDemand} from './browse-pagination';
 import {appendBrowseTimeline} from './browse-timeline';
 import {genreSelectionLabel} from './browse-view';
 import {formatDate} from './date-time';
-import {gameBrowseValues,gameBrowseIsCategories,gameBrowseHasFilters,gameBrowseRequest,gameBrowseHref,gamePlatformSelection,gameSourceContext,type GamePlatformGroup} from './game-browse-data';
+import {gameBrowseValues,gameBrowseIsCategories,gameBrowseHasFilters,gameBrowseSnapshot,gameBrowseRequest,gameBrowseHref,gamePlatformSelection,gameSourceContext,type GamePlatformGroup} from './game-browse-data';
 
 type Payload=GameVerificationPage&{results:BrowseItem[];has_more:boolean;cursor?:string|null;source?:string;source_at?:number|null;fetched_at?:string|null;partial?:boolean;stale?:boolean;coverage_limited?:boolean};
 type Shelf={key:string;title:string;payload:Payload|null};
@@ -286,6 +286,18 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
   const observer=new IntersectionObserver(entries=>{near=entries.some(entry=>entry.isIntersecting);},{rootMargin:'400px'});observer.observe(find('[data-browse-sentinel]'));
   window.addEventListener('scroll',()=>{demand.advance(scrollY,!loading&&!presentedCategories);if(frame)return;frame=requestAnimationFrame(()=>{frame=0;if(near&&!loading&&!presentedCategories&&payload.has_more&&demand.consume())void load(true);});},{passive:true,signal});
   document.addEventListener('anylist:cache-invalidated',()=>cache.clear(),{signal});
+  document.addEventListener('anylist:before-snapshot',()=>{
+    const snapshot=gameBrowseSnapshot({loading,failed:!error.hidden,activeValues,categories:presentedCategories,values:values().toString(),sections:[...shelves.values()],payload,
+      rows:[...grid.querySelectorAll<HTMLElement>('[data-browse-card]')].map(card=>items.get(card)).filter(Boolean)});
+    root.dataset.navigationSnapshotReady=String(!!snapshot);
+    if(!snapshot)return;
+    form.querySelectorAll<HTMLInputElement>('input').forEach(input=>{
+      input.setAttribute('value',input.value);
+      if(['checkbox','radio'].includes(input.type))input.toggleAttribute('checked',input.checked);
+    });
+    form.querySelectorAll('select').forEach(select=>[...select.options].forEach(option=>option.toggleAttribute('selected',option.selected)));
+    find('#game-browse-data').textContent=JSON.stringify({...initial,...snapshot}).replaceAll('<','\\u003c');
+  },{signal});
   signal.addEventListener('abort',()=>{request?.abort();clearTimeout(timer);observer.disconnect();cancelAnimationFrame(frame);},{once:true});
   syncGenres();syncPlatforms();updateControls();footer();
   if(initial.categories){request=new AbortController();void loadShelves(generation,request.signal);}

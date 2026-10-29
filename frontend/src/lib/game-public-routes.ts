@@ -4,9 +4,14 @@ export function anonymousGameDiscoveryRoute(method:string,path:string){
   return method==='POST'&&/^\/api\/proxy\/tracking\/games\/resolve\/[1-9][0-9]*\/?$/.test(path);
 }
 
-/** Restricted documents require a current server response on navigation. */
+/** Restricted routes require fresh authorization before navigation reuse. */
 export function approvedGamesPage(url:URL){
   return /^\/(?:games(?:\/|$)|browse\/games\/?$|discover-game\/?$|user\/[^/]+\/games\/?$)/.test(url.pathname)
     || /^\/(?:actors|person|studio)\//.test(url.pathname)&&(
       url.searchParams.get('media_type')==='game'||url.searchParams.get('domain')==='game');
+}
+
+/** Bounded tab snapshots may be reused after fresh approval/profile checks. */
+export function reusableGamesPage(url:URL){
+  return /^\/(?:browse\/games|user\/[^/]+\/(?:games|stats\/games))\/?$/.test(url.pathname);
 }

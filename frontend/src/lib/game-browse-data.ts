@@ -14,6 +14,12 @@ export function gameBrowseIsCategories(values:URLSearchParams){
   return !values.has('sort')&&!values.has('view')&&!gameBrowseHasFilters(values);
 }
 export const gameBrowseHasFilters=(values:URLSearchParams)=>filters.some(key=>!!values.get(key)&&values.get(key)!=='0');
+/** A mounted window needs every card's data plus the latest continuation. */
+export function gameBrowseSnapshot(state:{loading:boolean;failed:boolean;categories:boolean;values:string;activeValues:string;sections:unknown[];payload:Record<string,any>;rows:unknown[]}){
+  if(state.loading||state.failed||state.values!==state.activeValues||state.payload.verification_pending||state.payload.verification_error)return null;
+  return {values:state.values,categories:state.categories,sections:state.sections,
+    payload:{...state.payload,results:state.categories?state.payload.results:state.rows}};
+}
 export function gameBrowseRequest(values:URLSearchParams,limit=24,cursor?:string|null,today=new Date().toISOString().slice(0,10)){
   const params=new URLSearchParams(values);params.delete('view');params.delete('sort');
   if(values.get('view')==='timeline'){

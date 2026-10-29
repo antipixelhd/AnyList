@@ -2,6 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createPrediction,predictionAllowed,predictionManifest,predictivePage,paginationPosition,bindPredictivePagination} from '../src/lib/predictive-loading.ts';
 
+test('category streaming can bypass unfinished warming and reuse completed predictions',async()=>{
+  let finish;const controller=new AbortController();
+  const prediction=createPrediction(()=>new Promise(resolve=>{finish=resolve;}),controller.signal,()=>true);
+  prediction.prefetch('sections');
+  assert.equal(prediction.peek('sections'),undefined,'pending warming must not block streaming');
+  finish({sections:[1,2,3,4]});await Promise.resolve();
+  assert.deepEqual(prediction.peek('sections'),{sections:[1,2,3,4]});
+  controller.abort();assert.equal(prediction.peek('sections'),undefined);
+});
+
 test('prediction shares an in-flight batch with demand and is consumed once',async()=>{
   let resolve,calls=0;
   const lifetime=new AbortController();
@@ -54,7 +64,7 @@ test('implicit Games documents cannot be installed from prediction caches',()=>{
 
 test('only same-origin title and contributor pages can be predicted',()=>{
   const origin='https://anylist.test';
-  for(const path of ['/title/1','/games/7','/actors/tmdb%3A123','/person/catalogue:7','/studio/tmdb:12'])assert.equal(predictivePage(new URL(path,origin),origin),true);
+  for(const path of ['/title/1','/games/7','/actors/tmdb%3A123','/person/catalogue:7','/studio/tmdb:12','/browse/games','/user/alex/games','/user/alex/stats/games'])assert.equal(predictivePage(new URL(path,origin),origin),true);
   for(const path of ['/logout','/discover-title?id=7','/title/0','/title/1#gallery','https://other.test/title/1'])assert.equal(predictivePage(new URL(path,origin),origin),false);
 });
 
@@ -62,6 +72,13 @@ test('pagination predicts at 70% and appends within 500px of the end',()=>{
   assert.deepEqual(paginationPosition({top:-1399,height:3000,bottom:1601},1000),{predict:false,append:false});
   assert.deepEqual(paginationPosition({top:-1400,height:3000,bottom:1600},1000),{predict:true,append:false});
   assert.deepEqual(paginationPosition({top:-1500,height:3000,bottom:1500},1000),{predict:true,append:true});
+});
+
+test('approved Games tab manifests require an explicit restricted-tab caller',()=>{
+  const html='<script id="page-prediction">'+JSON.stringify({user:'7',requiresGamesAccess:true,artwork:[]})+'</script>';
+  assert.equal(predictionManifest(html,'7'),undefined);
+  assert.deepEqual(predictionManifest(html,'7',true),[]);
+  assert.equal(predictionManifest(html,'8',true),undefined);
 });
 
 test('people pagination requires downward intent and never loops on layout changes',()=>{

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {snapshotHasGames,authorizeGameSnapshot} from '../src/lib/navigation-games-access.ts';
+import {reusableGamesPage} from '../src/lib/game-public-routes.ts';
 import {readFileSync} from 'node:fs';
 import {stripTypeScriptTypes} from 'node:module';
 import {runInNewContext} from 'node:vm';
@@ -29,15 +30,41 @@ test('network failures, redirects and navigation cancellation never authorize st
   assert.equal(await authorizeGameSnapshot('7',controller.signal,async()=>{controller.abort();return Response.json({id:7,can_access_games:true});}),false);
 });
 
+test('cached Games list and statistics also recheck the target profile visibility',async()=>{
+  const signal=new AbortController().signal;
+  for(const path of ['/user/other%20viewer/games','/user/other%20viewer/stats/games']){
+    for(const visible of [true,false]){
+      const calls=[];
+      const allowed=await authorizeGameSnapshot('7',signal,async(url,options)=>{
+        calls.push(url);assert.equal(options.cache,'no-store');
+        return url==='/api/proxy/auth/me'?Response.json({id:7,can_access_games:true}):new Response('',{status:visible?200:403});
+      },new URL(path,'https://example.test'));
+      assert.equal(allowed,visible);
+      assert.deepEqual(calls,['/api/proxy/auth/me','/api/proxy/tracking/people/other%20viewer/header']);
+    }
+  }
+});
+
 const runtime=readFileSync(new URL('../src/components/NavigationRuntime.astro',import.meta.url),'utf8');
 test('mixed pages are remembered with an access requirement instead of excluded by game links',()=>{
   const start=runtime.indexOf('  function remember('),end=runtime.indexOf('  function storePrediction(',start);
   const state={user:'7',pages:new Map(),bytes:0};
   const html='<a href="/games/7">Game</a>';
-  const context={URL,Blob,Date,state,snapshotHasGames,resetForIdentity(){},cacheable:()=>true,keyFor:()=>'/home',
+  const context={URL,Blob,Date,state,snapshotHasGames,reusableGamesPage:()=>false,resetForIdentity(){},cacheable:()=>true,keyFor:()=>'/home',
     sanitizedHtml:()=>html,doc:{body:{dataset:{cacheUser:'7'},hasAttribute:()=>false},querySelector:()=>null}};
   runInNewContext(stripTypeScriptTypes(runtime.slice(start,end))+';remember(new URL("https://example.test/home"),doc);',context);
   assert.equal(state.pages.get('/home').requiresGamesAccess,true);
+});
+
+test('empty Games tab snapshots still require authorization before reuse',()=>{
+  const start=runtime.indexOf('  function remember('),end=runtime.indexOf('  function storePrediction(',start);
+  for(const path of ['/browse/games','/user/alex/games','/user/alex/stats/games']){
+    const state={user:'7',pages:new Map(),bytes:0};
+    const context={URL,Blob,Date,state,snapshotHasGames,reusableGamesPage,resetForIdentity(){},cacheable:()=>true,keyFor:()=>path,
+      sanitizedHtml:()=>'<main>No games</main>',doc:{body:{dataset:{cacheUser:'7'},hasAttribute:()=>true},querySelector:()=>null}};
+    runInNewContext(stripTypeScriptTypes(runtime.slice(start,end))+`;remember(new URL('https://example.test${path}'),doc);`,context);
+    assert.equal(state.pages.get(path).requiresGamesAccess,true);
+  }
 });
 
 test('cached mixed navigation waits for approval and falls back on revocation, invalidation or viewer changes',async()=>{
@@ -47,8 +74,8 @@ test('cached mixed navigation waits for approval and falls back on revocation, i
     let authorize,handler,parsed=0,fallback=0;
     const controller=new AbortController(),page={html:'cached',bytes:6,requiresGamesAccess:outcome!=='ordinary'};
     const state={user:'7',pages:new Map([['/home',page]]),generation:1,bytes:6,usedCached:new Set()};
-    const context={URL,Date,state,document:{addEventListener:(_name,callback)=>handler=callback},navigator:{onLine:true},
-      closeNavigationDialogs(){},resetForIdentity(){},keyFor:()=>'/home',cacheable:()=>true,approvedGamesPage:()=>false,
+    const context={URL,Date,state,document:{querySelector:()=>null,addEventListener:(_name,callback)=>handler=callback},navigator:{onLine:true},
+      closeNavigationDialogs(){},resetForIdentity(){},keyFor:()=>'/home',cacheable:()=>true,approvedGamesPage:()=>false,reusableGamesPage:()=>false,
       currentUser:()=>outcome==='other-viewer'?'8':'7',startProgress(){},
       authorizeGameSnapshot:()=>new Promise(resolve=>authorize=resolve),
       DOMParser:class{parseFromString(){parsed++;return 'parsed';}},

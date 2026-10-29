@@ -1,7 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {browseCardKey,browseCardHref,browseStatusLabel,expansionCard} from '../src/lib/browse-card-data.ts';
-import {gameBrowseValues,gameBrowseIsCategories,gameBrowseRequest,gameBrowseHref,gamePlatformSelection} from '../src/lib/game-browse-data.ts';
+import {gameBrowseValues,gameBrowseIsCategories,gameBrowseRequest,gameBrowseHref,gamePlatformSelection,gameBrowseSnapshot} from '../src/lib/game-browse-data.ts';
+
+test('restored Games windows retain earlier card data and the latest continuation',()=>{
+  const rows=[{igdb_id:1},{igdb_id:2},{igdb_id:3}];
+  const state={loading:false,failed:false,categories:false,values:'sort=popular',activeValues:'sort=popular',sections:[],rows,
+    payload:{results:[rows[2]],cursor:'next-page',has_more:true}};
+  const snapshot=gameBrowseSnapshot(state);
+  assert.deepEqual(snapshot.payload.results,rows);
+  assert.equal(snapshot.payload.cursor,'next-page');assert.equal(snapshot.payload.has_more,true);
+  for(const pending of [{loading:true},{failed:true},{activeValues:'q=previous'},{payload:{verification_pending:true}},{payload:{verification_error:'unavailable'}}])
+    assert.equal(gameBrowseSnapshot({...state,...pending}),null);
+});
 
 test('Games browse keys separate provider and catalogue identities and survive resolution',()=>{
   const remote={id:null,igdb_id:7,type:'game'};
