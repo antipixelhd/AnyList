@@ -1,4 +1,4 @@
-"""Optional IMDb portraits, shared by source identity and restricted at reads.
+"""Optional portraits, shared by source identity and restricted at reads.
 
 Never publish these into the public person entity or overwrite chosen artwork.
 The website endpoint's access is neither a service guarantee nor a licence.
@@ -31,18 +31,27 @@ async def identities(db,ids):
     canonical={person.id:person for person in await db.scalars(select(CatalogueEntity).where(
         CatalogueEntity.id.in_(aliases),CatalogueEntity.kind=='person').options(load_only(*fields)))} if aliases else {}
     roots={person.id:canonical.get(person.canonical_person_id,person) for person in people}
-    natives={person.id:[] for person in roots.values()}
-    for entity_id,native in await db.execute(select(CatalogueIdentity.entity_id,CatalogueIdentity.external_id).where(
-        CatalogueIdentity.entity_id.in_(natives),CatalogueIdentity.namespace=='imdb.person')):
-        natives[entity_id].append(native)
+    natives={person.id:{'imdb.person':[],'tmdb.person':[]} for person in roots.values()}
+    for entity_id,namespace,native in await db.execute(select(CatalogueIdentity.entity_id,
+        CatalogueIdentity.namespace,CatalogueIdentity.external_id).where(
+        CatalogueIdentity.entity_id.in_(natives),CatalogueIdentity.namespace.in_(('imdb.person','tmdb.person')))):
+        natives[entity_id][namespace].append(native)
+    def portrait_key(person):
+        bindings=natives[roots[person.id].id]
+        tmdb=bindings['tmdb.person'];imdb=bindings['imdb.person']
+        if len(tmdb)==1 and tmdb[0].isdecimal() and int(tmdb[0])>0:return f'tmdb:{tmdb[0]}'
+        if not tmdb and len(imdb)==1:return f'imdb:{imdb[0]}'
+        return None
     return {person.id:{'image':roots[person.id].image_url,
         'protected':'image_url' in (roots[person.id].protected_fields or []),
-        'native':natives[roots[person.id].id][0] if len(natives[roots[person.id].id])==1 else None}
+        'portrait_key':portrait_key(person),
+        'native':natives[roots[person.id].id]['imdb.person'][0]
+            if len(natives[roots[person.id].id]['imdb.person'])==1 else None}
         for person in people}
 
 
-def query(natives):
-    return select(MetadataSnapshot).where(MetadataSnapshot.provider=='imdb',
+def query(natives,provider='imdb'):
+    return select(MetadataSnapshot).where(MetadataSnapshot.provider==provider,
         MetadataSnapshot.kind==COMPONENT,MetadataSnapshot.external_id.in_(natives))
 
 
@@ -53,19 +62,25 @@ def projection(row):
 
 
 class GamePersonImages:
+    provider='imdb'
+
+    @staticmethod
+    def validate(native):
+        from core.game_imdb_source import identifier
+        identifier(native,person=True)
+
     def __init__(self,sessions,*,source=None):
         self.sessions=sessions
-        self.scope=id(getattr(sessions,'kw',{}).get('bind',sessions))
+        self.scope=(id(getattr(sessions,'kw',{}).get('bind',sessions)),self.provider)
         self.source=source or IMDbGameSource(ProviderHTTP(session_factory=sessions))
 
     async def get(self,natives):
         natives=list(dict.fromkeys(natives))
         if not natives:return {}
         if len(natives)>16:raise ProviderError('invalid_request')
-        from core.game_imdb_source import identifier
-        for native in natives:identifier(native,person=True)
+        for native in natives:self.validate(native)
         async with self.sessions() as db:
-            rows={row.external_id:row for row in await db.scalars(query(natives))}
+            rows={row.external_id:row for row in await db.scalars(query(natives,self.provider))}
         result={native:projection(rows.get(native)) for native in natives}
         due=[native for native in natives if not (rows.get(native) and (
             rows[native].expires_at and rows[native].expires_at>now()
@@ -96,8 +111,8 @@ class GamePersonImages:
         token=uuid.uuid4().hex
         async with self.sessions() as db:
             await db.execute(insert(MetadataSnapshot).values([
-                {'provider':'imdb','kind':COMPONENT,'external_id':native} for native in natives]).on_conflict_do_nothing())
-            rows=list(await db.scalars(query(natives).order_by(MetadataSnapshot.external_id).with_for_update()))
+                {'provider':self.provider,'kind':COMPONENT,'external_id':native} for native in natives]).on_conflict_do_nothing())
+            rows=list(await db.scalars(query(natives,self.provider).order_by(MetadataSnapshot.external_id).with_for_update()))
             claimed=[]
             for row in rows:
                 if (row.expires_at and row.expires_at>now() or row.next_attempt_at and row.next_attempt_at>now()
@@ -113,12 +128,13 @@ class GamePersonImages:
                 error=cause.code if isinstance(cause,ProviderError) else 'unavailable'
             except Exception:error='unavailable'
         async with self.sessions() as db:
-            rows=list(await db.scalars(query(natives).order_by(MetadataSnapshot.external_id).with_for_update()))
+            rows=list(await db.scalars(query(natives,self.provider).order_by(MetadataSnapshot.external_id).with_for_update()))
             for row in rows:
                 if row.lease_token!=token:continue
                 row.lease_token=row.lease_until=None
-                if error or row.external_id not in values:
-                    row.error_code=error or 'bad_response';row.attempts+=1
+                item_error=(values.get(row.external_id) or {}).get('error')
+                if error or item_error or row.external_id not in values:
+                    row.error_code=error or item_error or 'bad_response';row.attempts+=1
                     row.next_attempt_at=now()+timedelta(seconds=min(3600,60*2**min(row.attempts-1,6)))
                 else:
                     value=values[row.external_id]
@@ -135,17 +151,28 @@ class GamePersonImages:
 async def portraits(db,ids):
     """Called only behind the Games router's approved-account dependency."""
     from sqlalchemy.ext.asyncio import async_sessionmaker
+    from core import settings_store
+    from core.game_tmdb_person_images import GameTMDBPersonImages
     before=await identities(db,ids)
-    requested={value['native'] for value in before.values() if value['native'] and not value['image'] and not value['protected']}
-    service=GamePersonImages(async_sessionmaker(db.bind,expire_on_commit=False))
+    missing={person_id:value for person_id,value in before.items() if not value['image'] and not value['protected']}
+    key=settings_store.get_server_tmdb_key(await settings_store.get_global_settings(db)) if missing else None
+    sessions=async_sessionmaker(db.bind,expire_on_commit=False)
     await db.commit()  # Do not hold a connection during optional provider I/O.
-    images=await service.get(sorted(requested))
+    tmdb_images=await GameTMDBPersonImages(sessions,api_key=key).get(sorted({
+        value['portrait_key'] for value in missing.values() if value['portrait_key']})) if key else {}
+    def candidate(value):
+        return tmdb_images.get(value['portrait_key'],{'image':None,'state':'unavailable'})
+    requested={value['native'] for value in missing.values() if value['native']
+        and not candidate(value)['image'] and candidate(value)['state']!='pending'}
+    images=await GamePersonImages(sessions).get(sorted(requested))
     # Recheck identity and edits after provider I/O; no stale request can undo an
     # image choice or apply a portrait to a newly conflicting person binding.
     db.expire_all()
     current=await identities(db,ids)
-    return {'people':[{'id':person_id,'image':value['image'], 'state':'ready'}
-        if value['image'] or value['protected'] else {'id':person_id,
-            **(images.get(value['native'],{'image':None,'state':'unavailable'})
-               if before.get(person_id,{}).get('native')==value['native'] else {'image':None,'state':'unavailable'})}
-        for person_id,value in current.items()]}
+    def result(person_id,value):
+        if value['image'] or value['protected']:return {'image':value['image'],'state':'ready'}
+        if before.get(person_id)!=value:return {'image':None,'state':'unavailable'}
+        primary=candidate(value)
+        if primary['image'] or primary['state']=='pending':return primary
+        return images.get(value['native'],primary)
+    return {'people':[{'id':person_id,**result(person_id,value)} for person_id,value in current.items()]}

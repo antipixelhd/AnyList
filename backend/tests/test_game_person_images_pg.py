@@ -22,6 +22,8 @@ class PersonImageTests(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
         await fixture.GamesDatabaseTests.asyncSetUp(self)
+        key=patch('core.settings_store.get_server_tmdb_key',return_value=None)
+        key.start();self.addCleanup(key.stop)
         async with self.Session() as db:
             people=[CatalogueEntity(kind='person',name='Identical name',protected_fields=[]) for _ in range(4)]
             db.add_all(people);await db.flush();self.ids=[person.id for person in people]
@@ -131,7 +133,7 @@ class PersonImageTests(unittest.IsolatedAsyncioTestCase):
             with patch('core.game_person_images.GamePersonImages.get',self.service.get):
                 response=await self.client.post('/tracking/games/people/images',json={'ids':self.ids[:2]})
             self.assertEqual(response.status_code,200,response.text)
-            self.assertEqual(len([value for value in statements if value.startswith('SELECT')]),5)
+            self.assertEqual(len([value for value in statements if value.startswith('SELECT')]),6)
             self.assertTrue(all('catalogue_entities.attributes' not in value for value in statements))
             self.assertTrue(all('game_person_page' not in value for value in statements))
         finally:event.remove(self.engine.sync_engine,'before_cursor_execute',sql)
@@ -142,3 +144,102 @@ class PersonImageTests(unittest.IsolatedAsyncioTestCase):
         self.source.portraits.reset_mock()
         self.assertEqual((await self.service.get(['nm1']))['nm1']['state'],'pending')
         self.source.portraits.assert_not_awaited()
+
+    async def test_eight_people_prefer_tmdb_skip_known_id_lookup_and_batch_only_missing(self):
+        async with self.Session() as db:
+            people=[CatalogueEntity(kind='person',name=f'Portrait actor {i}',protected_fields=[]) for i in range(8)]
+            db.add_all(people);await db.flush();ids=[person.id for person in people]
+            for i,person in enumerate(people):
+                db.add(CatalogueIdentity(entity_id=person.id,namespace='imdb.person',external_id=f'nm{100+i}',source='imdb'))
+                if i<4:db.add(CatalogueIdentity(entity_id=person.id,namespace='tmdb.person',external_id=str(500+i),source='reviewed'))
+            await db.commit()
+        def profile(identifier,**kwargs):
+            return {'id':identifier,'profile_path':f'/photo{identifier}.jpg' if identifier%2==0 else None}
+        def find(native,*args,**kwargs):return {'person_results':[profile(500+int(native[2:])-100)]}
+        imdb=AsyncMock(side_effect=lambda natives:{native:{'image':URL,'width':500,'height':700} for native in natives})
+        with patch('core.settings_store.get_server_tmdb_key',return_value='fixture'), \
+            patch('core.tmdb.get_person_profile',AsyncMock(side_effect=profile)) as details, \
+            patch('core.tmdb.find_by_external_id',AsyncMock(side_effect=find)) as lookup, \
+            patch('core.game_imdb_source.IMDbGameSource.portraits',imdb):
+            first=await self.client.post('/tracking/games/people/images',json={'ids':ids})
+            self.assertEqual(first.status_code,200,first.text)
+            images=[row['image'] for row in first.json()['people']]
+            self.assertEqual(sum('image.tmdb.org' in image for image in images),4)
+            self.assertEqual(sum(image==URL for image in images),4)
+            self.assertEqual(details.await_count,4);self.assertEqual(lookup.await_count,4)
+            imdb.assert_awaited_once_with(['nm101','nm103','nm105','nm107'])
+            statements=[]
+            def sql(conn,cursor,statement,parameters,context,many):statements.append(statement)
+            event.listen(self.engine.sync_engine,'before_cursor_execute',sql)
+            try:second=await self.client.post('/tracking/games/people/images',json={'ids':ids})
+            finally:event.remove(self.engine.sync_engine,'before_cursor_execute',sql)
+            self.assertEqual(second.json(),first.json())
+            self.assertEqual(len([value for value in statements if value.startswith('SELECT')]),7)
+            self.assertTrue(all('catalogue_entities.attributes' not in value for value in statements))
+            self.assertFalse(any(value.startswith(('INSERT','UPDATE')) for value in statements))
+            self.assertEqual(details.await_count+lookup.await_count,8);imdb.assert_awaited_once()
+        async with self.Session() as db:
+            self.assertTrue(all(person.image_url is None for person in await db.scalars(
+                select(CatalogueEntity).where(CatalogueEntity.id.in_(ids)))))
+            negatives=[row for row in await db.scalars(query([f'tmdb:{i}' for i in range(500,504)]+
+                [f'imdb:nm{i}' for i in range(104,108)],'tmdb')) if not row.payload['image']]
+            self.assertEqual(len(negatives),4)
+            self.assertTrue(all(row.expires_at>now()+timedelta(days=6) for row in negatives))
+
+    async def test_tmdb_upgrade_ignores_old_imdb_fallback_and_late_identity_edit(self):
+        await self.service.get(['nm1'])
+        async def find(*args,**kwargs):
+            return {'person_results':[{'id':7,'profile_path':'/preferred.jpg'}]}
+        with patch('core.settings_store.get_server_tmdb_key',return_value='fixture'), \
+            patch('core.tmdb.find_by_external_id',AsyncMock(side_effect=find)), \
+            patch('core.game_imdb_source.IMDbGameSource.portraits',AsyncMock()) as imdb:
+            response=await self.client.post('/tracking/games/people/images',json={'ids':[self.ids[0]]})
+            self.assertEqual(response.json()['people'][0]['image'],'https://image.tmdb.org/t/p/w185/preferred.jpg')
+            imdb.assert_not_awaited()
+        async def change_identity(*args,**kwargs):
+            async with self.Session() as db:
+                db.add(CatalogueIdentity(entity_id=self.ids[1],namespace='tmdb.person',external_id='99',source='reviewed'))
+                await db.commit()
+            return {'person_results':[{'id':8,'profile_path':'/old-binding.jpg'}]}
+        with patch('core.settings_store.get_server_tmdb_key',return_value='fixture'), \
+            patch('core.tmdb.find_by_external_id',AsyncMock(side_effect=change_identity)):
+            response=await self.client.post('/tracking/games/people/images',json={'ids':[self.ids[1]]})
+        self.assertEqual(response.json()['people'][0],{'id':self.ids[1],'image':None,'state':'unavailable'})
+
+    async def test_tmdb_partial_errors_have_cooldowns_and_shared_cancellation_safe_work(self):
+        from core.game_tmdb_person_images import GameTMDBPersonImages
+        entered,release=asyncio.Event(),asyncio.Event()
+        async def fetch(natives):
+            entered.set();await release.wait()
+            return {'imdb:nm1':{'image':'https://image.tmdb.org/t/p/w185/photo.jpg'},'imdb:nm2':{'error':'timeout'}}
+        source=SimpleNamespace(portraits=AsyncMock(side_effect=fetch))
+        service=GameTMDBPersonImages(self.Session,source=source)
+        first=asyncio.create_task(service.get(['imdb:nm1','imdb:nm2']));await entered.wait()
+        second=asyncio.create_task(service.get(['imdb:nm2','imdb:nm1']));await asyncio.sleep(.02)
+        first.cancel()
+        with self.assertRaises(asyncio.CancelledError):await first
+        release.set();result=await second
+        self.assertTrue(result['imdb:nm1']['image']);self.assertEqual(result['imdb:nm2']['state'],'retry')
+        self.assertEqual(await service.get(['imdb:nm1','imdb:nm2']),result);source.portraits.assert_awaited_once()
+        async with self.Session() as db:
+            row=await db.scalar(query(['imdb:nm2'],'tmdb'))
+            self.assertIsNone(row.fetched_at);self.assertIsNone(row.expires_at)
+            self.assertGreater(row.next_attempt_at,now())
+
+    async def test_tmdb_with_no_imdb_identity_and_pending_lease_avoids_fallback(self):
+        from core.game_tmdb_person_images import GameTMDBPersonImages
+        async with self.Session() as db:
+            person=CatalogueEntity(kind='person',name='TMDB only',protected_fields=[])
+            db.add(person);await db.flush();person_id=person.id
+            db.add(CatalogueIdentity(entity_id=person.id,namespace='tmdb.person',external_id='7',source='reviewed'))
+            await db.commit()
+        with patch('core.settings_store.get_server_tmdb_key',return_value='fixture'), \
+            patch('core.tmdb.get_person_profile',AsyncMock(return_value={'id':7,'profile_path':'/only.jpg'})), \
+            patch('core.game_imdb_source.IMDbGameSource.portraits',AsyncMock()) as imdb:
+            response=await self.client.post('/tracking/games/people/images',json={'ids':[person_id]})
+        self.assertTrue(response.json()['people'][0]['image']);imdb.assert_not_awaited()
+        with patch('core.settings_store.get_server_tmdb_key',return_value='fixture'), \
+            patch.object(GameTMDBPersonImages,'get',AsyncMock(return_value={'imdb:nm1':{'image':None,'state':'pending'}})), \
+            patch.object(GamePersonImages,'get',AsyncMock(return_value={})) as imdb:
+            response=await self.client.post('/tracking/games/people/images',json={'ids':[self.ids[0]]})
+        self.assertEqual(response.json()['people'][0]['state'],'pending');imdb.assert_awaited_once_with([])

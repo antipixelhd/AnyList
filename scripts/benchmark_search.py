@@ -90,7 +90,7 @@ async def main(args):
         # Execute trusted repository source in this process only; never switch
         # branches or overwrite the user's checkout to compare revisions.
         for name in ('tmdb', 'discovery_policy', 'catalog_search', 'release_browse', 'browse',
-                     'person_identities', 'game_imdb_person', 'game_contributor_works', 'contributor_evidence', 'studio_discovery', 'contributor_details', 'contributor_search'):
+                     'person_identities', 'game_imdb_person', 'game_contributor_works', 'game_person_images', 'contributor_evidence', 'studio_discovery', 'contributor_details', 'contributor_search'):
             module = importlib.import_module('core.' + name)
             process = await asyncio.to_thread(subprocess.run, ['git', 'show', f'{args.baseline_ref}:backend/core/{name}.py'],
                 cwd=ROOT, check=True, capture_output=True, text=True, encoding='utf-8')
@@ -112,6 +112,7 @@ async def main(args):
             db.add(settings)
             global_settings = await db.get(GlobalSettings, 1)
             global_settings.mdblist_api_key = 'fixture-mdb-key'
+            if args.case and 'game_portraits' in args.case:global_settings.tmdb_api_key='fixture-provider-key'
             for index in range(args.local_titles):
                 db.add(Media(title=f'Benchmark title {900000 + index}', media_type=MediaType.movie,
                     tmdb_id=900000 + index, runtime=100, release_date='2026-10-01',
@@ -215,6 +216,13 @@ async def main(args):
                 db.add_all([CharacterPerformance(work_id=credit_work.id,credit_id=credits[i//3].id,
                     appearance_id=appearances[i].id,language='en',source='wikidata') for i in range(90)])
                 game_credits_id=credit_work.id
+            portrait_ids=[]
+            if args.case and 'game_portraits' in args.case:
+                for index in range(8):
+                    person=CatalogueEntity(kind='person',name=f'Portrait performer {index}',protected_fields=[])
+                    db.add(person);await db.flush();portrait_ids.append(person.id)
+                    db.add(CatalogueIdentity(entity_id=person.id,namespace='imdb.person',external_id=f'nm{7000000+index}',source='imdb'))
+                    if index<4:db.add(CatalogueIdentity(entity_id=person.id,namespace='tmdb.person',external_id=str(7000000+index),source='reviewed'))
             if args.case and 'game_time_to_beat' in args.case:
                 game=first_game
                 game.attributes={**game.attributes,'igdb_id':'9000000','completion_estimates':{'source':'igdb',
@@ -373,6 +381,10 @@ async def main(args):
                 raise tmdb.TMDBUnavailable('Controlled provider outage')
             await asyncio.sleep(args.provider_delay_ms / 1000)
             path = url.removeprefix(tmdb.TMDB_BASE + '/').split('/')
+            if current_case=='game_portraits':
+                identifier=int(path[1].removeprefix('nm'))
+                person={'id':identifier,'profile_path':'/portrait.jpg' if identifier%2==0 else None}
+                return {'person_results':[person]} if path[0]=='find' else person
             if path[:2] == ['watch', 'providers']:
                 return {'results': [{'provider_id': 8, 'provider_name': 'Fixture service'}]}
             params = params or {}
@@ -445,6 +457,7 @@ async def main(args):
                 if label.startswith('game_contributor') or label in ('game_person_cached','game_company_cached'):items=result['works']
                 if label=='game_credits':items=result['people']+result['game_characters']
                 if label=='game_person_roles':items=result['roles']
+                if label=='game_portraits':items=result['people']
                 if label.startswith('game_statistics'):items=result.get('data') if isinstance(result.get('data'),list) else [result.get('data')]
                 if result.get('sections'):
                     items = [item for section in result['sections'] for item in section['results']]
@@ -491,7 +504,9 @@ async def main(args):
             return result
 
         async def request(path, params):
-            if path == 'browse/context':
+            if path=='games/people/images':
+                response=await fixture.client.post('/tracking/'+path,json={'ids':portrait_ids})
+            elif path == 'browse/context':
                 response = await fixture.client.post('/tracking/browse/context', json={'items': [
                     {'type': 'movie', 'tmdb_id': identifier} for identifier in range(1000, 1024)
                 ]})
@@ -596,11 +611,20 @@ async def main(args):
             if current_case=='game_browse_critic' and data.get('rows') and 'first_verified_ms' not in counters:
                 counters['first_verified_ms']=round((time.perf_counter()-critic_clock['start'])*1000,2)
         game_sources.cache.publish=record_critic_progress
+        if args.case and 'game_portraits' in args.case:
+            from core.game_imdb_source import IMDbGameSource
+            async def portrait_provider(self,natives):
+                counters['provider_requests']+=1;counters['provider:imdb/portraits']+=1
+                await asyncio.sleep(args.provider_delay_ms/1000)
+                return {native:{'image':'https://m.media-amazon.com/images/M/fixture._V1_.jpg',
+                    'width':185,'height':278} for native in natives}
+            IMDbGameSource.portraits=portrait_provider
         event.listen(fixture.engine.sync_engine, 'before_cursor_execute', sql_start)
         event.listen(fixture.engine.sync_engine, 'after_cursor_execute', sql_end)
         feed = [{**title(1000 + i), 'imdb_votes': 10000, 'imdb_id': f'tt{1000+i}', 'imdb_score': 8} for i in range(120)]
         cases = [
             ('game_credits',f'catalogue/entities/{game_credits_id}/details',{})] if not args.case or 'game_credits' in args.case else []
+        if args.case and 'game_portraits' in args.case:cases += [('game_portraits','games/people/images',{})]
         if args.case and 'game_title_mapping' in args.case:
             cases += [('game_title_mapping','benchmark/game-title-mapping',{})]
         if args.case and 'game_title_mapping_deep' in args.case:
@@ -774,6 +798,10 @@ async def main(args):
                 for label, path, values in cases:
                     current_case = label
                     reset()
+                    if label=='game_portraits':
+                        async with fixture.Session() as db:
+                            await db.execute(delete(MetadataSnapshot).where(MetadataSnapshot.kind=='game_person_image'))
+                            await db.commit()
                     if label in ('game_title_mapping','game_title_mapping_deep'):
                         async with fixture.Session() as db:
                             await db.execute(delete(MetadataSnapshot).where(MetadataSnapshot.kind.in_(
@@ -813,6 +841,16 @@ async def main(args):
                         params['unfiltered'] = 'true'
 
                     async def operation(path=path, params=params, label=label, mode=mode):
+                        if label=='game_portraits':
+                            result=await request(path,params)
+                            people=result['people']
+                            if [person['id'] for person in people]!=portrait_ids or any(person['state']!='ready' for person in people):
+                                raise RuntimeError('Portrait batch lost people or returned pending evidence')
+                            expected=0 if args.baseline_ref else 4
+                            if sum('image.tmdb.org' in (person['image'] or '') for person in people)!=expected:
+                                raise RuntimeError('TMDB priority or IMDb fallback changed unexpectedly')
+                            if any(not person['image'] for person in people):raise RuntimeError('Fallback lost an available portrait')
+                            return result
                         if label == 'game_person_name_search':
                             result = await request(path, params)
                             if [row['key'] for row in result['results']['actor']] != [f'catalogue:{game_contributor_id}']:
