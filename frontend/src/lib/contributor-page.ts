@@ -15,6 +15,7 @@ import {browseCardKey} from './browse-card-data';
 import {contributorSourceRefresh} from './contributor-source-refresh';
 import {contributorAvailability,disabledContributorOption} from './contributor-availability';
 import {mountGamePersonImages} from './game-person-images';
+import {contributorPages} from './contributor-pages';
 
 export function initializeContributorPage(root: HTMLElement, signal: AbortSignal) {
   if(root.dataset.mediaType==='game')mountGamePersonImages(root,signal);
@@ -49,10 +50,13 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
   },{signal});
   const ready = new Set<string>();
   const params = contributorParams(new URLSearchParams(root.dataset.contributorQuery ?? location.search), data.list_count !== null);
+  let sourcePending=false;
+  let availabilityChanged=(_state:string)=>{};
   if(root.dataset.contributorAvailability==='true')contributorAvailability(root.dataset.endpoint!,data.key,signal,domains=>{
     form.querySelectorAll<HTMLInputElement>('input[name=domain],input[name=media_type]').forEach(input=>{
       input.disabled=disabledContributorOption(input.name,input.value,domains);
     });
+    availabilityChanged(JSON.stringify(domains));
   });
   const banner = root.querySelector<HTMLImageElement>('[data-contributor-banner]');
   const missingBanner = () => {
@@ -128,7 +132,10 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     region.querySelectorAll<HTMLElement>('[data-contributor-year]').forEach(group => {
       group.hidden = ![...group.querySelectorAll<HTMLElement>('[data-browse-card]')].some(card => !card.hidden);
     });
-    root.querySelector<HTMLElement>('[data-contributor-empty]')!.hidden = [...items.keys()].some(card => !card.hidden);
+    const hasWorks=[...items.keys()].some(card => !card.hidden);
+    const pending=!!filterRequest||params.get('media_type')==='game'&&sourcePending&&!hasWorks;
+    root.querySelector<HTMLElement>('[data-contributor-empty]')!.hidden = hasWorks||pending;
+    root.querySelector<HTMLElement>('[data-contributor-loading]')!.hidden = !pending;
   };
   const paint = (card: HTMLElement, item: ContributorWork) => {
     const href = workHref(item);
@@ -218,17 +225,10 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     document.addEventListener('anylist:editor-state',changed);requestSignal.addEventListener('abort',aborted,{once:true});
     changed();
   });
-  const sourceButton=root.querySelector<HTMLButtonElement>('[data-contributor-source-refresh]');
-  let automaticSourceRefresh=false;
+  let syncSource=()=>{};
   const sourceRefresh=contributorSourceRefresh(signal,available=>{
-    if(sourceButton)sourceButton.hidden=!available;
-    // A cold empty portfolio has no usable cards to reorder or replace. Publish
-    // its first source result through the normal filtered/private-read flow,
-    // retaining the document, biography, editor, focus and scroll position.
-    if(available&&!items.size&&!filterRequest&&params.get('media_type')==='game'){
-      automaticSourceRefresh=true;form.requestSubmit();
-    }
-  },data.kind==='studio'?undefined:{
+    if(available)syncSource();
+    },data.kind==='studio'?undefined:{
     kind:data.kind,ids:()=>[...items.values()].filter(item=>item.type==='game'&&item.id).map(item=>item.id!),
     apply:rows=>{
       const captions=new Map(rows.map(row=>[row.id,row]));
@@ -242,12 +242,10 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
         if(caption){caption.textContent=[...next.characters,...next.roles.filter(role=>!['Actor','Production'].includes(role))].join(' / ');caption.title=caption.textContent;}
       }
     }
+  },state=>{
+    sourcePending=!!state&&(state.pending||!!state.identity_pending)&&!state.error;
+    updateEmpty();
   });
-  sourceRefresh.update(params.get('media_type')==='game'?(data.game_company_status||data.game_person_status):null);
-  sourceButton?.addEventListener('click',()=>{
-    sourceButton.disabled=true;
-    void waitForGameWrites(signal).then(()=>{if(!signal.aborted)location.reload();}).catch(()=>{});
-  },{signal});
   const requestPage=async(path:string,requestSignal:AbortSignal):Promise<ContributorPage>=>{
     const games=new URLSearchParams(path.split('?')[1]||'').get('media_type')==='game';
     // Wait outside provider/DB work, and discard a private read if a write began
@@ -265,11 +263,15 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
       return next;
     }
   };
+  const pages=contributorPages<ContributorPage>(requestPage,signal);
+  const initialQuery=new URLSearchParams(params);
+  if(!initialQuery.has('media_type'))initialQuery.set('media_type','all');
+  pages.seed(`/api/proxy/tracking/${root.dataset.endpoint}?${initialQuery}`,structuredClone(data));
   const prediction=createPrediction<ContributorPage>(requestPage,signal);
   let filterRequest:AbortController|undefined,revision=0;
   signal.addEventListener('abort',()=>filterRequest?.abort(),{once:true});
-  document.addEventListener('anylist:cache-invalidated',prediction.cancel,{signal});
-  document.addEventListener('anylist:editor-state',event=>{if((event as CustomEvent).detail?.type==='game')prediction.cancel();},{signal});
+  document.addEventListener('anylist:cache-invalidated',()=>{prediction.cancel();pages.clear();},{signal});
+  document.addEventListener('anylist:editor-state',()=>{prediction.cancel();pages.clear();},{signal});
   const nextPath=()=>{
     const query=new URLSearchParams(params);
     query.set('page',String(data.page+1));query.set('source',data.source);
@@ -277,9 +279,9 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     return `/api/proxy/tracking/${root.dataset.endpoint}?${query}`;
   };
   const loadMore=async()=>{
-    if(more.disabled||filterRequest||!data.has_more||signal.aborted)return;
+    if(more.disabled||filterRequest||syncing||!data.has_more||signal.aborted)return;
     const current=revision;
-    more.disabled=true;more.textContent='Loading…';error.hidden=true;
+    more.disabled=true;more.textContent='Loading…';error.hidden=true;loading.hidden=false;
     try{
       const path=nextPath();
       const next=await prediction.consume(path,signal)??await requestPage(path,signal);
@@ -293,16 +295,16 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
         else showError(cause instanceof Error?cause.message:'Unable to load more works.');
       }
     }
-    finally{if(!signal.aborted&&current===revision){more.disabled=false;more.textContent='Load more';}}
+    finally{if(!signal.aborted&&current===revision){more.disabled=false;more.textContent='Load more';updateEmpty();if(syncAgain)void synchronize();}}
   };
   more.addEventListener('click',()=>void loadMore(),{signal});
   form.addEventListener('submit',event=>{
     event.preventDefault();prediction.cancel();filterRequest?.abort();
-    sourceRefresh.stop();
-    const worksAnchor = !automaticSourceRefresh&&new URL(form.action).hash === '#contributor-works';
-    automaticSourceRefresh=false;
+    const worksAnchor = new URL(form.action).hash === '#contributor-works';
     const request=new AbortController(),current=++revision;
     filterRequest=request;error.hidden=true;region.setAttribute('aria-busy','true');
+    root.querySelector<HTMLElement>('[data-contributor-loading]')!.hidden=false;
+    root.querySelector<HTMLElement>('[data-contributor-empty]')!.hidden=true;
     const submitted=new URLSearchParams();
     new FormData(form).forEach((value,key)=>submitted.set(key,String(value)));
     // A verified-empty selected option can still be opened by direct link.
@@ -310,7 +312,8 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     // the viewer changes another filter, without forcing a route switch.
     form.querySelectorAll<HTMLInputElement>('input[name=domain]:checked,input[name=media_type]:checked').forEach(input=>submitted.set(input.name,input.value));
     const query=contributorParams(submitted,data.list_count!==null);
-    void requestPage(`/api/proxy/tracking/${root.dataset.endpoint}?${query}`,request.signal).then(next=>{
+    region.hidden=(query.get('media_type')==='game')!==(params.get('media_type')==='game');
+    void pages.get(`/api/proxy/tracking/${root.dataset.endpoint}?${query}`).then(next=>{
       if(signal.aborted||current!==revision)return;
       // Replace only the works; keep biography, controls, focus and viewport intact.
       region.replaceChildren();items.clear();
@@ -318,7 +321,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
       for(const key of [...params.keys()])params.delete(key);
       query.forEach((value,key)=>params.set(key,value));
       root.dataset.mediaType=params.get('media_type')||'all';
-      sourceRefresh.update(params.get('media_type')==='game'?(next.game_company_status||next.game_person_status):null);
+      if(params.get('media_type')==='game')sourceRefresh.update(next.game_company_status||next.game_person_status);
       const count=root.querySelector('[data-contributor-list-count]');
       if(count)count.textContent=String(data.list_count||0);
       const roles=root.querySelector<HTMLElement>('[data-contributor-roles]')!;
@@ -337,15 +340,107 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
         if (works) scrollToWorks(works);
       }
     }).catch(cause=>{
-      if(!signal.aborted&&!request.signal.aborted&&current===revision){restoreFilterControls();sourceRefresh.update(params.get('media_type')==='game'?(data.game_company_status||data.game_person_status):null);showError(cause instanceof Error?cause.message:'Unable to load works.');}
+      if(!signal.aborted&&!request.signal.aborted&&current===revision){restoreFilterControls();showError(cause instanceof Error?cause.message:'Unable to load works.');}
     }).finally(()=>{
       if(!signal.aborted&&current===revision){
-        filterRequest=undefined;region.removeAttribute('aria-busy');
+        filterRequest=undefined;region.removeAttribute('aria-busy');region.hidden=false;
+        root.querySelector<HTMLElement>('[data-contributor-loading]')!.hidden=true;updateEmpty();
         more.disabled=false;more.textContent='Load more';
+        if(syncAgain)void synchronize();
       }
     });
   },{signal});
-  bindPredictivePagination(region,signal,()=>!filterRequest&&data.has_more&&!more.disabled&&error.hidden,
+  let syncing=false,syncAgain=false;
+  let syncRetry:ReturnType<typeof setTimeout>|undefined,syncFailures=0;
+  signal.addEventListener('abort',()=>clearTimeout(syncRetry),{once:true});
+  const loading=root.querySelector<HTMLElement>('[data-contributor-loading]')!;
+  const pathFor=(query:URLSearchParams)=>`/api/proxy/tracking/${root.dataset.endpoint}?${query}`;
+  const warmSibling=()=>{
+    if(root.dataset.contributorAvailability!=='true'||signal.aborted)return;
+    const query=new URLSearchParams();
+    query.set('media_type',params.get('media_type')==='game'?'all':'game');
+    void pages.get(pathFor(query)).then(next=>{
+      if(signal.aborted)return;
+      const state=next.game_company_status||next.game_person_status;
+      if(state)sourceRefresh.update(state);
+    }).catch(()=>{});
+  };
+  const synchronize=async()=>{
+    if(signal.aborted)return;
+    pages.forget(path=>new URLSearchParams(path.split('?')[1]).get('media_type')==='game');
+    if(syncing||filterRequest||more.disabled){syncAgain=true;return;}
+    syncing=true;syncAgain=false;prediction.cancel();
+    clearTimeout(syncRetry);
+    const current=revision,requestedWrites=writeVersion,windowPages=data.page;
+    try{
+      const query=new URLSearchParams(params);query.delete('page');query.delete('source');query.delete('cursor');
+      let next=await requestPage(pathFor(query),signal);
+      const works=[...next.works];
+      for(let page=1;page<windowPages&&next.has_more;page++){
+        query.set('page',String(next.page+1));query.set('source',next.source);
+        if(next.next_cursor)query.set('cursor',next.next_cursor);else query.delete('cursor');
+        next=await requestPage(pathFor(query),signal);works.push(...next.works);
+      }
+      if(signal.aborted||current!==revision)return;
+      if(requestedWrites!==writeVersion){syncAgain=true;return;}
+      // Reuse mounted cards and preserve the top visible card's position. New
+      // works arrive chronologically inside the user's existing loaded window.
+      const anchor=region.getBoundingClientRect().top<0?[...items.keys()].find(card=>card.getBoundingClientRect().bottom>0):undefined;
+      const top=anchor?.getBoundingClientRect().top;
+      const focused=document.activeElement instanceof HTMLElement?document.activeElement:null;
+      const wanted=new Set(works.map(work=>work.key));
+      for(const [card,item] of items)if(!wanted.has(item.key)){items.delete(card);card.remove();}
+      for(const work of works){
+        const existing=[...items].find(([,item])=>item.key===work.key);
+        if(existing){
+          Object.assign(existing[1],work);paint(existing[0],existing[1]);
+          const caption=existing[0].querySelector<HTMLElement>('[data-work-credit]');
+          if(caption){caption.textContent=[...work.characters,...work.roles.filter(role=>!['Actor','Production'].includes(role))].join(' / ');caption.title=caption.textContent;}
+        }
+      }
+      append(works);
+      for(const group of region.querySelectorAll<HTMLElement>('[data-contributor-year]')){
+        if(!group.querySelector('[data-browse-card]'))group.remove();
+      }
+      const groups=[...region.querySelectorAll<HTMLElement>('[data-contributor-year]')];
+      groups.sort((a,b)=>(b.dataset.contributorYear==='Undated'?'':b.dataset.contributorYear!).localeCompare(a.dataset.contributorYear==='Undated'?'':a.dataset.contributorYear!));
+      for(const group of groups){
+        region.append(group);
+        for(const work of works.filter(work=>contributorYear(work)===group.dataset.contributorYear)){
+          const card=[...items].find(([,item])=>item.key===work.key)?.[0];
+          if(card)group.querySelector('.contributor-year-works')!.append(card);
+        }
+      }
+      if(anchor?.isConnected&&top!==undefined)window.scrollBy(0,anchor.getBoundingClientRect().top-top);
+      if(focused?.isConnected&&document.activeElement!==focused)focused.focus({preventScroll:true});
+      data.page=next.page;data.source=next.source;data.next_cursor=next.next_cursor;data.has_more=next.has_more;
+      data.total=next.total;data.list_count=next.list_count;
+      const count=root.querySelector('[data-contributor-list-count]');if(count)count.textContent=String(next.list_count||0);
+      more.hidden=!data.has_more;updateEmpty();
+      syncFailures=0;
+    }catch{
+      // A final source revision must survive a transient browser read failure.
+      if(!signal.aborted&&current===revision&&++syncFailures<=3)
+        syncRetry=setTimeout(()=>void synchronize(),3000*syncFailures);
+    }
+    finally{syncing=false;if(syncAgain&&!filterRequest&&!signal.aborted)void synchronize();}
+  };
+  syncSource=()=>{
+    void synchronize();
+    pages.forget(path=>new URLSearchParams(path.split('?')[1]).get('media_type')!=='game');
+  };
+  let previousAvailability='';
+  availabilityChanged=state=>{
+    // Retry an empty active tab when background identity/availability changes.
+    if(previousAvailability&&state!==previousAvailability){
+      pages.clear();warmSibling();
+      if(!items.size&&!filterRequest)form.requestSubmit();
+    }
+    previousAvailability=state;
+  };
+  sourceRefresh.update(data.game_company_status||data.game_person_status);
+  warmSibling();
+  bindPredictivePagination(region,signal,()=>!filterRequest&&!syncing&&data.has_more&&!more.disabled&&error.hidden,
     ()=>prediction.prefetch(nextPath()),()=>void loadMore());
 
 }

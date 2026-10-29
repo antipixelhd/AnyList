@@ -4,20 +4,23 @@ export interface GamePersonStatus {
   roles?:{id:number;roles:string[];characters:string[]}[];
 }
 
-// New evidence is offered explicitly: never replace a scrolled filmography or
-// reload an open editor merely because a background component became ready.
+// Report each public revision. The page reconciles its mounted window while
+// preserving editor writes, focus and the visible scroll anchor.
 export function contributorSourceRefresh(signal:AbortSignal, ready:(available:boolean)=>void,
-  captions?:{kind:'actor'|'staff';ids:()=>number[];apply:(rows:NonNullable<GamePersonStatus['roles']>)=>void}) {
+  captions?:{kind:'actor'|'staff';ids:()=>number[];apply:(rows:NonNullable<GamePersonStatus['roles']>)=>void},
+  progress?:(state:GamePersonStatus|null)=>void) {
   let generation=0,request:AbortController|undefined,timer:ReturnType<typeof setTimeout>|undefined;
   const clear=()=>{if(timer!==undefined)clearTimeout(timer);timer=undefined;request?.abort();request=undefined;};
   const stop=()=>{++generation;clear();ready(false);};
   signal.addEventListener('abort',stop,{once:true});
   return {update(initial?:GamePersonStatus|null){
     stop();
+    progress?.(initial||null);
     const company=initial?.source==='igdb-company';
     if(signal.aborted||!initial||!(initial.pending||initial.identity_pending)||!(company?/^[1-9][0-9]*$/:/^nm[0-9]+$/).test(initial.id))return;
     const current=generation;
-    let attempts=0,available=false,captionRevision:string|null|undefined;
+    let attempts=0,captionRevision:string|null|undefined;
+    let observed=initial;
     const retryable=(error?:string|null)=>!error||['rate_limited','timeout','unavailable','network_error','incomplete_cache','stale_mapping','retry_pending','refreshing'].includes(error);
     const schedule=(delay:number)=>{timer=setTimeout(()=>void poll(),Math.max(3000,Math.min(3600000,delay*1000)));};
     const poll=async()=>{
@@ -35,6 +38,7 @@ export function contributorSourceRefresh(signal:AbortSignal, ready:(available:bo
         if(!response.ok)return;
         const next:GamePersonStatus=await response.json();
         if(signal.aborted||generation!==current||next.id!==initial.id)return;
+        progress?.(next);
         if(next.roles)captions?.apply(next.roles);
         // A display budget is not a collection limit. Refresh further mounted
         // cards sequentially only when public evidence changes, with the same
@@ -55,8 +59,8 @@ export function contributorSourceRefresh(signal:AbortSignal, ready:(available:bo
         // A usable projection can grow before every remote identity has been
         // attempted. Offer it without waiting for a rate-limited tail, and
         // never replace the user's scrolled list or open editor automatically.
-        if(!available&&(next.fetched_at&&next.fetched_at!==initial.fetched_at||next.revision&&next.revision!==initial.revision)){
-          available=true;ready(true);
+        if(next.fetched_at&&next.fetched_at!==observed.fetched_at||next.revision&&next.revision!==observed.revision){
+          observed=next;ready(true);
         }
         if(!next.pending&&!next.identity_pending&&next.complete)return;
         if((next.pending||next.identity_pending)&&retryable(next.error)&&++attempts<20)schedule(next.retry_after||3);

@@ -36,6 +36,9 @@ def title_index(rows):
 
 async def write_index(db,native,generation,rows,*,entity_id):
     titles=await asyncio.to_thread(title_index,rows)
+    # Source connection order is not release order. Map the newest known works
+    # first so useful recent participation publishes ahead of the older tail.
+    titles.sort(key=lambda row:(row['year'] or 0,-row['position']),reverse=True)
     pages=(len(titles)+SIZE-1)//SIZE
     for page in range(pages):
         statement=insert(MetadataSnapshot).values(provider='imdb',kind=INDEX,external_id=f'{native}:{generation}:{page}',

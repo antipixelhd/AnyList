@@ -15,6 +15,16 @@ from models.catalogue import CatalogueIdentity,MetadataSnapshot
 
 @unittest.skipUnless(fixture.URL,'Requires disposable PostgreSQL')
 class ReviewTests(unittest.IsolatedAsyncioTestCase):
+    async def test_discovery_index_prioritizes_recent_games_without_losing_source_positions(self):
+        from core.game_imdb_review import write_index
+        rows=[credit(f'tt{index}') for index in range(1,5)]
+        for row,year in zip(rows,[2000,2025,None,2020]):row['title']['releaseYear']={'year':year}
+        async with self.Session() as db:
+            await write_index(db,'nm1','priority-check',rows,entity_id=self.person_id)
+            titles=await db.scalar(snapshot(INDEX,'nm1:priority-check:0').with_only_columns(MetadataSnapshot.payload['titles']))
+            self.assertEqual([row['id'] for row in titles],['tt2','tt4','tt1','tt3'])
+            self.assertEqual([row['position'] for row in titles],[1,3,0,2])
+
     asyncSetUp=person_fixture.PersonEnrichmentTests.asyncSetUp
     asyncTearDown=fixture.CatalogueDatabaseTests.asyncTearDown
 

@@ -13,6 +13,20 @@ from models.games import GameChildState, GameEntry
 
 @unittest.skipUnless(fixture.fixture.URL, 'Requires explicit disposable statistics PostgreSQL')
 class GameContributorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_saved_imdb_identity_does_not_wait_for_a_tmdb_profile_to_show_games(self):
+        await self.seed(2)
+        async with self.Session() as db:
+            db.add_all([CatalogueIdentity(entity_id=self.person_id,namespace='imdb.person',external_id='nm1',source='imdb'),
+                CatalogueIdentity(entity_id=self.person_id,namespace='tmdb.person',external_id='77',source='tmdb')])
+            await db.commit()
+        self.key_mock.return_value='fixture'
+        with patch('core.tmdb.get_person_profile',AsyncMock(side_effect=AssertionError('Unrelated profile blocks games'))) as profile:
+            result=await self.request(media_type='game')
+            self.assertEqual(result.status_code,200,result.text)
+            self.assertEqual(len(result.json()['works']),2)
+            self.assertEqual(result.json()['game_person_status']['id'],'nm1')
+            profile.assert_not_awaited()
+
     async def asyncSetUp(self):
         await fixture.ContributorDetailsTests.asyncSetUp(self)
         async with self.Session() as db:
@@ -257,7 +271,7 @@ class GameContributorTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(public.json()['game_person_status'])
             source.assert_not_awaited()
 
-    async def test_notice_uses_selected_role_coverage_on_real_page(self):
+    async def test_pending_coverage_is_status_data_without_a_permanent_portfolio_warning(self):
         from core.game_imdb_person import VERSION
         await self.seed(2)
         async with self.Session() as db:
@@ -275,7 +289,8 @@ class GameContributorTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(actor.json()['notice'])
             staff = await self.request('staff', media_type='game')
             self.assertEqual(staff.status_code, 200, staff.text)
-            self.assertEqual(staff.json()['notice'], 'Some game credits could not be matched.')
+            self.assertIsNone(staff.json()['notice'])
+            self.assertEqual(staff.json()['game_person_status']['mapping']['role_coverage']['staff']['unmapped'],1)
             state.update(pending=True, complete=False)
             self.assertIsNone((await self.request(media_type='game')).json()['notice'])
 

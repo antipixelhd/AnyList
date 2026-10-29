@@ -306,7 +306,10 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
     remote = []
     notice = None
     provider_key = await settings_store.get_user_tmdb_key(db, viewer.id if viewer else -1) if native or not games else None
-    if native and provider_key:
+    # A Games portfolio already has its own source identity and profile. Do not
+    # hold its first usable cards behind an unrelated TMDB profile request.
+    saved_game_identity = games and entity and (kind=='studio' or any(row.namespace=='imdb.person' for row in identities))
+    if native and provider_key and not saved_game_identity:
         try:
             async with asyncio.timeout(12):
                 profile = await (tmdb.get_company(native, api_key=provider_key) if kind == "studio" else (tmdb.get_person_profile if games else tmdb.get_person)(native, api_key=provider_key))
@@ -375,7 +378,7 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
         raise RuntimeError("Unable to load more studio works")
     game_result = None
     if games:
-        from core.game_contributor_works import works_page, coverage_notice
+        from core.game_contributor_works import works_page
         game_result = await works_page(db, viewer, entity.id if entity else None, kind,
             key=f'catalogue:{entity.id}' if entity else key, list_scope=list_scope, status=status,
             page=page, cursor=cursor)
@@ -386,8 +389,6 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
             released = [row for row in works if '0000' < (row.get('release_date') or '') <= date.today().isoformat()]
             latest = next((row for row in released if row.get('backdrop') or row.get('poster')), {})
             share_summary = {'games': game_result['known_works'], 'background': latest.get('backdrop') or latest.get('poster')}
-        notice = ' '.join(filter(None, (notice,
-            coverage_notice(kind, person=imdb_state, company=company_state)))) or None
     else:
         # The caller supplies the current instance preference, including when metadata is offline.
         from models import GlobalSettings

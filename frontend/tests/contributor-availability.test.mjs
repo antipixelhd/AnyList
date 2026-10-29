@@ -50,3 +50,8 @@ test('unknown mapping evidence stops polling after twenty checks without claimin
   f.start();for(let i=0;i<25;i++)await f.tick();
   assert.equal(f.calls.length,20);assert.equal(f.timers.length,0);assert.ok(f.paints.every(value=>value.game==='unknown'));
 }));
+
+test('known domain choices stop availability reads while source enrichment continues separately',()=>fixture(async f=>{
+  f.start();f.reply({key:'catalogue:1',domains:{movie:'available',series:'empty',game:'available'},pending:true});
+  await f.tick();assert.equal(f.calls.length,1);assert.equal(f.timers.length,0);
+}));

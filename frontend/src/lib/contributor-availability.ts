@@ -26,7 +26,8 @@ export function contributorAvailability(endpoint:string,key:string,signal:AbortS
       if(signal.aborted||next.key!==key||!next.domains||!['movie','series','game'].every(
         name=>['unknown','available','empty'].includes(next.domains[name as keyof typeof next.domains])))return;
       paint(next.domains);
-      if(next.pending&&++attempts<20)timer=setTimeout(()=>void poll(),Math.max(3000,Math.min(60000,(next.retry_after||3)*1000)));
+      if(next.pending&&Object.values(next.domains).includes('unknown')&&++attempts<20)
+        timer=setTimeout(()=>void poll(),Math.max(3000,Math.min(60000,(next.retry_after||3)*1000)));
     }catch{/* Unknown/failed evidence must leave options usable. */}
   };
   if(!signal.aborted)timer=setTimeout(()=>void poll(),0);

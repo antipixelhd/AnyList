@@ -22,13 +22,13 @@ test('list shortcut submits with the works fragment, restores the form and prese
  assert.equal(scrolled.length,1);
 });
 
-for(const automatic of [false,true])test(`filtered results preserve automatic source scroll intent: ${automatic}`,async()=>{
+test('explicit filtered results scroll only after the requested works render',async()=>{
  const start=source.indexOf("  form.addEventListener('submit',event=>{");
- const snippet=source.slice(start,source.indexOf('  bindPredictivePagination',start));
+ const snippet=source.slice(start,source.indexOf('  let syncing=',start));
  let submit,resolvePage;const order=[],works={},urls=[];
  const form={action:'https://example.test/person/1#contributor-works',querySelectorAll:()=>[],addEventListener:(_,callback)=>submit=callback};
  const context={form,signal:new AbortController().signal,prediction:{cancel(){}},filterRequest:undefined,revision:0,AbortController,URL,URLSearchParams,
-  sourceRefresh:{update(){},stop(){}},automaticSourceRefresh:automatic,
+  sourceRefresh:{update(){},stop(){}},syncAgain:false,updateEmpty(){},pages:{get:()=>new Promise(resolve=>resolvePage=resolve)},
   error:{hidden:true},region:{setAttribute(){},removeAttribute(){},replaceChildren(){order.push('replace')}},
   FormData:class{forEach(callback){callback('in','list_scope');callback('movie','media_type')}},
   contributorParams:p=>p,requestPage:()=>new Promise(resolve=>resolvePage=resolve),root:{dataset:{endpoint:'people/1'},querySelector:s=>s==='.contributor-works'?works:s==='.contributor-list-link'?null:{}},
@@ -38,8 +38,7 @@ for(const automatic of [false,true])test(`filtered results preserve automatic so
  vm.runInNewContext(stripTypeScriptTypes(snippet),context);
  submit({preventDefault(){}});assert.deepEqual(order,[]);
  resolvePage({works:[],roles:[],kind:'actor',has_more:false});await new Promise(setImmediate);
- assert.deepEqual(order,automatic?['replace','render']:['replace','render','scroll']);
- assert.equal(context.automaticSourceRefresh,false);
- assert.equal(urls[0].hash,automatic?'':'#contributor-works');assert.equal(urls[0].searchParams.get('list_scope'),'in');
+ assert.deepEqual(order,['replace','render','scroll']);
+ assert.equal(urls[0].hash,'#contributor-works');assert.equal(urls[0].searchParams.get('list_scope'),'in');
  assert.equal(urls[0].searchParams.get('media_type'),'movie');
 });

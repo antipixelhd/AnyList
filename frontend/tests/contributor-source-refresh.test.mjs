@@ -40,6 +40,15 @@ test('new mappings offer a refresh even when the cached source timestamp stays f
   await f.tick();assert.equal(f.paint.at(-1),true);
 }));
 
+test('every new source revision publishes while unchanged polls do not repeat the read',()=>fixture(async f=>{
+  f.resource.update({id:'nm1',pending:true,complete:false,revision:'old'});
+  f.reply({id:'nm1',pending:true,complete:false,revision:'first'});await f.tick();
+  f.reply({id:'nm1',pending:true,complete:false,revision:'first'});await f.tick();
+  assert.equal(f.paint.filter(Boolean).length,1);
+  f.reply({id:'nm1',pending:false,complete:true,revision:'second'});await f.tick();
+  assert.equal(f.paint.filter(Boolean).length,2);
+}));
+
 test('identity resolution can finish after complete credits without replacing a scrolled portfolio',()=>fixture(async f=>{
   f.resource.update({id:'nm1',pending:false,complete:true,identity_pending:true,fetched_at:'same',revision:'old'});
   f.reply({id:'nm1',pending:false,complete:true,identity_pending:true,retry_after:60,fetched_at:'same',revision:'old'});

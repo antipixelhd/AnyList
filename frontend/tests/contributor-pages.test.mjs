@@ -40,3 +40,33 @@ test('game works remain a separate domain and explicit movie/series choices surv
   assert.equal(contributorParams(new URLSearchParams('domain=movies-series&media_type=all'),true).get('media_type'),'all');
   assert.equal(contributorParams(new URLSearchParams('media_type=game&list_scope=in'),false).toString(),'media_type=game');
 });
+
+import {contributorPages} from '../src/lib/contributor-pages.ts';
+
+test('warming the sibling tab shares its in-flight read with a click and keeps domains independent',async()=>{
+  const controller=new AbortController(),calls=[];
+  let finish;
+  const pages=contributorPages(async path=>{
+    calls.push(path);
+    if(path==='games'&&calls.filter(path=>path==='games').length===1)await new Promise(resolve=>finish=resolve);
+    return path;
+  },controller.signal);
+  const background=pages.get('games');
+  assert.equal(await pages.get('screen'),'screen');
+  const clicked=pages.get('games');
+  assert.equal(clicked,background);finish();
+  assert.equal(await clicked,'games');assert.deepEqual(calls,['games','screen']);
+  pages.forget(path=>path==='games');await pages.get('games');
+});
+
+test('failed reads retry and invalidation does not let an older failure evict a replacement',async()=>{
+  const controller=new AbortController();let reject,calls=0;
+  const pages=contributorPages(async()=>{
+    if(++calls===1)return new Promise((resolve,fail)=>reject=fail);
+    return calls;
+  },controller.signal);
+  const old=pages.get('screen');pages.clear();
+  assert.equal(await pages.get('screen'),2);
+  reject(new Error('offline'));await assert.rejects(old);
+  assert.equal(await pages.get('screen'),2);
+});
