@@ -559,10 +559,10 @@ async def main(args):
             if endpoint == 'companies':
                 await asyncio.sleep(args.provider_delay_ms / 1000)
                 return [{'id':7000000,'name':'Portfolio company'}] if 'Portfolio company' in query else []
-            await asyncio.sleep(args.provider_delay_ms / 1000)
+            if endpoint!='external_games':await asyncio.sleep(args.provider_delay_ms / 1000)
             if endpoint=='genres':return [{'id':5,'name':'Role-playing (RPG)'},{'id':9,'name':'Adventure'}]
             if endpoint=='platforms':return [{'id':6,'name':'PC (Microsoft Windows)'},{'id':167,'name':'PlayStation 5','platform_family':{'name':'PlayStation'}}]
-            if endpoint=='external_game_sources':return [{'id':1,'name':'IGDB'}]
+            if endpoint=='external_game_sources':return [{'id':1,'name':'IGDB'},{'id':2,'name':'Steam'}]
             if endpoint=='popularity_types':return [{'id':1,'name':'Visits','external_popularity_source':1}]
             if endpoint=='popularity_primitives':
                 offset=int(re.search(r'offset (\d+)',query).group(1))
@@ -578,6 +578,14 @@ async def main(args):
                         'release_dates':[early,point] if index%3==0 else [point]}
                     rows.append({'id':index+1,'game':game,**point})
                 return rows
+            if endpoint=='external_games':
+                appids=[int(value) for value in re.search(r'uid=\(([^)]+)\)',query).group(1).replace('"','').split(',')]
+                counters['steam_candidates']+=len(appids)
+                games=await game_provider('games','fields id; where id=('+','.join(str(8000000+appid-1) for appid in appids)+');')
+                # Count this as one real external_games request, not a second
+                # synthetic games request used only to reuse fixture construction.
+                counters['provider_requests']-=1;counters['provider:igdb/games']-=1
+                return [{'uid':str(appid),'game':game} for appid,game in zip(appids,games)]
             if endpoint=='games':
                 searching=query.startswith('search ')
                 if not searching and 'id=(' not in query:
@@ -607,6 +615,10 @@ async def main(args):
         game_sources.igdb=game_provider
         critic_clock={}
         async def critic_provider(provider,url,**kwargs):
+            if provider=='steam':
+                counters['provider_requests']+=1;counters['provider:steam/chart']+=1
+                await asyncio.sleep(args.provider_delay_ms/1000)
+                return {'response':{'last_update':int(time.time()),'ranks':[{'rank':i,'appid':i,'concurrent_in_game':1000-i} for i in range(1,101)]}}
             counters['provider_requests']+=1;counters['provider:'+provider+'/critic']+=1
             await asyncio.sleep(args.provider_delay_ms/1000)
             if provider=='wikidata':
@@ -676,6 +688,9 @@ async def main(args):
             ('game_search_prefix','games/search',{'q':'Elden R'}),
             *([('game_children',f'games/works/{children_base}/children',{'limit':24})] if children_base else []),
             ('game_browse_preview','games/browse',{'limit':6}),
+            *([(name,'games/browse',{'limit':limit,'category':'most_played'})
+                for name,limit in [('game_browse_most_played_preview',6),('game_browse_most_played_grid',24)]]
+                if args.case and any(name.startswith('game_browse_most_played') for name in args.case) else []),
             ('game_browse_grid','games/browse',{'limit':24}),
             ('game_browse_pages','games/browse',{'limit':24}),
             *([('game_browse_newest','games/browse',{'limit':24,'category':'newest'})]

@@ -488,11 +488,31 @@ class GameBrowseSources:
             ttl=timedelta(days=7), max_stale=timedelta(days=14))
         return result['data']['mappings']
 
-    async def most_played(self):
-        ranking = await self.steam()
+    async def most_played(self, *, offset=0, snapshot=None, preview=True):
+        if isinstance(offset, bool) or offset not in (0, 6):
+            raise ProviderError('invalid_request')
+        if offset:
+            # Continue the exact chart that supplied the prefix, even if the
+            # current Steam chart has refreshed since that page was rendered.
+            data = await self.cache.peek('steam', 'game_browse_cards', f'content-v2:{snapshot}:0', max_age=timedelta(hours=24))
+            ranking = {'data':data['ranking'], 'stale':False}
+        else:
+            ranking = await self.steam()
         observed = ranking['data']['source_at']
+        # The category shelf needs six eligible cards. Resolve its leading
+        # identities first; exclusions or a grid visit continue into the rest.
+        positions = ranking['data']['rows'][offset:6 if offset == 0 and preview else 100]
         async def load():
-            positions = ranking['data']['rows']
+            if not offset and not preview:
+                try:
+                    prefix = await self.cache.peek('steam', 'game_browse_cards', f'content-v2:{observed}:0', max_age=timedelta(hours=24))
+                except ProviderError as error:
+                    if error.code != 'cursor_expired':raise
+                else:
+                    rest = (await self.most_played(offset=6, snapshot=observed))['data']
+                    combined = {value['igdb_id']:value for value in reversed(prefix['rows']+rest['rows'])}
+                    return {**rest, 'rows':sorted(combined.values(),key=lambda value:value['source_rank']),
+                        'partial':prefix['partial'] or rest['partial']}
             native = await self.steam_games([row['appid'] for row in positions])
             mapped = {}
             for row in native:
@@ -515,8 +535,11 @@ class GameBrowseSources:
                 seen.add(value['igdb_id'])
                 rows.append({**value, 'source_rank':position['rank'], 'steam_app_id':position['appid']})
             return {'rows':rows, 'source':ranking['data']['source'], 'source_at':observed,
-                'universe':'Steam top 100', 'partial':unresolved > 0 or len(native) >= 500}
-        result = await self.cache.get('steam', 'game_browse_cards', f'content-v1:{observed}', load,
+                'universe':'Steam top 100', 'partial':unresolved > 0 or len(native) >= 500,
+                'has_more':offset == 0 and preview and len(ranking['data']['rows']) > 6, 'next_offset':6 if offset == 0 and preview else 100,
+                'snapshot':observed, **({'ranking':ranking['data']} if offset == 0 and preview else {})}
+        key = f'content-v2:{observed}:{offset}' + (':all' if not offset and not preview else '')
+        result = await self.cache.get('steam', 'game_browse_cards', key, load,
             ttl=timedelta(hours=4), max_stale=timedelta(hours=24))
         result['stale'] = result['stale'] or ranking['stale']
         self.require_source_time(result['data']['source_at'], 86400)

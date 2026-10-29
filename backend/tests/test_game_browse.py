@@ -37,6 +37,56 @@ class BrowseTests(unittest.IsolatedAsyncioTestCase):
         self.service=browse.GameBrowse(self.sources)
         self.query=await browse.filters(self.sources,category='trending')
 
+    async def test_most_played_shelf_resolves_six_and_grid_reuses_them_with_complete_paging(self):
+        from core.game_browse_sources import GameBrowseSources
+        sources=GameBrowseSources()
+        sources.cache=MemoryCache()
+        sources.steam=AsyncMock(return_value={'data':{'rows':[{'appid':i,'rank':i} for i in range(1,101)],
+            'source':'Steam concurrent players','source_at':int(time.time())},'stale':False})
+        async def games(appids):
+            return [{'uid':str(i),'game':{'id':i,'name':f'Game {i}','game_type':{'id':0}}} for i in appids]
+        sources.steam_games=AsyncMock(side_effect=games)
+        service=browse.GameBrowse(sources)
+        query={**self.query,'category':'most_played'}
+        preview=await service.page(query,limit=6)
+        self.assertEqual([r['igdb_id'] for r in preview['rows']],list(range(1,7)))
+        sources.steam_games.assert_awaited_once_with(list(range(1,7)))
+        self.assertTrue(preview['has_more']);self.assertFalse(preview['partial'])
+        combined=[];cursor=None
+        for _ in range(5):
+            page=await service.page(query,limit=24,cursor=cursor)
+            combined.extend(r['igdb_id'] for r in page['rows']);cursor=page['cursor']
+            if not cursor:break
+        self.assertEqual(combined,list(range(1,101)))
+        self.assertIsNone(cursor)
+        self.assertEqual(sources.steam_games.await_count,2)
+        self.assertEqual(sources.steam_games.await_args.args[0],list(range(7,101)))
+        # A later Steam update must not change the earlier preview cursor.
+        calls=sources.steam.await_count
+        sources.steam.return_value={'data':{'rows':[{'appid':200+i,'rank':i} for i in range(1,101)],
+            'source':'Steam concurrent players','source_at':int(time.time())+1},'stale':False}
+        following=await service.page(query,limit=6,cursor=preview['cursor'])
+        self.assertEqual([r['igdb_id'] for r in following['rows']],list(range(7,13)))
+        self.assertEqual(sources.steam.await_count,calls)
+
+    async def test_most_played_continues_past_excluded_duplicate_and_unmapped_leading_entries(self):
+        from core.game_browse_sources import GameBrowseSources
+        sources=GameBrowseSources();sources.cache=MemoryCache()
+        sources.steam=AsyncMock(return_value={'data':{'rows':[{'appid':i,'rank':i} for i in range(1,13)],
+            'source':'Steam concurrent players','source_at':int(time.time())},'stale':False})
+        async def games(appids):
+            return [{'uid':str(i),'game':{'id':3 if i==7 else i,'name':f'Game {i}','game_type':{'id':0},
+                'genres':[{'id':5 if i>2 else 9,'name':'Genre'}]}} for i in appids if i!=2]
+        sources.steam_games=AsyncMock(side_effect=games)
+        query={**self.query,'category':'most_played','genres':['igdb.genre:5']}
+        service=browse.GameBrowse(sources)
+        first=await service.page(query,limit=6)
+        self.assertEqual([r['igdb_id'] for r in first['rows']],[3,4,5,6,8,9])
+        self.assertTrue(first['partial']);self.assertTrue(first['has_more'])
+        second=await service.page(query,limit=6,cursor=first['cursor'])
+        self.assertEqual([r['igdb_id'] for r in second['rows']],[10,11,12])
+        self.assertFalse(second['has_more']);self.assertEqual(sources.steam_games.await_count,2)
+
     async def test_future_range_does_not_reuse_the_previous_clamped_empty_page(self):
         first=f'{date.today().year+1}-01-01'
         query=await browse.filters(self.sources,category='newest',start=first)

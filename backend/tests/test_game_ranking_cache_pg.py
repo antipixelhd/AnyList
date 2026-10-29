@@ -48,6 +48,23 @@ class RankingCacheTests(unittest.IsolatedAsyncioTestCase):
                 expires_at=utcnow()+timedelta(seconds=-1 if expired else 3600)))
             await db.commit()
 
+    async def test_most_played_preview_is_shared_durably_without_resolving_the_remainder(self):
+        source=GameBrowseSources(self.Session)
+        source.steam=AsyncMock(return_value={'data':{'rows':[{'appid':i,'rank':i} for i in range(1,101)],
+            'source':'Steam concurrent players','source_at':int(time.time())},'stale':False})
+        source.steam_games=AsyncMock(return_value=[{'uid':str(i),'game':{'id':i,'name':f'Game {i}',
+            'game_type':{'id':0}}} for i in range(1,7)])
+        query={'category':'most_played','genres':[],'platforms':[],'start':None,'end':None,
+            'q':'','min_metacritic':0,'timeline':False,'hide_erotic_games':True}
+        pages=await asyncio.gather(*(GameBrowse(source).page(query,limit=6) for _ in range(3)))
+        self.assertTrue(all([r['igdb_id'] for r in page['rows']]==list(range(1,7)) for page in pages))
+        source.steam_games.assert_awaited_once_with(list(range(1,7)))
+        other=GameBrowseSources(self.Session)
+        other.steam_games=AsyncMock(side_effect=AssertionError('Warm page must not reach providers'))
+        warm=await GameBrowse(other).page(query,limit=6)
+        self.assertEqual(warm['rows'],pages[0]['rows'])
+        other.steam_games.assert_not_awaited()
+
     async def test_old_source_waits_for_shared_refresh_even_with_a_recent_fetch(self):
         await self.seed(4*86400)
         query={'category':'trending','q':'','genres':[],'platforms':[],

@@ -104,7 +104,7 @@ class GameBrowse:
     def __init__(self, sources=None):
         self.sources = sources or GameBrowseSources()
 
-    async def frame(self, query, position, snapshot):
+    async def frame(self, query, position, snapshot, *, limit=24):
         source = self.sources
         category = query['category']
         if query['timeline'] and query['q']:
@@ -116,7 +116,7 @@ class GameBrowse:
                 platforms=query['platforms'],start=query['start'],end=query['end'],q=query['q'],
                 **({'search_mode':position[1]} if query['q'] else {}))
         if category=='most_played':
-            return await source.most_played()
+            return await source.most_played(offset=position[0], snapshot=position[1] or None, preview=limit<=6)
         if category=='score':
             return await source.highest_rated(page=position[0],start=position[1])
         return await source.attention(sellers=category=='sellers',offset=position[0])
@@ -124,7 +124,8 @@ class GameBrowse:
     async def page(self, query, *, limit=24, cursor=None, wait_seconds=None):
         if not 1<=limit<=48:
             raise ProviderError('invalid_request')
-        scope = digest([RELEASE_POLICY,query,limit])
+        policy = RELEASE_POLICY + ('-steam-segments-v2' if query['category']=='most_played' and not query['q'] else '')
+        scope = digest([policy,query,limit])
         previous = None
         if cursor:
             parent,expires = decode_cursor(cursor,scope)
@@ -154,7 +155,7 @@ class GameBrowse:
                 if not state['buffer']:
                     if state['exhausted'] or frames>=2:
                         break
-                    result = await self.frame(query,state['position'],state['window'])
+                    result = await self.frame(query,state['position'],state['window'],limit=limit)
                     frames+=1
                     data = result['data']
                     observed = data.get('source_at')
@@ -177,7 +178,7 @@ class GameBrowse:
                         state['position']=[data.get('next_page',251),data.get('next_start',0)]
                         beyond = state['position'][0]>250
                     else:
-                        state['position']=[data.get('next_offset',10001),data.get('search_mode',0)]
+                        state['position']=[data.get('next_offset',10001),data.get('snapshot',0) if query['category']=='most_played' and not query['q'] else data.get('search_mode',0)]
                         beyond = state['position'][0]>10000
                     if beyond and not state['exhausted']:
                         state['limited']=True;state['exhausted']=True
