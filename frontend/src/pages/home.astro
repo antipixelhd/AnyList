@@ -69,7 +69,7 @@ const upcomingSeasonCards=upcomingSeasons.map((entry:any)=>({
         </div>
       </article>)}</div> : <p class="series-progress-empty" data-upcoming-empty>Tracked series with confirmed upcoming season dates will appear here.</p>}
     </section></section>}
-    {domains.show_games&&<section class="home-playing-games" data-playing-games data-playing-revisions={gamesResult.status==='fulfilled'?JSON.stringify([playingGamesTotal,playingGames.map((entry:any)=>[entry.subject.catalogue_id,entry.revision])]):undefined}><div class="section-heading"><h2>Currently playing games</h2>{playingGamesTotal>0&&<a href={`${profile}/games?status=playing`}>View all</a>}</div>{gamesResult.status==='rejected'?<p class="series-progress-empty" role="status">Games are temporarily unavailable.</p>:playingGames.length?<div class="series-progress-grid">{playingGames.map((entry:any)=><GameProgressCard entry={entry} showAchievements={domains.show_game_achievements}/>)}</div>:<p class="series-progress-empty">Games you mark as Playing will appear here.</p>}</section>}
+    {domains.show_games&&<section class="home-playing-games" data-playing-games data-show-achievements={String(domains.show_game_achievements)} data-playing-revisions={gamesResult.status==='fulfilled'?JSON.stringify([playingGamesTotal,playingGames.map((entry:any)=>[entry.subject.catalogue_id,entry.revision])]):undefined}><div class="section-heading"><h2>Currently playing games</h2>{playingGamesTotal>0&&<a href={`${profile}/games?status=playing`}>View all</a>}</div>{gamesResult.status==='rejected'?<p class="series-progress-empty" role="status">Games are temporarily unavailable.</p>:playingGames.length?<div class="series-progress-grid">{playingGames.map((entry:any)=><GameProgressCard entry={entry} showAchievements={domains.show_game_achievements}/>)}</div>:<p class="series-progress-empty">Games you mark as Playing will appear here.</p>}</section>}
   </aside><section class="activity-stream" aria-labelledby="activity-heading" data-activity-feed data-show-movies-series={String(domains.show_movies_series)} data-show-games={String(domains.show_games)}><div class="section-heading"><h2 id="activity-heading">Activity</h2><span>Following</span></div>
   <p class="section-empty" role="status" data-activity-refresh-status hidden={!activityFailures||!!error}>Some activity is temporarily unavailable.</p>
   {error?<p class="error-message" role="alert" data-activity-error>{error}</p>:activities.length?activities.map(a=><ActivityCard activity={a} showUser/>):<div class="empty-state" data-activity-empty><span class="empty-symbol"><Icon name="play" /></span><h2>Your following feed is quiet</h2><p>Follow public profiles to see their tracking updates here. Your own updates live on your profile.</p><a class="button-primary" href={`${profile}/social?section=search#social-search-input`}>Find people</a></div>}
@@ -89,6 +89,7 @@ const upcomingSeasonCards=upcomingSeasons.map((entry:any)=>({
 import {localToday} from '../lib/date-time';
 import {startVisibleRefresh, type VisibleRefreshHandle} from '../lib/visible-refresh';
 import {createHomePanelRefresh} from '../lib/home-panel-refresh';
+import {paintHomeGameProgress} from '../lib/home-game-progress';
 import {editorStore, type EditorTitle} from '../lib/editor-store';
 import {showActionFailure} from '../lib/action-failure';
 
@@ -212,6 +213,8 @@ function initializeHomeProgress() {
 
   document.addEventListener('anylist:editor-state', event => {
     const title = (event as CustomEvent<EditorTitle>).detail;
+    if(title.type==='game'){if(gameShelf)paintHomeGameProgress(gameShelf,title);return;}
+    if(title.type!=='series')return;
     const card = [...grid.querySelectorAll<HTMLElement>('[data-progress-card]')].find(item => item.dataset.mediaId === String(title.id));
     if (!card) return;
     const entry = title.entry;
@@ -293,9 +296,10 @@ function initializeHomeProgress() {
     void homeSeriesRefresh?.refresh();
     void homeUpcomingRefresh?.refresh();
   }, {signal});
-  document.addEventListener('anylist:editor-committed', () => {
-    void (async () => { await homeSeriesRefresh?.refresh(); if (!signal.aborted) await refreshPanels(() => location.reload()); })();
-    void homeUpcomingRefresh?.refresh();
+  document.addEventListener('anylist:editor-committed', event => {
+    const title=(event as CustomEvent<{title:EditorTitle}>).detail.title;
+    void (async () => { if(title.type!=='game')await homeSeriesRefresh?.refresh(); if (!signal.aborted) await refreshPanels(); })();
+    if(title.type!=='game')void homeUpcomingRefresh?.refresh();
   }, {signal});
 }
 document.addEventListener('astro:page-load', initializeHomeProgress);
