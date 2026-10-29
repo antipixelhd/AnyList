@@ -113,6 +113,28 @@ class ColdCompanyDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         sources.igdb.assert_awaited_once()
         self.assertEqual(await self.count(MetadataSnapshot, MetadataSnapshot.kind == JOB), 1)
 
+    async def test_progressive_company_search_does_not_wait_for_the_provider(self):
+        service, sources = await self.discovery()
+        entered, release = asyncio.Event(), asyncio.Event()
+        rows = sources.igdb.return_value
+        async def load(*args):
+            entered.set(); await release.wait(); return rows
+        sources.igdb.side_effect = load
+        try:
+            cold = await asyncio.wait_for(service.search('FromSoftware', progressive=True), 2)
+            await asyncio.wait_for(entered.wait(), 2)
+            self.assertEqual(cold, {'ids': [], 'pending': True, 'partial': False, 'retry_after': 2})
+            again = await asyncio.wait_for(service.search('fromsoftware', progressive=True), 2)
+            self.assertTrue(again['pending'])
+            sources.igdb.assert_awaited_once()
+        finally:
+            release.set()
+            ready = await service.search('FromSoftware')
+        self.assertEqual(len(ready['ids']), 1)
+        self.assertTrue(ready['pending'])
+        sources.igdb.assert_awaited_once()
+        self.assertEqual(await self.count(MetadataSnapshot, MetadataSnapshot.kind == JOB), 1)
+
     async def test_failure_is_partial_and_retried_without_certifying_empty(self):
         service, sources = await self.discovery()
         sources.igdb.side_effect = TimeoutError

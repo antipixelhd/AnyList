@@ -63,7 +63,7 @@ class GameCompanyDiscovery:
             await db.commit()
         return {'ids': [str(raw['id']) for raw in rows]}
 
-    async def search(self, term):
+    async def search(self, term, *, progressive=False):
         try:
             self.sources.api.validate('igdb', 'game')
         except ProviderError:
@@ -71,10 +71,14 @@ class GameCompanyDiscovery:
         key = hashlib.sha256(json.dumps(['name-substring-v1', term.strip().casefold()]).encode()).hexdigest()
         try:
             async with asyncio.timeout(9):
-                cached = await self.sources.cache.get('igdb', 'game_company_search', key,
-                    lambda: self.load(term.strip()), ttl=timedelta(hours=6), max_stale=timedelta(days=7))
+                read = self.sources.cache.progressive if progressive else self.sources.cache.get
+                cached = await read('igdb', 'game_company_search', key,
+                    lambda _publish=None: self.load(term.strip()), ttl=timedelta(hours=6), max_stale=timedelta(days=7),
+                    **({'wait_seconds': .05} if progressive else {}))
         except (ProviderError, TimeoutError):
             return {'ids': [], 'pending': False, 'partial': True}
+        if cached['data'] is None:
+            return {'ids': [], 'pending': True, 'partial': False, 'retry_after': 2}
         natives = cached['data']['ids']
         if not natives:
             return {'ids': [], 'pending': False, 'partial': bool(cached.get('error'))}
@@ -96,7 +100,7 @@ class GameCompanyDiscovery:
             'partial': bool(cached.get('error')) or len(rows) != len(natives)}
 
 
-async def discover_companies(db, term, kind):
+async def discover_companies(db, term, kind, *, progressive=False):
     if kind not in ('all', 'studio'):
         return {'ids': [], 'pending': False, 'partial': False}
-    return await GameCompanyDiscovery(session_factory(db.bind)).search(term)
+    return await GameCompanyDiscovery(session_factory(db.bind)).search(term, progressive=progressive)

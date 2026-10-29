@@ -120,6 +120,27 @@ class ColdPeopleDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         self.source.people_candidates.assert_awaited_once()
         self.assertEqual(await self.count(MetadataSnapshot, MetadataSnapshot.kind == JOB), 1)
 
+    async def test_progressive_search_returns_pending_then_reuses_the_shared_discovery(self):
+        entered, release = asyncio.Event(), asyncio.Event()
+        rows = self.source.people_candidates.return_value
+        async def load(*args):
+            entered.set(); await release.wait(); return rows
+        self.source.people_candidates.side_effect = load
+        try:
+            cold = await asyncio.wait_for(self.service.search('Cold performer', progressive=True), 2)
+            await asyncio.wait_for(entered.wait(), 2)
+            self.assertEqual(cold, {'ids': [], 'pending': True, 'partial': False, 'retry_after': 2})
+            again = await asyncio.wait_for(self.service.search('cold performer', progressive=True), 2)
+            self.assertTrue(again['pending'])
+            self.source.people_candidates.assert_awaited_once()
+        finally:
+            release.set()
+            ready = await self.service.search('Cold performer')
+        self.assertEqual(len(ready['ids']), 1)
+        self.assertTrue(ready['pending'])  # Admission is not a verified career.
+        self.source.people_candidates.assert_awaited_once()
+        self.assertEqual(await self.count(MetadataSnapshot, MetadataSnapshot.kind == JOB), 1)
+
     async def test_failed_source_is_partial_and_does_not_admit_or_certify_empty(self):
         self.source.people_candidates.side_effect = TimeoutError
         result = await self.query('Cold performer', 'people', 'game')

@@ -48,3 +48,27 @@ test('read-only Browse context POST does not invalidate cached results', async (
   await wrapped('/api/proxy/tracking/browse/update', {method:'POST', body:'{}'});
   assert.equal(invalidations, 1);
 });
+
+test('optional portrait batches preserve caches while tracking writes still invalidate', async () => {
+  let invalidations = 0, failures = 0;
+  const wrapped = mutationFetch(async () => Response.json({people:[]}), 'https://beta.example/games/1',
+    () => invalidations++, () => failures++);
+  await wrapped('/api/proxy/tracking/games/people/images', {method:'POST', body:'{"ids":[1]}'});
+  await wrapped(new Request('https://beta.example/api/proxy/tracking/games/people/images?batch=2',
+    {method:'POST', body:'{"ids":[2]}'}));
+  assert.deepEqual([invalidations, failures], [0, 0]);
+  await wrapped('/api/proxy/tracking/games/entries/1', {method:'PATCH', body:'{"status":"playing"}'});
+  await wrapped('/api/proxy/tracking/games/people/images/review', {method:'POST'});
+  assert.deepEqual([invalidations, failures], [2, 0]);
+});
+
+test('optional portrait network failures stay with their caller instead of reporting a failed save', async () => {
+  let invalidations = 0, failures = 0;
+  const error = new TypeError('network failed');
+  const wrapped = mutationFetch(async () => {throw error;}, 'https://beta.example',
+    () => invalidations++, () => failures++);
+  await assert.rejects(wrapped('/api/proxy/tracking/games/people/images', {method:'POST'}), error);
+  assert.deepEqual([invalidations, failures], [0, 0]);
+  await assert.rejects(wrapped('/api/proxy/tracking/games/entries/1', {method:'PATCH'}), error);
+  assert.deepEqual([invalidations, failures], [0, 1]);
+});

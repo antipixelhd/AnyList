@@ -9,8 +9,12 @@ export function mutationFetch(
     const request = input instanceof Request ? input : null;
     const method = String(init?.method || request?.method || 'GET').toUpperCase();
     const url = new URL(request?.url || String(input), origin);
-    // This POST carries a bounded list of identities but only reads viewer state.
-    const readOnlyPost = method === 'POST' && url.pathname === '/api/proxy/tracking/browse/context';
+    // Identity batches read projections; optional portrait acquisition does not
+    // change viewer state or invalidate unrelated navigation/search results.
+    const readOnlyPost = method === 'POST' && [
+      '/api/proxy/tracking/browse/context',
+      '/api/proxy/tracking/games/people/images',
+    ].includes(url.pathname);
     const mutation = method !== 'GET' && method !== 'HEAD'
       && !readOnlyPost && url.origin === new URL(origin).origin && url.pathname.startsWith('/api/proxy/');
     let response: Response;

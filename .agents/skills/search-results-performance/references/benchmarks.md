@@ -66,6 +66,7 @@ The `auto_*` cases model the frontend's curated-then-broader HTTP sequence again
 
 For frontend loading/view changes, use these backend cases where relevant and verify actual tab/sort/grid/timeline transitions, stale responses and viewport refill in the real page. ASGI measurements cannot establish UI stability.
 
+Combined contributor search uses the shared Games source cache progressively: cold name discovery gets a 50ms wait budget per parallel domain branch, then returns pending evidence while the existing source flight continues. Saved Games and movie/series matches remain eligible for immediate composition; direct Games-only search retains its complete-discovery read. The `people_combined` case covers composition cost, while the focused progressive people/company PostgreSQL tests hold providers open to verify early pending responses and one shared admission. Deferred provider/SQL work can outlive a response and must not be mistaken for eliminated work in per-request counters. Optional portrait-batch POSTs do not invalidate browser navigation or result caches; tracking writes still do.
 ## Compare equivalent profiles and stages
 
 Cached game-person fixtures carry the current credit policy version. Legacy policy reprojection is a separate correctness path; it must not be mistaken for a warm source cache hit.

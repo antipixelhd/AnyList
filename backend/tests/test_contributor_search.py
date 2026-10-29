@@ -191,6 +191,20 @@ class ContributorSearchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data['results']['actor'][0]['name'],'Shared name')
         self.assertIsNone(data['results']['actor'][0]['image'])
 
+    async def test_combined_search_publishes_saved_matches_while_game_discovery_is_pending(self):
+        self.local_mock.return_value={**empty(),'actor':[{'key':'catalogue:5','name':'Saved actor','roles':['Actor']}]}
+        search.discover_people.return_value={'ids':[], 'pending':True, 'partial':False, 'retry_after':2}
+        first=await search.search_contributors(self.db,self.viewer,'Saved actor','actor')
+        self.assertEqual([row['key'] for row in first['results']['actor']],['catalogue:5'])
+        self.assertTrue(first['verification_pending'])
+        self.assertFalse(first['partial'])
+        search.discover_people.assert_awaited_once_with(self.db,'Saved actor','actor',progressive=True)
+        search.discover_companies.assert_awaited_once_with(self.db,'Saved actor','actor',progressive=True)
+        search.discover_people.return_value={'ids':[], 'pending':False, 'partial':False}
+        second=await search.search_contributors(self.db,self.viewer,'Saved actor','actor')
+        self.assertFalse(second['verification_pending'])
+        self.assertEqual(second['results'],first['results'])
+
     async def test_endpoint_is_authenticated_validated_and_trims_queries(self):
         app = FastAPI(); app.include_router(router, prefix='/tracking')
         async def database(): yield self.db

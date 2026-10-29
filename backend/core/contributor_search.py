@@ -305,11 +305,13 @@ async def search_contributors(db, viewer, term, kind='all', work_domain='all'):
     companies = {'ids': [], 'pending': False, 'partial': False}
     people = {'ids': [], 'pending': False, 'partial': False}
     if work_domain == 'all':
-        # Public candidate discovery uses separate shared sessions; it can run
-        # alongside TMDB without sharing the request's transaction or adding
-        # sequential provider latency to existing movie/series discovery.
+        # Publish saved/screen matches without waiting for cold game providers.
+        # The shared source cache owns discovery after this request returns;
+        # pending responses keep the existing verification polling active.
         screen, companies, people = await asyncio.gather(
-            screen_matches(db, viewer, term, kind), discover_companies(db, term, kind), discover_people(db, term, kind))
+            screen_matches(db, viewer, term, kind),
+            discover_companies(db, term, kind, progressive=True),
+            discover_people(db, term, kind, progressive=True))
         groups, failed, pending = screen
         groups = merge_game_matches(groups, await game_matches(db, term, kind, candidate_ids=companies['ids'] + people['ids']))
     else:
