@@ -6,7 +6,7 @@ import time
 import uuid
 from pathlib import Path
 
-FRESH_SECONDS = 1800
+FRESH_SECONDS = 4 * 3600
 STALE_SECONDS = 6 * 3600
 MAX_BYTES = 2_000_000
 MAX_RECORDS = 64

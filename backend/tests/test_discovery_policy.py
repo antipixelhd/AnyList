@@ -128,7 +128,7 @@ class ChronologicalTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(discovery.audience_relevant({'popularity': 27, 'original_language': 'de', 'origin_country': ['DE']}, 'DE'))
 
     async def test_upcoming_returns_sorted_before_paging_and_reuses_snapshot(self):
-        async def provider(url, *, headers, params):
+        async def provider(url, *, headers, params, cache_ttl=None):
             if '/discover/' in url:
                 self.assertTrue('first_air_date.gte' in params or 'air_date.gte' in params)
                 self.assertEqual(params['sort_by'], 'popularity.desc')
@@ -155,7 +155,7 @@ class ChronologicalTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(data['has_more'])
 
     async def test_show_all_cannot_displace_curated_candidates_at_provider_budget_boundary(self):
-        async def provider(url, *, headers, params):
+        async def provider(url, *, headers, params, cache_ttl=None):
             if '/discover/' in url:
                 self.assertNotIn('without_genres', params)
                 self.assertNotIn('vote_count.gte', params)
@@ -179,7 +179,7 @@ class ChronologicalTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_unfiltered_preserves_explicit_genre_provider_and_country_cinema(self):
         filters = {**self.filters, 'min_popularity': 0, 'audience_curation': False, 'genres': [18], 'provider': 8, 'cinema': True, 'cinema_country': 'DE'}
-        async def provider(url, *, headers, params):
+        async def provider(url, *, headers, params, cache_ttl=None):
             if '/discover/' in url:
                 self.assertEqual(params['with_genres'], '18')
                 self.assertEqual(params['with_watch_providers'], 8)

@@ -11,7 +11,7 @@ os.environ.setdefault('SECRET_KEY', 'progressive-tests-only')
 os.environ.setdefault('DATABASE_URL', 'postgresql+asyncpg://test:test@localhost/test')
 from core import browse, chronological_discovery as discovery
 from core.discovery_policy import DiscoveryPolicy
-from core.release_snapshots import ReleaseSnapshots
+from core.release_snapshots import ReleaseSnapshots, FRESH_SECONDS
 
 
 class PreviewTests(unittest.IsolatedAsyncioTestCase):
@@ -72,6 +72,65 @@ class PreviewTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rows,[])
         self.assertFalse(discovery._pending)
 
+    async def test_preview_overlaps_later_discovery_pages_and_full_pool_keeps_final_summaries(self):
+        blocked=asyncio.Event();entered=asyncio.Event();details=[]
+        async def provider(url, *, params, cache_ttl, **kwargs):
+            self.assertEqual(cache_ttl,2*3600)
+            if '/discover/' in url:
+                if params['page']>1:
+                    entered.set();await blocked.wait()
+                identifiers=range(1,7) if params['page']==1 else range(1,13)
+                return {'total_pages':2,'results':[dict(id=i,name='First' if params['page']==1 else 'Latest',
+                    first_air_date=date.today().isoformat(),popularity=80) for i in identifiers]}
+            identifier=int(url.rsplit('/',1)[1]);details.append(identifier)
+            return dict(id=identifier,first_air_date=date.today().isoformat(),popularity=80)
+        with patch('core.tmdb._get',AsyncMock(side_effect=provider)):
+            _,preview=await asyncio.wait_for(discovery.page('series','fixture',self.filters,size=6,preview=True),1)
+            await entered.wait();self.assertFalse(blocked.is_set())
+            self.assertEqual(len(preview),6)
+            full=asyncio.create_task(discovery.page('series','fixture',self.filters))
+            await asyncio.sleep(0);self.assertFalse(full.done())
+            blocked.set();_,rows=await full
+        self.assertEqual(len(rows),12)
+        self.assertTrue(all(row['title']=='Latest' for row in rows))
+        self.assertEqual(len(details),len(set(details)))
+
+    async def test_snapshot_is_still_fresh_after_three_hours_for_another_provider_key(self):
+        import json,time
+        with patch('core.tmdb._get',AsyncMock(return_value={'results':[],'total_pages':1})):
+            await discovery.page('series','first-key',self.filters,preview=True)
+        discovery._cache._store.clear()
+        path=next(discovery._snapshots.directory().glob('*.json'));saved=json.loads(path.read_text())
+        saved['fetched_at']=time.time()-3*3600;path.write_text(json.dumps(saved))
+        with patch('core.tmdb._get',AsyncMock(side_effect=AssertionError('warm public selection refetched'))) as read:
+            _,rows=await discovery.page('series','second-key',self.filters)
+        self.assertEqual(rows,[]);read.assert_not_awaited()
+
+    async def test_cancelling_a_cold_read_cleans_up_overlapped_discovery(self):
+        tails_entered=asyncio.Event();details_entered=asyncio.Event();cancelled=asyncio.Event()
+        tail_count=tail_cancels=0
+        async def provider(url,*,params,**kwargs):
+            nonlocal tail_count,tail_cancels
+            if '/discover/' in url and params['page']==1:
+                return {'total_pages':2,'results':[dict(id=i,name='Candidate',popularity=80,
+                    first_air_date=date.today().isoformat()) for i in range(1,7)]}
+            if '/discover/' in url:
+                tail_count+=1
+                if tail_count==2:tails_entered.set()
+                try:await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    tail_cancels+=1
+                    if tail_cancels==2:cancelled.set()
+                    raise
+            details_entered.set();await asyncio.Event().wait()
+        with patch('core.tmdb._get',AsyncMock(side_effect=provider)):
+            request=asyncio.create_task(discovery.page('series','fixture',self.filters))
+            await asyncio.wait_for(tails_entered.wait(),1)
+            await asyncio.wait_for(details_entered.wait(),1)
+            request.cancel();await asyncio.gather(request,return_exceptions=True)
+            await asyncio.wait_for(cancelled.wait(),1)
+        self.assertFalse(discovery._pending)
+
     async def test_finished_preview_survives_memory_cache_loss_without_provider_requests(self):
         with patch('core.tmdb._get',AsyncMock(return_value={'results':[],'total_pages':1})):
             await discovery.page('series','fixture',self.filters,preview=True)
@@ -87,7 +146,7 @@ class PreviewTests(unittest.IsolatedAsyncioTestCase):
         identity=discovery.selection_identity('series',self.filters,lower.isoformat(),upper.isoformat(),True,'')
         await discovery._snapshots.write(identity,{'rows':[],'partial':False})
         path=discovery._snapshots.path(identity);saved=json.loads(path.read_text())
-        saved['fetched_at']=time.time()-1900;path.write_text(json.dumps(saved))
+        saved['fetched_at']=time.time()-FRESH_SECONDS-100;path.write_text(json.dumps(saved))
         entered=asyncio.Event();release=asyncio.Event()
         async def build(*args,**kwargs):
             entered.set();await release.wait();return {'rows':[],'partial':False}
@@ -111,7 +170,7 @@ class PreviewTests(unittest.IsolatedAsyncioTestCase):
         identity=discovery.selection_identity('series',self.filters,lower.isoformat(),upper.isoformat(),True,'')
         await discovery._snapshots.write(identity,{'rows':[],'partial':False})
         path=discovery._snapshots.path(identity);saved=json.loads(path.read_text())
-        saved['fetched_at']=time.time()-1900;path.write_text(json.dumps(saved))
+        saved['fetched_at']=time.time()-FRESH_SECONDS-100;path.write_text(json.dumps(saved))
         original=path.read_bytes()
         with patch.object(discovery,'_selection',AsyncMock(side_effect=RuntimeError('provider down'))):
             _,rows=await discovery.page('series','fixture',self.filters,preview=True)
@@ -130,7 +189,7 @@ class PreviewTests(unittest.IsolatedAsyncioTestCase):
         identity=discovery.selection_identity('series',self.filters,lower.isoformat(),upper.isoformat(),True,'')
         await discovery._snapshots.write(identity,{'rows':[],'partial':False})
         path=discovery._snapshots.path(identity);saved=json.loads(path.read_text())
-        saved['fetched_at']=time.time()-1900;path.write_text(json.dumps(saved))
+        saved['fetched_at']=time.time()-FRESH_SECONDS-100;path.write_text(json.dumps(saved))
         with patch.object(discovery,'MAX_SELECTIONS',0),patch.object(discovery,'_selection',AsyncMock()) as build:
             _,rows=await discovery.page('series','fixture',self.filters,preview=True)
             self.assertEqual(rows,[]);build.assert_not_awaited()
@@ -159,6 +218,60 @@ class PreviewTests(unittest.IsolatedAsyncioTestCase):
 
 @unittest.skipUnless(os.getenv('STATISTICS_TEST_DATABASE_URL'), 'Requires disposable PostgreSQL')
 class BrowseStreamDatabaseTests(unittest.IsolatedAsyncioTestCase):
+    async def test_new_http_client_reuses_completed_public_selection_without_reusing_viewer_state(self):
+        import json,httpx
+        from test_statistics_pg import StatisticsDatabaseTests
+        from models import User,Media
+        from models.base import MediaType
+        from models.tracking import TrackedEntry
+        fixture=StatisticsDatabaseTests(methodName='runTest')
+        directory=self.enterContext(TemporaryDirectory())
+        self.enterContext(patch.object(discovery,'_snapshots',ReleaseSnapshots(lambda:Path(directory))))
+        discovery._cache._store.clear()
+        await fixture.asyncSetUp()
+        try:
+            owner=fixture.viewer
+            async with fixture.Session() as db:
+                movie=await db.get(Media,fixture.media_id)
+                movie.tmdb_id=1000;movie.release_date=date.today().isoformat()
+                movie.tmdb_data={**movie.tmdb_data,'popularity':80,'vote_count':500}
+                series=Media(title='Shared series',media_type=MediaType.series,tmdb_id=1000,
+                    release_date=date.today().isoformat(),tmdb_data={'popularity':80,'vote_count':500})
+                other=User(username='other-client',email='other-client@example.test',api_key='other-key')
+                db.add_all([series,other]);await db.flush()
+                db.add(TrackedEntry(user_id=owner.id,media_id=series.id,status='watching',rating_mode='manual',manual_score=7))
+                await db.commit()
+            raw=dict(id=1000,title='Shared movie',name='Shared series',popularity=80,vote_count=500,
+                release_date=date.today().isoformat(),first_air_date=date.today().isoformat(),genre_ids=[18],runtime=100)
+            async def provider(url,**kwargs):
+                return {'results':[raw],'total_pages':1} if '/discover/' in url else raw
+            async def provider_key(db,viewer_id):return f'key-for-{viewer_id}'
+            with patch('core.tmdb._get',AsyncMock(side_effect=provider)) as read, \
+                 patch('core.settings_store.get_user_tmdb_key',side_effect=provider_key), \
+                 patch('core.external_scores.effective_mdblist_key',AsyncMock(return_value='fixture')), \
+                 patch('core.mdblist_discovery.ranked_rows',AsyncMock(return_value=([raw],False))):
+                for kind in ('movie','series'):
+                    fixture.viewer=owner
+                    response=await fixture.client.get('/tracking/browse/sections',params={'media_type':kind,'region':'DE','stream':'true'})
+                    updates=[json.loads(line) for line in response.text.splitlines()]
+                    self.assertEqual(len(updates),4,response.text)
+                    owned=[row for update in updates for row in update['section']['results']]
+                    self.assertTrue(any(row['score'] in (7,8) for row in owned))
+                    calls=read.await_count;self.assertGreater(calls,0)
+                    discovery._cache._store.clear()  # Also prove durable, worker-independent reuse.
+                    fixture.viewer=other
+                    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=fixture.app),base_url='http://other-client') as client:
+                        response=await client.get('/tracking/browse/sections',params={'media_type':kind,'region':'DE','stream':'true'})
+                    updates=[json.loads(line) for line in response.text.splitlines()]
+                    self.assertEqual(len(updates),4,response.text)
+                    self.assertEqual(read.await_count,calls)
+                    rows=[row for update in updates for row in update['section']['results']]
+                    self.assertTrue(rows)
+                    self.assertTrue(all(row['score'] is None and row['list_status'] is None for row in rows))
+        finally:
+            await discovery.close()
+            await fixture.asyncTearDown()
+
     async def test_stream_keeps_session_open_private_state_fresh_and_authentication_required(self):
         import json
         from test_statistics_pg import StatisticsDatabaseTests

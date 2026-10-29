@@ -15,6 +15,7 @@ from core.release_events import events, window
 from core.release_snapshots import ReleaseSnapshots, FRESH_SECONDS
 from core.config import settings
 
+EVIDENCE_SECONDS = 2 * 3600
 PROVIDER_PAGES = 6
 WINDOW_DAYS = 180
 CURSOR_STRIDE = 10_000
@@ -97,12 +98,11 @@ async def _selection(media_type, key, filters, lower, upper, show_anime, term=''
         if upper: values[f'{field}.lte'] = upper
         if field == 'release_date' and media_type == 'movie':
             values['region'] = filters.get('cinema_country') or filters.get('region') or 'US'
-        async def read(number):
-            return await tmdb._get(f'{tmdb.TMDB_BASE}/discover/{kind}', headers=tmdb.get_headers(key), params={**values, 'page': number})
-        first = await read(1)
+        first = await tmdb._get(f'{tmdb.TMDB_BASE}/discover/{kind}', headers=tmdb.get_headers(key),
+            params={**values, 'page': 1}, cache_ttl=EVIDENCE_SECONDS)
         count = min(per_feed, first.get('total_pages', 1))
-        batches = [first, *await asyncio.gather(*(read(number) for number in range(2, count + 1)))]
-        return batches, first.get('total_pages', 1) > per_feed
+        return first, [{**values, 'page': number} for number in range(2, count + 1)], first.get('total_pages', 1) > per_feed
+    tails = None
     if term:
         from core.title_search import candidates as search_candidates
         first, search_rows = await search_candidates(term, media_type, key)
@@ -113,12 +113,24 @@ async def _selection(media_type, key, filters, lower, upper, show_anime, term=''
         partial = first.get('total_pages', 1) > 3
     else:
         feeds = await asyncio.gather(*(feed(field) for field in fields))
-        batches = [batch for group, _ in feeds for batch in group]
-        partial = any(partial for _, partial in feeds)
+        batches = [first for first, _, _ in feeds]
+        partial = any(limited for _, _, limited in feeds)
+        async def read_remaining():
+            tasks = [asyncio.create_task(tmdb._get(f'{tmdb.TMDB_BASE}/discover/{kind}',
+                headers=tmdb.get_headers(key), params=values, cache_ttl=EVIDENCE_SECONDS))
+                for _, following, _ in feeds for values in following]
+            try:
+                return await asyncio.gather(*tasks)
+            finally:
+                for task in tasks:
+                    if not task.done(): task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
     predicate = {name: value for name, value in filters.items() if name not in ('sort', 'audience_curation', 'include_returning')}
     cheap = {**predicate, 'start': None, 'end': None, 'status': '', 'cinema': False, 'provider': None}
-    candidates = {item['id']: item for batch in batches for item in batch.get('results', [])
-                  if matches(item, media_type=media_type, **cheap) and anime_visible(item, show_anime)}
+    def pool(groups):
+        return {item['id']: item for batch in groups for item in batch.get('results', [])
+                if matches(item, media_type=media_type, **cheap) and anime_visible(item, show_anime)}
+    candidates = pool(batches)
     gate = asyncio.Semaphore(6)
     failed = False
     async def detail(item):
@@ -126,12 +138,13 @@ async def _selection(media_type, key, filters, lower, upper, show_anime, term=''
         async with gate:
             try:
                 raw = await tmdb._get(f'{tmdb.TMDB_BASE}/{kind}/{item["id"]}', headers=tmdb.get_headers(key),
-                    params={'append_to_response': 'release_dates,watch/providers' if media_type == 'movie' else 'watch/providers'})
-                return {**item, **raw}
+                    params={'append_to_response': 'release_dates,watch/providers' if media_type == 'movie' else 'watch/providers'},
+                    cache_ttl=EVIDENCE_SECONDS)
+                return raw
             except Exception:
                 failed = True
                 # A failed evidence read cannot establish local eligibility.
-                return item
+                return {}
     rows = []
     def project(item):
         if not anime_visible(item, show_anime):
@@ -152,14 +165,49 @@ async def _selection(media_type, key, filters, lower, upper, show_anime, term=''
             check = {**predicate, 'start': None, 'end': None}
             if matches(event, media_type=media_type, **check):
                 rows.append(event)
-    # Recent premieres first for the shelf preview. The complete window still
-    # includes returning seasons and is finalized before any timeline paging.
-    ordered = sorted(candidates.values(), key=lambda item: item.get('first_air_date') or item.get('release_date') or '', reverse=not upcoming)
-    for start in range(0, len(ordered), 6):
-        for item in await asyncio.gather(*(detail(item) for item in ordered[start:start + 6])):
-            project(item)
-        if publish and len(rows) >= 6:
+    hydrated = {}
+    published = False
+    def ordered(values):
+        return sorted(values, key=lambda item: item.get('first_air_date') or item.get('release_date') or '', reverse=not upcoming)
+    def collect(values):
+        rows.clear()
+        for item in values:
+            if item['id'] in hydrated:
+                project({**item, **hydrated[item['id']]})
+    def preview():
+        nonlocal published
+        if publish and not published and len(rows) >= 6:
             publish({'rows': sorted(rows, key=lambda item: (window(item['release_date'])[0], item['release_event']), reverse=not upcoming)[:6], 'partial': True})
+            published = True
+    async def hydrate(batch):
+        for item, raw in zip(batch, await asyncio.gather(*(detail(item) for item in batch))):
+            hydrated[item['id']] = raw
+            project({**item, **raw})
+    try:
+        if not term:
+            tails = asyncio.create_task(read_remaining())
+        if tails is not None:
+            # The first six checks overlap the remaining discover pages. Full
+            # chronology still waits for the identical complete candidate pool.
+            await hydrate(ordered(candidates.values())[:6])
+            preview()
+            following = await tails
+            # Keep the original feed/page order: duplicate summaries previously
+            # used their final occurrence, independent of network arrival order.
+            groups=[];position=0
+            for first, pending, _ in feeds:
+                groups.extend([first, *following[position:position+len(pending)]])
+                position += len(pending)
+            candidates = pool(groups)
+            collect(candidates.values())
+        remaining = ordered(item for item in candidates.values() if item['id'] not in hydrated)
+        for start in range(0, len(remaining), 6):
+            await hydrate(remaining[start:start+6])
+            preview()
+    finally:
+        if tails is not None:
+            if not tails.done(): tails.cancel()
+            await asyncio.gather(tails, return_exceptions=True)
     rows.sort(key=lambda item: (window(item['release_date'])[0], item['release_event']), reverse=not upcoming)
     return {'rows': rows, 'partial': partial or failed, 'incomplete': failed}
 
@@ -216,7 +264,7 @@ async def page(media_type, key, filters, *, offset=0, show_anime=True, size=24, 
                     async with asyncio.timeout(90):
                         result = await _selection(media_type, key, filters, lower, upper, show_anime, term,
                             publish=publish)
-                        _cache.set(cache_key, result, 15 if result.get('incomplete') else 1800)
+                        _cache.set(cache_key, result, 15 if result.get('incomplete') else FRESH_SECONDS)
                         if entry[4] and not result.get('incomplete'):
                             await _snapshots.write(cache_key, result)
                         return result
