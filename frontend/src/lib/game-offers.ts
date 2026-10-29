@@ -38,7 +38,7 @@ export function mountGameOffers(root:HTMLElement,id:number,signal:AbortSignal,in
     return resource;
   }
   start();
-  const visibility=startVisibleRefresh({intervalMs:15*60_000,refresh:async()=>{await start()?.retry();}});
+  const visibility=startVisibleRefresh({intervalMs:15*60_000,wakeIntervalMs:15*60_000,refresh:async()=>{await start()?.retry();}});
   window.addEventListener('languagechange',()=>{start();},{signal});
   const needsPrimary=gameSectionPending(initial?.status,root.dataset.gamePrimaryPending==='true')||!initial?.steam_app_id;
   root.addEventListener('anylist:game-primary',()=>{if(needsPrimary)void start()?.retry(true);},{signal});

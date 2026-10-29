@@ -99,3 +99,28 @@ test('a failed request allows retry and navigation abort errors stay quiet', asy
   await pending;
   assert.deepEqual(failures, ['offline', 'offline']);
 });
+
+test('metadata wake-ups respect freshness while explicit writes and retries still refresh',async t=>{
+  const {document,window,timers}=environment(t);
+  let now=0,calls=0;
+  t.mock.method(Date,'now',()=>now);
+  const handle=startVisibleRefresh({intervalMs:60_000,wakeIntervalMs:60_000,refresh:()=>{calls++;}});
+  const settle=async()=>{for(let i=0;i<8;i++)await Promise.resolve();};
+  window.dispatchEvent(new Event('focus'));await settle();assert.equal(calls,0);
+  now=60_000;document.dispatchEvent(new Event('visibilitychange'));await settle();assert.equal(calls,1);
+  window.dispatchEvent(new Event('focus'));await settle();assert.equal(calls,1);
+  await handle.refresh();assert.equal(calls,2);
+  now+=1;window.dispatchEvent(new Event('focus'));await settle();assert.equal(calls,2);
+  [...timers.values()][0]();await settle();assert.equal(calls,3);
+  handle.stop();
+});
+
+test('activity and notification consumers retain immediate wake checks by default',async t=>{
+  const {window}=environment(t);let calls=0;
+  const handle=startVisibleRefresh({refresh:()=>{calls++;}});
+  window.dispatchEvent(new Event('focus'));
+  await handle.refresh();assert.equal(calls,1);
+  window.dispatchEvent(new Event('focus'));
+  await handle.refresh();assert.equal(calls,2);
+  handle.stop();
+});

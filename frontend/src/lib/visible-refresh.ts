@@ -1,6 +1,8 @@
 export type VisibleRefreshOptions = {
   /** The minimum delay between refresh attempts while the document is visible. */
   intervalMs?: number;
+  /** Minimum age before a focus/visibility wake rechecks already rendered data. */
+  wakeIntervalMs?: number;
   /** Refreshes the caller's data using the signal owned by this lifecycle. */
   refresh: (signal: AbortSignal) => void | Promise<void>;
   /** Run once immediately when the lifecycle starts, when the page is visible. */
@@ -23,6 +25,7 @@ export type VisibleRefreshHandle = {
  */
 export function startVisibleRefresh({
   intervalMs = 60_000,
+  wakeIntervalMs = 0,
   refresh,
   immediate = false,
   onError,
@@ -31,10 +34,12 @@ export function startVisibleRefresh({
   let stopped = false;
   let timer: ReturnType<typeof setInterval> | undefined;
   let inFlight: Promise<void> | undefined;
+  let lastAttempt = Date.now();
 
   const run = (): Promise<void> => {
     if (stopped || document.hidden) return Promise.resolve();
     if (inFlight) return inFlight;
+    lastAttempt = Date.now();
 
     inFlight = Promise.resolve()
       .then(() => refresh(controller.signal))
@@ -48,12 +53,11 @@ export function startVisibleRefresh({
     return inFlight;
   };
 
-  const onVisibilityChange = () => {
-    if (!document.hidden) void run();
+  const wake = () => {
+    if (Date.now() - lastAttempt >= wakeIntervalMs) void run();
   };
-  const onFocus = () => {
-    void run();
-  };
+  const onVisibilityChange = () => { if (!document.hidden) wake(); };
+  const onFocus = wake;
   const stop = () => {
     if (stopped) return;
     stopped = true;

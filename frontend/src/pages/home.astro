@@ -89,6 +89,7 @@ const upcomingSeasonCards=upcomingSeasons.map((entry:any)=>({
 import {localToday} from '../lib/date-time';
 import {startVisibleRefresh, type VisibleRefreshHandle} from '../lib/visible-refresh';
 import {createHomePanelRefresh} from '../lib/home-panel-refresh';
+import {reconcileHomePanel} from '../lib/home-panel-reconcile';
 import {paintHomeGameProgress} from '../lib/home-game-progress';
 import {editorStore, type EditorTitle} from '../lib/editor-store';
 import {showActionFailure} from '../lib/action-failure';
@@ -122,7 +123,7 @@ function initializeHomeProgress() {
       const freshDashboard = fresh.querySelector<HTMLElement>('.home-dashboard');
       const dashboard = document.querySelector<HTMLElement>('.home-dashboard');
       if (!current || !next || !dashboard || !freshDashboard || dashboard.dataset.username !== freshDashboard.dataset.username) return;
-      current.replaceWith(next);
+      reconcileHomePanel(current,next);
       dashboard.dataset.watchingCount = freshDashboard.dataset.watchingCount || '0';
       const browse = dashboard.querySelector<HTMLElement>('[data-find-title]');
       if (browse) browse.hidden = Number(dashboard.dataset.watchingCount) !== 0;
@@ -132,7 +133,7 @@ function initializeHomeProgress() {
   const grid = document.querySelector<HTMLElement>('[data-progress-grid]') || document.createElement('div');
   const upcomingGrid = document.querySelector<HTMLElement>('[data-upcoming-grid]');
   const gameShelf=document.querySelector<HTMLElement>('[data-playing-games]');
-  if(gameShelf)homeGamesRefresh=startVisibleRefresh({intervalMs:60_000,refresh:async refreshSignal=>{
+  if(gameShelf)homeGamesRefresh=startVisibleRefresh({intervalMs:60_000,wakeIntervalMs:60_000,refresh:async refreshSignal=>{
     if(document.querySelector('dialog[open]'))return;
     const response=await fetch('/api/proxy/tracking/games/playing?limit=12',{cache:'no-store',signal:refreshSignal});if(!response.ok)return;
     const data=await response.json();
@@ -247,7 +248,7 @@ function initializeHomeProgress() {
   const dashboard = document.querySelector<HTMLElement>('.home-dashboard');
   const username = dashboard?.dataset.username;
   if (!dashboard || !username) return;
-  homeSeriesRefresh = startVisibleRefresh({intervalMs:60_000, refresh:async refreshSignal => {
+  homeSeriesRefresh = startVisibleRefresh({intervalMs:60_000,wakeIntervalMs:60_000, refresh:async refreshSignal => {
     if (editorStore.hasPendingWrites() || grid.querySelector('[data-updating="true"]')) return;
     const revision=progressRevision;
     const response = await fetch(`/api/proxy/tracking/profile/${encodeURIComponent(username)}/all`, {cache:'no-store',signal:refreshSignal});
@@ -276,7 +277,7 @@ function initializeHomeProgress() {
     }
     updateCountdowns();
   }});
-  if(upcomingGrid)homeUpcomingRefresh = startVisibleRefresh({intervalMs:60_000, refresh:async refreshSignal => {
+  if(upcomingGrid)homeUpcomingRefresh = startVisibleRefresh({intervalMs:60_000,wakeIntervalMs:60_000, refresh:async refreshSignal => {
     const response = await fetch('/api/proxy/tracking/upcoming-seasons', {cache:'no-store',signal:refreshSignal});
     if (!response.ok) return;
     const results = (await response.json()).results;
@@ -309,6 +310,7 @@ import {activityAction,activityCompletionSuffix,activityRating,activityTime,scor
 import {mergeActivityFeeds,activityPresentation} from '../lib/activity-feed';
 import {applyResponsiveArtwork} from '../lib/responsive-artwork';
 import {startVisibleRefresh, type VisibleRefreshHandle} from '../lib/visible-refresh';
+import {reconcileHomePanel} from '../lib/home-panel-reconcile';
 
 let activityFeedRefresh: VisibleRefreshHandle|undefined;
 let activityEvents: AbortController;
@@ -325,6 +327,7 @@ document.addEventListener('astro:page-load',()=>{
   const emptyTemplate=document.querySelector<HTMLTemplateElement>('#activity-empty-template');
   if(!feed||!template)return;
   const seeded=JSON.parse(document.querySelector('#home-activity-data')?.textContent||'[]');
+  const signatures=new Map<string,string>(seeded.map((activity:any)=>[activity.key,JSON.stringify(activity)]));
   let movieActivity=seeded.filter((row:any)=>row.media.type!=='game'),gameActivity=seeded.filter((row:any)=>row.media.type==='game');
 
   const updateTimes=()=>document.querySelectorAll<HTMLTimeElement>('[data-relative-time]').forEach(time=>{
@@ -372,12 +375,22 @@ document.addEventListener('astro:page-load',()=>{
     const visibleKeys=new Set(activities.map(activity=>activity.key));
     cards.forEach((card,key)=>{if(!visibleKeys.has(key))card.remove();});
     if(activities.length)feed.querySelector('[data-activity-empty]')?.remove();
+    const focused=feed.contains(document.activeElement)?document.activeElement as HTMLElement:null;
+    let anchor:ChildNode|null=feed.querySelector('[data-activity-card]');
     activities.forEach(activity=>{
       const existing=cards.get(activity.key);
-      const card=render(activity);
-      if(card!==existing)existing?.remove();
-      feed.append(card);
+      const signature=JSON.stringify(activity);
+      let card=existing;
+      if(!card||signatures.get(activity.key)!==signature){
+        const fresh=render(activity);
+        if(card)reconcileHomePanel(card,fresh);else card=fresh;
+      }
+      signatures.set(activity.key,signature);
+      if(card!==anchor)feed.insertBefore(card,anchor);
+      anchor=card.nextSibling;
     });
+    for(const key of signatures.keys())if(!visibleKeys.has(key))signatures.delete(key);
+    if(focused?.isConnected&&document.activeElement!==focused)focused.focus({preventScroll:true});
     if(!activities.length&&!feed.querySelector('[data-activity-empty]')&&emptyTemplate)
       feed.append(emptyTemplate.content.firstElementChild!.cloneNode(true));
   };
