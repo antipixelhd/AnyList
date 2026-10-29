@@ -32,6 +32,8 @@ export function detailCastPresentation(person: DetailPerson, mode: 'actors' | 'c
     images: [...new Set((mode === 'characters' ? [person.character_image, ...(person.character_images || []), person.image] : [person.image]).filter((url):url is string=>!!url))]};
 }
 export type DetailMedia = EditorTitle & {
+  primary?:Record<string,any>;
+  primary_status?:import('./detail-background').DetailLoadState;
   id: number; type: MediaKind; overview?: string | null; year?: string; release_date?: string | null;
   original_title?: string; tagline?: string; release_status?: string; original_language?: string;
   runtime?: number; episode_runtime?: number; season_count?: number; episode_count?: number;
@@ -142,6 +144,16 @@ export function detailOrganizationFacts(media:DetailMedia) {
     add('Publisher',production.filter(person=>/publisher/i.test(roleText(person))));
   }else add('Studios',production);
   return groups;
+}
+export type DetailInformationRow={label:string;value?:string;items?:{name:string;url?:string|null}[];pending?:boolean};
+/** Shared SSR/live order; absence becomes a skeleton only while acquisition is pending. */
+export function detailInformationRows(media:DetailMedia,pending=false,facts=detailFacts(media)):DetailInformationRow[] {
+  const values=new Map<string,DetailInformationRow>(facts.map(row=>[row.label,row]));
+  for(const group of detailOrganizationFacts(media))values.set(group.label,{label:group.label,items:group.rows});
+  const release=values.has('Releases')?'Releases':'Released';
+  const order=[release,'Status',...(media.type==='series'?['Episode runtime','Seasons','Episodes','Created by','Network']:['Runtime']),
+    'Language','Country',...(media.type==='movie'?['Budget','Box office']:[]),'Studios'];
+  return order.flatMap(label=>values.has(label)?[values.get(label)!]:pending?[{label,pending:true}]:[]);
 }
 export function localMediaId(value: string | undefined) {
   return /^[1-9][0-9]{0,9}$/.test(value || '') && Number(value) <= 2147483647 ? Number(value) : null;

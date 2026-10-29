@@ -7,7 +7,7 @@ import {formatDate,localToday} from '../src/lib/date-time.ts';
 import {countryLabel} from '../src/lib/stats-overview-data.ts';
 const source=readFileSync(new URL('../src/lib/media-detail-data.ts',import.meta.url),'utf8');
 const context={Intl,Date,URLSearchParams,countryLabel,formatDate,localToday};
-runInNewContext(stripTypeScriptTypes(source.replace(/^import .*$/gm,'').replace(/export /g,''))+';globalThis.api={localMediaId,prepareDetail,detailCredits,detailCreditEpisodes,detailCreditText,detailCreditDescription,detailOrganizationFacts,durationLabel,detailDate,detailSynopsis,progressTotal,detailFacts,relationLabel,moneyLabel,detailWorkCaption,detailCastPresentation,detailBrowseHref,detailCreators};',context);
+runInNewContext(stripTypeScriptTypes(source.replace(/^import .*$/gm,'').replace(/export /g,''))+';globalThis.api={localMediaId,prepareDetail,detailCredits,detailCreditEpisodes,detailCreditText,detailCreditDescription,detailOrganizationFacts,detailInformationRows,durationLabel,detailDate,detailSynopsis,progressTotal,detailFacts,relationLabel,moneyLabel,detailWorkCaption,detailCastPresentation,detailBrowseHref,detailCreators};',context);
 const {api}=context;
 
 test('Games overview collapses at the first paragraph without truncating or losing stored text',()=>{
@@ -210,4 +210,19 @@ test('game crew keep their detailed jobs while canonical writer roles determine 
   const game=api.prepareDetail({type:'game',people,organizations:[]});
   assert.deepEqual(Array.from(api.detailCredits(game).principal,row=>row.name),['Writer','Composer']);
   assert.equal(api.detailCredits(game).principal[0].roles[0],'world created by');
+});
+
+
+test('screen information distinguishes pending fields from confirmed unavailable fields',()=>{
+  const media=context.api.prepareDetail({id:1,type:'series',title:'Series',genres:[],countries:[],people:[],organizations:[]});
+  const pending=context.api.detailInformationRows(media,true);
+  assert.ok(pending.some(row=>row.label==='Network'&&row.pending));
+  assert.ok(pending.some(row=>row.label==='Episode runtime'&&row.pending));
+  assert.equal(context.api.detailInformationRows(media,false).length,0);
+  media.episode_count=12;
+  media.organizations=[{id:3,kind:'studio',name:'Studio',url:'/studio/3',roles:['producer'],characters:[]}];
+  const ready=context.api.detailInformationRows(media,false);
+  assert.equal(ready.find(row=>row.label==='Episodes').value,'12');
+  assert.equal(ready.find(row=>row.label==='Studios').items[0].name,'Studio');
+  assert.ok(ready.every(row=>!row.pending));
 });

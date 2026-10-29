@@ -1577,7 +1577,10 @@ async def title(media_id: int, db: AsyncSession = Depends(get_db), viewer: User 
             for episode in all_episodes if episode.season_number == season.get('season_number')]
     from core.media_details import screen_work, work_details
     from core.countries import screen_countries
-    details = await work_details(db, await screen_work(db, media))
+    work = await screen_work(db, media)
+    details = await work_details(db, work)
+    from core.screen_primary import screen_primary
+    primary, primary_status = await screen_primary(db, media, work)
     details['countries'] = details.get('countries') or screen_countries(media.tmdb_data or {})['countries']
     from core.media_related import screen_related
     details = await screen_related(db, media, details, **(await result_filters(db, viewer)))
@@ -1588,7 +1591,7 @@ async def title(media_id: int, db: AsyncSession = Depends(get_db), viewer: User 
     from core.external_scores import effective_mdblist_key
     details['scores_pending'] = bool(viewer and await effective_mdblist_key(db, viewer.id))
     favorite = bool(entry and entry.favorite) or bool(viewer and await db.get(MediaFavorite, (viewer.id, media_id)) is not None)
-    return {**tracking_projection.media_data(media), **details, "favorite": favorite, "entry": tracking_projection.entry_data(entry, media, True, favorite=favorite) if entry else None,
+    return {**tracking_projection.media_data(media), **details, **primary, 'primary': primary, 'primary_status': primary_status, "favorite": favorite, "entry": tracking_projection.entry_data(entry, media, True, favorite=favorite) if entry else None,
             "seasons": seasons, "friends": friends,
             "friends_average": sum(f["score"] for f in friends) / len(friends) if friends else None}
 
@@ -1752,9 +1755,15 @@ async def title_people(media_id: Annotated[int, Path(gt=0)], db: Annotated[Async
     credits = await fill_screen_credits(db, media, viewer.id)
     # Actor credits must not wait for optional TVDB role-art enrichment.
     status = await fill_character_art(db, media, viewer.id) if characters else await cached_character_status(db, media.id)
-    details = await work_details(db, await screen_work(db, media), extras=False)
+    work = await screen_work(db, media)
+    details = await work_details(db, work, extras=False)
+    from core.screen_primary import screen_primary
+    primary, readiness = await screen_primary(db, media, work)
+    primary_status = ({'state': 'deferred', 'pending': True, 'error': 'unavailable', 'retry_after': 60}
+        if credits in ('failed', 'deferred') or (readiness['pending'] and credits != 'unavailable')
+        else {'state': 'unavailable' if credits == 'unavailable' else 'ready', 'pending': False})
     return {'people': details['people'], 'organizations': details['organizations'],
-            'credits_status': credits, 'character_status': status}
+            'credits_status': credits, 'character_status': status, 'primary': primary, 'primary_status': primary_status}
 
 
 @router.get('/title/{media_id}/scores')

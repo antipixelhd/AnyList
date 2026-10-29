@@ -24,6 +24,71 @@ def movie_payload(native=1492640, *, empty=False):
 
 @unittest.skipUnless(fixture.URL, 'Requires explicit disposable statistics PostgreSQL')
 class MediaCreditTests(unittest.IsolatedAsyncioTestCase):
+    async def test_cold_movie_and_series_publish_primary_information_without_another_fetch(self):
+        async with self.Session() as db:
+            self.viewer=await db.get(User,self.user_id)
+        self.app.dependency_overrides[get_current_user]=lambda:self.viewer
+        for kind,native in [('movie',1492640),('series',1492641)]:
+            raw=movie_payload(native)
+            raw.update(name='Cold series',overview='Recovered synopsis',release_date='2026-01-01',first_air_date='2026-01-01',
+                status='Released' if kind=='movie' else 'Returning Series',original_language='en',runtime=100,
+                episode_run_time=[42],number_of_seasons=2,number_of_episodes=12,
+                created_by=[{'id':7,'name':'Creator'}],networks=[{'id':8,'name':'Network'}],
+                production_companies=[{'id':9,'name':'Studio'}],genres=[{'id':18,'name':'Drama'}],
+                production_countries=[{'iso_3166_1':'US','name':'United States'}],budget=1000000,revenue=2000000)
+            self.providers.detail.return_value=(normalize_tmdb(raw,kind),raw)
+            async with self.Session() as db:
+                media=Media(title='Saved title',media_type=MediaType(kind),tmdb_id=native,tmdb_data={})
+                db.add(media);await db.commit();identifier=media.id
+            with patch('core.media_credits.CatalogueProviders',return_value=self.providers):
+                first=(await self.client.get(f'/tracking/title/{identifier}')).json()
+                self.assertTrue(first['primary_status']['pending'])
+                prior=self.providers.detail.await_count
+                late=(await self.client.get(f'/tracking/title/{identifier}/people')).json()
+                self.assertEqual(late['primary_status'],{'state':'ready','pending':False})
+                primary=late['primary']
+                self.assertEqual(primary['id'],identifier)
+                self.assertEqual(primary['type'],kind)
+                self.assertEqual(primary['overview'],'Recovered synopsis')
+                self.assertEqual(primary['countries'],['US'])
+                self.assertEqual(primary['genres'],['Drama'])
+                self.assertEqual(primary['release_date'],'2026-01-01')
+                self.assertEqual(primary['release_status'],raw['status'])
+                self.assertTrue(late['organizations'])
+                self.assertFalse({'entry','favorite','progress','seasons','poster','artwork'} & primary.keys())
+                if kind=='series':
+                    self.assertEqual((primary['season_count'],primary['episode_count'],primary['episode_runtime']),(2,12,42))
+                    self.assertEqual(primary['networks'][0]['name'],'Network')
+                else:self.assertEqual(primary['budget'],1000000)
+                warm=(await self.client.get(f'/tracking/title/{identifier}')).json()
+                self.assertEqual(warm['primary_status'],{'state':'ready','pending':False})
+                self.assertEqual(warm['overview'],'Recovered synopsis')
+                await self.client.get(f'/tracking/title/{identifier}/people')
+                self.assertEqual(self.providers.detail.await_count,prior+1)
+            async with self.Session() as db:
+                saved=await db.get(Media,identifier)
+                self.assertEqual(saved.title,'Saved title')
+                self.assertIsNone(saved.runtime)
+
+    async def test_legacy_bridge_success_does_not_finish_failed_primary_acquisition(self):
+        from core.catalogue import ingest_document
+        async with self.Session() as db:
+            media = await self.new_movie(db)
+            await ingest_document(db, normalize_tmdb(movie_payload(), 'movie'), 'tmdb')
+            await db.commit()
+            identifier = media.id
+            self.viewer = await db.get(User, self.user_id)
+        self.app.dependency_overrides[get_current_user] = lambda: self.viewer
+        self.providers.detail.side_effect = RuntimeError('Provider unavailable')
+        with patch('core.media_credits.CatalogueProviders', return_value=self.providers):
+            late = (await self.client.get(f'/tracking/title/{identifier}/people')).json()
+            self.assertEqual(late['credits_status'], 'updated')
+            self.assertTrue(late['primary_status']['pending'])
+            self.assertEqual(late['primary_status']['retry_after'], 60)
+            retry = (await self.client.get(f'/tracking/title/{identifier}/people')).json()
+            self.assertTrue(retry['primary_status']['pending'])
+        self.providers.detail.assert_awaited_once()
+
     async def test_complete_tmdb_title_never_fetches_secondary_provider(self):
         raw = movie_payload()
         raw.update(overview='Complete overview', poster_path='/poster.jpg', release_date='2026-01-01',

@@ -1,3 +1,4 @@
+import {publishScreenPrimary} from './screen-primary';
 import { createContentTransition } from './content-motion';
 import { detailCastPresentation, detailCredits, detailCreators, detailCreditEpisodes, detailCreditText, detailCreditDescription, type DetailPerson, type DetailMedia } from './media-detail-data';
 import { responsiveArtwork } from './responsive-artwork';
@@ -203,7 +204,14 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
     language=gameCastLanguage(gameCast.actors,select.value);
     transitionGameCast();
   },{signal});
-  const update=(data:{people:DetailPerson[];organizations:DetailPerson[];character_status:DetailLoadState&{complete?:boolean};credits_status?:string;game_characters?:import('./game-cast-data').GameCharacter[];game_character_status?:{complete?:boolean}})=>{
+  const update=(data:{people:DetailPerson[];organizations:DetailPerson[];character_status:DetailLoadState&{complete?:boolean};credits_status?:string;game_characters?:import('./game-cast-data').GameCharacter[];game_character_status?:{complete?:boolean};primary?:Record<string,any>;primary_status?:DetailLoadState})=>{
+    if(!gameCast&&data.primary&&data.primary_status){
+      const previous=info.screenPrimary||{};
+      const primary={...previous};
+      for(const [field,value] of Object.entries(data.primary))if(value!=null&&value!==''&&(!Array.isArray(value)||value.length))primary[field]=value;
+      info.screenPrimary=primary;
+      publishScreenPrimary(root,{...primary,people:data.people,organizations:data.organizations},info.id,data.primary_status,signal);
+    }
     if(gameCast&&keepCachedGameCredits(data,gameCast,!!root.querySelector('[data-credit-section="crew"] [data-person-id],[data-credit-section="studios"] [data-person-id]'))){metadataPending=true;return data.character_status;}
     metadataPending=data.character_status.pending===true||['partial','pending','deferred'].includes(data.character_status.state||'');
     const groups=detailCredits({people:data.people,organizations:data.organizations,type:info.type} as DetailMedia);
@@ -246,11 +254,11 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
     status();return data.character_status;
   };
   const background=detailPeopleLoading(info.id,signal,update,(state,message)=>{
-    error=state==='retry'?message||'People data is temporarily unavailable. Retrying automatically.':'';status();
+    error=state==='retry'?message||'Some details are temporarily unavailable. Retrying automatically.':'';status();
   },{selected:()=>mode==='characters',needed:()=>metadataPending,
     ...(info.gameCredits?{source:{people:`/api/proxy/tracking/games/works/${info.id}/credits`}}:{}),
     primaryReady:()=>waitForDetailPortraits([...root.querySelectorAll<HTMLImageElement>('[data-credit-preview] img')],signal),warm});
-  if(backgroundAvailable)background.start(!!info.gameCredits||!root.querySelector('[data-credit-preview] [data-person-id]'));
+  if(backgroundAvailable)background.start(!!info.gameCredits||!!info.screenPrimaryPending||!root.querySelector('[data-credit-preview] [data-person-id]'));
   root.addEventListener('click',event=>{
     const button=(event.target as Element).closest<HTMLButtonElement>('[data-cast-mode]');
     if((event.target as Element).closest('[data-detail-people-retry]')){void background.retry();return;}

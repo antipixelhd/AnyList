@@ -1,20 +1,23 @@
 ---
-import {detailOrganizationFacts,type DetailMedia} from '../lib/media-detail-data';
+import {detailOrganizationFacts,detailInformationRows,type DetailMedia} from '../lib/media-detail-data';
 import LocalDateTime from './LocalDateTime.astro';
 import {gameAgeRating} from '../lib/game-info-data';
-interface Props {facts:{label:string;value:string}[];title:DetailMedia}
-const {facts,title}=Astro.props;
+interface Props {facts:{label:string;value:string}[];title:DetailMedia;pending?:boolean}
+const {facts,title,pending=false}=Astro.props;
+const screen=title.type==='movie'||title.type==='series';
 const organizations=detailOrganizationFacts(title);
 const lowerFacts=new Set(['Language','Country','Budget','Box office','Platforms']);
 const finalGroups=new Set(['Studios','Publisher']);
 const age=title.type==='game'?gameAgeRating(title.game_info,title.game_offer_context?.country||'US'):null;
 ---
-<dl>
+{screen?<><dl data-screen-facts aria-busy={pending?'true':undefined}>
+  {detailInformationRows(title,pending,facts).map(row=><div data-detail-fact={row.label} data-fact-signature={JSON.stringify(row)} data-fact-pending={row.pending?'true':undefined}><dt>{row.label}</dt><dd>{row.pending?<span class="detail-value-skeleton" aria-hidden="true"/>:row.items?row.items.map(person=><span class="media-fact-entry">{person.url?<a href={person.url}>{person.name}</a>:person.name}</span>):['Released','Releases'].includes(row.label)?<LocalDateTime value={title.release_date} fallback={row.value}/>:row.value}</dd></div>)}
+</dl><p class="detail-load-status" data-detail-people-status hidden/></>:<dl>
   {title.type==='game'&&<div data-game-age-rating hidden={!age} title={age?.detail}><dt>Age rating</dt><dd>{age?.label}</dd></div>}
   {facts.filter(fact=>!lowerFacts.has(fact.label)).map(fact=><div><dt>{fact.label}</dt><dd>{['Released','Releases','First published'].includes(fact.label)?<LocalDateTime value={title.release_date} fallback={fact.value}/>:fact.value}</dd></div>)}
   {organizations.filter(group=>!finalGroups.has(group.label)).map(group=><div><dt>{group.label}</dt><dd>{group.rows.map(person=><span class="media-fact-entry">{person.url?<a href={person.url}>{person.name}</a>:person.name}</span>)}</dd></div>)}
   {facts.filter(fact=>lowerFacts.has(fact.label)).map(fact=><div><dt>{fact.label}</dt><dd>{fact.value}</dd></div>)}
   {organizations.filter(group=>finalGroups.has(group.label)).map(group=><div><dt>{group.label}</dt><dd>{group.rows.map(person=><span class="media-fact-entry">{person.url?<a href={person.url}>{person.name}</a>:person.name}</span>)}</dd></div>)}
-</dl>
+</dl>}
 
 {title.type==='game'&&title.game_metadata_status?.primary_ready===false&&!facts.length&&<div class="game-section-skeleton" data-game-primary-facts aria-hidden="true"><span></span><span></span><span></span></div>}

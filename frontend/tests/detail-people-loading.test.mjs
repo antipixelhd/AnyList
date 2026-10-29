@@ -117,3 +117,17 @@ test('a stalled portrait cannot leave secondary enrichment waiting forever',asyn
   await waitForDetailPortraits([image],controller.signal,5);
   controller.abort();
 });
+
+
+test('usable cast does not prematurely finish pending primary metadata',async()=>{
+  const nativeFetch=globalThis.fetch,controller=new AbortController(),states=[];
+  let calls=0;
+  globalThis.fetch=async()=>Response.json({people:[{kind:'actor'}],credits_status:'cached',character_status:{state:'ready'},
+    primary_status:++calls===1?{state:'pending',pending:true,retry_after:60}:{state:'ready',pending:false}});
+  try{
+    const resource=detailPeopleLoading(7,controller.signal,data=>data.character_status,state=>states.push(state),
+      {selected:()=>false,needed:()=>false,primaryReady:async()=>{},warm:()=>{}});
+    await resource.characters();assert.equal(states.at(-1),'loading');
+    await resource.retry();assert.equal(states.at(-1),'ready');assert.equal(calls,2);
+  }finally{controller.abort();globalThis.fetch=nativeFetch;}
+});
