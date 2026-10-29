@@ -4,6 +4,7 @@ import StatisticsRefresh from "./StatisticsRefresh.astro";
 import { api } from "../../lib/api";
 import { tracker } from "../../lib/tracker";
 import {viewerMediaPreferences} from '../../lib/viewer-media-preferences';
+import {viewerProfilePreferences} from '../../lib/viewer-profile-preferences';
 import type { UserPreferences, PrivacyLevel } from "../../lib/api";
 import '../../styles/profile-color-settings.css';
 
@@ -16,7 +17,7 @@ const RESULT_CATEGORIES = [
 const { token } = Astro.locals;
 const settings = Astro.locals.settings;
 const [profileData, me, trackingPrefs] = await Promise.all([
-  api.profile.get(token!).catch(() => null),
+  viewerProfilePreferences(Astro.locals),
   api.auth.me(token!),
   viewerMediaPreferences(Astro.locals),
 ]);

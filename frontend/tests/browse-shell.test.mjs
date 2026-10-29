@@ -14,6 +14,7 @@ test('browse renders without waiting for discovery or facets and preserves URL f
   const calls=[];
   const result=await runInNewContext(script,{
     viewerMediaPreferences:async()=>({show_movies_series:true,show_games:true}),
+    viewerProfilePreferences:async()=>({country:'DE'}),
     ...view,releaseYearBounds,releaseYearLabel,URLSearchParams,Intl,Date,
     Astro:{url:new URL('https://example.test/browse?type=series&genres=18&provider=8&view=timeline'),locals:{token:'viewer',user:{id:1}},cookies:{get:()=>undefined},request:{headers:{get:()=>null}}},
     api:{profile:{get:async()=>({country:'DE'})}},

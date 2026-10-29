@@ -22,12 +22,13 @@ import MobileNavigation from "../components/MobileNavigation.astro";
 import type {MobileNavigationItem, MobileNavigationGroup} from '../lib/mobile-navigation';
 import { api } from "../lib/api";
 import { themeVariables, viewerProfileTheme } from "../lib/profile-theme";
+import {viewerProfilePreferences} from '../lib/viewer-profile-preferences';
 import {legalConfig, legalHref} from '../lib/legal';
 
 interface Props { title: string; hideNav?: boolean; fullBleed?: boolean; inlineInstallPrompt?: boolean }
 const { title, hideNav, fullBleed = false, inlineInstallPrompt = false } = Astro.props;
 const { user, token } = Astro.locals;
-const viewerTheme = await viewerProfileTheme(token);
+const viewerTheme = await viewerProfileTheme(token,viewerProfilePreferences(Astro.locals));
 const siteColor = viewerTheme.applySiteWide ? viewerTheme.profileColor : undefined;
 
 let pendingRequestCount = 0;

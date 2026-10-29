@@ -3,6 +3,7 @@ import { api } from "../lib/api";
 import Tracker from "../layouts/Tracker.astro";
 import BrowseMediaTypes from "../components/BrowseMediaTypes.astro";
 import {viewerMediaPreferences} from "../lib/viewer-media-preferences";
+import {viewerProfilePreferences} from '../lib/viewer-profile-preferences';
 import { formatDate, requestDateLocale } from '../lib/date-time';
 import { STREAMING_REGION_COOKIE, streamingCountry, streamingRegionPreference } from '../lib/streaming-region';
 import BrowseCard from "../components/BrowseCard.astro";
@@ -22,7 +23,7 @@ import {
   browseLayout,
 } from "../lib/browse-view";
 const params = new URLSearchParams(Astro.url.search);
-const domains=await viewerMediaPreferences(Astro.locals);
+const [domains,account]=await Promise.all([viewerMediaPreferences(Astro.locals),viewerProfilePreferences(Astro.locals)]);
 const explicitType=params.get('type')||params.get('media_type');
 if(explicitType==='game'||!explicitType&&!domains.show_movies_series&&domains.show_games){
   params.delete('type');params.delete('media_type');
@@ -37,7 +38,6 @@ params.delete("streaming");
 params.delete("unfiltered");
 params.delete("include_rereleases");
 if (params.get('sort') === 'upcoming') params.set('status', 'upcoming');
-const account = Astro.locals.token ? await api.profile.get(Astro.locals.token).catch(() => null) : null;
 const preference = streamingRegionPreference(Astro.cookies.get(STREAMING_REGION_COOKIE)?.value);
 const region = streamingCountry(params.get('region')) || (preference?.manual ? preference.country : undefined) || preference?.country || streamingCountry(account?.country) || 'US';
 params.set('region', region);

@@ -26,10 +26,11 @@ import ReloadScrollRestoration from '../components/ReloadScrollRestoration.astro
 import PrimaryFontPreloads from '../components/PrimaryFontPreloads.astro';
 import SharePreview from '../components/SharePreview.astro';
 import { settingsGroups, isSettingsLinkActive } from '../lib/settings-navigation';
+import {viewerProfilePreferences} from '../lib/viewer-profile-preferences';
 
 const { title = 'Settings' } = Astro.props;
 const { user } = Astro.locals;
-const viewerTheme = await viewerProfileTheme(Astro.locals.token);
+const viewerTheme = await viewerProfileTheme(Astro.locals.token,viewerProfilePreferences(Astro.locals));
 const activeColor = viewerTheme.applySiteWide ? viewerTheme.profileColor : undefined;
 const pathname = Astro.url.pathname;
 ---

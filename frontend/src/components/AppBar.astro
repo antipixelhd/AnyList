@@ -6,7 +6,7 @@ import BrandMark from './BrandMark.astro';
 import MobileNavigation from './MobileNavigation.astro';
 import {appMobileNavigation} from '../lib/mobile-navigation';
 import {tracker} from '../lib/tracker';
-import {api} from '../lib/api';
+import {viewerProfilePreferences} from '../lib/viewer-profile-preferences';
 import {viewerMediaPreferences} from '../lib/viewer-media-preferences';
 import {domainListLinks} from '../lib/media-domains';
 import '../styles/app-bar.css';
@@ -16,19 +16,18 @@ const {initiallyHidden = false} = Astro.props;
 const pathname = Astro.url.pathname;
 const fadesAtTop = pathname.startsWith('/user/') || pathname.startsWith('/title/') || pathname.startsWith('/media/') || pathname.startsWith('/games/');
 const profile = user ? `/user/${encodeURIComponent(user.username)}` : '/login';
-let combineLists = true;
+const [, notificationResult, profileResult] = await Promise.allSettled([
+  viewerMediaPreferences(Astro.locals),
+  user?tracker('recent-events', token):Promise.resolve(null),
+  viewerProfilePreferences(Astro.locals),
+]);
 const domains=await viewerMediaPreferences(Astro.locals);
+const combineLists=domains.combine_lists!==false;
 let quietNotifications = 0;
 let attentionNotifications = 0;
 let avatarUrl: string | null = null;
 
 if (user) {
-  const [preferenceResult, notificationResult, profileResult] = await Promise.allSettled([
-    Promise.resolve(domains),
-    tracker('recent-events', token),
-    api.profile.get(token!),
-  ]);
-  if (preferenceResult.status === 'fulfilled') combineLists = preferenceResult.value.combine_lists !== false;
   if (notificationResult.status === 'fulfilled') {
     const notifications = notificationResult.value;
     attentionNotifications = (notifications.results ?? []).filter((event: any) => event.state === 'pending' && event.priority === 'high').length;
@@ -36,7 +35,7 @@ if (user) {
     // but they are not user notifications and must not light up the app bar.
     quietNotifications = Math.max(0, (notifications.results?.length ?? 0) - attentionNotifications);
   }
-  if (profileResult.status === 'fulfilled' && profileResult.value.avatar_url) avatarUrl = `/api/proxy${profileResult.value.avatar_url}`;
+  if (profileResult.status === 'fulfilled' && profileResult.value?.avatar_url) avatarUrl = `/api/proxy${profileResult.value.avatar_url}`;
 }
 
 const notificationTotal = quietNotifications + attentionNotifications;

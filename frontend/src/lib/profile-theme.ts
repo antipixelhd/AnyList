@@ -12,9 +12,9 @@ export function themeVariables(color: string): string {
   return `--accent-400: color-mix(in srgb, ${color} 78%, white); --accent-500: ${color}; --accent-600: color-mix(in srgb, ${color} 82%, black); --accent-900: color-mix(in srgb, ${color} 25%, #0b1622)`;
 }
 
-export async function viewerProfileTheme(token?: string | null) {
+export async function viewerProfileTheme(token?: string | null,profile?:Promise<import('./api').UserPreferences|null>) {
   if (!token) return { profileColor: DEFAULT_PROFILE_COLOR, applySiteWide: false };
-  const preferences = await api.profile.get(token).catch(() => null);
+  const preferences = await (profile||api.profile.get(token).catch(() => null));
   return {
     profileColor: profileColor(preferences?.profile_color),
     applySiteWide: preferences?.apply_site_wide === true,
