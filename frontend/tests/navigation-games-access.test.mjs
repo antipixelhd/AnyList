@@ -32,7 +32,7 @@ test('network failures, redirects and navigation cancellation never authorize st
 
 test('cached Games list and statistics also recheck the target profile visibility',async()=>{
   const signal=new AbortController().signal;
-  for(const path of ['/user/other%20viewer/games','/user/other%20viewer/stats/games']){
+  for(const path of ['/user/other%20viewer/games','/user/other%20viewer/stats/games','/user/other%20viewer/favorites']){
     for(const visible of [true,false]){
       const calls=[];
       const allowed=await authorizeGameSnapshot('7',signal,async(url,options)=>{

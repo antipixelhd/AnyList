@@ -29,8 +29,5 @@
   .favorites-actions { margin-left:auto; }
   .favorites-page .favorites-grid { grid-template-columns:repeat(auto-fill,minmax(84px,1fr)); gap:12px; padding:16px; }
 }
-.favorites-domain-tabs{display:flex;gap:24px;margin-bottom:28px}
-.favorites-domain-tabs a{color:var(--muted);padding:8px 0}
-.favorites-domain-tabs a[aria-current=page],.favorites-domain-tabs a:hover,.favorites-domain-tabs a:focus-visible{color:var(--blue)}
 .favorites-page [data-favorite-card][hidden]{display:none!important}
 .favorites-page .game-list-pagination{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:24px 0;color:var(--muted)}
