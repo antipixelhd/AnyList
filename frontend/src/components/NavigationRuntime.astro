@@ -6,13 +6,14 @@
   import { showToast as notify } from '../lib/toasts';
   import {createPrediction,bindPredictionIntent,predictionManifest,predictivePage,predictionAllowed,type PredictionArtwork} from '../lib/predictive-loading';
   import {approvedGamesPage} from '../lib/game-public-routes';
+  import {snapshotHasGames,authorizeGameSnapshot} from '../lib/navigation-games-access';
   import {editorStore,type EditorTitle} from '../lib/editor-store';
   import {isFailureHandled} from '../lib/handled-failures';
   import {responsiveArtwork} from '../lib/responsive-artwork';
   import {clearStoredBrowseCache} from '../lib/browse-cache';
   wirePasswordToggles();
 
-  type CachedPage = { html: string; bytes: number; storedAt: number; predicted?:boolean };
+  type CachedPage = { html: string; bytes: number; storedAt: number; predicted?:boolean; requiresGamesAccess?:boolean };
   type NavigationState = {
     user: string;
     pages: Map<string, CachedPage>;
@@ -137,7 +138,7 @@
   function remember(url: URL, doc: Document) {
     resetForIdentity();
     if (!cacheable(url) || doc.body.dataset.cacheUser !== state.user) return;
-    if(doc.body.hasAttribute('data-games-access')||doc.querySelector('a[href^="/games/"], [data-contributor-page][data-media-type="game"]'))return;
+    if(doc.body.hasAttribute('data-games-access')||doc.querySelector('[data-contributor-page][data-media-type="game"]'))return;
     const html = sanitizedHtml(doc, url);
     if (!html) return;
     const bytes = new Blob([html]).size;
@@ -146,7 +147,7 @@
     const previous = state.pages.get(key);
     if (previous) state.bytes -= previous.bytes;
     state.pages.delete(key);
-    state.pages.set(key, { html, bytes, storedAt: Date.now() });
+    state.pages.set(key, { html, bytes, storedAt: Date.now(),requiresGamesAccess:snapshotHasGames(html) });
     state.bytes += bytes;
     while (state.pages.size > 18 || state.bytes > 10_000_000) {
       const oldest = state.pages.keys().next().value as string | undefined;
@@ -225,7 +226,7 @@
       const html=await response.text(),sources=predictionManifest(html,user);
       if(signal.aborted||generation!==state.generation||!sources)throw new Error('Prediction invalidated');
       const bytes=new Blob([html]).size;if(bytes>2_000_000)throw new Error('Prediction too large');
-      const page={html,bytes,storedAt:Date.now(),predicted:true};storePrediction(url,page);warmPrimary(sources);return page;
+      const page={html,bytes,storedAt:Date.now(),predicted:true,requiresGamesAccess:snapshotHasGames(html)};storePrediction(url,page);warmPrimary(sources);return page;
     },lifetime.signal);
     state.previewPrediction=createPrediction<EditorTitle>(async(path,signal)=>{
       const generation=state.generation,user=state.user;
@@ -262,6 +263,10 @@
       if(String(init?.method||request?.method||'GET').toUpperCase()==='GET'&&target?.key===keyFor(url)){
         let page=state.pages.get(target.key);
         if(!page||!page.predicted||Date.now()-page.storedAt>=30_000)page=await state.prediction!.consume(url.href,target.signal);
+        if(page?.requiresGamesAccess&&!await authorizeGameSnapshot(state.user,target.signal,state.originalFetch)){
+          if(state.pages.get(target.key)===page){state.pages.delete(target.key);state.bytes-=page.bytes;}
+          page=undefined;state.predictionNavigation=undefined;
+        }
         if(page&&target===state.predictionNavigation&&!target.signal.aborted&&target.generation===state.generation){
           state.predictionNavigation=undefined;
           return new Response(page.html,{headers:{'Content-Type':'text/html'}});
@@ -303,8 +308,15 @@
         startProgress();
         return;
       }
-      state.usedCached.add(key);
+      const defaultLoader=event.loader,generation=state.generation,user=state.user;
       event.loader = async () => {
+        const authorized=!cached.requiresGamesAccess||await authorizeGameSnapshot(user,event.signal,state.originalFetch);
+        if(event.signal.aborted)return;
+        if(!authorized||generation!==state.generation||user!==currentUser()){
+          if(state.pages.get(key)===cached){state.pages.delete(key);state.bytes-=cached.bytes;}
+          await defaultLoader();return;
+        }
+        state.usedCached.add(key);
         event.newDocument = new DOMParser().parseFromString(cached.html, 'text/html');
       };
     });
