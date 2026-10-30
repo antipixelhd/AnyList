@@ -6,7 +6,7 @@ function context(method = 'GET', headers = {}, query = '', locals = {}) {
   return { params: { path: 'media/example' }, request: new Request(`http://localhost/api/proxy/media/example${query}`, { method, headers }), locals };
 }
 
-test('proxy forwards only the verified middleware token, never raw session cookies', async (t) => {
+test('proxy forwards only the middleware-selected token, never raw session cookies', async (t) => {
   const forwarded = [];
   t.mock.method(globalThis, 'fetch', async (_, options) => {
     forwarded.push(options.headers.get('Authorization'));

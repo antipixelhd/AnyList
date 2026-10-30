@@ -119,6 +119,16 @@ export const onRequest = defineMiddleware(async (context, next) => {
     return new Response('Cross-site form submissions are forbidden', { status: 403, headers: SECURITY_HEADERS });
   }
 
+  // API endpoints validate the forwarded session and their own permissions.
+  // A separate /auth/me preflight adds a round trip to every request without
+  // strengthening that check. Keep cookie-write CSRF protection above this.
+  if (token && pathname.startsWith('/api/proxy/')) {
+    context.locals.token = token;
+    const response = await next();
+    for (const [header, value] of Object.entries(SECURITY_HEADERS)) response.headers.set(header, value);
+    return response;
+  }
+
   // Skip auth for static assets and public routes
   const isStaticAsset = /\.(js|css|woff2?|ico|png|svg|webp|jpg|jpeg|webmanifest|json|xml)$/.test(pathname) || /^\/fonts\/[a-z-]+-OFL\.txt$/.test(pathname);
   const isAdminOnlyRoute = ADMIN_ONLY_ROUTES.includes(pathname);

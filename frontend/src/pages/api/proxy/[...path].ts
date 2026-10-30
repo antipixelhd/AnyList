@@ -23,7 +23,7 @@ async function handle({ params, request, locals }: Parameters<APIRoute>[0]): Pro
     if (auth) {
       forwardHeaders.set("Authorization", auth);
     } else {
-      // Video elements use query tokens or the session verified by middleware.
+      // Video elements use query tokens or the session selected by middleware (verified by the backend).
       const tokenQuery = new URL(request.url).searchParams.get("token");
       if (tokenQuery) {
         forwardHeaders.set("Authorization", `Bearer ${tokenQuery}`);
