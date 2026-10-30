@@ -1,5 +1,4 @@
 ---
-import ProfileListLoading from '../../../../components/ProfileListLoading.astro';
 import StatsHeadlineLoading from '../../../../components/StatsHeadlineLoading.astro';
 import ProfileStatisticsLoading from '../../../../components/ProfileStatisticsLoading.astro';
 import Tracker from '../../../../layouts/Tracker.astro';
@@ -67,7 +66,6 @@ const statuses=(overview?.statuses||[]).map(row=>({key:row.key,label:row.label,t
     </div>
   </section>
 </>:<div class="page-width"><p class="error-message" role="alert">{error}</p></div>}
-  <ProfileListLoading/>
   <ProfileStatisticsLoading username={Astro.params.username!} owner={data?.owner===true}/>
 </Tracker>
 <script>import '../../../../lib/profile-shell';</script>

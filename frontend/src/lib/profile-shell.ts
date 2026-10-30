@@ -1,3 +1,4 @@
+import {createMinimumDisplay} from './minimum-display';
 import {preparePanelStyles,panelLayoutFrame} from './panel-readiness';
 import {profilePanelKey,setPanelWaiting} from './profile-panel';
 import {bindPredictionIntent,predictionManifest} from './predictive-loading';
@@ -33,7 +34,7 @@ function setup(){
   const invalidate=()=>{generation++;for(const [key,panel] of panels)if(!panel.ready)panels.delete(key);};
   document.addEventListener('anylist:editor-state',invalidate,{signal});
   document.addEventListener('anylist:cache-invalidated',invalidate,{signal});
-  const loadingTemplates=new Map([...document.querySelectorAll<HTMLTemplateElement>('[data-profile-statistics-loading],[data-profile-list-loading]')].map(template=>[(template.dataset.profileStatisticsLoading||template.dataset.profileListLoading)!,template]));
+  const loadingTemplates=new Map([...document.querySelectorAll<HTMLTemplateElement>('[data-profile-statistics-loading]')].map(template=>[template.dataset.profileStatisticsLoading!,template]));
   const first=document.createElement('div');first.dataset.profileUrl=location.href;
   for(const child of [...host.childNodes])if(child!==header&&child!==nav)first.append(child);
   host.append(first);
@@ -74,9 +75,13 @@ function setup(){
     flights.set(key,pending);return pending;
   }
   function show(root:HTMLElement){shown.remove();shown=root;host!.append(root);}
+  let progressRunning=false;
+  const stopProgress=()=>{if(progressRunning){progressRunning=false;document.dispatchEvent(new Event('anylist:route-progress-end'));}};
+  signal.addEventListener('abort',stopProgress,{once:true});
   function select(key:string,url:string){
     if(key===wanted)return;
-    const leavingPreview=shown.matches('[data-profile-stats-preview],[data-profile-list-preview]');
+    stopProgress();
+    const leavingPreview=shown.matches('[data-profile-stats-preview]');
     if(leavingPreview){const source=panels.get(active);if(source){shown.remove();shown=source.root;host!.append(shown);}}
     document.dispatchEvent(new Event('anylist:profile-tab-changed'));
     if(!leavingPreview&&shown===panels.get(active)?.root){positions.set(active,scrollY);shown.dataset.profileUrl=location.href;shown.dispatchEvent(new Event('anylist:panel-inactive'));}
@@ -86,9 +91,13 @@ function setup(){
     nav.setAttribute('aria-busy','true');setPanelWaiting(source,true);
     const cached=panels.get(key);
     const loadingTemplate=loadingTemplates.get(key);
+    const skeletonTiming=createMinimumDisplay(signal);
+    let skeletonReady=Promise.resolve();
+    if(!cached?.ready&&!loadingTemplate){progressRunning=true;document.dispatchEvent(new Event('anylist:route-progress-start'));}
     if(loadingTemplate&&!cached?.ready){
       const preview=loadingTemplate.content.firstElementChild!.cloneNode(true) as HTMLElement;
-      show(preview);
+      show(preview);skeletonTiming.show();
+      skeletonReady=skeletonTiming.settle();
       window.scrollTo(0,positions.get(key)??Math.max(0,scrollY+nav.getBoundingClientRect().top));
     }
     const activate=async(panel:Panel)=>{
@@ -112,7 +121,9 @@ function setup(){
         await panel.preparing;
       }
       if(signal.aborted||wanted!==key)return;
-      setPanelWaiting(source,false);show(panel.root);active=key;document.body.toggleAttribute('data-list-landing',!key.startsWith('stats'));
+      if(loadingTemplate&&!cached?.ready)await skeletonReady;
+      if(signal.aborted||wanted!==key)return;
+      stopProgress();setPanelWaiting(source,false);show(panel.root);active=key;document.body.toggleAttribute('data-list-landing',!key.startsWith('stats'));
       history.replaceState(history.state,'',panel.root.dataset.profileUrl||panel.url);document.title=panel.title;
       nav.removeAttribute('aria-busy');update();
       window.scrollTo(0,positions.get(key)??scrollY);
@@ -120,7 +131,7 @@ function setup(){
     };
     const failed=()=>{
       if(signal.aborted||wanted!==key)return;
-      setPanelWaiting(source,false);if(shown!==source)show(source);window.scrollTo(0,positions.get(active)??scrollY);nav.removeAttribute('aria-busy');wanted=active;update();
+      stopProgress();setPanelWaiting(source,false);if(shown!==source)show(source);window.scrollTo(0,positions.get(active)??scrollY);nav.removeAttribute('aria-busy');wanted=active;update();
       const error=document.createElement('div');error.dataset.profileSwitchError='';error.className='page-width error-message';error.setAttribute('role','alert');
       const retry=document.createElement('button');retry.className='button-secondary';retry.textContent='Try again';
       retry.addEventListener('click',()=>select(key,url),{signal});error.append('Unable to load this section. ',retry);host!.append(error);

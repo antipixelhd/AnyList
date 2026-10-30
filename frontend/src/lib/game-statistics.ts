@@ -1,3 +1,4 @@
+import {createMinimumDisplay} from './minimum-display';
 import {initializeProfileSections} from './profile-section-selector';
 import {panelActive,panelUrl,setPanelUrl} from './profile-panel';
 import Chart from 'chart.js/auto';
@@ -45,7 +46,8 @@ export function initializeGameStatistics(root:HTMLElement,lifetime:AbortSignal) 
     showPageStart=push&&next.page!==selection.page;
     const content=node('.stats-overview-content');content.style.minHeight=`${content.getBoundingClientRect().height}px`;
     clearTimeout(timer);attempts=0;selection=next;response={...response,generation:null};
-    updateSelection();node('[data-stats-headline-loading]').hidden=selection.section!=='overview';node('.overview-results').hidden=true;node('.overview-pending').hidden=false;node('[data-game-stats-state]').textContent='Preparing statistics…';
+    skeletonTiming.reset();
+    updateSelection();node('[data-stats-headline-loading]').hidden=selection.section!=='overview';if(selection.section==='overview')skeletonTiming.show();node('.overview-results').hidden=true;node('.overview-pending').hidden=false;node('[data-game-stats-state]').textContent='Preparing statistics…';
     if(push)setPanelUrl(root,url(),true);
     void loader.load(selection);
   }
@@ -123,9 +125,17 @@ export function initializeGameStatistics(root:HTMLElement,lifetime:AbortSignal) 
     node('[data-game-groups-empty]').hidden=rows.length>0;node('[data-game-stats-page-label]').textContent=`Page ${selection.page}`;
     for(const direction of [-1,1]){const link=node<HTMLAnchorElement>(`[data-game-stats-page="${direction}"]`),disabled=direction<0?selection.page<=1:!response.has_more;link.setAttribute('aria-disabled',String(disabled));link.tabIndex=disabled?-1:0;const target=url();target.searchParams.set('page',String(selection.page+direction));if(disabled)link.removeAttribute('href');else link.href=target.toString();}
   }
-  function render(data:GameStatsResponse,initial=false) {
+  const skeletonTiming=createMinimumDisplay(signal);
+  function render(data:GameStatsResponse,initial=false){
+    skeletonTiming.cancel();
+    if(data.status==='ready'&&!initial&&!node('[data-stats-headline-loading]').hidden&&panelActive(root))skeletonTiming.finish(()=>renderNow(data,initial));
+    else renderNow(data,initial);
+  }
+  function renderNow(data:GameStatsResponse,initial=false) {
     response=data;updateSelection();node('[data-game-stats-error]').hidden=true;
-    const ready=data.status==='ready';node('[data-stats-headline-loading]').hidden=ready||selection.section!=='overview';node('.overview-results').hidden=!ready;node('.overview-pending').hidden=ready;
+    const ready=data.status==='ready';node('[data-stats-headline-loading]').hidden=ready||selection.section!=='overview';
+    if(!node('[data-stats-headline-loading]').hidden)skeletonTiming.show();else skeletonTiming.reset();
+    node('.overview-results').hidden=!ready;node('.overview-pending').hidden=ready;
     node('[data-game-stats-state]').textContent=data.status==='error'?'Statistics are unavailable. A retry is scheduled.':'Preparing statistics…';
     if(!ready){schedule(data.retry_after);return;}clearTimeout(timer);attempts=0;
     if(selection.section!=='overview'&&selection.page>Math.max(1,Math.ceil((data.total||0)/24))){navigate({...selection,page:Math.max(1,Math.ceil((data.total||0)/24))},false);setPanelUrl(root,url());return;}
@@ -136,7 +146,7 @@ export function initializeGameStatistics(root:HTMLElement,lifetime:AbortSignal) 
     if(!initial)reveal(node('.overview-results'));
     node('[data-game-stats-announcement]').textContent=`${gameStatsSections.find(([key])=>key===selection.section)![1]} statistics loaded${selection.section==='overview'?'':`, page ${selection.page}`}.`;
   }
-  const loader=createGameStatsLoader(root.dataset.username!,{render,busy:busy=>root.setAttribute('aria-busy',String(busy)),changed:()=>{if(!panelActive(root)){dirty=true;return;}navigate({...selection,page:1},false);setPanelUrl(root,url());},error:(message,denied)=>{const error=node('[data-game-stats-error]');error.textContent=message;error.hidden=false;if(denied){clearTimeout(timer);node('.overview-results').hidden=true;node('.overview-pending').hidden=true;}else schedule(10);}});
+  const loader=createGameStatsLoader(root.dataset.username!,{render,busy:busy=>root.setAttribute('aria-busy',String(busy)),changed:()=>{if(!panelActive(root)){dirty=true;return;}navigate({...selection,page:1},false);setPanelUrl(root,url());},error:(message,denied)=>{skeletonTiming.reset();const error=node('[data-game-stats-error]');error.textContent=message;error.hidden=false;if(denied){node('[data-stats-headline-loading]').hidden=true;clearTimeout(timer);node('.overview-results').hidden=true;node('.overview-pending').hidden=true;}else schedule(10);}});
   root.addEventListener('profile-section-change',event=>{const section=(event as CustomEvent).detail.value;if(gameStatsSections.some(([key])=>key===section))navigate({...selection,section,page:1});},{signal});
   root.addEventListener('click',event=>{
     const target=(event.target as Element).closest<HTMLElement>('[data-game-stats-sort],[data-game-stats-page],[data-game-stats-retry],[data-metric],[data-studio-scroll],[data-staff-scroll],[data-game-status]');if(!target)return;

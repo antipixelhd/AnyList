@@ -1,3 +1,4 @@
+import {createMinimumDisplay} from './minimum-display';
 import {initializeProfileSections} from './profile-section-selector';
 import {panelActive,panelUrl,setPanelUrl} from './profile-panel';
 import Chart from 'chart.js/auto';
@@ -190,7 +191,14 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
       return wrapper;
     }));
   }
-  function render(next: OverviewResponse, initial = false) {
+  const skeletonTiming=createMinimumDisplay(events.signal);
+  function render(next:OverviewResponse,initial=false){
+    skeletonTiming.cancel();
+    const loading=node('[data-stats-headline-loading]');
+    if(next.status==='ready'&&!initial&&!loading.hidden&&panelActive(root))skeletonTiming.finish(()=>renderNow(next,initial));
+    else renderNow(next,initial);
+  }
+  function renderNow(next: OverviewResponse, initial = false) {
     colors.clear();
     // Resolve the theme once before chart/table writes, avoiding repeated
     // synchronous layout reads during first paint and snapshot updates.
@@ -201,6 +209,7 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
     const ready = next.status === 'ready' && next.overview !== null;
     const wasPending = node('.overview-results').hidden;
     node('[data-stats-headline-loading]').hidden=ready||section!=='overview';
+    if(!node('[data-stats-headline-loading]').hidden)skeletonTiming.show();else skeletonTiming.reset();
     node('.overview-results').hidden = !ready;
     node('.overview-pending').hidden = ready;
     clearTimeout(timer);
@@ -246,9 +255,11 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
     },
     onBusy: busy => root.setAttribute('aria-busy', String(busy)),
     onError: (message, denied) => {
+      skeletonTiming.reset();
       const error = node('.overview-error'); error.textContent = message; error.hidden = false;
       error.setAttribute('data-motion-fade',''); reveal(error);
       if (denied) {
+        node('[data-stats-headline-loading]').hidden=true;
         clearTimeout(timer);
         response.overview = null;
         node('.overview-results').hidden = true;
@@ -287,6 +298,7 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
     syncLinks();
     const update = () => {
       node('[data-stats-headline-loading]').hidden=response.status==='ready'||section!=='overview';
+      if(!node('[data-stats-headline-loading]').hidden)skeletonTiming.show();else skeletonTiming.reset();
       root.querySelectorAll<HTMLElement>('[data-stats-panel]').forEach(panel => panel.hidden = panel.dataset.statsPanel !== section);
       if (response.overview) render(response, true);
     };
@@ -295,6 +307,7 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
   root.addEventListener('profile-section-change', event => selectSection((event as CustomEvent).detail.value, true), { signal: events.signal });
   root.addEventListener('statistics-url-change', syncLinks, { signal: events.signal });
   function navigate(next: MediaScope, push: boolean) {
+    skeletonTiming.cancel();
     tooltips.forEach(tooltip => tooltip.dismiss());
     pies.forEach(chart => { chart.tooltip?.setActiveElements([], {x:0,y:0}); chart.setActiveElements([]); chart.draw(); });
     media = next;

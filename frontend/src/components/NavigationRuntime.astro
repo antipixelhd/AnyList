@@ -22,6 +22,7 @@
     usedCached: Set<string>;
     generation?: number;
     timer?: number;
+    finishTimer?: number;
     initialized?: boolean;
     alignListLanding?: boolean;
     originalFetch?: typeof window.fetch;
@@ -200,6 +201,8 @@
   }
 
   function startProgress() {
+    window.clearTimeout(state.finishTimer);
+    document.querySelector('[data-route-progress]')?.classList.remove('finishing');
     window.clearTimeout(state.timer);
     state.timer = window.setTimeout(() => {
       document.querySelector('[data-route-progress]')?.classList.add('visible');
@@ -210,11 +213,14 @@
     const bar = document.querySelector<HTMLElement>('[data-route-progress]');
     if (!bar) return;
     bar.classList.add('finishing');
-    window.setTimeout(() => bar.classList.remove('visible','finishing'), 170);
+    window.clearTimeout(state.finishTimer);
+    state.finishTimer=window.setTimeout(() => bar.classList.remove('visible','finishing'), 170);
   }
 
   if (!state.initialized) {
     state.initialized = true;
+    document.addEventListener('anylist:route-progress-start',startProgress);
+    document.addEventListener('anylist:route-progress-end',finishProgress);
     document.addEventListener('anylist:cache-invalidated', () => {
       try { clearStoredBrowseCache(window.sessionStorage); } catch { /* Storage is optional. */ }
     });

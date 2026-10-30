@@ -1,5 +1,4 @@
 ---
-import ProfileListLoading from '../../../components/ProfileListLoading.astro';
 import ProfileStatisticsLoading from '../../../components/ProfileStatisticsLoading.astro';
 import Tracker from '../../../layouts/Tracker.astro';
 import ProfileHeader from '../../../components/ProfileHeader.astro';
@@ -54,7 +53,6 @@ const showAchievements=preferences.show_game_achievements;
       (()=>{if(performance.getEntriesByType('navigation')[0]?.type!=='navigate'||history.state)return;const tabs=document.querySelector('.profile-tabs');if(tabs)window.scrollTo(0,window.scrollY+tabs.getBoundingClientRect().top);})();
     </script>
   </>:<div class="page-width"><p class="error-message" role="alert">{error}</p></div>}
-  <ProfileListLoading/>
   <ProfileStatisticsLoading username={Astro.params.username!} owner={data?.owner===true||data?.profile?.owner===true}/>
 </Tracker>
 <script>import '../../../lib/profile-shell';</script>
