@@ -9,6 +9,7 @@ export function rankedGenres<T extends MediaGroup>(rows: T[], sort: GenreSort) {
   return [...rows].sort((a, b) => value(b) - value(a) || b.titles - a.titles || a.label.localeCompare(b.label)).slice(0, 18);
 }
 export function genreBrowseHref(row: GenreGroup, media: MediaScope) {
+  if(row.href)return row.href;
   const type = media === 'series' ? 'series' : 'movie';
   return `/browse?${new URLSearchParams({ type, genres: row.browse_filters[type] })}`;
 }

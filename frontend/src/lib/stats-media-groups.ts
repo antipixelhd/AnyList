@@ -54,7 +54,7 @@ export function mountMediaGroups<T extends MediaGroup>(root: HTMLElement, option
       let card = existing.get(row.key);
       if (!card || card.dataset[`${prefix}Signature`] !== JSON.stringify(row)) card = createCard(row);
       const link = query<HTMLAnchorElement>(card, `[data-${prefix}-link]`); link.href = options.href(row, next!);
-      const rank = query(card, `[data-${prefix}-rank]`); rank.textContent = String(index + 1); rank.setAttribute('aria-label', `Rank ${index + 1}`);
+      const rank = query(card, `[data-${prefix}-rank]`); rank.textContent = String(index+1+Number(root.dataset.statsRankOffset||0)); rank.setAttribute('aria-label', `Rank ${index + 1}`);
       return card;
     });
     for (const [card, controller] of carousels) if (!cards.includes(card)) { controller.stop(); carousels.delete(card); }
@@ -62,7 +62,7 @@ export function mountMediaGroups<T extends MediaGroup>(root: HTMLElement, option
     cards.forEach(card => {
       if (!carousels.has(card)) carousels.set(card, carousel(query(card, '[data-genre-track]'), reduced));
       else carousels.get(card)!.bounds();
-      if (animate && !reduced.matches && root.dataset.section === section) {
+      if (animate && !reduced.matches && (root.dataset.statsPanelSection||root.dataset.section)===section) {
         const old = before.get(card), now = card.getBoundingClientRect();
         const frames = old ? [{ transform: `translate(${old.left - now.left}px,${old.top - now.top}px)` }, { transform: 'translate(0,0)' }] : [{ opacity: 0 }, { opacity: 1 }];
         const animation = card.animate(frames, { duration: 600, easing: 'cubic-bezier(.22,.61,.36,1)' }); animations.set(card, animation);

@@ -1,3 +1,8 @@
+import {gameHeadlines,signedNumber,type GameOverview,type GameStatsResponse} from './game-statistics-data';
+import {statisticsSection,statisticsPanel,statisticsSections,type StatisticsDomain,type UnifiedStatistics} from './unified-statistics-data';
+import {createStatisticsReader,type StatisticsSelection} from './unified-statistics-request';
+import {statisticValue} from './statistic-value';
+import {bindPredictionIntent,predictionAllowed} from './predictive-loading';
 import {createMinimumDisplay} from './minimum-display';
 import {initializeProfileSections} from './profile-section-selector';
 import {panelActive,panelUrl,setPanelUrl} from './profile-panel';
@@ -5,7 +10,7 @@ import Chart from 'chart.js/auto';
 import type { ChartOptions } from 'chart.js';
 import type { ChartMetric, MediaScope, MetricGroup, Overview, OverviewResponse } from './stats-overview-data';
 import { barChartRows, displayNumber, distributionRows, headlineValues, knownRows, metricLabels, metricValue, watchYearRows } from './stats-overview-data';
-import { createOverviewLoader, overviewPollDelay } from './stats-overview-request';
+import { overviewPollDelay } from './stats-overview-request';
 import { refreshStatistics } from './statistics-refresh-request';
 import { mountGenres, mountStudios } from './stats-genres';
 import { genreSort } from './stats-genres-data';
@@ -27,10 +32,13 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
   mounted.add(root);
   const node = <T extends HTMLElement = HTMLElement>(selector: string) => root.querySelector<T>(selector)!;
   let response: OverviewResponse = JSON.parse(root.dataset.initial || '{}');
+  let domain:StatisticsDomain=root.dataset.domain==='game'?'game':'screen';
+  let page=Number(root.dataset.page||1);
   let media: MediaScope = root.dataset.media as MediaScope;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let stopped = false;
   let refreshing = false;
+  let scrollPage=false;
   const events = new AbortController();
   const switchPanel = createContentTransition(node('.overview-results'), events.signal);
   initializeScrollMotion(root, events.signal, '.stats-genre-card,.overview-chart,.overview-distribution', 'stats-scroll-reveal', {animateInitial:false, downwardOnly:true, once:true});
@@ -46,7 +54,9 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
   const actors = mountActors(root);
   const studios = mountStudios(root);
   const staff = mountStaff(root);
-  let section = root.dataset.section === 'genres' || root.dataset.section === 'actors' || root.dataset.section === 'studios' || root.dataset.section === 'staff' ? root.dataset.section : 'overview';
+  let section=statisticsSection(domain,root.dataset.section||'overview');
+  const rawGame=()=> (response as UnifiedStatistics).game;
+  const currentSelection=():StatisticsSelection=>({domain,media,section,sort:genreSort(root.dataset[statisticsPanel(section)==='actors'?'actorSort':statisticsPanel(section)==='staff'?'staffSort':statisticsPanel(section)==='studios'?'studioSort':'genreSort']),page,generation:rawGame()?.generation});
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
   const chartTextStyle=getComputedStyle(node('.overview-metrics button'));
   const chartFont = {size:parseFloat(chartTextStyle.fontSize),
@@ -78,13 +88,13 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
     return fixed[key] || palette[([...key].reduce((sum, letter) => sum * 31 + letter.charCodeAt(0), 0) >>> 0) % palette.length];
   };
   function dataRows(data: Overview, key: typeof chartKeys[number]): MetricGroup[] {
-    const rows = knownRows(data[key]);
-    return key === 'watch_years' ? watchYearRows(rows) : key === 'scores' || key === 'episode_counts' ? barChartRows(rows) : rows;
+    const rows=domain==='game'?data[key]:knownRows(data[key]);
+    return key === 'watch_years'&&domain!=='game' ? watchYearRows(rows) : key === 'scores' || key === 'episode_counts' ? barChartRows(rows) : rows;
   }
   function table(key: string, rows: MetricGroup[]) {
     node(`[data-chart-table="${key}"]`).replaceChildren(...rows.map(row => {
       const tr = document.createElement('tr');
-      [row.label, displayNumber(row.titles), displayNumber(row.minutes / 60, 1), ...(key === 'scores' ? [] : [displayNumber(row.mean_score, 2)])].forEach((value, index) => {
+      [row.label, displayNumber(row.titles), ...(domain==='game'&&key==='watch_years'?[]:[displayNumber(row.time_known===false?null:row.minutes/60,1)]), ...(key === 'scores' ? [] : [displayNumber(row.mean_score, 2)])].forEach((value, index) => {
         const cell = document.createElement(index ? 'td' : 'th');
         if (cell instanceof HTMLTableCellElement && !index) cell.scope = 'row';
         cell.textContent = value;
@@ -94,11 +104,12 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
     }));
   }
   function drawMetric(data: Overview, key: typeof chartKeys[number], initial = false) {
-    const rows = dataRows(data, key), metric = metrics.get(key)!;
+    const rows=dataRows(data,key);let metric=metrics.get(key)!;
+    if(domain==='game'&&key==='watch_years'&&metric==='hours'){metric='titles';metrics.set(key,metric);}
     const plotted = rows;
     const canvas = node<HTMLCanvasElement>(`[data-overview-chart="${key}"]`);
     canvas.parentElement!.style.setProperty('--chart-min-width', `${chartMinimumWidth(rows.length)}px`);
-    const tooltip = tooltips.get(key) || createMetricTooltip(canvas, key, events.signal);
+    const tooltip = tooltips.get(key) || createMetricTooltip(canvas,key,events.signal,(_key,row)=>({title:row.detail||(domain==='screen'&&key==='episode_counts'?`${row.label} episodes`:row.label),values:[{metric:'titles',label:domain==='game'?'Games':'Titles',value:displayNumber(row.titles)},...(domain==='game'&&key==='watch_years'?[]:[{metric:'hours',label:'Hours',value:displayNumber(row.time_known===false?null:row.minutes/60,1)}]),...(key==='scores'?[]:[{metric:'mean_score',label:'Mean score',value:displayNumber(row.mean_score,2)}])]}));
     tooltips.set(key, tooltip); tooltip.update(plotted, metric);
     const isLine = key.includes('years');
     const cyan = color('--stats-cyan'), axisText = color('--text-data'), bright = color('--bright');
@@ -106,7 +117,7 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
     const empty = rows.every(row => row.titles === 0 || (metric === 'mean_score' && row.mean_score === null));
     const message = node(`[data-chart-empty="${key}"]`);
     message.hidden = !empty;
-    message.textContent = metric === 'mean_score' ? 'No rated watched titles.' : 'No watched titles.';
+    message.textContent=domain==='game'?(metric==='mean_score'?'No rated games.':'No played games.'):(metric==='mean_score'?'No rated watched titles.':'No watched titles.');
     const highest=plotted.reduce((maximum,row)=>Math.max(maximum,metricValue(row,metric) ?? 0),0);
     canvas.setAttribute('aria-label', `${node(`[data-chart-section="${key}"] h3`).textContent}: ${metricLabels[metric]}`);
     const options: ChartOptions<'bar' | 'line'> = {
@@ -192,13 +203,19 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
     }));
   }
   const skeletonTiming=createMinimumDisplay(events.signal);
+  function matchesSelection(next:OverviewResponse){
+    const game=(next as UnifiedStatistics).game;
+    return domain==='game'?Boolean(game&&game.section===section&&game.page===page&&(next as UnifiedStatistics).selectionSort===currentSelection().sort):!game&&(!next.overview||next.overview.media_type===media);
+  }
   function render(next:OverviewResponse,initial=false){
+    if(!matchesSelection(next))return;
     skeletonTiming.cancel();
     const loading=node('[data-stats-headline-loading]');
     if(next.status==='ready'&&!initial&&!loading.hidden&&panelActive(root))skeletonTiming.finish(()=>renderNow(next,initial));
     else renderNow(next,initial);
   }
   function renderNow(next: OverviewResponse, initial = false) {
+    if(!matchesSelection(next))return;
     colors.clear();
     // Resolve the theme once before chart/table writes, avoiding repeated
     // synchronous layout reads during first paint and snapshot updates.
@@ -213,23 +230,23 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
     node('.overview-results').hidden = !ready;
     node('.overview-pending').hidden = ready;
     clearTimeout(timer);
-    const pollDelay = overviewPollDelay(next);
-    if (pollDelay !== null) timer = setTimeout(() => { if (!stopped&&panelActive(root)) void loader.load(media); }, pollDelay);
+    const pollDelay=domain==='game'&&next.status!=='ready'?(rawGame()?.retry_after||3)*1000:overviewPollDelay(next);
+    if (pollDelay !== null) timer = setTimeout(() => { if (!stopped&&panelActive(root)) void loader.load(media,true); }, pollDelay);
     if (!ready) {
       node('[data-overview-state]').textContent = next.status === 'error' ? 'Statistics are unavailable. A retry is scheduled.' : 'Preparing statistics…';
       return;
     }
     const data = next.overview!;
-    root.dataset.media = data.media_type;
-    headlineValues(data).forEach((metric, index) => {
+    if(domain==='screen')root.dataset.media=data.media_type;
+    updateDomainControls();
+    (domain==='game'?gameHeadlines(section==='overview'?rawGame()?.data as GameOverview:null):headlineValues(data)).forEach((metric, index) => {
       const value = node(`[data-headline-value="${index}"]`);
-      const changed = value.textContent !== metric.value;
-      value.textContent = metric.value;
-      if (changed && !initial && section === 'overview') { value.setAttribute('data-motion-fade',''); reveal(value); }
+      statisticValue(value,metric.value,events.signal,!initial&&section==='overview');
       value.parentElement!.title = metric.detail;
       node(`[data-headline-label="${index}"]`).textContent = metric.label;
     });
-    node('[data-chart-section="episode_counts"]').hidden = data.media_type === 'movie';
+    node('[data-chart-section="episode_counts"]').hidden=domain==='screen'&&media==='movie';
+    if(domain==='game'&&section==='overview')paintGameExtra(rawGame()?.data as GameOverview);
     if(!panelActive(root)&&!initial)return;
     if (section === 'overview') {
       chartKeys.forEach(key => { if (!(key === 'episode_counts' && data.media_type === 'movie')) drawMetric(data, key, initial); });
@@ -239,21 +256,28 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
     // section being viewed; switching sections uses the current snapshot.
     if (section === 'genres') genres.render(data, !initial);
     if (section === 'actors') actors.render(data, !initial);
-    if (section === 'studios') studios.render(data, !initial);
+    if(statisticsPanel(section)==='studios')studios.render(data,!initial);
     if (section === 'staff') staff.render(data, !initial);
     if (wasPending && !initial) reveal(node('.overview-results'));
-    syncLinks();
-    node('[data-overview-announcement]').textContent = `${data.media_type === 'all' ? 'All media' : data.media_type === 'movie' ? 'Movie' : 'Series'} statistics loaded.`;
+    syncLinks();updateDomainControls();
+    if(scrollPage){scrollPage=false;node('[data-stats-heading]').scrollIntoView({block:'start',behavior:reducedMotion.matches?'instant':'smooth'});}
+    node('[data-overview-announcement]').textContent = `${domain==='game'?'Games':data.media_type === 'all' ? 'All media' : data.media_type === 'movie' ? 'Movie' : 'Series'} statistics loaded.`;
   }
-  const loader = createOverviewLoader(root.dataset.username!, {
-    render: next => {
-      const changedScope = next.overview && next.overview.media_type !== response.overview?.media_type;
-      if (panelActive(root)&&changedScope && section !== 'overview') void switchPanel(() => {
-        if (next.overview?.media_type === media) render(next, true);
-      });
-      else render(next);
+  let progressRunning=false;
+  function statisticsBusy(busy:boolean,quiet=false){
+    root.setAttribute('aria-busy',String(busy));
+    const progress=busy&&!quiet&&panelActive(root);
+    if(progress!==progressRunning){progressRunning=progress;document.dispatchEvent(new Event(progress?'anylist:route-progress-start':'anylist:route-progress-end'));}
+  }
+  events.signal.addEventListener('abort',()=>statisticsBusy(false,true),{once:true});
+  const loader=createStatisticsReader(root.dataset.username!,events.signal,currentSelection,{
+    render:next=>{
+      const game=next.game;
+      if(domain==='game'&&game?.status==='ready'&&section!=='overview'&&page>Math.max(1,Math.ceil((game.total||0)/24))){page=Math.max(1,Math.ceil((game.total||0)/24));syncUrl(false);void loader.load();return;}
+      render(next);scheduleSibling();
     },
-    onBusy: busy => root.setAttribute('aria-busy', String(busy)),
+    changed:()=>{page=1;syncUrl(false);void loader.load(media);},
+    onBusy:statisticsBusy,
     onError: (message, denied) => {
       skeletonTiming.reset();
       const error = node('.overview-error'); error.textContent = message; error.hidden = false;
@@ -286,23 +310,28 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
     });
   }
   function selectSection(next: string, push: boolean,animate=true) {
+    skeletonTiming.cancel();
+    scrollPage=false;
+    const previousSection=section;
     tooltips.forEach(tooltip => tooltip.dismiss());
     pies.forEach(chart => { chart.tooltip?.setActiveElements([], {x:0,y:0}); chart.setActiveElements([]); chart.draw(); });
     const previous = section;
-    section = next === 'genres' || next === 'actors' || next === 'studios' || next === 'staff' ? next : 'overview'; root.dataset.section = section;
-    node('[data-stats-heading]').textContent = section === 'staff' ? 'Staff' : section === 'studios' ? 'Studios' : section === 'actors' ? 'Actors' : section === 'genres' ? 'Genres' : 'Overview';
+    section=statisticsSection(domain,next);root.dataset.section=section;root.dataset.statsPanelSection=statisticsPanel(section);page=1;
+    node('[data-stats-heading]').textContent = section==='developers'?'Developers':section==='publishers'?'Publishers':section === 'staff' ? 'Staff' : section === 'studios' ? 'Studios' : section === 'actors' ? 'Actors' : section === 'genres' ? 'Genres' : 'Overview';
     root.querySelectorAll<HTMLButtonElement>('.profile-section-selector__option').forEach(button => {
       const selected = button.dataset.section === section; button.classList.toggle('is-selected', selected); button.setAttribute('aria-pressed', String(selected));
     });
-    if (push) { const url = new URL(panelUrl(root)); url.searchParams.set('section', section); setPanelUrl(root,url,true); }
+    if(push)syncUrl(true);
+    if(domain==='game'&&previousSection!==section){updateDomainControls();void loader.load(media);scheduleSibling();return;}
     syncLinks();
     const update = () => {
       node('[data-stats-headline-loading]').hidden=response.status==='ready'||section!=='overview';
       if(!node('[data-stats-headline-loading]').hidden)skeletonTiming.show();else skeletonTiming.reset();
-      root.querySelectorAll<HTMLElement>('[data-stats-panel]').forEach(panel => panel.hidden = panel.dataset.statsPanel !== section);
+      root.querySelectorAll<HTMLElement>('[data-stats-panel]').forEach(panel => panel.hidden=panel.dataset.statsPanel!==statisticsPanel(section));
       if (response.overview) render(response, true);
     };
-    if (animate&&previous !== section) void switchPanel(update); else update();
+    if(animate&&previous!==section)void switchPanel(update);else update();
+    updateDomainControls();scheduleSibling();
   }
   root.addEventListener('anylist:statistics-domain-section',event=>{const next=(event as CustomEvent<{section:string}>).detail.section;if(next!==section)selectSection(next,false,false);},{signal:events.signal});
   root.addEventListener('profile-section-change', event => selectSection((event as CustomEvent).detail.value, true), { signal: events.signal });
@@ -311,9 +340,9 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
     skeletonTiming.cancel();
     tooltips.forEach(tooltip => tooltip.dismiss());
     pies.forEach(chart => { chart.tooltip?.setActiveElements([], {x:0,y:0}); chart.setActiveElements([]); chart.draw(); });
-    media = next;
+    scrollPage=false;media=next;
     clearTimeout(timer);
-    if (push) { const url = new URL(panelUrl(root)); url.searchParams.set('media', media); setPanelUrl(root,url,true); }
+    if(push)syncUrl(true);
     root.querySelectorAll<HTMLElement>('[data-overview-media]').forEach(link => { if (link.dataset.overviewMedia === media) link.setAttribute('aria-current', 'page'); else link.removeAttribute('aria-current'); });
     void loader.load(media);
   }
@@ -335,6 +364,7 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
     }
   }, { signal: events.signal });
   async function refreshMissing() {
+    if(domain==='game'){loader.clear();await loader.load(media);return;}
     if (!response.owner) { await loader.load(media); return; }
     if (refreshing) return;
     refreshing = true;
@@ -342,7 +372,7 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
     button.disabled = true;
     button.textContent = 'Refreshing…';
     try {
-      await refreshStatistics(events.signal);
+      loader.clear();await refreshStatistics(events.signal);
       if (!stopped) await loader.load(media);
     } catch (error) {
       if (!stopped) {
@@ -355,6 +385,71 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
       button.textContent = 'Refresh statistics';
     }
   }
+  let siblingTimer:ReturnType<typeof setTimeout>|undefined;
+  function scheduleSibling(){
+    clearTimeout(siblingTimer);
+    siblingTimer=setTimeout(()=>{
+      if(events.signal.aborted||!panelActive(root)||!predictionAllowed()||!node('.stats-domain-navigation')?.querySelector('a[href*="/games"]'))return;
+      const other:StatisticsDomain=domain==='screen'?'game':'screen';
+      void loader.prefetch({...currentSelection(),domain:other,section:statisticsSection(other,section),page:1,generation:null});
+    },250);
+  }
+  events.signal.addEventListener('abort',()=>clearTimeout(siblingTimer),{once:true});
+  function syncUrl(push:boolean){
+    const url=new URL(panelUrl(root));url.pathname=`/user/${encodeURIComponent(root.dataset.username!)}/stats${domain==='game'?'/games':''}`;
+    url.searchParams.set('section',section);
+    if(domain==='screen'){url.searchParams.set('media',media);url.searchParams.delete('page');}
+    else {url.searchParams.delete('media');url.searchParams.set('sort',currentSelection().sort);if(page>1)url.searchParams.set('page',String(page));else url.searchParams.delete('page');}
+    setPanelUrl(root,url,push);
+  }
+  function updateDomainControls(){
+    root.dataset.domain=domain;root.dataset.section=section;root.dataset.statsPanelSection=statisticsPanel(section);root.dataset.statsRankOffset=String(domain==='game'?(page-1)*24:0);
+    root.querySelectorAll<HTMLButtonElement>('.profile-section-selector [data-section]').forEach(button=>{button.hidden=!statisticsSections[domain].includes(button.dataset.section!);const selected=button.dataset.section===section;button.classList.toggle('is-selected',selected);button.setAttribute('aria-pressed',String(selected));});
+    node('[data-stats-heading]').textContent=node<HTMLButtonElement>(`.profile-section-selector [data-section="${section}"]`).textContent||'Overview';
+    node('[data-screen-media]').hidden=domain==='game';
+    root.querySelectorAll<HTMLElement>('[data-chart-section="watch_years"] thead th').forEach(th=>{if(th.textContent==='Hours')th.hidden=domain==='game';});
+    root.querySelectorAll<HTMLElement>('[data-overview-media]').forEach(link=>{if(link.dataset.overviewMedia===media)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');});
+    const titles:{[key:string]:string}={scores:'Scores',episode_counts:domain==='game'?'Recorded time':'Episode count',release_years:'Release year',watch_years:domain==='game'?'Completion year':'Watch year'};
+    for(const key of chartKeys){node(`[data-chart-section="${key}"] h3`).textContent=titles[key];root.querySelectorAll<HTMLButtonElement>(`[data-chart="${key}"]`).forEach(button=>{if(button.dataset.metric==='titles')button.textContent=domain==='game'?'Games':'Titles';button.hidden=domain==='game'&&key==='watch_years'&&button.dataset.metric==='hours';});}
+    for(const id of ['formats','countries'])node(`[data-distribution="${id}"]`).hidden=domain==='game';
+    node('[data-game-statistics-extra]').hidden=domain!=='game';
+    node('[data-statistics-pages]').hidden=domain!=='game'||section==='overview';
+    const raw=rawGame();node('[data-statistics-page-label]').textContent=`Page ${page}`;
+    for(const step of [-1,1]){const link=node<HTMLAnchorElement>(`[data-statistics-page="${step}"]`),disabled=step<0?page<=1:!raw?.has_more;link.setAttribute('aria-disabled',String(disabled));const url=new URL(panelUrl(root));url.searchParams.set('page',String(page+step));if(disabled)link.removeAttribute('href');else link.href=url.href;}
+    root.querySelectorAll<HTMLAnchorElement>('.stats-domain-navigation a').forEach(link=>{const game=link.getAttribute('href')?.includes('/games'),selected=game?domain==='game':domain==='screen';if(selected)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');});
+    root.querySelectorAll<HTMLElement>('.stats-genres-toolbar button,.stats-actors-toolbar button,.stats-genre-summary dt,.stats-actor-summary dt').forEach(label=>{if(label.textContent==='Time Watched'||label.textContent==='Time Played')label.textContent=domain==='game'?'Time Played':'Time Watched';});
+    root.querySelectorAll<HTMLElement>('[data-stats-panel]').forEach(panel=>panel.hidden=panel.dataset.statsPanel!==statisticsPanel(section));
+  }
+  function paintGameExtra(data:GameOverview){
+    node('[data-game-planned-count]').textContent=displayNumber(data.planned.games);node('[data-game-planned-hours]').textContent=data.planned.estimated_seconds==null?'—':`${data.planned.known_estimate_games<data.planned.games?'≥ ':''}${displayNumber(data.planned.estimated_seconds/3600,1)}`;
+    node('[data-game-replays]').textContent=data.totals.replay_games?displayNumber(data.totals.replays):'—';const undated=data.coverage.undated_completions||0;node('[data-game-undated]').hidden=!undated;node('[data-game-undated]').textContent=`${undated} completions have no date.`;
+    node('[data-game-comparisons]').replaceChildren(...data.comparisons.map(row=>{const tr=document.createElement('tr');[row.label,displayNumber(row.games),signedNumber(row.mean_difference_seconds,3600),row.mean_relative_percent==null?'—':`${signedNumber(row.mean_relative_percent)}%`].forEach((text,index)=>{const cell=document.createElement(index?'td':'th');if(!index)cell.scope='row';cell.textContent=text;tr.append(cell);});return tr;}));
+  }
+  function selectDomain(next:StatisticsDomain,push=true){
+    if(next===domain)return;
+    scrollPage=false;skeletonTiming.cancel();domain=next;section=statisticsSection(domain,section);page=1;syncUrl(push);updateDomainControls();
+    node('[data-stats-heading]').textContent=node<HTMLButtonElement>(`.profile-section-selector [data-section="${section}"]`).textContent||'Overview';
+    void loader.load(media);scheduleSibling();
+  }
+  root.addEventListener('click',event=>{
+    const link=(event.target as Element).closest<HTMLAnchorElement>('.stats-domain-navigation a[href]');
+    if(link){if(event instanceof MouseEvent&&(event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey))return;event.preventDefault();event.stopImmediatePropagation();selectDomain(link.getAttribute('href')?.includes('/games')?'game':'screen');return;}
+    const pageLink=(event.target as Element).closest<HTMLAnchorElement>('[data-statistics-page]');
+    if(pageLink){event.preventDefault();event.stopImmediatePropagation();if(pageLink.getAttribute('aria-disabled')==='true')return;scrollPage=true;skeletonTiming.cancel();page+=Number(pageLink.dataset.statisticsPage);syncUrl(true);void loader.load(media);return;}
+    const sortButton=(event.target as Element).closest<HTMLButtonElement>('button[data-genre-sort],button[data-actor-sort],button[data-studio-sort],button[data-staff-sort]');
+    if(domain==='game'&&sortButton){scrollPage=false;event.preventDefault();event.stopImmediatePropagation();for(const prefix of ['genre','actor','studio','staff'])if(sortButton.dataset[prefix+'Sort'])root.dataset[prefix+'Sort']=sortButton.dataset[prefix+'Sort'];page=1;skeletonTiming.cancel();syncUrl(true);void loader.load(media);}
+  },{capture:true,signal:events.signal});
+  function openUrl(url:URL){
+    scrollPage=false;skeletonTiming.cancel();domain=url.pathname.endsWith('/games')?'game':'screen';
+    section=statisticsSection(domain,url.searchParams.get('section')||'overview');
+    page=Math.max(1,Number(url.searchParams.get('page')||1)||1);
+    const value=url.searchParams.get('media');if(domain==='screen')media=value==='movie'||value==='series'?value:'all';
+    for(const [prefix,param] of [['genre','sort'],['actor','actor_sort'],['studio','studio_sort'],['staff','staff_sort']])root.dataset[prefix+'Sort']=genreSort(url.searchParams.get(domain==='game'?'sort':param));
+    root.dataset.actorArtwork=actorArtwork(url.searchParams.get('artwork'));
+    syncUrl(false);syncLinks();updateDomainControls();void loader.load(media);scheduleSibling();
+  }
+  root.addEventListener('anylist:statistics-open',event=>openUrl(new URL((event as CustomEvent<{url:string}>).detail.url)),{signal:events.signal});
+  bindPredictionIntent(root,events.signal,link=>{if(link.closest('.stats-domain-navigation'))void loader.prefetch({...currentSelection(),domain:domain==='screen'?'game':'screen',section:statisticsSection(domain==='screen'?'game':'screen',section),page:1,generation:null});});
   function highlightLegend(event: Event) {
     const target = (event.target as HTMLElement).closest<HTMLElement>('[data-pie]');
     if (!target || !response.overview) return;
@@ -368,15 +463,7 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
   function clearHighlight() { pies.forEach(chart => { chart.setActiveElements([]); chart.render(); }); }
   root.addEventListener('focusout', clearHighlight, { signal: events.signal });
   root.addEventListener('pointerout', clearHighlight, { signal: events.signal });
-  window.addEventListener('popstate', () => {
-    if(!panelActive(root))return;
-    const params = new URL(panelUrl(root)).searchParams, value = params.get('media');
-    root.dataset.genreSort = genreSort(params.get('sort')); root.dataset.actorSort = genreSort(params.get('actor_sort'));
-    root.dataset.studioSort = genreSort(params.get('studio_sort'));
-    root.dataset.staffSort = genreSort(params.get('staff_sort'));
-    root.dataset.actorArtwork = actorArtwork(params.get('artwork')); selectSection(params.get('section') || 'overview', false);
-    navigate(value === 'movie' || value === 'series' ? value : 'all', false);
-  }, { signal: events.signal });
+  window.addEventListener('popstate',()=>{if(panelActive(root))openUrl(new URL(location.href));},{signal:events.signal});
   reducedMotion.addEventListener('change', () => { cancelUiMotion(root); if (response.overview) render(response, true); }, { signal: events.signal });
   const observer = new MutationObserver(() => { if (panelActive(root)&&response.overview) render(response, true); });
   observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
@@ -385,9 +472,11 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
   observer.observe(document.body, { attributes: true, attributeFilter: ['style'] });
   let dirty=false;
   root.closest('[data-profile-url]')?.addEventListener('anylist:panel-inactive',()=>clearTimeout(timer),{signal:events.signal});
-  const refresh=()=>{if(panelActive(root)){dirty=false;void loader.load(media);}else dirty=true;};
+  const refresh=()=>{loader.clear();skeletonTiming.cancel();if(panelActive(root)){dirty=false;void loader.load(media);}else dirty=true;};
   root.closest('[data-profile-url]')?.addEventListener('anylist:panel-active',()=>{if(dirty||response.status!=='ready')refresh();else if(response.overview)render(response,true);},{signal:events.signal});
   document.addEventListener('anylist:editor-committed', () => { if (response.owner) refresh(); }, {signal:events.signal});
   lifetime.addEventListener('abort', () => { stopped = true; clearTimeout(timer); loader.stop(); events.abort(); genres.stop(); actors.stop(); studios.stop(); staff.stop(); observer.disconnect(); charts.forEach(chart => chart.destroy()); pies.forEach(chart => chart.destroy()); }, { once: true, signal: events.signal });
-  render(response, true);
+  loader.seed(currentSelection(),response as UnifiedStatistics);
+  document.addEventListener('anylist:cache-invalidated',refresh,{signal:events.signal});
+  render(response,true);updateDomainControls();scheduleSibling();
 }

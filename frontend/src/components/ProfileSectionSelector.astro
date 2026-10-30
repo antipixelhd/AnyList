@@ -6,7 +6,7 @@
  * section without navigating. The event detail is `{ value: string }`.
  */
 interface Props {
-  options: Array<{ id: string; label: string }>;
+  options: Array<{ id: string; label: string;hidden?:boolean }>;
   active: string;
   heading?: string;
   ariaLabel?: string;
@@ -30,7 +30,7 @@ const {
 >
   {heading && <div class="profile-section-selector__heading">{heading}</div>}
   <div class="profile-section-selector__options">
-    {options.map(({ id, label }) => (
+    {options.map(({ id, label,hidden }) => (
       <button
         class:list={[
           "profile-section-selector__option",
@@ -38,6 +38,7 @@ const {
         ]}
         type="button"
         data-section={id}
+        hidden={hidden}
         aria-pressed={id === active ? "true" : "false"}
       >
         {label}

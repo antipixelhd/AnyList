@@ -100,14 +100,14 @@ export function mountPeople(root: HTMLElement, section: 'actors' | 'staff') {
     const before = new Map(animate ? [...grid.children].map(card => [card, card.getBoundingClientRect()] as const) : []);
     animations.forEach(a => a.cancel()); animations.clear();
     const existing = new Map([...grid.querySelectorAll<HTMLElement>(`[data-${prefix}-key]`)].map(card => [card.dataset[`${prefix}Key`], card]));
-    const rows = section === 'staff' ? rankedStaff(next?.staff || [], genreSort(root.dataset.staffSort)) : rankedActors(next?.actors || [], genreSort(root.dataset.actorSort));
+    const rows=root.dataset.domain==='game'?(section==='staff'?next?.staff||[]:next?.actors||[]):section === 'staff' ? rankedStaff(next?.staff || [], genreSort(root.dataset.staffSort)) : rankedActors(next?.actors || [], genreSort(root.dataset.actorSort));
     const available = hasCharacterImages(next?.actors || []);
     const mode = actorArtwork(root.dataset[`${prefix}Artwork`]);
     const cards = rows.map((row, index) => {
       let card = existing.get(row.key);
       if (!card || card.dataset[`${prefix}Signature`] !== JSON.stringify(row)) card = createCard(row);
       setArtwork(query(card, `[data-${prefix}-portrait]`), row.image, row.label, true);
-      const rank = query(card, `[data-${prefix}-rank]`); rank.textContent = String(index + 1); rank.setAttribute('aria-label', `Rank ${index + 1}`);
+      const rank = query(card, `[data-${prefix}-rank]`); rank.textContent = String(index+1+Number(root.dataset.statsRankOffset||0)); rank.setAttribute('aria-label', `Rank ${index + 1}`);
       row.top_titles.forEach((title, i) => setArtwork(query(card!, '[data-genre-track]').children[i] as HTMLElement, titleImage(title, mode), title.title));
       return card;
     });
@@ -115,7 +115,7 @@ export function mountPeople(root: HTMLElement, section: 'actors' | 'staff') {
     grid.replaceChildren(...cards);
     cards.forEach(card => {
       if (!carousels.has(card)) carousels.set(card, carousel(query(card, '[data-genre-track]'), reduced)); else carousels.get(card)!.bounds();
-      if (animate && !reduced.matches && root.dataset.section === section) {
+      if (animate && !reduced.matches && (root.dataset.statsPanelSection||root.dataset.section)===section) {
         const old = before.get(card), now = card.getBoundingClientRect();
         const frames = old ? [{ transform: `translate(${old.left - now.left}px,${old.top - now.top}px)` }, { transform: 'translate(0,0)' }] : [{ opacity: 0 }, { opacity: 1 }];
         const animation = card.animate(frames, { duration: 600, easing: 'cubic-bezier(.22,.61,.36,1)' }); animations.set(card, animation);

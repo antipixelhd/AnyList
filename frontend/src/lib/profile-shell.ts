@@ -1,5 +1,4 @@
 import {statisticsDomainUrl} from './statistics-domains';
-import {createContentTransition} from './content-motion';
 import {createMinimumDisplay} from './minimum-display';
 import {preparePanelStyles,panelLayoutFrame} from './panel-readiness';
 import {profilePanelKey,setPanelWaiting} from './profile-panel';
@@ -14,9 +13,9 @@ async function initialize(panel:Panel,signal:AbortSignal){
   const pending=(async()=>{
     let mount:(root:HTMLElement,signal:AbortSignal)=>void;
     let root=panel.root;
-    if(panel.kind==='games')mount=(await import('./game-list')).initializeGameList;
-    else if(panel.kind==='stats'){mount=(await import('./stats-overview')).initializeStatistics;root=panel.root.querySelector('#statistics-overview')!;}
-    else if(panel.kind==='stats/games'){mount=(await import('./game-statistics')).initializeGameStatistics;root=panel.root.querySelector('#game-statistics')!;}
+    const statistics=panel.root.querySelector<HTMLElement>('[data-integrated-statistics]');
+    if(statistics){mount=(await import('./stats-overview')).initializeStatistics;root=statistics;}
+    else if(panel.kind==='games')mount=(await import('./game-list')).initializeGameList;
     else mount=(await import('./profile-list')).initializeProfileList;
     if(signal.aborted||!panel.root.isConnected)return;
     mount(root,signal);panel.ready=true;
@@ -40,9 +39,10 @@ function setup(){
   const first=document.createElement('div');first.dataset.profileUrl=location.href;
   for(const child of [...host.childNodes])if(child!==header&&child!==nav)first.append(child);
   const stage=document.createElement('div');stage.dataset.profilePanels='';host.append(stage);stage.append(first);
-  const changeStatistics=createContentTransition(stage,signal);
+
   let active=route.key,wanted=active,shown:HTMLElement=first;
   const initial:Panel={root:first,url:location.href,title:document.title,ready:false,kind:active};panels.set(active,initial);
+  if(first.querySelector('[data-integrated-statistics]')){panels.set('stats',initial);panels.set('stats/games',initial);}
   const targets=new Map<string,string>();
   nav.querySelectorAll<HTMLAnchorElement>('a[href]').forEach(link=>{const url=new URL(link.href),match=profilePanelKey(url);if(match?.username===route.username)targets.set(match.key,url.href);});
   const stats=`/user/${encodeURIComponent(route.username)}/stats`;
@@ -73,7 +73,7 @@ function setup(){
       if(signal.aborted||revision!==generation)throw new DOMException('Preview invalidated','AbortError');
       const root=document.createElement('div');root.dataset.profileUrl=url;
       for(const child of [...content.childNodes])if(!(child instanceof Element)||!child.matches('.profile-hero,.profile-tabs'))root.append(child);
-      const panel:Panel={root,url,title:doc.title,ready:false,kind:key};panels.set(key,panel);return panel;
+      const panel:Panel={root,url,title:doc.title,ready:false,kind:key};panels.set(key,panel);if(root.querySelector('[data-integrated-statistics]')){panels.set('stats',panel);panels.set('stats/games',panel);}return panel;
     })().finally(()=>flights.delete(key)).catch(error=>{if(!signal.aborted&&error instanceof DOMException&&error.name==='AbortError')return read(key,url);throw error;});
     flights.set(key,pending);return pending;
   }
@@ -83,7 +83,6 @@ function setup(){
   signal.addEventListener('abort',stopProgress,{once:true});
   function select(key:string,url:string){
     if(key===wanted)return;
-    changeStatistics.cancel();
     stopProgress();
     const leavingPreview=shown.matches('[data-profile-stats-preview]');
     if(leavingPreview){const source=panels.get(active);if(source){shown.remove();shown=source.root;stage.append(shown);}}
@@ -92,7 +91,6 @@ function setup(){
     wanted=key;update();
     host!.querySelector('[data-profile-switch-error]')?.remove();
     const source=shown;
-    const statisticsSwap=active.startsWith('stats')&&key.startsWith('stats')&&active!==key;
     const desiredSection=new URL(url,location.href).searchParams.get('section')||'overview';
     nav.setAttribute('aria-busy','true');setPanelWaiting(source,true);
     const cached=panels.get(key);
@@ -135,18 +133,14 @@ function setup(){
       if(signal.aborted||wanted!==key)return;
       const commit=()=>{
         if(signal.aborted||wanted!==key)return;
-        if(statisticsSwap){
-          const destination=new URL(panel.root.dataset.profileUrl||panel.url,location.href);
-          if(desiredSection!==(destination.searchParams.get('section')||'overview'))destination.searchParams.delete('page');
-          destination.searchParams.set('section',desiredSection);panel.root.dataset.profileUrl=destination.href;
-        }
         stopProgress();setPanelWaiting(source,false);show(panel.root);active=key;document.body.toggleAttribute('data-list-landing',!key.startsWith('stats'));
         history.replaceState(history.state,'',panel.root.dataset.profileUrl||panel.url);document.title=panel.title;
-        if(statisticsSwap)panel.root.querySelector<HTMLElement>('#statistics-overview,#game-statistics')?.dispatchEvent(new CustomEvent('anylist:statistics-domain-section',{detail:{section:desiredSection}}));
+        const statistics=panel.root.querySelector<HTMLElement>('[data-integrated-statistics]');
+        if(statistics&&panel.root.dataset.profileUrl!==url)statistics.dispatchEvent(new CustomEvent('anylist:statistics-open',{detail:{url}}));
         nav.removeAttribute('aria-busy');update();
         window.scrollTo(0,positions.get(key)??scrollY);
       };
-      if(statisticsSwap)await changeStatistics(commit);else commit();
+      commit();
       if(!signal.aborted&&wanted===key&&shown===panel.root)panel.root.dispatchEvent(new Event('anylist:panel-active'));
     };
     const failed=()=>{
@@ -164,6 +158,7 @@ function setup(){
   const target=(link:HTMLAnchorElement)=>{const url=statisticsDomainUrl(new URL(location.href),new URL(link.href)),match=profilePanelKey(url);return url.origin===location.origin&&match?.username===route.username&&targets.has(match.key)?{key:match.key,url:url.href}:undefined;};
   host.addEventListener('click',event=>{
     const link=(event.target as Element).closest<HTMLAnchorElement>('a[href]');if(!link||event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey||link.hasAttribute('download')||link.target)return;
+    if(link.closest('[data-integrated-statistics] .stats-domain-navigation'))return;
     const next=target(link);if(!next)return;
     if(next.key===wanted&&!link.closest('.profile-tabs,.stats-domain-navigation'))return;
     event.preventDefault();event.stopImmediatePropagation();select(next.key,next.url);

@@ -16,7 +16,9 @@ test('statistics previews use the real metric grid with no speculative chart pla
 test('pending aggregates expose headline positions before the status message and defer graphs',()=>{
   for(const route of ['stats.astro','stats/games.astro']){
     const source=read('../src/pages/user/[username]/'+route);
-    assert(source.indexOf('<StatsHeadlineLoading')<source.indexOf('<div class="overview-pending"'));
-    assert.match(source,/overview-results[^>]*hidden=/);
+    assert.match(source,/<StatisticsPage/);
   }
+  const shared=read('../src/components/StatisticsPage.astro');
+  assert(shared.indexOf('<StatsHeadlineLoading')<shared.indexOf('<div class="overview-pending"'));
+  assert.match(shared,/overview-results[^>]*hidden=/);
 });

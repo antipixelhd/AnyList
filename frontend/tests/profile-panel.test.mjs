@@ -39,7 +39,7 @@ test('reclicking a selected or pending profile tab cannot escape into full-page 
   const start=source.indexOf("  host.addEventListener('click'");
   const binding=source.slice(start,source.indexOf('  bindPredictionIntent',start));
   let click,prevented=0,stopped=0,selected=0;
-  const link={target:'',hasAttribute:()=>false,closest:()=>({})};
+  const link={target:'',hasAttribute:()=>false,closest:selector=>selector.includes('data-integrated-statistics')?null:({})};
   runInNewContext(stripTypeScriptTypes(binding),{host:{addEventListener:(_,fn)=>click=fn},signal:new AbortController().signal,
     target:()=>({key:'stats',url:'/user/alex/stats'}),wanted:'stats',select:()=>selected++});
   const event={target:{closest:()=>link},button:0,preventDefault:()=>prevented++,stopImmediatePropagation:()=>stopped++};

@@ -1,11 +1,11 @@
 ---
 import type { Overview } from '../lib/stats-overview-data';
 import { displayNumber, distributionRows } from '../lib/stats-overview-data';
-interface Props { id: 'statuses' | 'formats' | 'countries'; title: string; data?: Overview;rows?:{key:string;label:string;titles:number;percent:number}[];countLabel?:string;emptyLabel?:string; }
-const { id, title, data,rows:initialRows,countLabel='titles',emptyLabel='No titles.' } = Astro.props;
+interface Props { hidden?:boolean; id: 'statuses' | 'formats' | 'countries'; title: string; data?: Overview;rows?:{key:string;label:string;titles:number;percent:number}[];countLabel?:string;emptyLabel?:string; }
+const { hidden=false,id, title, data,rows:initialRows,countLabel='titles',emptyLabel='No titles.' } = Astro.props;
 const rows = initialRows||(data?distributionRows(data, id):[]);
 ---
-<section class="overview-distribution" aria-labelledby={`${id}-title`}>
+<section class="overview-distribution" hidden={hidden} data-distribution={id} aria-labelledby={`${id}-title`}>
   <h3 id={`${id}-title`}>{title}</h3>
   <div class="overview-pie"><canvas data-overview-distribution={id} role="img" aria-label={`${title} distribution`} aria-describedby={`${id}-legend`}></canvas><p class="overview-plot-empty" data-distribution-empty={id} hidden={rows.some(row => row.titles > 0)}>{emptyLabel}</p></div>
   <dl class="overview-distribution-rows" id={`${id}-legend`} data-distribution-rows={id}>
