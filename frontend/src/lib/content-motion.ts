@@ -10,7 +10,7 @@ export function createContentTransition(element: HTMLElement, signal: AbortSigna
   const cancel = () => { version++; interrupt?.(); motion.cancel(element); element.inert = false; };
   signal.addEventListener('abort', cancel, {once:true});
   reduced.addEventListener('change', () => { motion.cancel(element); if (reduced.matches) interrupt?.(); }, {signal});
-  return async (change: () => void) => {
+  const transition=async (change: () => void) => {
     const current = ++version;
     interrupt?.();
     if (signal.aborted) return;
@@ -25,6 +25,8 @@ export function createContentTransition(element: HTMLElement, signal: AbortSigna
     finally { element.inert = false; }
     motion.reveal(element);
   };
+  transition.cancel=cancel;
+  return transition;
 }
 
 /** Animate a native disclosure without losing its keyboard or no-JS behavior. */

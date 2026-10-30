@@ -31,3 +31,14 @@ test('Games requests cancel stale pages, restart changed generations and stop on
   const denied=loader.load({section:'actors',sort:'count',page:1});requests[3].resolve(new Response(null,{status:403}));await denied;assert.equal(errors[0][1],true);
   const cancelled=loader.load({section:'overview',sort:'count',page:1});loader.stop();requests[4].resolve(Response.json({generation:6}));await cancelled;assert.equal(rendered.length,1);
 });
+
+
+test('switching to a cached section can cancel a read without permanently stopping the loader',async t=>{
+  const requests=[],rendered=[];
+  t.mock.method(globalThis,'fetch',(url,options)=>new Promise(resolve=>requests.push({options,resolve})));
+  const loader=createGameStatsLoader('alex',{render:data=>rendered.push(data),error(){},busy(){},changed(){}});
+  const old=loader.load({section:'actors',sort:'count',page:1});loader.cancel();
+  requests[0].resolve(Response.json({generation:1,section:'actors'}));await old;assert.deepEqual(rendered,[]);
+  const next=loader.load({section:'genres',sort:'count',page:1});requests[1].resolve(Response.json({generation:2,section:'genres'}));await next;
+  assert.equal(rendered[0].section,'genres');
+});

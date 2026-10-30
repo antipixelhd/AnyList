@@ -1,3 +1,4 @@
+import {createStatisticsSections} from './statistics-domains';
 import {createMinimumDisplay} from './minimum-display';
 import {initializeProfileSections} from './profile-section-selector';
 import {panelActive,panelUrl,setPanelUrl} from './profile-panel';
@@ -28,6 +29,8 @@ export function initializeGameStatistics(root:HTMLElement,lifetime:AbortSignal) 
   const viewports=new Map<string,ReturnType<typeof mountChartViewport>>(),metrics=new Map<string,ChartMetric>();
   const carousels=new Map<HTMLElement,ReturnType<typeof carousel>>();
   let pie:Chart<'pie'>|undefined;
+  const sections=createStatisticsSections<GameStatsResponse>();
+  const sectionKey=(value:typeof selection)=>`${value.section}:${value.sort}:${value.page}`;
   mountStatisticsNavigation(root,signal);
   initializeScrollMotion(root,signal,'.stats-genre-card,.overview-chart,.overview-distribution','stats-scroll-reveal',{animateInitial:false,downwardOnly:true,once:true});
   root.addEventListener('load',event=>{if(event.target instanceof HTMLImageElement){event.target.setAttribute('data-motion-fade','');reveal(event.target);}},{capture:true,signal});
@@ -43,11 +46,16 @@ export function initializeGameStatistics(root:HTMLElement,lifetime:AbortSignal) 
     node('[data-game-stats-overview]').hidden=selection.section!=='overview';node('[data-game-stats-groups]').hidden=selection.section==='overview';
   }
   function navigate(next:typeof selection,push=true) {
+    loader.cancel();
     showPageStart=push&&next.page!==selection.page;
     const content=node('.stats-overview-content');content.style.minHeight=`${content.getBoundingClientRect().height}px`;
     clearTimeout(timer);attempts=0;selection=next;response={...response,generation:null};
     skeletonTiming.reset();
-    updateSelection();node('[data-stats-headline-loading]').hidden=selection.section!=='overview';if(selection.section==='overview')skeletonTiming.show();node('.overview-results').hidden=true;node('.overview-pending').hidden=false;node('[data-game-stats-state]').textContent='Preparing statistics…';
+    updateSelection();
+    const cached=sections.get(sectionKey(selection));
+    if(cached){render(cached,true);if(push)setPanelUrl(root,url(),true);return;}
+    response={...response,status:'pending',data:null};
+    node('[data-stats-headline-loading]').hidden=selection.section!=='overview';if(selection.section==='overview')skeletonTiming.show();node('.overview-results').hidden=true;node('.overview-pending').hidden=false;node('[data-game-stats-state]').textContent='Preparing statistics…';
     if(push)setPanelUrl(root,url(),true);
     void loader.load(selection);
   }
@@ -132,6 +140,7 @@ export function initializeGameStatistics(root:HTMLElement,lifetime:AbortSignal) 
     else renderNow(data,initial);
   }
   function renderNow(data:GameStatsResponse,initial=false) {
+    sections.set(sectionKey(selection),data);
     response=data;updateSelection();node('[data-game-stats-error]').hidden=true;
     const ready=data.status==='ready';node('[data-stats-headline-loading]').hidden=ready||selection.section!=='overview';
     if(!node('[data-stats-headline-loading]').hidden)skeletonTiming.show();else skeletonTiming.reset();
@@ -146,7 +155,9 @@ export function initializeGameStatistics(root:HTMLElement,lifetime:AbortSignal) 
     if(!initial)reveal(node('.overview-results'));
     node('[data-game-stats-announcement]').textContent=`${gameStatsSections.find(([key])=>key===selection.section)![1]} statistics loaded${selection.section==='overview'?'':`, page ${selection.page}`}.`;
   }
-  const loader=createGameStatsLoader(root.dataset.username!,{render,busy:busy=>root.setAttribute('aria-busy',String(busy)),changed:()=>{if(!panelActive(root)){dirty=true;return;}navigate({...selection,page:1},false);setPanelUrl(root,url());},error:(message,denied)=>{skeletonTiming.reset();const error=node('[data-game-stats-error]');error.textContent=message;error.hidden=false;if(denied){node('[data-stats-headline-loading]').hidden=true;clearTimeout(timer);node('.overview-results').hidden=true;node('.overview-pending').hidden=true;}else schedule(10);}});
+  const loader=createGameStatsLoader(root.dataset.username!,{render,busy:busy=>root.setAttribute('aria-busy',String(busy)),changed:()=>{sections.clear();if(!panelActive(root)){dirty=true;return;}navigate({...selection,page:1},false);setPanelUrl(root,url());},error:(message,denied)=>{skeletonTiming.reset();const error=node('[data-game-stats-error]');error.textContent=message;error.hidden=false;if(denied){sections.clear();node('[data-stats-headline-loading]').hidden=true;clearTimeout(timer);node('.overview-results').hidden=true;node('.overview-pending').hidden=true;}else schedule(10);}});
+  root.addEventListener('anylist:statistics-domain-section',event=>{const section=(event as CustomEvent<{section:typeof selection.section}>).detail.section;if(section!==selection.section&&gameStatsSections.some(([key])=>key===section))navigate({...selection,section,page:1},false);},{signal});
+  document.addEventListener('anylist:cache-invalidated',()=>sections.clear(),{signal});
   root.addEventListener('profile-section-change',event=>{const section=(event as CustomEvent).detail.value;if(gameStatsSections.some(([key])=>key===section))navigate({...selection,section,page:1});},{signal});
   root.addEventListener('click',event=>{
     const target=(event.target as Element).closest<HTMLElement>('[data-game-stats-sort],[data-game-stats-page],[data-game-stats-retry],[data-metric],[data-studio-scroll],[data-staff-scroll],[data-game-status]');if(!target)return;
@@ -161,8 +172,8 @@ export function initializeGameStatistics(root:HTMLElement,lifetime:AbortSignal) 
   let dirty=false;
   root.closest('[data-profile-url]')?.addEventListener('anylist:panel-inactive',()=>clearTimeout(timer),{signal});
   const refresh=()=>{if(panelActive(root)){dirty=false;void loader.load(selection);}else dirty=true;};
-  root.closest('[data-profile-url]')?.addEventListener('anylist:panel-active',()=>{if(dirty||response.status!=='ready')refresh();else render(response,true);},{signal});
-  document.addEventListener('anylist:editor-committed',event=>{const detail=(event as CustomEvent).detail;if(response.owner&&detail.title?.type==='game'){attempts=0;refresh();}},{signal});
+  root.closest('[data-profile-url]')?.addEventListener('anylist:panel-active',()=>{if(dirty||response.status!=='ready'){if(root.getAttribute('aria-busy')!=='true')refresh();}else render(response,true);},{signal});
+  document.addEventListener('anylist:editor-committed',event=>{const detail=(event as CustomEvent).detail;if(response.owner&&detail.title?.type==='game'){sections.clear();attempts=0;refresh();}},{signal});
   const observer=new MutationObserver(()=>{if(panelActive(root)&&selection.section==='overview'&&response.status==='ready')drawOverview(response.data as GameOverview,true);});observer.observe(document.documentElement,{attributes:true,attributeFilter:['class']});observer.observe(document.body,{attributes:true,attributeFilter:['style']});
   reduced.addEventListener('change',()=>{cancelUiMotion(root);if(panelActive(root)&&selection.section==='overview'&&response.status==='ready')drawOverview(response.data as GameOverview,true);},{signal});
   lifetime.addEventListener('abort',()=>{stopped=true;clearTimeout(timer);loader.stop();events.abort();observer.disconnect();charts.forEach(chart=>chart.destroy());pie?.destroy();carousels.forEach(controller=>controller.stop());cancelUiMotion(root);},{once:true,signal});

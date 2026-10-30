@@ -285,7 +285,7 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
       link.href = url.pathname + url.search;
     });
   }
-  function selectSection(next: string, push: boolean) {
+  function selectSection(next: string, push: boolean,animate=true) {
     tooltips.forEach(tooltip => tooltip.dismiss());
     pies.forEach(chart => { chart.tooltip?.setActiveElements([], {x:0,y:0}); chart.setActiveElements([]); chart.draw(); });
     const previous = section;
@@ -302,8 +302,9 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
       root.querySelectorAll<HTMLElement>('[data-stats-panel]').forEach(panel => panel.hidden = panel.dataset.statsPanel !== section);
       if (response.overview) render(response, true);
     };
-    if (previous !== section) void switchPanel(update); else update();
+    if (animate&&previous !== section) void switchPanel(update); else update();
   }
+  root.addEventListener('anylist:statistics-domain-section',event=>{const next=(event as CustomEvent<{section:string}>).detail.section;if(next!==section)selectSection(next,false,false);},{signal:events.signal});
   root.addEventListener('profile-section-change', event => selectSection((event as CustomEvent).detail.value, true), { signal: events.signal });
   root.addEventListener('statistics-url-change', syncLinks, { signal: events.signal });
   function navigate(next: MediaScope, push: boolean) {

@@ -68,7 +68,7 @@ test('a cold list selection uses the shared page progress without a local loadin
   const snippet=sourceText.slice(start,sourceText.indexOf('  const target=',start));
   const source={dataset:{},matches:()=>false,dispatchEvent(){}},preview={kind:'games'},waiting=[],positions=new Map();let rejectRead;
   const events=[];
-  const context={stopProgress(){},createMinimumDisplay,progressRunning:false,signal:new AbortController().signal,wanted:'movies',active:'movies',shown:source,positions,scrollY:780,
+  const context={URL,changeStatistics:{cancel(){}},stopProgress(){},createMinimumDisplay,progressRunning:false,signal:new AbortController().signal,wanted:'movies',active:'movies',shown:source,positions,scrollY:780,
     panels:new Map([['movies',{root:source,ready:true}]]),loadingTemplates:new Map(),
     read:()=>new Promise((resolve,reject)=>rejectRead=reject),setPanelWaiting:(root,on)=>waiting.push([root,on]),update(){},
     show:root=>context.shown=root,nav:{setAttribute(){},removeAttribute(){},getBoundingClientRect:()=>({top:-600})},

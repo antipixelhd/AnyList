@@ -19,6 +19,7 @@ export function createGameStatsLoader(username:string,callbacks:{render:(data:Ga
       } catch {if(!stopped&&!current.signal.aborted)callbacks.error('Unable to load Games statistics. Try again.',false);}
       finally {if(!stopped&&active===current)callbacks.busy(false);}
     },
+    cancel(){active?.abort();},
     stop(){stopped=true;active?.abort();},
   };
 }
