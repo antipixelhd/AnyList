@@ -1,5 +1,4 @@
 import {statisticsDomainUrl} from './statistics-domains';
-import {createMinimumDisplay} from './minimum-display';
 import {preparePanelStyles,panelLayoutFrame} from './panel-readiness';
 import {profilePanelKey,setPanelWaiting} from './profile-panel';
 import {bindPredictionIntent,predictionManifest} from './predictive-loading';
@@ -35,7 +34,6 @@ function setup(){
   const invalidate=()=>{generation++;for(const [key,panel] of panels)if(!panel.ready)panels.delete(key);};
   document.addEventListener('anylist:editor-state',invalidate,{signal});
   document.addEventListener('anylist:cache-invalidated',invalidate,{signal});
-  const loadingTemplates=new Map([...document.querySelectorAll<HTMLTemplateElement>('[data-profile-statistics-loading]')].map(template=>[template.dataset.profileStatisticsLoading!,template]));
   const first=document.createElement('div');first.dataset.profileUrl=location.href;
   for(const child of [...host.childNodes])if(child!==header&&child!==nav)first.append(child);
   const stage=document.createElement('div');stage.dataset.profilePanels='';host.append(stage);stage.append(first);
@@ -84,30 +82,14 @@ function setup(){
   function select(key:string,url:string){
     if(key===wanted)return;
     stopProgress();
-    const leavingPreview=shown.matches('[data-profile-stats-preview]');
-    if(leavingPreview){const source=panels.get(active);if(source){shown.remove();shown=source.root;stage.append(shown);}}
     document.dispatchEvent(new Event('anylist:profile-tab-changed'));
-    if(!leavingPreview&&shown===panels.get(active)?.root){positions.set(active,scrollY);shown.dataset.profileUrl=location.href;shown.dispatchEvent(new Event('anylist:panel-inactive'));}
+    if(shown===panels.get(active)?.root){positions.set(active,scrollY);shown.dataset.profileUrl=location.href;shown.dispatchEvent(new Event('anylist:panel-inactive'));}
     wanted=key;update();
     host!.querySelector('[data-profile-switch-error]')?.remove();
     const source=shown;
-    const desiredSection=new URL(url,location.href).searchParams.get('section')||'overview';
     nav.setAttribute('aria-busy','true');setPanelWaiting(source,true);
     const cached=panels.get(key);
-    const loadingTemplate=loadingTemplates.get(key);
-    const skeletonTiming=createMinimumDisplay(signal);
-    let skeletonReady=Promise.resolve();
-    if(!cached?.ready&&!loadingTemplate){progressRunning=true;document.dispatchEvent(new Event('anylist:route-progress-start'));}
-    if(loadingTemplate&&!cached?.ready){
-      const preview=loadingTemplate.content.firstElementChild!.cloneNode(true) as HTMLElement;
-      const options=[...preview.querySelectorAll<HTMLButtonElement>('[data-section]')];
-      options.forEach(button=>{const selected=button.dataset.section===desiredSection;button.classList.toggle('is-selected',selected);button.setAttribute('aria-pressed',String(selected));});
-      const heading=preview.querySelector<HTMLElement>('.overview-heading h2');if(heading)heading.textContent=options.find(button=>button.dataset.section===desiredSection)?.textContent||'Overview';
-      preview.querySelector<HTMLElement>('[data-stats-headline-loading]')!.hidden=desiredSection!=='overview';
-      show(preview);skeletonTiming.show();
-      skeletonReady=skeletonTiming.settle();
-      window.scrollTo(0,positions.get(key)??Math.max(0,scrollY+nav.getBoundingClientRect().top));
-    }
+    if(!cached?.ready){progressRunning=true;document.dispatchEvent(new Event('anylist:route-progress-start'));}
     const activate=async(panel:Panel)=>{
       if(signal.aborted||wanted!==key||document.body.dataset.cacheUser!==viewer)return;
       if(panel.preparing)await panel.preparing;
@@ -128,8 +110,6 @@ function setup(){
         })().finally(()=>{panel.preparing=undefined;});
         await panel.preparing;
       }
-      if(signal.aborted||wanted!==key)return;
-      if(loadingTemplate&&!cached?.ready)await skeletonReady;
       if(signal.aborted||wanted!==key)return;
       const commit=()=>{
         if(signal.aborted||wanted!==key)return;

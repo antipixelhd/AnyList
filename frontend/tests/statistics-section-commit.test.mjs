@@ -3,7 +3,7 @@ import test from 'node:test';
 import {readFileSync} from 'node:fs';
 import {stripTypeScriptTypes} from 'node:module';
 import {runInNewContext} from 'node:vm';
-import {statisticsPanel,statisticsSections} from '../src/lib/unified-statistics-data.ts';
+import {statisticsSection,statisticsPanel,statisticsSections} from '../src/lib/unified-statistics-data.ts';
 const source=readFileSync(new URL('../src/lib/stats-overview.ts',import.meta.url),'utf8');
 test('optimistic section controls leave the outgoing data panel intact until commit',()=>{
   const start=source.indexOf('  function updateDomainControls(');
@@ -17,14 +17,14 @@ test('optimistic section controls leave the outgoing data panel intact until com
   context.update();assert.equal(root.dataset.section,'publishers');assert.deepEqual(panels.map(p=>p.hidden),[false,true]);
   context.update(true);assert.deepEqual(panels.map(p=>p.hidden),[true,false]);
 });
-test('a pending snapshot preserves usable results while keeping the initial headline skeleton for cold entry',()=>{
+test('a pending snapshot preserves usable results while exposing the existing pending status on cold entry',()=>{
   const start=source.indexOf('  function renderNow('),end=source.indexOf('    if (!ready) {',start);
   const snippet=source.slice(start,end)+'  }';
   for(const initiallyHidden of [false,true]){
     const elements=new Map();const node=selector=>{if(!elements.has(selector))elements.set(selector,{hidden:selector==='.overview-results'?initiallyHidden:true,textContent:''});return elements.get(selector);};
     const root={dataset:{}};const context={matchesSelection:()=>true,colors:{clear(){}},color(){},response:{},root,node,section:'overview',domain:'screen',timer:undefined,clearTimeout,setTimeout:()=>0,overviewPollDelay:()=>5000,skeletonTiming:{show(){},reset(){}}};
     runInNewContext(stripTypeScriptTypes(snippet)+';this.render=renderNow;',context);context.render({status:'pending',overview:null});
-    assert.equal(node('.overview-results').hidden,initiallyHidden);assert.equal(node('.overview-pending').hidden,!initiallyHidden);assert.equal(node('[data-stats-headline-loading]').hidden,!initiallyHidden);
+    assert.equal(node('.overview-results').hidden,initiallyHidden);assert.equal(node('.overview-pending').hidden,!initiallyHidden);
   }
 });
 
@@ -37,4 +37,22 @@ test('outgoing controls stay inert across cold reads, failures and delayed commi
   context.busy(true);context.busy(false);assert.deepEqual(waiting,[true,true]);
   matching=true;context.busy(true);context.busy(false);assert.deepEqual(waiting,[true,true,true,false]);
   assert.deepEqual(progress,['anylist:route-progress-start','anylist:route-progress-end','anylist:route-progress-start','anylist:route-progress-end']);
+});
+
+test('domain switches and restored URLs update selection before reading without a loading timer',()=>{
+  const selectStart=source.indexOf('  function selectDomain(');
+  const select=source.slice(selectStart,source.indexOf("  root.addEventListener('click'",selectStart));
+  const openStart=source.indexOf('  function openUrl(');
+  const open=source.slice(openStart,source.indexOf("  root.addEventListener('anylist:statistics-open'",openStart));
+  const reads=[],urls=[],controls=[];
+  const context={domain:'screen',section:'actors',page:1,media:'series',statisticsSection,URL,
+    root:{dataset:{}},genreSort:value=>value||'count',actorArtwork:value=>value||'media',
+    node:()=>({textContent:'Actors'}),syncUrl:push=>urls.push([context.domain,context.section,push]),
+    updateDomainControls:()=>controls.push(context.domain),syncLinks(){},scheduleSibling(){},loader:{load:()=>reads.push([context.domain,context.section,context.media])}};
+  runInNewContext(stripTypeScriptTypes(select+open)+';this.select=selectDomain;this.open=openUrl;',context);
+  context.select('game');assert.deepEqual(reads[0],['game','actors','series']);assert.deepEqual(urls[0],['game','actors',true]);
+  context.open(new URL('https://example.test/user/alex/stats?section=genres&media=movie'));
+  assert.deepEqual(reads[1],['screen','genres','movie']);assert.deepEqual(controls,['game','screen']);
+  context.open(new URL('https://example.test/user/alex/stats/games?section=publishers'));
+  assert.deepEqual(reads[2],['game','publishers','movie']);
 });

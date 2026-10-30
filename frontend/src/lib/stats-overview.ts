@@ -3,7 +3,6 @@ import {statisticsSection,statisticsPanel,statisticsSections,type StatisticsDoma
 import {createStatisticsReader,type StatisticsSelection} from './unified-statistics-request';
 import {statisticValue} from './statistic-value';
 import {bindPredictionIntent,predictionAllowed} from './predictive-loading';
-import {createMinimumDisplay} from './minimum-display';
 import {initializeProfileSections} from './profile-section-selector';
 import {panelActive,panelUrl,setPanelUrl} from './profile-panel';
 import Chart from 'chart.js/auto';
@@ -202,17 +201,12 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
   function setResultsWaiting(waiting:boolean){
     node('.overview-results').inert=waiting;
   }
-  const skeletonTiming=createMinimumDisplay(events.signal);
   function matchesSelection(next:OverviewResponse){
     const game=(next as UnifiedStatistics).game;
     return domain==='game'?Boolean(game&&game.section===section&&game.page===page&&(next as UnifiedStatistics).selectionSort===currentSelection().sort):!game&&(!next.overview||next.overview.media_type===media);
   }
   function render(next:OverviewResponse,initial=false){
-    if(!matchesSelection(next))return;
-    skeletonTiming.cancel();
-    const loading=node('[data-stats-headline-loading]');
-    if(next.status==='ready'&&!initial&&!loading.hidden&&panelActive(root))skeletonTiming.finish(()=>renderNow(next,initial));
-    else renderNow(next,initial);
+    if(matchesSelection(next))renderNow(next,initial);
   }
   function renderNow(next: OverviewResponse, initial = false) {
     if(!matchesSelection(next))return;
@@ -226,8 +220,6 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
     const ready = next.status === 'ready' && next.overview !== null;
     const wasPending = node('.overview-results').hidden;
     const retainContent=!ready&&!wasPending;
-    node('[data-stats-headline-loading]').hidden=ready||retainContent||section!=='overview';
-    if(!node('[data-stats-headline-loading]').hidden)skeletonTiming.show();else skeletonTiming.reset();
     node('.overview-results').hidden = !ready&&!retainContent;
     node('.overview-pending').hidden = ready||retainContent;
     clearTimeout(timer);
@@ -281,11 +273,9 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
     changed:()=>{page=1;syncUrl(false);void loader.load(media);},
     onBusy:statisticsBusy,
     onError: (message, denied) => {
-      skeletonTiming.reset();
       const error = node('.overview-error'); error.textContent = message; error.hidden = false;
       error.setAttribute('data-motion-fade',''); reveal(error);
       if (denied) {
-        node('[data-stats-headline-loading]').hidden=true;
         clearTimeout(timer);
         response.overview = null;
         node('.overview-results').hidden = true;
@@ -312,7 +302,6 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
     });
   }
   function selectSection(next: string, push: boolean) {
-    skeletonTiming.cancel();
 
     tooltips.forEach(tooltip => tooltip.dismiss());
     pies.forEach(chart => { chart.tooltip?.setActiveElements([], {x:0,y:0}); chart.setActiveElements([]); chart.draw(); });
@@ -333,7 +322,6 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
   root.addEventListener('profile-section-change', event => selectSection((event as CustomEvent).detail.value, true), { signal: events.signal });
   root.addEventListener('statistics-url-change', syncLinks, { signal: events.signal });
   function navigate(next: MediaScope, push: boolean) {
-    skeletonTiming.cancel();
     tooltips.forEach(tooltip => tooltip.dismiss());
     pies.forEach(chart => { chart.tooltip?.setActiveElements([], {x:0,y:0}); chart.setActiveElements([]); chart.draw(); });
     media=next;
@@ -422,7 +410,7 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
   }
   function selectDomain(next:StatisticsDomain,push=true){
     if(next===domain)return;
-    skeletonTiming.cancel();domain=next;section=statisticsSection(domain,section);page=1;syncUrl(push);updateDomainControls();
+    domain=next;section=statisticsSection(domain,section);page=1;syncUrl(push);updateDomainControls();
     node('[data-stats-heading]').textContent=node<HTMLButtonElement>(`.profile-section-selector [data-section="${section}"]`).textContent||'Overview';
     void loader.load(media);scheduleSibling();
   }
@@ -430,10 +418,10 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
     const link=(event.target as Element).closest<HTMLAnchorElement>('.stats-domain-navigation a[href]');
     if(link){if(event instanceof MouseEvent&&(event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey))return;event.preventDefault();event.stopImmediatePropagation();selectDomain(link.getAttribute('href')?.includes('/games')?'game':'screen');return;}
     const sortButton=(event.target as Element).closest<HTMLButtonElement>('button[data-genre-sort],button[data-actor-sort],button[data-studio-sort],button[data-staff-sort]');
-    if(domain==='game'&&sortButton){event.preventDefault();event.stopImmediatePropagation();for(const prefix of ['genre','actor','studio','staff'])if(sortButton.dataset[prefix+'Sort'])root.dataset[prefix+'Sort']=sortButton.dataset[prefix+'Sort'];page=1;skeletonTiming.cancel();syncUrl(true);void loader.load(media);}
+    if(domain==='game'&&sortButton){event.preventDefault();event.stopImmediatePropagation();for(const prefix of ['genre','actor','studio','staff'])if(sortButton.dataset[prefix+'Sort'])root.dataset[prefix+'Sort']=sortButton.dataset[prefix+'Sort'];page=1;syncUrl(true);void loader.load(media);}
   },{capture:true,signal:events.signal});
   function openUrl(url:URL){
-    skeletonTiming.cancel();domain=url.pathname.endsWith('/games')?'game':'screen';
+    domain=url.pathname.endsWith('/games')?'game':'screen';
     section=statisticsSection(domain,url.searchParams.get('section')||'overview');
     page=1;
     const value=url.searchParams.get('media');if(domain==='screen')media=value==='movie'||value==='series'?value:'all';
@@ -479,7 +467,7 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
   observer.observe(document.body, { attributes: true, attributeFilter: ['style'] });
   let dirty=false;
   root.closest('[data-profile-url]')?.addEventListener('anylist:panel-inactive',()=>clearTimeout(timer),{signal:events.signal});
-  const refresh=()=>{page=1;loader.clear();skeletonTiming.cancel();if(panelActive(root)){dirty=false;void loader.load(media);}else dirty=true;};
+  const refresh=()=>{page=1;loader.clear();if(panelActive(root)){dirty=false;void loader.load(media);}else dirty=true;};
   root.closest('[data-profile-url]')?.addEventListener('anylist:panel-active',()=>{if(dirty||response.status!=='ready')refresh();else if(response.overview)render(response,true);},{signal:events.signal});
   document.addEventListener('anylist:editor-committed', () => { if (response.owner) refresh(); }, {signal:events.signal});
   lifetime.addEventListener('abort', () => { stopped = true; clearTimeout(timer); loader.stop(); events.abort(); genres.stop(); actors.stop(); studios.stop(); staff.stop(); observer.disconnect(); charts.forEach(chart => chart.destroy()); pies.forEach(chart => chart.destroy()); }, { once: true, signal: events.signal });
