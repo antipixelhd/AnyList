@@ -220,7 +220,7 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
       node(`[data-headline-label="${index}"]`).textContent = metric.label;
     });
     node('[data-chart-section="episode_counts"]').hidden = data.media_type === 'movie';
-    if(!panelActive(root))return;
+    if(!panelActive(root)&&!initial)return;
     if (section === 'overview') {
       chartKeys.forEach(key => { if (!(key === 'episode_counts' && data.media_type === 'movie')) drawMetric(data, key, initial); });
       (['statuses', 'formats', 'countries'] as const).forEach(key => drawDistribution(data, key, initial));

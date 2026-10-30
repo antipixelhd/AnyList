@@ -1,8 +1,8 @@
+import {preparePanelStyles} from './panel-readiness';
 import {initializeBrowse} from './browse';
 import {initializeGameBrowse} from './game-browse';
 import {bindPredictionIntent,predictionAllowed,predictionManifest} from './predictive-loading';
 import {browseTab,createBrowseTabs,scopeBrowseIds,type BrowseTab} from './browse-tabs';
-import {gameBrowseCategories} from './game-browse-data';
 
 let session:AbortController|undefined;
 let mounted:HTMLElement|undefined;
@@ -45,25 +45,6 @@ function setup(){
     root.querySelector('[data-browse-tab-slot]')!.append(nav);
     updateNav(tab);focus?.focus({preventScroll:true});
   }
-  function showLoading(tab:BrowseTab){
-    loading?.remove();loading=document.createElement('div');loading.className='page-width browse-page';
-    const header=first.querySelector('.browse-header')!.cloneNode(true) as HTMLElement;
-    header.querySelector('.browse-types')?.remove();
-    header.querySelector('[data-browse-tab-slot]')?.remove();
-    const slot=document.createElement('span');slot.dataset.browseTabSlot='';header.querySelector('.browse-header-controls')!.prepend(slot);
-    const layout=header.querySelector<HTMLElement>('.browse-view-switch');if(layout)layout.hidden=true;
-    loading.append(header);
-    const gap=document.createElement('div');gap.style.height=`${first.querySelector('[data-browse-form]')?.getBoundingClientRect().height||100}px`;loading.append(gap);
-    const sections=document.createElement('div');sections.className='browse-sections';sections.setAttribute('aria-busy','true');
-    const skeleton=first.querySelector('.browse-skeleton');
-    for(const title of tab==='game'?gameBrowseCategories.map(([,title])=>title):['Trending now','Newest','All-time popular','Highest rated']){
-      const section=document.createElement('section'),heading=document.createElement('h2'),grid=document.createElement('div');
-      section.className='browse-category';heading.textContent=title;grid.className='browse-grid';
-      if(skeleton)for(let i=0;i<6;i++)grid.append(skeleton.cloneNode(true));
-      section.append(heading,grid);sections.append(section);
-    }
-    loading.append(sections);host.append(loading);display(loading,tab);
-  }
   function warmImages(root:HTMLElement,panelSignal:AbortSignal){
     const warmed=new Set<HTMLImageElement>();
     const warm=()=>{
@@ -85,6 +66,7 @@ function setup(){
     const doc=new DOMParser().parseFromString(html,'text/html');
     if(requestSignal.aborted||doc.body.dataset.cacheUser!==viewer)throw new Error('Account changed.');
     if(tab==='game'&&doc.body.dataset.gamesApproved!=='true')throw new Error('Games access requires approval.');
+    await preparePanelStyles(doc,new URL(targets[tab],location.origin).href,requestSignal);
     const root=doc.querySelector<HTMLElement>('[data-browse-page]');if(!root)throw new Error('Unable to load this tab.');
     const lifetime=new AbortController();
     signal.addEventListener('abort',()=>lifetime.abort(),{once:true});
@@ -102,6 +84,7 @@ function setup(){
     document.dispatchEvent(new Event('anylist:browse-tab-changed'));
     const activate=(root:HTMLElement)=>{
       if(signal.aborted||wanted!==tab)return;
+      shown.removeAttribute('aria-busy');shown.querySelectorAll<HTMLElement>('[data-browse-form],[data-browse-region]').forEach(node=>node.inert=false);
       display(root,tab);active=tab;
       history.replaceState(history.state,'',root.dataset.browseUrl||targets[tab]);
       loading?.remove();loading=undefined;
@@ -109,12 +92,15 @@ function setup(){
       root.dispatchEvent(new Event('anylist:browse-active'));
     };
     const ready=tabs.peek(tab);if(ready){activate(ready);return;}
-    showLoading(tab);
+    // Keep real content in place until the destination's own shell/skeleton is ready.
+    shown.setAttribute('aria-busy','true');shown.querySelectorAll<HTMLElement>('[data-browse-form],[data-browse-region]').forEach(node=>node.inert=true);
+    updateNav(tab);
     void tabs.get(tab).then(activate).catch(()=>{
-      if(signal.aborted||wanted!==tab||!loading)return;
+      if(signal.aborted||wanted!==tab)return;
+      shown.removeAttribute('aria-busy');shown.querySelectorAll<HTMLElement>('[data-browse-form],[data-browse-region]').forEach(node=>node.inert=false);
       const error=document.createElement('button');error.type='button';error.className='button-secondary';error.textContent='Try again';
       error.addEventListener('click',()=>{wanted=active;select(tab);},{signal});
-      loading.querySelector('.browse-sections')?.replaceChildren(error);
+      loading?.remove();loading=document.createElement('div');loading.className='browse-error';loading.append(error);shown.append(loading);
     });
   }
   nav.addEventListener('click',event=>{

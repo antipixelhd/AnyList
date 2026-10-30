@@ -129,7 +129,7 @@ export function initializeGameStatistics(root:HTMLElement,lifetime:AbortSignal) 
     node('[data-game-stats-state]').textContent=data.status==='error'?'Statistics are unavailable. A retry is scheduled.':'Preparing statistics…';
     if(!ready){schedule(data.retry_after);return;}clearTimeout(timer);attempts=0;
     if(selection.section!=='overview'&&selection.page>Math.max(1,Math.ceil((data.total||0)/24))){navigate({...selection,page:Math.max(1,Math.ceil((data.total||0)/24))},false);setPanelUrl(root,url());return;}
-    if(!panelActive(root))return;
+    if(!panelActive(root)&&!initial)return;
     if(selection.section==='overview')drawOverview(data.data as GameOverview,initial);else drawGroups(data.data as GameStatsGroup[]);
     node('.stats-overview-content').style.removeProperty('min-height');
     if(showPageStart){showPageStart=false;node('[data-game-stats-heading]').scrollIntoView({block:'start'});}

@@ -1,7 +1,8 @@
-import {profilePanelKey} from './profile-panel';
+import {preparePanelStyles,panelLayoutFrame} from './panel-readiness';
+import {profilePanelKey,setPanelWaiting} from './profile-panel';
 import {bindPredictionIntent,predictionManifest} from './predictive-loading';
 
-type Panel={root:HTMLElement;url:string;title:string;ready:boolean;kind:string;initializing?:Promise<void>};
+type Panel={root:HTMLElement;url:string;title:string;ready:boolean;kind:string;initializing?:Promise<void>;preparing?:Promise<void>};
 let session:AbortController|undefined;
 let currentHost:HTMLElement|undefined;
 async function initialize(panel:Panel,signal:AbortSignal){
@@ -63,12 +64,7 @@ function setup(){
       if(doc.body.dataset.cacheUser!==viewer)throw new Error('Account changed.');
       if((key==='games'||key==='stats/games')&&doc.body.dataset.gamesApproved!=='true')throw new Error('Games access requires approval.');
       const content=doc.querySelector('#content');if(!content?.querySelector('.profile-tabs'))throw new Error('Unable to load this section.');
-      // Route-specific CSS must be available before its panel is revealed.
-      await Promise.all([...doc.querySelectorAll<HTMLLinkElement>('link[rel=stylesheet][href]')].map(link=>{
-        const href=new URL(link.getAttribute('href')!,url).href;
-        if([...document.querySelectorAll<HTMLLinkElement>('link[rel=stylesheet]')].some(existing=>existing.href===href))return;
-        return new Promise<void>((resolve,reject)=>{const css=document.createElement('link');css.rel='stylesheet';css.href=href;css.onload=()=>resolve();css.onerror=()=>{css.remove();reject(new Error('Styles unavailable'));};document.head.append(css);});
-      }));
+      await preparePanelStyles(doc,url,signal);
       if(signal.aborted||revision!==generation)throw new DOMException('Preview invalidated','AbortError');
       const root=document.createElement('div');root.dataset.profileUrl=url;
       for(const child of [...content.childNodes])if(!(child instanceof Element)||!child.matches('.profile-hero,.profile-tabs'))root.append(child);
@@ -82,26 +78,48 @@ function setup(){
     document.dispatchEvent(new Event('anylist:profile-tab-changed'));
     if(shown===panels.get(active)?.root){positions.set(active,scrollY);shown.dataset.profileUrl=location.href;shown.dispatchEvent(new Event('anylist:panel-inactive'));}
     wanted=key;update();
+    host!.querySelector('[data-profile-switch-error]')?.remove();
+    nav.setAttribute('aria-busy','true');setPanelWaiting(shown,true);
     const activate=async(panel:Panel)=>{
       if(signal.aborted||wanted!==key||document.body.dataset.cacheUser!==viewer)return;
-      show(panel.root);active=key;document.body.toggleAttribute('data-list-landing',!key.startsWith('stats'));
-      history.replaceState(history.state,'',panel.root.dataset.profileUrl||panel.url);document.title=panel.title;
-      await initialize(panel,signal);
+      if(panel.preparing)await panel.preparing;
+      else if(!panel.ready&&panel.root===shown)await initialize(panel,signal);
+      else if(!panel.ready){
+        // One shared staging task also owns rapid away/back switches.
+        panel.preparing=(async()=>{
+          const root=panel.root;root.dataset.profilePreparing='';root.inert=true;
+          root.style.cssText='position:absolute;left:0;right:0;top:0;visibility:hidden;pointer-events:none';host!.append(root);
+          try{
+            await document.fonts.ready;
+            if(signal.aborted)return;
+            await initialize(panel,signal);
+            await panelLayoutFrame(signal);await panelLayoutFrame(signal);
+          }finally{
+            root.remove();root.style.cssText='';delete root.dataset.profilePreparing;root.inert=false;
+          }
+        })().finally(()=>{panel.preparing=undefined;});
+        await panel.preparing;
+      }
       if(signal.aborted||wanted!==key)return;
-      update();window.scrollTo(0,positions.get(key)??Math.max(0,scrollY+nav.getBoundingClientRect().top));
+      setPanelWaiting(shown,false);show(panel.root);active=key;document.body.toggleAttribute('data-list-landing',!key.startsWith('stats'));
+      history.replaceState(history.state,'',panel.root.dataset.profileUrl||panel.url);document.title=panel.title;
+      nav.removeAttribute('aria-busy');update();
+      window.scrollTo(0,positions.get(key)??scrollY);
       panel.root.dispatchEvent(new Event('anylist:panel-active'));
     };
-    const cached=panels.get(key);
-    if(cached?.ready){void activate(cached);return;}
-    const skeleton=document.createElement('div');skeleton.className='page-width';skeleton.setAttribute('aria-busy','true');skeleton.style.minHeight='60vh';
-    for(let i=0;i<6;i++){const row=document.createElement('div');row.className='detail-fact-skeleton';row.style.cssText='height:48px;margin:18px 0;background:var(--bg-tertiary,#182335);border-radius:8px';skeleton.append(row);}
-    show(skeleton);
-    void read(key,url).then(activate).catch(()=>{
+    const failed=()=>{
       if(signal.aborted||wanted!==key)return;
+      setPanelWaiting(shown,false);nav.removeAttribute('aria-busy');wanted=active;update();
+      const error=document.createElement('div');error.dataset.profileSwitchError='';error.className='page-width error-message';error.setAttribute('role','alert');
       const retry=document.createElement('button');retry.className='button-secondary';retry.textContent='Try again';
-      retry.addEventListener('click',()=>{wanted='';select(key,url);},{signal});skeleton.replaceChildren(retry);skeleton.removeAttribute('aria-busy');
-    });
+      retry.addEventListener('click',()=>select(key,url),{signal});error.append('Unable to load this section. ',retry);host!.append(error);
+      shown.dispatchEvent(new Event('anylist:panel-active'));
+    };
+    const cached=panels.get(key);
+    if(cached?.ready){void activate(cached).catch(failed);return;}
+    void read(key,url).then(activate).catch(failed);
   }
+
   const target=(link:HTMLAnchorElement)=>{const url=new URL(link.href),match=profilePanelKey(url);return url.origin===location.origin&&match?.username===route.username&&targets.has(match.key)?{key:match.key,url:link.href}:undefined;};
   host.addEventListener('click',event=>{
     const link=(event.target as Element).closest<HTMLAnchorElement>('a[href]');if(!link||event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey||link.hasAttribute('download')||link.target)return;
