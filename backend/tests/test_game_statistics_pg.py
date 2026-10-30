@@ -85,7 +85,7 @@ class GameStatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data['totals']['recorded_seconds'],108000)
         self.assertEqual(data['comparisons'][1]['mean_difference_seconds'],0)
 
-    async def test_group_sort_and_paging_cover_all_works_and_reject_changed_generations(self):
+    async def test_principal_cast_and_hard_cap_have_no_continuation_and_reject_changed_generations(self):
         async with self.Session() as db:
             for index in range(30):
                 person=CatalogueEntity(kind='person',name=f'Actor {index:02}');db.add(person);await db.flush()
@@ -93,15 +93,30 @@ class GameStatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
                     attributes={'large_evidence':'RAW_CREDIT_SENTINEL '*5000}))
             await db.commit()
         await self.ready();first=(await self.request(section='actors')).json()
-        self.assertEqual((first['total'],len(first['data']),first['has_more']),(30,24,True))
+        self.assertEqual((first['total'],len(first['data']),first['has_more']),(24,24,False))
         second=(await self.request(section='actors',page=2,generation=first['generation'])).json()
-        self.assertEqual(len(second['data']),6)
-        self.assertEqual(len({row['key'] for row in first['data']+second['data']}),30)
+        self.assertEqual(len(second['data']),24)
+        self.assertEqual(second['page'],1)
+        self.assertEqual(len({row['key'] for row in first['data']+second['data']}),24)
         self.assertNotIn('RAW_',str(first))
         async with self.Session() as db:
             row=await db.scalar(select(GameEntry).where(GameEntry.work_id==self.game_id));row.score=9;await db.commit()
         await self.ready()
         self.assertEqual((await self.request(section='actors',page=2,generation=first['generation'])).status_code,409)
+
+    async def test_all_group_sorts_read_thirty_from_the_complete_snapshot(self):
+        await self.ready()
+        async with self.Session() as db:
+            state=await db.get(GameStatsState,self.user_id)
+            rows=[{'key':str(i),'label':f'Company {i:02}','games':i+1,'recorded_seconds':40-i,
+                'known_time_games':1,'mean_score':i/4,'rated_games':1,'href':None,'image':None,'roles':[], 'top_titles':[]} for i in range(40)]
+            state.payload={**state.payload,'developers':rows};await db.commit()
+        count=(await self.request(section='developers')).json()
+        time=(await self.request(section='developers',sort='time')).json()
+        self.assertEqual((len(count['data']),count['total'],count['has_more']),(30,30,False))
+        self.assertEqual(count['data'][0]['key'],'39');self.assertEqual(time['data'][0]['key'],'0')
+        async with self.Session() as db:
+            self.assertEqual(len((await db.get(GameStatsState,self.user_id)).payload['developers']),40)
 
     async def test_private_profile_revocation_and_anonymous_paths_do_not_expose_cached_statistics(self):
         await self.ready()

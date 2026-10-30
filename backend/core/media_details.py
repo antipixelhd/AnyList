@@ -71,6 +71,12 @@ async def work_details(db, work, *, extras=True):
     alternative_images = {}
     from core.person_identities import canonical_people
     canonical = await canonical_people(db, [person for _, person in credits])
+    if work.kind=='game':
+        from core.game_principal_credits import select_credits as select_game_credits
+        selected=select_game_credits([{'id':canonical[person.id].id,'kind':person.kind,'role':credit.role,
+            'role_label':credit.role_label,'position':credit.position,'character_label':credit.character_label,
+            'attributes':credit.attributes,'source':(credit,person)} for credit,person in credits])
+        credits=[row['source'] for row in selected]
     game_performances,game_characters={},[]
     game_character_status=None
     if work.kind=='game':

@@ -3,11 +3,11 @@ import test from 'node:test';
 import { genreSort, rankedGenres, genreBrowseHref, genreTime } from '../src/lib/stats-genres-data.ts';
 
 const row = (label, titles, mean_score, minutes) => ({ key: label, label, titles, mean_score, minutes, runtime_missing_plays: 0, browse_filters: { movie: '28,12', series: '10759' } });
-test('genre ranking caps at 18, uses the chosen metric and leaves snapshot rows intact', () => {
-  const rows = Array.from({ length: 20 }, (_, i) => row(`Genre ${i}`, i, i === 19 ? null : i / 2, 20 - i));
-  assert.equal(rankedGenres(rows, 'count').length, 18);
-  assert.equal(rankedGenres(rows, 'count')[0].titles, 19);
-  assert.equal(rankedGenres(rows, 'mean_score')[0].titles, 18);
+test('genre ranking caps at 30, uses the chosen metric and leaves snapshot rows intact', () => {
+  const rows = Array.from({ length: 40 }, (_, i) => row(`Genre ${i}`, i, i === 19 ? null : i / 2, 20 - i));
+  assert.equal(rankedGenres(rows, 'count').length, 30);
+  assert.equal(rankedGenres(rows, 'count')[0].titles, 39);
+  assert.equal(rankedGenres(rows, 'mean_score')[0].titles, 39);
   assert.equal(rankedGenres(rows, 'time')[0].titles, 0);
   assert.equal(rows[0].titles, 0);
   assert.deepEqual(rankedGenres([row('B', 2, null, 0), row('A', 2, null, 0)], 'mean_score').map(r => r.label), ['A', 'B']);

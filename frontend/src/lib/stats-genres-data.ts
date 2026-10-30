@@ -6,7 +6,7 @@ export function genreSort(value: string | null | undefined): GenreSort {
 }
 export function rankedGenres<T extends MediaGroup>(rows: T[], sort: GenreSort) {
   const value = (row: T) => sort === 'mean_score' ? row.mean_score ?? -Infinity : sort === 'time' ? row.minutes : row.titles;
-  return [...rows].sort((a, b) => value(b) - value(a) || b.titles - a.titles || a.label.localeCompare(b.label)).slice(0, 18);
+  return [...rows].sort((a, b) => value(b) - value(a) || b.titles - a.titles || a.label.localeCompare(b.label)).slice(0, 30);
 }
 export function genreBrowseHref(row: GenreGroup, media: MediaScope) {
   if(row.href)return row.href;

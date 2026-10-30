@@ -35,9 +35,9 @@ test('generation conflict, privacy denial, and lifetime cancellation preserve th
   pending=h.reader.load();h.requests[1].resolve(new Response(null,{status:403}));await pending;assert.equal(h.errors[0][1],true);
   pending=h.reader.load();h.controller.abort();h.requests[2].resolve(Response.json(game()));await pending;assert.equal(h.renders.length,0);
 });
-test('Games projection keeps all 24 rows, raw domain data, unknown time, and native genre links',()=>{
-  const raw=game();raw.data=Array.from({length:24},(_,i)=>({key:String(i),label:String(i),games:1,recorded_seconds:null,known_time_games:0,mean_score:null,rated_games:0,href:'/browse/games?genres='+i,image:null,roles:[],top_titles:[]}));
-  const view=gameStatisticsView(raw,'time');assert.equal(view.game,raw);assert.equal(view.overview.genres.length,24);assert.equal(view.overview.genres[0].href,'/browse/games?genres=0');assert.equal(view.selectionSort,'time');
+test('Games projection caps presentation at 30 rows while retaining, raw domain data, unknown time, and native genre links',()=>{
+  const raw=game();raw.data=Array.from({length:40},(_,i)=>({key:String(i),label:String(i),games:1,recorded_seconds:null,known_time_games:0,mean_score:null,rated_games:0,href:'/browse/games?genres='+i,image:null,roles:[],top_titles:[]}));
+  const view=gameStatisticsView(raw,'time');assert.equal(view.game,raw);assert.equal(view.overview.genres.length,30);assert.equal(view.overview.genres[0].href,'/browse/games?genres=0');assert.equal(view.selectionSort,'time');
   assert.equal(metricValue({minutes:0,time_known:false},'hours'),null);
   for(const section of ['overview','genres','actors','staff'])assert.equal(statisticsSection('game',section),section);
   assert.equal(statisticsSection('screen','developers'),'overview');assert.equal(emptyStatistics('series').media_type,'series');

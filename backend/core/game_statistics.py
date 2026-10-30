@@ -11,7 +11,7 @@ from sqlalchemy.orm import defer
 from core.game_statistics_facts import load_facts,build_statistics
 from models.game_statistics import GameStatsState
 
-CONTRACT=2
+CONTRACT=3
 SECTIONS=('overview','genres','developers','publishers','actors','staff')
 log=logging.getLogger(__name__)
 
@@ -25,8 +25,8 @@ async def read(db,user_id,section='overview',*,sort='count',page=1,generation=No
     field={'count':'games','mean_score':'mean_score','time':'recorded_seconds'}.get(sort)
     if not field or type(page) is not int or not 1<=page<=5000:raise ValueError('Invalid Games statistics page')
     # Project only the requested section/page in PostgreSQL. Sorting must cover
-    # the full stored collection; never hydrate a full contributor snapshot to
-    # display its first 24 groups or sort a truncated browser subset.
+    # the full stored collection; hydrate only the requested top thirty groups,
+    # never sort a truncated browser subset. Page is accepted for old bookmarks.
     row=(await db.execute(text("""SELECT s.user_id,s.generation,s.source_revision,s.computed_source_revision,
         s.metadata_revision,s.contract_version,s.computed_at,s.lease_until,s.next_due_at,s.error_code,
         jsonb_typeof(s.payload)='object' AS cached,s.metadata_source_revision AS current_metadata,
@@ -35,10 +35,10 @@ async def read(db,user_id,section='overview',*,sort='count',page=1,generation=No
             (SELECT value FROM jsonb_array_elements(CASE WHEN jsonb_typeof(s.payload->:section)='array'
               THEN s.payload->:section ELSE '[]'::jsonb END)
              ORDER BY (value->>:sort_field)::numeric DESC NULLS LAST,lower(value->>'label'),value->>'key'
-             LIMIT 24 OFFSET :offset) p) END AS data,
+             LIMIT 30 OFFSET 0) p) END AS data,
         CASE WHEN jsonb_typeof(s.payload->:section)='array' THEN jsonb_array_length(s.payload->:section) ELSE 0 END AS total
         FROM users u LEFT JOIN game_stats_state s ON s.user_id=u.id WHERE u.id=:user_id"""),
-        {'user_id':user_id,'section':section,'sort_field':field,'offset':(page-1)*24})).one_or_none()
+        {'user_id':user_id,'section':section,'sort_field':field})).one_or_none()
     if row is None:raise RuntimeError('Statistics account is unavailable')
     ready=bool(row.user_id is not None and row.cached and row.data is not None and row.contract_version==CONTRACT
         and row.source_revision==row.computed_source_revision and row.metadata_revision==row.current_metadata)
@@ -55,8 +55,8 @@ async def read(db,user_id,section='overview',*,sort='count',page=1,generation=No
     return {'domain':'game','section':section,'status':'ready' if ready else 'error' if row.error_code else 'pending',
         'generation':row.generation if ready else None,'computed_at':row.computed_at.replace(tzinfo=timezone.utc) if row.computed_at and ready else None,
         'refreshing':bool(row.lease_until and row.lease_until>now()),'data':row.data if ready else None,
-        'page':page,'total':row.total if ready and section!='overview' else None,
-        'has_more':bool(ready and section!='overview' and page*24<row.total),
+        'page':1,'total':min(30,row.total) if ready and section!='overview' else None,
+        'has_more':False,
         'retry_after':max(3,min(60,int((row.next_due_at-now()).total_seconds())+1)) if row.next_due_at else 3}
 
 

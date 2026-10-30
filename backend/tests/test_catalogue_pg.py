@@ -227,10 +227,10 @@ class CatalogueDatabaseTests(unittest.IsolatedAsyncioTestCase):
             performer=next(row for row in data['people'] if row['id']==actor.id)
             performances=performer['credit_performances']
             self.assertEqual([(row['source'],row['languages'],row['characters']) for row in performances],[
-                ('wikidata',['en'],['English role']),('imdb',[],['Unlabelled role']),('wikidata',['de'],['German role'])])
+                ('wikidata',['en'],['English role']),('wikidata',['de'],['German role'])])
             self.assertEqual(performances[0]['credited_as'],'English alias')
-            self.assertIsNone(performances[1]['voice']);self.assertTrue(performances[1]['uncredited'])
-            self.assertIsNone(performances[2]['uncredited'])
+            self.assertEqual(await db.scalar(select(func.count()).select_from(CatalogueCredit).where(CatalogueCredit.work_id==work.id)),15)
+            self.assertIsNone(performances[1]['uncredited'])
             composer=next(row for row in data['people'] if row['id']==crew.id)
             self.assertEqual(composer['roles'],[f'Job {position}' for position in range(12)])
             self.assertEqual(composer['jobs'],[f'composer: expansion {position}' for position in range(12)])

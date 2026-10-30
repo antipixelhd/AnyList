@@ -90,7 +90,7 @@ async def main(args):
             raise SystemExit('--baseline-ref must be a local commit SHA')
         # Execute trusted repository source in this process only; never switch
         # branches or overwrite the user's checkout to compare revisions.
-        for name in ('tmdb', 'discovery_policy', 'catalog_search', 'release_browse', 'browse',
+        for name in ('game_credit_projection','media_details','game_statistics_facts','game_statistics','tmdb', 'discovery_policy', 'catalog_search', 'release_browse', 'browse',
                      'person_identities', 'game_imdb_person', 'game_contributor_works', 'game_person_images', 'contributor_evidence', 'studio_discovery', 'contributor_details', 'contributor_search'):
             module = importlib.import_module('core.' + name)
             process = await asyncio.to_thread(subprocess.run, ['git', 'show', f'{args.baseline_ref}:backend/core/{name}.py'],
@@ -1030,7 +1030,7 @@ async def main(args):
                                 # Combined/default matrices also seed one
                                 # shared portfolio actor across these games.
                                 groups=played+int(bool(game_contributor_id and played))
-                                if result['total']!=groups or len(result['data'])!=min(24,max(0,groups-(24 if params.get('page')==2 else 0))):
+                                if (result['total'],len(result['data']),result['has_more']) != ((min(30,groups),min(30,groups),False) if not args.baseline_ref else (groups,min(24,max(0,groups-(24 if params.get('page')==2 else 0))),params.get('page',1)*24<groups)):
                                     raise RuntimeError('Statistics lost full contributor coverage or bounded paging')
                                 times=[row['recorded_seconds'] for row in result['data']]
                                 if times!=sorted(times,reverse=True):raise RuntimeError('Statistics sorted only a truncated subset')
@@ -1095,7 +1095,8 @@ async def main(args):
                         if label=='game_credits':
                             result=await request(path,params)
                             actors=[person for person in result['people'] if person['kind']=='actor']
-                            if len(actors)!=30 or len(result['game_characters'])!=100 or sum(len(person.get('performances',[])) for person in actors)!=90:
+                            expected_cast=30 if args.baseline_ref else 24
+                            if len(actors)!=expected_cast or len(result['game_characters'])!=100 or sum(len(person.get('performances',[])) for person in actors)!=expected_cast*3:
                                 raise RuntimeError('Game credit projection lost cast, independent characters or performance associations')
                             if 'statement' in json.dumps(result):raise RuntimeError('Raw source credit evidence leaked into the detail payload')
                             return result

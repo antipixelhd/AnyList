@@ -70,7 +70,7 @@ def studio_groups(listed):
     selected = set()
     for metric in ("titles", "minutes", "mean_score"):
         ranked = sorted(result, key=lambda r: (-(r[metric] if r[metric] is not None else -1), -r["titles"], r["label"].casefold(), r["key"]))
-        selected.update(r["key"] for r in ranked[:18])
+        selected.update(r["key"] for r in ranked[:30])
     return [r for r in result if r["key"] in selected]
 
 

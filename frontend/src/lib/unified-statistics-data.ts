@@ -19,7 +19,7 @@ export function gameStatisticsView(game:GameStatsResponse,selectionSort='count')
       view.scores=gameChartRows(data.scores);view.episode_counts=gameChartRows(data.hours);view.release_years=gameChartRows(data.release_years);view.watch_years=gameChartRows(data.completion_years);
       view.statuses=data.statuses.map(row=>({key:row.key,label:row.label,titles:row.games}));view.coverage=data.coverage;
     }else{
-      const rows=(game.data as GameStatsGroup[]).map(gameCard);
+      const rows=(game.data as GameStatsGroup[]).slice(0,30).map(gameCard);
       if(game.section==='genres')view.genres=rows.map(row=>({...row,browse_filters:{movie:'',series:''}}));
       else if(game.section==='actors')view.actors=rows.map(row=>({...row,top_titles:row.top_titles.map(title=>({...title,character:null,character_image:null}))}));
       else if(game.section==='staff')view.staff=rows;
@@ -27,13 +27,4 @@ export function gameStatisticsView(game:GameStatsResponse,selectionSort='count')
     }
   }
   return {...game,selectionSort,status:game.status,overview:game.status==='ready'?view:null,game,next_update_at:new Date(Date.now()+(game.retry_after||3)*1000).toISOString()};
-}
-
-/** Append only consecutive pages from the same published snapshot and ranking. */
-export function appendStatistics(previous:UnifiedStatistics,next:UnifiedStatistics):UnifiedStatistics{
-  const before=previous.game,after=next.game;
-  if(!before||!after||before.status!=='ready'||after.status!=='ready'||before.generation!==after.generation||before.section!==after.section||previous.selectionSort!==next.selectionSort||after.page!==before.page+1||!Array.isArray(before.data)||!Array.isArray(after.data))return next;
-  const rows=new Map(before.data.map(row=>[row.key,row]));
-  for(const row of after.data)rows.set(row.key,row);
-  return gameStatisticsView({...after,data:[...rows.values()]},next.selectionSort);
 }

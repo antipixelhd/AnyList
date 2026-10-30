@@ -13,7 +13,7 @@ from sqlalchemy.orm import aliased
 from core.game_types import INDEPENDENT
 from core.game_contributor_works import ACTING
 from core.catalogue_normalize import image
-from models.catalogue import CatalogueEntity,CatalogueCredit,MetadataSnapshot
+from models.catalogue import CatalogueEntity,CatalogueCredit,MetadataSnapshot,CharacterPerformance
 from models.games import GameEntry,GameAchievement,GameAchievementUnlock
 
 STATUSES=('planning','playing','paused','completed','dropped')
@@ -50,9 +50,14 @@ async def load_facts(db,user_id):
     result=await db.execute(select(CatalogueCredit.work_id,
         func.coalesce(root.id,person.id).label('id'),func.coalesce(root.name,person.name).label('name'),
         func.coalesce(root.image_url,person.image_url).label('image'),person.kind,CatalogueCredit.role,
-        CatalogueCredit.role_label).join(person,person.id==CatalogueCredit.contributor_id).outerjoin(root,
+        CatalogueCredit.role_label,CatalogueCredit.position,CatalogueCredit.character_label,
+        func.jsonb_build_object('game_role',CatalogueCredit.attributes['game_role'],
+            'uncredited',CatalogueCredit.attributes['uncredited']).label('attributes')).join(person,person.id==CatalogueCredit.contributor_id).outerjoin(root,
             root.id==func.coalesce(person.canonical_person_id,person.canonical_company_id)).where(
-        CatalogueCredit.work_id.in_(ids),CatalogueCredit.attributes['source_active'].astext.is_distinct_from('false')).distinct())
+        CatalogueCredit.work_id.in_(ids),
+        (CatalogueCredit.scope!='person') | select(CharacterPerformance.id).where(
+            CharacterPerformance.credit_id==CatalogueCredit.id,CharacterPerformance.source=='reviewed').exists(),
+        CatalogueCredit.attributes['source_active'].astext.is_distinct_from('false')).distinct())
     credits=await asyncio.to_thread(lambda:[dict(row) for row in result.mappings()])
     return facts,credits
 
@@ -150,6 +155,10 @@ def build_statistics(facts,credits):
                 reference=(row.get('genre_filters') or {}).get(label.casefold())
                 href='/browse/games?'+urlencode({'genres':reference}) if isinstance(reference,str) and re.fullmatch(r'igdb\.genre:[1-9][0-9]*',reference) else None
                 add('genres',label.casefold(),label,row,href=href)
+    from core.game_principal_credits import select_credits
+    by_work=defaultdict(list)
+    for credit in credits:by_work[credit['work_id']].append(credit)
+    credits=[credit for rows in by_work.values() for credit in select_credits(rows)]
     for credit in credits:
         row=by_id.get(credit['work_id'])
         if not row:continue
