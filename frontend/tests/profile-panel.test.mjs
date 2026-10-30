@@ -1,3 +1,6 @@
+import {readFileSync} from 'node:fs';
+import {stripTypeScriptTypes} from 'node:module';
+import {runInNewContext} from 'node:vm';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {profilePanelKey,panelActive,panelUrl,setPanelUrl,setPanelWaiting} from '../src/lib/profile-panel.ts';
@@ -27,4 +30,18 @@ test('waiting panels disable data controls without disabling domain navigation a
   setPanelWaiting(root,true);setPanelWaiting(root,true);
   assert.equal(attributes.has('data-profile-waiting'),true);assert.deepEqual(controls.map(node=>node.inert),[true,true]);
   setPanelWaiting(root,false);assert.equal(attributes.has('data-profile-waiting'),false);assert.deepEqual(controls.map(node=>node.inert),[false,true]);
+});
+
+
+test('reclicking a selected or pending profile tab cannot escape into full-page navigation',()=>{
+  const source=readFileSync(new URL('../src/lib/profile-shell.ts',import.meta.url),'utf8');
+  const start=source.indexOf("  host.addEventListener('click'");
+  const binding=source.slice(start,source.indexOf('  bindPredictionIntent',start));
+  let click,prevented=0,stopped=0,selected=0;
+  const link={target:'',hasAttribute:()=>false,closest:()=>({})};
+  runInNewContext(stripTypeScriptTypes(binding),{host:{addEventListener:(_,fn)=>click=fn},signal:new AbortController().signal,
+    target:()=>({key:'stats',url:'/user/alex/stats'}),wanted:'stats',select:()=>selected++});
+  const event={target:{closest:()=>link},button:0,preventDefault:()=>prevented++,stopImmediatePropagation:()=>stopped++};
+  click(event);assert.equal(prevented,1);assert.equal(stopped,1);
+  link.closest=()=>null;click(event);assert.equal(prevented,1,'same-domain pagination keeps its own controller');
 });

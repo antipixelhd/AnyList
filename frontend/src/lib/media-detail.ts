@@ -1,3 +1,4 @@
+import {preparePanelStyles} from './panel-readiness';
 import { editorStore, seedEditorPage, type EditorTitle } from './editor-store';
 import { createContentTransition, mountDetailsMotion } from './content-motion';
 import { mountContributorBiography } from './contributor-biography';
@@ -188,11 +189,17 @@ export function mountMediaDetail() {
       const html=new DOMParser().parseFromString(await response.text(),'text/html');
       const content=html.querySelector('.media-social-grid');
       if(!content)throw new Error('Unable to load social activity.');
+      await preparePanelStyles(html,response.url||location.href,signal);
       if(signal.aborted)return;
       const selectedScope = host.querySelector<HTMLButtonElement>('[data-social-scope][aria-selected="true"]')?.dataset.socialScope;
       host.replaceChildren(document.importNode(content,true));localizeDateTimes(host);socialLoaded=true;
       if (selectedScope) host.querySelector<HTMLButtonElement>(`[data-social-scope="${selectedScope}"]`)?.click();
-    })().catch(error=>{if(!signal.aborted&&!host.children.length)host.textContent=error instanceof Error?error.message:'Unable to load social activity.';}).finally(()=>{socialPending=undefined;});
+    })().catch(error=>{
+      if(signal.aborted||socialLoaded||host.querySelector('.media-social-grid'))return;
+      const message=document.createElement('p');message.className='section-empty';message.textContent=error instanceof Error?error.message:'Unable to load social activity.';
+      const retry=document.createElement('button');retry.type='button';retry.className='button-secondary';retry.textContent='Try again';retry.addEventListener('click',loadSocial,{signal});
+      host.replaceChildren(message,retry);
+    }).finally(()=>{socialPending=undefined;});
   };
   document.addEventListener('anylist:editor-committed', event => {
     const saved = (event as CustomEvent<{title:EditorTitle}>).detail.title;

@@ -123,7 +123,8 @@ function setup(){
   const target=(link:HTMLAnchorElement)=>{const url=new URL(link.href),match=profilePanelKey(url);return url.origin===location.origin&&match?.username===route.username&&targets.has(match.key)?{key:match.key,url:link.href}:undefined;};
   host.addEventListener('click',event=>{
     const link=(event.target as Element).closest<HTMLAnchorElement>('a[href]');if(!link||event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey||link.hasAttribute('download')||link.target)return;
-    const next=target(link);if(!next||next.key===wanted)return;
+    const next=target(link);if(!next)return;
+    if(next.key===wanted&&!link.closest('.profile-tabs,.stats-domain-navigation'))return;
     event.preventDefault();event.stopImmediatePropagation();select(next.key,next.url);
   },{signal,capture:true});
   bindPredictionIntent(host,signal,link=>{const next=target(link);if(next&&next.key!==wanted)void read(next.key,next.url).catch(()=>{});});

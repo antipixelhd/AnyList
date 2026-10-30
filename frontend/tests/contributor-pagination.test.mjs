@@ -19,7 +19,7 @@ test('a failed replacement filter restores pagination and ignores the older page
     contributorSourceRefresh:()=>({update(){},stop(){}}),
     contributorPages,updateEmpty(){},
     form:{action:'https://example.test/person/1',querySelectorAll:()=>[],addEventListener:(name,handler)=>{handlers[name]=handler;}},
-    document:{addEventListener(){}},region,more,data,
+    document:{addEventListener(){}},region,more,data,items:new Map(),
     error:{hidden:true},params:new URLSearchParams(),
     createPrediction:()=>({cancel(){},consume:async()=>null}),
     fetch:()=>new Promise((resolve,reject)=>pending.push({resolve,reject})),
@@ -117,6 +117,7 @@ test('cache invalidation during a tab switch retries the selected domain instead
   vm.runInContext(stripTypeScriptTypes(snippet),context);
   const flush=()=>new Promise(setImmediate);
   handlers.submit({preventDefault(){}});await flush();assert.equal(network.length,1);
+  assert.equal(context.region.hidden,false,'cold domain switching keeps the existing works visible');assert.equal(context.region.inert,true);
   pages.clear();await flush();assert.equal(network[0].signal.aborted,true);assert.equal(network.length,2);
   assert.equal(root.dataset.mediaType,'all');
   network[1].resolve({kind:'actor',works:[{id:7}],roles:[],list_count:1,has_more:false});await flush();

@@ -312,7 +312,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     const worksAnchor = new URL(form.action).hash === '#contributor-works';
     const request=new AbortController(),current=++revision;
     filterRequest=request;error.hidden=true;region.setAttribute('aria-busy','true');
-    root.querySelector<HTMLElement>('[data-contributor-loading]')!.hidden=false;
+    root.querySelector<HTMLElement>('[data-contributor-loading]')!.hidden=items.size>0;
     root.querySelector<HTMLElement>('[data-contributor-empty]')!.hidden=true;
     const submitted=new URLSearchParams();
     new FormData(form).forEach((value,key)=>submitted.set(key,String(value)));
@@ -325,7 +325,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     const cached=switching?retained.get(query.get('media_type')==='game'?'game':'movies-series'):undefined;
     if(switching&&retainCurrent&&!syncing)retained.set(domain(),{nodes:[...region.childNodes],items:new Map(items),data:{...data},params:new URLSearchParams(params),view:requestedView,scroll:scrollY});
     if(cached){query=new URLSearchParams(cached.params);requestedView=cached.view;}
-    region.hidden=(query.get('media_type')==='game')!==(params.get('media_type')==='game');
+    region.hidden=false;region.inert=true;
     const readSelection=async()=>{
       for(;;){
         try{return await pages.get(`/api/proxy/tracking/${root.dataset.endpoint}?${query}`,request.signal);}
@@ -367,7 +367,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
         if (works) scrollToWorks(works);
       }
     };
-    const finish=()=>{if(!signal.aborted&&current===revision){filterRequest=undefined;region.removeAttribute('aria-busy');region.hidden=false;root.querySelector<HTMLElement>('[data-contributor-loading]')!.hidden=true;updateEmpty();more.disabled=false;more.textContent='Load more';if(syncAgain)void synchronize();}};
+    const finish=()=>{if(!signal.aborted&&current===revision){filterRequest=undefined;region.removeAttribute('aria-busy');region.hidden=false;region.inert=false;root.querySelector<HTMLElement>('[data-contributor-loading]')!.hidden=true;updateEmpty();more.disabled=false;more.textContent='Load more';if(syncAgain)void synchronize();}};
     if(cached){applySelection(cached.data);finish();window.scrollTo(0,cached.scroll);return;}
     void readSelection().then(applySelection).catch(cause=>{
       if(!signal.aborted&&!request.signal.aborted&&current===revision&&(cause as Error).name!=='AbortError'){restoreFilterControls();showError(cause instanceof Error?cause.message:'Unable to load works.');}

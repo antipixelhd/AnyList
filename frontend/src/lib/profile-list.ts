@@ -190,6 +190,7 @@ export function initializeProfileList(panel:HTMLElement,lifetime:AbortSignal) {
         if (focused instanceof HTMLInputElement && focused.closest('.list-shell')) {
           focused.addEventListener('blur', scheduleRefresh, {once:true, signal:pageListeners.signal}); return;
         }
+        panel.querySelector('[data-list-refresh-error]')?.remove();
         refreshScheduled = true;
         const version = revision;
         void (async () => {
@@ -222,7 +223,10 @@ export function initializeProfileList(panel:HTMLElement,lifetime:AbortSignal) {
             initializeProfileList(panel,lifetime);
             if (filtersOpen && matchMedia('(max-width:650px)').matches) panel.querySelector<HTMLButtonElement>('.mobile-filter-toggle')?.click();
           } catch (error) {
-            if (!pageListeners.signal.aborted) location.reload();
+            if(pageListeners.signal.aborted)return;
+            const message=document.createElement('p');message.className='error-message';message.dataset.listRefreshError='';message.setAttribute('role','status');
+            const retry=document.createElement('button');retry.type='button';retry.className='lab-text-button';retry.textContent='Retry';retry.addEventListener('click',scheduleRefresh,{signal:pageListeners.signal});
+            message.append('Unable to refresh this list. ',retry);panel.querySelector('.list-content')?.prepend(message);
           } finally { refreshScheduled = false; }
         })();
       };

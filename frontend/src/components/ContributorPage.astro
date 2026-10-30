@@ -92,7 +92,7 @@ listLink.set('list_scope','in'); listLink.set('view',view);
           <div class:list={['contributor-works-grid', {'browse-grid':view === 'grid'}]} data-contributor-works>
             {years.map(year => <section class="contributor-year" data-contributor-year={year} aria-label={year}><h3>{year}</h3><div class="contributor-year-works">{data!.works.filter(work => contributorYear(work) === year).map(work => <BrowseCard item={work} signedIn={signedIn} credits />)}</div></section>)}
           </div>
-          <div class="contributor-loading" data-contributor-loading hidden aria-label="Loading works" role="status"><span></span><span></span><span></span></div>
+          <p class="contributor-loading" data-contributor-loading hidden role="status">Loading works…</p>
           <p class="contributor-empty" data-contributor-empty hidden={data.works.length > 0}>No works match these filters.</p>
           <div class="contributor-pagination"><a href={`${next.pathname}${next.search}`} data-contributor-next hidden={!data.has_more}>Next page <Icon name="arrow-right" /></a><button type="button" data-contributor-more hidden>Load more</button><p class="contributor-load-error" data-contributor-error role="alert" hidden></p></div>
           <template data-contributor-template><BrowseCard item={{title:'',type:'movie'}} signedIn={signedIn} template credits /></template>
