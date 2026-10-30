@@ -12,7 +12,7 @@ test('optimistic section controls leave the outgoing data panel intact until com
   const generic=()=>({hidden:false,textContent:'',setAttribute(){},removeAttribute(){}});
   const controls=new Map();const node=selector=>{if(!controls.has(selector))controls.set(selector,generic());return controls.get(selector);};
   const root={dataset:{},querySelectorAll:selector=>selector==='[data-stats-panel]'?panels:[]};
-  const context={root,node,domain:'game',section:'publishers',page:1,statisticsPanel,statisticsSections,rawGame:()=>({has_more:false}),panelUrl:()=> 'https://example.test/user/alex/stats/games',URL,chartKeys:['scores','episode_counts','release_years','watch_years']};
+  const context={root,node,domain:'game',section:'publishers',page:1,firstPage:1,appendFailed:false,statisticsPanel,statisticsSections,rawGame:()=>({has_more:false}),panelUrl:()=> 'https://example.test/user/alex/stats/games',URL,chartKeys:['scores','episode_counts','release_years','watch_years']};
   runInNewContext(stripTypeScriptTypes(snippet)+';this.update=updateDomainControls;',context);
   context.update();assert.equal(root.dataset.section,'publishers');assert.deepEqual(panels.map(p=>p.hidden),[false,true]);
   context.update(true);assert.deepEqual(panels.map(p=>p.hidden),[true,false]);
@@ -32,7 +32,7 @@ test('outgoing controls stay inert across cold reads, failures and delayed commi
   const start=source.indexOf('  function statisticsBusy(');
   const snippet=source.slice(start,source.indexOf("  events.signal.addEventListener('abort',()=>statisticsBusy",start));
   let matching=false;const waiting=[],progress=[];
-  const context={root:{setAttribute(){}},response:{status:'ready'},matchesSelection:()=>matching,setResultsWaiting:value=>waiting.push(value),panelActive:()=>true,progressRunning:false,document:{dispatchEvent:event=>progress.push(event.type)},Event};
+  const context={appending:false,queueMicrotask:()=>{},checkMore(){},root:{setAttribute(){}},response:{status:'ready'},matchesSelection:()=>matching,setResultsWaiting:value=>waiting.push(value),panelActive:()=>true,progressRunning:false,document:{dispatchEvent:event=>progress.push(event.type)},Event};
   runInNewContext(stripTypeScriptTypes(snippet)+';this.busy=statisticsBusy;',context);
   context.busy(true);context.busy(false);assert.deepEqual(waiting,[true,true]);
   matching=true;context.busy(true);context.busy(false);assert.deepEqual(waiting,[true,true,true,false]);

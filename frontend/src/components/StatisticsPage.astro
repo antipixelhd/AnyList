@@ -125,7 +125,11 @@ const actorTemplate = { key: '', label: '', image: null, href: '#', titles: 0, m
         <template data-staff-card-template><StatsStaffCard person={{...actorTemplate, roles: [], prominence: 8}} rank={0} /></template>
         <template data-genre-poster-template><a class="stats-genre-poster" href="#" draggable="false"><img alt="" loading="lazy" draggable="false" /><span class="stats-genre-placeholder" aria-hidden="true"></span><span class="stats-genre-tooltip" aria-hidden="true"></span></a></template>
       </div>
-      <nav class="game-stats-pagination" data-statistics-pages aria-label="Games statistics pages" hidden={!games||section==='overview'}><a data-statistics-page="-1" href={gameQuery.page>1?gamePageHref(gameQuery.page-1):undefined} aria-disabled={gameQuery.page<=1}>Previous</a><span data-statistics-page-label>Page {gameQuery.page}</span><a data-statistics-page="1" href={data.game?.has_more?gamePageHref(gameQuery.page+1):undefined} aria-disabled={!data.game?.has_more}>Next</a></nav>
+      <div data-statistics-pages class="statistics-more" hidden={!games||section==='overview'||!data.game?.has_more}>
+        <span data-statistics-sentinel aria-hidden="true"></span>
+        <button type="button" data-statistics-more hidden>Try again</button>
+        <noscript><a href={gamePageHref(gameQuery.page+1)}>Next page</a></noscript>
+      </div>
       </div>
     </section>
   </> : <div class="page-width"><p class="error-message" role="alert">{error}</p></div>}

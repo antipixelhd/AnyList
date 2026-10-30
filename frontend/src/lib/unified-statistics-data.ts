@@ -28,3 +28,12 @@ export function gameStatisticsView(game:GameStatsResponse,selectionSort='count')
   }
   return {...game,selectionSort,status:game.status,overview:game.status==='ready'?view:null,game,next_update_at:new Date(Date.now()+(game.retry_after||3)*1000).toISOString()};
 }
+
+/** Append only consecutive pages from the same published snapshot and ranking. */
+export function appendStatistics(previous:UnifiedStatistics,next:UnifiedStatistics):UnifiedStatistics{
+  const before=previous.game,after=next.game;
+  if(!before||!after||before.status!=='ready'||after.status!=='ready'||before.generation!==after.generation||before.section!==after.section||previous.selectionSort!==next.selectionSort||after.page!==before.page+1||!Array.isArray(before.data)||!Array.isArray(after.data))return next;
+  const rows=new Map(before.data.map(row=>[row.key,row]));
+  for(const row of after.data)rows.set(row.key,row);
+  return gameStatisticsView({...after,data:[...rows.values()]},next.selectionSort);
+}

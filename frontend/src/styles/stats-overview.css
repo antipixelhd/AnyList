@@ -125,3 +125,7 @@ html.light .overview-metrics button[aria-pressed=true] { color:#fff; }
   .overview-totals [data-headline-label] { font-size:12px; white-space:normal; }
 }
 @media(prefers-reduced-motion:reduce) { .stats-overview-page * { transition:none!important; animation:none!important; } }
+
+.statistics-more { min-height:1px; text-align:center; margin:24px 0; }
+[data-statistics-sentinel] { display:block; height:1px; }
+[data-statistics-more] { color:var(--stats-cyan); background:transparent; border:0; padding:10px; cursor:pointer; }
