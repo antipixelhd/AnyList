@@ -3,6 +3,7 @@
 .stats-overview-content { min-width:0; container:stats-content / inline-size; }
 .stats-overview-page :is(.overview-plot,.stats-genre-card) { box-shadow:0 14px 30px 0 rgba(0, 5, 15, 0.15),0 4px 4px 0 rgba(0, 5, 15, 0.05); }
 .overview-sidebar { min-width:0; }
+.overview-sidebar [data-statistics-domain]+[data-statistics-domain] { margin-top:28px; }
 .overview-sidebar .profile-section-selector { --type-sidebar-size:1.4rem; --type-sidebar-weight:700; --type-sidebar-selected-weight:700; }
 .overview-menu-toggle { display:none; }
 .overview-heading { display:flex; align-items:center; justify-content:space-between; gap:20px; margin-bottom:30px; }
@@ -12,8 +13,6 @@
 .overview-media a[aria-current=page] { color:var(--stats-cyan); background:linear-gradient(var(--stats-cyan),var(--stats-cyan)) left bottom/100% 2px no-repeat; border-radius:0; }
 .overview-media a:hover { color:var(--bright); }
 .stats-overview-page :is(button,a,select,summary,canvas):focus-visible { outline:none; color:var(--stats-cyan); background-color:color-mix(in srgb,var(--stats-cyan) 15%,var(--stats-plot)); }
-.stats-domain-navigation { justify-content:flex-end; margin-bottom:24px; }
-.stats-domain-navigation [aria-disabled=true] { color:var(--muted); opacity:.45; cursor:default; }
 .game-stats-secondary { display:flex; flex-wrap:wrap; justify-content:start; gap:24px; margin:0; }
 .overview-totals.game-stats-secondary>div { display:flex; flex-direction:column-reverse; align-items:start; gap:8px; }
 .overview-totals.game-stats-secondary dt { display:block; font-size:14px; font-weight:600; }
@@ -91,7 +90,6 @@ html.light .overview-metrics button[aria-pressed=true] { color:#fff; }
   .overview-menu-toggle svg { width:23px; height:23px; }
   .overview-sidebar #statistics-sections { display:none; margin-top:12px; }
   .overview-sidebar[data-menu-scripted] #statistics-sections:not([hidden]) { display:block; }
-  .overview-sidebar .profile-section-selector__heading { display:none; }
   .overview-chart-grid { grid-template-columns:1fr; gap:30px; }
   .overview-distribution-grid { grid-template-columns:1fr; gap:30px; }
   .overview-distribution { display:grid; grid-template-columns:120px minmax(0,1fr); gap:0 20px; align-items:center; }

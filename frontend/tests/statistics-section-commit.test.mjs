@@ -11,11 +11,14 @@ test('optimistic section controls leave the outgoing data panel intact until com
   const panels=[{dataset:{statsPanel:'overview'},hidden:false},{dataset:{statsPanel:'studios'},hidden:true}];
   const generic=()=>({hidden:false,textContent:'',setAttribute(){},removeAttribute(){}});
   const controls=new Map();const node=selector=>{if(!controls.has(selector))controls.set(selector,generic());return controls.get(selector);};
-  const root={dataset:{},querySelectorAll:selector=>selector==='[data-stats-panel]'?panels:[]};
+  const buttons=[['screen','overview'],['game','overview'],['game','publishers']].map(([domain,section])=>({dataset:{section},selected:false,closest:()=>({dataset:{statisticsDomain:domain}}),classList:{toggle(){}},setAttribute(name,value){if(name==='aria-pressed')this.selected=value==='true';}}));
+  const root={dataset:{},querySelectorAll:selector=>selector==='[data-stats-panel]'?panels:selector.includes('.profile-section-selector')?buttons:[]};
   const context={root,node,domain:'game',section:'publishers',page:1,firstPage:1,appendFailed:false,statisticsPanel,statisticsSections,rawGame:()=>({has_more:false}),panelUrl:()=> 'https://example.test/user/alex/stats/games',URL,chartKeys:['scores','episode_counts','release_years','watch_years']};
   runInNewContext(stripTypeScriptTypes(snippet)+';this.update=updateDomainControls;',context);
   context.update();assert.equal(root.dataset.section,'publishers');assert.deepEqual(panels.map(p=>p.hidden),[false,true]);
   context.update(true);assert.deepEqual(panels.map(p=>p.hidden),[true,false]);
+  assert.deepEqual(buttons.map(b=>b.selected),[false,false,true]);
+  context.section='overview';context.update();assert.deepEqual(buttons.map(b=>b.selected),[false,true,false]);
 });
 test('a pending snapshot preserves usable results while exposing the existing pending status on cold entry',()=>{
   const start=source.indexOf('  function renderNow('),end=source.indexOf('    if (!ready) {',start);
@@ -40,17 +43,17 @@ test('outgoing controls stay inert across cold reads, failures and delayed commi
 });
 
 test('domain switches and restored URLs update selection before reading without a loading timer',()=>{
-  const selectStart=source.indexOf('  function selectDomain(');
-  const select=source.slice(selectStart,source.indexOf("  root.addEventListener('click'",selectStart));
+  const selectStart=source.indexOf('  function selectSection(');
+  const select=source.slice(selectStart,source.indexOf("  root.addEventListener('anylist:statistics-domain-section'",selectStart));
   const openStart=source.indexOf('  function openUrl(');
   const open=source.slice(openStart,source.indexOf("  root.addEventListener('anylist:statistics-open'",openStart));
   const reads=[],urls=[],controls=[];
   const context={domain:'screen',section:'actors',page:1,media:'series',statisticsSection,URL,
-    root:{dataset:{}},genreSort:value=>value||'count',actorArtwork:value=>value||'media',
+    tooltips:new Map(),pies:new Map(),statisticsPanel,render(){},response:{},root:{dataset:{}},genreSort:value=>value||'count',actorArtwork:value=>value||'media',
     node:()=>({textContent:'Actors'}),syncUrl:push=>urls.push([context.domain,context.section,push]),
     updateDomainControls:()=>controls.push(context.domain),syncLinks(){},scheduleSibling(){},loader:{load:()=>reads.push([context.domain,context.section,context.media])}};
-  runInNewContext(stripTypeScriptTypes(select+open)+';this.select=selectDomain;this.open=openUrl;',context);
-  context.select('game');assert.deepEqual(reads[0],['game','actors','series']);assert.deepEqual(urls[0],['game','actors',true]);
+  runInNewContext(stripTypeScriptTypes(select+open)+';this.select=selectSection;this.open=openUrl;',context);
+  context.select('actors',true,'game');assert.deepEqual(reads[0],['game','actors','series']);assert.deepEqual(urls[0],['game','actors',true]);
   context.open(new URL('https://example.test/user/alex/stats?section=genres&media=movie'));
   assert.deepEqual(reads[1],['screen','genres','movie']);assert.deepEqual(controls,['game','screen']);
   context.open(new URL('https://example.test/user/alex/stats/games?section=publishers'));

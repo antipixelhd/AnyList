@@ -1,0 +1,14 @@
+---
+import ProfileSectionSelector from './ProfileSectionSelector.astro';
+import {viewerMediaPreferences} from '../lib/viewer-media-preferences';
+import {profileMediaDomains} from '../lib/media-domains';
+import {statisticsSections,type StatisticsDomain} from '../lib/unified-statistics-data';
+interface Props {owner:boolean;domain:StatisticsDomain;section:string}
+const {owner,domain,section}=Astro.props;
+const preferences=profileMediaDomains(owner,await viewerMediaPreferences(Astro.locals));
+const visible={screen:preferences.show_movies_series||domain==='screen',game:preferences.can_access_games!==false&&(preferences.show_games||domain==='game')};
+const labels:Record<string,string>={overview:'Overview',genres:'Genres',actors:'Actors',studios:'Studios',staff:'Staff',developers:'Developers',publishers:'Publishers'};
+---
+{(['screen','game'] as const).filter(value=>visible[value]).map(value=><div data-statistics-domain={value}>
+  <ProfileSectionSelector heading={value==='screen'?'Movies & Series':'Games'} ariaLabel={`${value==='screen'?'Movies & Series':'Games'} statistics sections`} options={statisticsSections[value].map(id=>({id,label:labels[id]}))} active={value===domain?section:''} width="100%"/>
+</div>)}

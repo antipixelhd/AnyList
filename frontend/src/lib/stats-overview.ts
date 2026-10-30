@@ -1,5 +1,5 @@
 import {gameHeadlines,signedNumber,type GameOverview,type GameStatsResponse} from './game-statistics-data';
-import {statisticsSection,statisticsPanel,statisticsSections,type StatisticsDomain,type UnifiedStatistics} from './unified-statistics-data';
+import {statisticsSection,statisticsPanel,type StatisticsDomain,type UnifiedStatistics} from './unified-statistics-data';
 import {createStatisticsReader,type StatisticsSelection} from './unified-statistics-request';
 import {statisticValue} from './statistic-value';
 import {bindPredictionIntent,predictionAllowed} from './predictive-loading';
@@ -301,25 +301,24 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
       link.href = url.pathname + url.search;
     });
   }
-  function selectSection(next: string, push: boolean) {
+  function selectSection(next: string, push: boolean,nextDomain:StatisticsDomain=domain) {
+    const domainChanged=domain!==nextDomain;
+    domain=nextDomain;
 
     tooltips.forEach(tooltip => tooltip.dismiss());
     pies.forEach(chart => { chart.tooltip?.setActiveElements([], {x:0,y:0}); chart.setActiveElements([]); chart.draw(); });
     section=statisticsSection(domain,next);root.dataset.section=section;root.dataset.statsPanelSection=statisticsPanel(section);page=1;
     node('[data-stats-heading]').textContent = section==='developers'?'Developers':section==='publishers'?'Publishers':section === 'staff' ? 'Staff' : section === 'studios' ? 'Studios' : section === 'actors' ? 'Actors' : section === 'genres' ? 'Genres' : 'Overview';
-    root.querySelectorAll<HTMLButtonElement>('.profile-section-selector__option').forEach(button => {
-      const selected = button.dataset.section === section; button.classList.toggle('is-selected', selected); button.setAttribute('aria-pressed', String(selected));
-    });
     if(push)syncUrl(true);
     syncLinks();updateDomainControls();
     // A section is committed with its data in one task. Keep the outgoing
     // panel painted during cold reads; never expose an unpopulated grid.
-    if(domain==='game')void loader.load(media);
+    if(domain==='game'||domainChanged)void loader.load(media);
     else render(response,true);
     scheduleSibling();
   }
   root.addEventListener('anylist:statistics-domain-section',event=>{const next=(event as CustomEvent<{section:string}>).detail.section;if(next!==section)selectSection(next,false);},{signal:events.signal});
-  root.addEventListener('profile-section-change', event => selectSection((event as CustomEvent).detail.value, true), { signal: events.signal });
+  root.addEventListener('profile-section-change', event => selectSection((event as CustomEvent).detail.value,true,(event.target as HTMLElement).closest<HTMLElement>('[data-statistics-domain]')?.dataset.statisticsDomain as StatisticsDomain||domain), { signal: events.signal });
   root.addEventListener('statistics-url-change', syncLinks, { signal: events.signal });
   function navigate(next: MediaScope, push: boolean) {
     tooltips.forEach(tooltip => tooltip.dismiss());
@@ -374,7 +373,7 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
   function scheduleSibling(){
     clearTimeout(siblingTimer);
     siblingTimer=setTimeout(()=>{
-      if(events.signal.aborted||!panelActive(root)||!predictionAllowed()||!node('.stats-domain-navigation')?.querySelector('a[href*="/games"]'))return;
+      if(events.signal.aborted||!panelActive(root)||!predictionAllowed()||!root.querySelector(`[data-statistics-domain="${domain==='screen'?'game':'screen'}"]`))return;
       const other:StatisticsDomain=domain==='screen'?'game':'screen';
       void loader.prefetch({...currentSelection(),domain:other,section:statisticsSection(other,section),page:1,generation:null});
     },250);
@@ -389,11 +388,10 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
   }
   function updateDomainControls(commit=false){
     root.dataset.domain=domain;root.dataset.section=section;root.dataset.statsPanelSection=statisticsPanel(section);root.dataset.statsRankOffset='0';
-    root.querySelectorAll<HTMLButtonElement>('.profile-section-selector [data-section]').forEach(button=>{button.hidden=!statisticsSections[domain].includes(button.dataset.section!);const selected=button.dataset.section===section;button.classList.toggle('is-selected',selected);button.setAttribute('aria-pressed',String(selected));});
-    node('[data-stats-heading]').textContent=node<HTMLButtonElement>(`.profile-section-selector [data-section="${section}"]`).textContent||'Overview';
+    root.querySelectorAll<HTMLButtonElement>('.profile-section-selector [data-section]').forEach(button=>{const selected=button.closest<HTMLElement>('[data-statistics-domain]')?.dataset.statisticsDomain===domain&&button.dataset.section===section;button.classList.toggle('is-selected',selected);button.setAttribute('aria-pressed',String(selected));});
+    node('[data-stats-heading]').textContent=node<HTMLButtonElement>(`[data-statistics-domain="${domain}"] [data-section="${section}"]`).textContent||'Overview';
     node('[data-screen-media]').hidden=domain==='game';
     root.querySelectorAll<HTMLElement>('[data-overview-media]').forEach(link=>{if(link.dataset.overviewMedia===media)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');});
-    root.querySelectorAll<HTMLAnchorElement>('.stats-domain-navigation a').forEach(link=>{const game=link.getAttribute('href')?.includes('/games'),selected=game?domain==='game':domain==='screen';if(selected)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');});
     if(!commit)return;
     root.querySelectorAll<HTMLElement>('[data-chart-section="watch_years"] thead th').forEach(th=>{if(th.textContent==='Hours')th.hidden=domain==='game';});
     const titles:{[key:string]:string}={scores:'Scores',episode_counts:domain==='game'?'Recorded time':'Episode count',release_years:'Release year',watch_years:domain==='game'?'Completion year':'Watch year'};
@@ -408,15 +406,7 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
     node('[data-game-replays]').textContent=data.totals.replay_games?displayNumber(data.totals.replays):'—';const undated=data.coverage.undated_completions||0;node('[data-game-undated]').hidden=!undated;node('[data-game-undated]').textContent=`${undated} completions have no date.`;
     node('[data-game-comparisons]').replaceChildren(...data.comparisons.map(row=>{const tr=document.createElement('tr');[row.label,displayNumber(row.games),signedNumber(row.mean_difference_seconds,3600),row.mean_relative_percent==null?'—':`${signedNumber(row.mean_relative_percent)}%`].forEach((text,index)=>{const cell=document.createElement(index?'td':'th');if(!index)cell.scope='row';cell.textContent=text;tr.append(cell);});return tr;}));
   }
-  function selectDomain(next:StatisticsDomain,push=true){
-    if(next===domain)return;
-    domain=next;section=statisticsSection(domain,section);page=1;syncUrl(push);updateDomainControls();
-    node('[data-stats-heading]').textContent=node<HTMLButtonElement>(`.profile-section-selector [data-section="${section}"]`).textContent||'Overview';
-    void loader.load(media);scheduleSibling();
-  }
   root.addEventListener('click',event=>{
-    const link=(event.target as Element).closest<HTMLAnchorElement>('.stats-domain-navigation a[href]');
-    if(link){if(event instanceof MouseEvent&&(event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey))return;event.preventDefault();event.stopImmediatePropagation();selectDomain(link.getAttribute('href')?.includes('/games')?'game':'screen');return;}
     const sortButton=(event.target as Element).closest<HTMLButtonElement>('button[data-genre-sort],button[data-actor-sort],button[data-studio-sort],button[data-staff-sort]');
     if(domain==='game'&&sortButton){event.preventDefault();event.stopImmediatePropagation();for(const prefix of ['genre','actor','studio','staff'])if(sortButton.dataset[prefix+'Sort'])root.dataset[prefix+'Sort']=sortButton.dataset[prefix+'Sort'];page=1;syncUrl(true);void loader.load(media);}
   },{capture:true,signal:events.signal});
@@ -430,7 +420,7 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
     syncUrl(false);syncLinks();updateDomainControls();void loader.load(media);scheduleSibling();
   }
   root.addEventListener('anylist:statistics-open',event=>openUrl(new URL((event as CustomEvent<{url:string}>).detail.url)),{signal:events.signal});
-  bindPredictionIntent(root,events.signal,link=>{if(link.dataset.overviewMedia)void loader.prefetch({...currentSelection(),domain:'screen',media:link.dataset.overviewMedia as MediaScope,page:1,generation:null});if(link.closest('.stats-domain-navigation'))void loader.prefetch({...currentSelection(),domain:domain==='screen'?'game':'screen',section:statisticsSection(domain==='screen'?'game':'screen',section),page:1,generation:null});});
+  bindPredictionIntent(root,events.signal,link=>{if(link.dataset.overviewMedia)void loader.prefetch({...currentSelection(),domain:'screen',media:link.dataset.overviewMedia as MediaScope,page:1,generation:null});});
   let intentTimer:ReturnType<typeof setTimeout>|undefined,intentButton:HTMLElement|undefined;
   const cancelIntent=()=>{clearTimeout(intentTimer);intentButton=undefined;};
   const sectionIntent=(event:Event)=>{
@@ -438,7 +428,9 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
     const button=(event.target as Element).closest<HTMLElement>('.profile-section-selector [data-section]');
     if(!button||button.hidden||intentButton===button)return;
     cancelIntent();intentButton=button;
-    intentTimer=setTimeout(()=>{if(!events.signal.aborted&&button.isConnected&&predictionAllowed()&&button.dataset.section!==section)void loader.prefetch({...currentSelection(),section:statisticsSection(domain,button.dataset.section!),sort:sectionSort(button.dataset.section!),page:1,generation:null});},180);
+    const targetDomain=button.closest<HTMLElement>('[data-statistics-domain]')?.dataset.statisticsDomain as StatisticsDomain;
+    if(targetDomain!=='screen'&&targetDomain!=='game')return;
+    intentTimer=setTimeout(()=>{if(!events.signal.aborted&&button.isConnected&&predictionAllowed()&&(targetDomain!==domain||button.dataset.section!==section))void loader.prefetch({...currentSelection(),domain:targetDomain,section:statisticsSection(targetDomain,button.dataset.section!),sort:sectionSort(button.dataset.section!),page:1,generation:null});},180);
   };
   root.addEventListener('pointerover',sectionIntent,{signal:events.signal,passive:true});
   root.addEventListener('focusin',sectionIntent,{signal:events.signal});

@@ -3,7 +3,7 @@ import {gameCard,gameChartRows,type GameStatsResponse,type GameStatsGroup,type G
 
 export type StatisticsDomain='screen'|'game';
 export type UnifiedStatistics=OverviewResponse & {game?:GameStatsResponse;selectionSort?:string};
-export const statisticsSections={screen:['overview','genres','actors','studios','staff'],game:['overview','genres','developers','publishers','actors','staff']};
+export const statisticsSections={screen:['overview','genres','actors','studios','staff'],game:['overview','genres','actors','developers','publishers','staff']};
 export function statisticsSection(domain:StatisticsDomain,section:string){return statisticsSections[domain].includes(section)?section:'overview';}
 export function statisticsPanel(section:string){return section==='developers'||section==='publishers'?'studios':section;}
 export function emptyStatistics(media:MediaScope='all'):Overview{

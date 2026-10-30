@@ -80,3 +80,13 @@ for(const destination of ['games','stats','stats/games'])test(`a cold ${destinat
   rejectRead(new Error('unavailable'));await new Promise(setImmediate);
   assert.equal(context.shown,source);assert.equal(context.wanted,'movies');assert.deepEqual(waiting.at(-1),[source,false]);
 });
+
+test('the statistics controller owns its media filter even when the shell entered on Games',()=>{
+  const source=readFileSync(new URL('../src/lib/profile-shell.ts',import.meta.url),'utf8');
+  const start=source.indexOf("  host.addEventListener('click'");
+  const binding=source.slice(start,source.indexOf('  bindPredictionIntent',start));
+  let click;
+  const link={target:'',hasAttribute:()=>false,closest:selector=>selector==='[data-integrated-statistics] [data-screen-media]'?{}:null};
+  runInNewContext(stripTypeScriptTypes(binding),{host:{addEventListener:(_,fn)=>click=fn},signal:new AbortController().signal,target(){throw new Error('Media filters must not select a shell panel');}});
+  click({target:{closest:()=>link},button:0,preventDefault(){throw new Error('Shell consumed filter');}});
+});
