@@ -33,6 +33,7 @@ function setup(){
   const invalidate=()=>{generation++;for(const [key,panel] of panels)if(!panel.ready)panels.delete(key);};
   document.addEventListener('anylist:editor-state',invalidate,{signal});
   document.addEventListener('anylist:cache-invalidated',invalidate,{signal});
+  const statisticsLoading=new Map([...document.querySelectorAll<HTMLTemplateElement>('[data-profile-statistics-loading]')].map(template=>[template.dataset.profileStatisticsLoading!,template]));
   const first=document.createElement('div');first.dataset.profileUrl=location.href;
   for(const child of [...host.childNodes])if(child!==header&&child!==nav)first.append(child);
   host.append(first);
@@ -75,11 +76,21 @@ function setup(){
   function show(root:HTMLElement){shown.remove();shown=root;host!.append(root);}
   function select(key:string,url:string){
     if(key===wanted)return;
+    const leavingPreview=shown.hasAttribute('data-profile-stats-preview');
+    if(leavingPreview){const source=panels.get(active);if(source){shown.remove();shown=source.root;host!.append(shown);}}
     document.dispatchEvent(new Event('anylist:profile-tab-changed'));
-    if(shown===panels.get(active)?.root){positions.set(active,scrollY);shown.dataset.profileUrl=location.href;shown.dispatchEvent(new Event('anylist:panel-inactive'));}
+    if(!leavingPreview&&shown===panels.get(active)?.root){positions.set(active,scrollY);shown.dataset.profileUrl=location.href;shown.dispatchEvent(new Event('anylist:panel-inactive'));}
     wanted=key;update();
     host!.querySelector('[data-profile-switch-error]')?.remove();
-    nav.setAttribute('aria-busy','true');setPanelWaiting(shown,true);
+    const source=shown;
+    nav.setAttribute('aria-busy','true');setPanelWaiting(source,true);
+    const cached=panels.get(key);
+    const loadingTemplate=statisticsLoading.get(key);
+    if(loadingTemplate&&!cached?.ready){
+      const preview=loadingTemplate.content.firstElementChild!.cloneNode(true) as HTMLElement;
+      show(preview);
+      window.scrollTo(0,positions.get(key)??Math.max(0,scrollY+nav.getBoundingClientRect().top));
+    }
     const activate=async(panel:Panel)=>{
       if(signal.aborted||wanted!==key||document.body.dataset.cacheUser!==viewer)return;
       if(panel.preparing)await panel.preparing;
@@ -101,7 +112,7 @@ function setup(){
         await panel.preparing;
       }
       if(signal.aborted||wanted!==key)return;
-      setPanelWaiting(shown,false);show(panel.root);active=key;document.body.toggleAttribute('data-list-landing',!key.startsWith('stats'));
+      setPanelWaiting(source,false);show(panel.root);active=key;document.body.toggleAttribute('data-list-landing',!key.startsWith('stats'));
       history.replaceState(history.state,'',panel.root.dataset.profileUrl||panel.url);document.title=panel.title;
       nav.removeAttribute('aria-busy');update();
       window.scrollTo(0,positions.get(key)??scrollY);
@@ -109,13 +120,12 @@ function setup(){
     };
     const failed=()=>{
       if(signal.aborted||wanted!==key)return;
-      setPanelWaiting(shown,false);nav.removeAttribute('aria-busy');wanted=active;update();
+      setPanelWaiting(source,false);if(shown!==source)show(source);window.scrollTo(0,positions.get(active)??scrollY);nav.removeAttribute('aria-busy');wanted=active;update();
       const error=document.createElement('div');error.dataset.profileSwitchError='';error.className='page-width error-message';error.setAttribute('role','alert');
       const retry=document.createElement('button');retry.className='button-secondary';retry.textContent='Try again';
       retry.addEventListener('click',()=>select(key,url),{signal});error.append('Unable to load this section. ',retry);host!.append(error);
       shown.dispatchEvent(new Event('anylist:panel-active'));
     };
-    const cached=panels.get(key);
     if(cached?.ready){void activate(cached).catch(failed);return;}
     void read(key,url).then(activate).catch(failed);
   }

@@ -45,7 +45,7 @@ export function initializeGameStatistics(root:HTMLElement,lifetime:AbortSignal) 
     showPageStart=push&&next.page!==selection.page;
     const content=node('.stats-overview-content');content.style.minHeight=`${content.getBoundingClientRect().height}px`;
     clearTimeout(timer);attempts=0;selection=next;response={...response,generation:null};
-    updateSelection();node('.overview-results').hidden=true;node('.overview-pending').hidden=false;node('[data-game-stats-state]').textContent='Preparing statistics…';
+    updateSelection();node('[data-stats-headline-loading]').hidden=selection.section!=='overview';node('.overview-results').hidden=true;node('.overview-pending').hidden=false;node('[data-game-stats-state]').textContent='Preparing statistics…';
     if(push)setPanelUrl(root,url(),true);
     void loader.load(selection);
   }
@@ -125,7 +125,7 @@ export function initializeGameStatistics(root:HTMLElement,lifetime:AbortSignal) 
   }
   function render(data:GameStatsResponse,initial=false) {
     response=data;updateSelection();node('[data-game-stats-error]').hidden=true;
-    const ready=data.status==='ready';node('.overview-results').hidden=!ready;node('.overview-pending').hidden=ready;
+    const ready=data.status==='ready';node('[data-stats-headline-loading]').hidden=ready||selection.section!=='overview';node('.overview-results').hidden=!ready;node('.overview-pending').hidden=ready;
     node('[data-game-stats-state]').textContent=data.status==='error'?'Statistics are unavailable. A retry is scheduled.':'Preparing statistics…';
     if(!ready){schedule(data.retry_after);return;}clearTimeout(timer);attempts=0;
     if(selection.section!=='overview'&&selection.page>Math.max(1,Math.ceil((data.total||0)/24))){navigate({...selection,page:Math.max(1,Math.ceil((data.total||0)/24))},false);setPanelUrl(root,url());return;}

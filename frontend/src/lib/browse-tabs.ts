@@ -27,7 +27,7 @@ export function createBrowseTabs<T>(load:(tab:BrowseTab,signal:AbortSignal)=>Pro
   };
 }
 
-export const browsePanelActive=(root:HTMLElement)=>root.isConnected&&!root.hidden&&!root.inert;
+export const browsePanelActive=(root:HTMLElement)=>root.isConnected&&!root.hidden&&!root.inert&&!root.hasAttribute('data-browse-waiting');
 export function setBrowsePanelUrl(root:HTMLElement,url:string){
   root.dataset.browseUrl=url;
   root.dispatchEvent(new Event('anylist:browse-url'));

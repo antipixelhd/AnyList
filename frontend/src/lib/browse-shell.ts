@@ -84,7 +84,7 @@ function setup(){
     document.dispatchEvent(new Event('anylist:browse-tab-changed'));
     const activate=(root:HTMLElement)=>{
       if(signal.aborted||wanted!==tab)return;
-      shown.removeAttribute('aria-busy');shown.querySelectorAll<HTMLElement>('[data-browse-form],[data-browse-region]').forEach(node=>node.inert=false);
+      shown.removeAttribute('data-browse-waiting');shown.removeAttribute('aria-busy');shown.querySelectorAll<HTMLElement>('[data-browse-form],[data-browse-region]').forEach(node=>node.inert=false);
       display(root,tab);active=tab;
       history.replaceState(history.state,'',root.dataset.browseUrl||targets[tab]);
       loading?.remove();loading=undefined;
@@ -93,13 +93,14 @@ function setup(){
     };
     const ready=tabs.peek(tab);if(ready){activate(ready);return;}
     // Keep real content in place until the destination's own shell/skeleton is ready.
-    shown.setAttribute('aria-busy','true');shown.querySelectorAll<HTMLElement>('[data-browse-form],[data-browse-region]').forEach(node=>node.inert=true);
+    shown.setAttribute('data-browse-waiting','');shown.setAttribute('aria-busy','true');shown.querySelectorAll<HTMLElement>('[data-browse-form],[data-browse-region]').forEach(node=>node.inert=true);
     updateNav(tab);
     void tabs.get(tab).then(activate).catch(()=>{
       if(signal.aborted||wanted!==tab)return;
-      shown.removeAttribute('aria-busy');shown.querySelectorAll<HTMLElement>('[data-browse-form],[data-browse-region]').forEach(node=>node.inert=false);
+      shown.removeAttribute('data-browse-waiting');shown.removeAttribute('aria-busy');shown.querySelectorAll<HTMLElement>('[data-browse-form],[data-browse-region]').forEach(node=>node.inert=false);
+      wanted=active;updateNav(active);
       const error=document.createElement('button');error.type='button';error.className='button-secondary';error.textContent='Try again';
-      error.addEventListener('click',()=>{wanted=active;select(tab);},{signal});
+      error.addEventListener('click',()=>select(tab),{signal});
       loading?.remove();loading=document.createElement('div');loading.className='browse-error';loading.append(error);shown.append(loading);
     });
   }

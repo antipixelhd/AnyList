@@ -307,7 +307,7 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
   more.addEventListener('click',()=>void load(true),{signal});find('[data-browse-retry]').addEventListener('click',()=>void load(retryAppend),{signal});
   let near=false,frame=0;
   const observer=new IntersectionObserver(entries=>{near=entries.some(entry=>entry.isIntersecting);},{rootMargin:'400px'});observer.observe(find('[data-browse-sentinel]'));
-  window.addEventListener('scroll',()=>{if(!browsePanelActive(root))return;demand.advance(scrollY,!loading&&!presentedCategories);if(frame)return;frame=requestAnimationFrame(()=>{frame=0;if(near&&!loading&&!presentedCategories&&payload.has_more&&demand.consume())void load(true);});},{passive:true,signal});
+  window.addEventListener('scroll',()=>{if(!browsePanelActive(root))return;demand.advance(scrollY,!loading&&!presentedCategories);if(frame)return;frame=requestAnimationFrame(()=>{frame=0;if(browsePanelActive(root)&&near&&!loading&&!presentedCategories&&payload.has_more&&demand.consume())void load(true);});},{passive:true,signal});
   document.addEventListener('anylist:cache-invalidated',()=>cache.clear(),{signal});
   document.addEventListener('anylist:before-snapshot',()=>{
     const snapshot=gameBrowseSnapshot({loading,failed:!error.hidden,activeValues,categories:presentedCategories,values:values().toString(),sections:[...shelves.values()],payload,

@@ -1,4 +1,6 @@
 ---
+import StatsHeadlineLoading from '../../../components/StatsHeadlineLoading.astro';
+import ProfileStatisticsLoading from '../../../components/ProfileStatisticsLoading.astro';
 import Tracker from '../../../layouts/Tracker.astro';
 import ProfileHeader from '../../../components/ProfileHeader.astro';
 import ProfileSectionSelector from '../../../components/ProfileSectionSelector.astro';
@@ -59,8 +61,10 @@ const actorTemplate = { key: '', label: '', image: null, href: '#', titles: 0, m
         {[['all', 'All'], ['movie', 'Movies'], ['series', 'Series']].map(([value, label]) => <a href={`?${new URLSearchParams({media: value, section, sort, actor_sort: actorSort, studio_sort: studioSort, staff_sort: staffSort, artwork})}`} data-overview-media={value} aria-current={value === media ? 'page' : undefined}>{label}</a>)}
       </nav></header>
       <p class="overview-error error-message" role="alert" hidden></p>
+      <StatsHeadlineLoading domain="screen" media={media} hidden={ready||section!=='overview'}/>
       <div class="overview-pending" role="status" hidden={ready}><p data-overview-state>{data.status === 'error' ? 'Statistics are unavailable. A retry is scheduled.' : 'Preparing statistics…'}</p><button type="button" data-overview-retry>{data.owner ? 'Refresh statistics' : 'Check again'}</button></div>
       <span class="overview-sr-only" data-overview-announcement role="status" aria-live="polite"></span>
+
       <div class="overview-results" hidden={!ready}>
         <div data-stats-panel="overview" hidden={section !== 'overview'}>
         <dl class="overview-totals" aria-label="Primary statistics">{highlights.map((metric, index) => <div title={metric.detail}><dt><span class="overview-total-icon" aria-hidden="true"><Icon name={headlineIcons[index]} /></span><span data-headline-label={index}>{metric.label}</span></dt><dd data-headline-value={index}>{metric.value}</dd></div>)}</dl>
@@ -110,5 +114,6 @@ const actorTemplate = { key: '', label: '', image: null, href: '#', titles: 0, m
       </div>
     </section>
   </> : <div class="page-width"><p class="error-message" role="alert">{error}</p></div>}
+  <ProfileStatisticsLoading username={Astro.params.username!} owner={data?.owner===true}/>
 </Tracker>
 <script>import '../../../lib/profile-shell';</script>

@@ -200,6 +200,7 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
     node('.overview-error').hidden = true;
     const ready = next.status === 'ready' && next.overview !== null;
     const wasPending = node('.overview-results').hidden;
+    node('[data-stats-headline-loading]').hidden=ready||section!=='overview';
     node('.overview-results').hidden = !ready;
     node('.overview-pending').hidden = ready;
     clearTimeout(timer);
@@ -285,6 +286,7 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
     if (push) { const url = new URL(panelUrl(root)); url.searchParams.set('section', section); setPanelUrl(root,url,true); }
     syncLinks();
     const update = () => {
+      node('[data-stats-headline-loading]').hidden=response.status==='ready'||section!=='overview';
       root.querySelectorAll<HTMLElement>('[data-stats-panel]').forEach(panel => panel.hidden = panel.dataset.statsPanel !== section);
       if (response.overview) render(response, true);
     };

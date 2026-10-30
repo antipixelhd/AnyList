@@ -1,4 +1,6 @@
 ---
+import StatsHeadlineLoading from '../../../../components/StatsHeadlineLoading.astro';
+import ProfileStatisticsLoading from '../../../../components/ProfileStatisticsLoading.astro';
 import Tracker from '../../../../layouts/Tracker.astro';
 import ProfileHeader from '../../../../components/ProfileHeader.astro';
 import ProfileStatsDomains from '../../../../components/ProfileStatsDomains.astro';
@@ -36,7 +38,9 @@ const statuses=(overview?.statuses||[]).map(row=>({key:row.key,label:row.label,t
       <header class="overview-heading"><h2 data-game-stats-heading>{gameStatsSections.find(([key])=>key===query.section)?.[1]}</h2></header>
       <p class="overview-error error-message" role="alert" data-game-stats-error hidden></p>
       <p class="overview-sr-only" role="status" aria-live="polite" data-game-stats-announcement></p>
+      <StatsHeadlineLoading domain="game" hidden={data.status==='ready'||query.section!=='overview'}/>
       <div class="overview-pending" role="status" hidden={data.status==='ready'}><p data-game-stats-state>{data.status==='error'?'Statistics are unavailable. A retry is scheduled.':'Preparing statistics…'}</p><button type="button" data-game-stats-retry>Check again</button></div>
+
       <div class="overview-results" hidden={data.status!=='ready'}>
         <div data-game-stats-overview hidden={query.section!=='overview'}>
           <dl class="overview-totals" aria-label="Primary game statistics">{head.map((metric,index)=><div title={metric.detail}><dt><span class="overview-total-icon" aria-hidden="true"><Icon name={icons[index]}/></span><span data-headline-label={index}>{metric.label}</span></dt><dd data-headline-value={index}>{metric.value}</dd></div>)}</dl>
@@ -62,5 +66,6 @@ const statuses=(overview?.statuses||[]).map(row=>({key:row.key,label:row.label,t
     </div>
   </section>
 </>:<div class="page-width"><p class="error-message" role="alert">{error}</p></div>}
+  <ProfileStatisticsLoading username={Astro.params.username!} owner={data?.owner===true}/>
 </Tracker>
 <script>import '../../../../lib/profile-shell';</script>

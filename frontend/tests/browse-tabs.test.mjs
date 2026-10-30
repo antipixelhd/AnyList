@@ -35,7 +35,7 @@ test('a hidden panel can finish loading without overwriting the visible URL',t=>
   const calls=[],state={astro:'retained'};
   Object.defineProperty(globalThis,'history',{configurable:true,value:{state,replaceState:(...args)=>calls.push(args)}});
   t.after(()=>{if(original)Object.defineProperty(globalThis,'history',original);else delete globalThis.history;});
-  const root={dataset:{},isConnected:true,hidden:true,inert:true,dispatchEvent(){}};
+  const root={dataset:{},isConnected:true,hidden:true,inert:true,dispatchEvent(){},hasAttribute:()=>false};
   setBrowsePanelUrl(root,'/browse?type=series&q=Drama');
   assert.equal(root.dataset.browseUrl,'/browse?type=series&q=Drama');assert.equal(calls.length,0);
   root.hidden=root.inert=false;

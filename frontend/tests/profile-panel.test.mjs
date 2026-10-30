@@ -45,3 +45,18 @@ test('reclicking a selected or pending profile tab cannot escape into full-page 
   click(event);assert.equal(prevented,1);assert.equal(stopped,1);
   link.closest=()=>null;click(event);assert.equal(prevented,1,'same-domain pagination keeps its own controller');
 });
+
+
+test('a failed optimistic statistics load restores the source list scroll position',()=>{
+  const sourceText=readFileSync(new URL('../src/lib/profile-shell.ts',import.meta.url),'utf8');
+  const start=sourceText.indexOf('    const failed=()=>{');
+  const snippet=sourceText.slice(start,sourceText.indexOf('    if(cached?.ready)',start));
+  const source={dispatchEvent(){}},preview={},scrolls=[],states=[];
+  const context={signal:new AbortController().signal,wanted:'stats',key:'stats',active:'movies',source,shown:preview,
+    positions:new Map([['movies',1250]]),scrollY:150,window:{scrollTo:(x,y)=>scrolls.push(y)},
+    setPanelWaiting:(root,on)=>states.push([root,on]),show:root=>context.shown=root,nav:{removeAttribute(){}},update(){},
+    document:{createElement:()=>({dataset:{},setAttribute(){},addEventListener(){},append(){}})},host:{append(){}},Event,select(){},url:'/user/alex/stats',
+  };
+  runInNewContext(stripTypeScriptTypes(snippet)+';this.failed=failed;',context);context.failed();
+  assert.equal(context.shown,source);assert.equal(context.wanted,'movies');assert.deepEqual(scrolls,[1250]);assert.deepEqual(states,[[source,false]]);
+});
