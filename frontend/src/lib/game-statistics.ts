@@ -1,3 +1,5 @@
+import {initializeProfileSections} from './profile-section-selector';
+import {panelActive,panelUrl,setPanelUrl} from './profile-panel';
 import Chart from 'chart.js/auto';
 import type {ChartOptions} from 'chart.js';
 import {gameStatsQuery,gameStatsSections,gameHeadlines,gameChartRows,gameCard,signedNumber,type GameOverview,type GameStatsResponse,type GameStatsGroup} from './game-statistics-data';
@@ -14,11 +16,12 @@ import {cancelUiMotion,reveal} from './ui-motion';
 
 const mounted=new WeakSet<HTMLElement>();
 const chartKeys=['scores','hours','release_years','completion_years'] as const;
-function mount(root:HTMLElement) {
+export function initializeGameStatistics(root:HTMLElement,lifetime:AbortSignal) {
+  initializeProfileSections();
   if(mounted.has(root))return;mounted.add(root);
   const node=<T extends HTMLElement=HTMLElement>(selector:string)=>root.querySelector<T>(selector)!;
   const events=new AbortController(),signal=events.signal,reduced=matchMedia('(prefers-reduced-motion: reduce)');
-  let response:GameStatsResponse=JSON.parse(root.dataset.initial||'{}'),selection=gameStatsQuery(new URLSearchParams(location.search));
+  let response:GameStatsResponse=JSON.parse(root.dataset.initial||'{}'),selection=gameStatsQuery(new URL(panelUrl(root)).searchParams);
   let timer:ReturnType<typeof setTimeout>|undefined,attempts=0,stopped=false,showPageStart=false;
   const charts=new Map<string,Chart<'bar'|'line'>>(),tooltips=new Map<string,ReturnType<typeof createMetricTooltip>>();
   const viewports=new Map<string,ReturnType<typeof mountChartViewport>>(),metrics=new Map<string,ChartMetric>();
@@ -29,8 +32,8 @@ function mount(root:HTMLElement) {
   root.addEventListener('load',event=>{if(event.target instanceof HTMLImageElement){event.target.setAttribute('data-motion-fade','');reveal(event.target);}},{capture:true,signal});
   const color=(variable:string)=>{const probe=document.createElement('span');probe.style.color=`var(${variable})`;root.append(probe);const value=getComputedStyle(probe).color;probe.remove();return value;};
   const fontStyle=getComputedStyle(node('.overview-metrics button')),font={size:parseFloat(fontStyle.fontSize),weight:700 as const,family:fontStyle.fontFamily};
-  function schedule(delay=3) {clearTimeout(timer);if(!stopped&&attempts++<20)timer=setTimeout(()=>void loader.load({...selection,generation:response.generation}),Math.max(3,Math.min(60,delay))*1000);}
-  function url() {const target=new URL(location.href);target.searchParams.set('section',selection.section);target.searchParams.set('sort',selection.sort);if(selection.page>1)target.searchParams.set('page',String(selection.page));else target.searchParams.delete('page');return target;}
+  function schedule(delay=3) {clearTimeout(timer);if(!stopped&&attempts++<20)timer=setTimeout(()=>{if(panelActive(root))void loader.load({...selection,generation:response.generation});},Math.max(3,Math.min(60,delay))*1000);}
+  function url() {const target=new URL(panelUrl(root));target.searchParams.set('section',selection.section);target.searchParams.set('sort',selection.sort);if(selection.page>1)target.searchParams.set('page',String(selection.page));else target.searchParams.delete('page');return target;}
   function updateSelection() {
     root.dataset.section=selection.section;
     node('[data-game-stats-heading]').textContent=gameStatsSections.find(([key])=>key===selection.section)![1];
@@ -43,7 +46,7 @@ function mount(root:HTMLElement) {
     const content=node('.stats-overview-content');content.style.minHeight=`${content.getBoundingClientRect().height}px`;
     clearTimeout(timer);attempts=0;selection=next;response={...response,generation:null};
     updateSelection();node('.overview-results').hidden=true;node('.overview-pending').hidden=false;node('[data-game-stats-state]').textContent='Preparing statistics…';
-    if(push)history.pushState({},'',url());
+    if(push)setPanelUrl(root,url(),true);
     void loader.load(selection);
   }
   function draw(key:typeof chartKeys[number],data:GameOverview,initial=false) {
@@ -125,30 +128,33 @@ function mount(root:HTMLElement) {
     const ready=data.status==='ready';node('.overview-results').hidden=!ready;node('.overview-pending').hidden=ready;
     node('[data-game-stats-state]').textContent=data.status==='error'?'Statistics are unavailable. A retry is scheduled.':'Preparing statistics…';
     if(!ready){schedule(data.retry_after);return;}clearTimeout(timer);attempts=0;
-    if(selection.section!=='overview'&&selection.page>Math.max(1,Math.ceil((data.total||0)/24))){navigate({...selection,page:Math.max(1,Math.ceil((data.total||0)/24))},false);history.replaceState({},'',url());return;}
+    if(selection.section!=='overview'&&selection.page>Math.max(1,Math.ceil((data.total||0)/24))){navigate({...selection,page:Math.max(1,Math.ceil((data.total||0)/24))},false);setPanelUrl(root,url());return;}
+    if(!panelActive(root))return;
     if(selection.section==='overview')drawOverview(data.data as GameOverview,initial);else drawGroups(data.data as GameStatsGroup[]);
     node('.stats-overview-content').style.removeProperty('min-height');
     if(showPageStart){showPageStart=false;node('[data-game-stats-heading]').scrollIntoView({block:'start'});}
     if(!initial)reveal(node('.overview-results'));
     node('[data-game-stats-announcement]').textContent=`${gameStatsSections.find(([key])=>key===selection.section)![1]} statistics loaded${selection.section==='overview'?'':`, page ${selection.page}`}.`;
   }
-  const loader=createGameStatsLoader(root.dataset.username!,{render,busy:busy=>root.setAttribute('aria-busy',String(busy)),changed:()=>{navigate({...selection,page:1},false);history.replaceState({},'',url());},error:(message,denied)=>{const error=node('[data-game-stats-error]');error.textContent=message;error.hidden=false;if(denied){clearTimeout(timer);node('.overview-results').hidden=true;node('.overview-pending').hidden=true;}else schedule(10);}});
+  const loader=createGameStatsLoader(root.dataset.username!,{render,busy:busy=>root.setAttribute('aria-busy',String(busy)),changed:()=>{if(!panelActive(root)){dirty=true;return;}navigate({...selection,page:1},false);setPanelUrl(root,url());},error:(message,denied)=>{const error=node('[data-game-stats-error]');error.textContent=message;error.hidden=false;if(denied){clearTimeout(timer);node('.overview-results').hidden=true;node('.overview-pending').hidden=true;}else schedule(10);}});
   root.addEventListener('profile-section-change',event=>{const section=(event as CustomEvent).detail.value;if(gameStatsSections.some(([key])=>key===section))navigate({...selection,section,page:1});},{signal});
   root.addEventListener('click',event=>{
     const target=(event.target as Element).closest<HTMLElement>('[data-game-stats-sort],[data-game-stats-page],[data-game-stats-retry],[data-metric],[data-studio-scroll],[data-staff-scroll],[data-game-status]');if(!target)return;
     if(target.dataset.gameStatsSort)navigate({...selection,sort:target.dataset.gameStatsSort as typeof selection.sort,page:1});
     else if(target.hasAttribute('data-game-stats-page')){if(event instanceof MouseEvent&&(event.metaKey||event.ctrlKey||event.shiftKey||event.altKey||event.button!==0))return;event.preventDefault();if(target.getAttribute('aria-disabled')!=='true')navigate({...selection,page:selection.page+Number(target.dataset.gameStatsPage)});}
-    else if(target.hasAttribute('data-game-stats-retry')){attempts=0;void loader.load(selection);}
+    else if(target.hasAttribute('data-game-stats-retry')){attempts=0;refresh();}
     else if(target.dataset.metric){const key=target.dataset.chart!.slice(5).replaceAll('-','_') as typeof chartKeys[number];metrics.set(key,target.dataset.metric as ChartMetric);root.querySelectorAll(`[data-chart="${target.dataset.chart}"]`).forEach(button=>button.setAttribute('aria-pressed',String((button as HTMLElement).dataset.metric===target.dataset.metric)));if(response.status==='ready')draw(key,response.data as GameOverview);}
     else if(target.dataset.gameStatus){pie?.setActiveElements([{datasetIndex:0,index:Number(target.dataset.gameStatus)}]);pie?.render();}
     else {const card=target.closest<HTMLElement>('.stats-genre-card')!;carousels.get(card)?.scroll(Number(target.dataset.studioScroll||target.dataset.staffScroll));}
   },{signal});
-  window.addEventListener('popstate',()=>navigate(gameStatsQuery(new URLSearchParams(location.search)),false),{signal});
-  document.addEventListener('anylist:editor-committed',event=>{const detail=(event as CustomEvent).detail;if(response.owner&&detail.title?.type==='game'){attempts=0;void loader.load(selection);}},{signal});
-  const observer=new MutationObserver(()=>{if(selection.section==='overview'&&response.status==='ready')drawOverview(response.data as GameOverview,true);});observer.observe(document.documentElement,{attributes:true,attributeFilter:['class']});observer.observe(document.body,{attributes:true,attributeFilter:['style']});
-  reduced.addEventListener('change',()=>{cancelUiMotion(root);if(selection.section==='overview'&&response.status==='ready')drawOverview(response.data as GameOverview,true);},{signal});
-  document.addEventListener('astro:before-swap',()=>{stopped=true;clearTimeout(timer);loader.stop();events.abort();observer.disconnect();charts.forEach(chart=>chart.destroy());pie?.destroy();carousels.forEach(controller=>controller.stop());cancelUiMotion(root);},{once:true,signal});
+  window.addEventListener('popstate',()=>{if(panelActive(root))navigate(gameStatsQuery(new URL(location.href).searchParams),false);},{signal});
+  let dirty=false;
+  root.closest('[data-profile-url]')?.addEventListener('anylist:panel-inactive',()=>clearTimeout(timer),{signal});
+  const refresh=()=>{if(panelActive(root)){dirty=false;void loader.load(selection);}else dirty=true;};
+  root.closest('[data-profile-url]')?.addEventListener('anylist:panel-active',()=>{if(dirty||response.status!=='ready')refresh();else render(response,true);},{signal});
+  document.addEventListener('anylist:editor-committed',event=>{const detail=(event as CustomEvent).detail;if(response.owner&&detail.title?.type==='game'){attempts=0;refresh();}},{signal});
+  const observer=new MutationObserver(()=>{if(panelActive(root)&&selection.section==='overview'&&response.status==='ready')drawOverview(response.data as GameOverview,true);});observer.observe(document.documentElement,{attributes:true,attributeFilter:['class']});observer.observe(document.body,{attributes:true,attributeFilter:['style']});
+  reduced.addEventListener('change',()=>{cancelUiMotion(root);if(panelActive(root)&&selection.section==='overview'&&response.status==='ready')drawOverview(response.data as GameOverview,true);},{signal});
+  lifetime.addEventListener('abort',()=>{stopped=true;clearTimeout(timer);loader.stop();events.abort();observer.disconnect();charts.forEach(chart=>chart.destroy());pie?.destroy();carousels.forEach(controller=>controller.stop());cancelUiMotion(root);},{once:true,signal});
   render(response,true);
 }
-function setup(){const root=document.querySelector<HTMLElement>('#game-statistics');if(root)mount(root);}
-document.addEventListener('astro:page-load',setup);setup();

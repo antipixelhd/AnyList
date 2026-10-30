@@ -200,6 +200,7 @@
       }
     });
     added.observe(document.body, { childList: true, subtree: true });
+    document.addEventListener('anylist:profile-tab-changed',()=>{if(openControl)close(openControl,false,true);},{signal:listeners.signal});
     document.addEventListener('anylist:browse-tab-changed',()=>{if(openControl)close(openControl,false,true);},{signal:listeners.signal});
     document.addEventListener('click', event => {
       if (openControl && !openControl.wrapper.contains(event.target as Node) && !openControl.menu.contains(event.target as Node)) close(openControl);

@@ -104,11 +104,11 @@ test('cache invalidation during a tab switch retries the selected domain instead
   const node={hidden:false,textContent:'',removeAttribute(){},setAttribute(){}};
   const root={dataset:{endpoint:'contributors/actor/catalogue:1',mediaType:'all'},querySelector:selector=>selector==='.contributor-list-link'?null:node};
   const context=vm.createContext({Error,DOMException,AbortController,URL,URLSearchParams,
-    signal:lifetime.signal,pages,root,revision:0,filterRequest:undefined,prediction:{cancel(){}},
+    domain:()=> 'movies-series',retained:new Map(),retainCurrent:false,syncing:false,signal:lifetime.signal,pages,root,revision:0,filterRequest:undefined,prediction:{cancel(){}},
     form:{action:'https://example.test/person/1',querySelectorAll:()=>[],addEventListener:(name,handler)=>handlers[name]=handler},
     FormData:class{forEach(fn){fn('game','media_type');}},contributorParams:query=>query,
     params:new URLSearchParams('media_type=all'),data:{kind:'actor',list_count:0},
-    region:{hidden:false,setAttribute(){},removeAttribute(){},replaceChildren(){}},items:new Map(),
+    scrollY:0,region:{childNodes:[],hidden:false,setAttribute(){},removeAttribute(){},replaceChildren(){}},items:new Map(),
     error:{hidden:true},sourceRefresh:{update(){}},more:{},requestedView:'timeline',
     append:works=>appended.push(...works),updateEmpty(){},syncAgain:false,
     restoreFilterControls:()=>assert.fail('selection should be retained'),showError:message=>errors.push(message),
@@ -142,4 +142,28 @@ test('a write overlapping the final source revision queues another synchronizati
   resolve({works:[],has_more:false});await pending;
   assert.equal(reads,2,'the completed source revision cannot disappear behind a concurrent edit');
   context.signal=new AbortController().signal;
+});
+
+test('returning to a contributor domain restores exact cards, filters and loaded window without a read',()=>{
+  const source=readFileSync(new URL('../src/lib/contributor-page.ts',import.meta.url),'utf8');
+  const start=source.indexOf("  form.addEventListener('submit',event=>{");
+  const snippet=source.slice(start,source.indexOf('  let syncing=',start));
+  let submit,reads=0,restores=0;const scrolls=[],screenNode={},gameNode={},gameItem={key:'game:1'};
+  const snapshot={nodes:[gameNode],items:new Map([[gameNode,gameItem]]),params:new URLSearchParams('media_type=game&list_scope=in'),view:'grid',scroll:94,data:{works:[gameItem],roles:[],kind:'actor',list_count:2,page:3,has_more:true}};
+  const retained=new Map([['game',snapshot]]),items=new Map([[screenNode,{key:'movie:1'}]]);
+  const node={hidden:false,textContent:'',value:'',removeAttribute(){},setAttribute(){}};
+  const region={childNodes:[screenNode],classList:{toggle(){}},setAttribute(){},removeAttribute(){},replaceChildren(...nodes){this.childNodes=nodes;}};
+  const params=new URLSearchParams('media_type=movie'),data={kind:'actor',list_count:1};
+  const context={Error,DOMException,AbortController,URL,URLSearchParams,Map,
+    signal:new AbortController().signal,pages:{get(){reads++;throw new Error('Unexpected read');}},revision:0,filterRequest:undefined,prediction:{cancel(){}},
+    form:{action:'https://example.test/person/1',querySelectorAll:()=>[],elements:{namedItem:()=>node},addEventListener:(name,handler)=>submit=handler},
+    FormData:class{forEach(fn){fn('game','media_type');}},contributorParams:query=>query,
+    domain:()=> 'movies-series',retained,retainCurrent:true,syncing:false,scrollY:37,window:{scrollTo:(x,y)=>scrolls.push(y)},
+    params,data,region,items,error:node,root:{dataset:{endpoint:'people/1'},querySelector:selector=>selector==='.contributor-list-link'?null:node,querySelectorAll:()=>[]},
+    sourceRefresh:{update(){}},more:{},requestedView:'timeline',append(){throw new Error('Cards must be retained');},updateEmpty(){},syncAgain:false,
+    restoreFilterControls:()=>restores++,scrollToWorks(){},showError:message=>assert.fail(message),location:{href:'https://example.test/person/1'},history:{replaceState(){}},
+  };
+  vm.runInNewContext(stripTypeScriptTypes(snippet),context);submit({preventDefault(){}});
+  assert.equal(reads,0);assert.equal(restores,1);assert.equal(region.childNodes[0],gameNode);assert.equal(items.get(gameNode),gameItem);
+  assert.equal(data.page,3);assert.equal(params.get('list_scope'),'in');assert.equal(retained.get('movies-series').nodes[0],screenNode);assert.deepEqual(scrolls,[94]);
 });

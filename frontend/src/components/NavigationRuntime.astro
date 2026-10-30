@@ -6,6 +6,7 @@
   import { showToast as notify } from '../lib/toasts';
   import {createPrediction,bindPredictionIntent,predictionManifest,predictivePage,predictionAllowed,type PredictionArtwork} from '../lib/predictive-loading';
   import {approvedGamesPage,reusableGamesPage} from '../lib/game-public-routes';
+  import {profilePanelKey} from '../lib/profile-panel';
   import {snapshotHasGames,authorizeGameSnapshot} from '../lib/navigation-games-access';
   import {editorStore,type EditorTitle} from '../lib/editor-store';
   import {isFailureHandled} from '../lib/handled-failures';
@@ -137,7 +138,7 @@
 
   function remember(url: URL, doc: Document) {
     resetForIdentity();
-    if (!cacheable(url) || doc.body.dataset.cacheUser !== state.user || doc.querySelector('[data-browse-shell]')) return;
+    if (!cacheable(url) || doc.body.dataset.cacheUser !== state.user || doc.querySelector('[data-browse-shell],[data-profile-shell]')) return;
     if(!reusableGamesPage(url)&&(doc.body.hasAttribute('data-games-access')||doc.querySelector('[data-contributor-page][data-media-type="game"]')))return;
     const html = sanitizedHtml(doc, url);
     if (!html) return;
@@ -242,6 +243,7 @@
     bindPredictionIntent(document,lifetime.signal,link=>{
       const url=new URL(link.href);
       if(url.origin!==location.origin||approvedGamesPage(url)&&!reusableGamesPage(url)||link.target||link.hasAttribute('download')||link.hasAttribute('data-astro-reload'))return;
+      if(link.closest('[data-profile-shell]')&&profilePanelKey(url))return;
       if(link.hasAttribute('data-browse-type')&&link.closest('[data-browse-shell]'))return;
       if(url.pathname==='/discover-title'){
         const type=url.searchParams.get('type'),id=url.searchParams.get('id');

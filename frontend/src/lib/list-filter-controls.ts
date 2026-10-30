@@ -155,7 +155,7 @@ export function mountListFilterControls(root:HTMLElement,signal:AbortSignal) {
     function flushFacets(){if(pendingFacets)refreshFacets(pendingFacets);}
     root.addEventListener('focusout',()=>queueMicrotask(flushFacets),{signal});
     signal.addEventListener('abort',()=>{pendingFacets=null;},{once:true});
-    return {selectedYear,refreshFacets,sync(status:string,defaultSort:string){
+    return {close(){filterDropdowns.forEach(dropdown=>{dropdown.trigger.setAttribute('aria-expanded','false');void hideMenu(dropdown.menu,true);});},selectedYear,refreshFacets,sync(status:string,defaultSort:string){
       syncYear();
       const active=[status!=='all',input('list-search').value.trim()!=='',input('genre-filter').value!=='',selectedYear()!=='',input('favorite-filter').value!=='',input('sort-filter').value!==defaultSort].filter(Boolean).length;
       mobileToggle.toggleAttribute('data-active',active>0);

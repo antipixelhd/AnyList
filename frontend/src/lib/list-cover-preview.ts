@@ -1,8 +1,8 @@
 import {applyResponsiveArtwork} from './responsive-artwork';
 
 /** Shared compact-list artwork behavior, scoped to the current page lifetime. */
-export function mountListCoverPreview(signal:AbortSignal){
-  const preview=document.querySelector<HTMLElement>('#cover-preview'),image=preview?.querySelector<HTMLImageElement>('img');
+export function mountListCoverPreview(signal:AbortSignal,root:ParentNode=document){
+  const preview=root.querySelector<HTMLElement>('#cover-preview'),image=preview?.querySelector<HTMLImageElement>('img');
   let dismissed=false,hovered:HTMLElement|null=null,shown:HTMLElement|null=null;
   const hide=()=>{shown=null;if(preview)preview.hidden=true;};
   const show=(row:HTMLElement)=>{
@@ -14,7 +14,7 @@ export function mountListCoverPreview(signal:AbortSignal){
     preview.style.top=`${Math.max(8,Math.min(innerHeight-height-8,rect.top-(height-rect.height)/2))}px`;
     preview.hidden=false;shown=row;
   };
-  document.querySelectorAll<HTMLElement>('.entry-row').forEach(row=>{
+  root.querySelectorAll<HTMLElement>('.entry-row').forEach(row=>{
     row.addEventListener('pointerenter',()=>{hovered=row;dismissed=false;show(row);},{signal});
     row.addEventListener('pointerleave',()=>{if(hovered===row)hovered=null;if(shown===row)hide();if(!document.querySelector<HTMLDialogElement>('#tracking-editor')?.open)delete row.dataset.editorDeselected;},{signal});
     row.addEventListener('focusin',event=>{if(hovered||(event.target as Element).closest('[data-edit-entry],[data-edit-game]'))return;dismissed=false;show(row);},{signal});

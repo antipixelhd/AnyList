@@ -381,13 +381,13 @@ export const editorStore = new EditorStore(async (path, options) => {
   document.dispatchEvent(new CustomEvent('anylist:editor-committed', {detail:{title,patch}}));
 });
 
-export function seedEditorPage() {
+export function seedEditorPage(root:ParentNode=document) {
   editorStore.scope(document.body.dataset.cacheUser || 'anonymous');
-  const list = JSON.parse(document.querySelector('#list-editor-entries')?.textContent || '[]');
+  const list = JSON.parse(root.querySelector('#list-editor-entries')?.textContent || '[]');
   list.forEach((entry: any) => editorStore.seed({...entry, entry:entry.entry ? {...entry.entry, progress:entry.progress, released_episodes:entry.released_episodes, season_position:entry.season_position} : entry}));
-  const title = JSON.parse(document.querySelector('#title-editor-data')?.textContent || 'null');
+  const title = JSON.parse(root.querySelector('#title-editor-data')?.textContent || 'null');
   if (title) editorStore.seed(title);
-  const browse = JSON.parse(document.querySelector('#browse-data')?.textContent || '{}');
+  const browse = JSON.parse(root.querySelector('#browse-data')?.textContent || '{}');
   [...(browse.payload?.results || []), ...(browse.sections || []).flatMap((section: any) => section.results)]
     .forEach((item: any) => { if ('entry' in item) editorStore.seed(item); });
 }

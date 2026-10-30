@@ -1,3 +1,5 @@
+import {initializeProfileSections} from './profile-section-selector';
+import {panelActive,panelUrl,setPanelUrl} from './profile-panel';
 import Chart from 'chart.js/auto';
 import type { ChartOptions } from 'chart.js';
 import type { ChartMetric, MediaScope, MetricGroup, Overview, OverviewResponse } from './stats-overview-data';
@@ -18,7 +20,8 @@ import { cancelUiMotion, reveal } from './ui-motion';
 const mounted = new WeakSet<HTMLElement>();
 const chartKeys = ['scores', 'episode_counts', 'release_years', 'watch_years'] as const;
 
-function mount(root: HTMLElement) {
+export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
+  initializeProfileSections();
   if (mounted.has(root)) return;
   mounted.add(root);
   const node = <T extends HTMLElement = HTMLElement>(selector: string) => root.querySelector<T>(selector)!;
@@ -201,7 +204,7 @@ function mount(root: HTMLElement) {
     node('.overview-pending').hidden = ready;
     clearTimeout(timer);
     const pollDelay = overviewPollDelay(next);
-    if (pollDelay !== null) timer = setTimeout(() => { if (!stopped) void loader.load(media); }, pollDelay);
+    if (pollDelay !== null) timer = setTimeout(() => { if (!stopped&&panelActive(root)) void loader.load(media); }, pollDelay);
     if (!ready) {
       node('[data-overview-state]').textContent = next.status === 'error' ? 'Statistics are unavailable. A retry is scheduled.' : 'Preparing statistics…';
       return;
@@ -217,6 +220,7 @@ function mount(root: HTMLElement) {
       node(`[data-headline-label="${index}"]`).textContent = metric.label;
     });
     node('[data-chart-section="episode_counts"]').hidden = data.media_type === 'movie';
+    if(!panelActive(root))return;
     if (section === 'overview') {
       chartKeys.forEach(key => { if (!(key === 'episode_counts' && data.media_type === 'movie')) drawMetric(data, key, initial); });
       (['statuses', 'formats', 'countries'] as const).forEach(key => drawDistribution(data, key, initial));
@@ -234,7 +238,7 @@ function mount(root: HTMLElement) {
   const loader = createOverviewLoader(root.dataset.username!, {
     render: next => {
       const changedScope = next.overview && next.overview.media_type !== response.overview?.media_type;
-      if (changedScope && section !== 'overview') void switchPanel(() => {
+      if (panelActive(root)&&changedScope && section !== 'overview') void switchPanel(() => {
         if (next.overview?.media_type === media) render(next, true);
       });
       else render(next);
@@ -261,7 +265,7 @@ function mount(root: HTMLElement) {
   });
   function syncLinks() {
     root.querySelectorAll<HTMLAnchorElement>('[data-overview-media]').forEach(link => {
-      const url = new URL(location.href); url.searchParams.set('media', link.dataset.overviewMedia!);
+      const url = new URL(panelUrl(root)); url.searchParams.set('media', link.dataset.overviewMedia!);
       url.searchParams.set('section', section); url.searchParams.set('sort', root.dataset.genreSort || 'count');
       url.searchParams.set('actor_sort', root.dataset.actorSort || 'count'); url.searchParams.set('artwork', root.dataset.actorArtwork || 'media');
       url.searchParams.set('studio_sort', root.dataset.studioSort || 'count');
@@ -278,7 +282,7 @@ function mount(root: HTMLElement) {
     root.querySelectorAll<HTMLButtonElement>('.profile-section-selector__option').forEach(button => {
       const selected = button.dataset.section === section; button.classList.toggle('is-selected', selected); button.setAttribute('aria-pressed', String(selected));
     });
-    if (push) { const url = new URL(location.href); url.searchParams.set('section', section); history.pushState({}, '', url); }
+    if (push) { const url = new URL(panelUrl(root)); url.searchParams.set('section', section); setPanelUrl(root,url,true); }
     syncLinks();
     const update = () => {
       root.querySelectorAll<HTMLElement>('[data-stats-panel]').forEach(panel => panel.hidden = panel.dataset.statsPanel !== section);
@@ -293,7 +297,7 @@ function mount(root: HTMLElement) {
     pies.forEach(chart => { chart.tooltip?.setActiveElements([], {x:0,y:0}); chart.setActiveElements([]); chart.draw(); });
     media = next;
     clearTimeout(timer);
-    if (push) { const url = new URL(location.href); url.searchParams.set('media', media); history.pushState({}, '', url); }
+    if (push) { const url = new URL(panelUrl(root)); url.searchParams.set('media', media); setPanelUrl(root,url,true); }
     root.querySelectorAll<HTMLElement>('[data-overview-media]').forEach(link => { if (link.dataset.overviewMedia === media) link.setAttribute('aria-current', 'page'); else link.removeAttribute('aria-current'); });
     void loader.load(media);
   }
@@ -349,7 +353,8 @@ function mount(root: HTMLElement) {
   root.addEventListener('focusout', clearHighlight, { signal: events.signal });
   root.addEventListener('pointerout', clearHighlight, { signal: events.signal });
   window.addEventListener('popstate', () => {
-    const params = new URL(location.href).searchParams, value = params.get('media');
+    if(!panelActive(root))return;
+    const params = new URL(panelUrl(root)).searchParams, value = params.get('media');
     root.dataset.genreSort = genreSort(params.get('sort')); root.dataset.actorSort = genreSort(params.get('actor_sort'));
     root.dataset.studioSort = genreSort(params.get('studio_sort'));
     root.dataset.staffSort = genreSort(params.get('staff_sort'));
@@ -357,15 +362,16 @@ function mount(root: HTMLElement) {
     navigate(value === 'movie' || value === 'series' ? value : 'all', false);
   }, { signal: events.signal });
   reducedMotion.addEventListener('change', () => { cancelUiMotion(root); if (response.overview) render(response, true); }, { signal: events.signal });
-  const observer = new MutationObserver(() => { if (response.overview) render(response, true); });
+  const observer = new MutationObserver(() => { if (panelActive(root)&&response.overview) render(response, true); });
   observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
   // The profile runtime applies the owner/viewer accent on body, including
   // saved choices restored during client-side navigation. Repaint canvases too.
   observer.observe(document.body, { attributes: true, attributeFilter: ['style'] });
-  document.addEventListener('anylist:editor-committed', () => { if (response.owner) void loader.load(media); }, {signal:events.signal});
-  document.addEventListener('astro:before-swap', () => { stopped = true; clearTimeout(timer); loader.stop(); events.abort(); genres.stop(); actors.stop(); studios.stop(); staff.stop(); observer.disconnect(); charts.forEach(chart => chart.destroy()); pies.forEach(chart => chart.destroy()); }, { once: true, signal: events.signal });
+  let dirty=false;
+  root.closest('[data-profile-url]')?.addEventListener('anylist:panel-inactive',()=>clearTimeout(timer),{signal:events.signal});
+  const refresh=()=>{if(panelActive(root)){dirty=false;void loader.load(media);}else dirty=true;};
+  root.closest('[data-profile-url]')?.addEventListener('anylist:panel-active',()=>{if(dirty||response.status!=='ready')refresh();else if(response.overview)render(response,true);},{signal:events.signal});
+  document.addEventListener('anylist:editor-committed', () => { if (response.owner) refresh(); }, {signal:events.signal});
+  lifetime.addEventListener('abort', () => { stopped = true; clearTimeout(timer); loader.stop(); events.abort(); genres.stop(); actors.stop(); studios.stop(); staff.stop(); observer.disconnect(); charts.forEach(chart => chart.destroy()); pies.forEach(chart => chart.destroy()); }, { once: true, signal: events.signal });
   render(response, true);
 }
-function setup() { const root = document.querySelector<HTMLElement>('#statistics-overview'); if (root) mount(root); }
-document.addEventListener('astro:page-load', setup);
-setup();

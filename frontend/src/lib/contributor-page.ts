@@ -299,6 +299,14 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     finally{if(!signal.aborted&&current===revision){more.disabled=false;more.textContent='Load more';updateEmpty();if(syncAgain)void synchronize();}}
   };
   more.addEventListener('click',()=>void loadMore(),{signal});
+  type RetainedWorks={nodes:Node[];items:Map<HTMLElement,ContributorWork>;data:ContributorPage;params:URLSearchParams;view:string|undefined;scroll:number};
+  const retained=new Map<string,RetainedWorks>();
+  let retainCurrent=true;
+  const domain=()=>params.get('media_type')==='game'?'game':'movies-series';
+  const invalidateRetained=()=>{retained.clear();retainCurrent=false;};
+  document.addEventListener('anylist:cache-invalidated',invalidateRetained,{signal});
+  document.addEventListener('anylist:editor-state',invalidateRetained,{signal});
+  signal.addEventListener('abort',()=>retained.clear(),{once:true});
   form.addEventListener('submit',event=>{
     event.preventDefault();prediction.cancel();filterRequest?.abort();
     const worksAnchor = new URL(form.action).hash === '#contributor-works';
@@ -312,7 +320,11 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     // Disabled controls are absent from FormData; preserve its domain while
     // the viewer changes another filter, without forcing a route switch.
     form.querySelectorAll<HTMLInputElement>('input[name=domain]:checked,input[name=media_type]:checked').forEach(input=>submitted.set(input.name,input.value));
-    const query=contributorParams(submitted,data.list_count!==null);
+    let query=contributorParams(submitted,data.list_count!==null);
+    const switching=(query.get('media_type')==='game'?'game':'movies-series')!==domain();
+    const cached=switching?retained.get(query.get('media_type')==='game'?'game':'movies-series'):undefined;
+    if(switching&&retainCurrent&&!syncing)retained.set(domain(),{nodes:[...region.childNodes],items:new Map(items),data:{...data},params:new URLSearchParams(params),view:requestedView,scroll:scrollY});
+    if(cached){query=new URLSearchParams(cached.params);requestedView=cached.view;}
     region.hidden=(query.get('media_type')==='game')!==(params.get('media_type')==='game');
     const readSelection=async()=>{
       for(;;){
@@ -324,10 +336,11 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
         }
       }
     };
-    void readSelection().then(next=>{
+    const applySelection=(next:ContributorPage)=>{
       if(signal.aborted||current!==revision)return;
       // Replace only the works; keep biography, controls, focus and viewport intact.
-      region.replaceChildren();items.clear();
+      region.replaceChildren(...(cached?.nodes||[]));items.clear();
+      if(cached)for(const [card,item] of cached.items)items.set(card,item);
       Object.assign(data,next);
       for(const key of [...params.keys()])params.delete(key);
       query.forEach((value,key)=>params.set(key,value));
@@ -340,7 +353,10 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
       if(data.kind==='studio')root.querySelector('[data-contributor-kicker]')!.textContent=params.get('media_type')==='game'?'Game studio':'Production studio';
       const listLink=root.querySelector<HTMLAnchorElement>('.contributor-list-link');
       if(listLink){const href=new URL(location.pathname,location.origin);href.search=query.toString();href.searchParams.set('list_scope','in');href.searchParams.set('view',requestedView||'timeline');href.hash='contributor-works';listLink.href=href.href;}
-      append(next.works);more.hidden=!data.has_more;more.disabled=false;more.textContent='Load more';
+      if(!cached)append(next.works);
+      retainCurrent=true;
+      if(cached){restoreFilterControls();root.dataset.view=requestedView;region.classList.toggle('browse-grid',requestedView==='grid');(form.elements.namedItem('view') as HTMLInputElement).value=requestedView||'timeline';root.querySelectorAll<HTMLElement>('[data-contributor-view]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.contributorView===requestedView)));}
+      more.hidden=!data.has_more;more.disabled=false;more.textContent='Load more';
       const notice=root.querySelector<HTMLElement>('[data-contributor-notice]')!;
       notice.textContent=next.notice||'';notice.hidden=!next.notice;
       const url=new URL(location.href);url.search=query.toString();
@@ -350,16 +366,12 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
         const works=root.querySelector<HTMLElement>('.contributor-works');
         if (works) scrollToWorks(works);
       }
-    }).catch(cause=>{
+    };
+    const finish=()=>{if(!signal.aborted&&current===revision){filterRequest=undefined;region.removeAttribute('aria-busy');region.hidden=false;root.querySelector<HTMLElement>('[data-contributor-loading]')!.hidden=true;updateEmpty();more.disabled=false;more.textContent='Load more';if(syncAgain)void synchronize();}};
+    if(cached){applySelection(cached.data);finish();window.scrollTo(0,cached.scroll);return;}
+    void readSelection().then(applySelection).catch(cause=>{
       if(!signal.aborted&&!request.signal.aborted&&current===revision&&(cause as Error).name!=='AbortError'){restoreFilterControls();showError(cause instanceof Error?cause.message:'Unable to load works.');}
-    }).finally(()=>{
-      if(!signal.aborted&&current===revision){
-        filterRequest=undefined;region.removeAttribute('aria-busy');region.hidden=false;
-        root.querySelector<HTMLElement>('[data-contributor-loading]')!.hidden=true;updateEmpty();
-        more.disabled=false;more.textContent='Load more';
-        if(syncAgain)void synchronize();
-      }
-    });
+    }).finally(finish);
   },{signal});
   let syncing=false,syncAgain=false;
   let syncRetry:ReturnType<typeof setTimeout>|undefined,syncFailures=0;
@@ -441,7 +453,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
   availabilityChanged=state=>{
     // Retry an empty active tab when background identity/availability changes.
     if(previousAvailability&&state!==previousAvailability){
-      pages.clear();
+      pages.clear();invalidateRetained();
       if(!items.size&&!filterRequest)form.requestSubmit();
     }
     previousAvailability=state;

@@ -28,7 +28,7 @@ test('explicit filtered results scroll only after the requested works render',as
  let submit,resolvePage;const order=[],works={},urls=[];
  const form={action:'https://example.test/person/1#contributor-works',querySelectorAll:()=>[],addEventListener:(_,callback)=>submit=callback};
  const context={form,signal:new AbortController().signal,prediction:{cancel(){}},filterRequest:undefined,revision:0,AbortController,URL,URLSearchParams,
-  sourceRefresh:{update(){},stop(){}},syncAgain:false,updateEmpty(){},pages:{get:()=>new Promise(resolve=>resolvePage=resolve)},
+  domain:()=> 'movies-series',retained:new Map(),retainCurrent:false,syncing:false,sourceRefresh:{update(){},stop(){}},syncAgain:false,updateEmpty(){},pages:{get:()=>new Promise(resolve=>resolvePage=resolve)},
   error:{hidden:true},region:{setAttribute(){},removeAttribute(){},replaceChildren(){order.push('replace')}},
   FormData:class{forEach(callback){callback('in','list_scope');callback('movie','media_type')}},
   contributorParams:p=>p,requestPage:()=>new Promise(resolve=>resolvePage=resolve),root:{dataset:{endpoint:'people/1'},querySelector:s=>s==='.contributor-works'?works:s==='.contributor-list-link'?null:{}},
