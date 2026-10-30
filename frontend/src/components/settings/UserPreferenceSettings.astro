@@ -263,15 +263,15 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
       <section>
         <h2 class="section-headline mb-4 border-b border-zinc-800 pb-2">Results filters</h2>
         <label class="setting-switch-row" for="hide-erotic-games">
-          <span><strong>Hide erotic games</strong><small>Mature age ratings remain visible.</small></span>
+          <span><strong>Hide erotic games</strong><small>Excludes games classified as erotic regardless of votes or popularity. Mature age ratings remain visible.</small></span>
           <input id="hide-erotic-games" type="checkbox" checked={trackingPrefs.hide_erotic_games !== false}/>
         </label>
-        <p class="text-sm text-zinc-400">Titles qualify with enough votes or enough popularity.</p>
         <div class="space-y-2 max-w-xs mt-5">
           <div class="setting-label-line"><label for="minimum_movie_runtime" class="block text-sm font-medium text-zinc-400">Minimum movie runtime (minutes)</label></div>
           <input id="minimum_movie_runtime" name="minimum_movie_runtime" type="number" min="0" max="1440" step="1" value={prefs.minimum_movie_runtime} class="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:bg-zinc-800 transition-colors" />
         </div>
         <div class="space-y-2 max-w-xs mt-5">
+          <p class="text-sm text-zinc-400">Movies and series qualify with enough votes or enough popularity.</p>
           <label for="minimum_votes" class="block text-sm font-medium text-zinc-400">Minimum votes</label>
           <input id="minimum_votes" name="minimum_votes" type="number" min="0" max="10000000" step="1" value={prefs.minimum_votes} class="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:bg-zinc-800 transition-colors" />
         </div>
