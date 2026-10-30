@@ -33,7 +33,7 @@ function setup(){
   const invalidate=()=>{generation++;for(const [key,panel] of panels)if(!panel.ready)panels.delete(key);};
   document.addEventListener('anylist:editor-state',invalidate,{signal});
   document.addEventListener('anylist:cache-invalidated',invalidate,{signal});
-  const statisticsLoading=new Map([...document.querySelectorAll<HTMLTemplateElement>('[data-profile-statistics-loading]')].map(template=>[template.dataset.profileStatisticsLoading!,template]));
+  const loadingTemplates=new Map([...document.querySelectorAll<HTMLTemplateElement>('[data-profile-statistics-loading],[data-profile-list-loading]')].map(template=>[(template.dataset.profileStatisticsLoading||template.dataset.profileListLoading)!,template]));
   const first=document.createElement('div');first.dataset.profileUrl=location.href;
   for(const child of [...host.childNodes])if(child!==header&&child!==nav)first.append(child);
   host.append(first);
@@ -76,7 +76,7 @@ function setup(){
   function show(root:HTMLElement){shown.remove();shown=root;host!.append(root);}
   function select(key:string,url:string){
     if(key===wanted)return;
-    const leavingPreview=shown.hasAttribute('data-profile-stats-preview');
+    const leavingPreview=shown.matches('[data-profile-stats-preview],[data-profile-list-preview]');
     if(leavingPreview){const source=panels.get(active);if(source){shown.remove();shown=source.root;host!.append(shown);}}
     document.dispatchEvent(new Event('anylist:profile-tab-changed'));
     if(!leavingPreview&&shown===panels.get(active)?.root){positions.set(active,scrollY);shown.dataset.profileUrl=location.href;shown.dispatchEvent(new Event('anylist:panel-inactive'));}
@@ -85,7 +85,7 @@ function setup(){
     const source=shown;
     nav.setAttribute('aria-busy','true');setPanelWaiting(source,true);
     const cached=panels.get(key);
-    const loadingTemplate=statisticsLoading.get(key);
+    const loadingTemplate=loadingTemplates.get(key);
     if(loadingTemplate&&!cached?.ready){
       const preview=loadingTemplate.content.firstElementChild!.cloneNode(true) as HTMLElement;
       show(preview);

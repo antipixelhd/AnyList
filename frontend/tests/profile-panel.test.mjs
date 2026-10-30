@@ -60,3 +60,22 @@ test('a failed optimistic statistics load restores the source list scroll positi
   runInNewContext(stripTypeScriptTypes(snippet)+';this.failed=failed;',context);context.failed();
   assert.equal(context.shown,source);assert.equal(context.wanted,'movies');assert.deepEqual(scrolls,[1250]);assert.deepEqual(states,[[source,false]]);
 });
+
+test('a cold list selection immediately shows its destination frame instead of the previous rows',async()=>{
+  const sourceText=readFileSync(new URL('../src/lib/profile-shell.ts',import.meta.url),'utf8');
+  const start=sourceText.indexOf('  function select(key:string,url:string)');
+  const snippet=sourceText.slice(start,sourceText.indexOf('  const target=',start));
+  const source={dataset:{},matches:()=>false,dispatchEvent(){}},preview={kind:'games'},waiting=[],positions=new Map();let rejectRead;
+  const context={signal:new AbortController().signal,wanted:'movies',active:'movies',shown:source,positions,scrollY:780,
+    panels:new Map([['movies',{root:source,ready:true}]]),loadingTemplates:new Map([['games',{content:{firstElementChild:{cloneNode:()=>preview}}}]]),
+    read:()=>new Promise((resolve,reject)=>rejectRead=reject),setPanelWaiting:(root,on)=>waiting.push([root,on]),update(){},
+    show:root=>context.shown=root,nav:{setAttribute(){},removeAttribute(){},getBoundingClientRect:()=>({top:-600})},
+    host:{querySelector:()=>null,append(){}},window:{scrollTo(){}},location:{href:'https://example.test/user/alex/movies'},
+    document:{dispatchEvent(){},createElement:()=>({dataset:{},setAttribute(){},addEventListener(){},append(){}})},Event,
+  };
+  runInNewContext(stripTypeScriptTypes(snippet)+';this.select=select;',context);
+  context.select('games');assert.equal(context.shown,preview);assert.equal(context.wanted,'games');assert.equal(positions.get('movies'),780);
+  assert.deepEqual(waiting,[[source,true]]);
+  rejectRead(new Error('unavailable'));await new Promise(setImmediate);
+  assert.equal(context.shown,source);assert.equal(context.wanted,'movies');assert.deepEqual(waiting.at(-1),[source,false]);
+});
