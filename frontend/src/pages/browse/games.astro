@@ -90,9 +90,4 @@ const firstYear=1900,lastYear=Math.max(new Date().getFullYear()+3,Number(values.
     <script id="game-browse-data" type="application/json" set:html={JSON.stringify({payload,facets,sections,categories,error,values:values.toString()}).replaceAll('<','\\u003c')}/>
   </div>
 </Tracker>
-<script>
-import {initializeGameBrowse} from '../../lib/game-browse';
-let session:AbortController;
-document.addEventListener('astro:page-load',()=>{session?.abort();session=new AbortController();const root=document.querySelector<HTMLElement>('[data-game-browse]');if(root)initializeGameBrowse(root,session.signal);});
-document.addEventListener('astro:before-swap',()=>session?.abort());
-</script>
+<script>import "../../lib/browse-shell";</script>

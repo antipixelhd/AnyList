@@ -137,7 +137,7 @@
 
   function remember(url: URL, doc: Document) {
     resetForIdentity();
-    if (!cacheable(url) || doc.body.dataset.cacheUser !== state.user) return;
+    if (!cacheable(url) || doc.body.dataset.cacheUser !== state.user || doc.querySelector('[data-browse-shell]')) return;
     if(!reusableGamesPage(url)&&(doc.body.hasAttribute('data-games-access')||doc.querySelector('[data-contributor-page][data-media-type="game"]')))return;
     const html = sanitizedHtml(doc, url);
     if (!html) return;
@@ -242,7 +242,7 @@
     bindPredictionIntent(document,lifetime.signal,link=>{
       const url=new URL(link.href);
       if(url.origin!==location.origin||approvedGamesPage(url)&&!reusableGamesPage(url)||link.target||link.hasAttribute('download')||link.hasAttribute('data-astro-reload'))return;
-      if(link.hasAttribute('data-browse-type')&&url.pathname==='/browse'&&location.pathname==='/browse')return;
+      if(link.hasAttribute('data-browse-type')&&link.closest('[data-browse-shell]'))return;
       if(url.pathname==='/discover-title'){
         const type=url.searchParams.get('type'),id=url.searchParams.get('id');
         if(!['movie','series'].includes(type||'')||!id||!/^\d+$/.test(id))return;
@@ -291,7 +291,7 @@
     }, true);
 
     document.addEventListener('astro:before-preparation', rawEvent => {
-      if(document.querySelector('[data-game-browse]')){
+      if(!document.querySelector('[data-browse-shell]')&&document.querySelector('[data-game-browse]')){
         document.dispatchEvent(new Event('anylist:before-snapshot'));
         if(document.querySelector<HTMLElement>('[data-game-browse]')?.dataset.navigationSnapshotReady==='true')remember(new URL(location.href),document);
       }

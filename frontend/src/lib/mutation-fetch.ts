@@ -13,6 +13,7 @@ export function mutationFetch(
     // change viewer state or invalidate unrelated navigation/search results.
     const readOnlyPost = method === 'POST' && [
       '/api/proxy/tracking/browse/context',
+      '/api/proxy/tracking/games/state',
       '/api/proxy/tracking/games/people/images',
     ].includes(url.pathname);
     const mutation = method !== 'GET' && method !== 'HEAD'

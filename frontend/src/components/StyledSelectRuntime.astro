@@ -78,7 +78,7 @@
       const parent = select.parentElement;
       const parentWidth = parent?.getBoundingClientRect().width || 0;
       const selectWidth = select.getBoundingClientRect().width;
-      const fullWidth = select.classList.contains('w-full') || parentWidth > 0 && selectWidth >= parentWidth - 2 && computed.display !== 'inline';
+      const fullWidth = parent?.classList.contains('tracker-select-full') || select.classList.contains('w-full') || parentWidth > 0 && selectWidth >= parentWidth - 2 && computed.display !== 'inline';
       // Navigation snapshots can contain enhanced controls from an older page.
       // Adopt their trigger and collapse nested wrappers instead of layering labels.
       let existingWrapper = parent?.matches('.tracker-select') ? parent : null;
@@ -200,6 +200,7 @@
       }
     });
     added.observe(document.body, { childList: true, subtree: true });
+    document.addEventListener('anylist:browse-tab-changed',()=>{if(openControl)close(openControl,false,true);},{signal:listeners.signal});
     document.addEventListener('click', event => {
       if (openControl && !openControl.wrapper.contains(event.target as Node) && !openControl.menu.contains(event.target as Node)) close(openControl);
     }, { signal: listeners.signal });

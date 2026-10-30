@@ -434,14 +434,4 @@ if(params.has('cinema'))initialChips.push(cinemaLabel);
     />
   </div>
 </Tracker>
-<script>
-  import { initializeBrowse } from "../lib/browse";
-  let session: AbortController;
-  document.addEventListener("astro:page-load", () => {
-    session?.abort();
-    session = new AbortController();
-    const root = document.querySelector<HTMLElement>("[data-browse-page]");
-    if (root&&!root.hasAttribute("data-game-browse")) initializeBrowse(root, session.signal);
-  });
-  document.addEventListener("astro:before-swap", () => session?.abort());
-</script>
+<script>import "../lib/browse-shell";</script>

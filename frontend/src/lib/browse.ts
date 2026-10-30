@@ -1,3 +1,4 @@
+import {browseElement,browsePanelActive,setBrowsePanelUrl} from './browse-tabs';
 import { bindBrowseCardActions, bindBrowseCardTouch, paintBrowseCardState, type BrowseItem } from './browse-card-actions';
 import { formatDate } from './date-time';
 import { wireSearchWordCapitalization } from './search-word-capitalization';
@@ -16,7 +17,7 @@ import { createBrowsePaginationDemand } from "./browse-pagination";
 import { initializeMobileBrowseFilters } from "./browse-mobile-filters";
 import { BROWSE_FACET_TTL, browseResultTtl, createBrowseCache, waitForBrowseRequest } from "./browse-cache";
 import { refreshBrowseContextBatches } from './browse-context';
-import {createPrediction,bindPredictionIntent, paginationPosition} from "./predictive-loading";
+import {createPrediction, paginationPosition} from "./predictive-loading";
 import { initializeBrowseSort } from "./browse-sort";
 import { createBrowseOverride } from './browse-override';
 import {createSearchExpansion, shouldBroadenSearch, broadSearchParams} from './search-fallback';
@@ -58,7 +59,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     });
   }));
   const find = <T extends HTMLElement>(selector: string) =>
-    root.querySelector<T>(selector)!;
+    browseElement<T>(root,selector);
   const form = find<HTMLFormElement>("[data-browse-form]");
   initializeMobileBrowseFilters(form, signal);
   const searchClear = find<HTMLButtonElement>("[data-browse-search-clear]");
@@ -165,23 +166,15 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     else if(root.dataset.browseScreenEnabled==='false')values.set("type","movie");
     if (values.get("sort") === "all") values.delete("sort");
     if (values.get("min_score") === "0") values.delete("min_score");
-    history.replaceState(
-      history.state,
-      "",
-      `${location.pathname}${values.size ? `?${values}` : ""}`,
-    );
+    const pathname=root.dataset.browseTab?'/browse':location.pathname;
+    setBrowsePanelUrl(root,`${pathname}${values.size?`?${values}`:''}`);
     root.querySelectorAll<HTMLAnchorElement>('[data-browse-layout]').forEach(link=>{
       const target=new URLSearchParams(values);
       if(link.dataset.browseLayout==='timeline')target.set('view','timeline');else target.delete('view');
-      link.href=`${location.pathname}${target.size?'?'+target:''}`;
+      link.href=`${pathname}${target.size?'?'+target:''}`;
       if(link.dataset.browseLayout===field('view').value)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');
     });
-    root.querySelectorAll<HTMLAnchorElement>('[data-browse-type]').forEach(link=>{
-      if(link.dataset.browseType==='game')return;
-      const target=new URLSearchParams(values);target.delete('genres');target.delete('status');target.delete('cinema');
-      if(link.dataset.browseType==='series')target.set('type','series');else target.delete('type');
-      link.href=`${location.pathname}${target.size?'?'+target:''}`;
-    });
+
   };
   const json = async (path: string, options: RequestInit = {}) => {
     const response = await fetch(`/api/proxy/tracking/${path}`, options);
@@ -230,10 +223,8 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       paintState(card, item);
     }
   };
-  const refreshViewerContext = async (response: Payload | SectionsPayload, current: AbortController) => {
+  const refreshViewerContext = async (selection: Item[], current: AbortController) => {
     if (viewer === 'anonymous') return;
-    const selection = 'sections' in response
-      ? response.sections.flatMap(section => section.results) : response.results;
     const unique = new Map<string, Item>();
     for (const item of selection) if (item.id || item.tmdb_id) unique.set(titleKey(item), item);
     if (!unique.size) return;
@@ -258,6 +249,12 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       }
     }, () => !current.signal.aborted && !signal.aborted && request === current && revision === contextRevision);
   };
+  let contextAt=Date.now();
+  root.addEventListener('anylist:browse-active',()=>{
+    if(loading||Date.now()-contextAt<60_000)return;
+    if(!items.size)return;
+    contextAt=Date.now();request??=new AbortController();void refreshViewerContext([...items.values()],request);
+  },{signal});
   const render = (results: Item[], destination = grid, deduplicate = true) => {
     const fragment = document.createDocumentFragment();
     const cards:HTMLElement[]=[];
@@ -378,7 +375,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     ]
       .map((input) => input.value)
       .join(",");
-    find("[id=browse-genres-value]").textContent = genreSelectionLabel(field("genres").value, facets.genres);
+    find("#browse-genres-value").textContent = genreSelectionLabel(field("genres").value, facets.genres);
   };
   const updateFooter = () => {
     const manualOverride = resultOverride.forQuery(field('q').value);
@@ -531,7 +528,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
         payload = response;
       }
       notice.textContent = response.notice || "";
-      if (cached) void refreshViewerContext(response, current);
+      if (cached) void refreshViewerContext([...items.values()], current);
 
     } catch (cause) {
       await loadingView.settle(current.signal);
@@ -617,7 +614,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       if (current !== facetRequest || current.signal.aborted || signal.aborted) return;
       facetCache.set(cacheKey, result, !cachedFacets);
       facets = result;
-      find("[id=browse-genres-value]").textContent = genreSelectionLabel(field("genres").value, facets.genres);
+      find("#browse-genres-value").textContent = genreSelectionLabel(field("genres").value, facets.genres);
       const options = find<HTMLElement>("[data-genre-options]");
       options.replaceChildren();
       for (const genre of facets.genres) {
@@ -716,62 +713,6 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     field('view').value=view;
     changed();
   },{signal}));
-  bindPredictionIntent(root.querySelector<HTMLElement>('.browse-types')!,signal,link=>{
-    const type=link.dataset.browseType;
-    if(!type||type==='game'||type===field('type').value)return;
-    const next=params();next.set('media_type',type);next.set('page','1');
-    for(const key of ['genres','status','cinema'])next.delete(key);
-    const path=requestPath(next);if(!responseCache.get(path))prediction.prefetch(path);
-  });
-  root
-    .querySelectorAll<HTMLAnchorElement>("[data-browse-type]")
-    .forEach((link) =>
-      link.addEventListener(
-        "click",
-        (event) => {
-          if(link.dataset.browseType==='game'||event.button!==0||event.ctrlKey||event.metaKey||event.shiftKey||event.altKey)return;
-          event.preventDefault();
-          if (field("type").value === link.dataset.browseType) return;
-          field("type").value = link.dataset.browseType!;
-          (field('cinema') as HTMLInputElement).checked=false;
-          find<HTMLElement>('[data-browse-cinema]').hidden=field('type').value!=='movie';
-          root
-            .querySelectorAll("[data-browse-type]")
-            .forEach((a) => a.removeAttribute("aria-current"));
-          link.setAttribute("aria-current", "page");
-          field("genres").value = "";
-          syncGenresAfterType();
-          field("status").value = "";
-          const statuses =
-            field("type").value === "movie"
-              ? [
-                  ["released", "Released"],
-                  ["upcoming", "Upcoming"],
-                ]
-              : [
-                  ["airing", "Airing"],
-                  ["returning", "Returning Series"],
-                  ["finished", "Finished"],
-                  ["cancelled", "Cancelled"],
-                  ["upcoming", "Upcoming"],
-                ];
-          (field("status") as HTMLSelectElement).replaceChildren(
-            new Option("Any status", ""),
-            ...statuses.map(([id, name]) => new Option(name, id)),
-          );
-          refreshSelect(field("status"));
-          void loadFacets();
-          changed();
-        },
-        { signal },
-      ),
-    );
-  function syncGenresAfterType() {
-    form
-      .querySelectorAll<HTMLInputElement>("[name=genre]")
-      .forEach((input) => (input.checked = false));
-    syncGenres();
-  }
   root
     .querySelectorAll("[data-browse-clear]")
     .forEach((button) => button.addEventListener("click", clear, { signal }));
@@ -795,7 +736,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   let sentinelNearEnd = false;
   let paginationFrame = 0;
   let predictionScrollY=scrollY;
-  const canAutoLoad = () => !signal.aborted && !displayedCategories &&
+  const canAutoLoad = () => browsePanelActive(root) && !signal.aborted && !displayedCategories &&
     !loading && !suspended && payload.has_more;
   const autoLoadMore = () => {
     if (sentinelNearEnd && canAutoLoad() && paginationDemand.consume())
@@ -810,6 +751,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   );
   observer.observe(sentinel);
   window.addEventListener("scroll", () => {
+    if(!browsePanelActive(root))return;
     const down=scrollY>predictionScrollY;predictionScrollY=scrollY;
     paginationDemand.advance(scrollY, canAutoLoad());
     if (!paginationFrame) paginationFrame = requestAnimationFrame(() => {
@@ -826,7 +768,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   paintChips();
   updateFooter();
   const savedRegion = streamingRegionPreference(document.cookie.split(';').map(part => part.trim()).find(part => part.startsWith(`${STREAMING_REGION_COOKIE}=`))?.slice(STREAMING_REGION_COOKIE.length + 1));
-  if (!new URLSearchParams(location.search).has('region') && !savedRegion?.manual) {
+  if (!new URL(root.dataset.browseUrl||location.href,location.origin).searchParams.has('region') && !savedRegion?.manual) {
     const detected = deviceStreamingCountry();
     if (detected) {
       document.cookie = `${STREAMING_REGION_COOKIE}=auto.${detected}; Path=/; Max-Age=31536000; SameSite=Lax${location.protocol === 'https:' ? '; Secure' : ''}`;

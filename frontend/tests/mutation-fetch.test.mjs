@@ -72,3 +72,18 @@ test('optional portrait network failures stay with their caller instead of repor
   await assert.rejects(wrapped('/api/proxy/tracking/games/entries/1', {method:'PATCH'}), error);
   assert.deepEqual([invalidations, failures], [0, 1]);
 });
+
+
+test('Games state reads preserve mounted caches on success and network failure', async () => {
+  let invalidations = 0, failures = 0;
+  const wrapped = mutationFetch(async () => Response.json({states:[]}), 'https://beta.example',
+    () => invalidations++, () => failures++);
+  await wrapped('/api/proxy/tracking/games/state', {method:'POST', body:'{}'});
+  const error = new TypeError('network failed');
+  const failed = mutationFetch(async () => {throw error;}, 'https://beta.example',
+    () => invalidations++, () => failures++);
+  await assert.rejects(failed('/api/proxy/tracking/games/state', {method:'POST'}), error);
+  assert.deepEqual([invalidations, failures], [0, 0]);
+  await wrapped('/api/proxy/tracking/games/entries/1', {method:'PATCH'});
+  assert.equal(invalidations, 1);
+});

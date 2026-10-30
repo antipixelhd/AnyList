@@ -1,3 +1,4 @@
+import {browseElement,browsePanelActive,setBrowsePanelUrl} from './browse-tabs';
 import {editorStore,type EditorTitle} from './editor-store';
 import {bindBrowseCardActions,bindBrowseCardTouch,paintBrowseCardState,type BrowseItem} from './browse-card-actions';
 import {browseCardKey,browseCardHref} from './browse-card-data';
@@ -24,7 +25,7 @@ class BrowseReadError extends Error {status:number;constructor(message:string,st
 export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
   root.dataset.enhanced='';root.dataset.browseScripted='';
   editorStore.scope(document.body.dataset.cacheUser||'anonymous');
-  const find=<T extends HTMLElement>(selector:string)=>root.querySelector<T>(selector)!;
+  const find=<T extends HTMLElement>(selector:string)=>browseElement<T>(root,selector);
   const form=find<HTMLFormElement>('[data-browse-form]');
   const field=(name:string)=>form.elements.namedItem(name) as HTMLInputElement|HTMLSelectElement;
   initializeMobileBrowseFilters(form,signal);initializeBrowseMenus(form,signal);
@@ -61,6 +62,28 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
       const href=browseCardHref(item);if(href)card.querySelectorAll<HTMLAnchorElement>('a').forEach(link=>link.href=href);
     }
   };
+  let contextAt=Date.now();
+  root.addEventListener('anylist:browse-active',()=>{
+    if(loading||Date.now()-contextAt<60_000||document.body.dataset.cacheUser==='anonymous')return;
+    contextAt=Date.now();const started=writeVersion;
+    const ids=[...new Set([...items.values()].map(item=>item.id).filter((id):id is number=>!!id))];
+    void(async()=>{
+      for(let offset=0;offset<ids.length&&!signal.aborted;offset+=80){
+        try{
+          const response=await fetch('/api/proxy/tracking/games/state',{method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({work_ids:ids.slice(offset,offset+80)}),signal});
+          if(!response.ok)continue;
+          const states=await response.json();if(signal.aborted)return;
+          for(const state of states){
+            const id=state.subject.catalogue_id;
+            if((edits.get(id)?.version||0)>started||editorStore.hasPendingSubject({kind:'game',catalogue_id:id}))continue;
+            editorStore.invalidateSubject({kind:'game',catalogue_id:id});
+            syncItem({type:'game',id,title:state.title,list_status:state.listed?state.status:null,score:state.score});
+          }
+        }catch{/* Keep mounted results usable when the background check fails. */}
+      }
+    })();
+  },{signal});
   document.addEventListener('anylist:game-resolved',event=>{
     const resolved=(event as CustomEvent<{igdb_id:number;id:number}>).detail;
     for(const page of cache.values())for(const item of page.results)if(item.igdb_id===resolved.igdb_id)item.id=resolved.id;
@@ -210,7 +233,7 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
     try{
       if(config.category){
         presentedCategories=true;activeValues=current.toString();notice.textContent='';
-        history.replaceState(history.state,'',gameBrowseHref(current));
+        setBrowsePanelUrl(root,gameBrowseHref(current));
         loading=false;region.setAttribute('aria-busy','false');footer();
         await loadShelves(epoch,currentRequest.signal);return;
       }
@@ -230,7 +253,7 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
         if(result.results.length||!result.verification_pending)loadingView.finish();
         sections.hidden=true;grid.hidden=false;
         notice.textContent=result.verification_pending?'':current.get('q')&&!result.coverage_limited?current.has('min_metacritic')&&result.partial?'Some games have no verified critic score.':'':gameSourceContext(result);
-        history.replaceState(history.state,'',gameBrowseHref(current));
+        setBrowsePanelUrl(root,gameBrowseHref(current));
       },currentRequest.signal);
     }catch(cause){
       if(signal.aborted||currentRequest.signal.aborted||epoch!==generation)return;
@@ -284,7 +307,7 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
   more.addEventListener('click',()=>void load(true),{signal});find('[data-browse-retry]').addEventListener('click',()=>void load(retryAppend),{signal});
   let near=false,frame=0;
   const observer=new IntersectionObserver(entries=>{near=entries.some(entry=>entry.isIntersecting);},{rootMargin:'400px'});observer.observe(find('[data-browse-sentinel]'));
-  window.addEventListener('scroll',()=>{demand.advance(scrollY,!loading&&!presentedCategories);if(frame)return;frame=requestAnimationFrame(()=>{frame=0;if(near&&!loading&&!presentedCategories&&payload.has_more&&demand.consume())void load(true);});},{passive:true,signal});
+  window.addEventListener('scroll',()=>{if(!browsePanelActive(root))return;demand.advance(scrollY,!loading&&!presentedCategories);if(frame)return;frame=requestAnimationFrame(()=>{frame=0;if(near&&!loading&&!presentedCategories&&payload.has_more&&demand.consume())void load(true);});},{passive:true,signal});
   document.addEventListener('anylist:cache-invalidated',()=>cache.clear(),{signal});
   document.addEventListener('anylist:before-snapshot',()=>{
     const snapshot=gameBrowseSnapshot({loading,failed:!error.hidden,activeValues,categories:presentedCategories,values:values().toString(),sections:[...shelves.values()],payload,

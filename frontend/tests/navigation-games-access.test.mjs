@@ -22,6 +22,21 @@ test('cached game content requires matching viewer and current approval on every
   assert.equal(await authorizeGameSnapshot('7',controller.signal,read),false);assert.equal(calls.length,3);
 });
 
+test('middleware-approved accounts switch their own Games tabs without authorization round trips',async t=>{
+  const original=Object.getOwnPropertyDescriptor(globalThis,'document');
+  const account={cacheUser:'7',cacheUsername:'alex',gamesApproved:'true'};
+  Object.defineProperty(globalThis,'document',{value:{body:{dataset:account}},configurable:true});
+  t.after(()=>{if(original)Object.defineProperty(globalThis,'document',original);else delete globalThis.document;});
+  let calls=0;const read=async()=>{calls++;return Response.json({id:7,can_access_games:true});};
+  const signal=new AbortController().signal;
+  for(const path of ['/browse/games','/user/alex/games','/user/alex/stats/games'])
+    assert.equal(await authorizeGameSnapshot('7',signal,read,new URL(path,'https://example.test')),true);
+  assert.equal(calls,0);
+  assert.equal(await authorizeGameSnapshot('7',signal,read,new URL('/user/other/games','https://example.test')),true);
+  assert.equal(calls,1,'other profile privacy is still checked');
+  account.gamesApproved='false';assert.equal(await authorizeGameSnapshot('7',signal,read),false);assert.equal(calls,1);
+});
+
 test('network failures, redirects and navigation cancellation never authorize stale game content',async()=>{
   const controller=new AbortController();
   assert.equal(await authorizeGameSnapshot('7',controller.signal,async()=>{throw new Error('offline');}),false);
