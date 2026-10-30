@@ -21,7 +21,7 @@
 .game-stats-pagination { display:flex; justify-content:center; align-items:center; gap:20px; margin:32px 0; color:var(--muted); }
 .game-stats-pagination a { padding:8px 12px; background:var(--stats-plot); color:var(--bright); border-radius:5px; text-decoration:none; }
 .game-stats-pagination a[aria-disabled=true] { opacity:.4; cursor:default; }
-#game-statistics [data-game-stats-heading] { scroll-margin-top:90px; }
+.stats-overview-page [data-stats-heading] { scroll-margin-top:90px; }
 .overview-metrics button:disabled { opacity:.4; cursor:default; }
 .game-comparison-table { width:100%; border-collapse:collapse; font-size:var(--stats-data-size); }
 .game-comparison-table :is(th,td) { padding:12px 10px; text-align:right; font-variant-numeric:tabular-nums; }
@@ -29,8 +29,6 @@
 .game-comparison-table td { color:var(--muted); }
 .game-comparison-table thead { color:var(--text); }
 .overview-table-scroll:has(.game-comparison-table) { overflow-x:auto; }
-.overview-results { transition:opacity 240ms ease; }
-.stats-overview-page[aria-busy=true] .overview-results { opacity:.85; }
 .overview-totals { display:grid; grid-template-columns:repeat(3,max-content); justify-content:space-between; gap:40px 24px; margin:0 0 48px; text-align:left; }
 .overview-totals>div { display:grid; grid-template-columns:40px max-content; grid-template-rows:auto auto; column-gap:16px; align-items:center; }
 .overview-totals dt { display:contents; }
