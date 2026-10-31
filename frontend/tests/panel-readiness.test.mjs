@@ -48,3 +48,10 @@ test('stylesheet failures and navigation cancellation reject readiness instead o
   const retry=preparePanelStyles(f.source,'https://example.test/a',new AbortController().signal,f.document);
   f.nodes[1].dispatchEvent(new Event('error'));await assert.rejects(retry,/Styles unavailable/);
 });
+
+test('fetched HTML never rewrites a live stylesheet with the same identity',async()=>{
+  const live=new Style('.posters{padding:20px 24px}','stats.css');
+  const f=fixture([new Style('.posters{padding:0}','stats.css')],[],[live]);
+  await preparePanelStyles(f.source,'https://example.test/user/alex/list',new AbortController().signal,f.document);
+  assert.equal(f.nodes.length,1);assert.equal(live.textContent,'.posters{padding:20px 24px}');
+});

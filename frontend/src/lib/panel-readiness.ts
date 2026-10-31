@@ -4,8 +4,9 @@ export async function preparePanelStyles(source:Document,base:string,signal:Abor
   for(const style of source.querySelectorAll<HTMLStyleElement>('style')){
     const identity=style.getAttribute('data-vite-dev-id');
     const existing=[...document.head.querySelectorAll<HTMLStyleElement>('style')].find(item=>identity?item.getAttribute('data-vite-dev-id')===identity:item.textContent===style.textContent);
-    if(existing){if(identity&&existing.textContent!==style.textContent)existing.textContent=style.textContent;}
-    else document.head.append(document.importNode(style,true));
+    // The active runtime (including Vite HMR) owns installed style identities.
+    // A fetched HTML snapshot must not replace their live CSS or undo updates.
+    if(!existing)document.head.append(document.importNode(style,true));
   }
   await Promise.all([...source.querySelectorAll<HTMLLinkElement>('link[rel=stylesheet][href]')].map(async link=>{
     const href=new URL(link.getAttribute('href')!,base).href;

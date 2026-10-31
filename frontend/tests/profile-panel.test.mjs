@@ -90,3 +90,12 @@ test('the statistics controller owns its media filter even when the shell entere
   runInNewContext(stripTypeScriptTypes(binding),{host:{addEventListener:(_,fn)=>click=fn},signal:new AbortController().signal,target(){throw new Error('Media filters must not select a shell panel');}});
   click({target:{closest:()=>link},button:0,preventDefault(){throw new Error('Shell consumed filter');}});
 });
+
+test('profile prediction retains destination styles without applying them until selection',()=>{
+  const source=readFileSync(new URL('../src/lib/profile-shell.ts',import.meta.url),'utf8');
+  const read=source.slice(source.indexOf('  async function read('),source.indexOf('  function show('));
+  assert.doesNotMatch(read,/preparePanelStyles/);assert.match(read,/styles:doc/);
+  const activate=source.slice(source.indexOf('    const activate='),source.indexOf('    const failed='));
+  assert(activate.indexOf('await preparePanelStyles')<activate.indexOf('stage.append(root)'));
+  assert(activate.indexOf('await preparePanelStyles')<activate.indexOf('await initialize(panel,signal)',activate.indexOf('await preparePanelStyles')));
+});

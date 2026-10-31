@@ -3,7 +3,7 @@ import {preparePanelStyles,panelLayoutFrame} from './panel-readiness';
 import {profilePanelKey,setPanelWaiting} from './profile-panel';
 import {bindPredictionIntent,predictionManifest} from './predictive-loading';
 
-type Panel={root:HTMLElement;url:string;title:string;ready:boolean;kind:string;initializing?:Promise<void>;preparing?:Promise<void>};
+type Panel={root:HTMLElement;url:string;title:string;ready:boolean;kind:string;styles?:Document;initializing?:Promise<void>;preparing?:Promise<void>};
 let session:AbortController|undefined;
 let currentHost:HTMLElement|undefined;
 async function initialize(panel:Panel,signal:AbortSignal){
@@ -67,11 +67,10 @@ function setup(){
       if(doc.body.dataset.cacheUser!==viewer)throw new Error('Account changed.');
       if((key==='games'||key==='stats/games')&&doc.body.dataset.gamesApproved!=='true')throw new Error('Games access requires approval.');
       const content=doc.querySelector('#content');if(!content?.querySelector('.profile-tabs'))throw new Error('Unable to load this section.');
-      await preparePanelStyles(doc,url,signal);
       if(signal.aborted||revision!==generation)throw new DOMException('Preview invalidated','AbortError');
       const root=document.createElement('div');root.dataset.profileUrl=url;
       for(const child of [...content.childNodes])if(!(child instanceof Element)||!child.matches('.profile-hero,.profile-tabs'))root.append(child);
-      const panel:Panel={root,url,title:doc.title,ready:false,kind:key};panels.set(key,panel);if(root.querySelector('[data-integrated-statistics]')){panels.set('stats',panel);panels.set('stats/games',panel);}return panel;
+      const panel:Panel={root,url,title:doc.title,ready:false,kind:key,styles:doc};panels.set(key,panel);if(root.querySelector('[data-integrated-statistics]')){panels.set('stats',panel);panels.set('stats/games',panel);}return panel;
     })().finally(()=>flights.delete(key)).catch(error=>{if(!signal.aborted&&error instanceof DOMException&&error.name==='AbortError')return read(key,url);throw error;});
     flights.set(key,pending);return pending;
   }
@@ -97,6 +96,10 @@ function setup(){
       else if(!panel.ready){
         // One shared staging task also owns rapid away/back switches.
         panel.preparing=(async()=>{
+          // Prediction keeps its styles detached; only an actual selection may
+          // install destination CSS into the visible document.
+          if(panel.styles){await preparePanelStyles(panel.styles,panel.url,signal);panel.styles=undefined;}
+          if(signal.aborted)return;
           const root=panel.root;root.dataset.profilePreparing='';root.inert=true;
           root.style.cssText='position:absolute;left:0;right:0;top:0;visibility:hidden;pointer-events:none';stage.append(root);
           try{
