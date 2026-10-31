@@ -15,10 +15,12 @@ from models.base import CollectionSource
 from models.connections import MediaServerConnection
 from models.sync import SyncJob, SyncStatus
 from models.users import User, UserSettings
+from core.steam_sync import run_steam_sync
 
 ACTIVE = (SyncStatus.pending, SyncStatus.running)
 TERMINAL = (SyncStatus.completed, SyncStatus.failed, SyncStatus.cancelled)
 SERVER_RUNNERS = {
+    "steam": run_steam_sync,
     "jellyfin": server_sync.run_jellyfin_sync, "emby": server_sync.run_emby_sync,
     "plex": server_sync.run_plex_sync, "nuvio": server_sync.run_nuvio_sync,
     "stremio": server_sync.run_stremio_sync, "arvio": server_sync.run_arvio_sync,
@@ -32,6 +34,8 @@ CLOUD_RUNNERS = {
 def has_pull_options(conn) -> bool:
     if not getattr(conn, "libraries_confirmed", True):
         return False
+    if conn.type == 'steam':
+        return True  # Its two game-specific options are checked in the worker.
     fields = ("sync_collection", "sync_watched", "sync_playback")
     if conn.type in {"jellyfin", "emby", "plex"}:
         fields += ("sync_ratings",)
@@ -99,7 +103,7 @@ async def queue_account_pull(db, user_id: int, *, scheduled: bool = False,
         if any(not getattr(conn, "libraries_confirmed", True) for conn in connections):
             raise HTTPException(400, "Save library selection before syncing a new media server")
         raise HTTPException(400, "Connect a provider and enable at least one pull option")
-    if not await settings_store.get_effective_tmdb_key(db, settings):
+    if any(provider != 'steam' for provider, _ in targets) and not await settings_store.get_effective_tmdb_key(db, settings):
         raise HTTPException(400, "TMDB API key required for sync")
     parent = SyncJob(user_id=user_id, source=CollectionSource.manual, job_type="pull_cycle",
                      status=SyncStatus.pending, total_items=len(targets), current_step="Pulling connected providers")

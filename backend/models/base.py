@@ -16,6 +16,7 @@ class MediaType(str, enum.Enum):
     person  = "person"
 
 class CollectionSource(str, enum.Enum):
+    steam    = "steam"
     jellyfin = "jellyfin"
     emby     = "emby"
     plex     = "plex"

@@ -1,0 +1,21 @@
+# Steam connection, import and sync
+
+Steam uses the existing connection rows, account pull schedule, cancellation and sync-job status. Its private `steam_connections` extension owns onboarding snapshots, selections and source checkpoints. The first import never passes through the movie/series mapping importer: `steam.app` identities resolve existing catalogue games or create Steam-rooted games directly. Existing non-independent catalogue identities retain their tracking rules.
+
+The importer shows the complete public library, progressively mounting cards. The default selection is playtime >= 30 minutes OR unlocked achievements >= 1. Card overrides take priority until Reset. Drafts persist on the server, with tab-local recovery for reloads during the debounce. Sorting never changes selection. Unavailable achievements remain unknown. Optional missing release dates use shared public store responses for exposed cards only; they never delay library selection. Public posters go directly to Steam's CDN.
+
+Sync updates the selected games only. New library games require another explicit import flow in a future iteration. Removing an entry locally does not cause sync to recreate it. Status, ratings, notes and completion dates are preserved. The first playtime observation uses the greater of existing time and Steam time; later positive Steam deltas preserve other manually recorded time. Achievement counts come from Steam when available. Steam does not imply that a game's story is complete.
+
+## Public API and request cost
+
+- [GetPlayerSummaries / ResolveVanityURL](https://partner.steamgames.com/doc/webapi/ISteamUser): one profile check, plus one vanity resolution if needed. No Steam password, user API key or cookies are required.
+- [GetOwnedGames](https://partner.steamgames.com/doc/webapi/IPlayerService): one request supplies library identities, names and playtime, including played free games. Profile and Game details must be public. An absent `game_count` is unavailable evidence; an explicit zero is a valid empty library.
+- [GetPlayerAchievements](https://partner.steamgames.com/doc/webapi/ISteamUserStats): one request per game, with unlocked and total counts. No documented cross-game bulk endpoint. The initial import checks every library game so achievements can select games even with zero reported playtime.
+- The documented public player interfaces do not expose custom client library collections. The importer therefore defaults to playtime, with alphabetical and achievement-completion sorting.
+- [Valve's API terms](https://steamcommunity.com/dev/apiterms) allow 100,000 calls/day. `STEAM_DAILY_BUDGET` defaults to 90,000, shared across server Steam provider requests. Existing cross-process provider pacing and cooldowns also apply. Player responses explicitly bypass shared HTTP caching.
+
+A 15-minute account interval produces 96 library calls/day per active connection, plus per-game achievement checks for changed playtime. Quiet games are rechecked after a day for delayed/offline achievement updates. At most 100 achievement requests are admitted in a pass, ordered by changed playtime then oldest check; unprocessed changes remain due. A quiet 1,000-game selection is approximately 1,096 player API calls/day, versus 96,096 calls/day for a complete per-game scan every 15 minutes. This is an estimate, excluding initial import, retries, profile checks and other Steam metadata. Daily fallback is eventual, not a promise that unchanged-playtime achievements arrive within 15 minutes.
+
+## Verification
+
+Run `test_steam`, `test_steam_pg`, neighboring account/connection tests and `frontend/tests/steam-import.test.mjs`. The PostgreSQL fixture requires an explicit disposable `GAMES_TEST_DATABASE_URL`. `test_steam_pg` covers the actual migration, app identity reuse, selection ownership, admission, sync idempotency and provider cost, preservation of local fields, unknown achievements and removed entries. Render the real authenticated Connections page on desktop/mobile and check overrides, Reset, reload recovery and progressive mounting. Search/browse regression checks use `scripts/benchmark_search.py --case game_search --case game_browse_most_played_grid` before/after; those controlled benchmarks do not measure live Steam or browser painting.

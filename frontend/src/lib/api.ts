@@ -385,7 +385,7 @@ export interface MediaServerConnection {
   setup_pending?: boolean;
   id: number;
   user_id: number;
-  type: "jellyfin" | "emby" | "plex" | "nuvio" | "stremio" | "arvio";
+  type: "jellyfin" | "emby" | "plex" | "nuvio" | "stremio" | "arvio" | "steam";
   name: string;
   url: string;
   token: string;

@@ -178,11 +178,12 @@ class ProviderHTTP:
                     and row.request_count >= settings.rawg_monthly_budget
                 ):
                     raise ProviderError("monthly_budget")
-                if provider == "hardcover":
+                if provider in {"hardcover", "steam"}:
                     day = now.strftime("%Y-%m-%d")
                     if row.day != day:
                         row.day, row.daily_request_count = day, 0
-                    if row.daily_request_count >= settings.hardcover_daily_budget:
+                    budget_limit = settings.hardcover_daily_budget if provider == 'hardcover' else settings.steam_daily_budget
+                    if row.daily_request_count >= budget_limit:
                         tomorrow = now.replace(
                             hour=0, minute=0, second=0, microsecond=0
                         ) + timedelta(days=1)

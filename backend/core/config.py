@@ -70,6 +70,7 @@ class Settings(BaseSettings):
     rawg_api_key: Optional[str] = Field(default=None, repr=False)
     itad_api_key: Optional[str] = Field(default=None, repr=False)
     steam_web_api_key: Optional[str] = Field(default=None, repr=False)
+    steam_daily_budget: int = Field(default=90000, ge=0, le=100000)
     # Local safety budget; the provider account's plan is still authoritative.
     rawg_monthly_budget: int = Field(default=19000, ge=0, le=20000)
     hardcover_daily_budget: int = Field(default=5000, ge=0, le=5000)

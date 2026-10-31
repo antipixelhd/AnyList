@@ -115,6 +115,8 @@ app.include_router(lists.router, prefix="/lists", tags=["lists"])
 app.include_router(profile.router, prefix="/profile", tags=["profile"])
 app.include_router(sharing.router)
 app.include_router(legal.router)
+from routers import steam
+app.include_router(steam.router)
 app.include_router(trakt.router, prefix="/trakt", tags=["trakt"])
 app.include_router(simkl.router, prefix="/simkl", tags=["simkl"])
 app.include_router(mdblist.router, prefix="/mdblist", tags=["mdblist"])

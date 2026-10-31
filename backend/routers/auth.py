@@ -697,6 +697,9 @@ async def update_connection(
     if not conn:
         raise HTTPException(status_code=404, detail="Connection not found")
 
+    if conn.type == 'steam':
+        raise HTTPException(400, 'Use Steam connection settings to change this connection.')
+
     if conn.type in ("stremio", "nuvio"):
         from core import stremio, nuvio
         # Delivery workers take this lock before the provider lock. Use the
@@ -1536,6 +1539,10 @@ async def get_connection_status(
 
     async def check_media_server(conn):
         from core import arvio, jellyfin, nuvio, plex, stremio
+
+        if conn.type == 'steam':
+            from core.config import settings as runtime_settings
+            return {'id': conn.id, 'connected': bool(runtime_settings.steam_web_api_key)}
 
         try:
             if conn.type == "plex":

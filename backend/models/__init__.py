@@ -4,6 +4,7 @@ from .base import Base, UserRole, MediaType, CollectionSource
 from .users import User, UserSettings, TotpBackupCode
 from .account_security import OidcIdentity, EmailChangeToken
 from .connections import MediaServerConnection
+from .steam import SteamConnection
 from .scrobble_connection import ScrobbleConnection
 from .profile import UserProfileData
 from .comments import Comment
@@ -98,5 +99,5 @@ __all__ = [
     "MetadataProviderBudget", "SteamPriceSnapshot",
     "StatsMetadataRevision", "UserStatsSnapshot", "UserStatsState",
     "GameStatsState",
-    "GameEntry", "GameChildState", "GameFavorite", "GameAchievement", "GameAchievementUnlock", "GameActivity",
+    "GameEntry", "GameChildState", "GameFavorite", "GameAchievement", "GameAchievementUnlock", "GameActivity", "SteamConnection",
 ]
