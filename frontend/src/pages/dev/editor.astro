@@ -5,7 +5,7 @@ import PreviewTrackingEditor from '../../components/dev/PreviewTrackingEditor.as
 import Icon from '../../components/Icon.astro';
 import {samples} from '../../components/dev/detail-fixtures';
 import '../../styles/dev-season-editor.css';
-const concepts = [{id:'rows',name:'Rows',number:'01'}, {id:'rows-2',name:'Rows 2',number:'02'}, {id:'drawers',name:'Drawers',number:'03'}];
+const concepts = [{id:'rows',name:'Rows',number:'01'}, {id:'rows-2',name:'Rows 2',number:'02'}, {id:'drawers',name:'Drawers',number:'03'}, {id:'popover',name:'Popover',number:'04'}, {id:'expand',name:'Expand',number:'05'}];
 const design = concepts.find(item => item.id === Astro.url.searchParams.get('design')) ?? concepts[0];
 const context = Astro.url.searchParams.get('context') === 'details' ? 'details' : 'list';
 const media = ['series','movie','game'].includes(Astro.url.searchParams.get('media') || '') ? Astro.url.searchParams.get('media')! : 'series';

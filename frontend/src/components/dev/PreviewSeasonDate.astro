@@ -7,7 +7,8 @@ const {number, inline = false} = Astro.props as {number: number; inline?: boolea
   <label for={`sp-season-date-${number}`}>Finish date</label>
   <div class="sp-date-control">
     <CalendarDateInput id={`sp-season-date-${number}`} name={`season_date_${number}`} label={`Season ${number} finish date`}/>
+    {inline && <button class="sp-icon sp-infer-date" type="button" data-infer={number} aria-label={`Use inferred date for season ${number}`} title="Use inferred date"><Icon name="clock"/></button>}
     <button class="sp-icon sp-clear-date" type="button" data-clear-date={number} aria-label={`Clear season ${number} finish date`} title="Clear date"><Icon name="close"/></button>
   </div>
-  <div class="sp-date-actions"><button type="button" class="sp-text" data-today={number}>Today</button><button type="button" class="sp-text" data-infer={number}>Use inferred date</button><span data-date-source={number}></span></div>
+  <div class="sp-date-actions">{!inline && <><button type="button" class="sp-text" data-today={number}>Today</button><button type="button" class="sp-text" data-infer={number}>Use inferred date</button></>}<span data-date-source={number}></span></div>
 </div>

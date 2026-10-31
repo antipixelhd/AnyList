@@ -1,0 +1,17 @@
+---
+import Icon from '../Icon.astro';
+import PreviewSeasonDate from './PreviewSeasonDate.astro';
+import {initialEntry} from './season-editor-state';
+const {design} = Astro.props as {design:string};
+---
+<div class:list={['sp-finish-disclosure',{'sp-finish-expansion':design==='expand'}]} data-finish-disclosure data-series-only>
+  <section id="sp-finish-seasons" class="sp-finish-panel" data-finish-panel popover={design==='popover'?'manual':undefined} role="region" aria-label="Season finish dates" aria-hidden="true" inert>
+    <div class="sp-finish-panel-inner">
+      <header><h3>Seasons</h3><button class="sp-icon" type="button" data-finish-close aria-label="Close season dates"><Icon name="close"/></button></header>
+      <div class="sp-finish-date-list">{initialEntry().seasons.map(season=><div class="sp-finish-date-row" data-finish-season={season.number}>
+        <label for={`sp-season-date-${season.number}`}><span class="sp-finish-state" aria-hidden="true"></span>Season {season.number}</label>
+        <PreviewSeasonDate number={season.number} inline/>
+      </div>)}</div>
+    </div>
+  </section>
+</div>

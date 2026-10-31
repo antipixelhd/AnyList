@@ -4,6 +4,7 @@ import {setupScoreSteppers} from '../../lib/scoreStepper';
 import {setupEditorSelect} from '../../lib/editor-select';
 import {showDialog, closeDialog} from '../../lib/ui-motion';
 import {statuses} from '../../lib/tracking-statuses';
+import {setupFinishDateDisclosure} from './finish-date-disclosure';
 import {completeSeason, initialWork, nextSeason, setSeasonDate, setPreviewProgress, totalProgress, type PreviewEntry, type PreviewMedia} from './season-editor-state';
 
 type Fixture = {id: PreviewMedia; title: string; kind: string; poster: string; backdrop: string};
@@ -41,7 +42,15 @@ function setup() {
   let opener: HTMLElement | undefined;
   const statusSelect = find<HTMLSelectElement>('#sp-status');
   const statusControl = setupEditorSelect(statusSelect.closest<HTMLElement>('[data-editor-select]')!,signal);
-  const refreshDates = setupCalendarDateInputs(dialog,signal);
+  const syncDates = setupCalendarDateInputs(dialog,signal);
+  const refreshDates=()=>{
+    syncDates();
+    const placeholders=()=>dialog.querySelectorAll<HTMLInputElement>('.sp-date-inline [data-date-display]').forEach(input=>{if (!input.value) input.placeholder='Add date';});
+    placeholders();
+    // The shared calendar also syncs in a microtask after a form reset.
+    queueMicrotask(()=>{if (!signal.aborted) placeholders();});
+  };
+  const finishDisclosure=setupFinishDateDisclosure(dialog,signal);
   setupScoreSteppers(dialog,signal);
   const sourceNames = {connection:'Trakt',automatic:'Automatic',manual:'',inferred:'Inferred'};
   const feedback = (message='') => {find('.sp-editor-feedback').textContent=message;};
@@ -76,6 +85,8 @@ function setup() {
       const number=season.number;
       const row=find<HTMLElement>(`[data-season-row="${number}"]`);
       row.dataset.completed=String(season.completed);
+      const finishRow=find<HTMLElement>(`[data-finish-season="${number}"]`);
+      if (finishRow) {finishRow.dataset.completed=String(season.completed);finishRow.title=`${season.watched} / ${season.total}${sourceName(season)?` · ${sourceName(season)}`:''}`;}
       find(`[data-season-progress="${number}"]`).textContent=`${season.watched} / ${season.total}`;
       const label=find(`[data-date-label="${number}"]`);
       if (label) {label.textContent=season.date?formatDate(season.date):'Finish date'; label.title=sourceName(season);}
@@ -93,10 +104,11 @@ function setup() {
   }
 
   function populate() {
+    finishDisclosure.reset();
     form.reset();
     const fixture=fixtures.find(item=>item.id===current)!;
     dialog.dataset.kind=current;
-    // This is the app's existing game-layout switch, shared by all three mocks.
+    // The app's existing game-layout switch is shared by every concept.
     dialog.dataset.editorDomain=current==='game'?'game':'movies-series';
     find('#sp-editor-title').textContent=fixture.title;
     find('[data-editor-kind]').textContent=fixture.kind;
@@ -236,6 +248,7 @@ function setup() {
     event.preventDefault();
     const invalid=form.querySelector<HTMLInputElement>(':invalid');
     if (invalid) {
+      if (invalid.closest('[data-finish-panel]')) finishDisclosure.reveal();
       let parent=invalid.parentElement;
       while (parent && parent!==form) {
         if (parent instanceof HTMLDetailsElement) parent.open=true;

@@ -4,10 +4,12 @@ import CalendarDateInput from '../CalendarDateInput.astro';
 import NumberStepper from '../NumberStepper.astro';
 import EditorSelect from '../EditorSelect.astro';
 import PreviewSeasonDate from './PreviewSeasonDate.astro';
+import PreviewFinishDates from './PreviewFinishDates.astro';
 import {statuses} from '../../lib/tracking-statuses';
 import {initialEntry} from './season-editor-state';
 const {design} = Astro.props as {design:string};
 const seasons = initialEntry().seasons;
+const integrated = design==='popover' || design==='expand';
 ---
 <!-- Fixture version of TrackingEditor: the same shared controls, classes and field order. -->
 <dialog class="editor season-preview-editor" id="season-preview-editor" aria-labelledby="sp-editor-title" data-motion-static data-design={design}>
@@ -30,7 +32,11 @@ const seasons = initialEntry().seasons;
       <div class="editor-number-field sp-progress-field" data-series-only><label for="sp-progress">Episode progress</label><NumberStepper id="sp-progress" name="progress" label="Episode progress" max={62}/></div>
       <div class="editor-number-field sp-hours-field" data-game-only hidden><label for="sp-hours">Total time (hours)</label><NumberStepper id="sp-hours" name="hours" label="Total time in hours" step="any"/><div class="game-first-completion"><div class="game-field-heading"><label for="sp-first-hours">First completion</label><button type="button" class="game-value-button" data-action="first-hours">Add</button></div><div data-first-hours hidden><NumberStepper id="sp-first-hours" name="firstHours" label="First completion time in hours" step="any"/></div></div></div>
       <div class="editor-start-date"><label for="sp-start">Start date</label><CalendarDateInput id="sp-start" name="start" label="Start date"/></div>
-      <div class="editor-finish-date"><label for="sp-finish">Finish date</label><CalendarDateInput id="sp-finish" name="finish" label="Finish date"/></div>
+      <div class:list={['editor-finish-date',{'sp-integrated-finish':integrated}]} data-finish-field={integrated?design:undefined}>
+        <div class="sp-finish-heading"><label for="sp-finish">Finish date</label>{integrated && <button class="sp-finish-trigger" type="button" data-finish-trigger data-series-only aria-label="Season finish dates" aria-controls="sp-finish-seasons" aria-expanded="false"><span>Seasons</span><Icon name="chevron-down"/></button>}</div>
+        <CalendarDateInput id="sp-finish" name="finish" label="Finish date"/>
+        {integrated && <PreviewFinishDates design={design}/>}
+      </div>
       <label class="editor-rewatches editor-number-field" for="sp-rewatches" data-watch-only>Total rewatches<NumberStepper id="sp-rewatches" name="rewatches" label="Total rewatches" max={10000}/></label>
       <div class="editor-number-field sp-replays-field" data-game-only hidden><label for="sp-replays">Replay count</label><NumberStepper id="sp-replays" name="replays" label="Replay count" max={2147483647}/></div>
       <section class="wide game-achievement-editor" data-game-only hidden><div class="game-field-heading"><span>Achievements</span><button type="button" class="game-value-button" data-action="achievements">Add</button></div><div class="sp-achievement-input" data-achievements hidden><NumberStepper id="sp-achievements" name="achievements" label="Achievement progress" max={67}/><span>/ 67</span></div></section>
@@ -47,14 +53,14 @@ const seasons = initialEntry().seasons;
                 <button class="sp-season-complete sp-text" type="button" data-complete-season={season.number} aria-pressed="false"><Icon name="check"/><span>Complete season</span></button>
               </div>
             </details>
-            : <div class:list={['sp-season-row',{'sp-inline-row':design==='rows-2'}]} data-season-row={season.number}>
+            : <div class:list={['sp-season-row',{'sp-inline-row':design==='rows-2','sp-rating-row':integrated}]} data-season-row={season.number}>
                 <button class="sp-icon sp-season-check" type="button" data-complete-season={season.number} aria-label={`Season ${season.number} completed`} aria-pressed="false"><Icon name="check"/></button>
                 <div class="sp-season-identity"><strong>Season {season.number}</strong><span data-season-progress={season.number}></span></div>
                 <div class="sp-season-score"><NumberStepper id={`sp-season-score-${season.number}`} name={`season_score_${season.number}`} label={`Season ${season.number} score`} min={0} max={10} step={0.1} score/></div>
-                {design === 'rows-2' ? <PreviewSeasonDate number={season.number} inline/> : <>
+                {!integrated && (design === 'rows-2' ? <PreviewSeasonDate number={season.number} inline/> : <>
                   <button class="sp-date-trigger" type="button" data-edit-season={season.number} aria-label={`Edit season ${season.number} finish date`} aria-expanded="false"><span data-date-label={season.number}></span><Icon name="calendar"/></button>
                   <div class="sp-expanded-date" data-expanded-date={season.number} hidden><PreviewSeasonDate number={season.number}/></div>
-                </>}
+                </>)}
               </div>
           )}
         </div>
