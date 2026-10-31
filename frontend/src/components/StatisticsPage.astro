@@ -55,7 +55,7 @@ const actorTemplate = { key: '', label: '', image: null, href: '#', titles: 0, m
     <section class="page-width stats-overview-page" id="statistics-overview" data-integrated-statistics data-domain={domain} data-page="1" data-game-sort={gameQuery.sort} data-username={username} data-initial={JSON.stringify(data)} data-media={media} data-section={section} data-genre-sort={sort} data-studio-sort={studioSort} data-staff-sort={staffSort} data-actor-sort={actorSort} data-actor-artwork={artwork} aria-label="Statistics">
       <aside class="overview-sidebar">
         <button type="button" class="overview-menu-toggle" data-stats-menu-toggle aria-label="Show statistics sections" aria-expanded="false" aria-controls="statistics-sections"><span>Statistics</span><Icon name="ellipsis" /></button>
-        <div id="statistics-sections"><StatisticsSections owner={data.owner} {domain} {section}/></div>
+        <div id="statistics-sections" data-motion-static><StatisticsSections owner={data.owner} {domain} {section}/></div>
       </aside>
       <div class="stats-overview-content">
       <header class="overview-heading"><h2 data-stats-heading>{section==='developers'?'Developers':section==='publishers'?'Publishers':section === 'staff' ? 'Staff' : section === 'studios' ? 'Studios' : section === 'actors' ? 'Actors' : section === 'genres' ? 'Genres' : 'Overview'}</h2><nav class="overview-media" aria-label="Statistics media type" data-screen-media hidden={games}>

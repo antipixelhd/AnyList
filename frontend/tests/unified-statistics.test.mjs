@@ -57,3 +57,10 @@ test('privacy denial invalidates outstanding predictions before they can repopul
   h.set({section:'genres'});const next=h.reader.load();assert.equal(h.requests.length,3);assert.equal(h.renders.length,0);
   h.requests[2].resolve(new Response(null,{status:403}));await next;assert.equal(h.renders.length,0);
 });
+
+test('sidebar prediction warms data without rendering or changing active busy state',async()=>{
+  const h=harness();const prediction=h.reader.prefetch({domain:'game',media:'all',section:'actors',sort:'count',page:1});
+  h.requests[0].resolve(Response.json(game('actors')));await prediction;
+  assert.equal(h.renders.length,0);assert.equal(h.busy.length,0);assert.equal(h.errors.length,0);
+  h.set({section:'actors'});await h.reader.load();assert.equal(h.requests.length,1);assert.equal(h.renders[0].game.section,'actors');
+});
