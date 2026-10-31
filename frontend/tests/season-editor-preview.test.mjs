@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {advanceEpisode, completeSeason, initialEntry, nextSeason, setSeasonDate, totalProgress} from '../src/components/dev/season-editor-state.ts';
+import {advanceEpisode, completeSeason, initialEntry, initialWork, nextSeason, setPreviewProgress, setSeasonDate, totalProgress} from '../src/components/dev/season-editor-state.ts';
 
 test('completion targets the earliest unfinished season, including older gaps', () => {
   const entry = initialEntry();
@@ -58,4 +58,41 @@ test('progress stops when all seasons are completed', () => {
   const before = structuredClone(entry);
   advanceEpisode(entry, '2026-11-01');
   assert.deepEqual(entry, before);
+});
+
+test('all media keep the normal start and finish dates and only series have seasons', () => {
+  for (const kind of ['series','movie','game']) {
+    const entry=initialWork(kind);
+    assert.equal(typeof entry.start,'string');
+    assert.equal(typeof entry.finish,'string');
+    assert.equal(typeof entry.rewatches,'number');
+    assert.equal(entry.seasons.length,kind==='series'?5:0);
+  }
+  assert.equal(initialWork('movie').finish,'2026-10-18');
+  assert.equal(initialWork('game').status,'playing');
+});
+
+test('optional season dates never replace the normal entry dates', () => {
+  const entry=initialEntry();
+  entry.finish='2026-10-29';
+  setSeasonDate(entry.seasons[1],entry.seasons[1].inferred,'inferred');
+  setSeasonDate(entry.seasons[0],'');
+  setPreviewProgress(entry,33,'2026-10-31');
+  assert.equal(entry.start,'2026-09-25');
+  assert.equal(entry.finish,'2026-10-29');
+  assert.equal(entry.seasons[0].date,'');
+  assert.equal(entry.seasons[1].date,'2026-10-10');
+  assert.equal(entry.seasons[2].date,'2026-10-31');
+});
+
+test('typed progress saves dates only when crossing a season boundary', () => {
+  const entry=initialEntry();
+  setPreviewProgress(entry,34,'2026-10-31');
+  assert.equal(entry.seasons[1].date,'');
+  assert.equal(entry.seasons[2].date,'2026-10-31');
+  assert.equal(entry.seasons[3].date,'');
+  assert.equal(entry.seasons[3].watched,1);
+  setPreviewProgress(entry,31,'2026-10-31');
+  assert.equal(entry.seasons[2].completed,false);
+  assert.equal(entry.seasons[2].date,'');
 });

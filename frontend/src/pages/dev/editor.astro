@@ -1,69 +1,44 @@
 ---
 import Tracker from '../../layouts/Tracker.astro';
 import DevNavigation from '../../components/dev/DevNavigation.astro';
+import PreviewTrackingEditor from '../../components/dev/PreviewTrackingEditor.astro';
 import Icon from '../../components/Icon.astro';
-import CalendarDateInput from '../../components/CalendarDateInput.astro';
+import {samples} from '../../components/dev/detail-fixtures';
 import '../../styles/dev-season-editor.css';
-const concepts = [{id:'rows',name:'Rows',number:'01'}, {id:'focus',name:'Focus',number:'02'}, {id:'batch',name:'Batch',number:'03'}];
+const concepts = [{id:'rows',name:'Rows',number:'01'}, {id:'rows-2',name:'Rows 2',number:'02'}, {id:'drawers',name:'Drawers',number:'03'}];
 const design = concepts.find(item => item.id === Astro.url.searchParams.get('design')) ?? concepts[0];
-const href = (id: string) => `/dev/editor?design=${id}`;
-const poster = 'https://image.tmdb.org/t/p/w185/3xnWaLQjelJDDF7LT1WBo6f4BRe.jpg';
-const backdrop = 'https://image.tmdb.org/t/p/w1280/tsRy63Mu5cu8etL1X7ZLyf7UP1M.jpg';
+const context = Astro.url.searchParams.get('context') === 'details' ? 'details' : 'list';
+const media = ['series','movie','game'].includes(Astro.url.searchParams.get('media') || '') ? Astro.url.searchParams.get('media')! : 'series';
+const fixtures = [
+  {id:'series',title:'Breaking Bad',kind:'TV series',year:'2008',status:'Watching',score:'8.5',progress:'32 / 62',poster:'https://image.tmdb.org/t/p/w185/3xnWaLQjelJDDF7LT1WBo6f4BRe.jpg',backdrop:'https://image.tmdb.org/t/p/w1280/tsRy63Mu5cu8etL1X7ZLyf7UP1M.jpg',summary:'A chemistry teacher turns to manufacturing methamphetamine to secure his family’s future.'},
+  {id:'movie',title:samples.movie.title,kind:'Movie',year:samples.movie.year,status:'Completed',score:'8.5',progress:'1 / 1',poster:samples.movie.poster.replace('/w500/','/w185/'),backdrop:samples.movie.backdrop,summary:samples.movie.summary},
+  {id:'game',title:samples.game.title,kind:'Game',year:samples.game.year,status:'Playing',score:'8.5',progress:'12.5 h',poster:samples.game.poster,backdrop:samples.game.backdrop,summary:samples.game.summary},
+];
+const current = fixtures.find(item=>item.id===media)!;
+const href = (id=design.id, ctx:string=context, kind=media) => `/dev/editor?design=${id}&context=${ctx}&media=${kind}`;
 ---
-<Tracker title={`Season editor · ${design.name}`}>
+<Tracker title={`List editor · ${design.name}`}>
   <DevNavigation slot="navigation" designItems={concepts.map(item => ({label:item.name,href:href(item.id),active:item.id===design.id}))}/>
   <div class="season-lab" data-season-lab data-design={design.id}>
-    <header class="season-lab-heading"><h1>List editor <span>Preview</span></h1><button class="se-text" type="button" data-action="reset"><Icon name="undo"/>Reset</button></header>
-    <nav class="season-concepts" aria-label="Editor designs">{concepts.map(item => <a href={href(item.id)} aria-current={item.id === design.id ? 'page' : undefined}><span>{item.number}</span>{item.name}</a>)}</nav>
-
-    <div class="se-list-row">
-      <img src={poster} alt="" width="34" height="51"/>
-      <div><strong>Breaking Bad</strong><span data-list-status>Watching</span></div>
-      <span data-list-progress>32 / 62</span>
-      <button class="se-icon" type="button" data-action="open" aria-label="Edit Breaking Bad"><Icon name="edit"/></button>
-    </div>
-
-    <section class="season-editor" aria-labelledby="se-title">
-      <header class="se-hero">
-        <img class="se-backdrop" src={backdrop} alt="" fetchpriority="high"/>
-        <div class="se-hero-shade"></div>
-        <img class="se-poster" src={poster} alt="Breaking Bad poster" width="80" height="120"/>
-        <div class="se-title"><span>TV series</span><h2 id="se-title">Breaking Bad</h2></div>
-        <div class="se-hero-actions"><button class="se-icon se-favorite" type="button" data-action="favorite" aria-label="Favorite" aria-pressed="false"><Icon name="heart"/></button><button class="se-primary" type="button" data-action="save">Save</button></div>
-        <button class="se-icon se-close" type="button" data-action="close" aria-label="Close editor"><Icon name="close"/></button>
-      </header>
-      <div class="se-body">
-        <div class="se-fields">
-          <div class="se-field"><span>Status</span><div class="se-status-wrap"><button class="se-field-control" data-action="status" aria-expanded="false" aria-controls="se-status-menu"><span data-status>Watching</span><Icon name="chevron-down"/></button><div id="se-status-menu" class="se-status-menu" hidden><button type="button" data-action="complete-next" data-next-label>Complete season 3</button></div></div></div>
-          <label class="se-field">Score<div class="se-score"><button class="se-icon" type="button" data-action="score-down" aria-label="Decrease score">−</button><input type="number" min="0" max="10" step="0.1" value="8.5" aria-label="Score" data-score/><button class="se-icon" type="button" data-action="score-up" aria-label="Increase score">+</button></div></label>
-          <div class="se-field"><span>Episode progress</span><div class="se-progress"><span data-progress>32 <small>/ 62</small></span><button type="button" class="se-icon" data-action="episode" aria-label="Watch next episode"><Icon name="plus"/></button></div></div>
-        </div>
-
-        <section class="se-seasons" aria-labelledby="se-seasons-title">
-          <header class="se-section-heading"><h3 id="se-seasons-title">Seasons</h3><span data-completed-count>2 / 5</span></header>
-          {design.id === 'focus' && <nav class="se-season-tabs" aria-label="Season"><!-- Populated from the same draft as the other concepts. --></nav>}
-          {design.id === 'batch' && <div class="se-batch-tools"><button type="button" class="se-text" data-action="select-missing">Missing dates</button><button type="button" class="se-text" data-action="select-all">Select all</button></div>}
-          <div class:list={['se-season-layout',`se-layout-${design.id}`]}>
-            <div data-season-list></div>
-            <div class="se-date-panel" data-date-panel hidden={design.id === 'rows'}>
-              <div class="se-date-heading"><h4 data-date-heading>Season 2</h4><button type="button" class="se-icon" data-action="dismiss-date" aria-label="Close date editor" hidden={design.id !== 'rows'}><Icon name="close"/></button></div>
-              <form data-date-form>
-                <label for="season-completion-date">Completion date</label>
-                <CalendarDateInput id="season-completion-date" name="completion_date" label="Completion date"/>
-                <div class="se-date-shortcuts"><button type="button" class="se-text" data-action="today">Today</button><button type="button" class="se-text" data-action="infer">Use inferred date</button><button type="button" class="se-text" data-action="clear-date">Clear date</button></div>
-                <button class="se-primary se-apply" type="submit" data-apply>Apply</button>
-              </form>
-            </div>
-          </div>
-        </section>
-        <details class="se-more"><summary>More <Icon name="chevron-down"/></summary><div class="se-more-fields"><div class="se-field"><label for="se-start">Start date</label><CalendarDateInput id="se-start" name="start_date" label="Start date"/></div><label class="se-field">Notes<textarea rows="2" data-notes></textarea></label></div></details>
-      </div>
-      <footer class="se-footer"><button type="button" class="se-text" data-action="undo" disabled><Icon name="undo"/>Undo</button><button type="button" class="se-text se-next-complete" data-action="complete-next"><Icon name="check"/><span data-next-label>Complete season 3</span></button></footer>
-    </section>
-    <div class="se-feedback" role="status" aria-live="polite"></div>
-    <template id="se-season-row"><div class="se-season-row"><button type="button" class="se-completion se-icon" data-completion><Icon name="check"/></button><div class="se-season-name"><strong></strong><span></span></div><button type="button" class="se-date-button" data-edit-date><span></span><Icon name="calendar"/></button></div></template>
-    <template id="se-batch-row"><button type="button" class="se-batch-row" aria-pressed="false"><span class="se-selection"><Icon name="check"/></span><span class="se-season-name"><strong></strong><span></span></span><span class="se-batch-date"></span></button></template>
-    <template id="se-focus-card"><article class="se-focus-card"><header><button type="button" class="se-icon" data-action="previous" aria-label="Previous season"><Icon name="chevron-left"/></button><h4></h4><button type="button" class="se-icon" data-action="next" aria-label="Next season"><Icon name="chevron-right"/></button></header><div class="se-focus-progress"><div><span data-focus-status></span><span data-focus-episodes></span></div><progress max="100"></progress></div><button type="button" class="se-focus-complete" data-focus-completion><Icon name="check"/><span></span></button><span class="se-focus-source" data-focus-source></span></article></template>
+    <header class="sp-lab-heading"><h1>List editor <span>Preview</span></h1><button class="sp-text" type="button" data-action="reset"><Icon name="undo"/>Reset</button></header>
+    <div class="sp-lab-toolbar"><nav class="sp-concepts" aria-label="Editor designs">{concepts.map(item => <a href={href(item.id)} aria-current={item.id === design.id ? 'page' : undefined}><span>{item.number}</span>{item.name}</a>)}</nav><nav class="sp-context" aria-label="Editor context"><a href={href(design.id,'list')} aria-current={context==='list'?'page':undefined}>List</a><a href={href(design.id,'details')} aria-current={context==='details'?'page':undefined}>Details</a></nav></div>
+    {context === 'list' ? <section class="sp-list" aria-label="My list">
+      <div class="sp-list-head"><span>Title</span><span>Score</span><span>Progress</span><span></span></div>
+      {fixtures.map(item=><article class="sp-list-row" data-work-row={item.id}>
+        <a class="sp-list-title" href={href(design.id,'details',item.id)}><img src={item.poster} alt="" width="34" height="51"/><span><strong>{item.title}</strong><small data-work-status={item.id}>{item.status}</small></span></a>
+        <span data-work-score={item.id}>{item.score}</span><span data-work-progress={item.id}>{item.progress}</span>
+        <button class="sp-icon" type="button" data-open-work={item.id} aria-label={`Edit ${item.title}`}><Icon name="edit"/></button>
+      </article>)}
+    </section> : <>
+      <nav class="sp-media" aria-label="Sample media">{fixtures.map(item=><a href={href(design.id,'details',item.id)} aria-current={media===item.id?'page':undefined}>{item.kind==='TV series'?'Series':item.kind==='Movie'?'Movies':'Games'}</a>)}</nav>
+      <section class="sp-detail" data-work-row={current.id}>
+        <div class="sp-detail-backdrop"><img src={current.backdrop} alt=""/><div></div></div>
+        <div class="sp-detail-content"><img class="sp-detail-poster" src={current.poster} alt={`${current.title} poster`}/><div><span class="sp-detail-kind">{current.kind} · {current.year}</span><h2>{current.title}</h2><p>{current.summary}</p><button class="button-primary" type="button" data-open-work={current.id}><Icon name="edit"/>Edit entry</button></div></div>
+      </section>
+    </>}
+    <p class="sp-lab-feedback" role="status" aria-live="polite"></p>
+    <PreviewTrackingEditor design={design.id}/>
+    <script id="sp-fixtures" type="application/json" set:html={JSON.stringify(fixtures).replaceAll('<','\\u003c')}/>
   </div>
 </Tracker>
 <script>

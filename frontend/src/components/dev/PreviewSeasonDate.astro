@@ -1,0 +1,13 @@
+---
+import CalendarDateInput from '../CalendarDateInput.astro';
+import Icon from '../Icon.astro';
+const {number, inline = false} = Astro.props as {number: number; inline?: boolean};
+---
+<div class:list={['sp-season-date', {'sp-date-inline':inline}]} data-season-date={number}>
+  <label for={`sp-season-date-${number}`}>Finish date</label>
+  <div class="sp-date-control">
+    <CalendarDateInput id={`sp-season-date-${number}`} name={`season_date_${number}`} label={`Season ${number} finish date`}/>
+    <button class="sp-icon sp-clear-date" type="button" data-clear-date={number} aria-label={`Clear season ${number} finish date`} title="Clear date"><Icon name="close"/></button>
+  </div>
+  <div class="sp-date-actions"><button type="button" class="sp-text" data-today={number}>Today</button><button type="button" class="sp-text" data-infer={number}>Use inferred date</button><span data-date-source={number}></span></div>
+</div>

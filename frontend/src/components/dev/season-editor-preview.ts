@@ -1,10 +1,16 @@
 import {formatDate, localToday} from '../../lib/date-time';
 import {setupCalendarDateInputs} from '../../lib/calendar-date-input';
-import {advanceEpisode, completeSeason, initialEntry, nextSeason, setSeasonDate, totalProgress, type PreviewEntry, type Season} from './season-editor-state';
+import {setupScoreSteppers} from '../../lib/scoreStepper';
+import {setupEditorSelect} from '../../lib/editor-select';
+import {showDialog, closeDialog} from '../../lib/ui-motion';
+import {statuses} from '../../lib/tracking-statuses';
+import {completeSeason, initialWork, nextSeason, setSeasonDate, setPreviewProgress, totalProgress, type PreviewEntry, type PreviewMedia} from './season-editor-state';
 
-const storageKey = 'anylist:dev:season-editor:v1';
-let controller: AbortController | undefined;
+type Fixture = {id: PreviewMedia; title: string; kind: string; poster: string; backdrop: string};
+const storageKey = 'anylist:dev:season-editor:v2';
+const kinds: PreviewMedia[] = ['series','movie','game'];
 const copy = <T>(value: T): T => structuredClone(value);
+let controller: AbortController | undefined;
 
 function setup() {
   controller?.abort();
@@ -13,227 +19,244 @@ function setup() {
   controller = new AbortController();
   const {signal} = controller;
   const find = <T extends Element = HTMLElement>(selector: string) => root.querySelector<T>(selector)!;
-  const design = root.dataset.design!;
-  let saved = initialEntry();
+  const dialog = find<HTMLDialogElement>('#season-preview-editor');
+  const form = find<HTMLFormElement>('#sp-form');
+  const field = (name: string) => form.elements.namedItem(name) as HTMLInputElement;
+  const fixtures: Fixture[] = JSON.parse(find('#sp-fixtures').textContent!);
+  let saved = Object.fromEntries(kinds.map(kind => [kind,initialWork(kind)])) as Record<PreviewMedia, PreviewEntry>;
   try {
     const stored = JSON.parse(sessionStorage.getItem(storageKey) || 'null');
-    // Only accept this fixture's exact shape; an old preview must not break the lab.
-    if (stored && typeof stored.score === 'string' && typeof stored.notes === 'string' && typeof stored.start === 'string' && typeof stored.favorite === 'boolean'
-      && Array.isArray(stored.seasons) && stored.seasons.length === 5 && stored.seasons.every((s: Season, i: number) =>
-        s.number === i+1 && s.total === saved.seasons[i].total && Number.isInteger(s.watched) && s.watched >= 0 && s.watched <= s.total
-        && typeof s.completed === 'boolean' && typeof s.date === 'string' && typeof s.inferred === 'string'
-        && (!s.date || Boolean(formatDate(s.date))) && [null,'manual','automatic','inferred','connection'].includes(s.source))) saved = stored;
-  } catch { /* Storage is optional in the fixture preview. */ }
-  let draft = copy(saved);
-  let active = 2;
-  let selected = new Set([2]);
-  let dateOpen = false;
-  let pendingSource: Season['source'] = 'manual';
-  let dateEdited = false;
-  const history: PreviewEntry[] = [];
-  const list = find('[data-season-list]');
-  const panel = find('[data-date-panel]');
-  const dateForm = find<HTMLFormElement>('[data-date-form]');
-  const dateInput = panel.querySelector<HTMLInputElement>('[data-date-iso]')!;
-  const dateDisplay = panel.querySelector<HTMLInputElement>('[data-date-display]')!;
-  const startInput = find<HTMLInputElement>('[name=start_date]');
-  const refreshDates = setupCalendarDateInputs(root, signal);
-  const sourceName = (season: Season) => ({connection:'Trakt',automatic:'Automatic',manual:'',inferred:'Inferred'}[season.source || 'manual']);
-  const targets = () => draft.seasons.filter(s => design === 'batch' ? selected.has(s.number) : s.number === active);
-  const feedback = (text: string) => {find('.se-feedback').textContent = text;};
-  const checkpoint = () => {history.push(copy(draft)); if (history.length > 30) history.shift();};
-  const clone = (id: string) => (find<HTMLTemplateElement>(id).content.firstElementChild!.cloneNode(true) as HTMLElement);
+    if (stored && kinds.every(kind => {
+      const entry = stored[kind];
+      return entry && ['score','notes','start','finish','status','firstHours','achievements'].every(key=>typeof entry[key]==='string')
+        && ['hours','rewatches','replays'].every(key=>Number.isFinite(entry[key])) && typeof entry.favorite==='boolean'
+        && Array.isArray(entry.seasons) && entry.seasons.length===(kind==='series'?5:0)
+        && entry.seasons.every((s: PreviewEntry['seasons'][number],i:number)=>s.number===i+1 && s.total===saved.series.seasons[i].total
+          && Number.isInteger(s.watched) && s.watched>=0 && s.watched<=s.total && typeof s.completed==='boolean'
+          && typeof s.date==='string' && (!s.date || Boolean(formatDate(s.date))) && typeof s.inferred==='string');
+    })) saved = stored;
+  } catch { /* The mock remains usable without browser storage. */ }
+  let current: PreviewMedia = 'series';
+  let draft = copy(saved.series);
+  let opener: HTMLElement | undefined;
+  const statusSelect = find<HTMLSelectElement>('#sp-status');
+  const statusControl = setupEditorSelect(statusSelect.closest<HTMLElement>('[data-editor-select]')!,signal);
+  const refreshDates = setupCalendarDateInputs(dialog,signal);
+  setupScoreSteppers(dialog,signal);
+  const sourceNames = {connection:'Trakt',automatic:'Automatic',manual:'',inferred:'Inferred'};
+  const feedback = (message='') => {find('.sp-editor-feedback').textContent=message;};
+  const sourceName = (season: PreviewEntry['seasons'][number]) => sourceNames[season.source || 'manual'];
 
-  function syncList() {
-    find('[data-list-progress]').textContent = `${totalProgress(saved)} / 62`;
-    find('[data-list-status]').textContent = saved.seasons.every(s => s.completed) ? 'Completed' : 'Watching';
-  }
-
-  function syncDatePanel() {
-    const seasons = targets();
-    const season = seasons[0];
-    find('[data-date-heading]').textContent = design === 'batch'
-      ? `${seasons.length} ${seasons.length === 1 ? 'season' : 'seasons'} selected`
-      : `Season ${active}${season && sourceName(season) ? ` · ${sourceName(season)}` : ''}`;
-    dateInput.value = season && seasons.every(s => s.date === season.date) ? season.date : '';
-    dateDisplay.placeholder = seasons.length > 1 && !seasons.every(s => s.date === season?.date) ? 'Mixed dates' : '';
-    pendingSource = 'manual';
-    refreshDates();
-    // The shared input intentionally removes placeholders when syncing a normal date.
-    if (seasons.length > 1 && !seasons.every(s => s.date === season?.date)) dateDisplay.placeholder = 'Mixed dates';
-    const infer = find<HTMLButtonElement>('[data-action=infer]');
-    infer.hidden = !seasons.length || !seasons.every(s => s.completed && s.inferred);
-    const apply = find<HTMLButtonElement>('[data-apply]');
-    apply.textContent = design === 'batch' && seasons.length > 1 ? `Apply to ${seasons.length} seasons` : 'Apply';
-    apply.disabled = !seasons.length;
-    dateDisplay.disabled = !seasons.length;
-    panel.querySelector<HTMLButtonElement>('[data-date-picker]')!.disabled = !seasons.length;
-    for (const action of ['today','clear-date']) find<HTMLButtonElement>(`[data-action=${action}]`).disabled = !seasons.length;
-  }
-
-  function render() {
-    dateEdited = false;
-    // Move the live date control out before replacing row nodes, preserving its picker.
-    find('.se-season-layout').append(panel);
-    list.replaceChildren();
-    const total = totalProgress(draft);
-    find('[data-progress]').replaceChildren(document.createTextNode(`${total} `));
-    const maximum = document.createElement('small'); maximum.textContent = '/ 62'; find('[data-progress]').append(maximum);
-    const next = nextSeason(draft);
-    find('[data-status]').textContent = next ? 'Watching' : 'Completed';
-    root!.querySelectorAll<HTMLElement>('[data-next-label]').forEach(node => {node.textContent = next ? `Complete season ${next.number}` : 'All seasons completed';});
-    root!.querySelectorAll<HTMLButtonElement>('[data-action=complete-next],[data-action=episode]').forEach(button => {button.disabled = !next;});
-    find('[data-completed-count]').textContent = `${draft.seasons.filter(s => s.completed).length} / ${draft.seasons.length}`;
-    find<HTMLButtonElement>('[data-action=undo]').disabled = !history.length;
-    find('[data-action=favorite]').setAttribute('aria-pressed', String(draft.favorite));
-    find<HTMLInputElement>('[data-score]').value = draft.score;
-    find<HTMLTextAreaElement>('[data-notes]').value = draft.notes;
-    startInput.value = draft.start;
-
-    if (design === 'focus') {
-      const tabs = find('.se-season-tabs'); tabs.replaceChildren();
-      for (const season of draft.seasons) {
-        const button = document.createElement('button'); button.type = 'button'; button.textContent = `S${season.number}`;
-        button.dataset.season = String(season.number); button.dataset.completed = String(season.completed);
-        button.setAttribute('aria-label', `Season ${season.number}${season.completed ? ', completed' : ''}`);
-        button.setAttribute('aria-current', String(active === season.number)); tabs.append(button);
-      }
-      const season = draft.seasons[active-1];
-      const card = clone('#se-focus-card'); card.querySelector('h4')!.textContent = `Season ${active}`;
-      card.querySelector('[data-focus-status]')!.textContent = season.completed ? 'Completed' : season.watched ? 'Watching' : 'Not started';
-      card.querySelector('[data-focus-episodes]')!.textContent = `${season.watched} / ${season.total} episodes`;
-      card.querySelector('progress')!.value = season.watched / season.total * 100;
-      const toggle = card.querySelector<HTMLButtonElement>('[data-focus-completion]')!;
-      toggle.dataset.toggleSeason = String(active); toggle.setAttribute('aria-pressed', String(season.completed));
-      toggle.querySelector('span:last-child')!.textContent = season.completed ? 'Completed' : 'Complete season';
-      card.querySelector('[data-focus-source]')!.textContent = season.date ? `${formatDate(season.date)}${sourceName(season) ? ` · ${sourceName(season)}` : ''}` : season.completed ? 'Add date' : '';
-      card.querySelector<HTMLButtonElement>('[data-action=previous]')!.disabled = active === 1;
-      card.querySelector<HTMLButtonElement>('[data-action=next]')!.disabled = active === draft.seasons.length;
-      list.append(card); panel.hidden = false;
-    } else {
-      for (const season of draft.seasons) {
-        const row = clone(design === 'batch' ? '#se-batch-row' : '#se-season-row');
-        row.querySelector('.se-season-name strong')!.textContent = `Season ${season.number}`;
-        row.querySelector('.se-season-name>span')!.textContent = `${season.watched} / ${season.total} episodes`;
-        if (design === 'batch') {
-          row.dataset.selectSeason = String(season.number); row.setAttribute('aria-pressed', String(selected.has(season.number)));
-          row.setAttribute('aria-label', `Season ${season.number}, ${season.completed ? 'completed' : 'not completed'}, ${season.date ? formatDate(season.date) : 'no date'}`);
-          row.querySelector('.se-batch-date')!.textContent = season.date ? formatDate(season.date) : season.completed ? 'Add date' : '—';
-        } else {
-          const completion = row.querySelector<HTMLButtonElement>('[data-completion]')!;
-          completion.dataset.toggleSeason = String(season.number);
-          completion.setAttribute('aria-pressed', String(season.completed));
-          completion.setAttribute('aria-label', `Season ${season.number} completed`);
-          const edit = row.querySelector<HTMLButtonElement>('[data-edit-date]')!;
-          edit.dataset.editSeason = String(season.number);
-          edit.setAttribute('aria-label', `Season ${season.number} completion date${season.date ? `, ${formatDate(season.date)}` : ''}`);
-          edit.title = sourceName(season);
-          edit.classList.toggle('has-date', Boolean(season.date));
-          edit.querySelector('span')!.textContent = season.date ? formatDate(season.date) : season.completed ? 'Add date' : 'Set date';
-          edit.setAttribute('aria-expanded', String(dateOpen && active === season.number));
-          row.classList.toggle('is-editing', dateOpen && active === season.number);
-        }
-        list.append(row);
-        if (design === 'rows' && dateOpen && active === season.number) list.append(panel);
-      }
-      panel.hidden = design === 'rows' && !dateOpen;
+  function syncRows() {
+    for (const kind of kinds) {
+      const entry = saved[kind];
+      const label = entry.status==='playing'?'Playing':statuses.find(([key])=>key===entry.status)?.[1]||entry.status;
+      const status = find(`[data-work-status="${kind}"]`); if (status) status.textContent=label;
+      const score = find(`[data-work-score="${kind}"]`); if (score) score.textContent=entry.score;
+      const progress = find(`[data-work-progress="${kind}"]`);
+      if (progress) progress.textContent=kind==='series'?`${totalProgress(entry)} / 62`:kind==='game'?`${entry.hours} h`:entry.status==='completed'?'1 / 1':'0 / 1';
     }
-    syncDatePanel();
   }
 
-  function mutate(action: () => void, message = '') {
-    checkpoint(); action(); render(); feedback(message);
+  function syncStatus() {
+    const next = nextSeason(draft);
+    const complete = [...statusSelect.options].find(option=>option.value==='completed')!;
+    complete.textContent=current==='series'&&next?`Complete season ${next.number}`:'Completed';
+    statusSelect.value=draft.status;
+    statusControl.sync();
+    find('[data-next-label]').textContent=next?`Complete season ${next.number}`:'All seasons completed';
+    find<HTMLButtonElement>('[data-action=complete-next]').disabled=!next;
   }
-  function focusSeasonButton() {
-    find<HTMLButtonElement>(design === 'focus' ? `[data-season="${active}"]` : `[data-edit-season="${active}"]`)?.focus({preventScroll:true});
-  }
-  function closeStatus() {find('#se-status-menu').hidden = true; find('[data-action=status]').setAttribute('aria-expanded','false');}
 
-  root.addEventListener('click', event => {
-    const button = (event.target as Element).closest<HTMLButtonElement>('button');
+  function syncSeasons() {
+    if (current!=='series') return;
+    find('[data-season-count]').textContent=`${draft.seasons.filter(season=>season.completed).length} / ${draft.seasons.length}`;
+    field('progress').value=String(totalProgress(draft));
+    for (const season of draft.seasons) {
+      const number=season.number;
+      const row=find<HTMLElement>(`[data-season-row="${number}"]`);
+      row.dataset.completed=String(season.completed);
+      find(`[data-season-progress="${number}"]`).textContent=`${season.watched} / ${season.total}`;
+      const label=find(`[data-date-label="${number}"]`);
+      if (label) {label.textContent=season.date?formatDate(season.date):'Finish date'; label.title=sourceName(season);}
+      const completion=find(`[data-complete-season="${number}"]`);
+      completion.setAttribute('aria-pressed',String(season.completed));
+      const text=completion.querySelector('span:last-child:not(.ui-icon)');
+      if (text) text.textContent=season.completed?'Completed':'Complete season';
+      field(`season_date_${number}`).value=season.date;
+      field(`season_score_${number}`).value=season.score || '';
+      find<HTMLButtonElement>(`[data-clear-date="${number}"]`).disabled=!season.date;
+      find<HTMLButtonElement>(`[data-infer="${number}"]`).hidden=!season.completed || !season.inferred || Boolean(season.date);
+      find(`[data-date-source="${number}"]`).textContent=sourceName(season);
+    }
+    syncStatus();
+  }
+
+  function populate() {
+    form.reset();
+    const fixture=fixtures.find(item=>item.id===current)!;
+    dialog.dataset.kind=current;
+    // This is the app's existing game-layout switch, shared by all three mocks.
+    dialog.dataset.editorDomain=current==='game'?'game':'movies-series';
+    find('#sp-editor-title').textContent=fixture.title;
+    find('[data-editor-kind]').textContent=fixture.kind;
+    const setArtwork=(image:HTMLImageElement,src:string)=>{
+      if (image.getAttribute('src')===src && image.complete && image.naturalWidth) {image.hidden=false;return;}
+      image.hidden=true; image.src=src;
+      if (image.complete && image.naturalWidth) image.hidden=false;
+      else image.addEventListener('load',()=>{image.hidden=false;},{once:true,signal});
+    };
+    const poster=find<HTMLImageElement>('[data-editor-poster]'); setArtwork(poster,fixture.poster); poster.alt=`${fixture.title} poster`;
+    setArtwork(find<HTMLImageElement>('[data-editor-backdrop]'),fixture.backdrop);
+    dialog.querySelectorAll<HTMLElement>('[data-series-only]').forEach(node=>{node.hidden=current!=='series';});
+    dialog.querySelectorAll<HTMLElement>('[data-game-only]').forEach(node=>{node.hidden=current!=='game';});
+    dialog.querySelectorAll<HTMLElement>('[data-watch-only]').forEach(node=>{node.hidden=current==='game';});
+    // Hidden fields never validate or submit in another media domain.
+    for (const control of form.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('input,select,textarea')) {
+      control.disabled=Boolean(control.closest('[data-series-only]') && current!=='series'
+        || control.closest('[data-game-only]') && current!=='game'
+        || control.closest('[data-watch-only]') && current==='game');
+    }
+    const watching=statusSelect.querySelector<HTMLOptionElement>('option[value=watching],option[value=playing]')!;
+    watching.value=current==='game'?'playing':'watching'; watching.textContent=current==='game'?'Playing':'Watching';
+    for (const name of ['score','notes','start','finish','rewatches','hours','replays','firstHours','achievements'] as const) field(name).value=String(draft[name]);
+    field('favorite').checked=draft.favorite;
+    find<HTMLDetailsElement>('.sp-seasons').open=false;
+    dialog.querySelectorAll<HTMLDetailsElement>('.sp-season-drawer').forEach(node=>{node.open=false;});
+    dialog.querySelectorAll<HTMLElement>('[data-expanded-date]').forEach(node=>{node.hidden=true;});
+    dialog.querySelectorAll<HTMLElement>('[data-edit-season]').forEach(node=>node.setAttribute('aria-expanded','false'));
+    find('[data-first-hours]').hidden=!draft.firstHours;
+    field('firstHours').disabled=current!=='game'||!draft.firstHours;
+    find('[data-achievements]').hidden=!draft.achievements;
+    field('achievements').disabled=current!=='game'||!draft.achievements;
+    find('[data-action=achievements]').textContent=draft.achievements?'Remove':'Add';
+    syncStatus(); syncSeasons(); refreshDates(); feedback();
+  }
+
+  async function close() {await closeDialog(dialog); opener?.focus({preventScroll:true});}
+  root.addEventListener('click',event=>{
+    const button=(event.target as Element).closest<HTMLButtonElement>('button');
     if (!button || button.disabled) return;
-    const action = button.dataset.action;
-    // Keep a typed/picked date when another editor control changes the draft.
-    const changesDraft = button.dataset.season || button.dataset.editSeason || button.dataset.selectSeason || button.dataset.toggleSeason
-      || ['complete-next','episode','favorite','score-up','score-down','previous','next','select-missing','select-all','dismiss-date'].includes(action || '');
-    if (changesDraft && dateEdited && !applyDates()) return;
-    if (button.dataset.season) {active = Number(button.dataset.season); render(); focusSeasonButton(); return;}
+    if (button.dataset.openWork) {
+      current=button.dataset.openWork as PreviewMedia; draft=copy(saved[current]); opener=button;
+      populate(); showDialog(dialog); dialog.scrollTop=0; return;
+    }
     if (button.dataset.editSeason) {
-      const number = Number(button.dataset.editSeason);
-      dateOpen = number === active ? !dateOpen : true; active = number; render();
-      if (dateOpen) dateDisplay.focus({preventScroll:true}); else focusSeasonButton();
+      const number=button.dataset.editSeason;
+      const panel=find<HTMLElement>(`[data-expanded-date="${number}"]`);
+      const wasOpen=!panel.hidden;
+      // The row expansion changes only visibility; the calendar input stays mounted.
+      dialog.querySelectorAll<HTMLElement>('[data-expanded-date]').forEach(node=>{node.hidden=true;});
+      dialog.querySelectorAll<HTMLElement>('[data-edit-season]').forEach(node=>node.setAttribute('aria-expanded','false'));
+      panel.hidden=wasOpen; button.setAttribute('aria-expanded',String(!wasOpen));
+      if (!wasOpen) panel.querySelector<HTMLInputElement>('[data-date-display]')!.focus();
       return;
     }
-    if (button.dataset.selectSeason) {
-      const number = Number(button.dataset.selectSeason);
-      if (selected.has(number)) selected.delete(number); else selected.add(number);
-      render(); find<HTMLButtonElement>(`[data-select-season="${number}"]`).focus({preventScroll:true}); return;
-    }
-    if (button.dataset.toggleSeason) {
-      const number = Number(button.dataset.toggleSeason);
-      mutate(() => {
-        const season = draft.seasons[number-1];
-        if (season.completed) {season.completed = false; season.watched = Math.max(0,season.total-1); season.date = ''; season.source = null;}
+    const number=Number(button.dataset.completeSeason || button.dataset.today || button.dataset.infer || button.dataset.clearDate);
+    if (number && current==='series') {
+      const season=draft.seasons[number-1];
+      if (button.dataset.completeSeason) {
+        if (season.completed) {season.completed=false; season.watched=Math.max(0,season.total-1); setSeasonDate(season,'');}
         else completeSeason(season);
-      });
-      find<HTMLButtonElement>(`[data-toggle-season="${number}"]`).focus({preventScroll:true}); return;
+      } else if (button.dataset.today) setSeasonDate(season,localToday());
+      else if (button.dataset.infer) setSeasonDate(season,season.inferred,'inferred');
+      else setSeasonDate(season,'');
+      syncSeasons(); refreshDates(); return;
     }
-    if (action === 'status') {const menu = find('#se-status-menu'); menu.hidden = !menu.hidden; button.setAttribute('aria-expanded',String(!menu.hidden));}
-    else if (action === 'complete-next' || action === 'episode') {
-      closeStatus();
-      const season = nextSeason(draft); if (!season) return;
-      mutate(() => {if (action === 'episode') advanceEpisode(draft); else completeSeason(season);}, season.watched+1 >= season.total || action === 'complete-next' ? `Season ${season.number} completed` : 'Progress updated');
-    } else if (action === 'today') {
-      dateInput.value = localToday(); pendingSource = 'manual'; refreshDates();
-    } else if (action === 'infer') {
-      pendingSource = 'inferred'; dateInput.value = targets()[0]?.inferred || ''; refreshDates();
-    } else if (action === 'clear-date') {
-      mutate(() => targets().forEach(season => setSeasonDate(season,'')), 'Date cleared');
-    } else if (action === 'dismiss-date') {dateOpen = false; render(); focusSeasonButton();}
-    else if (action === 'previous' || action === 'next') {active += action === 'previous' ? -1 : 1; render(); focusSeasonButton();}
-    else if (action === 'select-missing') {selected = new Set(draft.seasons.filter(s => s.completed && !s.date).map(s => s.number)); render();}
-    else if (action === 'select-all') {selected = selected.size === draft.seasons.length ? new Set() : new Set(draft.seasons.map(s => s.number)); render();}
-    else if (action === 'favorite') {mutate(() => {draft.favorite = !draft.favorite;});}
-    else if (action === 'score-up' || action === 'score-down') {mutate(() => {draft.score = Math.min(10,Math.max(0,Number(draft.score)+(action === 'score-up' ? .1 : -.1))).toFixed(1);});}
-    else if (action === 'undo') {const previous = history.pop(); if (previous) {draft = previous; render(); feedback('Undone');}}
-    else if (action === 'save') {
-      if (!find<HTMLInputElement>('[data-score]').reportValidity() || !find<HTMLInputElement>('#se-start').reportValidity()) return;
-      // Apply an edited date before saving, even if its Apply button wasn't pressed.
-      if (!panel.hidden && dateEdited) {if (!applyDates()) return;}
-      saved = copy(draft);
-      try {sessionStorage.setItem(storageKey, JSON.stringify(saved));} catch { /* Still usable without storage. */ }
-      syncList(); feedback('Saved in preview');
-    } else if (action === 'reset') {
-      saved = initialEntry(); draft = copy(saved); history.length = 0; active = 2; selected = new Set([2]); dateOpen = false;
+    const action=button.dataset.action;
+    if (action==='close') void close();
+    else if (action==='complete-next') {
+      const season=nextSeason(draft); if (!season) return;
+      completeSeason(season); syncSeasons(); refreshDates(); feedback(`Season ${season.number} completed`);
+    } else if (action==='reset') {
+      saved=Object.fromEntries(kinds.map(kind=>[kind,initialWork(kind)])) as typeof saved;
       try {sessionStorage.removeItem(storageKey);} catch { /* Optional storage. */ }
-      render(); syncList(); feedback('Reset');
-    } else if (action === 'close') {draft = copy(saved); history.length = 0; render(); find('.season-editor').hidden = true; feedback(''); find<HTMLButtonElement>('[data-action=open]').focus();}
-    else if (action === 'open') {find('.season-editor').hidden = false; find<HTMLButtonElement>('[data-action=save]').focus({preventScroll:true});}
-  }, {signal});
-  function applyDates() {
-    if (!dateDisplay.reportValidity()) return false;
-    const seasons = targets(); if (!seasons.length) return false;
-    const value = dateInput.value;
-    const source = pendingSource;
-    mutate(() => seasons.forEach(season => setSeasonDate(season,source === 'inferred' ? season.inferred : value,source)), 'Date updated');
-    return true;
+      syncRows(); find('.sp-lab-feedback').textContent='Reset';
+    } else if (action==='library') {
+      const active=button.getAttribute('aria-pressed')!=='true'; button.setAttribute('aria-pressed',String(active)); button.classList.toggle('is-active',active);
+      button.setAttribute('aria-label',active?'Remove from library':'Add to library');
+    } else if (action==='first-hours') {
+      const panel=find('[data-first-hours]'); panel.hidden=!panel.hidden; field('firstHours').disabled=panel.hidden;
+      if (!panel.hidden) field('firstHours').focus();
+    } else if (action==='achievements') {
+      const panel=find('[data-achievements]'); panel.hidden=!panel.hidden; field('achievements').disabled=panel.hidden;
+      button.textContent=panel.hidden?'Add':'Remove';
+      if (panel.hidden) {draft.achievements=''; field('achievements').value='';} else field('achievements').focus();
+    } else if (action==='delete') {
+      // Fixture-only removal is reversible with Reset.
+      saved[current]=initialWork(current); saved[current].status='planning'; saved[current].score='';
+      if (current==='series') {setPreviewProgress(saved[current],0); saved[current].seasons.forEach(season=>{season.score='';});}
+      saveStorage(); syncRows(); void close(); find('.sp-lab-feedback').textContent='Entry removed in preview';
+    }
+  },{signal});
+
+  function readInput(event: Event) {
+    const input=event.target;
+    if (!(input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement || input instanceof HTMLSelectElement) || input.disabled) return;
+    const control=input.closest('[data-calendar-input]');
+    const valueInput=control?.querySelector<HTMLInputElement>('[data-date-iso]') || input;
+    if (!input.checkValidity()) return;
+    const {name,value}=valueInput;
+    if (name.startsWith('season_date_')) {
+      const season=draft.seasons[Number(name.split('_').at(-1))-1];
+      if (season) {setSeasonDate(season,value); syncSeasons();}
+    } else if (name.startsWith('season_score_')) {
+      draft.seasons[Number(name.split('_').at(-1))-1].score=value;
+    } else if (name==='progress') {
+      setPreviewProgress(draft,Number(value)); syncSeasons(); refreshDates();
+    } else if (name==='status') {
+      if (current==='series' && value==='completed' && nextSeason(draft)) {
+        completeSeason(nextSeason(draft)!); syncSeasons(); refreshDates();
+      } else {draft.status=value; if (value==='completed' && !draft.finish) {draft.finish=localToday(); field('finish').value=draft.finish; refreshDates();}}
+      syncStatus();
+    } else if (['rewatches','hours','replays'].includes(name)) {
+      (draft[name as 'rewatches'|'hours'|'replays'] as number)=Number(value);
+    } else if (['score','notes','start','finish','firstHours','achievements'].includes(name)) {
+      draft[name as 'score'|'notes'|'start'|'finish'|'firstHours'|'achievements']=value;
+    } else if (name==='favorite') draft.favorite=(input as HTMLInputElement).checked;
   }
-  panel.addEventListener('input', () => {dateEdited = true; pendingSource = 'manual';}, {signal});
-  dateInput.addEventListener('change', () => {dateEdited = true; pendingSource = 'manual';}, {signal});
-  panel.addEventListener('click', event => {if ((event.target as Element).closest('[data-action=today],[data-action=infer]')) dateEdited = true;}, {signal});
-  dateForm.addEventListener('submit', event => {event.preventDefault(); applyDates();}, {signal});
-  find<HTMLInputElement>('[data-score]').addEventListener('change', event => {
-    const input = event.target as HTMLInputElement; if (input.checkValidity()) {checkpoint(); draft.score = input.value; find<HTMLButtonElement>('[data-action=undo]').disabled = false;}
-  }, {signal});
-  find<HTMLTextAreaElement>('[data-notes]').addEventListener('input', event => {draft.notes = (event.target as HTMLTextAreaElement).value;}, {signal});
-  find('#se-start').addEventListener('input', () => {draft.start = startInput.value;}, {signal});
-  startInput.addEventListener('change', () => {draft.start = startInput.value;}, {signal});
-  document.addEventListener('pointerdown', event => {if (!(event.target as Element).closest('.se-status-wrap')) closeStatus();}, {signal});
-  root.addEventListener('keydown', event => {
-    if (event.key === 'Escape') {closeStatus(); if (design === 'rows' && dateOpen) {dateOpen = false; render(); focusSeasonButton();}}
-  }, {signal});
-  render(); syncList();
+  form.addEventListener('input',readInput,{signal});
+  form.addEventListener('change',readInput,{signal});
+  for (const drawer of dialog.querySelectorAll<HTMLDetailsElement>('.sp-season-drawer')) {
+    drawer.addEventListener('toggle',()=>{
+      if (!drawer.open || !dialog.open) return;
+      requestAnimationFrame(()=>{
+        if (signal.aborted || !drawer.open) return;
+        const bottom=dialog.getBoundingClientRect().bottom;
+        const footer=find('.sp-mobile-actions').getBoundingClientRect().height;
+        const overflow=drawer.getBoundingClientRect().bottom-bottom+footer+18;
+        if (overflow>0) dialog.scrollBy({top:overflow,behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'});
+      });
+    },{signal});
+  }
+  const saveStorage=()=>{try {sessionStorage.setItem(storageKey,JSON.stringify(saved));} catch { /* Keep the fixture usable without storage. */ }};
+  // Disable native submit validation so a collapsed season can be revealed before reporting an error.
+  form.noValidate=true;
+  form.addEventListener('submit',event=>{
+    event.preventDefault();
+    const invalid=form.querySelector<HTMLInputElement>(':invalid');
+    if (invalid) {
+      let parent=invalid.parentElement;
+      while (parent && parent!==form) {
+        if (parent instanceof HTMLDetailsElement) parent.open=true;
+        if (parent.hasAttribute('data-expanded-date')) {
+          parent.hidden=false;
+          find(`[data-edit-season="${parent.dataset.expandedDate}"]`).setAttribute('aria-expanded','true');
+        }
+        parent=parent.parentElement;
+      }
+      invalid.reportValidity(); return;
+    }
+    saved[current]=copy(draft); saveStorage(); syncRows();
+    find('.sp-lab-feedback').textContent='Saved in preview'; void close();
+  },{signal});
+  dialog.addEventListener('click',event=>{if (event.target===dialog) {
+    const rect=dialog.getBoundingClientRect();
+    if (event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom) void close();
+  }},{signal});
+  signal.addEventListener('abort',()=>{if (dialog.open) dialog.close();},{once:true});
+  syncRows();
 }
 
-document.addEventListener('astro:before-swap', () => controller?.abort());
-document.addEventListener('astro:page-load', setup);
+document.addEventListener('astro:before-swap',()=>controller?.abort());
+document.addEventListener('astro:page-load',setup);
