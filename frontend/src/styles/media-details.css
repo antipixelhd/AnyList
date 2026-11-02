@@ -305,3 +305,6 @@ body.tracker .media-detail :is(.lab-public-score,.lab-game-offer) h2 { font-size
 .media-detail .game-banner-controls { display:flex; margin-left:auto; gap:4px; align-items:center; align-self:end; }
 .media-detail[data-media-kind=game] .game-banner-controls :is(.lab-hero-art-button,.game-banner-settings-button) { position:static; inset:auto; width:34px; height:34px; }
 @media (max-width:650px) { .media-detail .game-banner-controls { position:absolute; top:12px; right:0; } }
+
+.media-detail[data-game-banner-pending=true] .lab-hero-image { visibility:hidden; }
+.media-detail .game-banner-settings,.media-detail .game-banner-settings:popover-open { animation:none !important; transition:none !important; transform:none !important; }

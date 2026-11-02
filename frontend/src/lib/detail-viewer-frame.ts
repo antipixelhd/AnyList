@@ -41,5 +41,8 @@ export function bindDetailViewerFrame(dialog:HTMLDialogElement,signal:AbortSigna
   window.addEventListener('resize',fitVisible,{signal,passive:true});
   dialog.addEventListener('close',()=>{selected=undefined;artworkWidth=1280;artworkHeight=720;},{signal});
   // Prepare the correct aspect ratio before showModal measures the first frame.
-  return (image:HTMLImageElement|undefined,kind:'posters'|'artwork')=>{selected=image;group=kind;fit();};
+  return (image:HTMLImageElement|undefined,kind:'posters'|'artwork',seed?:HTMLImageElement)=>{
+    if(seed?.naturalWidth&&seed.naturalHeight){artworkWidth=seed.naturalWidth;artworkHeight=seed.naturalHeight;}
+    selected=image;group=kind;fit();
+  };
 }

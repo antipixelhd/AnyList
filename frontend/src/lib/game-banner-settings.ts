@@ -30,7 +30,7 @@ export function mountGameBannerSettings(root:HTMLElement,id:number,viewer:string
       if(['pending','deferred'].includes(data.background_status?.state))timer=setTimeout(()=>void read(),Math.max(2,data.background_status.retry_after||10)*1000);
       const status=root.querySelector<HTMLElement>('[data-banner-status]');
       if(status){status.textContent=settings.animated&&!data.banners?.length?'No animated banners available.':settings.cycle&&list.length<2?'Only one banner meets the rating threshold.':'';status.hidden=!status.textContent;}
-    }catch{if(!signal.aborted&&current===revision){const status=root.querySelector<HTMLElement>('[data-banner-status]');if(status){status.textContent='Couldn’t load banners. Try again.';status.hidden=false;}}}
+    }catch{if(!signal.aborted&&current===revision){delete root.dataset.gameBannerPending;const status=root.querySelector<HTMLElement>('[data-banner-status]');if(status){status.textContent='Couldn’t load banners. Try again.';status.hidden=false;}}}
   };
   controls.forEach(input=>input.addEventListener('change',()=>{
     settings={...settings,[input.dataset.bannerSetting!]:input.checked};

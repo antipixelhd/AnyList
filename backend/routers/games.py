@@ -36,6 +36,7 @@ async def game_background(work_id:WorkId,db:DB,viewer:Reader,animated:bool=False
     from core.media_details import primary_details
     work=await tracking.work(db,work_id)
     rows,state=await images(db,work,'heroes_animated' if animated else 'heroes')
+    rows=rows[:15]
     primary=primary_details(work)
     return {**primary,'backdrop':rows[0]['url'] if animated and rows else primary['backdrop'],
         'banners':[row['url'] for row in rows],

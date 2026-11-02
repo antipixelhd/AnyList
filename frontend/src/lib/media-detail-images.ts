@@ -204,7 +204,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
     // Opening is explicit gallery intent. Start the remaining full-size
     // images on their real slides so swiping never waits to assign a source.
     // Reconciliation retains these decoded elements across selection changes.
-    rows.forEach((_,position)=>{if(position!==current)prepareImage(position);});
+    if(active!=='hero')rows.forEach((_,position)=>{if(position!==current)prepareImage(position);});
   };
   const prepareImage=(index:number)=>{
     if(!lightbox.open||signal.aborted)return;
@@ -307,7 +307,8 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
     const commit=()=>{
       if(signal.aborted||revision!==heroRevision)return;
       commitDetailHero(hero,candidate,url,button,backdrop=>{
-        galleries.hero=uniqueDetailImages([backdrop,...galleries.hero],Infinity);
+        galleries.hero=uniqueDetailImages([backdrop,...galleries.hero],15);
+        if(gameBannerSelected===backdrop)delete root.dataset.gameBannerPending;
         publishDetailArtwork(editorStore,info,{backdrop});
       });
     };
@@ -438,14 +439,14 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
     const gridIndex=[...root.querySelectorAll('[data-detail-artwork-grid] button')].indexOf(button);
     followedSlot=undefined;
     prepareViewer();
-    fitViewer(undefined,viewerGroup());
+    fitViewer(undefined,viewerGroup(),active==='hero'?root.querySelector<HTMLImageElement>('.lab-hero-image')||undefined:undefined);
     showDialog(lightbox);previews.reveal();showImage(gridIndex>=0?gridIndex:Math.max(0,galleries[active].findIndex(value=>imageKey(value)===imageKey(url))));if(active!=='hero')void loadImages();
   },{signal});
   // The hero is critical: start its small metadata read immediately. Full
   // gallery curation and extra image downloads wait for a gallery interaction.
   if(info.type==='game'&&info.heroAvailable)mountGameBannerSettings(root,info.id,String(info.bannerViewer||''),signal,data=>{
     gameBannerSelected=data.backdrop;
-    galleries.hero=uniqueDetailImages(data.banners||[],Infinity);
+    galleries.hero=uniqueDetailImages(data.banners||[],15);
     if(data.backdrop)paintHero(data.backdrop);
   });
   if(info.heroAvailable&&info.type!=='game'){
