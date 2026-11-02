@@ -47,7 +47,10 @@ async def game_images(work_id:WorkId,db:DB,viewer:Reader) -> dict:
     work=await tracking.work(db,work_id)
     rows,state=await images(db,work,'grids')
     primary=primary_details(work)
-    return {**primary,'posters':unique_images([primary['poster'],*(row['url'] for row in rows)],limit=None),
+    alternatives=unique_images([row['url'] for row in rows],limit=None)
+    from core.media_images import image_key
+    alternatives=[url for url in alternatives if image_key(url)!=image_key(primary['poster'] or '')][:10]
+    return {**primary,'posters':unique_images([primary['poster'],*alternatives],limit=None),
         'image_status':state}
 
 
