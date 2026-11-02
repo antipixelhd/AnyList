@@ -1,5 +1,8 @@
 """Repair imported artwork from exact Steam references, outside tracking writes."""
 from datetime import datetime, timedelta
+import asyncio
+
+import httpx
 
 from sqlalchemy import select
 
@@ -11,8 +14,27 @@ from core.game_browse_sources import GameBrowseSources
 from core.game_types import canonical_game
 from models.catalogue import CatalogueEntity, CatalogueIdentity
 
+_headers=asyncio.Semaphore(4)
 
-async def refresh(factory, games, *, source=None):
+
+async def steam_header(app):
+    """Some older apps have only a landscape header, no library portrait."""
+    from core.game_achievement_source import native_app
+    native_app(app)
+    url=f'https://cdn.akamai.steamstatic.com/steam/apps/{app}/header.jpg'
+    async with _headers, httpx.AsyncClient(timeout=5) as client:
+        try:
+            response=await client.head(url)
+            if response.status_code==404:
+                return None
+            if response.status_code==200 and response.headers.get('content-type','').startswith('image/'):
+                return url
+            raise ProviderError('unavailable')
+        except httpx.HTTPError:
+            raise ProviderError('unavailable') from None
+
+
+async def refresh(factory, games, *, source=None, fallback=None):
     if source is None and not (settings.igdb_client_id and settings.igdb_client_secret):
         return
     apps=list(dict.fromkeys(game['app_id'] for game in games))
@@ -31,7 +53,9 @@ async def refresh(factory, games, *, source=None):
         checked=item.get('artwork_checked_at')
         if not checked or datetime.fromisoformat(checked)<=stamp-timedelta(days=30):
             due.append(app)
-    source=source or GameBrowseSources(factory)
+    if source is None:
+        source=GameBrowseSources(factory)
+        fallback=fallback or steam_header
     for offset in range(0,len(due),100):
         batch=due[offset:offset+100]
         try:
@@ -51,8 +75,18 @@ async def refresh(factory, games, *, source=None):
                 raw=next(iter(candidates.values()))
                 poster=image(raw.get('cover'))
                 if poster:
-                    value.update(poster=poster)
+                    value.update(poster=poster,poster_source='igdb',poster_verified=True)
             values.append(value)
+        async def complete(value):
+            if not value.get('poster') and fallback:
+                try:
+                    poster=await fallback(value['app_id'])
+                except ProviderError:
+                    value.pop('artwork_checked_at',None)
+                    return
+                if poster:
+                    value.update(poster=poster,poster_source='steam',poster_verified=True)
+        await asyncio.gather(*(complete(value) for value in values))
         async with factory() as db:
             await catalogue.write_lock(db)
             works=await db.execute(select(CatalogueIdentity.external_id,CatalogueEntity).join(
@@ -65,6 +99,6 @@ async def refresh(factory, games, *, source=None):
                 if poster and (not work.image_url or (work.field_sources or {}).get('image_url')=='steam'):
                     # Use the explicit cross-reference's cover without merging
                     # catalogue identities or touching private list state.
-                    catalogue.merge_fields(work,{'image_url':poster},'igdb')
+                    catalogue.merge_fields(work,{'image_url':poster},by_app[app]['poster_source'])
             await db.commit()
         await steam_cache.save_public(factory,values)

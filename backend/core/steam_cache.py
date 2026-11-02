@@ -108,7 +108,7 @@ async def save_public(factory, games, *, release_checked=False):
     for offset in range(0, len(games), 200):
         values = []
         for game in games[offset:offset+200]:
-            payload = {key: game[key] for key in ('name', 'poster', 'release_date', 'artwork_checked_at') if game.get(key) is not None}
+            payload = {key: game[key] for key in ('name', 'poster', 'release_date', 'artwork_checked_at', 'poster_verified') if game.get(key) is not None}
             if release_checked:
                 payload.update(release_date=game.get('release_date'), release_checked_at=stamp.isoformat())
             values.append({'provider': 'steam', 'kind': PUBLIC_KIND, 'external_id': game['app_id'],
@@ -131,7 +131,9 @@ async def save_public(factory, games, *, release_checked=False):
             merged = func.coalesce(MetadataSnapshot.payload, cast('{}', JSONB)).op('||')(statement.excluded.payload)
             # OwnedGames supplies a guessed Steam URL on every refresh. Never
             # replace a verified cross-reference cover with that guess.
-            merged = case((MetadataSnapshot.payload['poster'].astext.startswith('https://images.igdb.com/')
+            merged = case(((func.coalesce(MetadataSnapshot.payload['poster_verified'].as_boolean(), False)
+                | MetadataSnapshot.payload['poster'].astext.startswith('https://images.igdb.com/'))
+                & ~func.coalesce(statement.excluded.payload['poster_verified'].as_boolean(), False)
                 & ~func.coalesce(statement.excluded.payload['poster'].astext, '').startswith('https://images.igdb.com/'),
                 merged.op('||')(func.jsonb_build_object('poster', MetadataSnapshot.payload['poster']))), else_=merged)
             await db.execute(statement.on_conflict_do_update(constraint='uq_catalogue_snapshot', set_={

@@ -74,6 +74,29 @@ class SteamDatabaseTests(unittest.IsolatedAsyncioTestCase):
             work=await db.get(CatalogueEntity,identity.entity_id)
             self.assertEqual(work.image_url,'https://example.test/selected.jpg')
 
+    async def test_missing_portrait_uses_verified_steam_header_and_keeps_it_cached(self):
+        from core import steam_artwork, steam_cache
+        from core.catalogue_providers import ProviderError
+        from models.catalogue import MetadataSnapshot
+        await self.imported()
+        source=SimpleNamespace(steam_games=AsyncMock(return_value=[]))
+        header='https://cdn.akamai.steamstatic.com/steam/apps/20/header.jpg'
+        fallback=AsyncMock(side_effect=ProviderError('unavailable'))
+        await steam_artwork.refresh(self.Session,[game('20',0)],source=source,fallback=fallback)
+        fallback.side_effect=None
+        fallback.return_value=header
+        await steam_artwork.refresh(self.Session,[game('20',0)],source=source,fallback=fallback)
+        await steam_cache.save_public(self.Session,[game('20',0)])
+        await steam_artwork.refresh(self.Session,[game('20',0)],source=source,fallback=fallback)
+        self.assertEqual(fallback.await_count,2)
+        self.assertEqual(source.steam_games.await_count,2)
+        async with self.Session() as db:
+            cached=await steam_cache.public_metadata(db,['20'])
+            self.assertEqual(cached['20']['poster'],header)
+            raw=await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.kind==steam_cache.PUBLIC_KIND,
+                MetadataSnapshot.external_id=='20'))
+            self.assertEqual(raw.payload['poster'],header)
+
     async def test_completed_import_dates_can_be_overridden_or_discarded(self):
         self.source.library.return_value[0]['last_played'] = 1700000000
         await self.connect()
