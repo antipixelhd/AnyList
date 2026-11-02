@@ -151,7 +151,7 @@ button.gallery-primary-action { background:var(--blue); color:#08131e; font-weig
 /* Keep actions in the dialog's coordinate system throughout its opening motion. */
 .image-lightbox .gallery-artwork-actions { position:absolute; top:12px; left:12px; right:auto; bottom:auto; translate:none; max-width:calc(100% - 68px); flex-wrap:wrap; }
 .profile-artwork-editor { width:min(1000px,calc(100vw - 32px)); }
-.profile-artwork-canvas { height:min(58dvh,520px); min-height:220px; background:var(--field); border-radius:8px; overflow:hidden; }
+.profile-artwork-canvas { width:100%; height:auto; aspect-ratio:16/9; margin-inline:auto; background:var(--field); border-radius:8px; overflow:hidden; }
 .profile-artwork-canvas > img { display:none; }
 .profile-artwork-canvas cropper-canvas { width:100%; height:100%; --theme-color:#3db4f2; }
 .profile-artwork-canvas cropper-selection { --theme-color:#ffffff; }

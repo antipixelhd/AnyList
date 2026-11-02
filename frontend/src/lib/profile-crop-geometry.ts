@@ -1,5 +1,35 @@
 export type CropRect={x:number;y:number;width:number;height:number};
 
+/** Resize from the last pointer sample, not the beginning of an overshot gesture. */
+export function resizeProfileSelection(rect:CropRect,dx:number,dy:number,action:string,aspect:number):CropRect {
+  const direction=action.replace('-resize','');
+  const horizontal=direction.includes('e')?1:direction.includes('w')?-1:0;
+  const vertical=direction.includes('s')?1:direction.includes('n')?-1:0;
+  const change=horizontal&&vertical?(dx*horizontal+dy*vertical/aspect)/(1+1/(aspect*aspect))
+    :horizontal?dx*horizontal:dy*vertical*aspect;
+  const width=Math.max(0,rect.width+change),height=width/aspect;
+  return {x:rect.x-(width-rect.width)*(horizontal===-1?1:horizontal===0?.5:0),
+    y:rect.y-(height-rect.height)*(vertical===-1?1:vertical===0?.5:0),width,height};
+}
+
+/** Clamp each drag axis independently and keep the opposite resize edge anchored. */
+export function boundedProfileSelection(rect:CropRect,previous:CropRect,bounds:CropRect,aspect:number):CropRect {
+  const clamp=(value:number,min:number,max:number)=>Math.max(min,Math.min(max,value));
+  const same=(a:number,b:number)=>Math.abs(a-b)<.01;
+  if(same(rect.width,previous.width)&&same(rect.height,previous.height))return {...rect,
+    x:clamp(rect.x,bounds.x,bounds.x+bounds.width-rect.width),
+    y:clamp(rect.y,bounds.y,bounds.y+bounds.height-rect.height)};
+  const anchor=(position:number,size:number,oldPosition:number,oldSize:number)=>
+    same(position,oldPosition)?0:same(position+size,oldPosition+oldSize)?1:.5;
+  const ax=anchor(rect.x,rect.width,previous.x,previous.width),ay=anchor(rect.y,rect.height,previous.y,previous.height);
+  const x=previous.x+previous.width*ax,y=previous.y+previous.height*ay;
+  const room=(point:number,start:number,size:number,side:number)=>side===0?start+size-point:side===1?point-start:2*Math.min(point-start,start+size-point);
+  const maximum=Math.max(0,Math.min(room(x,bounds.x,bounds.width,ax),room(y,bounds.y,bounds.height,ay)*aspect));
+  const minimum=Math.min(maximum,Math.min(bounds.width,bounds.height*aspect)/3);
+  const width=clamp(rect.width,minimum,maximum),height=width/aspect;
+  return {x:x-width*ax,y:y-height*ay,width,height};
+}
+
 /** Translate a natural-image selection into the existing CSS focal framing. */
 export function profileCrop(rect:CropRect,width:number,height:number,aspect:number) {
   const coverWidth=Math.min(width,height*aspect);
