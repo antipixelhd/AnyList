@@ -148,6 +148,7 @@ async def update_profile(
         db.add(profile)
 
     values = body.model_dump(exclude_unset=True)
+    if "background_url" in values and "background_crop" not in values:values["background_crop"]=None
     for field, value in values.items():
         setattr(profile, field, value)
 
@@ -961,6 +962,7 @@ async def get_public_profile(
         "username": user.username,
         "display_name": display_name,
         "avatar_url": f"/profile/avatar/{user.id}" if (profile and profile.avatar_path) else None,
+        "background_crop": profile.background_crop if profile else None,
         "background_url": profile.background_url if profile else None,
         "bio": profile.bio if profile else None,
         "profile_color": profile.profile_color if profile else "#3db4f2",

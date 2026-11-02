@@ -8,7 +8,7 @@ test('cycling advances once per visit and keeps viewer/game preferences separate
   const previous=Object.getOwnPropertyDescriptor(globalThis,'localStorage');
   Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{getItem:key=>stored.get(key),setItem:(key,value)=>stored.set(key,value)}});
   t.after(()=>previous?Object.defineProperty(globalThis,'localStorage',previous):delete globalThis.localStorage);
-  const root={querySelectorAll:()=>[],querySelector:()=>null};
+  const root={addEventListener(){},querySelectorAll:()=>[],querySelector:()=>null};
   const output=[];
   for(let visit=0;visit<2;visit++){
     const controller=new AbortController();
@@ -24,7 +24,7 @@ test('navigation suppresses a late banner response',async t=>{
   let resolveRead;
   t.mock.method(globalThis,'fetch',()=>new Promise(resolve=>{resolveRead=resolve;}));
   const controller=new AbortController(),output=[];
-  mountGameBannerSettings({querySelectorAll:()=>[],querySelector:()=>null},2,'viewer',controller.signal,data=>output.push(data));
+  mountGameBannerSettings({addEventListener(){},querySelectorAll:()=>[],querySelector:()=>null},2,'viewer',controller.signal,data=>output.push(data));
   controller.abort();
   resolveRead({ok:true,json:async()=>({backdrop:'late'})});
   await new Promise(resolve=>setImmediate(resolve));

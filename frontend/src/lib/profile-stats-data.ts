@@ -6,6 +6,7 @@ export interface ProfileStats {
     bio: string | null;
     profile_color: string;
     has_avatar: boolean;
+    background_crop?: {x:number;y:number;zoom:number}|null;
     background_url: string | null;
   };
   owner: boolean;

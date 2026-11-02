@@ -432,7 +432,15 @@ class AccountNameResponse(BaseModel):
     username: str
 
 
+class BackgroundCrop(BaseModel):
+    model_config={'extra':'forbid'}
+    x: float = Field(default=50,ge=0,le=100,allow_inf_nan=False)
+    y: float = Field(default=50,ge=0,le=100,allow_inf_nan=False)
+    zoom: float = Field(default=1,ge=1,le=3,allow_inf_nan=False)
+
+
 class UserProfileUpdate(BaseModel):
+    background_crop: Optional[BackgroundCrop] = None
     background_url: Optional[str] = Field(default=None, max_length=2048)
 
     @field_validator("background_url")
@@ -482,6 +490,7 @@ class UserProfileUpdate(BaseModel):
         return value.lower()
 
 class UserProfileResponse(BaseModel):
+    background_crop: Optional[BackgroundCrop] = None
     minimum_movie_runtime: int = 30
     minimum_votes: int = Field(default=250, ge=0, le=10000000)
     excluded_categories: list[int] = Field(default_factory=default_excluded_categories)
@@ -504,6 +513,7 @@ class UserProfileResponse(BaseModel):
         from_attributes = True
 
 class PublicProfileResponse(BaseModel):
+    background_crop: Optional[BackgroundCrop] = None
     id: int
     username: str
     display_name: str

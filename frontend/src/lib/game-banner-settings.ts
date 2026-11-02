@@ -16,7 +16,7 @@ export function mountGameBannerSettings(root:HTMLElement,id:number,viewer:string
       const data=await response.json();
       if(signal.aborted||current!==revision)return;
       const list:string[]=settings.cycle&&data.cycle_banners?.length?data.cycle_banners.slice(0,6):[];
-      if(list.length){
+      if(list.length&&!data.pinned_banner){
         const positionKey=`${key}:position:${settings.animated}`;
         if(!cycleChoice||!list.includes(cycleChoice)){
           let position=0;
@@ -38,5 +38,6 @@ export function mountGameBannerSettings(root:HTMLElement,id:number,viewer:string
     try{localStorage.setItem(key,JSON.stringify(settings));}catch{}
     void read();
   },{signal}));
+  root.addEventListener('anylist:banner-pinned',()=>void read(),{signal});
   void read();
 }

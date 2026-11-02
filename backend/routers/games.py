@@ -30,6 +30,29 @@ WorkId = Annotated[int, Path(gt=0)]
 Admin = Annotated[User, Depends(require_admin)]
 
 
+class BannerChoice(BaseModel):
+    model_config={'extra':'forbid'}
+    image:str|None=Field(default=None,max_length=2048)
+
+
+@router.put('/works/{work_id}/banner')
+async def save_game_banner(work_id:WorkId,body:BannerChoice,db:DB,viewer:Writer) -> dict:
+    from models import UserProfileData
+    from core.catalogue_normalize import image
+    await tracking.work(db,work_id)
+    if body.image and not image(body.image):raise HTTPException(422,'Choose an HTTPS artwork image')
+    # Account lock also serializes creating a profile and independent game pins.
+    await db.execute(select(User.id).where(User.id==viewer.id).with_for_update())
+    profile=await db.scalar(select(UserProfileData).where(UserProfileData.user_id==viewer.id).with_for_update())
+    if not profile:profile=UserProfileData(user_id=viewer.id);db.add(profile)
+    choices=dict(profile.game_banners or {})
+    if body.image:choices[str(work_id)]=body.image
+    else:choices.pop(str(work_id),None)
+    profile.game_banners=choices
+    await db.commit()
+    return {'pinned_banner':body.image}
+
+
 @router.get('/works/{work_id}/background')
 async def game_background(work_id:WorkId,db:DB,viewer:Reader,animated:bool=False) -> dict:
     from core.game_artwork import images,cycling
@@ -38,7 +61,9 @@ async def game_background(work_id:WorkId,db:DB,viewer:Reader,animated:bool=False
     rows,state=await images(db,work,'heroes_animated' if animated else 'heroes')
     rows=rows[:15]
     primary=primary_details(work)
-    return {**primary,'backdrop':rows[0]['url'] if animated and rows else primary['backdrop'],
+    from models import UserProfileData
+    pinned=await db.scalar(select(UserProfileData.game_banners[str(work_id)].astext).where(UserProfileData.user_id==viewer.id))
+    return {**primary,'pinned_banner':pinned,'backdrop':pinned or (rows[0]['url'] if animated and rows else primary['backdrop']),
         'banners':[row['url'] for row in rows],
         'cycle_banners':cycling(rows),
         'background_status':state}

@@ -85,6 +85,7 @@ class GameListProfile(BaseModel):
     username: str
     display_name: str
     profile_color: str = '#3db4f2'
+    background_crop: dict | None = None
     background_url: str | None = None
     has_avatar: bool = False
     owner: bool = False

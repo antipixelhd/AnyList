@@ -1,3 +1,4 @@
+import {mountGalleryArtworkActions} from './gallery-artwork-actions';
 import {mountGameBannerSettings} from './game-banner-settings';
 import {showDialog,reveal,cancelUiMotion} from './ui-motion';
 import {showToast} from './toasts';
@@ -180,6 +181,11 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
         behavior:matchMedia('(prefers-reduced-motion:reduce)').matches?'instant':'smooth'});
     }
   };
+  const artworkActions=mountGalleryArtworkActions(lightbox,info,signal,
+    ()=>({url:galleries[active][current],artwork:active!=='posters'}),url=>{
+      gameBannerSelected=url;if(url)paintHero(url);
+      root.dispatchEvent(new CustomEvent('anylist:banner-pinned',{detail:{url}}));
+    });
   const showImage=(index:number,animate=false,scroll=true,preserveZoom=false,fast=false)=>{
     if(!preserveZoom){if(scroll)resetZoom();else resetZoom.preserveInteraction();}
     const rows=galleries[active];
@@ -187,6 +193,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
     const previous=current;
     current=count?(index+count)%count:0;
     if(current!==previous)revealPreviews();
+    artworkActions();
     const group=active;
     const alt=`${name} · ${group==='posters'?'Poster':'Artwork'} ${current+1}`;
     if(announcement)announcement.textContent=count?`${group==='posters'?'Poster':'Artwork'} ${current+1}${viewerPending()?'':` of ${count}`}`:'No images available';
@@ -446,6 +453,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
   // gallery curation and extra image downloads wait for a gallery interaction.
   if(info.type==='game'&&info.heroAvailable)mountGameBannerSettings(root,info.id,String(info.bannerViewer||''),signal,data=>{
     gameBannerSelected=data.backdrop;
+    artworkActions(data.pinned_banner||'');
     galleries.hero=uniqueDetailImages(data.banners||[],15);
     if(data.backdrop)paintHero(data.backdrop);
   });

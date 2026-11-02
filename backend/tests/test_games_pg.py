@@ -36,6 +36,45 @@ URL = os.getenv('GAMES_TEST_DATABASE_URL')
 
 @unittest.skipUnless(URL, 'Requires explicit disposable games PostgreSQL')
 class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
+    async def test_personal_artwork_migration_roundtrip(self):
+        migration=importlib.import_module('migrations.versions.mt076_personal_artwork')
+        def migrate(connection):
+            with Operations.context(MigrationContext.configure(connection)):
+                migration.downgrade();migration.upgrade()
+        async with self.engine.begin() as connection:await connection.run_sync(migrate)
+        async with self.Session() as db:
+            profile=await db.scalar(select(UserProfileData).where(UserProfileData.user_id==self.viewer.id))
+            self.assertIsNotNone(profile)
+            self.assertEqual(profile.game_banners,{})
+            self.assertIsNone(profile.background_crop)
+
+    async def test_personal_banner_is_private_sticky_and_can_be_cleared(self):
+        path=f'/tracking/games/works/{self.base}/banner'
+        url='https://cdn2.steamgriddb.com/hero/pinned.png'
+        result=await self.client.put(path,json={'image':url})
+        self.assertEqual(result.status_code,200,result.text)
+        with patch('core.game_artwork.images',AsyncMock(return_value=([],{'state':'ready'}))):
+            data=(await self.client.get(f'/tracking/games/works/{self.base}/background')).json()
+        self.assertEqual(data['pinned_banner'],url);self.assertEqual(data['backdrop'],url)
+        async with self.Session() as db:
+            from models import UserProfileData
+            profiles=list(await db.scalars(select(UserProfileData)))
+            self.assertFalse(any((p.game_banners or {}).get(str(self.base)) for p in profiles if p.user_id!=self.viewer.id))
+        self.assertEqual((await self.client.put(path,json={'image':'javascript:bad'})).status_code,422)
+        self.assertEqual((await self.client.put(path,json={'image':None})).status_code,200)
+        self.viewer=None
+        self.assertEqual((await self.client.put(path,json={'image':url})).status_code,401)
+
+    async def test_background_crop_validation_and_persistence(self):
+        result=await self.client.patch('/profile/me',json={'background_url':'https://example.test/background.jpg',
+            'background_crop':{'x':20,'y':75,'zoom':1.4}})
+        self.assertEqual(result.status_code,200,result.text)
+        self.assertEqual(result.json()['background_crop'],{'x':20,'y':75,'zoom':1.4})
+        self.assertEqual((await self.client.patch('/profile/me',json={'background_crop':{'zoom':9}})).status_code,422)
+        result=await self.client.patch('/profile/me',json={'background_url':'https://example.test/another.jpg'})
+        self.assertEqual(result.status_code,200,result.text)
+        self.assertIsNone(result.json()['background_crop'])
+
     async def test_steamgriddb_cache_reuses_results_and_keeps_selected_artwork(self):
         from core import game_artwork
         from test_game_artwork import asset

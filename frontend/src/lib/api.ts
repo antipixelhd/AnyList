@@ -637,6 +637,7 @@ export interface ProfileCommentItem {
 }
 
 export interface PublicProfile {
+  background_crop?: {x:number;y:number;zoom:number}|null;
   background_url: string | null;
   profile_color: string;
   id: number;

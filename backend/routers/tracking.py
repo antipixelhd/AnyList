@@ -672,6 +672,7 @@ async def person(username: str, db: AsyncSession = Depends(get_db), viewer: User
     favorites = sorted(favorite_media.values(), key=lambda m: (order_index.get(m.id, len(order_index)), m.id))
     return {"id":user.id,"username":user.username,"display_name":user.display_name,"bio":user.profile.bio if user.profile else None,
         "profile_color": user.profile.profile_color if user.profile else "#3db4f2",
+        "background_crop": user.profile.background_crop if user.profile else None,
         "background_url": user.profile.background_url if user.profile else None,
         "owner":owner,"following":bool(viewer and viewer.id in followers_ids),
         "follows_you":bool(viewer and not owner and viewer.id in following_ids),
@@ -1191,7 +1192,8 @@ async def profile_stats_overview(
                     "bio": user.profile.bio if user.profile else None,
                     "profile_color": user.profile.profile_color if user.profile else "#3db4f2",
                     "has_avatar": bool(user.profile and user.profile.avatar_path),
-                    "background_url": user.profile.background_url if user.profile else None},
+                    "background_crop": user.profile.background_crop if user.profile else None,
+        "background_url": user.profile.background_url if user.profile else None},
         "owner": owner, "following": following, "follows_you": follows_you,
         "combine_lists": True if prefs is None else prefs.combine_lists,
     }
