@@ -47,7 +47,10 @@ def definitions(raw,app):
     stats=game.get('availableGameStats') if isinstance(game,dict) else None
     rows=stats.get('achievements') if isinstance(stats,dict) else None
     # An omitted field or {} is not proof that this game has zero achievements.
-    if not isinstance(rows,list) or len(rows)>50000 or not isinstance(game.get('gameName'),str) or not game['gameName'].strip():
+    # Steam legitimately returns an empty gameName (for example TUNIC).
+    # The requested app scopes this response; only the explicit definitions
+    # array establishes catalogue availability, not this optional label.
+    if not isinstance(rows,list) or len(rows)>50000:
         raise ProviderError('bad_response')
     result=[];seen=set()
     for row in rows:

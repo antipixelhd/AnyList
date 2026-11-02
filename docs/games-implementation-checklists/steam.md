@@ -12,6 +12,8 @@ Sync updates selected games. The optional **Automatically add new games** settin
 
 `steam_player_games` durably caches authoritative progress by viewer, Steam profile and app, including request leases and failure cooldowns. Reopening/reconnecting reuses this evidence; another viewer never receives it. Public app names, posters, release evidence and achievement denominators go into shared metadata even for declined games. User lists store unlocked counts; percentages are derived from the current public denominator. Added/withdrawn achievements invalidate stale counts and can update percentages without treating an older schema read as newer evidence.
 
+After import and sync, public artwork repair uses IGDB's explicit Steam references in batches of at most 100. Unique canonical references can supply covers without merging game identities or changing private entries. Ambiguous/empty results are cached for 30 days; provider failures stay retryable. Existing canonical and protected artwork wins, and a subsequent OwnedGames refresh cannot replace a verified cover with its guessed Steam URL. Reviews reuse that shared cover. Steam achievement schemas may legitimately have an empty `gameName`; completeness depends on the explicit validated achievement array.
+
 ## Public API and request cost
 
 - [GetPlayerSummaries / ResolveVanityURL](https://partner.steamgames.com/doc/webapi/ISteamUser): one profile check, plus one vanity resolution if needed. No Steam password, user API key or cookies are required.

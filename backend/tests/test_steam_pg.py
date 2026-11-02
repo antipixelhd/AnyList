@@ -30,6 +30,50 @@ def game(app, minutes, count=None, total=None):
 class SteamDatabaseTests(unittest.IsolatedAsyncioTestCase):
     cleanup = fixture.GamesDatabaseTests.cleanup
 
+    async def test_artwork_repairs_exact_references_and_reuses_public_cache(self):
+        from core import steam_artwork, steam_cache
+        from models.catalogue import MetadataSnapshot
+        await self.imported()
+        cover='https://images.igdb.com/igdb/image/upload/t_thumb/verified.jpg'
+        source=SimpleNamespace(steam_games=AsyncMock(return_value=[
+            {'uid':'20','game':{'id':123,'cover':{'url':cover}}},
+            {'uid':'30','game':{'id':124,'cover':{'url':cover}}},
+            {'uid':'30','game':{'id':125,'cover':{'url':cover}}}]))
+        games=[game('20',0),game('30',0)]
+        await steam_artwork.refresh(self.Session,games,source=source)
+        await steam_cache.save_public(self.Session,games)
+        await steam_artwork.refresh(self.Session,games,source=source)
+        source.steam_games.assert_awaited_once()
+        async with self.Session() as db:
+            cache=await steam_cache.public_metadata(db,['20','30'])
+            self.assertEqual(cache['20']['poster'],cover)
+            self.assertNotEqual(cache['30']['poster'],cover)
+            hydrated=await steam_sync.attach_dates(db,games)
+            self.assertEqual(hydrated[0]['poster'],cover)
+            self.assertEqual(hydrated[1]['poster'],games[1]['poster'])
+            row=await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.kind==steam_cache.PUBLIC_KIND,
+                MetadataSnapshot.external_id=='20'))
+            self.assertEqual(row.payload['poster'],cover)
+
+    async def test_artwork_failure_stays_retryable_and_preserves_protected_image(self):
+        from core import steam_artwork
+        from core.catalogue_providers import ProviderError
+        await self.imported()
+        source=SimpleNamespace(steam_games=AsyncMock(side_effect=ProviderError('unavailable')))
+        await steam_artwork.refresh(self.Session,[game('20',0)],source=source)
+        source.steam_games.side_effect=None
+        source.steam_games.return_value=[{'uid':'20','game':{'id':123,'cover':{'url':'https://images.igdb.com/igdb/image/upload/t_thumb/new.jpg'}}}]
+        async with self.Session() as db:
+            identity=await db.scalar(select(CatalogueIdentity).where(CatalogueIdentity.namespace=='steam.app',CatalogueIdentity.external_id=='20'))
+            work=await db.get(CatalogueEntity,identity.entity_id)
+            work.image_url='https://example.test/selected.jpg';work.protected_fields=['image_url']
+            await db.commit()
+        await steam_artwork.refresh(self.Session,[game('20',0)],source=source)
+        self.assertEqual(source.steam_games.await_count,2)
+        async with self.Session() as db:
+            work=await db.get(CatalogueEntity,identity.entity_id)
+            self.assertEqual(work.image_url,'https://example.test/selected.jpg')
+
     async def test_completed_import_dates_can_be_overridden_or_discarded(self):
         self.source.library.return_value[0]['last_played'] = 1700000000
         await self.connect()

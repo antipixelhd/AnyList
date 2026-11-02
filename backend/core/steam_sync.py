@@ -94,7 +94,8 @@ async def preparation(factory, user_id, connection_id, job_id):
 
 async def attach_dates(db, library):
     public = await steam_cache.public_metadata(db, [game['app_id'] for game in library])
-    return [{**game, 'release_date': public.get(game['app_id'], {}).get('release_date')} for game in library]
+    return [{**game, **{key:value for key,value in public.get(game['app_id'], {}).items()
+        if key in ('poster','release_date') and value is not None}} for game in library]
 
 
 async def apply_games(db, state, library, selected, *, initial=False, add_apps=None, initial_status='completed', completion_dates=None):
@@ -250,6 +251,8 @@ async def sync(factory, user_id, job_id, connection_id):
             job.warnings = [f'Achievements unavailable for {unknown} games; existing progress was preserved.'] if unknown else []
             await db.commit()
         await steam_cache.save_public(factory, library)
+        from core.steam_artwork import refresh as refresh_artwork
+        await refresh_artwork(factory, library)
     except SyncCancelled:
         return
     except Exception as error:

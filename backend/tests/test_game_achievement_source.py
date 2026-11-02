@@ -50,6 +50,14 @@ class AchievementSourceTests(unittest.IsolatedAsyncioTestCase):
             'https://cdn.akamai.steamstatic.com/steamcommunity/public/images/apps/11/a.jpg']:
             self.assertIsNone(icon(url,'10'))
 
+    def test_schema_accepts_empty_or_absent_game_name_from_steam(self):
+        for label in ({'gameName':''}, {}):
+            raw={'game':{**label,'availableGameStats':{'achievements':[
+                {'name':'STICK','displayName':'A Stick!','hidden':1}]}}}
+            result=definitions(raw,'553420')
+            self.assertEqual(result['total'],1)
+            self.assertEqual(result['definitions'][0]['name'],'A Stick!')
+
     async def test_invalid_app_or_component_never_requests_remote_data(self):
         http=SimpleNamespace(request=AsyncMock());source=GameAchievementSource(http=http,key='')
         for app,part in [('0','globals'),('10/','schema'),('4294967296','globals'),('10','players')]:

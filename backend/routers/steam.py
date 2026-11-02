@@ -273,7 +273,7 @@ async def save_draft(connection_id: int, body: Draft, db: DB, viewer: Viewer) ->
 
 
 @router.post('/{connection_id}/import')
-async def commit_import(connection_id: int, body: ImportSelection, db: DB, viewer: Viewer) -> dict:
+async def commit_import(connection_id: int, body: ImportSelection, background: BackgroundTasks, db: DB, viewer: Viewer) -> dict:
     await require_idle_account(db, viewer.id)
     state = await validate_draft(db, viewer, connection_id, body)
     library = await steam_cache.read_progress(db, viewer.id, state.steam_id, state.library)
@@ -291,4 +291,6 @@ async def commit_import(connection_id: int, body: ImportSelection, db: DB, viewe
     conn = await db.get(MediaServerConnection, connection_id)
     conn.libraries_confirmed = True
     await db.commit()
+    from core.steam_artwork import refresh as refresh_artwork
+    background.add_task(refresh_artwork, AsyncSessionLocal, library)
     return {'imported': len(accepted), 'selected': len(accepted), **({'skipped': len(selection) - len(accepted)} if len(accepted) != len(selection) else {})}
