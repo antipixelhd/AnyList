@@ -143,3 +143,7 @@ button.gallery-primary-action { background:var(--blue); color:#08131e; font-weig
 @media(max-width:650px) { .gallery-artwork-actions { width:max-content; max-width:calc(100vw - 24px); bottom:8px; } .gallery-artwork-actions button { font-size:1.1rem; padding:8px; } .profile-artwork-editor label { grid-template-columns:1fr; gap:8px; } }
 
 .profile-artwork-editor input:focus-visible { outline:none; filter:brightness(1.2); }
+
+.media-detail .gallery-artwork-actions button { padding:10px 16px; border:0; border-radius:6px; background:var(--panel); color:var(--bright); }
+.media-detail .gallery-artwork-actions .gallery-primary-action { background:var(--blue); color:#08131e; font-weight:600; }
+.media-detail .gallery-artwork-actions button:focus-visible { outline:none; filter:brightness(1.18); }
