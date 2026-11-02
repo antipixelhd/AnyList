@@ -106,7 +106,7 @@ async def attach_dates(db, library):
         if key in ('poster','release_date','game_class') and value is not None}} for game in library]
 
 
-async def apply_games(db, state, library, selected, *, initial=False, add_apps=None, initial_status='completed', completion_dates=None):
+async def apply_games(db, state, library, selected, *, initial=False, add_apps=None, initial_status='completed', completion_dates=None,start_dates=None):
     """One list write per canonical game; source app counters remain independent."""
     from core import steam_targets
     by_app = {row['app_id']: row for row in library}
@@ -165,6 +165,9 @@ async def apply_games(db, state, library, selected, *, initial=False, add_apps=N
                     entry.achievement_mode, entry.achievement_count, entry.achievement_percentage)
         if initial:
             entry.status = initial_status
+            if initial_status=='playing':
+                dates=[value for game in games if (value:=(start_dates or {}).get(game['app_id'])) is not None]
+                entry.start_date=min(dates) if dates else None
             if initial_status == 'completed':
                 dates = []
                 for game in games:
@@ -207,7 +210,8 @@ async def apply_games(db, state, library, selected, *, initial=False, add_apps=N
         if created or previous != current:
             entry.revision = (entry.revision or 0) + 1
             await db.flush()
-            await game_activity.record(db, entry, before, await game_activity.snapshot(db, work, entry, achievements=state.sync_achievements))
+            if initial:await game_activity.record_import(db,entry,timezone_name=state.timezone or 'UTC')
+            else:await game_activity.record(db, entry, before, await game_activity.snapshot(db, work, entry, achievements=state.sync_achievements))
             changed += 1
         for game in games:
             app = game['app_id']

@@ -2,7 +2,7 @@
 import unittest
 import importlib
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -15,7 +15,7 @@ from core import steam_sync
 from models import MediaServerConnection, SteamConnection, SyncJob, SyncStatus
 from models.base import CollectionSource
 from models.catalogue import CatalogueEntity, CatalogueIdentity
-from models.games import GameEntry
+from models.games import GameEntry,GameActivity
 from models.steam import SteamPlayerGame
 from routers import steam
 
@@ -29,6 +29,46 @@ def game(app, minutes, count=None, total=None):
 @unittest.skipUnless(fixture.URL, 'Requires disposable Games PostgreSQL')
 class SteamDatabaseTests(unittest.IsolatedAsyncioTestCase):
     cleanup = fixture.GamesDatabaseTests.cleanup
+
+    async def test_initial_import_without_dates_silently_saves_status_and_counters(self):
+        await self.connect()
+        async with self.Session() as db:
+            state=await db.get(SteamConnection,self.id)
+            for app,status in [('20','completed'),('30','playing'),('1245620','planning')]:
+                await steam_sync.apply_games(db,state,[game(app,60,1,3)],[app],initial=True,initial_status=status)
+            await db.commit()
+            self.assertEqual(list(await db.scalars(select(GameActivity).where(GameActivity.user_id==self.user.id))),[])
+            entries=list(await db.scalars(select(GameEntry).where(GameEntry.user_id==self.user.id)))
+            self.assertEqual(len(entries),3)
+            self.assertTrue(all(row.total_seconds==3600 and row.achievement_count==1 for row in entries))
+
+    async def test_initial_import_records_only_dated_milestones_at_their_dates(self):
+        from zoneinfo import ZoneInfo
+        await self.connect()
+        async with self.Session() as db:
+            state=await db.get(SteamConnection,self.id)
+            for app,status,options in [('20','completed',{'completion_dates':{'20':date(2020,5,4)}}),
+                ('30','playing',{'start_dates':{'30':date(2021,6,3)}}),
+                ('1245620','planning',{'start_dates':{'1245620':date(2021,6,3)}})]:
+                await steam_sync.apply_games(db,state,[game(app,60,1,3)],[app],initial=True,initial_status=status,**options)
+            await db.commit()
+            rows=list(await db.scalars(select(GameActivity).where(GameActivity.user_id==self.user.id).order_by(GameActivity.created_at)))
+            self.assertEqual([row.status for row in rows],['completed','playing'])
+            days=[row.created_at.replace(tzinfo=timezone.utc).astimezone(ZoneInfo(state.timezone or 'UTC')).date() for row in rows]
+            self.assertEqual(days,[date(2020,5,4),date(2021,6,3)])
+            self.assertTrue(all(row.payload['status_changed'] and not row.payload['hours_changed'] and not row.payload['achievements_changed'] for row in rows))
+            await steam_sync.apply_games(db,state,[game('30',65,2,3)],['30'])
+            await db.commit()
+            self.assertEqual(len(list(await db.scalars(select(GameActivity).where(GameActivity.user_id==self.user.id)))),3)
+
+    async def test_initial_import_discarded_completion_date_does_not_create_activity(self):
+        await self.connect()
+        async with self.Session() as db:
+            state=await db.get(SteamConnection,self.id)
+            data={**game('20',90,2,3),'last_played':1700000000}
+            await steam_sync.apply_games(db,state,[data],['20'],initial=True,completion_dates={'20':None})
+            await db.commit()
+            self.assertEqual(list(await db.scalars(select(GameActivity).where(GameActivity.user_id==self.user.id))),[])
 
     async def test_component_apps_combine_once_and_sync_independent_deltas(self):
         from core import catalogue,steam_targets,game_tracking

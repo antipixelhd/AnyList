@@ -10,12 +10,13 @@ export function steamProgressPending(game: SteamGame): boolean {
 export type SteamDraft = {
   import_status: 'completed' | 'playing' | 'planning' | 'paused' | 'dropped';
   completion_dates: Record<string, string | null>;
+  start_dates: Record<string, string | null>;
   minimum_playtime: number; minimum_achievements: number;
   playtime_enabled: boolean; achievements_enabled: boolean;
   overrides: Record<string, boolean>; sort: 'playtime' | 'alphabetical' | 'completion';
 };
 export function defaultSteamDraft(): SteamDraft {
-  return { import_status: 'completed', completion_dates: {}, minimum_playtime: 30, minimum_achievements: 1, playtime_enabled: true,
+  return { import_status: 'completed', completion_dates: {}, start_dates:{}, minimum_playtime: 30, minimum_achievements: 1, playtime_enabled: true,
     achievements_enabled: true, overrides: {}, sort: 'playtime' };
 }
 export function steamSelected(game: SteamGame, draft: SteamDraft): boolean {

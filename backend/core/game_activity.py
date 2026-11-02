@@ -1,5 +1,6 @@
 """Public game activity is a projection of verified changes, never editor input."""
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, or_, select, func, literal
 
@@ -11,6 +12,19 @@ from models.games import GameActivity, GameEntry, GameChildState, GameAchievemen
 
 PUBLIC_FLAGS = ('status_changed', 'rating_changed', 'hours_changed', 'achievements_changed', 'added_to_list')
 PUBLIC_FIELDS = (*PUBLIC_FLAGS, 'previous_score', 'rating_first', 'total_seconds', 'achievement_percentage')
+
+
+async def record_import(db,row,*,timezone_name='UTC'):
+    """Historical onboarding milestones require dates; baseline counters are silent."""
+    day=row.finish_date if row.status=='completed' else row.start_date if row.status=='playing' else None
+    if day is None:return
+    stamp=datetime.combine(day,time(12),ZoneInfo(timezone_name)).astimezone(timezone.utc).replace(tzinfo=None)
+    exists=await db.scalar(select(GameActivity.id).where(GameActivity.user_id==row.user_id,
+        GameActivity.work_id==row.work_id,GameActivity.status==row.status,GameActivity.created_at==stamp).limit(1))
+    if exists:return
+    db.add(GameActivity(user_id=row.user_id,work_id=row.work_id,status=row.status,score=row.score,created_at=stamp,
+        payload={'status_changed':True,'rating_changed':False,'hours_changed':False,'achievements_changed':False,
+            'added_to_list':False,'total_seconds':row.total_seconds,'imported':True}))
 
 
 async def snapshot(db, entity, row, *, achievements=False):

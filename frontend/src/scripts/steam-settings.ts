@@ -28,6 +28,8 @@ function init() {
   const dateDialog = get<HTMLDialogElement>('date-dialog');
   const refreshDate = setupCalendarDateInputs(dateDialog, signal);
   let dateApp: string | undefined;
+  let dateKind:'start'|'completion'='completion';
+  const selectedDate=(game:SteamGame)=>draft.import_status==='playing'?draft.start_dates[game.app_id]||null:finishDate(game);
   const finishDate = (game: SteamGame) => Object.hasOwn(draft.completion_dates, game.app_id) ? draft.completion_dates[game.app_id]
     : game.last_played ? new Date(game.last_played * 1000).toLocaleDateString('sv-SE') : null;
   listen(get('resume'), 'click', () => showDialog(dialog));
@@ -37,7 +39,7 @@ function init() {
   listen(dateDialog, 'close', () => {
     if (!dateApp || !['save','discard'].includes(dateDialog.returnValue)) return;
     const input = dateDialog.querySelector<HTMLInputElement>('[data-date-iso]')!;
-    draft.completion_dates[dateApp] = dateDialog.returnValue === 'discard' ? null : input.value || null;
+    (dateKind==='start'?draft.start_dates:draft.completion_dates)[dateApp] = dateDialog.returnValue === 'discard' ? null : input.value || null;
     changed(); dateApp = undefined;
   });
   const datesSeen = new Set<string>();
@@ -162,8 +164,8 @@ function init() {
       if (game) card.setAttribute('aria-pressed', String(steamSelected(game, draft)));
       const date = card.parentElement?.querySelector<HTMLButtonElement>('.steam-completion');
       if (date && game) {
-        date.hidden = !steamSelected(game, draft) || draft.import_status !== 'completed';
-        const value = finishDate(game); date.textContent = value ? `Completed ${formatDate(value)}` : 'Set completion date';
+        date.hidden = !steamSelected(game, draft) || !['completed','playing'].includes(draft.import_status);
+        const value = selectedDate(game); date.textContent = value ? `${draft.import_status==='playing'?'Started':'Completed'} ${formatDate(value)}` : draft.import_status==='playing'?'Set start date':'Set completion date';
       }
     }
     get('selected').textContent = `${games.filter(game => steamSelected(game, draft)).length} of ${games.length} selected`;
@@ -192,8 +194,11 @@ function init() {
     const wrapper = document.createElement('article'); wrapper.className = 'steam-game'; wrapper.append(node);
     const date = document.createElement('button'); date.type = 'button'; date.className = 'steam-completion';
     listen(date, 'click', () => {
-      dateApp = game.app_id; dateDialog.returnValue = '';
-      dateDialog.querySelector<HTMLInputElement>('[data-date-iso]')!.value = finishDate(game) || '';
+      dateApp = game.app_id; dateKind=draft.import_status==='playing'?'start':'completion'; dateDialog.returnValue = '';
+      const label=dateKind==='start'?'Start date':'Completion date';
+      dateDialog.querySelector('h2')!.textContent=label;
+      dateDialog.querySelector('[data-date-display]')?.setAttribute('aria-label',label);
+      dateDialog.querySelector<HTMLInputElement>('[data-date-iso]')!.value = selectedDate(game) || '';
       refreshDate(); showDialog(dateDialog);
     });
     wrapper.append(date);
@@ -321,7 +326,8 @@ function init() {
     importing = true; reviewEpoch++;
     const selectedGames = games.filter(game => steamSelected(game, draft));
     const selection = { ...payload(), selected_apps: selectedGames.map(game => game.app_id),
-      completion_dates: Object.fromEntries(selectedGames.map(game => [game.app_id, finishDate(game)])) };
+      completion_dates: Object.fromEntries(selectedGames.map(game => [game.app_id, finishDate(game)])),
+      start_dates:Object.fromEntries(selectedGames.map(game=>[game.app_id,draft.start_dates[game.app_id]||null])) };
     clearTimeout(saveTimer); const button = get<HTMLButtonElement>('import'); button.disabled = true; button.textContent = 'Importing…';
     void writes.catch(() => {}).then(() => request<{ imported: number; skipped?: number }>(`/${active!.id}/import`, 'POST', selection))
       .then(async result => {

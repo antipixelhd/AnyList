@@ -46,6 +46,7 @@ class Connect(Options):
 
 
 class Draft(BaseModel):
+    start_dates: dict[str, date | None] = Field(default_factory=dict, max_length=100000)
     import_status: Literal['completed', 'playing', 'planning', 'paused', 'dropped'] = 'completed'
     completion_dates: dict[str, date | None] = Field(default_factory=dict, max_length=100000)
     generation: int = Field(ge=1)
@@ -282,7 +283,7 @@ async def commit_import(connection_id: int, body: ImportSelection, background: B
     if set(selection) - {row['app_id'] for row in library}:
         raise HTTPException(422, 'Selection contains games outside this Steam library.')
     await steam_sync.apply_games(db, state, library, selection, initial=True,
-        initial_status=body.import_status, completion_dates=body.completion_dates)
+        initial_status=body.import_status, completion_dates=body.completion_dates,start_dates=body.start_dates)
     accepted = [app for app in selection if app in state.checkpoints]
     state.selection, state.imported, state.draft = accepted, True, {}
     state.known_apps = sorted(row['app_id'] for row in library)
