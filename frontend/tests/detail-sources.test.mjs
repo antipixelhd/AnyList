@@ -22,6 +22,16 @@ test('a Steam-supplied critic URL is labelled for its actual destination',()=>{
     [{name:'Metacritic',url:'https://www.metacritic.com/game/example'}]);
 });
 
+test('game links use the requested order and derive artwork links without a lookup',()=>{
+  const official={name:'Official website',url:'https://example.com/game'};
+  const steam={name:'Steam',url:'https://store.steampowered.com/app/42/'};
+  const igdb={name:'IGDB',url:'https://www.igdb.com/games/example'};
+  const critic={name:'STEAM',url:'https://www.metacritic.com/game/example'};
+  assert.deepEqual(detailSources([critic,igdb,steam,official],true),[official,steam,igdb,
+    {name:'SteamGridDB · Art',url:'https://www.steamgriddb.com/steam/42'}]);
+  assert.deepEqual(detailSources([critic,igdb],true),[igdb]);
+});
+
 test('late ratings and primary updates reconcile links without losing the other section',()=>{
   const previous=globalThis.document;
   globalThis.document={createElement:()=>({append(){}})};

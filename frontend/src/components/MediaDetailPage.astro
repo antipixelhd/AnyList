@@ -73,7 +73,7 @@ const tabs=[{id:'overview',label:'Overview'},...(title?.type==='series'?[{id:'se
 const initialTab=tabs.find(tab=>tab.id===Astro.url.searchParams.get('tab')&&!(tab.id==='people'&&gamePeopleEmpty)&&!(tab.id==='artwork'&&gameTitle&&!artwork.length&&!gamePrimaryPending))?.id||'overview';
 // Discover only the primary preview in the head, ahead of the large credit JSON.
 const initialArtwork=[poster,backdrop].filter(Boolean).map(image=>({...image,priority:'high'}));
-const sources=detailSources([...(title?.sources||[]),...(title?.tmdb_id?[{name:'TMDB',url:`https://www.themoviedb.org/${title.type==='series'?'tv':'movie'}/${title.tmdb_id}`}]:[]),...(title?.imdb_id?[{name:'IMDb',url:`https://www.imdb.com/title/${title.imdb_id}/`}]:[])]);
+const sources=detailSources([...(title?.sources||[]),...(title?.tmdb_id?[{name:'TMDB',url:`https://www.themoviedb.org/${title.type==='series'?'tv':'movie'}/${title.tmdb_id}`}]:[]),...(title?.imdb_id?[{name:'IMDb',url:`https://www.imdb.com/title/${title.imdb_id}/`}]:[])],title?.type==='game');
 const ratings=[{name:'TMDB',field:'tmdb_score',value:title?.tmdb_score},{name:'IMDb',field:'imdb_score',value:title?.imdb_score},
   {name:'RT Critics',field:'rt_critic_score',value:title?.rt_critic_score},{name:'RT Audience',field:'rt_audience_score',value:title?.rt_audience_score}].filter(rating=>rating.value!=null||title?.scores_pending)
   .map(row=>({...row,value:row.value==null?null:row.name.startsWith('RT')?`${Math.round(Number(row.value))}%`:scoreLabel(Number(row.value))}));

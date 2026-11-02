@@ -1,4 +1,4 @@
-export function detailSources(rows:{name:string;url:string}[] = []) {
+export function detailSources(rows:{name:string;url:string}[] = [], game=false) {
   const sources=new Map<string,{name:string;url:string}>();
   for(const row of rows){
     try{
@@ -11,7 +11,13 @@ export function detailSources(rows:{name:string;url:string}[] = []) {
       if(!sources.has(key))sources.set(key,source);
     }catch{}
   }
-  return [...sources.values()];
+  const values=[...sources.values()];
+  if(!game)return values;
+  const official=values.filter(row=>row.name==='Official website');
+  const steam=values.filter(row=>new URL(row.url).hostname==='store.steampowered.com');
+  const igdb=values.filter(row=>['igdb.com','www.igdb.com'].includes(new URL(row.url).hostname)).map(row=>({...row,name:'IGDB'}));
+  const art=steam.map(row=>({name:'SteamGridDB · Art',url:`https://www.steamgriddb.com/steam/${new URL(row.url).pathname.split('/')[2]}`}));
+  return [...official,...steam,...igdb,...art];
 }
 
 const publications=new WeakMap<HTMLElement,Map<string,{name:string;url:string}[]>>();
@@ -23,7 +29,7 @@ export function publishDetailSources(root:HTMLElement,rows:{name:string;url:stri
     publications.set(root,sections);
   }
   sections.set(owner,rows);
-  const sources=detailSources([...sections.values()].flat());
+  const sources=detailSources([...sections.values()].flat(),root.dataset?.mediaKind==='game');
   nav.replaceChildren(...sources.map(source=>{
     const link=document.createElement('a');link.href=source.url;link.target='_blank';link.rel='noreferrer';link.textContent=source.name;
     const icon=root.querySelector<HTMLTemplateElement>('[data-detail-source-icon]');

@@ -274,6 +274,13 @@ def source_link(provider, url, *, homepage=False):
     return {'name':name or ('Official website' if homepage else provider.upper()), 'url':url}
 
 
+def game_source_links(work, sources):
+    slug=(work.attributes or {}).get('igdb_slug')
+    if isinstance(slug,str) and re.fullmatch(r'[a-z0-9][a-z0-9-]*',slug):
+        sources=[*sources,{'name':'IGDB','url':f'https://www.igdb.com/games/{slug}'}]
+    return sources
+
+
 async def game_primary_details(db, work):
     """Public sections updated by primary hydration, without optional enrichment."""
     snapshots = (await db.execute(select(MetadataSnapshot.provider,
@@ -293,7 +300,7 @@ async def game_primary_details(db, work):
     for identity in identities:
         if identity.external_id.isdecimal():
             sources.append({'name':'Steam','url':f'https://store.steampowered.com/app/{identity.external_id}/'})
-    return {**primary_details(work), 'sources':sources, 'releases':await game_releases(db, work)}
+    return {**primary_details(work), 'sources':game_source_links(work,sources), 'releases':await game_releases(db, work)}
 
 
 async def catalogue_title(db, work, viewer_id=None, *, store_country=None, enqueue_offers=False,enqueue_ratings=False,enqueue_info=False,identities=None):
@@ -358,6 +365,7 @@ async def catalogue_title(db, work, viewer_id=None, *, store_country=None, enque
             details['sources'].append({'name': 'Open Library', 'url': f'https://openlibrary.org/works/{native}'})
         elif identity.namespace == 'steam.app' and native.isdecimal():
             details['sources'].append({'name': 'Steam', 'url': f'https://store.steampowered.com/app/{native}/'})
+    if work.kind=='game':details['sources']=game_source_links(work,details['sources'])
     primary=primary_details(work,details['artwork'])
     return {**details, 'id': work.id, 'type': work.kind, 'title': work.name, 'overview': work.description,
         'poster':primary['poster'],'backdrop':primary['backdrop'],
