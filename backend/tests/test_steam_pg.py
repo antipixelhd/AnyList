@@ -30,6 +30,30 @@ def game(app, minutes, count=None, total=None):
 class SteamDatabaseTests(unittest.IsolatedAsyncioTestCase):
     cleanup = fixture.GamesDatabaseTests.cleanup
 
+    async def test_completed_import_dates_can_be_overridden_or_discarded(self):
+        self.source.library.return_value[0]['last_played'] = 1700000000
+        await self.connect()
+        response = await self.client.post(f'/connections/steam/{self.id}/import', json={
+            'generation': 1, 'selected_apps': ['1245620', '20', '30'],
+            'completion_dates': {'20': '2020-05-04', '30': None}})
+        self.assertEqual(response.status_code, 200, response.text)
+        async with self.Session() as db:
+            rows = dict((await db.execute(select(CatalogueIdentity.external_id, GameEntry).join(
+                GameEntry, GameEntry.work_id == CatalogueIdentity.entity_id).where(GameEntry.user_id == self.user.id,
+                CatalogueIdentity.namespace == 'steam.app'))).all())
+            self.assertTrue(all(row.status == 'completed' for row in rows.values()))
+            self.assertEqual(str(rows['1245620'].finish_date), '2023-11-14')
+            self.assertEqual(str(rows['20'].finish_date), '2020-05-04')
+            self.assertIsNone(rows['30'].finish_date)
+
+    async def test_background_details_survive_independent_review_requests(self):
+        await self.connect()
+        response = await self.client.post(f'/connections/steam/{self.id}/background')
+        self.assertEqual(response.status_code, 200, response.text)
+        details = await self.client.get(f'/connections/steam/{self.id}/achievement-progress')
+        self.assertEqual(details.status_code, 200, details.text)
+        self.assertTrue(all(row['achievement_state'] == 'ready' for row in details.json()['games']))
+
     async def asyncSetUp(self):
         await fixture.GamesDatabaseTests.asyncSetUp(self)
         self.client._transport.app.include_router(steam.router)

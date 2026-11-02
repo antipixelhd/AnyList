@@ -1,3 +1,6 @@
+---
+import CalendarDateInput from '../CalendarDateInput.astro';
+---
 <section data-steam-settings class="steam-settings space-y-4">
   <h2 class="section-headline border-b border-zinc-800 pb-2">Games</h2>
   <div class="rounded-2xl bg-zinc-900 p-5 space-y-4">
@@ -16,7 +19,10 @@
     </form>
     <p data-steam-message role="status" class="text-sm text-zinc-400" hidden></p>
   </div>
-  <div data-steam-review class="rounded-2xl bg-zinc-900 p-5 space-y-5" hidden>
+  <button data-steam-resume type="button" class="steam-primary" hidden>Continue Steam import</button>
+  <dialog data-steam-dialog class="steam-workflow" aria-labelledby="steam-import-heading">
+  <header class="steam-workflow-header"><div><p class="text-sm text-zinc-400">Steam import</p><h2 id="steam-import-heading">Choose your games</h2></div><div class="flex gap-5"><button data-steam-later type="button">Complete later</button><button data-steam-cancel type="button">Cancel import</button></div></header>
+  <div data-steam-review class="space-y-5" hidden>
     <div data-steam-loading class="space-y-3" hidden>
       <p class="text-zinc-200">Loading your Steam library…</p>
       <progress class="w-full accent-indigo-400" max="1" value="0"></progress>
@@ -28,9 +34,11 @@
         <button type="button" data-steam-reset class="text-sm text-zinc-400 hover:text-white">Reset</button>
       </div>
       <div class="steam-filters">
+        <label class="steam-threshold">Import as <select data-steam-status aria-label="Imported game status"><option value="completed">Completed</option><option value="playing">Playing</option><option value="planning">Planning to play</option><option value="paused">Paused</option><option value="dropped">Dropped</option></select></label>
         <label class="steam-threshold"><span><input type="checkbox" data-steam-playtime-enabled checked /> Minimum playtime</span><span><input aria-label="Minimum playtime in minutes" data-steam-minutes type="number" min="0" max="10000000" value="30" /> min</span></label>
         <label class="steam-threshold"><span><input type="checkbox" data-steam-achievements-enabled checked /> Minimum achievements</span><input aria-label="Minimum achievements" data-steam-achievements type="number" min="0" max="50000" value="1" /></label>
       </div>
+      <div class="steam-progress"><div class="flex justify-between text-sm"><span>Achievement details</span><span data-steam-progress-label></span></div><progress data-steam-progress max="1" value="0" aria-label="Loading achievement details"></progress></div>
       <div class="flex flex-wrap items-center justify-between gap-3 my-5 text-sm text-zinc-400">
         <p>Either threshold selects a game. Your card choices take priority.</p>
         <label>Sort <select data-steam-sort aria-label="Sort Steam games" class="rounded-lg bg-zinc-800 p-2 text-zinc-200"><option value="playtime">Playtime</option><option value="alphabetical">Alphabetical</option><option value="completion">Completion</option></select></label>
@@ -41,6 +49,8 @@
     </div>
     <button type="button" data-steam-retry class="steam-primary" hidden>Retry loading</button>
   </div>
+  </dialog>
+  <dialog data-steam-date-dialog class="steam-date-dialog" aria-labelledby="steam-date-heading"><form method="dialog"><h2 id="steam-date-heading">Completion date</h2><CalendarDateInput id="steam-completion-date" name="completion_date" label="Completion date" /><div class="flex justify-between gap-4 mt-6"><button value="discard">Discard date</button><button value="cancel">Cancel</button><button class="steam-primary" value="save">Save date</button></div></form></dialog>
 </section>
 
 <style>
@@ -54,9 +64,17 @@
   .steam-filters { display:flex; flex-wrap:wrap; gap:1rem 2rem; }
   .steam-threshold { display:flex; align-items:center; gap:.75rem; font-size:.875rem; color:#d4d4d8; }
   .steam-threshold input[type=number] { width:5rem; background:#27272a; border-radius:.4rem; padding:.4rem .5rem; }
-  .steam-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(130px,1fr)); gap:1rem; }
+  .steam-workflow { width:min(1240px,96vw); max-width:none; height:92dvh; max-height:96dvh; padding:0; border:0; border-radius:1.25rem; background:var(--surface,#121e2b); color:var(--text,#e4e4e7); overflow:auto; }
+  .steam-workflow::backdrop,.steam-date-dialog::backdrop { background:#030912bb; backdrop-filter:blur(8px); }
+  .steam-workflow-header { display:flex; justify-content:space-between; align-items:center; gap:2rem; padding:1.5rem 2rem; background:var(--surface,#121e2b); position:sticky; top:0; z-index:3; }
+  .steam-workflow-header h2 { font-size:1.75rem; font-weight:650; }
+  [data-steam-review] { padding:1rem 2rem 2rem; }
+  .steam-progress { margin-top:1.25rem; color:#a1a1aa; }
+  .steam-progress progress { width:100%; height:5px; accent-color:#818cf8; }
+  .steam-date-dialog { width:min(420px,94vw); padding:1.5rem; border:0; border-radius:1rem; background:#152334; color:#e4e4e7; }
+  .steam-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:1rem; }
   .steam-import-bar { position:sticky; bottom:1rem; display:flex; justify-content:space-between; align-items:center; gap:1rem; margin-top:1.5rem; padding:1rem; border-radius:.75rem; background:#18181bf2; backdrop-filter:blur(12px); }
-  @media(max-width:480px) { .steam-grid { grid-template-columns:repeat(2,minmax(0,1fr)); gap:.75rem; } }
+  @media(max-width:600px) { .steam-grid { grid-template-columns:1fr; } .steam-workflow { width:100vw; height:100dvh; max-height:100dvh; border-radius:0; } .steam-workflow-header,[data-steam-review] { padding:1rem; } .steam-workflow-header { gap:1rem; } .steam-workflow-header h2 { font-size:1.3rem; } }
   @media(prefers-reduced-motion:reduce) { .steam-primary { transition:none; } }
 </style>
 <style is:global>
@@ -65,6 +83,15 @@
   .steam-card:hover { color:white; }
   .steam-card:focus-visible { background:#4338ca99; outline:none; }
   .steam-card img { width:100%; aspect-ratio:2/3; object-fit:cover; border-radius:.45rem; background:#27272a; }
+  .steam-game { padding:1rem; border-radius:.85rem; background:#ffffff04; transition:background .2s; }
+  .steam-game:has([aria-pressed=true]) { background:#6366f11c; }
+  .steam-game .steam-card { display:grid; grid-template-columns:90px minmax(0,1fr); gap:.4rem .9rem; width:100%; background:transparent; padding:0; }
+  .steam-game .steam-card img { grid-row:1/4; }
+  .steam-game .steam-card-title { font-size:1rem; line-height:1.45; margin:0; }
+  .steam-game .steam-card-stats { font-size:.85rem; margin:0; }
+  .steam-game .steam-card-check { display:none; }
+  .steam-game .steam-card[aria-pressed=true] .steam-card-title::before { content:'✓ '; color:#a5b4fc; }
+  .steam-completion { margin-left:calc(90px + .9rem); text-align:left; font-size:.8rem; color:#b9b6ed; padding:.4rem 0; }
   .steam-card-title { display:block; margin-top:.5rem; font-size:.8rem; font-weight:500; line-height:1.4; }
   .steam-card-stats { display:block; font-size:.75rem; color:#a1a1aa; margin-top:.3rem; }
   .steam-card-achievements { display:block; min-height:1.125rem; line-height:1.125rem; }

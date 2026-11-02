@@ -18,6 +18,46 @@ def now():
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+async def background_details(factory, user_id, connection_id, job_id):
+    """Owned by the server, so dismissing or leaving the picker cannot stop it."""
+    async with factory() as db:
+        if not await mark_job_running_unless_cancelled(db, job_id):
+            return
+        state = await db.get(SteamConnection, connection_id)
+        if state is None or state.user_id != user_id:
+            return
+        library, native, generation = list(state.library), state.steam_id, state.generation
+    try:
+        source = SteamSource(factory)
+        library.sort(key=lambda game: -game['playtime_minutes'])
+        async with factory() as db:
+            observed = await steam_cache.read_progress(db, user_id, native, library)
+        pending = [game for game in observed if game['achievement_refresh_due']]
+        for offset in range(0, len(pending), 4):
+            await steam_cache.load_progress(factory, user_id, native, pending[offset:offset+4], source)
+            async with factory() as db:
+                await raise_if_cancelled(db, job_id)
+                job = await running_job(db, job_id)
+                job.processed_items = min(offset+4, len(library))
+                await db.commit()
+        async with factory() as db:
+            await game_tracking.lock_owner(db, user_id)
+            state = await db.get(SteamConnection, connection_id, with_for_update=True)
+            if state and state.generation == generation and state.imported:
+                games = await steam_cache.read_progress(db, user_id, native, library)
+                await apply_games(db, state, games, state.selection)
+            job = await running_job(db, job_id)
+            job.status = SyncStatus.completed
+            await db.commit()
+    except SyncCancelled:
+        return
+    except Exception:
+        async with factory() as db:
+            await db.execute(update(SyncJob).where(SyncJob.id == job_id, SyncJob.status == SyncStatus.running)
+                .values(status=SyncStatus.failed, error_message='Background Steam details interrupted. Resume the import to retry.'))
+            await db.commit()
+
+
 async def running_job(db, job_id):
     job = await db.scalar(select(SyncJob).where(SyncJob.id == job_id).with_for_update().execution_options(populate_existing=True))
     if job is None or job.status != SyncStatus.running:
@@ -49,7 +89,7 @@ async def attach_dates(db, library):
     return [{**game, 'release_date': public.get(game['app_id'], {}).get('release_date')} for game in library]
 
 
-async def apply_games(db, state, library, selected, *, initial=False, add_apps=None):
+async def apply_games(db, state, library, selected, *, initial=False, add_apps=None, initial_status='completed', completion_dates=None):
     """Caller holds the owner mutex. Source totals never replace manual deltas."""
     by_app = {row['app_id']: row for row in library}
     checkpoints, additions = dict(state.checkpoints), set(add_apps or ())
@@ -85,8 +125,16 @@ async def apply_games(db, state, library, selected, *, initial=False, add_apps=N
             db.add(entry)
             if automatic:
                 prior['start_pending'] = True
-        previous = (entry.status, entry.start_date, entry.total_seconds, entry.achievement_mode,
+        previous = (entry.status, entry.start_date, entry.finish_date, entry.total_seconds, entry.achievement_mode,
                     entry.achievement_count, entry.achievement_percentage)
+        if initial:
+            entry.status = initial_status
+            if initial_status == 'completed':
+                stamp = data.get('last_played')
+                inferred = datetime.fromtimestamp(stamp, ZoneInfo(state.timezone or 'UTC')).date() if stamp else None
+                entry.finish_date = (completion_dates or {}).get(app, inferred)
+                if entry.completion_seconds is None:
+                    entry.completion_source = 'unknown'
         if state.auto_add_games and prior.get('start_pending'):
             if entry.status != 'planning' or entry.start_date is not None:
                 prior['start_pending'] = False
@@ -105,7 +153,7 @@ async def apply_games(db, state, library, selected, *, initial=False, add_apps=N
             entry.achievement_mode, entry.achievement_count = 'count', data['achievement_count']
             total = data.get('achievement_total')
             entry.achievement_percentage = 100 * entry.achievement_count / total if total and entry.achievement_count <= total else None
-        current = (entry.status, entry.start_date, entry.total_seconds, entry.achievement_mode,
+        current = (entry.status, entry.start_date, entry.finish_date, entry.total_seconds, entry.achievement_mode,
                    entry.achievement_count, entry.achievement_percentage)
         if created or previous != current:
             entry.revision = (entry.revision or 0) + 1

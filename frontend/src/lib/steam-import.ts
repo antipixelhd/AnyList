@@ -1,5 +1,6 @@
 export type SteamGame = {
   app_id: string; name: string; poster: string; release_date: string | null;
+  last_played?: number | null;
   playtime_minutes: number; achievement_count: number | null; achievement_total: number | null;
   achievement_state?: 'loading' | 'ready' | 'unavailable'; achievement_refresh_due?: boolean; achievement_refreshing?: boolean;
 };
@@ -7,12 +8,14 @@ export function steamProgressPending(game: SteamGame): boolean {
   return game.achievement_refresh_due !== false || game.achievement_state === 'loading' || game.achievement_refreshing === true;
 }
 export type SteamDraft = {
+  import_status: 'completed' | 'playing' | 'planning' | 'paused' | 'dropped';
+  completion_dates: Record<string, string | null>;
   minimum_playtime: number; minimum_achievements: number;
   playtime_enabled: boolean; achievements_enabled: boolean;
   overrides: Record<string, boolean>; sort: 'playtime' | 'alphabetical' | 'completion';
 };
 export function defaultSteamDraft(): SteamDraft {
-  return { minimum_playtime: 30, minimum_achievements: 1, playtime_enabled: true,
+  return { import_status: 'completed', completion_dates: {}, minimum_playtime: 30, minimum_achievements: 1, playtime_enabled: true,
     achievements_enabled: true, overrides: {}, sort: 'playtime' };
 }
 export function steamSelected(game: SteamGame, draft: SteamDraft): boolean {

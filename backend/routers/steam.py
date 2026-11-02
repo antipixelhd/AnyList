@@ -1,5 +1,6 @@
 """Steam connections share account ownership and sync jobs, with a dedicated review."""
-from typing import Annotated
+from typing import Annotated, Literal
+from datetime import date
 import asyncio
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -45,6 +46,8 @@ class Connect(Options):
 
 
 class Draft(BaseModel):
+    import_status: Literal['completed', 'playing', 'planning', 'paused', 'dropped'] = 'completed'
+    completion_dates: dict[str, date | None] = Field(default_factory=dict, max_length=100000)
     generation: int = Field(ge=1)
     minimum_playtime: int = Field(default=30, ge=0, le=10000000)
     minimum_achievements: int = Field(default=1, ge=0, le=50000)
@@ -98,6 +101,27 @@ async def owned(db, user_id, connection_id, *, lock=False):
     if not state:
         raise HTTPException(404, 'Steam connection not found')
     return state
+
+
+@router.post('/{connection_id}/background')
+async def background_details(connection_id: int, background: BackgroundTasks, db: DB, viewer: Viewer) -> dict:
+    state = await owned(db, viewer.id, connection_id, lock=True)
+    job = await db.scalar(select(SyncJob).where(SyncJob.connection_id == connection_id,
+        SyncJob.user_id == viewer.id, SyncJob.job_type == 'steam_details',
+        SyncJob.status.in_((SyncStatus.pending, SyncStatus.running))).order_by(SyncJob.id.desc()).limit(1))
+    if job is None:
+        job = SyncJob(user_id=viewer.id, connection_id=connection_id, source=CollectionSource.steam,
+            job_type='steam_details', status=SyncStatus.pending, total_items=len(state.library))
+        db.add(job); await db.commit()
+        background.add_task(steam_sync.background_details, AsyncSessionLocal, viewer.id, connection_id, job.id)
+    return {'job_id': job.id}
+
+
+@router.get('/{connection_id}/achievement-progress')
+async def detail_progress(connection_id: int, db: DB, viewer: Viewer) -> dict:
+    state = await owned(db, viewer.id, connection_id)
+    games = await steam_cache.read_progress(db, viewer.id, state.steam_id, state.library)
+    return {'games': [{key: value for key, value in game.items() if key == 'app_id' or key.startswith('achievement_')} for game in games]}
 
 
 async def latest_job(db, user_id, connection_id):
@@ -243,7 +267,7 @@ async def validate_draft(db, viewer, connection_id, body):
 @router.put('/{connection_id}/draft')
 async def save_draft(connection_id: int, body: Draft, db: DB, viewer: Viewer) -> dict:
     state = await validate_draft(db, viewer, connection_id, body)
-    state.draft = body.model_dump(exclude={'generation'})
+    state.draft = body.model_dump(mode='json', exclude={'generation'})
     await db.commit()
     return {'selected_count': len(selected_games(state.library, body))}
 
@@ -257,7 +281,8 @@ async def commit_import(connection_id: int, body: ImportSelection, db: DB, viewe
     selection = selected_games(library, body) if body.selected_apps is None else list(dict.fromkeys(body.selected_apps))
     if set(selection) - {row['app_id'] for row in library}:
         raise HTTPException(422, 'Selection contains games outside this Steam library.')
-    await steam_sync.apply_games(db, state, library, selection, initial=True)
+    await steam_sync.apply_games(db, state, library, selection, initial=True,
+        initial_status=body.import_status, completion_dates=body.completion_dates)
     accepted = [app for app in selection if app in state.checkpoints]
     state.selection, state.imported, state.draft = accepted, True, {}
     state.known_apps = sorted(row['app_id'] for row in library)
