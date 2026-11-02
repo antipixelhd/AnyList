@@ -224,7 +224,7 @@ def primary_details(work,artwork=None):
     selected=image(attrs.get('backdrop_path')) or (next(iter(gallery),None) if 'attributes.artwork' in (work.protected_fields or []) else None)
     from core.game_artwork import asset_url,background_status
     grid_hero=asset_url((attrs.get('steamgriddb_hero') or {}).get('image')) if work.kind=='game' else None
-    backdrop=selected or grid_hero or next(iter(scenes if work.kind=='game' and attrs.get('artwork_policy_version') in (1,2,3,GAME_ARTWORK_VERSION) else gallery),None)
+    backdrop=selected or grid_hero or next(iter(scenes if work.kind=='game' and attrs.get('artwork_policy_version') in (1,2,3,4,GAME_ARTWORK_VERSION) else gallery),None)
     preview=next((url for url in scenes if image_key(url)!=image_key(backdrop or '')),None) if work.kind=='game' else None
     if work.kind=='game':gallery=[url for url in gallery if image_key(url) not in {image_key(backdrop or ''),image_key(preview or '')}]
     released=attrs.get('release_date')

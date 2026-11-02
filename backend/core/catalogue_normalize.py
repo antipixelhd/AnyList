@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 from core.countries import country_codes, game_countries, numeric_country, screen_countries
 from core.studio_names import studio_name, studio_attributes
 from core.movie_financials import movie_financials
-GAME_ARTWORK_VERSION = 4
+GAME_ARTWORK_VERSION = 5
 
 
 PRIMARY = {"movie": "tmdb", "series": "tmdb", "game": "igdb", "book": "hardcover"}
@@ -383,11 +383,12 @@ def game_artwork(raw):
             if not isinstance(row,dict) or row.get('animated'):continue
             kind=row.get('image_type')
             if kind in (5,6,7,8,9,10,11,12,13,14,15):continue
+            width,height=(row.get(key) for key in ('width','height'))
+            if all(type(value) is int and value>0 for value in (width,height)) and max(width,height)<256:continue
             url=image(row)
             if not url:continue
             priority=priorities.get(kind,0) if field=='artworks' else 5
             gallery.append((priority,position,url))
-            width,height=(row.get(key) for key in ('width','height'))
             # Wide key art and Steam-shaped banners are valid hero candidates.
             if all(type(value) is int and value>0 for value in (width,height)) and width>=640 and 1.25<=width/height<=4:
                 scenes.append((priority,-width*height,position,url))

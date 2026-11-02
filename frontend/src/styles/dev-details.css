@@ -52,7 +52,9 @@
 .detail-lab h3 { font-size: var(--type-card-size); font-weight: 600; line-height: 1.45; }
 .detail-lab button { color: inherit; border: 0; background: none; }
 .detail-lab button,.detail-lab a,.detail-lab select,.detail-lab input,.detail-lab textarea { -webkit-tap-highlight-color: transparent; }
-.detail-lab :is(button,a,input,select,textarea):focus-visible { outline: 2px solid var(--blue); outline-offset: 4px; }
+.detail-lab :is(button,a,input,select,textarea,summary):focus-visible { outline:none; color:var(--blue); }
+.detail-lab :is(button,a):focus-visible img { filter:brightness(1.12); }
+.detail-lab :is(input,select,textarea):focus-visible { background:color-mix(in srgb,var(--blue) 12%,var(--field)); }
 .detail-lab button:disabled { opacity: .55; cursor: default; }
 .detail-lab .ui-icon { display: inline-flex; flex-shrink: 0; width: 1.2em; height: 1.2em; align-items: center; justify-content: center; }
 .detail-lab .ui-icon svg { width: 100%; height: 100%; }
@@ -291,7 +293,7 @@
 .lab-score-disclosure summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-top: 14px; font-size: 1.1rem; cursor: pointer; list-style: none; color: var(--text); }
 .lab-score-disclosure summary::-webkit-details-marker { display: none; }
 .lab-score-disclosure summary:hover { color: var(--blue); }
-.lab-score-disclosure summary:focus-visible { outline: 2px solid var(--blue); outline-offset: 4px; }
+.lab-score-disclosure summary:focus-visible { outline:none; color:var(--blue); }
 .lab-score-disclosure summary .ui-icon { width: 10px; height: 10px; transition: transform .2s; }
 .lab-score-disclosure[open] summary .ui-icon { transform: rotate(180deg); }
 .lab-distribution { padding-top: 18px; animation: lab-panel-enter .25s ease; }
@@ -402,7 +404,7 @@
 .lab-steam-review { position: relative; }
 .lab-steam-review summary { list-style: none; cursor: pointer; }
 .lab-steam-review summary::-webkit-details-marker { display: none; }
-.lab-steam-review summary:focus-visible { outline: 2px solid var(--blue); outline-offset: 5px; border-radius: 2px; }
+.lab-steam-review summary:focus-visible { outline:none; color:var(--blue); }
 .lab-review-period { display: block; font-size: 1.1rem; color: var(--lab-muted); margin-bottom: 6px; }
 .lab-review-verdict { font-size: 1.5rem; line-height: 1.6; }
 .sentiment-positive { color: #79c8ec; }.sentiment-mixed { color: #d9b986; }.sentiment-negative { color: #ed9869; }

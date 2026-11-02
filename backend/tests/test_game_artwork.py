@@ -38,7 +38,9 @@ class ArtworkTests(unittest.IsolatedAsyncioTestCase):
     def test_igdb_order_icons_and_unique_primary_images(self):
         rows=[{'url':f'https://images.igdb.com/igdb/image/upload/t_original/a{i}.jpg',
             'image_type':i,'width':1920,'height':620} for i in (3,4,2,1,13,5,8,12)]
-        normalized=game_artwork({'artworks':rows,'screenshots':[{'url':'https://cdn.test/screenshot.jpg','width':3840,'height':2160}]})
+        normalized=game_artwork({'artworks':[*rows,{'url':'https://cdn.test/icon.jpg','image_type':1,'width':48,'height':48}],
+            'screenshots':[{'url':'https://cdn.test/screenshot.jpg','width':3840,'height':2160}]})
+        self.assertNotIn('https://cdn.test/icon.jpg',normalized['artwork'])
         self.assertEqual([url.split('/')[-1] for url in normalized['scene_artwork']],['a1.jpg','a4.jpg','a2.jpg','a3.jpg','screenshot.jpg'])
         work=SimpleNamespace(id=1,kind='game',name='Game',description='',image_url=None,
             protected_fields=[],field_sources={},attributes={**normalized,'steamgriddb_hero':{'image':asset()['url']}})
