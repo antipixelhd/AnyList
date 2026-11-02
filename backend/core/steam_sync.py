@@ -1,4 +1,5 @@
 """Steam review and incremental account sync with durable source checkpoints."""
+import asyncio
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -32,14 +33,20 @@ async def background_details(factory, user_id, connection_id, job_id):
         library.sort(key=lambda game: -game['playtime_minutes'])
         async with factory() as db:
             observed = await steam_cache.read_progress(db, user_id, native, library)
-        pending = [game for game in observed if game['achievement_refresh_due']]
-        for offset in range(0, len(pending), 4):
-            await steam_cache.load_progress(factory, user_id, native, pending[offset:offset+4], source)
+        pending = [game for game in observed if game['achievement_refresh_due'] or game['achievement_state'] == 'loading' or game.get('achievement_refreshing')]
+        while pending:
+            for offset in range(0, len(pending), 4):
+                await steam_cache.load_progress(factory, user_id, native, pending[offset:offset+4], source)
+                async with factory() as db:
+                    await raise_if_cancelled(db, job_id)
+                    job = await running_job(db, job_id)
+                    job.processed_items = min(len(library)-len(pending)+offset+4, len(library))
+                    await db.commit()
             async with factory() as db:
-                await raise_if_cancelled(db, job_id)
-                job = await running_job(db, job_id)
-                job.processed_items = min(offset+4, len(library))
-                await db.commit()
+                observed = await steam_cache.read_progress(db, user_id, native, library)
+            pending = [game for game in observed if game['achievement_refresh_due'] or game['achievement_state'] == 'loading' or game.get('achievement_refreshing')]
+            if pending:
+                await asyncio.sleep(1.5)
         async with factory() as db:
             await game_tracking.lock_owner(db, user_id)
             state = await db.get(SteamConnection, connection_id, with_for_update=True)
