@@ -197,6 +197,10 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
       return;
     }
     prepareImage(current);
+    // Opening is explicit gallery intent. Start the remaining full-size
+    // images on their real slides so swiping never waits to assign a source.
+    // Reconciliation retains these decoded elements across selection changes.
+    rows.forEach((_,position)=>{if(position!==current)prepareImage(position);});
   };
   const prepareImage=(index:number)=>{
     if(!lightbox.open||signal.aborted)return;
@@ -204,7 +208,9 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
     if(!original)return;
     const url=responsiveArtwork(original,{size:group==='posters'?'w780':'original',route:'auto'})?.src;
     const slide=carousel.slide(index);
-    if(!url||!slide||preparedImages.get(slide.image)===url)return;
+    if(!url||!slide)return;
+    if(index===current)slide.image.fetchPriority='high';
+    if(preparedImages.get(slide.image)===url)return;
     const {image,skeleton}=slide;
     preparedImages.set(image,url);
     skeleton.classList.add('detail-image-skeleton');skeleton.textContent='';
@@ -218,7 +224,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
       }
       return wasSelected;
     };
-    const ready=loadViewerImage(image,skeleton,url,`${name} · ${group==='posters'?'Poster':'Artwork'} ${index+1}`);
+    const ready=loadViewerImage(image,skeleton,url,`${name} · ${group==='posters'?'Poster':'Artwork'} ${index+1}`,index===current?'high':'low');
     const cached=image.complete&&image.naturalWidth>0;
     void ready.then(loaded=>{
       if(!loaded||signal.aborted)return;

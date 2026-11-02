@@ -33,6 +33,18 @@ test('a cached image appears synchronously without resetting its skeleton on ret
   load(a.image,a.skeleton,'first','First again');assert.equal(a.sources(),1);
 });
 
+test('background gallery images decode once and stay visible when selected later',async()=>{
+  const load=createDetailViewerImageLoader(new AbortController().signal),a=slide();
+  const warm=load(a.image,a.skeleton,'next','Next','low');
+  assert.equal(a.image.fetchPriority,'low');
+  a.finish();await warm;
+  const selected=load(a.image,a.skeleton,'next','Next');
+  assert.equal(selected,warm);
+  assert.equal(a.skeleton.hidden,true);
+  assert.equal(a.image.style.visibility,'');
+  assert.equal(a.decodes(),1);assert.equal(a.sources(),1);
+});
+
 test('page teardown prevents a late decode from revealing an image',async()=>{
   const controller=new AbortController(),load=createDetailViewerImageLoader(controller.signal),a=slide();
   const ready=load(a.image,a.skeleton,'first','First');controller.abort();a.finish();

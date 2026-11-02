@@ -13,6 +13,21 @@ test('Games retain complete canonical galleries while other consumers retain the
   assert.deepEqual(Array.from(context.unique([...rows,rows[0].replace('t_thumb','t_1080p'),'javascript:alert(1)'],Infinity)),rows);
 });
 
+test('opening the shared viewer prepares the selected image first and every remaining slide',()=>{
+  const prepared=[];
+  const rows=Array.from({length:22},(_,index)=>`image-${index}`);
+  const scope={galleries:{artwork:rows},active:'artwork',current:0,name:'Game',galleryLimit:10,
+    viewerPending:()=>false,resetZoom:()=>{},revealPreviews:()=>{},announcement:null,
+    carousel:()=>({image:{},skeleton:{}}),fitViewer:()=>{},viewerGroup:()=> 'artwork',
+    arrows:[],paintSlots:()=>{},imageKey:value=>value,prepareImage:index=>prepared.push(index)};
+  const start=source.indexOf('  const showImage=');
+  const end=source.indexOf('  const prepareImage=',start);
+  runInNewContext(stripTypeScriptTypes(source.slice(start,end))+';showImage(7);',scope);
+  assert.equal(prepared[0],7);
+  assert.equal(new Set(prepared).size,22);
+  assert.equal(prepared.length,22);
+});
+
 test('a refreshed canonical game gallery removes stale logos instead of merging them back',()=>{
   let publish;
   const info={type:'game',id:194},galleries={posters:[],artwork:['scene','logo']};

@@ -2,12 +2,12 @@
  * Starting another slide must never cancel one the user has already exposed. */
 export function createDetailViewerImageLoader(signal:AbortSignal) {
   const requests=new WeakMap<HTMLImageElement,{url:string;pending:Promise<boolean>}>();
-  return (image:HTMLImageElement,skeleton:HTMLElement,url:string,alt:string)=>{
+  return (image:HTMLImageElement,skeleton:HTMLElement,url:string,alt:string,priority:'high'|'low'='high')=>{
     if(signal.aborted)return Promise.resolve(false);
     image.alt=alt;
     const existing=requests.get(image);
     if(existing?.url===url)return existing.pending;
-    image.fetchPriority='high';
+    image.fetchPriority=priority;
     image.src=url;
     if(image.complete&&image.naturalWidth>0){
       image.style.visibility='';skeleton.hidden=true;
