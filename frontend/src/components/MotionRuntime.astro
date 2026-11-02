@@ -4,7 +4,8 @@
 
   const active = new Map<HTMLElement, ReturnType<typeof animate>>();
   const hovered = new Set<HTMLElement>();
-  const selector = 'button, [role="button"], input[type="button"], input[type="submit"], input[type="reset"], a.button-primary, a.button-secondary, a.button-quiet, a.button-danger, a.appbar-icon-link, [data-motion-press]';
+  // Scaling also resamples text. Components must opt in and own their motion.
+  const selector = '[data-motion-press]';
   const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
   const canHover = () => matchMedia('(hover: hover) and (pointer: fine)').matches && !reduced();
 
