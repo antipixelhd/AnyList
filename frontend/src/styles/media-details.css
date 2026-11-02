@@ -75,17 +75,18 @@
 .media-detail .media-square { width:var(--media-control-height); height:var(--media-control-height); display:grid; place-items:center; flex-shrink:0; padding:0; border:1px solid var(--border); border-radius:5px; background:var(--panel); color:var(--lab-muted); }
 .media-detail .media-square .ui-icon { width:15px; height:15px; }
 .media-detail .media-square { transition:background-color .18s ease,border-color .18s ease,color .18s ease; }
-.media-detail :is(.media-square,.lab-season-rate,.lab-text-button,.lab-episode-check):focus-visible { outline:2px solid var(--blue); outline-offset:3px; }
+.media-detail :is(.lab-season-rate,.lab-text-button,.lab-episode-check):focus-visible { outline:2px solid var(--blue); outline-offset:3px; }
 .media-detail :is(.lab-season-rate strong,.lab-text-button) { transition:color .18s ease; }
 .media-detail [data-detail-synopsis] { scroll-margin-top:96px; }
 .media-detail [data-detail-synopsis] [data-biography-text] { white-space:pre-line; }
 .media-detail .media-square[aria-pressed=true] { color:var(--blue); border-color:color-mix(in srgb,var(--blue) 40%,var(--border)); background:color-mix(in srgb,var(--blue) 12%,var(--panel)); }
 .media-detail .media-square[aria-pressed=true] svg { fill:currentColor; }
 .media-detail .media-favorite { color:#f05296; }
-.media-detail .media-favorite[aria-pressed=true] { color:#ffffff; border-color:#f05296; background:#f05296; }
+.media-detail .media-favorite[aria-pressed=true] { --media-action-surface:#f05296; color:#ffffff; border-color:#f05296; background:#f05296; }
 .media-detail .media-library { color:var(--blue); }
-.media-detail .media-library[aria-pressed=true] { color:#ffffff; border-color:var(--blue); background:var(--blue); }
+.media-detail .media-library[aria-pressed=true] { --media-action-surface:var(--blue); color:#ffffff; border-color:var(--blue); background:var(--blue); }
 .media-detail :is(.media-favorite,.media-library)[aria-pressed=false] { border-color:transparent; }
+.media-detail :is(.media-favorite,.media-library):is(:hover,:focus-visible):not(:disabled) { outline:none; background:color-mix(in srgb,var(--white) 7%,var(--media-action-surface,var(--panel))); }
 .media-detail .lab-friend-avatar img { width:100%; height:100%; object-fit:cover; border-radius:inherit; }
 .media-detail .lab-friend h3 { overflow-wrap:anywhere; }
 .media-detail .lab-friend>div { flex:1; }

@@ -38,13 +38,13 @@ if (token) {
       <div class="flex gap-3 mb-8">
         <button
           id="pick-movie-btn"
-          class="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-black rounded-2xl transition-all shadow-xl shadow-blue-900/40 active:scale-95 text-sm uppercase tracking-wider cursor-pointer"
+          class="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-black rounded-2xl transition-all shadow-xl shadow-blue-900/40 text-sm uppercase tracking-wider cursor-pointer"
         >
           Pick a Movie
         </button>
         <button
           id="pick-show-btn"
-          class="inline-flex items-center gap-2 px-6 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-100 font-black rounded-2xl transition-all active:scale-95 text-sm uppercase tracking-wider cursor-pointer"
+          class="inline-flex items-center gap-2 px-6 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-100 font-black rounded-2xl transition-all text-sm uppercase tracking-wider cursor-pointer"
         >
           Pick a Show
         </button>
@@ -86,10 +86,10 @@ if (token) {
           <div id="pick-genres" class="flex flex-wrap gap-2"></div>
           <div id="pick-sources" class="flex flex-wrap gap-2"></div>
           <div class="flex gap-3 pt-1">
-            <button id="pick-again-btn" class="flex items-center gap-2 px-4 py-2.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-200 font-bold text-sm rounded-xl transition-all active:scale-95 active:opacity-70 cursor-pointer">
+            <button id="pick-again-btn" class="flex items-center gap-2 px-4 py-2.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-200 font-bold text-sm rounded-xl transition-all active:opacity-70 cursor-pointer">
               Pick again
             </button>
-            <a id="pick-view-link" href="#" class="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm rounded-xl transition-all active:scale-95">
+            <a id="pick-view-link" href="#" class="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm rounded-xl transition-all ">
               View details →
             </a>
           </div>
@@ -99,7 +99,7 @@ if (token) {
       <div id="pick-error" class="hidden flex-col items-center justify-center py-20 px-8 gap-4 text-center">
         <span class="text-5xl">🤷</span>
         <p id="pick-error-msg" class="text-zinc-300 font-medium"></p>
-        <button id="pick-error-retry" class="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold text-sm rounded-xl transition-all active:scale-95 cursor-pointer">
+        <button id="pick-error-retry" class="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold text-sm rounded-xl transition-all cursor-pointer">
           Try again
         </button>
       </div>

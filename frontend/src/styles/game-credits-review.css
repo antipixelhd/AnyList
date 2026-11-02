@@ -14,7 +14,7 @@
   .match-records span{font-size:14px;color:var(--muted)}
   .match-submit{min-height:40px;font-size:14px;white-space:nowrap;flex-shrink:0;cursor:pointer;transition:background-color .16s,transform .16s}
   .match-submit:is(:hover,:focus-visible){outline:none;background:color-mix(in srgb,var(--blue) 85%,white)}
-  .match-submit:active{transform:scale(.98)}
+  .match-submit:active{filter:brightness(.94)}
   .match-submit:disabled{opacity:.65;cursor:progress}
   .match-review{display:grid;gap:12px;font-size:14px}
   .match-review textarea{font:inherit;color:var(--bright);background:var(--panel);border:0;border-radius:5px;padding:12px;resize:vertical;transition:background-color .16s}

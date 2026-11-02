@@ -340,7 +340,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
                 aria-pressed={active}
                 data-chip="streaming"
                 data-value={id}
-                class={`chip px-5 py-3 rounded-full border text-base font-medium transition-all cursor-pointer active:scale-95 active:opacity-70 ${active ? "bg-blue-500/20 border-blue-500 text-blue-400" : "bg-zinc-900 border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200"}`}
+                class={`chip px-5 py-3 rounded-full border text-base font-medium transition-all cursor-pointer active:opacity-70 ${active ? "bg-blue-500/20 border-blue-500 text-blue-400" : "bg-zinc-900 border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200"}`}
               >
                 {name}
               </button>
