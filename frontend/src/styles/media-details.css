@@ -30,6 +30,7 @@
 .media-detail .lab-hero-art-button:is(:hover,:focus-visible) { outline:none; background:#15233380; color:var(--bright); }
 @media (prefers-reduced-motion:reduce) { .media-detail .lab-hero-art-button { transition:none; } }
 .media-detail .media-cover-empty { display:grid; place-items:center; background:var(--panel); color:var(--blue); font-size:5rem; }
+.media-detail :is(.media-cover,.lab-art-image):focus-visible { outline:none; opacity:.85; }
 .media-detail .media-original-title { font-size:1.3rem; color:var(--lab-muted); margin-bottom:8px; }
 .media-detail .lab-genres a { font-size:1.1rem; padding:4px 10px; background:rgb(21 31 46 / 75%); border-radius:4px; color:var(--text); }
 .media-detail :is(.lab-facts,.lab-inline-facts,.lab-game-times) :is(dt,dd) { font-family:var(--font-body); }
@@ -73,7 +74,7 @@
 .media-detail .media-square { width:var(--media-control-height); height:var(--media-control-height); display:grid; place-items:center; flex-shrink:0; padding:0; border:1px solid var(--border); border-radius:5px; background:var(--panel); color:var(--lab-muted); }
 .media-detail .media-square .ui-icon { width:15px; height:15px; }
 .media-detail .media-square { transition:background-color .18s ease,border-color .18s ease,color .18s ease; }
-.media-detail :is(.media-square,.lab-season-rate,.lab-text-button,.lab-episode-check):focus-visible { outline:none; color:var(--blue); background:color-mix(in srgb,var(--blue) 12%,var(--panel)); }
+.media-detail :is(.media-square,.lab-season-rate,.lab-text-button,.lab-episode-check):focus-visible { outline:2px solid var(--blue); outline-offset:3px; }
 .media-detail :is(.lab-season-rate strong,.lab-text-button) { transition:color .18s ease; }
 .media-detail [data-detail-synopsis] { scroll-margin-top:96px; }
 .media-detail [data-detail-synopsis] [data-biography-text] { white-space:pre-line; }
