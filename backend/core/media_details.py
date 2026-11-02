@@ -234,6 +234,7 @@ def primary_details(work,artwork=None):
         'poster':poster,'posters':[poster] if poster else [],'artwork':gallery,'backdrop':backdrop,
         **({'artwork_preview':{'image':preview},'backdrop_fallbacks':scenes} if work.kind=='game' else {}),
         'release_date':released,'year':str(released or '')[:4],
+        **({'release_date_precision':attrs.get('release_date_precision'),'release_quarter':attrs.get('release_quarter')} if work.kind=='game' else {}),
         'genres':[value if isinstance(value,str) else value.get('name') for value in attrs.get('genres') or []
             if isinstance(value,str) or isinstance(value,dict) and value.get('name')],
         'platforms':list(dict.fromkeys('PC' if row.get('group')=='PC' or str(row.get('id')) in {'3','6','14'}
@@ -358,6 +359,7 @@ async def catalogue_title(db, work, viewer_id=None, *, store_country=None, enque
         'poster':primary['poster'],'backdrop':primary['backdrop'],
         **({key:primary[key] for key in ('artwork_preview','backdrop_fallbacks')} if work.kind=='game' else {}),
         'release_date': attrs.get('release_date'), 'year': str(attrs.get('release_date') or '')[:4],
+        **({'release_date_precision':attrs.get('release_date_precision'),'release_quarter':attrs.get('release_quarter')} if work.kind=='game' else {}),
         'genres': [value if isinstance(value, str) else value.get('name') for value in attrs.get('genres') or []
             if isinstance(value, str) or (isinstance(value, dict) and value.get('name'))],
         'countries': attrs.get('countries') or [], 'pages': attrs.get('pages'),

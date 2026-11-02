@@ -35,6 +35,7 @@ export type DetailMedia = EditorTitle & {
   primary?:Record<string,any>;
   primary_status?:import('./detail-background').DetailLoadState;
   id: number; type: MediaKind; overview?: string | null; year?: string; release_date?: string | null;
+  release_date_precision?:string|null; release_quarter?:number|null;
   original_title?: string; tagline?: string; release_status?: string; original_language?: string;
   runtime?: number; episode_runtime?: number; season_count?: number; episode_count?: number;
   budget?: number | null; revenue?: number | null;
@@ -171,7 +172,8 @@ export function durationLabel(minutes?: number | null) {
   const hours = Math.floor(minutes / 60), rest = Math.round(minutes % 60);
   return hours ? `${hours}h${rest ? ` ${rest}m` : ''}` : `${rest}m`;
 }
-export function detailDate(value?: string | null) {
+export function detailDate(value?: string | null, quarter?:number|null) {
+  if(value&&/^\d{4}$/.test(value)&&typeof quarter==='number'&&Number.isInteger(quarter)&&quarter>=1&&quarter<=4)return `Q${quarter} ${value}`;
   return formatDate(value?.slice(0, 10));
 }
 export function detailSynopsis(value?: string | null, oneParagraph=false) {
@@ -197,7 +199,8 @@ export function detailFacts(media: DetailMedia, today = localToday()) {
   const add = (label: string, value: unknown) => { if (value != null && value !== '' && value !== 0) facts.push({label,value:String(value)}); };
   const release = (media.release_date || media.year || '').slice(0,10);
   const future = /^\d{4}(?:-\d{2}){0,2}$/.test(release) && release > today.slice(0,release.length);
-  add(media.type === 'book' ? 'First published' : future ? 'Releases' : 'Released', detailDate(media.release_date) || media.year);
+  add(media.type === 'book' ? 'First published' : future ? 'Releases' : 'Released', detailDate(media.release_date,
+    media.type==='game'&&media.release_date_precision==='quarter'?media.release_quarter:null) || media.year);
   add('Status',media.release_status);
   if (media.type === 'movie') add('Runtime',durationLabel(media.runtime));
   if (media.type === 'series') {

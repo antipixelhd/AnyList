@@ -8,13 +8,14 @@ const screen=title.type==='movie'||title.type==='series';
 const organizations=detailOrganizationFacts(title);
 const lowerFacts=new Set(['Language','Country','Budget','Box office','Platforms']);
 const finalGroups=new Set(['Studios','Publisher']);
+const quarterRelease=title.type==='game'&&title.release_date_precision==='quarter';
 const age=title.type==='game'?gameAgeRating(title.game_info,title.game_offer_context?.country||'US'):null;
 ---
 {screen?<><dl data-screen-facts aria-busy={pending?'true':undefined}>
   {detailInformationRows(title,pending,facts).map(row=><div data-detail-fact={row.label} data-fact-signature={JSON.stringify(row)} data-fact-pending={row.pending?'true':undefined}><dt>{row.label}</dt><dd>{row.pending?<span class="detail-value-skeleton" aria-hidden="true"/>:row.items?row.items.map(person=><span class="media-fact-entry">{person.url?<a href={person.url}>{person.name}</a>:person.name}</span>):['Released','Releases'].includes(row.label)?<LocalDateTime value={title.release_date} fallback={row.value}/>:row.value}</dd></div>)}
 </dl><p class="detail-load-status" data-detail-people-status hidden/></>:<dl>
   {title.type==='game'&&<div data-game-age-rating hidden={!age} title={age?.detail}><dt>Age rating</dt><dd>{age?.label}</dd></div>}
-  {facts.filter(fact=>!lowerFacts.has(fact.label)).map(fact=><div><dt>{fact.label}</dt><dd>{['Released','Releases','First published'].includes(fact.label)?<LocalDateTime value={title.release_date} fallback={fact.value}/>:fact.value}</dd></div>)}
+  {facts.filter(fact=>!lowerFacts.has(fact.label)).map(fact=><div><dt>{fact.label}</dt><dd>{['Released','Releases','First published'].includes(fact.label)&&!quarterRelease?<LocalDateTime value={title.release_date} fallback={fact.value}/>:fact.value}</dd></div>)}
   {organizations.filter(group=>!finalGroups.has(group.label)).map(group=><div><dt>{group.label}</dt><dd>{group.rows.map(person=><span class="media-fact-entry">{person.url?<a href={person.url}>{person.name}</a>:person.name}</span>)}</dd></div>)}
   {facts.filter(fact=>lowerFacts.has(fact.label)).map(fact=><div><dt>{fact.label}</dt><dd>{fact.value}</dd></div>)}
   {organizations.filter(group=>finalGroups.has(group.label)).map(group=><div><dt>{group.label}</dt><dd>{group.rows.map(person=><span class="media-fact-entry">{person.url?<a href={person.url}>{person.name}</a>:person.name}</span>)}</dd></div>)}

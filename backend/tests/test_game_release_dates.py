@@ -22,6 +22,14 @@ def game(form='YYYYMM', value='2027-03-01'):
 
 
 class GameReleasePrecisionTests(unittest.TestCase):
+    def test_primary_details_preserve_provider_quarter_for_information_display(self):
+        from core.media_details import primary_details
+        attrs=normalize_igdb(game('YYYYQ2','2027-06-30'))['work']['attributes']
+        work=SimpleNamespace(id=1,kind='game',name='Quarter release',description=None,image_url=None,
+            attributes=attrs,field_sources={},protected_fields=[])
+        data=primary_details(work)
+        self.assertEqual((data['release_date'],data['release_date_precision'],data['release_quarter']),('2027','quarter',2))
+
     def test_display_uses_normal_release_while_mapping_can_retain_early_access_year(self):
         from core.game_title_match import years
         raw=game('YYYYMMDD','2018-02-21')

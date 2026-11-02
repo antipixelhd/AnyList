@@ -161,6 +161,16 @@ test('partial release dates remain stable and absent metadata is omitted',()=>{
   assert.deepEqual(Array.from(facts,fact=>fact.label),['First published','Pages']);
 });
 
+test('game Information preserves known release quarters without inventing precision',()=>{
+  const game={type:'game',release_date:'2027',release_date_precision:'quarter',release_quarter:2};
+  assert.equal(api.detailFacts(api.prepareDetail(game),'2026-11-02')[0].value,'Q2 2027');
+  for(const quarter of [null,0,5,2.5,'2']){
+    assert.equal(api.detailFacts(api.prepareDetail({...game,release_quarter:quarter}),'2026-11-02')[0].value,'2027');
+  }
+  assert.equal(api.detailFacts(api.prepareDetail({...game,release_date_precision:'year'}),'2026-11-02')[0].value,'2027');
+  assert.equal(api.detailFacts(api.prepareDetail({...game,type:'movie'}),'2026-11-02')[0].value,'2027');
+});
+
 test('movie budget and box office follow Country with whole-dollar currency formatting',()=>{
   const facts=api.detailFacts(api.prepareDetail({type:'movie',countries:['US'],budget:150000000,revenue:825000001}));
   assert.deepEqual(Array.from(facts,fact=>[fact.label,fact.value]),[
