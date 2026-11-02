@@ -2,6 +2,21 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {detailPeopleLoading,waitForDetailPortraits} from '../src/lib/detail-people-loading.ts';
 
+test('settled game crew does not wait or show an error for optional character retry',async()=>{
+  const nativeFetch=globalThis.fetch,controller=new AbortController(),states=[];
+  let selected=false,calls=0;
+  globalThis.fetch=async()=>{calls++;return Response.json({people:[{kind:'staff'}],
+    game_credit_status:{state:'ready',complete:true,pending:false},
+    character_status:{state:'retry',pending:true,error:'unavailable',retry_after:60}});};
+  try{
+    const resource=detailPeopleLoading(7,controller.signal,data=>data.character_status,state=>states.push(state),
+      {selected:()=>selected,needed:()=>true,primaryReady:async()=>{},warm:()=>{},source:{people:'/game/credits'}});
+    await resource.characters();assert.equal(states.at(-1),'ready');
+    selected=true;
+    await resource.characters();assert.equal(calls,2);assert.equal(states.at(-1),'retry');
+  }finally{controller.abort();globalThis.fetch=nativeFetch;}
+});
+
 test('a game connection polls its own progress without a second character request',async()=>{
   const originalFetch=globalThis.fetch,originalSet=globalThis.setTimeout,originalClear=globalThis.clearTimeout;
   const controller=new AbortController(),calls=[],timers=[];

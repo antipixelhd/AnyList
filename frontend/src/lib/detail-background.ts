@@ -3,7 +3,7 @@ export type DetailLoadState = {state?:string; pending?:boolean; retry_after?:num
 /** Optional reads start after paint, preserve cached content, and honor server cooldowns. */
 export function detailBackground<T>(path:string, signal:AbortSignal, apply:(data:T)=>DetailLoadState|void|Promise<DetailLoadState|void>,
   status:(state:'loading'|'ready'|'retry',error?:string)=>void) {
-  let request:Promise<void>|undefined,timer:ReturnType<typeof setTimeout>|undefined,attempts=0,done=false;
+  let request:Promise<void>|undefined,timer:ReturnType<typeof setTimeout>|undefined,attempts=0,done=false,recovering=false;
   const schedule=(seconds:number)=>{
     clearTimeout(timer);
     timer=setTimeout(()=>{timer=undefined;if(!signal.aborted)void load();},Math.max(1000,seconds*1000));
@@ -11,7 +11,7 @@ export function detailBackground<T>(path:string, signal:AbortSignal, apply:(data
   const load=()=>{
     if(signal.aborted||done)return Promise.resolve();
     if(request)return request;
-    clearTimeout(timer);timer=undefined;status('loading');
+    clearTimeout(timer);timer=undefined;if(!recovering)status('loading');
     request=(async()=>{
       try {
         const response=await fetch(path,{signal});
@@ -27,12 +27,14 @@ export function detailBackground<T>(path:string, signal:AbortSignal, apply:(data
         const state=await apply(data)||{};
         if(signal.aborted)return;
         attempts=0;
+        recovering=!!state.error;
         if(state.state==='deferred'||state.state==='partial'||state.pending||state.state==='pending'){
-          status(state.error?'retry':'loading',state.error?'Provider data is temporarily unavailable. Retrying automatically.':undefined);
+          status(state.error?'retry':'loading',state.error?'Some details couldn’t be refreshed. We’ll retry shortly.':undefined);
           schedule(Math.max(1,state.retry_after||10));
         }else {done=true;status('ready');}
       }catch(error){
         if(signal.aborted)return;
+        recovering=true;
         status('retry',(error as Error).message);
         if(!done&&!timer)schedule(Math.min(300,5*2**Math.min(attempts++,6)));
       }finally{request=undefined;}

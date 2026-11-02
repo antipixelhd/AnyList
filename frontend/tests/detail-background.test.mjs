@@ -10,6 +10,19 @@ function clock() {
   return {tasks,restore(){globalThis.setTimeout=nativeSet;globalThis.clearTimeout=nativeClear;}};
 }
 
+test('automatic retries retain the error state until usable data arrives',async()=>{
+  const timer=clock(),nativeFetch=globalThis.fetch,controller=new AbortController(),states=[];
+  let release,calls=0;
+  globalThis.fetch=async()=>++calls===1?new Response('',{status:503}):
+    await new Promise(resolve=>release=()=>resolve(Response.json({state:'ready'})));
+  try{
+    const resource=detailBackground('/fixture',controller.signal,row=>row,state=>states.push(state));
+    await resource.load();assert.deepEqual(states,['loading','retry']);
+    const next=resource.load();assert.deepEqual(states,['loading','retry']);
+    release();await next;assert.equal(states.at(-1),'ready');
+  }finally{controller.abort();globalThis.fetch=nativeFetch;timer.restore();}
+});
+
 test('background details start after paint without an extra timer and cancel on navigation',async()=>{
   const timer=clock(),nativeFetch=globalThis.fetch,nativeFrame=globalThis.requestAnimationFrame;
   const frames=[];let calls=0;

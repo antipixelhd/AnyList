@@ -204,7 +204,8 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
     language=gameCastLanguage(gameCast.actors,select.value);
     transitionGameCast();
   },{signal});
-  const update=(data:{people:DetailPerson[];organizations:DetailPerson[];character_status:DetailLoadState&{complete?:boolean};credits_status?:string;game_characters?:import('./game-cast-data').GameCharacter[];game_character_status?:{complete?:boolean};primary?:Record<string,any>;primary_status?:DetailLoadState})=>{
+  const update=(data:{people:DetailPerson[];organizations:DetailPerson[];character_status:DetailLoadState&{complete?:boolean};game_credit_status?:DetailLoadState&{complete?:boolean};credits_status?:string;game_characters?:import('./game-cast-data').GameCharacter[];game_character_status?:{complete?:boolean};primary?:Record<string,any>;primary_status?:DetailLoadState})=>{
+    const pendingState=gameCast&&mode==='actors'&&data.game_credit_status?data.game_credit_status:data.character_status;
     if(!gameCast&&data.primary&&data.primary_status){
       const previous=info.screenPrimary||{};
       const primary={...previous};
@@ -213,7 +214,7 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
       publishScreenPrimary(root,{...primary,people:data.people,organizations:data.organizations},info.id,data.primary_status,signal);
     }
     if(gameCast&&keepCachedGameCredits(data,gameCast,!!root.querySelector('[data-credit-section="crew"] [data-person-id],[data-credit-section="studios"] [data-person-id]'))){metadataPending=true;return data.character_status;}
-    metadataPending=data.character_status.pending===true||['partial','pending','deferred'].includes(data.character_status.state||'');
+    metadataPending=!pendingState.error&&(pendingState.pending===true||['partial','pending','deferred'].includes(pendingState.state||''));
     const groups=detailCredits({people:data.people,organizations:data.organizations,type:info.type} as DetailMedia);
     if(!groups.cast.length&&['failed','deferred'].includes(data.credits_status||''))return {state:'deferred',pending:true,retry_after:60,error:'unavailable'};
     const creatorRow=root.querySelector<HTMLElement>('[data-detail-creators]');
@@ -228,7 +229,7 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
       creatorRow.replaceChildren(...nodes);creatorRow.hidden=false;
     }
     if(gameCast){
-      gameCast=gameCastData(groups.cast,data.game_characters||[],data.character_status,data.game_character_status);
+      gameCast=gameCastData(groups.cast,data.game_characters||[],data.game_credit_status||data.character_status,data.game_character_status);
       if(gameCast.availability[mode]==='empty'||!gameCast[mode].length&&gameCast[mode==='actors'?'characters':'actors'].length)mode=mode==='actors'?'characters':'actors';
       showGameCast(groups.preview);
       const tab=root.querySelector<HTMLButtonElement>('[data-detail-tab="people"]');
@@ -249,12 +250,17 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
       section.hidden=!people.length;
       const toggle=section.querySelector<HTMLButtonElement>('[data-credit-toggle]')!;toggle.hidden=people.length<=limit;
     });
-    metadataPending=data.character_status.pending===true||['partial','pending','deferred'].includes(data.character_status.state||'');
+    metadataPending=!pendingState.error&&(pendingState.pending===true||['partial','pending','deferred'].includes(pendingState.state||''));
     containers.forEach(container=>paint(container,mode));
     status();return data.character_status;
   };
   const background=detailPeopleLoading(info.id,signal,update,(state,message)=>{
-    error=state==='retry'?message||'Some details are temporarily unavailable. Retrying automatically.':'';status();
+    error=state==='retry'?(message?.includes('Sign in')||message?.includes('Access to')?message:'Couldn’t refresh cast and crew. We’ll try again shortly.'):'';
+    if(state==='retry'){
+      metadataPending=false;
+      if(gameCast)showGameCast();
+    }
+    status();
   },{selected:()=>mode==='characters',needed:()=>metadataPending,
     ...(info.gameCredits?{source:{people:`/api/proxy/tracking/games/works/${info.id}/credits`}}:{}),
     primaryReady:()=>waitForDetailPortraits([...root.querySelectorAll<HTMLImageElement>('[data-credit-preview] img')],signal),warm});
