@@ -1,4 +1,4 @@
-import { defaultSteamDraft, sortSteamGames, steamSelected } from '../lib/steam-import';
+import { defaultSteamDraft, sortSteamGames, steamSelected, steamProgressPending } from '../lib/steam-import';
 import type { SteamDraft, SteamGame } from '../lib/steam-import';
 
 type Connection = { id: number; steam_id: string; imported: boolean; sync_achievements: boolean; sync_playtime: boolean; auto_add_games: boolean; selected_count: number; generation: number };
@@ -60,7 +60,7 @@ function init() {
       : `${game.achievement_count}${game.achievement_total !== null ? `/${game.achievement_total}` : ''} achievements`;
   }
   async function loadProgress(epoch: number, id: number, generation: number) {
-    const pending = sortSteamGames(games.filter(game => game.achievement_refresh_due !== false), 'playtime');
+    const pending = sortSteamGames(games.filter(steamProgressPending), 'playtime');
     while (pending.length && epoch === reviewEpoch && !signal.aborted && !importing) {
       const exposed = pending.filter(game => cards.has(game.app_id) && (() => {
         const rect = cards.get(game.app_id)!.getBoundingClientRect(); return rect.bottom >= 0 && rect.top <= innerHeight;
@@ -75,6 +75,7 @@ function init() {
           const game = byId.get(value.app_id);
           if (!game) continue;
           Object.assign(game, value); paintCount(game);
+          if (value.achievement_state === 'loading' || value.achievement_refreshing) pending.push(game);
         }
       } catch {
         if (epoch !== reviewEpoch || signal.aborted || importing) return;
@@ -82,6 +83,12 @@ function init() {
       }
       // Only automatic selections change. Explicit card choices stay in draft.overrides.
       if (draft.sort === 'completion') render(); else paintSelections();
+      if (pending.length && pending.every(game => game.achievement_refresh_due === false)) {
+        await new Promise<void>(resolve => {
+          const finish = () => { clearTimeout(wait); signal.removeEventListener('abort', finish); resolve(); };
+          const wait = setTimeout(finish, 1500); signal.addEventListener('abort', finish, { once: true });
+        });
+      }
     }
   }
   async function loadDates() {

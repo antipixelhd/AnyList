@@ -249,6 +249,7 @@ class SteamDatabaseTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.wait_for(started.wait(), 5)
         second = await self.progress(['20'])
         self.assertEqual(second['provider_requests'], 0)
+        self.assertTrue(second['games'][0]['achievement_refreshing'])
         release.set(); await first
         self.assertEqual(self.source.achievements.await_count, 1)
 

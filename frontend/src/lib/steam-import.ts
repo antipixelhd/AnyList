@@ -1,8 +1,11 @@
 export type SteamGame = {
   app_id: string; name: string; poster: string; release_date: string | null;
   playtime_minutes: number; achievement_count: number | null; achievement_total: number | null;
-  achievement_state?: 'loading' | 'ready' | 'unavailable'; achievement_refresh_due?: boolean;
+  achievement_state?: 'loading' | 'ready' | 'unavailable'; achievement_refresh_due?: boolean; achievement_refreshing?: boolean;
 };
+export function steamProgressPending(game: SteamGame): boolean {
+  return game.achievement_refresh_due !== false || game.achievement_state === 'loading' || game.achievement_refreshing === true;
+}
 export type SteamDraft = {
   minimum_playtime: number; minimum_achievements: number;
   playtime_enabled: boolean; achievements_enabled: boolean;

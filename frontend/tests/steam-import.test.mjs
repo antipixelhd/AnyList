@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { defaultSteamDraft, sortSteamGames, steamSelected } from '../src/lib/steam-import.ts';
+import { defaultSteamDraft, sortSteamGames, steamSelected, steamProgressPending } from '../src/lib/steam-import.ts';
 
 const games = [
   {app_id:'1',name:'Alpha',playtime_minutes:30,achievement_count:null,achievement_total:null},
@@ -47,4 +47,14 @@ test('completion sorting uses the current denominator when achievements are adde
   assert.deepEqual(sortSteamGames(rows,'completion').map(game=>game.app_id),['3','2','4','1']);
   rows[1].achievement_total=1;
   assert.deepEqual(sortSteamGames(rows,'completion').map(game=>game.app_id),['2','3','4','1']);
+});
+test('reload keeps observing an in-flight cache claim without repeating provider work',()=>{
+  const game={...games[0],achievement_refresh_due:false,achievement_state:'loading',achievement_refreshing:true};
+  assert.equal(steamProgressPending(game),true);
+  game.achievement_state='ready';
+  assert.equal(steamProgressPending(game),true);
+  game.achievement_refreshing=false;
+  assert.equal(steamProgressPending(game),false);
+  game.achievement_state='unavailable';
+  assert.equal(steamProgressPending(game),false);
 });

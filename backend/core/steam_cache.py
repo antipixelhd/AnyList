@@ -22,6 +22,7 @@ def progress_view(row, minutes, stamp):
         return {'achievement_count': None, 'achievement_total': None, 'achievement_state': 'loading'}
     blocked = bool(row.retry_at and row.retry_at > stamp)
     return {'achievement_count': row.achievement_count, 'achievement_total': row.achievement_total,
+        'achievement_refreshing': bool(row.lease_until and row.lease_until > stamp),
         'achievement_state': 'ready' if row.achievement_count is not None else 'unavailable' if blocked else 'loading',
         **({'achievement_checked_at': row.fetched_at.isoformat()} if row.fetched_at else {})}
 
