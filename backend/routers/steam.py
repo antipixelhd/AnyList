@@ -293,4 +293,5 @@ async def commit_import(connection_id: int, body: ImportSelection, background: B
     await db.commit()
     from core.steam_artwork import refresh as refresh_artwork
     background.add_task(refresh_artwork, AsyncSessionLocal, library)
-    return {'imported': len(accepted), 'selected': len(accepted), **({'skipped': len(selection) - len(accepted)} if len(accepted) != len(selection) else {})}
+    return {'imported': len({state.checkpoints[app]['work_id'] for app in accepted}), 'selected': len(accepted),
+        **({'skipped': len(selection) - len(accepted)} if len(accepted) != len(selection) else {})}

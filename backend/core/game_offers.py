@@ -65,9 +65,9 @@ async def country(db,user_id,hint=None):
     return {'country':account or detected or 'US','source':'account' if account else 'device' if detected else 'fallback'}
 
 
-def steam_identity(identities):
+def steam_identity(identities,preferred=None):
     values={row.external_id for row in identities if row.namespace=='steam.app' and re.fullmatch(r'[1-9][0-9]{0,18}',row.external_id)}
-    return next(iter(values)) if len(values)==1 else None
+    return preferred if preferred in values else next(iter(values)) if len(values)==1 else None
 
 
 def public_link(value):
@@ -86,7 +86,7 @@ async def view(db,work,user_id,*,hint=None,identities=None,enqueue=False):
     if identities is None:
         identities=list(await db.scalars(select(CatalogueIdentity).where(CatalogueIdentity.entity_id==work.id,
             CatalogueIdentity.namespace=='steam.app').limit(2)))
-    app=steam_identity(identities)
+    app=steam_identity(identities,(work.attributes or {}).get('steam_primary_app_id'))
     if not app:return base
     base['steam_app_id']=app
     # Never hydrate raw provider responses just to render one regional offer.

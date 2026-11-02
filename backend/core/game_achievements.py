@@ -108,6 +108,9 @@ class GameAchievements(GameRatings):
             'definitions_stale':known_schema and (not definitions_current or any(row.kind==PREFIX+'schema' and (not row.expires_at or row.expires_at<=now()) for row in records)),
             'total_source':'player_progress' if public_newer else 'schema' if known_schema else 'global_percentages'}
         catalogue.merge_fields(work,{'attributes':{'achievement_catalogue':metadata}},'steam')
+        from core.steam_cache import merge_total
+        if type(total) is int:
+            merge_total(work,app,total,now())
 
 
 async def scheduler():

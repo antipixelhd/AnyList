@@ -108,7 +108,8 @@ async def save_public(factory, games, *, release_checked=False):
     for offset in range(0, len(games), 200):
         values = []
         for game in games[offset:offset+200]:
-            payload = {key: game[key] for key in ('name', 'poster', 'release_date', 'artwork_checked_at', 'poster_verified') if game.get(key) is not None}
+            payload = {key: game[key] for key in ('name', 'poster', 'release_date', 'artwork_checked_at', 'poster_verified',
+                'game_class', 'igdb_id', 'classification_checked_at') if game.get(key) is not None}
             if release_checked:
                 payload.update(release_date=game.get('release_date'), release_checked_at=stamp.isoformat())
             values.append({'provider': 'steam', 'kind': PUBLIC_KIND, 'external_id': game['app_id'],
@@ -147,9 +148,10 @@ async def public_metadata(db, apps):
     cached = {row.external_id: dict(row.payload or {}) for row in await db.scalars(select(MetadataSnapshot).where(
         MetadataSnapshot.provider == 'steam', MetadataSnapshot.kind == PUBLIC_KIND, MetadataSnapshot.external_id.in_(apps)))}
     rows = await db.execute(select(CatalogueIdentity.external_id, CatalogueEntity.attributes['release_date'].astext,
-        CatalogueEntity.name, CatalogueEntity.image_url).join(CatalogueEntity, CatalogueEntity.id == CatalogueIdentity.entity_id)
+        CatalogueEntity.name, CatalogueEntity.image_url, CatalogueEntity.attributes['game_class'].astext,
+        CatalogueEntity.field_sources['attributes.game_class'].astext).join(CatalogueEntity, CatalogueEntity.id == CatalogueIdentity.entity_id)
         .where(CatalogueIdentity.namespace == 'steam.app', CatalogueIdentity.external_id.in_(apps)))
-    for app, release, name, image in rows:
+    for app, release, name, image, game_class, category_source in rows:
         item = cached.setdefault(app, {})
         if release:
             item['release_date'] = release
@@ -157,12 +159,20 @@ async def public_metadata(db, apps):
             item['name'] = name
         if image:
             item['poster'] = image
+        if category_source=='igdb' and game_class:
+            item.update(game_class=game_class,classification_known=True)
     return cached
 
 
 def merge_total(work, app, total, stamp):
     """The denominator is public catalogue data, never a frozen user percentage."""
     from core import catalogue
+    if app in ((work.attributes or {}).get('steam_progress_apps') or []):
+        totals=dict((work.attributes or {}).get('steam_progress_totals') or {})
+        totals[app]=total
+        catalogue.merge_fields(work,{'attributes':{'steam_progress_totals':totals}},'steam')
+        if app!=(work.attributes or {}).get('steam_primary_app_id'):
+            return
     if 'attributes.achievement_catalogue' in (work.protected_fields or []):
         return
     prior = dict((work.attributes or {}).get('achievement_catalogue') or {})
@@ -188,6 +198,13 @@ async def publish_totals(factory, totals):
             .order_by(CatalogueEntity.id).with_for_update(of=CatalogueEntity))
         for app, work in rows:
             merge_total(work, app, totals[app], stamp)
+        from core.steam_targets import KIND
+        mapped=await db.execute(select(MetadataSnapshot.external_id,CatalogueEntity).join(
+            CatalogueEntity,CatalogueEntity.id==MetadataSnapshot.entity_id).where(
+            MetadataSnapshot.provider=='steam',MetadataSnapshot.kind==KIND,MetadataSnapshot.external_id.in_(totals))
+            .order_by(CatalogueEntity.id).with_for_update(of=CatalogueEntity))
+        for app, work in mapped:
+            merge_total(work,app,totals[app],stamp)
         statement = insert(MetadataSnapshot).values([{'provider': 'steam', 'kind': PUBLIC_KIND, 'external_id': app,
             'payload': {'achievement_total': total, 'achievement_total_checked_at': stamp.isoformat()}, 'fetched_at': stamp} for app, total in totals.items()])
         await db.execute(statement.on_conflict_do_update(constraint='uq_catalogue_snapshot', set_={

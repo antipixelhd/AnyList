@@ -83,6 +83,15 @@ def achievement_metadata(entity):
     availability = info.get('status', 'unknown')
     if availability not in {'unknown', 'partial', 'complete', 'none'}:
         availability = 'unknown'
+    apps=(entity.attributes or {}).get('steam_progress_apps') or []
+    if len(apps)>1:
+        # Source catalogues have independent namespaces and changing totals.
+        # Do not call a primary app's definitions complete for the whole game.
+        totals=dict((entity.attributes or {}).get('steam_progress_totals') or {})
+        if info.get('steam_app_id') in apps and total is not None:
+            totals[info['steam_app_id']]=total
+        total=sum(totals[app] for app in apps) if all(type(totals.get(app)) is int for app in apps) else None
+        return 'none' if total==0 else 'partial',total,False
     return availability, total, bool(info.get('definitions_complete'))
 
 

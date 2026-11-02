@@ -30,6 +30,81 @@ def game(app, minutes, count=None, total=None):
 class SteamDatabaseTests(unittest.IsolatedAsyncioTestCase):
     cleanup = fixture.GamesDatabaseTests.cleanup
 
+    async def test_component_apps_combine_once_and_sync_independent_deltas(self):
+        from core import catalogue,steam_targets,game_tracking
+        await self.connect()
+        async with self.Session() as db:
+            await catalogue.write_lock(db)
+            work=await steam_targets.assign(db,'20','1245620',evidence={'review':'confirmed component'})
+            target=work.id
+            state=await db.get(SteamConnection,self.id)
+            games=[game('1245620',60,2,3),game('20',40,1,2)]
+            await steam_sync.apply_games(db,state,games,['1245620','20'],initial=True)
+            await db.commit()
+            entry=await db.scalar(select(GameEntry).where(GameEntry.user_id==self.user.id,GameEntry.work_id==target))
+            self.assertEqual((entry.total_seconds,entry.achievement_count),(6000,3))
+            self.assertEqual(game_tracking.achievement_metadata(work)[1],5)
+            await steam_sync.apply_games(db,state,games,['1245620','20'])
+            self.assertEqual(entry.total_seconds,6000)
+            entry.total_seconds+=600
+            games=[game('1245620',65,2,3),game('20',50,2,2)]
+            await steam_sync.apply_games(db,state,games,['1245620','20'])
+            self.assertEqual((entry.total_seconds,entry.achievement_count),(7500,4))
+            await steam_sync.apply_games(db,state,games,['1245620','20'])
+            self.assertEqual(entry.total_seconds,7500)
+            self.assertEqual(state.checkpoints['20']['work_id'],target)
+            self.assertEqual(state.checkpoints['20']['playtime_minutes'],50)
+            await db.commit()
+
+    async def test_existing_component_membership_moves_without_reimporting_time(self):
+        from core import catalogue,steam_targets
+        await self.imported()
+        async with self.Session() as db:
+            state=await db.get(SteamConnection,self.id)
+            old=state.checkpoints['20']['work_id']
+            row=await db.scalar(select(GameEntry).where(GameEntry.user_id==self.user.id,GameEntry.work_id==old))
+            row.total_seconds=1200;row.notes='component note'
+            await catalogue.write_lock(db)
+            work=await steam_targets.assign(db,'20','1245620',evidence={'review':'confirmed component'})
+            await steam_sync.apply_games(db,state,[game('1245620',60,0,3),game('20',0,1,3)],['1245620','20'])
+            await db.commit()
+            self.assertIsNone(await db.scalar(select(GameEntry).where(GameEntry.user_id==self.user.id,GameEntry.work_id==old)))
+            entry=await db.scalar(select(GameEntry).where(GameEntry.user_id==self.user.id,GameEntry.work_id==work.id))
+            self.assertEqual(entry.total_seconds,4800)
+            self.assertEqual(entry.notes,'component note')
+            await steam_sync.apply_games(db,state,[game('1245620',60,0,3),game('20',10,1,3)],['1245620','20'])
+            self.assertEqual(entry.total_seconds,5400)
+
+    async def test_exact_classification_rejects_non_game_without_title_guessing(self):
+        from core import steam_targets
+        source=SimpleNamespace(steam_games=AsyncMock(return_value=[
+            {'uid':'20','game':{'id':123,'name':'A soundtrack','game_type':{'id':3,'type':'Bundle'}}}]))
+        await steam_targets.classify(self.Session,[game('20',50)],source=source)
+        await steam_targets.classify(self.Session,[game('20',50)],source=source)
+        source.steam_games.assert_awaited_once()
+        await self.connect()
+        async with self.Session() as db:
+            state=await db.get(SteamConnection,self.id)
+            games=await steam_sync.attach_dates(db,[game('20',50)])
+            await steam_sync.apply_games(db,state,games,['20'],initial=True)
+            self.assertNotIn('20',state.checkpoints)
+
+    async def test_reviewed_component_resolves_main_game_without_main_app_selected(self):
+        from core import steam_targets
+        source=SimpleNamespace(steam_games=AsyncMock(side_effect=lambda apps: [
+            {'uid':'202970','game':{'id':1122,'name':'Call of Duty: Black Ops II','game_type':{'id':0,'type':'Main Game'}}}
+        ] if apps==[202970] else []))
+        await steam_targets.classify(self.Session,[game('212910',60)],source=source)
+        await self.connect()
+        async with self.Session() as db:
+            state=await db.get(SteamConnection,self.id)
+            await steam_sync.apply_games(db,state,[game('212910',60,5,50)],['212910'],initial=True)
+            target=(await steam_targets.targets(db,['212910']))['212910']
+            row=await db.scalar(select(GameEntry).where(GameEntry.user_id==self.user.id,GameEntry.work_id==target))
+            self.assertEqual(row.total_seconds,3600)
+            self.assertEqual((await db.get(CatalogueEntity,target)).name,'Call of Duty: Black Ops II')
+            self.assertIsNone(await db.scalar(select(CatalogueIdentity).where(CatalogueIdentity.namespace=='steam.app',CatalogueIdentity.external_id=='212910')))
+
     async def test_artwork_repairs_exact_references_and_reuses_public_cache(self):
         from core import steam_artwork, steam_cache
         from models.catalogue import MetadataSnapshot

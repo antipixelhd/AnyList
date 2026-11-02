@@ -25,7 +25,7 @@ async def app_id(db,work,identities=None):
     if identities is None:
         identities=list(await db.scalars(select(CatalogueIdentity).where(CatalogueIdentity.entity_id==work.id,
             CatalogueIdentity.namespace=='steam.app').limit(2)))
-    app=steam_identity(identities)
+    app=steam_identity(identities,(work.attributes or {}).get('steam_primary_app_id'))
     return app if app and int(app)<=4294967295 else None
 
 

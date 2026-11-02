@@ -81,6 +81,14 @@ async def preparation(factory, user_id, connection_id, job_id):
         state = await db.get(SteamConnection, connection_id, with_for_update=True)
         if not state or state.user_id != user_id:
             return
+        library=list(state.library)
+    from core.steam_targets import classify
+    await classify(factory,library)
+    async with factory() as db:
+        state=await db.get(SteamConnection,connection_id,with_for_update=True)
+        if not state or state.user_id!=user_id:
+            return
+        state.library=await attach_dates(db,state.library)
         state.library = await steam_cache.read_progress(db, user_id, state.steam_id, state.library)
         state.fetched_at = now()
         library = list(state.library)
@@ -95,85 +103,120 @@ async def preparation(factory, user_id, connection_id, job_id):
 async def attach_dates(db, library):
     public = await steam_cache.public_metadata(db, [game['app_id'] for game in library])
     return [{**game, **{key:value for key,value in public.get(game['app_id'], {}).items()
-        if key in ('poster','release_date') and value is not None}} for game in library]
+        if key in ('poster','release_date','game_class') and value is not None}} for game in library]
 
 
 async def apply_games(db, state, library, selected, *, initial=False, add_apps=None, initial_status='completed', completion_dates=None):
-    """Caller holds the owner mutex. Source totals never replace manual deltas."""
+    """One list write per canonical game; source app counters remain independent."""
+    from core import steam_targets
     by_app = {row['app_id']: row for row in library}
-    checkpoints, additions = dict(state.checkpoints), set(add_apps or ())
-    changed = 0
+    additions = set(add_apps or ())
     today = datetime.now(ZoneInfo(state.timezone or 'UTC')).date()
     await catalogue.write_lock(db)
-    for app in selected:
+    mapping = await steam_targets.targets(db, selected)
+    await steam_targets.retarget(db, state, mapping)
+    checkpoints, groups = dict(state.checkpoints), {}
+    for app in dict.fromkeys(selected):
         data = by_app.get(app)
         if data is None:
             continue
-        prior = dict(checkpoints.get(app, {}))
         identity = await catalogue.resolve_identity(db, 'steam.app', app)
-        if not identity and not initial and app not in additions:
+        if app in mapping:
+            work = await db.get(CatalogueEntity, mapping[app])
+        elif identity:
+            work = await db.get(CatalogueEntity, identity.entity_id)
+        elif initial or app in additions:
+            work = await catalogue.upsert_entity(db, {
+                'kind': 'game', 'name': data['name'], 'image_url': data['poster'],
+                'attributes': {'game_class': data.get('game_class', 'game'),
+                    **({'release_date': data['release_date'], 'release_date_precision': 'day' if len(data['release_date']) == 10 else 'month' if len(data['release_date']) == 7 else 'year'} if data.get('release_date') else {})},
+                'identities': [{'namespace': 'steam.app', 'external_id': app}],
+            }, 'steam')
+        else:
             continue
-        work = await db.get(CatalogueEntity, identity.entity_id) if identity else await catalogue.upsert_entity(db, {
-            'kind': 'game', 'name': data['name'], 'image_url': data['poster'], 'attributes': {'game_class': 'game',
-                **({'release_date': data['release_date'], 'release_date_precision': 'day' if len(data['release_date']) == 10 else 'month' if len(data['release_date']) == 7 else 'year'} if data.get('release_date') else {})},
-            'identities': [{'namespace': 'steam.app', 'external_id': app}],
-        }, 'steam')
-        if not capabilities(work.attributes).independent:
+        if work and app not in mapping and data.get('game_class') and data['game_class']!='unknown' and (work.field_sources or {}).get('attributes.game_class') in (None,'steam'):
+            catalogue.merge_fields(work,{'attributes':{'game_class':data['game_class']}},'igdb')
+        if not work or not capabilities(work.attributes).independent:
             continue
-        if identity is None and data.get('achievement_total') is not None:
+        if data.get('achievement_total') is not None and (identity is None or app in mapping or (work.attributes or {}).get('steam_progress_apps')):
             steam_cache.merge_total(work, app, data['achievement_total'], now())
+        groups.setdefault(work.id, (work, []))[1].append(data)
+    changed = 0
+    for work, games in groups.values():
+        apps={game['app_id'] for game in games}
+        if len(apps)>1 and not (work.attributes or {}).get('steam_progress_apps'):
+            catalogue.merge_fields(work,{'attributes':{'steam_progress_apps':sorted(apps),
+                'steam_primary_app_id':(work.attributes or {}).get('steam_primary_app_id') or
+                    ((work.attributes or {}).get('achievement_catalogue') or {}).get('steam_app_id') or sorted(apps)[0]}},'steam')
+            for game in games:
+                if game.get('achievement_total') is not None:
+                    steam_cache.merge_total(work,game['app_id'],game['achievement_total'],now())
         entry = await db.scalar(select(GameEntry).where(GameEntry.user_id == state.user_id, GameEntry.work_id == work.id))
-        if entry is None and not initial and app not in additions:
-            continue  # Manual deletion is never undone by an ordinary refresh.
+        automatic = any(game['app_id'] in additions for game in games)
+        if entry is None and not initial and not automatic:
+            continue
         before = await game_activity.snapshot(db, work, entry, achievements=state.sync_achievements)
         created = entry is None
         if created:
-            automatic = app in additions
-            entry = GameEntry(user_id=state.user_id, work_id=work.id, revision=0,
-                status='planning' if automatic else 'playing' if data['playtime_minutes'] or data.get('achievement_count') else 'planning')
+            entry = GameEntry(user_id=state.user_id, work_id=work.id, revision=0, status='planning')
             db.add(entry)
-            if automatic:
-                prior['start_pending'] = True
-        previous = (entry.status, entry.start_date, entry.finish_date, entry.total_seconds, entry.achievement_mode,
-                    entry.achievement_count, entry.achievement_percentage)
+        priors = {game['app_id']: dict(checkpoints.get(game['app_id'], {})) for game in games}
+        previous = (entry.status, entry.start_date, entry.finish_date, entry.total_seconds,
+                    entry.achievement_mode, entry.achievement_count, entry.achievement_percentage)
         if initial:
             entry.status = initial_status
             if initial_status == 'completed':
-                stamp = data.get('last_played')
-                inferred = datetime.fromtimestamp(stamp, ZoneInfo(state.timezone or 'UTC')).date() if stamp else None
-                entry.finish_date = (completion_dates or {}).get(app, inferred)
+                dates = []
+                for game in games:
+                    stamp = game.get('last_played')
+                    inferred = datetime.fromtimestamp(stamp, ZoneInfo(state.timezone or 'UTC')).date() if stamp else None
+                    date = (completion_dates or {}).get(game['app_id'], inferred)
+                    if date is not None:
+                        dates.append(date)
+                entry.finish_date = max(dates) if dates else None
                 if entry.completion_seconds is None:
                     entry.completion_source = 'unknown'
-        if state.auto_add_games and prior.get('start_pending'):
+        if created and automatic:
+            for prior in priors.values():
+                prior['start_pending'] = True
+        if state.auto_add_games and any(prior.get('start_pending') for prior in priors.values()):
             if entry.status != 'planning' or entry.start_date is not None:
-                prior['start_pending'] = False
-            elif data['playtime_minutes'] > 30:
+                for prior in priors.values():
+                    prior['start_pending'] = False
+            elif sum(game['playtime_minutes'] for game in games) > 30:
                 entry.status, entry.start_date = 'playing', today
-                prior['start_pending'] = False
+                for prior in priors.values():
+                    prior['start_pending'] = False
         if state.sync_playtime:
-            seconds = data['playtime_minutes'] * 60
-            if 'playtime_minutes' not in prior:
-                entry.total_seconds = max(entry.total_seconds or 0, seconds)
+            if initial or all('playtime_minutes' not in prior for prior in priors.values()):
+                entry.total_seconds = max(entry.total_seconds or 0, sum(game['playtime_minutes'] for game in games) * 60)
             else:
-                delta = max(0, data['playtime_minutes'] - prior['playtime_minutes']) * 60
-                if delta:
-                    entry.total_seconds = (entry.total_seconds or 0) + delta
-        if state.sync_achievements and data.get('achievement_count') is not None:
-            entry.achievement_mode, entry.achievement_count = 'count', data['achievement_count']
-            total = data.get('achievement_total')
-            entry.achievement_percentage = 100 * entry.achievement_count / total if total and entry.achievement_count <= total else None
-        current = (entry.status, entry.start_date, entry.finish_date, entry.total_seconds, entry.achievement_mode,
-                   entry.achievement_count, entry.achievement_percentage)
+                delta = sum(max(0, game['playtime_minutes'] - priors[game['app_id']].get('playtime_minutes', 0)) for game in games)
+                entry.total_seconds = (entry.total_seconds or 0) + delta * 60
+        if state.sync_achievements:
+            counts = [game.get('achievement_count') if game.get('achievement_count') is not None
+                      else priors[game['app_id']].get('achievement_count') for game in games]
+            counts.extend(prior.get('achievement_count') for native,prior in checkpoints.items()
+                if native in selected and native not in apps and prior.get('work_id')==work.id)
+            if all(count is not None for count in counts):
+                entry.achievement_mode, entry.achievement_count = 'count', sum(counts)
+                _, total, _ = game_tracking.achievement_metadata(work)
+                entry.achievement_percentage = 100 * entry.achievement_count / total if total and entry.achievement_count <= total else None
+        current = (entry.status, entry.start_date, entry.finish_date, entry.total_seconds,
+                   entry.achievement_mode, entry.achievement_count, entry.achievement_percentage)
         if created or previous != current:
             entry.revision = (entry.revision or 0) + 1
             await db.flush()
             await game_activity.record(db, entry, before, await game_activity.snapshot(db, work, entry, achievements=state.sync_achievements))
             changed += 1
-        checkpoints[app] = {**prior, 'work_id': work.id,
-            'observed_playtime_minutes': data['playtime_minutes'],
-            **({'last_played': data['last_played']} if data.get('last_played') is not None else {}),
-            **({'playtime_minutes': max(prior.get('playtime_minutes', 0), data['playtime_minutes'])} if state.sync_playtime else {}),
-            **({'achievement_checked_at': data['achievement_checked_at']} if data.get('achievement_checked_at') else {})}
+        for game in games:
+            app = game['app_id']
+            checkpoints[app] = {**priors[app], 'work_id': work.id,
+                'observed_playtime_minutes': game['playtime_minutes'],
+                **({'last_played': game['last_played']} if game.get('last_played') is not None else {}),
+                **({'playtime_minutes': max(priors[app].get('playtime_minutes', 0), game['playtime_minutes'])} if state.sync_playtime else {}),
+                **({'achievement_count': game['achievement_count']} if state.sync_achievements and game.get('achievement_count') is not None else {}),
+                **({'achievement_checked_at': game['achievement_checked_at']} if game.get('achievement_checked_at') else {})}
     state.checkpoints = checkpoints
     return changed
 
@@ -215,12 +258,12 @@ async def sync(factory, user_id, job_id, connection_id):
             return
         source = SteamSource(factory)
         library = await source.library(native)
+        from core.steam_targets import classify
+        await classify(factory,library)
         additions = {row['app_id'] for row in library} - known if auto_add else set()
         target_ids = set(selected) | additions
         async with factory() as db:
-            if additions:
-                dates = await steam_cache.public_metadata(db, additions)
-                library = [{**row, 'release_date': dates.get(row['app_id'], {}).get('release_date')} for row in library]
+            library = await attach_dates(db, library)
             library = await steam_cache.read_progress(db, user_id, native, library)
         pending = [row for row in library if row['app_id'] in target_ids and achievements_enabled and row['achievement_refresh_due']]
         pending.sort(key=lambda row: (not achievement_due(row, checkpoints.get(row['app_id'], {}), now()),
