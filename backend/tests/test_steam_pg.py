@@ -1,6 +1,8 @@
 """End-to-end Steam review and sync against an isolated PostgreSQL schema."""
 import unittest
 import importlib
+import asyncio
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -14,6 +16,7 @@ from models import MediaServerConnection, SteamConnection, SyncJob, SyncStatus
 from models.base import CollectionSource
 from models.catalogue import CatalogueEntity, CatalogueIdentity
 from models.games import GameEntry
+from models.steam import SteamPlayerGame
 from routers import steam
 
 
@@ -46,7 +49,14 @@ class SteamDatabaseTests(unittest.IsolatedAsyncioTestCase):
 
     async def imported(self, overrides=None):
         await self.connect()
+        await self.progress()
         response = await self.client.post(f'/connections/steam/{self.id}/import', json={'generation': 1, 'overrides': overrides or {}})
+        self.assertEqual(response.status_code, 200, response.text)
+        return response.json()
+
+    async def progress(self, apps=None):
+        response = await self.client.post(f'/connections/steam/{self.id}/achievements',
+            json={'generation': 1, 'apps': apps or ['1245620', '20', '30']})
         self.assertEqual(response.status_code, 200, response.text)
         return response.json()
 
@@ -62,6 +72,8 @@ class SteamDatabaseTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_review_default_or_manual_override_persistence_and_exact_identity(self):
         await self.connect()
+        self.source.achievements.assert_not_awaited()
+        await self.progress()
         response = await self.client.get(f'/connections/steam/{self.id}')
         self.assertEqual(response.json()['job']['status'], 'completed')
         self.assertEqual(len(response.json()['library']), 3)
@@ -151,12 +163,14 @@ class SteamDatabaseTests(unittest.IsolatedAsyncioTestCase):
     async def test_real_migration_accepts_steam_on_existing_connections_table(self):
         async with self.engine.connect() as conn:
             await conn.execute(text('DROP TABLE steam_connections'))
+            await conn.execute(text('DROP TABLE steam_player_games'))
             await conn.execute(text('ALTER TABLE media_server_connections DROP CONSTRAINT ck_msc_type'))
             await conn.execute(text("ALTER TABLE media_server_connections ADD CONSTRAINT ck_msc_type CHECK(type IN ('plex','jellyfin','emby','nuvio','stremio','arvio'))"))
             await conn.commit()
             def migrate(connection):
                 with Operations.context(MigrationContext.configure(connection)):
                     importlib.import_module('migrations.versions.mt074_steam_connections').upgrade()
+                    importlib.import_module('migrations.versions.mt075_steam_progress').upgrade()
             await conn.run_sync(migrate)
             await conn.commit()
         await self.connect()
@@ -189,3 +203,118 @@ class SteamDatabaseTests(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as db:
             self.assertEqual((await db.get(SyncJob, job_id)).status, SyncStatus.failed)
             self.assertEqual(len(list(await db.scalars(select(GameEntry).where(GameEntry.user_id == self.user.id)))), 2)
+
+    async def test_picker_is_ready_without_achievement_calls_and_one_failure_is_not_fatal(self):
+        from core.steam import SteamError
+        await self.connect()
+        self.source.achievements.assert_not_awaited()
+        review = (await self.client.get(f'/connections/steam/{self.id}')).json()
+        self.assertEqual(review['job']['status'], 'completed')
+        self.assertTrue(all(row['achievement_state'] == 'loading' for row in review['library']))
+        def progress(native, app):
+            if app == '20':
+                raise SteamError('Steam returned HTTP 500')
+            return {'achievement_count': 1, 'achievement_total': 3}
+        self.source.achievements.side_effect = progress
+        result = await self.progress()
+        self.assertEqual(result['provider_requests'], 3)
+        rows = {row['app_id']: row for row in result['games']}
+        self.assertEqual(rows['20']['achievement_state'], 'unavailable')
+        self.assertEqual(rows['30']['achievement_count'], 1)
+        self.assertEqual((await self.progress())['provider_requests'], 0)
+        self.assertEqual((await self.client.get(f'/connections/steam/{self.id}')).json()['job']['status'], 'completed')
+
+    async def test_cached_progress_survives_reconnect_and_public_evidence_includes_declined_games(self):
+        from core.connection_lifecycle import delete_connection
+        from models.catalogue import MetadataSnapshot
+        from core.steam_cache import PUBLIC_KIND
+        await self.connect(); await self.progress()
+        async with self.Session() as db:
+            await delete_connection(db, await db.get(MediaServerConnection, self.id))
+        await self.connect()
+        self.assertEqual((await self.progress())['provider_requests'], 0)
+        async with self.Session() as db:
+            rows = list(await db.scalars(select(MetadataSnapshot).where(MetadataSnapshot.kind == PUBLIC_KIND)))
+            self.assertEqual({row.external_id for row in rows}, {'1245620', '20', '30'})
+            self.assertTrue(all('playtime_minutes' not in row.payload and 'achievement_count' not in row.payload for row in rows))
+
+    async def test_overlapping_progress_requests_share_the_durable_claim(self):
+        await self.connect()
+        started, release = asyncio.Event(), asyncio.Event()
+        async def slow(native, app):
+            started.set(); await release.wait()
+            return {'achievement_count': 1, 'achievement_total': 3}
+        self.source.achievements.side_effect = slow
+        first = asyncio.create_task(self.progress(['20']))
+        await asyncio.wait_for(started.wait(), 5)
+        second = await self.progress(['20'])
+        self.assertEqual(second['provider_requests'], 0)
+        release.set(); await first
+        self.assertEqual(self.source.achievements.await_count, 1)
+
+    async def test_explicit_import_selection_is_not_expanded_by_late_achievement_results(self):
+        await self.connect(); await self.progress()
+        response = await self.client.post(f'/connections/steam/{self.id}/import', json={'generation': 1, 'selected_apps': ['1245620']})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()['selected'], 1)
+
+    async def test_new_game_planning_first_play_threshold_and_manual_status_are_preserved(self):
+        from zoneinfo import ZoneInfo
+        await self.imported()
+        response = await self.client.patch(f'/connections/steam/{self.id}', json={
+            'sync_playtime': True, 'sync_achievements': False, 'auto_add_games': True, 'timezone': 'Europe/Berlin'})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.source.library.return_value = [game('1245620', 60), game('20', 0), game('30', 500), game('40', 0)]
+        stats = await self.sync()
+        self.assertEqual(stats['added'], 1)
+        async def entry(app):
+            async with self.Session() as db:
+                return await db.scalar(select(GameEntry).join(CatalogueIdentity, CatalogueIdentity.entity_id == GameEntry.work_id)
+                    .where(GameEntry.user_id == self.user.id, CatalogueIdentity.namespace == 'steam.app', CatalogueIdentity.external_id == app))
+        self.assertIsNone(await entry('30'))  # Declined original games are never backfilled.
+        self.assertEqual((await entry('40')).status, 'planning')
+        self.source.library.return_value[-1] = game('40', 30)
+        await self.sync(); self.assertEqual((await entry('40')).status, 'planning')
+        self.source.library.return_value[-1] = game('40', 31)
+        await self.sync(); row = await entry('40')
+        self.assertEqual((row.status, row.start_date), ('playing', datetime.now(ZoneInfo('Europe/Berlin')).date()))
+        async with self.Session() as db:
+            changed = await db.get(GameEntry, row.id); changed.status = 'paused'; await db.commit()
+        self.source.library.return_value[-1] = game('40', 60)
+        await self.sync(); self.assertEqual((await entry('40')).status, 'paused')
+        async with self.Session() as db:
+            await db.execute(delete(GameEntry).where(GameEntry.id == row.id)); await db.commit()
+        await self.sync(); self.assertIsNone(await entry('40'))
+
+    async def test_timestamp_change_triggers_refresh_but_missing_timestamp_does_not(self):
+        await self.imported()
+        self.source.achievements.reset_mock()
+        self.source.library.return_value[0]['last_played'] = 1800000000
+        self.assertEqual((await self.sync())['achievement_requests'], 1)
+        self.source.library.return_value[0]['last_played'] = None
+        self.assertEqual((await self.sync())['achievement_requests'], 0)
+        self.source.library.return_value[0]['playtime_minutes'] = 61
+        self.assertEqual((await self.sync())['achievement_requests'], 1)
+
+    async def test_changed_public_totals_update_percentages_and_expired_counts_refresh_without_playtime(self):
+        from core import steam_cache, game_tracking
+        await self.imported()
+        async with self.Session() as db:
+            work = await db.get(CatalogueEntity, self.base)
+            work.field_sources = {**(work.field_sources or {}), 'attributes.achievement_catalogue': 'steam'}
+            await db.commit()
+        await steam_cache.publish_totals(self.Session, {'1245620': 6})
+        self.source.achievements.side_effect = None
+        self.source.achievements.return_value = {'achievement_count': 2, 'achievement_total': 6}
+        self.assertEqual((await self.sync())['achievement_requests'], 1)
+        async with self.Session() as db:
+            state = (await game_tracking.states(db, self.user.id, [self.base]))[0]
+            self.assertAlmostEqual(state.achievements.percentage, 100 / 3)
+            cache = await db.get(SteamPlayerGame, (self.user.id, '76561198000000000', '1245620'))
+            cache.fetched_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=2)
+            await db.commit()
+        self.source.achievements.return_value = {'achievement_count': 1, 'achievement_total': 2}
+        self.assertEqual((await self.sync())['achievement_requests'], 1)
+        async with self.Session() as db:
+            state = (await game_tracking.states(db, self.user.id, [self.base]))[0]
+            self.assertEqual((state.achievements.count, state.achievements.total, state.achievements.percentage), (1, 2, 50))

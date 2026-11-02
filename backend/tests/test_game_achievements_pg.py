@@ -33,6 +33,25 @@ def schema_part(names=('A0','A1','A2')):
 class AchievementDatabaseTests(unittest.IsolatedAsyncioTestCase):
     cleanup=fixture.GamesDatabaseTests.cleanup
 
+    async def test_player_total_changes_survive_older_schema_reads_and_fresh_schema_can_replace_them(self):
+        from core.steam_cache import publish_totals
+        await self.service.run(self.base)
+        await publish_totals(self.Session, {'1245620': 6})
+        async with self.Session() as db:
+            work = await db.get(CatalogueEntity, self.base)
+            await self.service.publish_component(db, work, '1245620', 'globals', {**globals_part(), 'fetched_at': now().isoformat()})
+            await db.commit()
+            info = work.attributes['achievement_catalogue']
+            self.assertEqual(info['total'], 6)
+            self.assertFalse(info['definitions_complete'])
+        await self.due('schema')
+        self.source.fetch.side_effect = lambda app, part, stamp: globals_part() if part == 'globals' else schema_part(('A0', 'A1'))
+        await self.service.run(self.base)
+        async with self.Session() as db:
+            work = await db.get(CatalogueEntity, self.base)
+            self.assertEqual(work.attributes['achievement_catalogue']['total'], 2)
+            self.assertTrue(work.attributes['achievement_catalogue']['definitions_complete'])
+
     async def asyncSetUp(self):
         await fixture.GamesDatabaseTests.asyncSetUp(self)
         async with self.Session() as db:

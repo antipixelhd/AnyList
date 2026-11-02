@@ -4,7 +4,7 @@ from .base import Base, UserRole, MediaType, CollectionSource
 from .users import User, UserSettings, TotpBackupCode
 from .account_security import OidcIdentity, EmailChangeToken
 from .connections import MediaServerConnection
-from .steam import SteamConnection
+from .steam import SteamConnection, SteamPlayerGame
 from .scrobble_connection import ScrobbleConnection
 from .profile import UserProfileData
 from .comments import Comment

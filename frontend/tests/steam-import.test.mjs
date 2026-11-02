@@ -31,3 +31,20 @@ test('disabled thresholds and unknown achievements do not auto select',()=>{
   draft.achievements_enabled=false;
   assert(games.every(game=>!steamSelected(game,draft)));
 });
+test('late counts reselect automatically without changing manual choices or the full library',()=>{
+  const loading=structuredClone(games).map(game=>({...game,achievement_count:null,achievement_total:null,achievement_state:'loading'}));
+  const draft=defaultSteamDraft();draft.overrides={'1':false,'4':true};
+  assert.deepEqual(loading.map(game=>steamSelected(game,draft)),[false,false,false,true]);
+  loading[1].achievement_count=1;loading[1].achievement_total=2;loading[1].achievement_state='ready';
+  assert.deepEqual(loading.map(game=>steamSelected(game,draft)),[false,true,false,true]);
+  assert.equal(loading.length,4);
+  assert.deepEqual(draft.overrides,{'1':false,'4':true});
+});
+test('completion sorting uses the current denominator when achievements are added or removed',()=>{
+  const rows=structuredClone(games);
+  assert.deepEqual(sortSteamGames(rows,'completion').map(game=>game.app_id),['2','3','4','1']);
+  rows[1].achievement_total=20;
+  assert.deepEqual(sortSteamGames(rows,'completion').map(game=>game.app_id),['3','2','4','1']);
+  rows[1].achievement_total=1;
+  assert.deepEqual(sortSteamGames(rows,'completion').map(game=>game.app_id),['2','3','4','1']);
+});

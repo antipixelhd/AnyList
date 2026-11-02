@@ -1,7 +1,7 @@
 """Private Steam onboarding and incremental checkpoints on a shared connection."""
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -17,6 +17,10 @@ class SteamConnection(Base):
     steam_id: Mapped[str] = mapped_column(String(20))
     sync_achievements: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default='true')
     sync_playtime: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default='true')
+    auto_add_games: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default='false')
+    timezone: Mapped[str] = mapped_column(String(80), nullable=False, default='UTC', server_default='UTC')
+    # All identities observed, including declined games, form the new-game boundary.
+    known_apps: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default='[]')
     imported: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default='false')
     # Server-owned library snapshot. Client selections may reference only these app IDs.
     library: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default='[]')
@@ -25,3 +29,19 @@ class SteamConnection(Base):
     draft: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default='{}')
     generation: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default='1')
     fetched_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class SteamPlayerGame(Base):
+    """Reusable progress scoped to the viewer and Steam profile, never public metadata."""
+    __tablename__ = 'steam_player_games'
+    user_id: Mapped[int] = mapped_column(ForeignKey('users.id', ondelete='CASCADE'), primary_key=True)
+    steam_id: Mapped[str] = mapped_column(String(20), primary_key=True)
+    app_id: Mapped[str] = mapped_column(String(20), primary_key=True)
+    achievement_count: Mapped[int | None] = mapped_column(Integer)
+    achievement_total: Mapped[int | None] = mapped_column(Integer)
+    observed_playtime: Mapped[int | None] = mapped_column(Integer)
+    observed_last_played: Mapped[int | None] = mapped_column(BigInteger)
+    fetched_at: Mapped[datetime | None] = mapped_column(DateTime)
+    retry_at: Mapped[datetime | None] = mapped_column(DateTime)
+    lease_token: Mapped[str | None] = mapped_column(String(40))
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime)

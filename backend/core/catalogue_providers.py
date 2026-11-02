@@ -223,7 +223,9 @@ class ProviderHTTP:
         else:
             _local_next[provider] = max(_local_next.get(provider, 0), time.monotonic() + delay)
 
-    async def request(self, provider, method, url, *, cache=True, **kwargs):
+    async def request(self, provider, method, url, *, cache=True, attempts=3, **kwargs):
+        if type(attempts) is not int or not 1 <= attempts <= 3:
+            raise ProviderError('invalid_request')
         # WDQS and the Action API are separate services. A query-service 429
         # must not prevent reading explicit entities from the Action API.
         budget = 'wikidata_query' if provider=='wikidata' and urlsplit(url).hostname=='query.wikidata.org' else provider
@@ -244,7 +246,7 @@ class ProviderHTTP:
             headers={"User-Agent": "AnyList catalogue/1"},
         )
         try:
-            for attempt in range(3):
+            for attempt in range(attempts):
                 try:
                     async with self.lane(budget):
                         async with client.stream(method, url, **kwargs) as response:
@@ -270,7 +272,7 @@ class ProviderHTTP:
                         )
                         if status == 429:
                             await self.defer(budget, delay)
-                        if attempt == 2 or delay > 5:
+                        if attempt == attempts - 1 or delay > 5:
                             raise ProviderError(
                                 "rate_limited" if status == 429 else "unavailable",
                                 delay,
@@ -317,7 +319,7 @@ class ProviderHTTP:
                     httpx.NetworkError,
                     httpx.RemoteProtocolError,
                 ):
-                    if attempt == 2:
+                    if attempt == attempts - 1:
                         raise ProviderError("unavailable") from None
                     await asyncio.sleep(2**attempt)
         finally:

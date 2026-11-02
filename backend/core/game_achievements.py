@@ -1,8 +1,8 @@
 """Shared Steam achievement catalogue; personal progress remains untouched."""
 from datetime import timedelta
 
-from sqlalchemy import case,select,update,cast,Text,all_
-from sqlalchemy.dialects.postgresql import insert,ARRAY
+from sqlalchemy import case,select,update,cast,Text,all_,func
+from sqlalchemy.dialects.postgresql import insert,ARRAY,JSONB
 
 from core import catalogue
 from core.config import settings
@@ -11,6 +11,7 @@ from core.game_imdb_enrichment import now,request as admit,status as job_status
 from core.game_ratings import GameRatings,app_id,run_scheduler
 from core.game_tracking import achievement_metadata
 from core.game_types import capabilities
+from core.steam_cache import PUBLIC_KIND
 from models.catalogue import MetadataSnapshot
 from models.games import GameAchievement
 
@@ -28,7 +29,7 @@ async def view(db,work,*,enqueue=False):
     if not app:return {'catalogue':data,'status':{'state':'unavailable','pending':False,'complete':False}}
     # Installing a key enables schema enrichment immediately, without waiting
     # for a previous keyless capability observation to expire.
-    if enqueue and settings.steam_web_api_key and not previous.get('schema_enabled'):
+    if enqueue and settings.steam_web_api_key and (not previous.get('schema_enabled') or previous.get('definitions_stale')):
         await db.execute(update(MetadataSnapshot).where(MetadataSnapshot.provider=='steam',
             MetadataSnapshot.entity_id==work.id,MetadataSnapshot.kind.in_((JOB,PREFIX+'schema')),
             MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.next_attempt_at.is_(None))
@@ -84,13 +85,28 @@ class GameAchievements(GameRatings):
                 GameAchievement.api_name.in_(batch)).values(global_percentage=case(batch,value=GameAchievement.api_name)))
         known_schema=schema.get('available') is True
         total=schema.get('total') if known_schema else global_data.get('total')
-        metadata={'status':'none' if total==0 else 'complete' if known_schema else 'partial',
-            'total':total,'definitions_complete':known_schema,'steam_app_id':app,'source':'steam',
+        # A newer player response can already observe a changed public schema.
+        # An older cached schema/global refresh must not restore its old total.
+        public = await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.provider=='steam',
+            MetadataSnapshot.kind==PUBLIC_KIND,MetadataSnapshot.external_id==app))
+        observed = (public.payload or {}) if public else {}
+        total_stamp = (schema if known_schema else global_data).get('fetched_at') or ''
+        public_newer=type(observed.get('achievement_total')) is int and observed.get('achievement_total_checked_at','') > total_stamp
+        if public_newer:
+            total=observed['achievement_total']
+        elif type(total) is int:
+            statement=insert(MetadataSnapshot).values(provider='steam',kind=PUBLIC_KIND,external_id=app,
+                payload={'achievement_total':total,'achievement_total_checked_at':total_stamp})
+            await db.execute(statement.on_conflict_do_update(constraint='uq_catalogue_snapshot',set_={
+                'payload':func.coalesce(MetadataSnapshot.payload,cast('{}',JSONB)).op('||')(statement.excluded.payload)}))
+        definitions_current=known_schema and schema.get('total')==total
+        metadata={'status':'none' if total==0 else 'complete' if definitions_current else 'partial',
+            'total':total,'definitions_complete':definitions_current,'steam_app_id':app,'source':'steam',
             'schema_enabled':bool(settings.steam_web_api_key),'language':'english',
             'fetched_at':value['fetched_at'],'global_fetched_at':global_data.get('fetched_at'),
             'schema_fetched_at':schema.get('fetched_at') if known_schema else None,
-            'definitions_stale':known_schema and any(row.kind==PREFIX+'schema' and (not row.expires_at or row.expires_at<=now()) for row in records),
-            'total_source':'schema' if known_schema else 'global_percentages'}
+            'definitions_stale':known_schema and (not definitions_current or any(row.kind==PREFIX+'schema' and (not row.expires_at or row.expires_at<=now()) for row in records)),
+            'total_source':'player_progress' if public_newer else 'schema' if known_schema else 'global_percentages'}
         catalogue.merge_fields(work,{'attributes':{'achievement_catalogue':metadata}},'steam')
 
 

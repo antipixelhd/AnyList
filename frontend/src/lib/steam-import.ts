@@ -1,6 +1,7 @@
 export type SteamGame = {
   app_id: string; name: string; poster: string; release_date: string | null;
   playtime_minutes: number; achievement_count: number | null; achievement_total: number | null;
+  achievement_state?: 'loading' | 'ready' | 'unavailable'; achievement_refresh_due?: boolean;
 };
 export type SteamDraft = {
   minimum_playtime: number; minimum_achievements: number;

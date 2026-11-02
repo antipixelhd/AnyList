@@ -106,16 +106,18 @@ class SteamSource:
                 raise SteamError('Steam library or playtime is unavailable. Make Game details and playtime public, then try again.')
             seen.add(app)
             result.append({'app_id': str(app), 'name': str(game.get('name') or f'Steam {app}')[:500],
-                           'playtime_minutes': minutes, 'last_played': game.get('rtime_last_played', 0),
+                           'playtime_minutes': minutes, 'last_played': game.get('rtime_last_played') if type(game.get('rtime_last_played')) is int and game['rtime_last_played'] > 0 else None,
                            'poster': f'https://cdn.akamai.steamstatic.com/steam/apps/{app}/library_600x900.jpg',
                            'release_date': None, 'achievement_count': None, 'achievement_total': None})
         return result
 
     async def achievements(self, native, app):
         # Games without player stats commonly return 400. Treat that as unknown.
+        if not self.key:
+            raise SteamError('Steam is not configured.')
         try:
             raw = await self.http.request('steam', 'GET', API + 'ISteamUserStats/GetPlayerAchievements/v1/',
-                cache=False, params={'key': self.key, 'steamid': native, 'appid': app})
+                cache=False, attempts=1, timeout=6, params={'key': self.key, 'steamid': native, 'appid': app})
         except ProviderError as error:
             if error.code in {'bad_response', 'not_found', 'forbidden'}:
                 return {'achievement_count': None, 'achievement_total': None}

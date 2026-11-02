@@ -1,13 +1,16 @@
 """Steam connections share account ownership and sync jobs, with a dedicated review."""
 from typing import Annotated
 import asyncio
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from pydantic import BaseModel, Field
-from sqlalchemy import select
+from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import select, func, true, column
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core import game_tracking, steam_sync
+from core import game_tracking, steam_sync, steam_cache
 from core.account_sync import require_idle_account
 from core.game_access import approved_games_viewer
 from core.import_admission import require_import_slot
@@ -21,15 +24,24 @@ DB = Annotated[AsyncSession, Depends(get_db)]
 Viewer = Annotated[User, Depends(get_current_user)]
 
 
-class Connect(BaseModel):
-    profile: str = Field(min_length=1, max_length=300)
+class Options(BaseModel):
     sync_achievements: bool = True
     sync_playtime: bool = True
+    auto_add_games: bool = False
+    timezone: str = Field(default='UTC', max_length=80)
+
+    @field_validator('timezone')
+    @classmethod
+    def valid_timezone(cls, value):
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError):
+            raise ValueError('Choose a valid timezone') from None
+        return value
 
 
-class Options(BaseModel):
-    sync_achievements: bool
-    sync_playtime: bool
+class Connect(Options):
+    profile: str = Field(min_length=1, max_length=300)
 
 
 class Draft(BaseModel):
@@ -46,13 +58,28 @@ class MetadataBatch(BaseModel):
     apps: list[Annotated[str, Field(pattern=r'^[1-9][0-9]{0,9}$')]] = Field(min_length=1, max_length=8)
 
 
+class ProgressBatch(MetadataBatch):
+    generation: int = Field(ge=1)
+
+
+class ImportSelection(Draft):
+    selected_apps: list[str] | None = Field(default=None, max_length=100000)
+
+
 @router.post('/metadata')
-async def metadata(body: MetadataBatch, viewer: Viewer) -> dict:
+async def metadata(body: MetadataBatch, viewer: Viewer, db: DB) -> dict:
     from core.catalogue_providers import ProviderError
     source = SteamSource(AsyncSessionLocal)
+    cached = await steam_cache.public_metadata(db, body.apps)
     async def one(app):
+        prior = cached.get(app, {})
+        checked = prior.get('release_checked_at')
+        if prior.get('release_date') or checked and datetime.fromisoformat(checked) > steam_sync.now() - timedelta(days=30):
+            return app, {'release_date': prior.get('release_date')}
         try:
-            return app, await source.metadata(app)
+            value = await source.metadata(app)
+            await steam_cache.save_public(AsyncSessionLocal, [{'app_id': app, **value}], release_checked=True)
+            return app, value
         except (ProviderError, SteamError):
             return app, {'release_date': None}
     return dict(await asyncio.gather(*(one(app) for app in dict.fromkeys(body.apps))))
@@ -81,6 +108,7 @@ async def latest_job(db, user_id, connection_id):
 def summary(state):
     return {'id': state.connection_id, 'steam_id': state.steam_id, 'imported': state.imported,
             'sync_achievements': state.sync_achievements, 'sync_playtime': state.sync_playtime,
+            'auto_add_games': state.auto_add_games, 'timezone': state.timezone,
             'selected_count': len(state.selection), 'generation': state.generation}
 
 
@@ -119,7 +147,8 @@ async def connect(body: Connect, background: BackgroundTasks, db: DB, viewer: Vi
     db.add(conn)
     await db.flush()
     state = SteamConnection(connection_id=conn.id, user_id=viewer.id, steam_id=profile['steam_id'],
-        library=await steam_sync.attach_dates(db, library), sync_achievements=body.sync_achievements, sync_playtime=body.sync_playtime)
+        library=await steam_sync.attach_dates(db, library), sync_achievements=body.sync_achievements, sync_playtime=body.sync_playtime,
+        auto_add_games=body.auto_add_games, timezone=body.timezone)
     db.add(state)
     await db.flush()
     await queue_preparation(db, state, background)
@@ -130,7 +159,8 @@ async def connect(body: Connect, background: BackgroundTasks, db: DB, viewer: Vi
 async def review(connection_id: int, db: DB, viewer: Viewer) -> dict:
     state = await owned(db, viewer.id, connection_id)
     job = await latest_job(db, viewer.id, connection_id)
-    return {**summary(state), 'library': state.library if job and job.status == SyncStatus.completed else [], 'draft': state.draft,
+    library = await steam_cache.read_progress(db, viewer.id, state.steam_id, state.library) if job and job.status == SyncStatus.completed else []
+    return {**summary(state), 'library': library, 'draft': state.draft,
         'job': {'status': job.status.value, 'current': job.processed_items, 'total': job.total_items,
                 'error': job.error_message, 'warnings': job.warnings or []} if job else None}
 
@@ -143,9 +173,28 @@ async def options(connection_id: int, body: Options, db: DB, viewer: Viewer) -> 
         # Start a new baseline on re-enable; never add the disabled interval twice.
         state.checkpoints = {app: {k: v for k, v in value.items() if k != 'playtime_minutes'} for app, value in state.checkpoints.items()}
     state.sync_achievements, state.sync_playtime = body.sync_achievements, body.sync_playtime
+    state.auto_add_games, state.timezone = body.auto_add_games, body.timezone
     state.generation += 1
     await db.commit()
     return summary(state)
+
+
+@router.post('/{connection_id}/achievements')
+async def achievements(connection_id: int, body: ProgressBatch, db: DB, viewer: Viewer) -> dict:
+    header = (await db.execute(select(SteamConnection.steam_id, SteamConnection.generation, SteamConnection.imported).where(
+        SteamConnection.connection_id == connection_id, SteamConnection.user_id == viewer.id))).one_or_none()
+    if header is None:
+        raise HTTPException(404, 'Steam connection not found')
+    if header.generation != body.generation or header.imported:
+        raise HTTPException(409, 'Steam import changed. Reload to continue.')
+    elements = func.jsonb_array_elements(SteamConnection.library).table_valued(column('value', JSONB)).alias('games')
+    games = list(await db.scalars(select(elements.c.value).select_from(SteamConnection).join(elements, true()).where(
+        SteamConnection.connection_id == connection_id, SteamConnection.user_id == viewer.id,
+        elements.c.value['app_id'].astext.in_(set(body.apps)))))
+    if {game['app_id'] for game in games} != set(body.apps):
+        raise HTTPException(422, 'Games must belong to this Steam library')
+    values, requests = await steam_cache.load_progress(AsyncSessionLocal, viewer.id, header.steam_id, games, SteamSource(AsyncSessionLocal))
+    return {'games': values, 'provider_requests': requests}
 
 
 @router.post('/{connection_id}/retry')
@@ -200,15 +249,18 @@ async def save_draft(connection_id: int, body: Draft, db: DB, viewer: Viewer) ->
 
 
 @router.post('/{connection_id}/import')
-async def commit_import(connection_id: int, body: Draft, db: DB, viewer: Viewer) -> dict:
+async def commit_import(connection_id: int, body: ImportSelection, db: DB, viewer: Viewer) -> dict:
     await require_idle_account(db, viewer.id)
     state = await validate_draft(db, viewer, connection_id, body)
-    selection = selected_games(state.library, body)
-    stamp = steam_sync.now().isoformat()
-    library = [{**row, 'achievement_checked_at': stamp} for row in state.library]
+    library = await steam_cache.read_progress(db, viewer.id, state.steam_id, state.library)
+    library = await steam_sync.attach_dates(db, library)
+    selection = selected_games(library, body) if body.selected_apps is None else list(dict.fromkeys(body.selected_apps))
+    if set(selection) - {row['app_id'] for row in library}:
+        raise HTTPException(422, 'Selection contains games outside this Steam library.')
     await steam_sync.apply_games(db, state, library, selection, initial=True)
     accepted = [app for app in selection if app in state.checkpoints]
     state.selection, state.imported, state.draft = accepted, True, {}
+    state.known_apps = sorted(row['app_id'] for row in library)
     # The large review payload is temporary. Recurring sync needs only IDs/checkpoints.
     state.library = []
     conn = await db.get(MediaServerConnection, connection_id)
