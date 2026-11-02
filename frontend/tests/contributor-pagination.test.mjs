@@ -135,7 +135,7 @@ test('a write overlapping the final source revision queues another synchronizati
   let resolve,reads=0;const context=vm.createContext({
     signal:new AbortController().signal,pages:{forget(){}},syncing:false,syncAgain:false,
     filterRequest:undefined,more:{disabled:false},prediction:{cancel(){}},clearTimeout(){},syncRetry:undefined,
-    revision:0,writeVersion:0,data:{page:1},params:new URLSearchParams('media_type=game'),URLSearchParams,
+    revision:0,writeVersion:0,data:{page:1},params:new URLSearchParams('media_type=game'),URLSearchParams,updateEmpty(){},
     pathFor:()=>'/games',requestPage:()=>{reads++;return new Promise(done=>resolve=done);},
   });
   vm.runInContext(stripTypeScriptTypes(snippet),context);

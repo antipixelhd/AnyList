@@ -112,6 +112,10 @@ html.light .contributor-banner.is-logo img { filter:brightness(0); }
 .contributor-notice,.contributor-empty { color:var(--muted); line-height:1.65; }
 .contributor-loading { margin:0; padding-block:12px; color:var(--muted); font-size:14px; }
 .contributor-loading[hidden] { display:none; }
+.contributor-works-busy { display:inline-block; position:relative; width:14px; height:14px; margin-left:10px; vertical-align:middle; color:var(--blue); visibility:hidden; opacity:0; transition:opacity .15s,visibility 0s; }
+.contributor-works-busy::before { content:''; position:absolute; inset:0; border:2px solid color-mix(in srgb,currentColor 20%,transparent); border-top-color:currentColor; border-radius:50%; animation:contributor-works-spin .8s linear infinite; }
+.contributor-works-busy[data-active=true] { visibility:visible; opacity:1; transition-delay:.15s; }
+@keyframes contributor-works-spin { to { transform:rotate(360deg); } }
 .contributor-pagination { display:flex; align-items:center; flex-direction:column; gap:16px; margin-top:36px; }
 .contributor-pagination button:disabled { opacity:.6; cursor:wait; }
 .contributor-load-error { color:var(--danger,#e57474); margin:0; }

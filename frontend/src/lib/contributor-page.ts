@@ -51,7 +51,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
   },{signal});
   const ready = new Set<string>();
   const params = contributorParams(new URLSearchParams(root.dataset.contributorQuery ?? location.search), data.list_count !== null);
-  let sourcePending=false;
+  let sourcePending=false,pagePending=false;
   let availabilityChanged=(_state:string)=>{};
   if(root.dataset.contributorAvailability==='true')contributorAvailability(root.dataset.endpoint!,data.key,signal,domains=>{
     form.querySelectorAll<HTMLInputElement>('input[name=domain],input[name=media_type]').forEach(input=>{
@@ -135,6 +135,10 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     });
     const hasWorks=[...items.keys()].some(card => !card.hidden);
     const pending=!!filterRequest||params.get('media_type')==='game'&&sourcePending&&!hasWorks;
+    const busy=!!filterRequest||pagePending||syncing||params.get('media_type')==='game'&&sourcePending;
+    const indicator=root.querySelector<HTMLElement>('[data-contributor-busy]')!;
+    indicator.dataset.active=String(busy);indicator.setAttribute('aria-hidden',String(!busy));
+    region.setAttribute('aria-busy',String(busy));
     root.querySelector<HTMLElement>('[data-contributor-empty]')!.hidden = hasWorks||pending;
     root.querySelector<HTMLElement>('[data-contributor-loading]')!.hidden = !pending;
   };
@@ -282,6 +286,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
   const loadMore=async()=>{
     if(more.disabled||filterRequest||syncing||!data.has_more||signal.aborted)return;
     const current=revision;
+    pagePending=true;updateEmpty();
     more.disabled=true;more.textContent='Loading…';error.hidden=true;loading.hidden=false;
     try{
       const path=nextPath();
@@ -296,7 +301,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
         else showError(cause instanceof Error?cause.message:'Unable to load more works.');
       }
     }
-    finally{if(!signal.aborted&&current===revision){more.disabled=false;more.textContent='Load more';updateEmpty();if(syncAgain)void synchronize();}}
+    finally{pagePending=false;if(!signal.aborted&&current===revision){more.disabled=false;more.textContent='Load more';updateEmpty();if(syncAgain)void synchronize();}}
   };
   more.addEventListener('click',()=>void loadMore(),{signal});
   type RetainedWorks={nodes:Node[];items:Map<HTMLElement,ContributorWork>;data:ContributorPage;params:URLSearchParams;view:string|undefined;scroll:number};
@@ -312,6 +317,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     const worksAnchor = new URL(form.action).hash === '#contributor-works';
     const request=new AbortController(),current=++revision;
     filterRequest=request;error.hidden=true;region.setAttribute('aria-busy','true');
+    updateEmpty();
     root.querySelector<HTMLElement>('[data-contributor-loading]')!.hidden=items.size>0;
     root.querySelector<HTMLElement>('[data-contributor-empty]')!.hidden=true;
     const submitted=new URLSearchParams();
@@ -390,6 +396,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     pages.forget(path=>new URLSearchParams(path.split('?')[1]).get('media_type')==='game');
     if(syncing||filterRequest||more.disabled){syncAgain=true;return;}
     syncing=true;syncAgain=false;prediction.cancel();
+    updateEmpty();
     clearTimeout(syncRetry);
     const current=revision,requestedWrites=writeVersion,windowPages=data.page;
     try{
@@ -443,7 +450,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
       if(!signal.aborted&&current===revision&&++syncFailures<=3)
         syncRetry=setTimeout(()=>void synchronize(),3000*syncFailures);
     }
-    finally{syncing=false;if(syncAgain&&!filterRequest&&!signal.aborted)void synchronize();}
+    finally{syncing=false;if(!signal.aborted)updateEmpty();if(syncAgain&&!filterRequest&&!signal.aborted)void synchronize();}
   };
   syncSource=()=>{
     void synchronize();
