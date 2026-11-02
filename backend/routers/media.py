@@ -2070,11 +2070,13 @@ async def serve_image(
     from core.image_cache import (
         ALLOWED_SIZES,
         TVDB_SIZE,
+        ARTWORK_ORIGINS,
         upstream_image_url,
         download_and_cache_image,
         prune_cache_bg,
     )
-    upstream = upstream_image_url(size, path)
+    try:upstream = upstream_image_url(size, path)
+    except ValueError:raise HTTPException(400,'Invalid artwork path') from None
 
     # Check settings
     gs = await settings_store.get_global_settings(db)
@@ -2082,7 +2084,7 @@ async def serve_image(
     if not gs or not gs.image_cache_enabled:
         return RedirectResponse(upstream)
 
-    if size != TVDB_SIZE and size not in ALLOWED_SIZES:
+    if size != TVDB_SIZE and size not in ALLOWED_SIZES and size not in ARTWORK_ORIGINS:
         raise HTTPException(status_code=400, detail="Invalid image size")
     if ".." in path:
         raise HTTPException(status_code=400, detail="Invalid image path")

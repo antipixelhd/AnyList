@@ -6,6 +6,23 @@ function context(method = 'GET', headers = {}, query = '', locals = {}) {
   return { params: { path: 'media/example' }, request: new Request(`http://localhost/api/proxy/media/example${query}`, { method, headers }), locals };
 }
 
+test('profile uploads reject oversized bodies before forwarding, including absent length headers',async t=>{
+  const upstream=t.mock.method(globalThis,'fetch',async()=>new Response(null,{status:204}));
+  for(const headers of [{},{'Content-Length':String(4*1024*1024)}]){
+    const request=new Request('http://localhost/api/proxy/profile/me/avatar',{method:'POST',headers,body:new Uint8Array(4*1024*1024)});
+    const response=await POST({params:{path:'profile/me/avatar'},request,locals:{token:'fixture'}});
+    assert.equal(response.status,413);
+  }
+  assert.equal(upstream.mock.callCount(),0);
+});
+
+test('profile upload multipart bytes reach the backend unchanged',async t=>{
+  const content=new Uint8Array([1,2,3,4]);
+  t.mock.method(globalThis,'fetch',async(_,options)=>{assert.deepEqual(new Uint8Array(options.body),content);return new Response(null,{status:204});});
+  const response=await POST({params:{path:'profile/me/background'},request:new Request('http://localhost/api/proxy/profile/me/background',{method:'POST',body:content}),locals:{token:'fixture'}});
+  assert.equal(response.status,204);
+});
+
 test('proxy forwards only the middleware-selected token, never raw session cookies', async (t) => {
   const forwarded = [];
   t.mock.method(globalThis, 'fetch', async (_, options) => {
@@ -50,6 +67,10 @@ test('redirects must use HTTPS artwork hosts without embedded credentials', asyn
   for (const [location, status] of [
     ['https://image.tmdb.org/t/p/w500/a.jpg', 302],
     ['https://artworks.thetvdb.com/banners/a.jpg', 302],
+    ['https://cdn2.steamgriddb.com/hero/abc.png', 302],
+    ['https://images.igdb.com/igdb/image/upload/t_original/ar123.jpg', 302],
+    ['https://images.metahub.space/background/high/tt123/img', 302],
+    ['https://cdn2.steamgriddb.com.evil.test/hero/abc.png', 502],
     ['http://image.tmdb.org/a.jpg', 502],
     ['https://user:secret@image.tmdb.org/a.jpg', 502],
     ['https://evil.test/a.jpg', 502],

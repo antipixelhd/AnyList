@@ -1,4 +1,5 @@
 """Shared catalogue and public-profile access policy."""
+from core.profile_images import background_url as profile_background_url
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,7 +21,7 @@ async def profile_header(db, user, owner, viewer):
     return dict(id=user.id, username=user.username, display_name=user.display_name or user.username,
         bio=profile.bio if profile else None,
         profile_color=profile.profile_color if profile else '#3db4f2',
-        background_crop=profile.background_crop if profile else None, background_url=profile.background_url if profile else None, has_avatar=bool(profile and profile.avatar_path),
+        background_crop=profile.background_crop if profile else None, background_url=await profile_background_url(db,profile), has_avatar=bool(profile and profile.avatar_path),
         owner=owner, following=following, follows_you=follows_you, combine_lists=combined is not False)
 
 

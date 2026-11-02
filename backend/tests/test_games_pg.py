@@ -66,12 +66,12 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.client.put(path,json={'image':url})).status_code,401)
 
     async def test_background_crop_validation_and_persistence(self):
-        result=await self.client.patch('/profile/me',json={'background_url':'https://example.test/background.jpg',
-            'background_crop':{'x':20,'y':75,'zoom':1.4}})
+        result=await self.client.put('/profile/me/background',json={'image':'https://cdn2.steamgriddb.com/hero/abc.png',
+            'crop':{'x':20,'y':75,'zoom':1.4}})
         self.assertEqual(result.status_code,200,result.text)
         self.assertEqual(result.json()['background_crop'],{'x':20,'y':75,'zoom':1.4})
         self.assertEqual((await self.client.patch('/profile/me',json={'background_crop':{'zoom':9}})).status_code,422)
-        result=await self.client.patch('/profile/me',json={'background_url':'https://example.test/another.jpg'})
+        result=await self.client.patch('/profile/me',json={'background_url':None})
         self.assertEqual(result.status_code,200,result.text)
         self.assertIsNone(result.json()['background_crop'])
 

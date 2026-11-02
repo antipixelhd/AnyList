@@ -20,6 +20,8 @@ Run `game_credits` separately from Games search/browse cases when measuring only
 
 Normal Games Browse cases establish ranking, pagination and request cost with usable source observations. They do not seed a recently fetched ranking whose provider timestamp has expired. `test_game_ranking_cache_pg` covers that recovery separately: unusable observations must await a shared refresh, usable stale rankings may paint immediately, and failures preserve cooldowns without presenting outdated evidence.
 
+Profile image uploads are permanent assets in the existing avatar backup store; gallery backgrounds retain canonical provider URLs and use the shared image cache only when enabled. `game_list` and `game_details_cold` check the primary read boundary, while `test_profile_images`, `test_backup_avatars`, and `test_share_preview` cover upload decoding/cropping, provider cache keys, privacy, and durable uploads. These benchmarks do not measure image encoding or browser file selection; verify upload and crop flows on the real settings page.
+
 Games discovery excludes IGDB's Erotic theme by default, independently of age ratings. The viewer preference is read as one JSON field per HTTP request; paginated aggregate cases therefore add one read per page. Public candidate caches retain content classification, while composed pages/cursors include the visibility policy. Normal benchmark fixtures contain no erotic candidates; `test_game_content`, `test_game_content_pg` and the focused Browse test verify intended exclusions, opt-out, viewer isolation, pagination and rejection before critic enrichment.
 
 | Affected path | Useful existing cases |

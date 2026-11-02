@@ -94,8 +94,11 @@ def profile_card(user, overview):
         {'value':str(formats.get('series', 0)), 'label':'Series watched'},
         {'value':f"{overview['totals']['watch_days']:.1f}", 'label':'Days watched'},
     ]
+    background=user.profile.background_url if user.profile else None
+    local=bool(getattr(user,'id',None) and background==f'/api/proxy/profile/background/{user.id}')
     return dict(kind='profile', title=user.display_name or user.username, eyebrow=f'@{user.username}', subtitle='',
-                stats=stats, primary=None, background=user.profile.background_url if user.profile else None)
+                stats=stats, primary=None, background=background,
+                **({'background_upload_user_id':user.id} if local else {}))
 
 
 async def card_data(db, path):
@@ -234,7 +237,19 @@ async def image_bytes(card, avatar=None):
 
     async def build():
         async with _slots:
-            primary, background = await asyncio.gather(fetch_image(card.get('primary')), fetch_image(card.get('background')))
+            async def background_image():
+                owner=card.get('background_upload_user_id')
+                if card.get('kind')=='profile' and type(owner) is int and owner>0:
+                    # Only profile_card emits this marker after public-profile
+                    # access checks. Generic metadata URLs never read local files.
+                    from core.config import settings
+                    def read():
+                        path=settings.data_dir/'avatars'/f'{owner}.banner.webp'
+                        try:return path.read_bytes() if not path.is_symlink() and path.stat().st_size<=5*1024*1024 else None
+                        except OSError:return None
+                    return await asyncio.to_thread(read)
+                return await fetch_image(card.get('background'))
+            primary, background = await asyncio.gather(fetch_image(card.get('primary')), background_image())
             if avatar:
                 try:
                     primary = await asyncio.to_thread(avatar.read_bytes)

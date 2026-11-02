@@ -439,6 +439,12 @@ class BackgroundCrop(BaseModel):
     zoom: float = Field(default=1,ge=1,le=3,allow_inf_nan=False)
 
 
+class ProfileBackgroundSource(BaseModel):
+    model_config={'extra':'forbid'}
+    image:str=Field(min_length=1,max_length=2048)
+    crop:BackgroundCrop=Field(default_factory=BackgroundCrop)
+
+
 class UserProfileUpdate(BaseModel):
     background_crop: Optional[BackgroundCrop] = None
     background_url: Optional[str] = Field(default=None, max_length=2048)
@@ -448,12 +454,7 @@ class UserProfileUpdate(BaseModel):
     def validate_background_url(cls, value: Optional[str]) -> Optional[str]:
         if not value or not value.strip():
             return None
-        from urllib.parse import urlsplit
-        value = value.strip()
-        parsed = urlsplit(value)
-        if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password:
-            raise ValueError("Use an HTTP or HTTPS image URL without credentials")
-        return value
+        raise ValueError('Upload a background image or choose artwork from a gallery')
 
     bio: Optional[str] = Field(default=None, max_length=5000)
     minimum_movie_runtime: int = Field(default=30, ge=0, le=1440)

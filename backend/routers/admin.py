@@ -261,7 +261,7 @@ async def backup_database(_: User = Depends(require_admin)):
                 "SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename != 'alembic_version'"
             )
             tables = [r["tablename"] for r in rows]
-            avatar_rows = await conn.fetch("SELECT user_id, avatar_path FROM user_profiles WHERE avatar_path IS NOT NULL")
+            avatar_rows = await conn.fetch("SELECT user_id, avatar_path, background_url FROM user_profiles WHERE avatar_path IS NOT NULL OR background_url IS NOT NULL")
             avatars = avatar_backup_files(app_settings.data_dir / "avatars", avatar_rows)
 
             buf = io.BytesIO()

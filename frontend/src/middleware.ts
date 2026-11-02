@@ -25,7 +25,7 @@ const PUBLIC_LEGACY_STATS_PAGE_RE = /^\/stats\/\d+\/?$/;
 // The profile page's <img> tag hits this proxy path directly. It has no file
 // extension, so it doesn't fall under isStaticAsset below like TMDB poster
 // URLs do, and needs the same admin-gated anonymous allowance as the page itself.
-const PUBLIC_AVATAR_PROXY_RE = /^\/api\/proxy\/profile\/avatar\/\d+$/;
+const PUBLIC_AVATAR_PROXY_RE = /^\/api\/proxy\/profile\/(?:avatar|background)\/\d+$/;
 // Matches /list/{id} (someone else's public/friends-only list page). The list
 // itself still enforces its own privacy_level server-side; this only decides
 // whether a logged-out visitor gets past the gate at all.

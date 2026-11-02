@@ -1,4 +1,5 @@
 """Tracked lists are independent of connected streaming-library membership."""
+from core.profile_images import background_url as profile_background_url
 import asyncio
 from core.catalog_search import result_filters, browse_preferences
 from core import settings_store, season_releases, tracking_projection
@@ -673,7 +674,7 @@ async def person(username: str, db: AsyncSession = Depends(get_db), viewer: User
     return {"id":user.id,"username":user.username,"display_name":user.display_name,"bio":user.profile.bio if user.profile else None,
         "profile_color": user.profile.profile_color if user.profile else "#3db4f2",
         "background_crop": user.profile.background_crop if user.profile else None,
-        "background_url": user.profile.background_url if user.profile else None,
+        "background_url": await profile_background_url(db,user.profile),
         "owner":owner,"following":bool(viewer and viewer.id in followers_ids),
         "follows_you":bool(viewer and not owner and viewer.id in following_ids),
         "has_avatar":bool(user.profile and user.profile.avatar_path),
@@ -1193,7 +1194,7 @@ async def profile_stats_overview(
                     "profile_color": user.profile.profile_color if user.profile else "#3db4f2",
                     "has_avatar": bool(user.profile and user.profile.avatar_path),
                     "background_crop": user.profile.background_crop if user.profile else None,
-        "background_url": user.profile.background_url if user.profile else None},
+        "background_url": await profile_background_url(db,user.profile)},
         "owner": owner, "following": following, "follows_you": follows_you,
         "combine_lists": True if prefs is None else prefs.combine_lists,
     }
@@ -1259,7 +1260,7 @@ async def profile_stats(username: str, media_type: Literal["movie", "series", "a
     return {"profile":{"id":user.id,"username":user.username,"display_name":user.display_name,
                        "bio":user.profile.bio if user.profile else None,"profile_color":user.profile.profile_color if user.profile else "#3db4f2",
                        "has_avatar":bool(user.profile and user.profile.avatar_path),
-                       "background_url":user.profile.background_url if user.profile else None},
+                       "background_url":await profile_background_url(db,user.profile)},
             "owner":owner,"following":following,"follows_you":follows_you,
             "combine_lists":True if prefs is None else prefs.combine_lists,"media_type":media_type,"year":year,
             "current":{"total":len(entries),"statuses":statuses},
