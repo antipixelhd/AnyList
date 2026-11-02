@@ -18,6 +18,19 @@ def asset(id=1,**values):
 
 
 class ArtworkTests(unittest.IsolatedAsyncioTestCase):
+    def test_cycle_threshold_and_ranked_fallback_for_redacted_votes(self):
+        rows=artwork.candidates([asset(index) for index in range(10)],'heroes')
+        self.assertEqual(artwork.cycling(rows),[row['url'] for row in rows[:6]])
+        rows[2]['upvotes']=2
+        self.assertEqual(artwork.cycling(rows),[rows[2]['url']])
+
+    async def test_animated_heroes_use_an_independent_source_filter(self):
+        http=SimpleNamespace(request=AsyncMock(return_value={'success':True,'data':[asset(animated=True)]}))
+        with patch.object(artwork.settings,'steamgriddb_api_key','fake'):
+            rows=await artwork.retrieve(http,'1578650','heroes_animated')
+        self.assertEqual(len(rows),1)
+        self.assertEqual(http.request.call_args.kwargs['params']['types'],'animated')
+        self.assertIn('/heroes/steam/',http.request.call_args.args[2])
     async def test_explicit_static_filtered_request_and_provider_vote_order(self):
         http=SimpleNamespace(request=AsyncMock(return_value={'success':True,'data':[asset(3),asset(1)]}))
         with patch.object(artwork.settings,'steamgriddb_api_key','fake'):

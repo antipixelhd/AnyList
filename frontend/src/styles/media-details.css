@@ -285,3 +285,19 @@ body.tracker .media-detail :is(.lab-public-score,.lab-game-offer) h2 { font-size
 
 .media-detail [data-game-genres]:empty { min-height:26px; }
 .media-detail [data-game-genres][hidden] { display:none; }
+
+/* Game banners reuse the image viewer; only their source controls are new. */
+.media-detail[data-media-kind=game] .lab-hero-art-button { right:calc(max(18px,(100% - 1240px) / 2) + 38px); }
+.media-detail .game-banner-settings-button { position:absolute; right:max(18px,calc((100% - 1240px) / 2)); bottom:36px; display:grid; place-items:center; width:34px; height:34px; color:#d4e0ea99; anchor-name:--game-banner-settings; }
+.media-detail .game-banner-settings-button:is(:hover,:focus-visible) { outline:none; color:var(--bright); background:none; }
+.game-banner-settings { inset:auto; position:fixed; top:140px; right:24px; margin:0; padding:18px; width:260px; max-width:calc(100vw - 32px); border:0; border-radius:8px; background:var(--panel); color:var(--bright); box-shadow:0 12px 40px #0006; }
+@supports (position-anchor:--game-banner-settings) { .game-banner-settings { position-anchor:--game-banner-settings; top:anchor(bottom); left:anchor(right); right:auto; translate:-100% 0; margin-top:8px; } }
+.game-banner-settings label { display:flex; align-items:center; justify-content:space-between; gap:20px; padding:8px 0; cursor:pointer; }
+.game-banner-settings input { appearance:none; flex-shrink:0; width:32px; height:18px; border:0; border-radius:20px; background:var(--field); position:relative; cursor:pointer; transition:background-color .15s; }
+.game-banner-settings input:before { content:''; position:absolute; width:12px; height:12px; top:3px; left:3px; border-radius:50%; background:var(--bright); transition:transform .15s; }
+.game-banner-settings input:checked { background:var(--blue); }
+.game-banner-settings input:checked:before { transform:translateX(14px); }
+.media-detail .game-banner-settings input:focus-visible { outline:none; filter:brightness(1.3); }
+.game-banner-settings p { color:var(--text); font-size:1.2rem; margin-top:10px; }
+@media (max-width:650px) { .media-detail.concept-marquee[data-media-kind=game] .lab-hero-art-button { right:38px; } .media-detail .game-banner-settings-button { top:12px; bottom:auto; right:0; } }
+@media (prefers-reduced-motion:reduce) { .game-banner-settings input,.game-banner-settings input:before { transition:none; } }

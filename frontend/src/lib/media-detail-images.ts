@@ -1,3 +1,4 @@
+import {mountGameBannerSettings} from './game-banner-settings';
 import {showDialog,reveal,cancelUiMotion} from './ui-motion';
 import {showToast} from './toasts';
 import {bindImageViewerDismissal} from './image-viewer-dismissal';
@@ -36,6 +37,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
   const initialHero=root.querySelector<HTMLButtonElement>('.lab-hero-art-button')?.dataset.detailImage;
   const artworkLimit=info.type==='game'?Infinity:10;
   const posterLimit=info.type==='game'?Infinity:10;
+  let gameBannerSelected:string|undefined;
   const imagePath=info.type==='game'?`/api/proxy/tracking/games/works/${info.id}`:`/api/proxy/tracking/title/${info.id}`;
   const galleries:Galleries&{hero:string[]}={posters:uniqueDetailImages(info.posters||[],posterLimit),artwork:uniqueDetailImages(info.artwork||[],artworkLimit),hero:initialHero?[initialHero]:[]};
   const galleryLimit=standalone&&!standalone.logo?5:10;
@@ -305,7 +307,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
     const commit=()=>{
       if(signal.aborted||revision!==heroRevision)return;
       commitDetailHero(hero,candidate,url,button,backdrop=>{
-        galleries.hero=[backdrop];
+        galleries.hero=uniqueDetailImages([backdrop,...galleries.hero],Infinity);
         publishDetailArtwork(editorStore,info,{backdrop});
       });
     };
@@ -345,7 +347,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
         if(coverImage&&imageKey(coverImage.src)!==imageKey(primary))applyResponsiveArtwork(coverImage,primary,{size:'w500',sizes:coverImage.sizes||'(max-width:650px) 108px, 210px',route:'auto'});
       }
       fallback=data.backdrop_fallback||fallback;
-      paintHero(data.backdrop);
+      paintHero(info.type==='game'&&gameBannerSelected?gameBannerSelected:data.backdrop);
       if(!standalone)publishDetailArtwork(editorStore,info,{poster:primary});
       paintPreview();
       const grid=root.querySelector<HTMLElement>('[data-detail-artwork-grid]');
@@ -423,7 +425,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
     const button=(event.target as Element).closest<HTMLButtonElement>(standalone?'[data-portrait-image]':'[data-detail-image]');
     if(!button||button.disabled)return;
     active=button.matches('.lab-hero-art-button')?'hero':button.dataset.detailGallery==='posters'||(standalone&&!standalone.logo)?'posters':'artwork';
-    if(active==='hero')galleries.hero=[button.dataset.detailImage!];
+    if(active==='hero'&&!galleries.hero.includes(button.dataset.detailImage!))galleries.hero=[button.dataset.detailImage!,...galleries.hero];
     lightbox.dataset.gallery=viewerGroup();
     const url=(standalone?button.dataset.portraitImage:button.dataset.detailImage)!;
     if(active==='artwork'&&url&&!galleries.artwork.includes(url))galleries.artwork.unshift(url);
@@ -441,7 +443,12 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
   },{signal});
   // The hero is critical: start its small metadata read immediately. Full
   // gallery curation and extra image downloads wait for a gallery interaction.
-  if(info.heroAvailable){
+  if(info.type==='game'&&info.heroAvailable)mountGameBannerSettings(root,info.id,String(info.bannerViewer||''),signal,data=>{
+    gameBannerSelected=data.backdrop;
+    galleries.hero=uniqueDetailImages(data.banners||[],Infinity);
+    if(data.backdrop)paintHero(data.backdrop);
+  });
+  if(info.heroAvailable&&info.type!=='game'){
     const background=detailBackground<Partial<Galleries>&{artwork_preview?:{image?:string;thumbnail?:string};backdrop?:string;backdrop_fallback?:string;background_status?:DetailLoadState}>(
       `${imagePath}/background`,signal,data=>{
         fallback=data.backdrop_fallback||fallback;

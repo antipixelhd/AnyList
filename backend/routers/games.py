@@ -31,12 +31,16 @@ Admin = Annotated[User, Depends(require_admin)]
 
 
 @router.get('/works/{work_id}/background')
-async def game_background(work_id:WorkId,db:DB,viewer:Reader) -> dict:
-    from core.game_artwork import images
+async def game_background(work_id:WorkId,db:DB,viewer:Reader,animated:bool=False) -> dict:
+    from core.game_artwork import images,cycling
     from core.media_details import primary_details
     work=await tracking.work(db,work_id)
-    _,state=await images(db,work,'heroes')
-    return {**primary_details(work),'background_status':state}
+    rows,state=await images(db,work,'heroes_animated' if animated else 'heroes')
+    primary=primary_details(work)
+    return {**primary,'backdrop':rows[0]['url'] if rows else primary['backdrop'],
+        'banners':[row['url'] for row in rows],
+        'cycle_banners':cycling(rows),
+        'background_status':state}
 
 
 @router.get('/works/{work_id}/images')

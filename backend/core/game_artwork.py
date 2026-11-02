@@ -9,7 +9,7 @@ from core.catalogue_providers import ProviderHTTP, ProviderError
 from core.config import settings
 from models.catalogue import CatalogueIdentity
 
-VERSION=1
+VERSION=2
 
 
 def now():
@@ -24,28 +24,40 @@ def asset_url(value):
 
 def candidates(rows,kind):
     """Keep provider vote order (the API ranks by score), including tied scores."""
+    animated=kind=="heroes_animated"
+    kind="heroes" if animated else kind
     result=[]
     for row in rows:
         if not isinstance(row,dict):continue
         width,height=row.get('width'),row.get('height')
         if (row.get('style')!='alternate' or row.get('language') not in ('en',None)
-            or any(row.get(flag) for flag in ('humor','nsfw','epilepsy','animated'))
+            or any(row.get(flag) for flag in (('humor','nsfw','epilepsy') if animated else ('humor','nsfw','epilepsy','animated')))
             or row.get('mime') not in ('image/png','image/jpeg','image/webp')
             or not all(type(value) is int and value>0 for value in (width,height))):continue
         if kind=='grids' and not .6<=width/height<=.75:continue
         if kind=='heroes' and not 1.5<=width/height<=4:continue
         url=asset_url(row.get('url'))
         if url and url not in [value['url'] for value in result]:
-            result.append({'url':url,'thumbnail':asset_url(row.get('thumb')),'id':row.get('id')})
+            result.append({'url':url,'thumbnail':asset_url(row.get('thumb')),'id':row.get('id'),'upvotes':row.get('upvotes',0),'score':row.get('score',0)})
     return result
 
 
+def cycling(rows):
+    # Some API responses redact every vote counter to zero. In that case
+    # retain the provider's ranked order rather than interpreting it as dislike.
+    rated=any((row.get('upvotes') or 0)!=0 or (row.get('score') or 0)!=0 for row in rows)
+    eligible=[row for row in rows if (row.get('upvotes') or 0)>=2 or (row.get('score') or 0)>=2] if rated else rows
+    return [row['url'] for row in eligible[:6]]
+
+
 async def retrieve(http,app,kind):
-    params={'styles':'alternate','types':'static','nsfw':'false','humor':'false',
+    animated=kind=='heroes_animated'
+    endpoint='heroes' if animated else kind
+    params={'styles':'alternate','types':'animated' if animated else 'static','nsfw':'false','humor':'false',
         'epilepsy':'false','languages':'en','mimes':'image/png,image/jpeg,image/webp','limit':50}
     if kind=='grids':params['dimensions']='600x900,342x482'
     try:
-        raw=await http.request('steamgriddb','GET',f'https://www.steamgriddb.com/api/v2/{kind}/steam/{app}',
+        raw=await http.request('steamgriddb','GET',f'https://www.steamgriddb.com/api/v2/{endpoint}/steam/{app}',
             headers={'Authorization':'Bearer '+settings.steamgriddb_api_key},params=params,attempts=1)
     except ProviderError as error:
         if error.code=='not_found':return []
