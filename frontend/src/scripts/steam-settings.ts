@@ -85,7 +85,7 @@ function init() {
         const result = await request<{ games: SteamGame[] }>(`/${id}/achievement-progress`);
         if (epoch !== reviewEpoch || signal.aborted || importing) return;
         for (const value of result.games) { const game = byId.get(value.app_id); if (game) { Object.assign(game, value); paintCount(game); } }
-        paintSelections();
+        if (draft.sort === 'completion') render(); else paintSelections();
         if (!games.some(steamProgressPending)) return;
         await new Promise<void>(resolve => { const finish = () => { clearTimeout(wait); signal.removeEventListener('abort', finish); resolve(); }; const wait = setTimeout(finish, 1500); signal.addEventListener('abort', finish, {once:true}); });
       }

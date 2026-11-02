@@ -50,7 +50,7 @@ import CalendarDateInput from '../CalendarDateInput.astro';
     <button type="button" data-steam-retry class="steam-primary" hidden>Retry loading</button>
   </div>
   </dialog>
-  <dialog data-steam-date-dialog class="steam-date-dialog" aria-labelledby="steam-date-heading"><form method="dialog"><h2 id="steam-date-heading">Completion date</h2><CalendarDateInput id="steam-completion-date" name="completion_date" label="Completion date" /><div class="flex justify-between gap-4 mt-6"><button value="discard">Discard date</button><button value="cancel">Cancel</button><button class="steam-primary" value="save">Save date</button></div></form></dialog>
+  <dialog data-steam-date-dialog class="steam-date-dialog" aria-labelledby="steam-date-heading"><form method="dialog"><h2 id="steam-date-heading">Completion date</h2><CalendarDateInput id="steam-completion-date" name="completion_date" label="Completion date" /><div class="flex justify-between gap-4 mt-6"><button value="discard" formnovalidate>Discard date</button><button value="cancel" formnovalidate>Cancel</button><button class="steam-primary" value="save">Save date</button></div></form></dialog>
 </section>
 
 <style>

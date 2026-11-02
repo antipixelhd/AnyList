@@ -55,6 +55,7 @@ async def background_details(factory, user_id, connection_id, job_id):
                 await apply_games(db, state, games, state.selection)
             job = await running_job(db, job_id)
             job.status = SyncStatus.completed
+            job.processed_items = job.total_items = len(library)
             await db.commit()
     except SyncCancelled:
         return
