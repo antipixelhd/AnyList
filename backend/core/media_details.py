@@ -204,7 +204,7 @@ async def work_details(db, work, *, extras=True):
         artwork.extend(variants['artwork'])
         homepage = public_url(snapshot.homepage)
         if url := homepage or public_url(snapshot.url):
-            sources.append({'name': 'Official website' if homepage else snapshot.provider.upper(), 'url': url})
+            sources.append(source_link(snapshot.provider, url, homepage=bool(homepage)))
     from core.media_related import catalogue_related
     related = await catalogue_related(db, work)
     return {'catalogue_id': work.id, 'people': list(people.values()), 'organizations': list(organizations.values()),
@@ -238,6 +238,57 @@ def primary_details(work,artwork=None):
             if isinstance(value,str) or isinstance(value,dict) and value.get('name')],
         'platforms':list(dict.fromkeys('PC' if row.get('group')=='PC' or str(row.get('id')) in {'3','6','14'}
             else row.get('name') for row in attrs.get('platforms') or [] if isinstance(row,dict) and row.get('name'))) if work.kind=='game' else []}
+
+
+async def game_releases(db, work):
+    from core.game_release_dates import public_release
+    legacy_game_date = ((work.attributes or {}).get('release_date_projection') != GAME_RELEASE_VERSION
+        and (work.field_sources or {}).get('attributes.release_date') == 'igdb')
+    releases = []
+    release_rows = (await db.execute(select(GameRelease,CatalogueEntity.attributes).join(CatalogueEntity,
+        CatalogueEntity.id == GameRelease.entity_id).where(GameRelease.work_id == work.id,
+        GameRelease.platform_namespace == 'igdb.platform')
+        .order_by(GameRelease.release_date.asc().nullslast(), GameRelease.entity_id))).all()
+    seen_platforms = set()
+    for release, attributes in release_rows:
+        if not public_release(attributes or {}):
+            continue
+        platform = 'PC' if release.platform_id in {'3','6','14'} else release.platform_name
+        if not platform or platform in seen_platforms:
+            continue
+        seen_platforms.add(platform)
+        value=release.release_date
+        releases.append({'platform': platform, 'region': release.region, 'release_quarter':(attributes or {}).get('release_quarter'),
+            'release_date':value[:4] if legacy_game_date and isinstance(value,str) else value})
+    return releases
+
+
+def source_link(provider, url, *, homepage=False):
+    host = urlsplit(url).hostname
+    name = {'store.steampowered.com':'Steam','www.metacritic.com':'Metacritic','metacritic.com':'Metacritic'}.get(host)
+    return {'name':name or ('Official website' if homepage else provider.upper()), 'url':url}
+
+
+async def game_primary_details(db, work):
+    """Public sections updated by primary hydration, without optional enrichment."""
+    snapshots = (await db.execute(select(MetadataSnapshot.provider,
+        MetadataSnapshot.payload['homepage'].astext.label('homepage'),
+        MetadataSnapshot.payload['url'].astext.label('url')).where(
+            MetadataSnapshot.entity_id == work.id,
+            MetadataSnapshot.kind.not_like('game_credit%'),MetadataSnapshot.kind!='game_binding_review',
+            or_(MetadataSnapshot.payload['homepage'].is_not(None),MetadataSnapshot.payload['url'].is_not(None)))
+        .order_by(MetadataSnapshot.fetched_at.desc().nullslast()).limit(6))).all()
+    sources = []
+    for row in snapshots:
+        homepage = public_url(row.homepage)
+        if url := homepage or public_url(row.url):
+            sources.append(source_link(row.provider,url,homepage=bool(homepage)))
+    identities = await db.scalars(select(CatalogueIdentity).where(CatalogueIdentity.entity_id == work.id,
+        CatalogueIdentity.namespace == 'steam.app'))
+    for identity in identities:
+        if identity.external_id.isdecimal():
+            sources.append({'name':'Steam','url':f'https://store.steampowered.com/app/{identity.external_id}/'})
+    return {**primary_details(work), 'sources':sources, 'releases':await game_releases(db, work)}
 
 
 async def catalogue_title(db, work, viewer_id=None, *, store_country=None, enqueue_offers=False,enqueue_ratings=False,enqueue_info=False,identities=None):
@@ -289,18 +340,7 @@ async def catalogue_title(db, work, viewer_id=None, *, store_country=None, enque
             'pages': edition.pages} for edition, entity in rows]
         details['posters'] = unique_images([*details['posters'], *(row['image'] for row in editions)])
     if work.kind == 'game':
-        release_rows = await db.scalars(select(GameRelease).where(GameRelease.work_id == work.id,
-            GameRelease.platform_namespace == 'igdb.platform')
-            .order_by(GameRelease.release_date.asc().nullslast(), GameRelease.entity_id))
-        seen_platforms = set()
-        for release in release_rows:
-            platform = 'PC' if release.platform_id in {'3','6','14'} else release.platform_name
-            if not platform or platform in seen_platforms:
-                continue
-            seen_platforms.add(platform)
-            value=release.release_date
-            releases.append({'platform': platform, 'region': release.region,
-                'release_date':value[:4] if legacy_game_date and isinstance(value,str) else value})
+        releases = await game_releases(db, work)
         from core.game_offers import view as offers_view
         offers=await offers_view(db,work,viewer_id,hint=store_country,identities=identities,enqueue=enqueue_offers)
         prices=offers['offers'];personal['game_offer_context']={key:value for key,value in offers.items() if key!='offers'}

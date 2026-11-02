@@ -1,5 +1,7 @@
 import {detailBrowseHref,detailFacts,detailSynopsis,prepareDetail} from './media-detail-data';
 import {mountContributorBiography,unmountContributorBiography} from './contributor-biography';
+import {publishDetailSources} from './detail-sources';
+import {formatDate} from './date-time';
 
 /** Publish public metadata into owned slots; never re-seed editor/private state. */
 export function publishGamePrimary(root:HTMLElement,data:Record<string,any>,id:number,signal:AbortSignal) {
@@ -7,6 +9,24 @@ export function publishGamePrimary(root:HTMLElement,data:Record<string,any>,id:n
   root.dataset.gamePrimaryPending='false';
   root.querySelectorAll('[data-game-primary-facts]').forEach(node=>node.remove());
   const title=prepareDetail(data);
+  publishDetailSources(root,title.sources);
+  const releases=root.querySelector<HTMLElement>('[data-game-releases]');
+  if(releases){
+    releases.hidden=!title.releases.length;
+    releases.querySelector('.media-releases')?.replaceChildren(...title.releases.map(release=>{
+      const row=document.createElement('p'),platform=document.createElement('strong'),value=document.createElement('span');
+      platform.textContent=release.platform;
+      value.textContent=release.region||'';
+      if(release.release_date){
+        if(release.region)value.append(' · ');
+        const time=document.createElement('time');time.dateTime=release.release_date;time.dataset.localDateTime='date';
+        if(release.release_quarter){time.textContent=`Q${release.release_quarter} ${release.release_date}`;delete time.dataset.localDateTime;}
+        else time.textContent=formatDate(release.release_date);
+        value.append(time);
+      }
+      row.append(platform,value);return row;
+    }));
+  }
   const heading=root.querySelector('.lab-heading h1');if(heading)heading.textContent=title.title;
   const year=root.querySelector<HTMLElement>('[data-game-year]');
   if(year){

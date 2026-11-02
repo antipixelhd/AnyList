@@ -493,10 +493,13 @@ async def ingest_document(db, doc, provider, *, entities=None, project_screen_ro
             ["work_id", "provider", "source_key"],
             preserve_missing=True,
         )
+    current_releases = set()
     for r in doc["releases"]:
         if work.kind != "game":
             raise IdentityConflict("Release requires a game work")
         release = await upsert_entity(db, r["entity"], provider)
+        if r.get('platform_namespace') == 'igdb.platform':
+            current_releases.add(release.id)
         old = await db.get(GameRelease, release.id)
         if old and old.work_id != work.id:
             raise IdentityConflict("Release already belongs to another game work")
@@ -516,9 +519,14 @@ async def ingest_document(db, doc, provider, *, entities=None, project_screen_ro
         }
         if old:
             values = {k: v for k, v in values.items() if has_value(v)}
-        if provider=='igdb' and (release.attributes or {}).get('release_date_projection') in (1,2):
+        if provider=='igdb' and (release.attributes or {}).get('release_date_projection') in (1,2,3):
             values['release_date']=(release.attributes or {}).get('release_date')
         await upsert(db, GameRelease, values, ["entity_id"])
+    if provider == 'igdb' and work.kind == 'game' and doc.get('coverage', {}).get('release_dates') == 'provider_projection':
+        # A provider may replace release IDs when postponing a game. Retaining
+        # superseded rows makes the earliest-per-platform view show old dates.
+        await db.execute(delete(GameRelease).where(GameRelease.work_id == work.id,
+            GameRelease.platform_namespace == 'igdb.platform', GameRelease.entity_id.not_in(current_releases)))
     child_edges={'dlc':set(),'expansion':set()}
     for r in doc["relationships"]:
         target = await upsert_entity(db, r["target"], provider)

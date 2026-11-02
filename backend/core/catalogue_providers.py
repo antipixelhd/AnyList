@@ -584,6 +584,7 @@ class CatalogueProviders:
     async def _detail(self, provider, kind, id, *, credit_groups=None,on_primary=None):
         if provider == "igdb":
             from core.game_types import igdb_game_class
+            from core.game_release_dates import VERSION as RELEASE_VERSION
             rows = await self.igdb(
                 "games", f"fields {IGDB_FIELDS}; where id = {id}; limit 1;"
             )
@@ -612,7 +613,7 @@ class CatalogueProviders:
                         if x not in doc['work']['identities'])
                 return doc
             raw['_coverage']={'primary_complete':True,'source_game_id':str(raw['id']),
-                'characters_complete':False,'release_dates':'provider_projection','release_precision_version':1,'artwork_policy_version':GAME_ARTWORK_VERSION,'contributors':'companies_only',
+                'characters_complete':False,'release_dates':'provider_projection','release_precision_version':RELEASE_VERSION,'artwork_policy_version':GAME_ARTWORK_VERSION,'contributors':'companies_only',
                 'children_complete':all(isinstance(raw.get(field,[]),list) and all(
                     isinstance(child,dict) and child.get('id') and child.get('name') and igdb_game_class(child)!='unknown'
                     for child in raw.get(field,[])) for field in ('dlcs','expansions'))}

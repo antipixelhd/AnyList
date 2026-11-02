@@ -465,7 +465,7 @@ def normalize_igdb(raw):
             "igdb.release",
             r,
             name=f"{raw['name']} — {platform.get('name', platform['id'])}",
-            attributes=release(r),
+            attributes={**release(r),'release_status':(r.get('status') or {}).get('name')},
         )
         doc["releases"].append(
             {

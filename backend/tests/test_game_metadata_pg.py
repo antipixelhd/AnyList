@@ -28,7 +28,7 @@ class Provider:
             'game_type':{'id':0,'type':'Main Game'},'cover':{'url':'https://images.igdb.com/igdb/image/upload/t_thumb/source.jpg'},
             'genres':[{'id':5,'name':'Adventure'}],'platforms':[{'id':6,'name':'PC (Microsoft Windows)'}],
             '_coverage':{'primary_complete':True,'source_game_id':native,'characters_complete':False,
-                'release_precision_version':RELEASE_VERSION,'artwork_policy_version':GAME_ARTWORK_VERSION,'children_complete':True}}
+                'release_precision_version':RELEASE_VERSION,'release_dates':'provider_projection','artwork_policy_version':GAME_ARTWORK_VERSION,'children_complete':True}}
         raw.update(self.dates)
         if on_primary:await on_primary(normalize_igdb(raw),{'game':deepcopy(raw)})
         self.optional_active+=1;self.optional_max=max(self.optional_max,self.optional_active)
@@ -213,11 +213,20 @@ class GameMetadataTests(unittest.IsolatedAsyncioTestCase):
         from core.game_metadata import request
         self.provider.dates={'first_release_date':1803859200,'release_dates':[{'id':982776,
             'date':1803859200,'date_format':{'id':1,'format':'YYYYMM'},'y':2027,'m':3,
-            'platform':{'id':6,'name':'PC (Microsoft Windows)'}}]}
+            'platform':{'id':6,'name':'PC (Microsoft Windows)'}},
+            {'id':982777,'date':1776816000,'date_format':{'format':'YYYYMMDD'},'status':{'name':'Beta'},
+             'platform':{'id':6,'name':'PC (Microsoft Windows)'}}]}
         async with self.Session() as db:
             work=await db.get(CatalogueEntity,self.base)
             work.attributes={**work.attributes,'release_date':'2027-03-01'}
             work.field_sources={**work.field_sources,'attributes.release_date':'igdb'}
+            old=CatalogueEntity(kind='release',name='Superseded release')
+            db.add(old);await db.flush()
+            db.add(GameRelease(entity_id=old.id,work_id=self.base,platform_namespace='igdb.platform',
+                platform_id='6',platform_name='PC (Microsoft Windows)',release_date='2026-04-22'))
+            db.add(CatalogueIdentity(entity_id=self.base,namespace='steam.app',external_id='42',source='igdb'))
+            db.add(MetadataSnapshot(provider='steam',kind='store',external_id='42',entity_id=self.base,
+                payload={'url':'https://www.metacritic.com/game/example'},fetched_at=now()))
             db.add(MetadataSnapshot(provider='igdb',kind='game',external_id='119133',entity_id=self.base,
                 fetched_at=now(),expires_at=now()+timedelta(days=30),coverage={'characters_complete':True},payload={}))
             await db.commit()
@@ -227,6 +236,10 @@ class GameMetadataTests(unittest.IsolatedAsyncioTestCase):
         data=(await self.detail()).json()
         self.assertEqual(data['release_date'],'2027-03')
         self.assertEqual(data['releases'][0]['release_date'],'2027-03')
+        primary=(await self.client.get(f'/tracking/games/works/{self.base}/primary')).json()
+        self.assertEqual(primary['releases'],data['releases'])
+        self.assertIn({'name':'Steam','url':'https://store.steampowered.com/app/42/'},primary['sources'])
+        self.assertIn({'name':'Metacritic','url':'https://www.metacritic.com/game/example'},primary['sources'])
         async with self.Session() as db:
             release=await db.scalar(select(GameRelease).where(GameRelease.work_id==self.base))
             self.assertEqual(release.release_date,'2027-03')
@@ -420,6 +433,7 @@ class SourceCheckpointTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(entered.wait(),2)
             primary.assert_awaited_once();doc=primary.call_args.args[0]
             self.assertTrue(doc['coverage']['primary_complete']);self.assertFalse(doc['coverage']['characters_complete'])
+            self.assertEqual(doc['coverage']['release_precision_version'],RELEASE_VERSION)
             self.assertIn({'namespace':'igdb.game','external_id':'119133'},doc['work']['identities'])
             if edition:self.assertIn({'namespace':'igdb.game','external_id':'555'},doc['work']['identities'])
             release.set();doc,_=await task;self.assertTrue(doc['coverage']['characters_complete'])

@@ -197,17 +197,17 @@ async def game_metadata_status(work_id:WorkId,db:DB,viewer:Reader,
     # still return immediately and never acquire optional character payloads.
     state,_=await service.ensure(db,work,wait_seconds=2)
     if primary and state['primary_ready'] and state.get('primary_revision')!=revision:
-        from core.media_details import primary_details
+        from core.media_details import game_primary_details
         await db.refresh(work)
-        return {**state,'primary':primary_details(work)}
+        return {**state,'primary':await game_primary_details(db,work)}
     return state
 
 
 @router.get('/works/{work_id}/primary')
 async def game_primary(work_id:WorkId,db:DB,viewer:Reader,response:Response) -> dict:
-    from core.media_details import primary_details
+    from core.media_details import game_primary_details
     response.headers['Cache-Control']='private, no-store'
-    return primary_details(await tracking.work(db,work_id))
+    return await game_primary_details(db,await tracking.work(db,work_id))
 
 
 class IMDbBindingReview(BaseModel):

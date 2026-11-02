@@ -1,0 +1,39 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {detailSources,publishDetailSources} from '../src/lib/detail-sources.ts';
+
+test('Steam snapshot and identity links share one canonical label and URL',()=>{
+  assert.deepEqual(detailSources([
+    {name:'STEAM',url:'http://store.steampowered.com/app/42/Game/?utm_source=igdb'},
+    {name:'steam',url:'https://store.steampowered.com/app/42'},
+    {name:'Steam',url:'https://store.steampowered.com/app/42/'},
+    {name:'IGDB',url:'https://www.igdb.com/games/example'},
+  ]),[{name:'Steam',url:'https://store.steampowered.com/app/42/'},{name:'IGDB',url:'https://www.igdb.com/games/example'}]);
+});
+
+test('source links reject unsafe URLs and retain distinct destinations',()=>{
+  assert.deepEqual(detailSources([{name:'Bad',url:'javascript:alert(1)'},{name:'Bad',url:'broken'}]),[]);
+  assert.equal(detailSources([{name:'Steam',url:'https://store.steampowered.com/app/42/'},
+    {name:'Steam',url:'https://store.steampowered.com/app/43/'}]).length,2);
+});
+
+test('a Steam-supplied critic URL is labelled for its actual destination',()=>{
+  assert.deepEqual(detailSources([{name:'STEAM',url:'https://www.metacritic.com/game/example'}]),
+    [{name:'Metacritic',url:'https://www.metacritic.com/game/example'}]);
+});
+
+test('late ratings and primary updates reconcile links without losing the other section',()=>{
+  const previous=globalThis.document;
+  globalThis.document={createElement:()=>({append(){}})};
+  try{
+    const nav={hidden:true,children:[],querySelectorAll(){return this.children;},replaceChildren(...rows){this.children=rows;}};
+    const root={querySelector:selector=>selector==='[data-detail-sources]'?nav:null};
+    const steam={name:'Steam',url:'https://store.steampowered.com/app/42/'};
+    const critic={name:'Metacritic',url:'https://www.metacritic.com/game/example'};
+    publishDetailSources(root,[critic],'ratings');assert.equal(nav.hidden,false);
+    publishDetailSources(root,[steam]);assert.deepEqual(nav.children.map(row=>row.textContent),['Steam','Metacritic']);
+    publishDetailSources(root,[steam,steam],'ratings');assert.equal(nav.children.length,1);
+    publishDetailSources(root,[]);assert.equal(nav.children.length,1);
+    publishDetailSources(root,[],'ratings');assert.equal(nav.hidden,true);
+  }finally{globalThis.document=previous;}
+});

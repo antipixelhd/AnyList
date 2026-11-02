@@ -2,10 +2,16 @@
 import calendar
 from datetime import date, datetime, timezone
 
-VERSION = 2
+VERSION = 3
 FIELDS = 'release_dates.date,release_dates.date_format.format,release_dates.y,release_dates.m,release_dates.d,release_dates.status.name'
 FORMATS = {0:'YYYYMMDD',1:'YYYYMM',2:'YYYY',3:'YYYYQ1',4:'YYYYQ2',5:'YYYYQ3',6:'YYYYQ4',7:'TBD'}
 KEYS = {'release_date','release_date_precision','release_quarter','release_date_evidence','release_date_projection'}
+
+
+def public_release(row):
+    status = row.get('status')
+    name = status.get('name', '') if isinstance(status, dict) else row.get('release_status', '')
+    return str(name).casefold() not in ('early access','alpha','beta','cancelled','canceled','prerelease','pre-release')
 
 
 def timestamp_day(value):
@@ -54,8 +60,7 @@ def game_release(raw):
     rows = [row for row in raw.get('release_dates') or [] if isinstance(row, dict)]
     # Unlabelled historical releases remain valid. A later full-release port
     # does not supersede the original release on another platform.
-    public=[row for row in rows if str(row['status'].get('name','') if isinstance(row.get('status'),dict) else '').casefold()
-        not in ('early access','alpha','beta','cancelled','canceled','prerelease','pre-release')]
+    public=[row for row in rows if public_release(row)]
     if rows and not public:
         return {'release_date':None,'release_date_precision':'unknown','release_quarter':None,
             'release_date_evidence':'release_dates','release_date_projection':VERSION}
