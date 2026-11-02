@@ -45,7 +45,7 @@ export function mountMediaDetail() {
   const deferArtwork=observeDeferredArtwork(root,signal);
   mountDetailCast(root,signal,info);
   if(root.dataset.mediaKind==='game'){mountGameMetadata(root,info.id,signal);mountGameTimeToBeat(root,info.id,signal,info.gameEstimateStatus);mountGameOffers(root,info.id,signal,info.gameOffers);mountGameRatings(root,info.id,signal,info.gameRatingStatus);mountGameInfo(root,info.id,signal,info.gameInfo);}
-  if(info.backgroundAvailable){
+  if(info.backgroundAvailable&&root.dataset.mediaKind!=='game'){
     const scoreStatus=root.querySelector<HTMLElement>('[data-detail-score-status]');
     const scores=detailBackground<Record<string,any>>(`/api/proxy/tracking/title/${info.id}/scores`,signal,data=>{
       root.querySelectorAll<HTMLElement>('[data-detail-score]').forEach(node=>{
