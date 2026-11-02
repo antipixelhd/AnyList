@@ -71,7 +71,7 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
             db.add(CatalogueIdentity(entity_id=work.id,namespace='steam.app',external_id='1578650',source='igdb'))
             work.attributes={**work.attributes,'steam_primary_app_id':'1578650'}
             values=game_artwork.candidates([asset()],'heroes')
-            db.add(MetadataSnapshot(provider='steamgriddb',kind='game_art_heroes',external_id='v1:1:1578650',
+            db.add(MetadataSnapshot(provider='steamgriddb',kind='game_art_heroes',external_id=f'v1:{game_artwork.VERSION}:1578650',
                 payload={'images':values},fetched_at=game_artwork.now()-timedelta(days=15),
                 error_code='unavailable',expires_at=datetime(2020,1,1)))
             await db.commit()
