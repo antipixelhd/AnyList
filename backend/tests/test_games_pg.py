@@ -36,6 +36,74 @@ URL = os.getenv('GAMES_TEST_DATABASE_URL')
 
 @unittest.skipUnless(URL, 'Requires explicit disposable games PostgreSQL')
 class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
+    async def test_steamgriddb_cache_reuses_results_and_keeps_selected_artwork(self):
+        from core import game_artwork
+        from test_game_artwork import asset
+        from core.media_details import primary_details
+        from types import SimpleNamespace
+        async with self.Session() as db:
+            work=await db.get(CatalogueEntity,self.base)
+            db.add(CatalogueIdentity(entity_id=work.id,namespace='steam.app',external_id='1578650',source='igdb'))
+            work.attributes={**work.attributes,'backdrop_path':'https://example.test/selected.jpg','steam_primary_app_id':'1578650'}
+            work.protected_fields=['attributes.backdrop_path']
+            await db.commit()
+            http=SimpleNamespace(request=AsyncMock(return_value={'success':True,'data':[asset()]}))
+            with patch.object(game_artwork.settings,'steamgriddb_api_key','fake'):
+                first,state=await game_artwork.images(db,work,'heroes',http=http)
+                second,_=await game_artwork.images(db,work,'heroes',http=http)
+            self.assertEqual(first,second);self.assertEqual(state['state'],'ready')
+            self.assertEqual(http.request.await_count,1)
+            self.assertEqual(primary_details(work)['backdrop'],'https://example.test/selected.jpg')
+            self.assertEqual(work.attributes['steamgriddb_hero']['image'],asset()['url'])
+        async with self.Session() as db:
+            work=await db.get(CatalogueEntity,self.base)
+            with patch.object(game_artwork.settings,'steamgriddb_api_key','fake'):
+                self.assertEqual((await game_artwork.images(db,work,'heroes',http=http))[0],first)
+            self.assertEqual(http.request.await_count,1)
+
+    async def test_steamgriddb_failure_preserves_stale_artwork_and_cools_down(self):
+        from core import game_artwork
+        from core.catalogue_providers import ProviderError
+        from test_game_artwork import asset
+        from types import SimpleNamespace
+        async with self.Session() as db:
+            work=await db.get(CatalogueEntity,self.base)
+            db.add(CatalogueIdentity(entity_id=work.id,namespace='steam.app',external_id='1578650',source='igdb'))
+            work.attributes={**work.attributes,'steam_primary_app_id':'1578650'}
+            values=game_artwork.candidates([asset()],'heroes')
+            db.add(MetadataSnapshot(provider='steamgriddb',kind='game_art_heroes',external_id='v1:1:1578650',
+                payload={'images':values},fetched_at=game_artwork.now()-timedelta(days=15),
+                error_code='unavailable',expires_at=datetime(2020,1,1)))
+            await db.commit()
+            http=SimpleNamespace(request=AsyncMock(side_effect=ProviderError('unavailable')))
+            with patch.object(game_artwork.settings,'steamgriddb_api_key','fake'):
+                rows,state=await game_artwork.images(db,work,'heroes',http=http)
+                again,_=await game_artwork.images(db,work,'heroes',http=http)
+            self.assertEqual(rows,values);self.assertEqual(again,values)
+            self.assertEqual(state['state'],'deferred');self.assertEqual(http.request.await_count,1)
+
+    async def test_game_artwork_routes_keep_posters_lazy_and_require_access(self):
+        from core import game_artwork
+        from test_game_artwork import asset
+        async with self.Session() as db:
+            work=await db.get(CatalogueEntity,self.base)
+            work.image_url='https://example.test/original.jpg'
+            work.attributes={**work.attributes,'steam_primary_app_id':'10'}
+            await db.commit()
+        rows=game_artwork.candidates([asset()],'heroes')
+        with patch.object(game_artwork.settings,'steamgriddb_api_key','fake'),patch.object(
+                game_artwork,'retrieve',AsyncMock(return_value=rows)) as source:
+            background=await self.client.get(f'/tracking/games/works/{self.base}/background')
+            self.assertEqual(background.status_code,200,background.text)
+            self.assertEqual(background.json()['backdrop'],asset()['url'])
+            self.assertEqual([call.args[2] for call in source.await_args_list],['heroes'])
+            posters=await self.client.get(f'/tracking/games/works/{self.base}/images')
+            self.assertEqual(posters.status_code,200,posters.text)
+            self.assertEqual(posters.json()['posters'],['https://example.test/original.jpg',asset()['url']])
+            self.assertEqual([call.args[2] for call in source.await_args_list],['heroes','grids'])
+            self.viewer=None
+            self.assertEqual((await self.client.get(f'/tracking/games/works/{self.base}/images')).status_code,401)
+
     async def test_person_caption_poll_is_bounded_identity_scoped_and_authenticated(self):
         from models.catalogue import CatalogueCredit
         async with self.Session() as db:
@@ -694,8 +762,8 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code,200,response.text)
         data=response.json()
         self.assertEqual(data['backdrop'],selected)
-        self.assertEqual(len(data['artwork']),23)
-        self.assertEqual(set(data['artwork']),set(rows))
+        self.assertEqual(len(data['artwork']),21)
+        self.assertEqual(set(data['artwork']),set(rows)-{selected,rows[0]})
         self.assertEqual(data['artwork_preview']['image'],rows[0])
 
     async def test_visibility_does_not_block_direct_links_or_public_profiles_and_notes_stay_private(self):

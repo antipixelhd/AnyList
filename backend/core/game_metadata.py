@@ -71,11 +71,11 @@ async def upgrade_cached_artwork(db,work,native):
         MetadataSnapshot.payload['game']['artworks'].label('artworks')).where(
             MetadataSnapshot.provider=='igdb',MetadataSnapshot.kind=='game',MetadataSnapshot.external_id==native,
             MetadataSnapshot.entity_id==work.id,MetadataSnapshot.fetched_at.is_not(None),
-            MetadataSnapshot.coverage['artwork_policy_version'].as_integer()==1).with_for_update())).one_or_none()
+            MetadataSnapshot.coverage['artwork_policy_version'].as_integer().in_((1,2,3))).with_for_update())).one_or_none()
     if not source or source.native!=native or any(value is not None and not isinstance(value,list)
         for value in (source.screenshots,source.artworks)):return False
     # Legacy artwork lacks image types: refresh it before declaring logo policy current.
-    if source.artworks:return False
+    if source.artworks and any(not isinstance(row,dict) or 'image_type' not in row for row in source.artworks):return False
     raw={'screenshots':source.screenshots or [],'artworks':source.artworks or []}
     images=[value for rows in raw.values() for value in rows]
     if images and not any(isinstance(value,dict) and all(type(value.get(key)) is int and value[key]>0
@@ -84,6 +84,13 @@ async def upgrade_cached_artwork(db,work,native):
     attrs=dict(work.attributes or {});fields=dict(work.field_sources or {})
     if 'attributes.scene_artwork' not in (work.protected_fields or []) and fields.get('attributes.scene_artwork') in (None,'igdb'):
         attrs['scene_artwork']=ranked['scene_artwork'];fields['attributes.scene_artwork']='igdb'
+    if 'attributes.artwork' not in (work.protected_fields or []) and fields.get('attributes.artwork') in (None,'igdb'):
+        from core.catalogue_normalize import image
+        excluded={image(row) for row in source.artworks or [] if isinstance(row,dict)
+            and (row.get('image_type') in (5,6,7,8,9,10,11,12,13,14,15) or row.get('animated'))}
+        attrs['artwork']=list(dict.fromkeys([*ranked['artwork'],
+            *(value for value in attrs.get('artwork') or [] if image(value) not in excluded)]))
+        fields['attributes.artwork']='igdb'
     # Preserve the complete gallery, selected backdrop, source timestamps,
     # retry/lease state and all private tracking. Only presentation policy moves.
     attrs['artwork_policy_version']=GAME_ARTWORK_VERSION
@@ -100,7 +107,7 @@ async def request(db,work,*,identities=None):
     row=await header(db,native);stamp=now()
     if row and row.entity_id not in (None,work.id):
         return None,{'state':'unavailable','primary_ready':False,'pending':False,'complete':False,'error':'identity_conflict','retry_after':0}
-    if row and row.fetched_at and row.artwork_policy_version==1:
+    if row and row.fetched_at and row.artwork_policy_version in (1,2,3):
         await upgrade_cached_artwork(db,work,native)
         row=await header(db,native)
     if (row and row.fetched_at and (row.release_precision_version!=RELEASE_VERSION or row.artwork_policy_version!=GAME_ARTWORK_VERSION) and not row.next_attempt_at

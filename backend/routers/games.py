@@ -30,6 +30,27 @@ WorkId = Annotated[int, Path(gt=0)]
 Admin = Annotated[User, Depends(require_admin)]
 
 
+@router.get('/works/{work_id}/background')
+async def game_background(work_id:WorkId,db:DB,viewer:Reader) -> dict:
+    from core.game_artwork import images
+    from core.media_details import primary_details
+    work=await tracking.work(db,work_id)
+    _,state=await images(db,work,'heroes')
+    return {**primary_details(work),'background_status':state}
+
+
+@router.get('/works/{work_id}/images')
+async def game_images(work_id:WorkId,db:DB,viewer:Reader) -> dict:
+    from core.game_artwork import images
+    from core.media_details import primary_details
+    from core.media_images import unique_images
+    work=await tracking.work(db,work_id)
+    rows,state=await images(db,work,'grids')
+    primary=primary_details(work)
+    return {**primary,'posters':unique_images([primary['poster'],*(row['url'] for row in rows)],limit=None),
+        'image_status':state}
+
+
 @router.get('/users/{username}/statistics')
 async def game_statistics(username:str,response:Response,db:DB,viewer:Reader,section:GameStatsSection='overview',
     sort:Literal['count','mean_score','time']='count',page:Annotated[int,Query(ge=1,le=5000)]=1,

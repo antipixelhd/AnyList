@@ -32,8 +32,8 @@ class NormalizationTests(unittest.TestCase):
             {'url':'https://cdn.test/color.png','image_type':7,'width':5981,'height':920},
             {'url':'https://cdn.test/unknown.jpg','width':256,'height':256}]}
         result=normalize.game_artwork(raw)
-        self.assertEqual(result['artwork'],[r['url'] for r in screenshots]+['https://cdn.test/art.jpg','https://cdn.test/unknown.jpg'])
-        self.assertEqual(result['scene_artwork'],[r['url'] for r in screenshots])
+        self.assertEqual(result['artwork'],['https://cdn.test/art.jpg','https://cdn.test/unknown.jpg']+[r['url'] for r in screenshots])
+        self.assertEqual(result['scene_artwork'],['https://cdn.test/art.jpg']+[r['url'] for r in screenshots])
         self.assertIn('artworks.image_type',providers.IGDB_FIELDS.split(','))
 
     def test_game_scenes_use_typed_dimensions_and_keep_every_gallery_asset(self):
@@ -43,13 +43,13 @@ class NormalizationTests(unittest.TestCase):
                         {'url':'https://cdn.test/square.jpg','width':256,'height':256},
                         {'url':'https://cdn.test/art.jpg','width':1920,'height':1080}]}
         attrs=normalize.normalize_igdb(raw)['work']['attributes']
-        self.assertEqual(attrs['scene_artwork'],['https://cdn.test/scene.jpg','https://cdn.test/art.jpg'])
+        self.assertEqual(attrs['scene_artwork'],['https://cdn.test/art.jpg','https://cdn.test/scene.jpg'])
         self.assertEqual(len(attrs['artwork']),4)
-        self.assertEqual(attrs['artwork'][0],'https://cdn.test/scene.jpg')
+        self.assertEqual(attrs['artwork'][0],'https://cdn.test/logo.jpg')
         raw['screenshots'].append({'url':'https://cdn.test/high-resolution-scene.jpg','width':3840,'height':2160})
         upgraded=normalize.normalize_igdb(raw)['work']['attributes']
-        self.assertEqual(upgraded['scene_artwork'][0],'https://cdn.test/high-resolution-scene.jpg')
-        self.assertEqual(upgraded['artwork'][0],'https://cdn.test/scene.jpg')
+        self.assertEqual(upgraded['scene_artwork'][0],'https://cdn.test/art.jpg')
+        self.assertEqual(upgraded['artwork'][0],'https://cdn.test/logo.jpg')
         self.assertEqual(len(upgraded['artwork']),5)
     def test_game_platform_availability_includes_verified_ports_without_copying_remakes(self):
         raw={'id':1960,'name':'Original','game_type':{'id':0},'platforms':[{'id':7,'name':'PlayStation'}],

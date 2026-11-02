@@ -8,7 +8,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import load_only
 
 from core.catalogue_normalize import image,GAME_ARTWORK_VERSION
-from core.media_images import provider_images, unique_images
+from core.media_images import provider_images, unique_images, image_key
 from core.screen_characters import character_images, role_image_candidates
 from core.studio_names import studio_name
 from core.movie_financials import movie_financials
@@ -222,8 +222,11 @@ def primary_details(work,artwork=None):
         [url for value in attrs.get('artwork') or [] if (url:=image(value))],limit=None if work.kind=='game' else 10)
     scenes=[url for value in attrs.get('scene_artwork') or [] if (url:=image(value))]
     selected=image(attrs.get('backdrop_path')) or (next(iter(gallery),None) if 'attributes.artwork' in (work.protected_fields or []) else None)
-    backdrop=selected or next(iter(scenes if work.kind=='game' and attrs.get('artwork_policy_version') in (1,2,GAME_ARTWORK_VERSION) else gallery),None)
-    preview=next((url for url in scenes if url!=backdrop),backdrop) if work.kind=='game' else None
+    from core.game_artwork import asset_url,background_status
+    grid_hero=asset_url((attrs.get('steamgriddb_hero') or {}).get('image')) if work.kind=='game' else None
+    backdrop=selected or grid_hero or next(iter(scenes if work.kind=='game' and attrs.get('artwork_policy_version') in (1,2,3,GAME_ARTWORK_VERSION) else gallery),None)
+    preview=next((url for url in scenes if image_key(url)!=image_key(backdrop or '')),None) if work.kind=='game' else None
+    if work.kind=='game':gallery=[url for url in gallery if image_key(url) not in {image_key(backdrop or ''),image_key(preview or '')}]
     released=attrs.get('release_date')
     if (work.kind=='game' and attrs.get('release_date_projection')!=GAME_RELEASE_VERSION
         and (work.field_sources or {}).get('attributes.release_date')=='igdb'
@@ -232,7 +235,8 @@ def primary_details(work,artwork=None):
     poster=image(work.image_url)
     return {'id':work.id,'type':work.kind,'title':work.name,'overview':work.description,
         'poster':poster,'posters':[poster] if poster else [],'artwork':gallery,'backdrop':backdrop,
-        **({'artwork_preview':{'image':preview},'backdrop_fallbacks':scenes} if work.kind=='game' else {}),
+        **({'artwork_preview':{'image':preview},'backdrop_fallbacks':scenes,
+            'background_status':background_status(work),'preview_status':{'state':'ready'}} if work.kind=='game' else {}),
         'release_date':released,'year':str(released or '')[:4],
         **({'release_date_precision':attrs.get('release_date_precision'),'release_quarter':attrs.get('release_quarter')} if work.kind=='game' else {}),
         'genres':[value if isinstance(value,str) else value.get('name') for value in attrs.get('genres') or []
@@ -357,7 +361,7 @@ async def catalogue_title(db, work, viewer_id=None, *, store_country=None, enque
     primary=primary_details(work,details['artwork'])
     return {**details, 'id': work.id, 'type': work.kind, 'title': work.name, 'overview': work.description,
         'poster':primary['poster'],'backdrop':primary['backdrop'],
-        **({key:primary[key] for key in ('artwork_preview','backdrop_fallbacks')} if work.kind=='game' else {}),
+        **({key:primary[key] for key in ('artwork','artwork_preview','backdrop_fallbacks','background_status','preview_status')} if work.kind=='game' else {}),
         'release_date': attrs.get('release_date'), 'year': str(attrs.get('release_date') or '')[:4],
         **({'release_date_precision':attrs.get('release_date_precision'),'release_quarter':attrs.get('release_quarter')} if work.kind=='game' else {}),
         'genres': [value if isinstance(value, str) else value.get('name') for value in attrs.get('genres') or []

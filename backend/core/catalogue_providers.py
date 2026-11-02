@@ -50,6 +50,7 @@ INTERVALS = {
     "tvdb": 0.5,
     "tvmaze": 0.5,
     "steam": 0.5,
+    "steamgriddb": 0.3,
     "wikidata": 1.0,
     "wikidata_query": 1.0,
     "imdb": 1.0,
@@ -89,6 +90,7 @@ class _PrivateRequests(logging.Filter):
                 "v3.sg.media-imdb.com",
                 "api.steampowered.com",
                 "partner.steam-api.com",
+                "www.steamgriddb.com",
             )
         )
 

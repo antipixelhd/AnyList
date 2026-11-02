@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 from core.countries import country_codes, game_countries, numeric_country, screen_countries
 from core.studio_names import studio_name, studio_attributes
 from core.movie_financials import movie_financials
-GAME_ARTWORK_VERSION = 3
+GAME_ARTWORK_VERSION = 4
 
 
 PRIMARY = {"movie": "tmdb", "series": "tmdb", "game": "igdb", "book": "hardcover"}
@@ -375,20 +375,25 @@ def normalize_tvdb(raw, kind="series"):
 
 def game_artwork(raw):
     gallery, scenes = [], []
-    for priority,field in enumerate(('screenshots','artworks')):
+    # IGDB image_types: Artwork, Concept art, Key art without/with logo.
+    # Screenshots have no promotional/gameplay classification in the API.
+    priorities={1:0,4:1,2:2,3:3,16:4}
+    for field in ('artworks','screenshots'):
         for position,row in enumerate(raw.get(field) or []):
-            # IGDB distinguishes the white, black and color game logos from art.
-            if field=='artworks' and isinstance(row,dict) and row.get('image_type') in (5,6,7):continue
+            if not isinstance(row,dict) or row.get('animated'):continue
+            kind=row.get('image_type')
+            if kind in (5,6,7,8,9,10,11,12,13,14,15):continue
             url=image(row)
             if not url:continue
-            if url not in gallery:gallery.append(url)
-            width,height=(row.get(key) for key in ('width','height')) if isinstance(row,dict) else (None,None)
-            # Asset type and source dimensions establish scene suitability.
-            # Preserve portraits and unusual crops in the full gallery.
-            if all(type(value) is int and value>0 for value in (width,height)) and 1.25<=width/height<=2.5:
+            priority=priorities.get(kind,0) if field=='artworks' else 5
+            gallery.append((priority,position,url))
+            width,height=(row.get(key) for key in ('width','height'))
+            # Wide key art and Steam-shaped banners are valid hero candidates.
+            if all(type(value) is int and value>0 for value in (width,height)) and width>=640 and 1.25<=width/height<=4:
                 scenes.append((priority,-width*height,position,url))
     ordered=list(dict.fromkeys(row[-1] for row in sorted(scenes)))
-    return {'artwork':gallery,'scene_artwork':ordered,'artwork_policy_version':GAME_ARTWORK_VERSION}
+    return {'artwork':list(dict.fromkeys(row[-1] for row in sorted(gallery))),
+            'scene_artwork':ordered,'artwork_policy_version':GAME_ARTWORK_VERSION}
 
 
 def normalize_igdb(raw):
