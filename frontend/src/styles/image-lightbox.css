@@ -147,3 +147,15 @@ button.gallery-primary-action { background:var(--blue); color:#08131e; font-weig
 .media-detail .gallery-artwork-actions button { padding:10px 16px; border:0; border-radius:6px; background:var(--panel); color:var(--bright); }
 .media-detail .gallery-artwork-actions .gallery-primary-action { background:var(--blue); color:#08131e; font-weight:600; }
 .media-detail .gallery-artwork-actions button:focus-visible { outline:none; filter:brightness(1.18); }
+
+/* Keep actions in the dialog's coordinate system throughout its opening motion. */
+.image-lightbox .gallery-artwork-actions { position:absolute; top:12px; left:12px; right:auto; bottom:auto; translate:none; max-width:calc(100% - 68px); flex-wrap:wrap; }
+.profile-artwork-editor { width:min(1000px,calc(100vw - 32px)); }
+.profile-artwork-canvas { height:min(58dvh,520px); min-height:220px; background:var(--field); border-radius:8px; overflow:hidden; }
+.profile-artwork-canvas > img { display:none; }
+.profile-artwork-canvas cropper-canvas { width:100%; height:100%; --theme-color:#3db4f2; }
+.profile-artwork-canvas cropper-selection { --theme-color:#ffffff; }
+.profile-artwork-canvas cropper-selection:focus-visible { outline:none; }
+.profile-crop-status { margin:12px 0; color:var(--text); }
+.profile-artwork-buttons { margin-top:18px; }
+@media(max-width:650px) { .image-lightbox .gallery-artwork-actions { top:8px; left:8px; gap:6px; } .media-detail .gallery-artwork-actions button { padding:8px; } }
