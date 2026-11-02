@@ -7,19 +7,17 @@ import Icon from '../../../components/Icon.astro';
 import {tracker,trackerFailure,scoreLabel} from '../../../lib/tracker';
 import {gameStatuses} from '../../../lib/game-editor-data';
 import {gameProgress} from '../../../lib/game-progress';
-import {gameListQuery,gameListHref,gameListEditorTitle} from '../../../lib/game-list-data';
+import {gameListQuery,gameListEditorTitle} from '../../../lib/game-list-data';
 import {viewerMediaPreferences} from '../../../lib/viewer-media-preferences';
 import {responsiveArtwork} from '../../../lib/responsive-artwork';
 import '../../../styles/game-list.css';
 const preferences=await viewerMediaPreferences(Astro.locals);
-const {query,page,offset,limit}=gameListQuery(Astro.url.searchParams,preferences.default_sort);
-const request=new URLSearchParams(query);request.set('offset',String(offset));request.set('limit',String(limit));
+const {query}=gameListQuery(Astro.url.searchParams,preferences.default_sort);
+const request=new URLSearchParams({complete:'true',sort:query.get('sort')!});
 let data:any=null,error='';
 try{data=await tracker(`games/users/${encodeURIComponent(Astro.params.username!)}/list?${request}`,Astro.locals.token);}
 catch(cause){const failure=trackerFailure(cause);error=failure.message;Astro.response.status=failure.status;}
-if(data&&page>Math.max(1,Math.ceil(data.total/limit)))return Astro.redirect(gameListHref(Astro.url.pathname,query,{page:Math.max(1,Math.ceil(data.total/limit))}));
 const entries=data?.results||[],owner=data?.profile?.owner===true;
-const href=(changes:Record<string,string|number|null>)=>gameListHref(Astro.url.pathname,query,changes);
 const showAchievements=preferences.show_game_achievements;
 ---
 <Tracker title={`${data?.profile?.display_name||Astro.params.username}'s Games List`} listLanding={!!data} ownerProfileColor={data?.profile?.profile_color} ownerIsViewer={owner}>
@@ -29,11 +27,11 @@ const showAchievements=preferences.show_game_achievements;
       <ProfileListFilters statuses={gameStatuses} counts={data.status_counts} genres={data.genres} years={data.years} status={query.get('status')||'all'} sort={query.get('sort')||'title'} defaultSort={preferences.default_sort} query={query.get('q')||''} genre={query.get('genre')||''} year={query.get('year')||''} favorites={query.has('favorites')} progressLabel="Hours"/>
 
       <div class="list-content">
-        <div class="list-toolbar"><span class="sr-only" aria-live="polite">{data.total?`${offset+1}–${Math.min(offset+limit,data.total)} of ${data.total}`:'0 entries'}</span></div>
+        <div class="list-toolbar"><span class="sr-only" aria-live="polite">{`${data.total} entries`}</span></div>
         <div id="entry-groups" class="game-entry-groups" data-game-groups>
           {gameStatuses.map(([status,label])=>{const rows=entries.filter((entry:any)=>entry.status===status);return <section class="status-section" data-game-group={status} hidden={!rows.length}><h2>{label}</h2><div class="entry-table">
             <div class="entry-head"><span class="entry-cover-column" aria-hidden="true"></span><span class="entry-title-column">Title</span><span>Score</span><span class="game-hours-column">Hours</span>{showAchievements&&<span class="game-achievements-column">Achievements</span>}</div>
-            {rows.map((entry:any)=>{const image=responsiveArtwork(entry.image_url,{size:'w185',sizes:'44px',route:'direct'}),progress=gameProgress(entry),id=entry.subject.catalogue_id;return <article class="entry-row" data-game-entry={id} data-game-base={entry.base_work_id||undefined} data-entry-status={entry.status} data-title={entry.title} data-score={entry.score??-1} data-hours={entry.total_seconds??-1} data-updated={entry.updated_at}>
+            {rows.map((entry:any)=>{const image=responsiveArtwork(entry.image_url,{size:'w185',sizes:'44px',route:'direct'}),progress=gameProgress(entry),id=entry.subject.catalogue_id;return <article class="entry-row" data-game-entry={id} data-game-base={entry.base_work_id||undefined} data-entry-status={entry.status} data-title={entry.title} data-score={entry.score??-1} data-hours={entry.total_seconds??-1} data-updated={entry.updated_at} data-year={entry.year||''} data-genres={JSON.stringify(entry.genres||[])} data-favorite={String(!!entry.favorite)}>
               <div class="entry-thumbnail" data-artwork-path={entry.image_url||undefined} data-preview-src={entry.image_url||undefined}>{image?<img class="entry-cover" {...image} alt="" loading="lazy"/>:<span class="entry-cover"/>}{owner&&<button type="button" class="row-menu" data-motion-static data-edit-game={id} aria-label={`Edit ${entry.title}`}><Icon name="ellipsis"/></button>}</div>
               <div class="entry-title"><a class="entry-title-link" href={`/games/${id}`}>{entry.title}<span class="row-favorite" aria-label="Favorite" data-game-list-favorite hidden={!entry.favorite}><Icon name="heart"/></span></a><EntryAnnotations notes={entry.notes} replayCount={entry.replay_count}/></div>
               <span class="entry-score">{owner?<button type="button" class="entry-score-button" data-game-list-rate={id} aria-label={`Rate ${entry.title}`}><span data-score-label>{scoreLabel(entry.score)}</span></button>:scoreLabel(entry.score)}</span>
@@ -42,8 +40,7 @@ const showAchievements=preferences.show_game_achievements;
             </article>})}
           </div></section>})}
         </div>
-        <div id="list-empty" class="empty-state" hidden={!!entries.length}><h2>{data.total?'No games on this page':'No matching games'}</h2>{owner&&<a class="button-primary" href="/browse?media_type=game">Browse games</a>}</div>
-        {(page>1||offset+limit<data.total)&&<nav class="game-list-pagination" aria-label="Games list pages">{page>1?<a class="button-secondary" href={href({page:page-1})} rel="prev">Previous</a>:<span/>}<span>Page {page} of {Math.max(1,Math.ceil(data.total/limit))}</span>{offset+limit<data.total?<a class="button-secondary" href={href({page:page+1})} rel="next">Next</a>:<span/>}</nav>}
+        <div id="list-empty" class="empty-state" hidden={!!entries.length}><h2>No matching games</h2>{owner&&<a class="button-primary" href="/browse?media_type=game">Browse games</a>}</div>
       </div>
     </div>
     <div id="cover-preview" aria-hidden="true" hidden><img alt=""/></div>

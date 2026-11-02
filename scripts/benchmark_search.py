@@ -701,6 +701,7 @@ async def main(args):
             *([('game_browse_critic','games/browse',{'limit':24,'min_metacritic':80})]
                 if args.case and 'game_browse_critic' in args.case else []),
             ('game_list', f'games/users/{viewer.username}/list', {'limit': 50}),
+            ('game_list_complete', f'games/users/{viewer.username}/list', {'complete': 'true'}),
             *([('game_statistics_overview',f'games/users/{viewer.username}/statistics',{}),
                 ('game_statistics_rebuild',f'games/users/{viewer.username}/statistics',{}),
                 ('game_statistics_actors',f'games/users/{viewer.username}/statistics',{'section':'actors','sort':'time'}),

@@ -4,7 +4,7 @@ import {gameProgress} from './game-progress';
 import {scoreLabel} from './tracker';
 import {mountListCoverPreview} from './list-cover-preview';
 import {mountListFilterControls} from './list-filter-controls';
-import {compareGameListEntries,gameListQuery,gameListRefreshQuery} from './game-list-data';
+import {compareGameListEntries,gameListQuery} from './game-list-data';
 
 import {panelActive,panelUrl,setPanelUrl} from './profile-panel';
 export function initializeGameList(panel:HTMLElement,lifetime:AbortSignal){
@@ -39,18 +39,40 @@ export function initializeGameList(panel:HTMLElement,lifetime:AbortSignal){
   let searchTimer:ReturnType<typeof setTimeout>|undefined;
   let request:AbortController|undefined,generation=0;
   const invalidate=()=>{generation++;request?.abort();};
-  const load=async(preservePage=false,page?:string|null)=>{
-    clearTimeout(searchTimer);invalidate();
+  const applyFilters=()=>{
+    const values=new URLSearchParams();for(const [key,value] of new FormData(form))if(typeof value==='string')values.set(key,value);
+    const query=gameListQuery(values,defaultSort).query;
+    root.dataset.status=query.get('status')||'';root.dataset.favorites=String(query.has('favorites'));root.dataset.sort=query.get('sort')||'title';
+    const search=(query.get('q')||'').toLowerCase();
+    let count=0;
+    root.querySelectorAll<HTMLElement>('[data-game-group] .entry-table').forEach(table=>{
+      const rows=[...table.querySelectorAll<HTMLElement>('[data-game-entry]')];
+      const value=(row:HTMLElement)=>({id:Number(row.dataset.gameEntry),title:row.dataset.title||'',score:Number(row.dataset.score),total_seconds:Number(row.dataset.hours),updated_at:row.dataset.updated});
+      rows.sort((a,b)=>compareGameListEntries(value(a),value(b),root.dataset.sort!)).forEach(row=>{
+        row.hidden=!row.dataset.entryStatus||hiddenBases.has(Number(row.dataset.gameBase))||
+          (!!root.dataset.status&&row.dataset.entryStatus!==root.dataset.status)||
+          !(row.dataset.title||'').toLowerCase().includes(search)||
+          (!!query.get('genre')&&!JSON.parse(row.dataset.genres||'[]').includes(query.get('genre')))||
+          (!!query.get('year')&&row.dataset.year!==query.get('year'))||
+          (query.has('favorites')&&row.dataset.favorite!=='true');
+        table.append(row);if(!row.hidden)count++;
+      });
+    });
+    updateGroups();controls.sync(root.dataset.status||'all',defaultSort);
+    root.querySelector('.list-toolbar [aria-live]')!.textContent=`${count} entries`;
+    const url=new URL(panelUrl(panel));url.search=query.toString();setPanelUrl(panel,url.href);
+  };
+  const load=async(refresh=false)=>{
+    clearTimeout(searchTimer);
+    if(!refresh){applyFilters();return;}
+    invalidate();
     const revision=generation;request=new AbortController();const requestSignal=request.signal;
     controls.sync(field('status').value||'all',defaultSort);
-    const values=new URLSearchParams();for(const [key,value] of new FormData(form))if(typeof value==='string')values.set(key,value);
-    const query=preservePage?gameListRefreshQuery(values,new URL(panelUrl(panel)).searchParams,defaultSort):gameListQuery(values,defaultSort).query;
-    if(page)query.set('page',page);
-    const url=new URL(panelUrl(panel));url.search=query.toString();
+    const url=new URL(panelUrl(panel));
     const content=root.querySelector<HTMLElement>('.list-content')!;
     content.setAttribute('aria-busy','true');root.querySelector('[data-game-list-error]')?.remove();
     try{
-      // Reuse the server's bounded, private-safe list renderer without replacing
+      // Refresh saved membership without replacing
       // the controls: typing, slider drags, mobile panel and focus stay intact.
       const response=await fetch(url,{signal:requestSignal,cache:'no-store'});
       if(!response.ok)throw new Error('Unable to filter this list.');
@@ -65,21 +87,16 @@ export function initializeGameList(panel:HTMLElement,lifetime:AbortSignal){
       controls.refreshFacets(next.querySelector<HTMLElement>('#list-filters')!);
       const seed=panel.querySelector('#list-editor-entries'),nextSeed=html.querySelector('#list-editor-entries');
       if(seed&&nextSeed){seed.textContent=nextSeed.textContent;seedEditorPage(panel);}
-      reconcileRows();mountPreview();updateCounts();
-      setPanelUrl(panel,response.url);
+      reconcileRows();mountPreview();updateCounts();applyFilters();
+
     }catch(error){
       if(signal.aborted||revision!==generation)return;
       const message=document.createElement('p');message.className='error-message';message.dataset.gameListError='';message.setAttribute('role','alert');
       message.append('Unable to refresh this list. ');
-      const retry=document.createElement('button');retry.type='button';retry.className='lab-text-button';retry.textContent='Retry';retry.addEventListener('click',()=>void load(preservePage),{signal});message.append(retry);content.prepend(message);
+      const retry=document.createElement('button');retry.type='button';retry.className='lab-text-button';retry.textContent='Retry';retry.addEventListener('click',()=>void load(true),{signal});message.append(retry);content.prepend(message);
     }finally{if(!signal.aborted&&revision===generation){request=undefined;content.removeAttribute('aria-busy');}}
   };
   panel.addEventListener('anylist:panel-inactive',()=>{controls.close();if(searchTimer){clearTimeout(searchTimer);searchTimer=undefined;dirty=true;}},{signal});
-  root.addEventListener('click',event=>{
-    const link=(event.target as Element).closest<HTMLAnchorElement>('.game-list-pagination a[href]');
-    if(!link||event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;
-    event.preventDefault();void load(true,new URL(link.href).searchParams.get('page'));
-  },{signal});
   const submit=()=>load();
   let refreshQueued=false;
   let dirty=false;
@@ -100,7 +117,7 @@ export function initializeGameList(panel:HTMLElement,lifetime:AbortSignal){
   form.addEventListener('input',event=>{
     const input=event.target as HTMLInputElement;
     if(input.id==='year-filter')return;
-    clearTimeout(searchTimer);invalidate();
+    clearTimeout(searchTimer);
     if(input.name==='q')searchTimer=setTimeout(submit,300);else void submit();
   },{signal});
   filters.querySelector('#year-filter')!.addEventListener('change',submit,{signal});
@@ -127,23 +144,18 @@ export function initializeGameList(panel:HTMLElement,lifetime:AbortSignal){
       row.querySelector('[data-score-label]')!.textContent=scoreLabel(entry.score);
       const progress=gameProgress(entry);row.querySelector('[data-game-list-hours]')!.textContent=progress.hours||'—';
       row.querySelectorAll<HTMLElement>('[data-game-list-achievements]').forEach(achievement=>{achievement.textContent=progress.achievement||'—';achievement.dataset.known=String(progress.achievement!=null);if(achievement.classList.contains('game-inline-achievements'))achievement.setAttribute('aria-label',`Achievements ${progress.achievement||'unknown'}`);});
-      row.querySelector<HTMLElement>('[data-game-list-favorite]')!.hidden=!title.favorite;
+      row.querySelector<HTMLElement>('[data-game-list-favorite]')!.hidden=!title.favorite;row.dataset.favorite=String(!!title.favorite);
       root.querySelector(`[data-game-group="${entry.status}"] .entry-table`)?.append(row);
     }
-    root.querySelectorAll<HTMLElement>('[data-game-group] .entry-table').forEach(table=>{
-      const rows=[...table.querySelectorAll<HTMLElement>('.entry-row')];
-      const value=(row:HTMLElement)=>({id:Number(row.dataset.gameEntry),title:row.dataset.title||'',score:Number(row.dataset.score),total_seconds:Number(row.dataset.hours),updated_at:row.dataset.updated});
-      rows.sort((left,right)=>compareGameListEntries(value(left),value(right),root.dataset.sort||'title')).forEach(row=>table.append(row));
-    });
     updateCounts();
-    updateGroups();
+    applyFilters();
   };
   const reconcileRows=()=>{if(root.dataset.owner==='true')root.querySelectorAll<HTMLElement>('[data-game-entry]').forEach(row=>{
     const title=editorStore.findSubject({kind:'game',catalogue_id:Number(row.dataset.gameEntry)});if(!title)return;
     const entry=title.entry,achievement=row.querySelector('[data-game-list-achievements]');
     if(!entry||entry.status!==row.dataset.entryStatus||Number(entry.score??-1)!==Number(row.dataset.score)||Number(entry.total_seconds??-1)!==Number(row.dataset.hours)||(achievement&&(gameProgress(entry).achievement||'—')!==achievement.textContent)||row.querySelector<HTMLElement>('[data-game-list-favorite]')!.hidden===!!title.favorite)paint(title);
   });};
-  reconcileRows();
+  reconcileRows();applyFilters();
   let refreshAfterWrite=false;
   document.addEventListener('anylist:editor-state',event=>{
     const title=(event as CustomEvent<EditorTitle>).detail;paint(title);

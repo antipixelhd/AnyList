@@ -605,6 +605,10 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first['total'], 68)
         self.assertEqual(len(first['results']), 50)
         self.assertEqual(len(second['results']), 18)
+        complete = (await self.client.get('/tracking/games/users/player/list?complete=true&offset=50&limit=1')).json()
+        self.assertEqual((complete['total'], complete['offset'], len(complete['results'])), (68, 0, 68))
+        self.assertEqual([r['subject']['catalogue_id'] for r in complete['results']],
+            [r['subject']['catalogue_id'] for r in first['results'] + second['results']])
         self.assertFalse({r['subject']['catalogue_id'] for r in first['results']} & {r['subject']['catalogue_id'] for r in second['results']})
         self.assertEqual(first['status_counts']['paused'], 1)
         self.assertEqual(first['status_counts']['playing'], 65)

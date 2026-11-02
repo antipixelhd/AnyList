@@ -524,6 +524,7 @@ async def user_list(username: str, db: DB, viewer: Viewer,
                     genre: Annotated[str, Query(max_length=200)] = '',
                     year: Annotated[str | None, Query(pattern=r'^\d{4}$')] = None,
                     favorites: bool = False,
+                    complete: bool = False,
                     offset: Annotated[int, Query(ge=0)] = 0,
                     limit: Annotated[int, Query(ge=1, le=200)] = 50) -> GameListOut:
     user, owner = await profile_access(db, username, viewer)
@@ -560,9 +561,10 @@ async def user_list(username: str, db: DB, viewer: Viewer,
                 'score': memberships.c.score.desc().nullslast(),
                 'progress': memberships.c.total_seconds.desc().nullslast(),
                 'updated': memberships.c.updated_at.desc()}[sort]
-    ids = list((await db.scalars(query.order_by(ordering, memberships.c.work_id).offset(offset).limit(limit))).all())
+    ordered = query.order_by(ordering, memberships.c.work_id)
+    ids = list((await db.scalars(ordered if complete else ordered.offset(offset).limit(limit))).all())
     rows = {r.subject.catalogue_id: r for r in await tracking.states(db, user.id, ids, owner=owner)}
-    return GameListOut(results=[rows[i] for i in ids], total=total, offset=offset, limit=limit,
+    return GameListOut(results=[rows[i] for i in ids], total=total, offset=0 if complete else offset, limit=total if complete else limit,
         profile=GameListProfile.model_validate(await profile_header(db, user, owner, viewer)),
         status_counts=status_counts, genres=genres, years=years)
 

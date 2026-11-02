@@ -1,4 +1,3 @@
-.game-list-pagination{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:24px 0;color:var(--muted)}
 .game-list-shell #entry-groups:not(.grid-view) :is(.entry-head,.entry-row){grid-template-columns:60px minmax(0,5fr) minmax(56px,1fr) minmax(84px,1fr) minmax(84px,1fr)}
 .game-list-shell[data-show-achievements=false] #entry-groups:not(.grid-view) :is(.entry-head,.entry-row){grid-template-columns:60px minmax(0,5fr) minmax(56px,1fr) minmax(84px,1fr)}
 .game-list-shell .game-list-achievements{text-align:center;color:var(--text-data);font-size:var(--type-row-size)}
