@@ -75,6 +75,7 @@ import {setupEditorSelect} from '../lib/editor-select';
 import {gameDatePatch,gameStatuses} from '../lib/game-editor-data';
 import {localToday} from '../lib/date-time';
 import {artworkIdentity} from '../lib/responsive-artwork';
+import {dismissPosterControls} from '../lib/poster-controls';
 import {confirmEntryAction as confirmAction,watchRollbackWarning} from '../lib/entry-confirmation';
 let pageListeners: AbortController;
 document.addEventListener('astro:before-swap', () => pageListeners?.abort());
@@ -316,6 +317,7 @@ document.addEventListener('astro:page-load', () => {
   dialog.addEventListener('close', () => {
     // The native close event is queued; a failed save may already have reopened the editor.
     if (dialog.open) return;
+    dismissPosterControls(opener, pageListeners.signal);
     resumeExpansion=null;gameFields.reset();
     loadController?.abort(); loadController = null; libraryButton.hidden = true; current = null; currentTitle = null; displayedScore = ''; form.reset();
     const listRow = opener?.closest<HTMLElement>('.entry-row');

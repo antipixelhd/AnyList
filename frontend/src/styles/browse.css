@@ -642,6 +642,12 @@
   opacity: 1;
   visibility: visible;
 }
+.browse-card[data-controls-dismissed] .browse-extra-actions {
+  max-height: 0;
+  margin-bottom: 0;
+  opacity: 0;
+  visibility: hidden;
+}
 .browse-card-title {
   display: block;
 }
@@ -888,6 +894,12 @@
   .browse-card:hover .browse-poster-link img {
     transform: none;
   }
+}
+/* Override hover and restored focus on both mouse and touch layouts. */
+.browse-card[data-controls-dismissed] .browse-actions {
+  pointer-events: none;
+  opacity: 0;
+  translate: 0 4px;
 }
 @media (prefers-reduced-motion: reduce) {
   .browse-card-caption { animation: none; }
