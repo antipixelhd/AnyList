@@ -274,7 +274,14 @@ def source_link(provider, url, *, homepage=False):
     return {'name':name or ('Official website' if homepage else provider.upper()), 'url':url}
 
 
-def game_source_links(work, sources):
+def game_source_links(work, sources, identities):
+    from core.game_offers import steam_identity
+    # Merged campaign/multiplayer/edition identities remain available to their
+    # owning systems; outbound links represent only the canonical main app.
+    app=steam_identity(identities,(work.attributes or {}).get('steam_primary_app_id'))
+    sources=[source for source in sources if urlsplit(source['url']).hostname not in
+        {'store.steampowered.com','igdb.com','www.igdb.com','steamgriddb.com','www.steamgriddb.com'}]
+    if app:sources.append({'name':'Steam','url':f'https://store.steampowered.com/app/{app}/'})
     slug=(work.attributes or {}).get('igdb_slug')
     if isinstance(slug,str) and re.fullmatch(r'[a-z0-9][a-z0-9-]*',slug):
         sources=[*sources,{'name':'IGDB','url':f'https://www.igdb.com/games/{slug}'}]
@@ -295,12 +302,9 @@ async def game_primary_details(db, work):
         homepage = public_url(row.homepage)
         if url := homepage or public_url(row.url):
             sources.append(source_link(row.provider,url,homepage=bool(homepage)))
-    identities = await db.scalars(select(CatalogueIdentity).where(CatalogueIdentity.entity_id == work.id,
-        CatalogueIdentity.namespace == 'steam.app'))
-    for identity in identities:
-        if identity.external_id.isdecimal():
-            sources.append({'name':'Steam','url':f'https://store.steampowered.com/app/{identity.external_id}/'})
-    return {**primary_details(work), 'sources':game_source_links(work,sources), 'releases':await game_releases(db, work)}
+    identities = list(await db.scalars(select(CatalogueIdentity).where(CatalogueIdentity.entity_id == work.id,
+        CatalogueIdentity.namespace == 'steam.app')))
+    return {**primary_details(work), 'sources':game_source_links(work,sources,identities), 'releases':await game_releases(db, work)}
 
 
 async def catalogue_title(db, work, viewer_id=None, *, store_country=None, enqueue_offers=False,enqueue_ratings=False,enqueue_info=False,identities=None):
@@ -365,7 +369,7 @@ async def catalogue_title(db, work, viewer_id=None, *, store_country=None, enque
             details['sources'].append({'name': 'Open Library', 'url': f'https://openlibrary.org/works/{native}'})
         elif identity.namespace == 'steam.app' and native.isdecimal():
             details['sources'].append({'name': 'Steam', 'url': f'https://store.steampowered.com/app/{native}/'})
-    if work.kind=='game':details['sources']=game_source_links(work,details['sources'])
+    if work.kind=='game':details['sources']=game_source_links(work,details['sources'],identities)
     primary=primary_details(work,details['artwork'])
     return {**details, 'id': work.id, 'type': work.kind, 'title': work.name, 'overview': work.description,
         'poster':primary['poster'],'backdrop':primary['backdrop'],

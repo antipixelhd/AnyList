@@ -13,9 +13,9 @@ export function detailSources(rows:{name:string;url:string}[] = [], game=false) 
   }
   const values=[...sources.values()];
   if(!game)return values;
-  const official=values.filter(row=>row.name==='Official website');
-  const steam=values.filter(row=>new URL(row.url).hostname==='store.steampowered.com');
-  const igdb=values.filter(row=>['igdb.com','www.igdb.com'].includes(new URL(row.url).hostname)).map(row=>({...row,name:'IGDB'}));
+  const official=values.filter(row=>row.name==='Official website').slice(0,1);
+  const steam=values.filter(row=>new URL(row.url).hostname==='store.steampowered.com').slice(0,1);
+  const igdb=values.filter(row=>['igdb.com','www.igdb.com'].includes(new URL(row.url).hostname)).slice(0,1).map(row=>({...row,name:'IGDB'}));
   const art=steam.map(row=>({name:'SteamGridDB · Art',url:`https://www.steamgriddb.com/steam/${new URL(row.url).pathname.split('/')[2]}`}));
   return [...official,...steam,...igdb,...art];
 }

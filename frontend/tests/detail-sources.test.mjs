@@ -32,6 +32,19 @@ test('game links use the requested order and derive artwork links without a look
   assert.deepEqual(detailSources([critic,igdb],true),[igdb]);
 });
 
+test('merged games render at most one link per source, including derived artwork',()=>{
+  const rows=[
+    {name:'Official website',url:'https://example.com/main'},
+    {name:'Official website',url:'https://example.com/multiplayer'},
+    {name:'Steam',url:'https://store.steampowered.com/app/202970/'},
+    {name:'Steam',url:'https://store.steampowered.com/app/202990/'},
+    {name:'IGDB',url:'https://www.igdb.com/games/main'},
+    {name:'IGDB',url:'https://www.igdb.com/games/multiplayer'},
+  ];
+  assert.deepEqual(detailSources(rows,true),[rows[0],rows[2],rows[4],
+    {name:'SteamGridDB · Art',url:'https://www.steamgriddb.com/steam/202970'}]);
+});
+
 test('late ratings and primary updates reconcile links without losing the other section',()=>{
   const previous=globalThis.document;
   globalThis.document={createElement:()=>({append(){}})};
