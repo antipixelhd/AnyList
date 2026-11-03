@@ -176,6 +176,60 @@ class NormalizationTests(unittest.TestCase):
 
 
 class ClientTests(unittest.IsolatedAsyncioTestCase):
+    async def test_igdb_waiter_rechecks_cooldown_published_during_start_spacing(self):
+        import asyncio
+        providers._local_next.clear();providers._local_igdb_slots=None
+        self.addCleanup(setattr,providers,'_local_igdb_slots',None)
+        self.addCleanup(providers._local_next.clear)
+        waiting=asyncio.Event();sleep=asyncio.sleep;http=providers.ProviderHTTP()
+        async def observed_sleep(delay):
+            if delay>0:waiting.set()
+            await sleep(delay)
+        async def load():
+            async with providers.ProviderHTTP().lane('igdb'):self.fail('Ignored new cooldown')
+        with patch.dict(providers.INTERVALS,{'igdb':.1}),patch.object(providers.asyncio,'sleep',observed_sleep):
+            async with http.lane('igdb'):
+                task=asyncio.create_task(load())
+                try:
+                    await asyncio.wait_for(waiting.wait(),1)
+                    await http.defer('igdb',10)
+                    with self.assertRaises(providers.ProviderError) as error:
+                        await asyncio.wait_for(task,1)
+                    self.assertEqual(error.exception.code,'rate_limited')
+                    self.assertGreater(error.exception.retry_after,9)
+                finally:
+                    task.cancel();await asyncio.gather(task,return_exceptions=True)
+
+    async def test_igdb_overlaps_two_requests_and_releases_cancelled_slots(self):
+        import asyncio,time
+        providers._local_next.clear();providers._local_igdb_slots=None
+        self.addCleanup(setattr,providers,'_local_igdb_slots',None)
+        self.addCleanup(providers._local_next.clear)
+        release=asyncio.Event();two_started=asyncio.Event();starts=[]
+        async def load():
+            async with providers.ProviderHTTP().lane('igdb'):
+                starts.append(time.monotonic())
+                if len(starts)>=2:two_started.set()
+                await release.wait()
+        with patch.dict(providers.INTERVALS,{'igdb':.02}):
+            tasks=[asyncio.create_task(load()) for _ in range(3)]
+            try:
+                await asyncio.wait_for(two_started.wait(),1)
+                self.assertEqual(len(starts),2)
+                self.assertGreaterEqual(starts[1]-starts[0],.019)
+                tasks[0].cancel();await asyncio.gather(tasks[0],return_exceptions=True)
+                # A cancelled HTTP owner releases its slot for the third caller.
+                release.set();await asyncio.wait_for(asyncio.gather(*tasks[1:]),1)
+                self.assertEqual(len(starts),3)
+                await providers.ProviderHTTP().defer('igdb',10)
+                with self.assertRaises(providers.ProviderError) as error:
+                    async with providers.ProviderHTTP().lane('igdb'):self.fail('Ignored shared cooldown')
+                self.assertEqual(error.exception.code,'rate_limited')
+            finally:
+                release.set()
+                for task in tasks:task.cancel()
+                await asyncio.gather(*tasks,return_exceptions=True)
+
     async def test_igdb_start_spacing_does_not_add_a_pause_after_slow_io_or_shorten_deferral(self):
         import asyncio,time
         providers._local_next.clear()

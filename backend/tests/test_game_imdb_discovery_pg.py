@@ -79,27 +79,89 @@ class PortfolioDiscoveryTests(unittest.IsolatedAsyncioTestCase):
             value=await db.scalar(snapshot(MAP,'tt2',provider='wikidata'))
             self.assertEqual(value.payload['status'],'verified')
 
-    async def test_igdb_shared_lane_keeps_serialization_and_start_spacing(self):
+    async def test_igdb_shared_lane_overlaps_two_requests_with_start_spacing(self):
         import time
         from core.catalogue_providers import ProviderHTTP
         from unittest.mock import patch
         from core import catalogue_providers
+        catalogue_providers._local_igdb_slots=None
+        self.addCleanup(setattr,catalogue_providers,'_local_igdb_slots',None)
         first,second=ProviderHTTP(session_factory=self.Session),ProviderHTTP(session_factory=self.Session)
         active=0;maximum=0;starts=[];ends=[]
         async def load(http):
             nonlocal active,maximum
             async with http.lane('igdb'):
                 starts.append(time.monotonic());active+=1;maximum=max(maximum,active)
-                await asyncio.sleep(.08);active-=1;ends.append(time.monotonic())
+                await asyncio.sleep(.16);active-=1;ends.append(time.monotonic())
         with patch.dict(catalogue_providers.INTERVALS,{'igdb':.05}):
-            await asyncio.gather(load(first),load(second))
-        self.assertEqual(maximum,1)
-        self.assertGreaterEqual(starts[1]-starts[0],.05)
+            await asyncio.gather(*(load(first if index%2 else second) for index in range(5)))
+        self.assertEqual(maximum,2)
+        self.assertTrue(all(later-earlier>=.045 for earlier,later in zip(starts,starts[1:])))
         # The persisted deadline is the start budget, not finish plus budget.
         from models.catalogue import MetadataProviderBudget
         async with self.Session() as db:
             budget=await db.get(MetadataProviderBudget,'igdb')
             self.assertLess(budget.next_request_at,now())
+            self.assertEqual(budget.request_count,5)
+
+    async def test_igdb_waiter_refreshes_database_cooldown_before_starting(self):
+        from core import catalogue_providers as providers
+        from unittest.mock import patch
+        providers._local_igdb_slots=None
+        self.addCleanup(setattr,providers,'_local_igdb_slots',None)
+        http=providers.ProviderHTTP(session_factory=self.Session)
+        waiting=asyncio.Event();sleep=asyncio.sleep
+        async def observed_sleep(delay):
+            if delay>0:waiting.set()
+            await sleep(delay)
+        async def load():
+            async with providers.ProviderHTTP(session_factory=self.Session).lane('igdb'):
+                self.fail('Ignored database cooldown published during wait')
+        with patch.dict(providers.INTERVALS,{'igdb':.25}),patch.object(providers.asyncio,'sleep',observed_sleep):
+            async with http.lane('igdb'):
+                task=asyncio.create_task(load())
+                try:
+                    await asyncio.wait_for(waiting.wait(),2)
+                    await http.defer('igdb',10)
+                    with self.assertRaises(ProviderError) as error:await asyncio.wait_for(task,2)
+                    self.assertEqual(error.exception.code,'rate_limited')
+                    self.assertGreater(error.exception.retry_after,9)
+                finally:
+                    task.cancel();await asyncio.gather(task,return_exceptions=True)
+
+    async def test_igdb_database_slots_survive_separate_clients_and_release_on_cancel(self):
+        from sqlalchemy import text
+        from core import catalogue_providers as providers
+        from models.catalogue import MetadataProviderBudget
+        from unittest.mock import patch
+        import hashlib
+        providers._local_igdb_slots=None
+        self.addCleanup(setattr,providers,'_local_igdb_slots',None)
+        entered=asyncio.Event();release=asyncio.Event()
+        async def load():
+            async with providers.ProviderHTTP(session_factory=self.Session).lane('igdb'):
+                entered.set();await release.wait()
+        with patch.dict(providers.INTERVALS,{'igdb':.01}):
+            task=asyncio.create_task(load())
+            try:
+                await asyncio.wait_for(entered.wait(),2)
+                # A separate DB transaction observes one occupied slot. This
+                # exercises the process-independent bound, not just a semaphore.
+                async with self.Session() as db:
+                    keys=[int.from_bytes(hashlib.sha256(f'catalogue-igdb-slot:{slot}'.encode()).digest()[:8],
+                        'big',signed=True) for slot in range(2)]
+                    self.assertEqual([await db.scalar(text('SELECT pg_try_advisory_xact_lock(:key)'),{'key':key})
+                        for key in keys],[False,True])
+                await providers.ProviderHTTP(session_factory=self.Session).defer('igdb',10)
+            finally:
+                task.cancel();await asyncio.gather(task,return_exceptions=True)
+            async with self.Session() as db:
+                self.assertTrue(await db.scalar(text('SELECT pg_try_advisory_xact_lock(:key)'),{'key':keys[0]}))
+                budget=await db.get(MetadataProviderBudget,'igdb')
+                self.assertGreater(budget.next_request_at,now()+timedelta(seconds=8))
+            with self.assertRaises(ProviderError) as error:
+                async with providers.ProviderHTTP(session_factory=self.Session).lane('igdb'):self.fail('Ignored cooldown')
+            self.assertEqual(error.exception.code,'rate_limited')
 
     async def test_transport_upgrade_retries_completed_bad_response_outcomes_from_saved_source(self):
         from core.game_imdb_discovery import VERSION
