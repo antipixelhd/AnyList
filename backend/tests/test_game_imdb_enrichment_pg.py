@@ -30,6 +30,46 @@ def page(rows,total,more=False,cursor=None):
 
 @unittest.skipUnless(fixture.URL,'Requires explicit disposable catalogue PostgreSQL')
 class IMDbEnrichmentTests(unittest.IsolatedAsyncioTestCase):
+    async def test_unmapped_job_without_a_verified_root_keeps_its_cooldown(self):
+        async with self.Session() as db:
+            job=await db.scalar(snapshot(JOB,self.work_id))
+            job.coverage={'state':'unmapped','complete':False};job.next_attempt_at=None
+            job.expires_at=now()+timedelta(days=7);await db.commit()
+        async with self.Session() as db:
+            self.assertFalse((await request(db,self.work_id))['pending'])
+            job=await db.scalar(snapshot(JOB,self.work_id))
+            self.assertIsNone(job.next_attempt_at)
+
+    async def test_verified_binding_recovers_cached_unmapped_job_without_provider_work(self):
+        async with self.Session() as db:
+            binding=await db.scalar(select(CatalogueIdentity).where(CatalogueIdentity.namespace=='imdb.title',CatalogueIdentity.entity_id==self.work_id))
+            binding.evidence={**binding.evidence,'igdb_id':'10'}
+            job=await db.scalar(snapshot(JOB,self.work_id))
+            job.coverage={'state':'unmapped','complete':False};job.payload={'state':'unmapped'}
+            job.next_attempt_at=None;job.expires_at=now()+timedelta(days=7)
+            await db.commit()
+        async with self.Session() as db:
+            state=await request(db,self.work_id);await db.commit()
+        self.assertTrue(state['pending'])
+        self.bindings.resolve.assert_not_awaited()
+        self.assertEqual(await self.service.run(self.work_id),'ready')
+        self.assertEqual(len(await self.active()),2)
+
+    async def test_negative_retry_preserves_active_lease_and_completed_job(self):
+        from core.game_imdb_enrichment import retry_unmapped
+        for coverage,lease in [({'state':'unmapped','complete':False},now()+timedelta(minutes=3)),
+                ({'state':'complete','complete':True},None)]:
+            async with self.Session() as db:
+                job=await db.scalar(snapshot(JOB,self.work_id))
+                job.coverage=coverage;job.payload={'keep':True};job.next_attempt_at=None
+                job.lease_until=lease;job.expires_at=now()+timedelta(days=7)
+                await db.commit()
+            async with self.Session() as db:
+                await retry_unmapped(db,self.work_id);await db.commit()
+            async with self.Session() as db:
+                job=await db.scalar(snapshot(JOB,self.work_id))
+                self.assertEqual(job.payload,{'keep':True});self.assertIsNone(job.next_attempt_at)
+
     async def test_supported_v6_binding_accepts_new_title_credit_publication(self):
         from core.game_title_match import decide
         from test_game_title_match import game

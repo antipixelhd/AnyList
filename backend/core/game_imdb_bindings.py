@@ -370,6 +370,8 @@ class GameIMDbBindings:
                     .values(payload={},coverage={},expires_at=None,next_attempt_at=now(),lease_token=None,lease_until=None,
                         error_code=None,attempts=0).execution_options(synchronize_session=False))
             if mapping_changed:
+                from core.game_imdb_enrichment import retry_unmapped
+                await retry_unmapped(db,work_id)
                 stamp=now();version={'revision':uuid.uuid4().hex}
                 await db.execute(insert(MetadataSnapshot).values(provider='imdb',kind=BINDING_REVISION,external_id='current',
                     coverage=version,fetched_at=stamp).on_conflict_do_update(constraint='uq_catalogue_snapshot',

@@ -36,6 +36,15 @@ async def request(db,work_id,*,kind=JOB,entity_id=None,provider='imdb'):
     stamp=now()
     row=await header(db,work_id,kind=kind,provider=provider)
     view=status_view(row)
+    if kind==JOB and provider=='imdb' and row and row.coverage=='unmapped' and not view['pending']:
+        # A later automatic/person discovery may have supplied the missing
+        # identity since this negative job was cached. Recover existing jobs
+        # without querying providers or disturbing active/usable collections.
+        from core.game_imdb_bindings import verified_bindings
+        bindings=verified_bindings().subquery()
+        if await db.scalar(select(bindings.c.work_id).where(bindings.c.work_id==work_id)):
+            await retry_unmapped(db,work_id)
+            return await status(db,work_id)
     if row and (row.next_attempt_at or row.lease_until and row.lease_until>stamp
                 or row.expires_at and row.expires_at>stamp):
         return view
@@ -47,6 +56,16 @@ async def request(db,work_id,*,kind=JOB,entity_id=None,provider='imdb'):
             & or_(MetadataSnapshot.expires_at.is_(None),MetadataSnapshot.expires_at<=stamp)
             & or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=stamp))))
     return {**view,'state':'pending','pending':True,'complete':False,'error':None,'retry_after':2}
+
+
+async def retry_unmapped(db,work_id):
+    await db.execute(update(MetadataSnapshot).where(MetadataSnapshot.provider=='imdb',
+        MetadataSnapshot.kind==JOB,MetadataSnapshot.external_id==str(work_id),
+        MetadataSnapshot.coverage['state'].astext=='unmapped',MetadataSnapshot.next_attempt_at.is_(None),
+        or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=now()))
+        .values(payload={},coverage={},expires_at=None,next_attempt_at=now(),error_code=None,attempts=0,
+            lease_token=None,lease_until=None)
+        .execution_options(synchronize_session=False))
 
 
 async def header(db,work_id,*,kind=JOB,provider='imdb'):

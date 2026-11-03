@@ -17,6 +17,20 @@ from test_game_credit_sources import item, claim, snak
 
 @unittest.skipUnless(fixture.URL,'Requires explicit disposable catalogue PostgreSQL')
 class IMDbBindingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_automatic_binding_wakes_existing_unmapped_credit_job(self):
+        from core.game_imdb_enrichment import JOB,now,snapshot
+        from datetime import timedelta
+        work=await self.setup_game()
+        async with self.Session() as db:
+            db.add(MetadataSnapshot(provider='imdb',kind=JOB,external_id=str(work),entity_id=work,
+                coverage={'state':'unmapped','complete':False},payload={'state':'unmapped'},
+                expires_at=now()+timedelta(days=7)))
+            await db.commit()
+        self.assertEqual((await self.service().resolve(work))['status'],'bound')
+        async with self.Session() as db:
+            job=await db.scalar(snapshot(JOB,work))
+            self.assertIsNotNone(job.next_attempt_at);self.assertIsNone(job.expires_at)
+
     asyncSetUp=fixture.CatalogueDatabaseTests.asyncSetUp
     asyncTearDown=fixture.CatalogueDatabaseTests.asyncTearDown
 
