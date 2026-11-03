@@ -20,7 +20,7 @@ from models.catalogue import CatalogueIdentity,MetadataSnapshot
 
 JOB='game_person_discovery'
 MAP='game_person_title_map'
-VERSION=15
+VERSION=16
 MAX_ACQUIRE=4
 WORKERS=2
 _slots=asyncio.Semaphore(WORKERS)

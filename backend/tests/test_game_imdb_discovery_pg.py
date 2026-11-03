@@ -55,6 +55,23 @@ class PortfolioDiscoveryTests(unittest.IsolatedAsyncioTestCase):
             data=await view(db,'nm1',check_mapping=True);await db.commit()
         return data
 
+    async def test_transport_upgrade_retries_completed_bad_response_outcomes_from_saved_source(self):
+        from core.game_imdb_discovery import VERSION
+        async with self.Session() as db:
+            job=await db.scalar(snapshot(JOB,'nm1'))
+            job.coverage={'complete':True,'state':'complete','matcher_version':VERSION-1}
+            job.next_attempt_at=None;job.expires_at=now()+timedelta(days=1)
+            for native in ('tt2','tt3'):
+                db.add(MetadataSnapshot(provider='wikidata',kind=MAP,external_id=native,
+                    payload={'id':native,'status':'unresolved','reason':'bad_response',
+                        'matcher_version':VERSION-1,'retry_attempts':3,'deferred_retry':True},
+                    coverage={},expires_at=now()+timedelta(days=1)))
+            await db.commit()
+        self.assertTrue((await self.admit())['pending'])
+        self.assertEqual(await self.service.run('nm1'),'ready')
+        self.assertEqual(self.source.page.await_args.args[0],['tt2','tt3'])
+        self.assertEqual(self.connection.credits.await_count,1,'reuse saved IMDb credits')
+
     async def another_person(self,native='nm2',title='tt4',*,titles=None):
         from core.game_imdb_person import request
         async with self.Session() as db:

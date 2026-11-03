@@ -26,11 +26,32 @@ class GameQueryBatchTests(unittest.IsolatedAsyncioTestCase):
     async def test_independent_queries_share_a_request_and_match_named_results(self):
         source=object.__new__(sources.GameBrowseSources)
         source.igdb=AsyncMock(return_value=[{'name':'q1','result':[{'id':2}]},{'name':'q0','result':[{'id':1}]}])
-        self.assertEqual(await source.igdb_queries(['search "Example";','where name ~ "Example";']),[[{'id':1}],[{'id':2}]])
+        self.assertEqual(await source.igdb_queries(['where name ~ "Example";','where id = 2;']),[[{'id':1}],[{'id':2}]])
         source.igdb.assert_awaited_once()
         endpoint,body=source.igdb.await_args.args
         self.assertEqual(endpoint,'multiquery')
-        self.assertIn('query games "q0" { search "Example"; };',body)
+        self.assertIn('query games "q0" { where name ~ "Example"; };',body)
+
+    async def test_searches_use_games_and_compatible_filters_still_share_a_named_batch(self):
+        source=object.__new__(sources.GameBrowseSources)
+        async def provider(endpoint, query):
+            if endpoint=='multiquery':
+                # Reproduce the live failure instead of accepting search in a
+                # mocked batch that the real provider silently discards.
+                if 'search ' in query:return []
+                return [{'name':'q1','result':[{'id':4}]},{'name':'q0','result':[{'id':2}]}]
+            return [{'id':3 if 'Another' in query else 1}]
+        source.igdb=AsyncMock(side_effect=provider)
+        queries=['fields name; search "Example"; limit 100;', 'where id = 2;',
+            'search "Another"; fields name;', 'where id = 4;']
+        self.assertEqual(await source.igdb_queries(queries),[[{'id':1}],[{'id':2}],[{'id':3}],[{'id':4}]])
+        self.assertCountEqual([call.args[0] for call in source.igdb.await_args_list],['games','games','multiquery'])
+
+    async def test_search_errors_propagate_instead_of_becoming_empty_evidence(self):
+        source=object.__new__(sources.GameBrowseSources)
+        source.igdb=AsyncMock(side_effect=ProviderError('unavailable'))
+        with self.assertRaises(ProviderError):
+            await source.igdb_queries(['search "Example";','where id = 2;'])
 
     async def test_partial_duplicate_and_error_batches_never_become_empty_evidence(self):
         source=object.__new__(sources.GameBrowseSources)

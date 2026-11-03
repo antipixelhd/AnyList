@@ -123,6 +123,20 @@ class GameBrowseSources:
             raise ProviderError('invalid_request')
         if len(queries) == 1:
             return [await self.igdb('games', queries[0])]
+        # IGDB returns [] for multiqueries containing a search command, even
+        # when the same search succeeds at /games. Keep those branches separate
+        # while still batching compatible filters and preserving caller order.
+        searches = [index for index, query in enumerate(queries) if re.search(r'(?:^|;)\s*search\s+', query)]
+        if searches:
+            grouped = [index for index in range(len(queries)) if index not in searches]
+            requests = [self.igdb('games', queries[index]) for index in searches]
+            if grouped:
+                requests.append(self.igdb_queries([queries[index] for index in grouped]))
+            fetched = await asyncio.gather(*requests)
+            results = dict(zip(searches, fetched))
+            if grouped:
+                results.update(zip(grouped, fetched[-1]))
+            return [results[index] for index in range(len(queries))]
         names = [f'q{index}' for index in range(len(queries))]
         body = ' '.join(f'query games "{name}" {{ {query} }};' for name, query in zip(names, queries))
         try:
