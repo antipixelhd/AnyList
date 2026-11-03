@@ -83,7 +83,8 @@ import CalendarDateInput from '../CalendarDateInput.astro';
 <style is:global>
   .steam-card { position:relative; min-width:0; text-align:left; padding:.4rem; border-radius:.7rem; color:#a1a1aa; background:transparent; transition:background .15s,color .15s; }
   .steam-card[aria-pressed=true] { background:#312e8166; color:#e4e4e7; }
-  .steam-card:hover { color:white; }
+  .steam-card:hover:not([aria-disabled=true]) { color:white; }
+  .steam-card[aria-disabled=true] { opacity:.4; cursor:not-allowed; }
   .steam-card:focus-visible { background:#4338ca99; outline:none; }
   .steam-card img { width:100%; aspect-ratio:2/3; object-fit:cover; border-radius:.45rem; background:#27272a; }
   .steam-game { padding:1rem; border-radius:.85rem; background:#ffffff04; transition:background .2s; }

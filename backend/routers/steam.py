@@ -98,7 +98,7 @@ def selected_games(library, draft):
 
 async def owned(db, user_id, connection_id, *, lock=False):
     statement = select(SteamConnection).where(SteamConnection.connection_id == connection_id, SteamConnection.user_id == user_id)
-    state = await db.scalar(statement.with_for_update() if lock else statement)
+    state = await db.scalar(statement.with_for_update().execution_options(populate_existing=True) if lock else statement)
     if not state:
         raise HTTPException(404, 'Steam connection not found')
     return state
@@ -120,9 +120,13 @@ async def background_details(connection_id: int, background: BackgroundTasks, db
 
 @router.get('/{connection_id}/achievement-progress')
 async def detail_progress(connection_id: int, db: DB, viewer: Viewer) -> dict:
+    from core.steam_targets import import_states
     state = await owned(db, viewer.id, connection_id)
+    job = await latest_job(db, viewer.id, connection_id)
+    states = await import_states(db, state.library, settled=bool(job and job.status in (SyncStatus.completed, SyncStatus.failed, SyncStatus.cancelled)))
     games = await steam_cache.read_progress(db, viewer.id, state.steam_id, state.library)
-    return {'games': [{key: value for key, value in game.items() if key == 'app_id' or key.startswith('achievement_')} for game in games]}
+    return {'games': [{**{key: value for key, value in game.items() if key == 'app_id' or key.startswith('achievement_')},
+        'mapping_state': states[game['app_id']]} for game in games]}
 
 
 async def latest_job(db, user_id, connection_id):
@@ -184,7 +188,10 @@ async def connect(body: Connect, background: BackgroundTasks, db: DB, viewer: Vi
 async def review(connection_id: int, db: DB, viewer: Viewer) -> dict:
     state = await owned(db, viewer.id, connection_id)
     job = await latest_job(db, viewer.id, connection_id)
-    library = await steam_cache.read_progress(db, viewer.id, state.steam_id, state.library) if job and job.status == SyncStatus.completed else []
+    from core.steam_targets import import_states
+    library = await steam_cache.read_progress(db, viewer.id, state.steam_id, state.library)
+    states = await import_states(db, library, settled=bool(job and job.status in (SyncStatus.completed, SyncStatus.failed, SyncStatus.cancelled)))
+    library = [{**game, 'mapping_state':states[game['app_id']]} for game in library]
     return {**summary(state), 'library': library, 'draft': state.draft,
         'job': {'status': job.status.value, 'current': job.processed_items, 'total': job.total_items,
                 'error': job.error_message, 'warnings': job.warnings or []} if job else None}
@@ -256,9 +263,6 @@ async def validate_draft(db, viewer, connection_id, body):
     state = await owned(db, viewer.id, connection_id, lock=True)
     if state.imported or state.generation != body.generation:
         raise HTTPException(409, 'Steam import changed. Reload to continue.')
-    job = await latest_job(db, viewer.id, connection_id)
-    if not job or job.status != SyncStatus.completed:
-        raise HTTPException(409, 'Finish loading your Steam library before importing.')
     apps = {row['app_id'] for row in state.library}
     if body.overrides.keys() - apps:
         raise HTTPException(422, 'Selection contains games outside this Steam library.')
@@ -282,6 +286,15 @@ async def commit_import(connection_id: int, body: ImportSelection, background: B
     selection = selected_games(library, body) if body.selected_apps is None else list(dict.fromkeys(body.selected_apps))
     if set(selection) - {row['app_id'] for row in library}:
         raise HTTPException(422, 'Selection contains games outside this Steam library.')
+    # Finish pending identity checks outside all owner/connection locks. Cached
+    # exact references and known Steam IDs make this a cheap no-op when ready.
+    selected_ids = set(selection)
+    selected_library = [game for game in library if game['app_id'] in selected_ids]
+    await db.commit()
+    from core.steam_targets import classify
+    await classify(AsyncSessionLocal, selected_library)
+    await require_idle_account(db, viewer.id)
+    state = await validate_draft(db, viewer, connection_id, body)
     await steam_sync.apply_games(db, state, library, selection, initial=True,
         initial_status=body.import_status, completion_dates=body.completion_dates,start_dates=body.start_dates)
     accepted = [app for app in selection if app in state.checkpoints]

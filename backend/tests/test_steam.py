@@ -12,6 +12,23 @@ from routers.steam import Draft, selected_games
 
 
 class SteamTests(unittest.IsolatedAsyncioTestCase):
+    async def test_mapping_projection_reuses_known_ids_and_keeps_components_selectable(self):
+        from core import steam_targets
+        from core.steam_sync import now
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        db = SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(all=lambda:[('10','100')])))
+        evidence = {'version':1,'state':'bound','igdb_id':'200','game_class':'game','checked_at':now().isoformat()}
+        games = [{'app_id':app} for app in ('10','20','30','40','212910')]
+        with patch.object(steam_targets,'targets',AsyncMock(return_value={})), patch.object(
+            steam_targets.steam_cache,'public_metadata',AsyncMock(return_value={
+                '20':{'igdb_classification':evidence},
+                '30':{'igdb_classification':{'state':'unmatched'}}})):
+            result = await steam_targets.import_states(db,games)
+            self.assertEqual(result,{'10':'ready','20':'ready','30':'unavailable','40':'pending','212910':'pending'})
+            result = await steam_targets.import_states(db,games,settled=True)
+            self.assertEqual(result,{'10':'ready','20':'ready','30':'unavailable','40':'unavailable','212910':'ready'})
+
     def test_import_requires_recent_complete_exact_identity_evidence(self):
         from core.steam_sync import verified_import_native, now
         evidence = {'version':1,'state':'bound','igdb_id':'11208','checked_at':now().isoformat()}

@@ -161,7 +161,12 @@ function init() {
   function paintSelections() {
     for (const [id, card] of cards) {
       const game = byId.get(id);
-      if (game) card.setAttribute('aria-pressed', String(steamSelected(game, draft)));
+      if (game) {
+        card.setAttribute('aria-pressed', String(steamSelected(game, draft)));
+        const unavailable = game.mapping_state === 'unavailable';
+        card.setAttribute('aria-disabled', String(unavailable));
+        card.title = unavailable ? 'Unavailable' : '';
+      }
       const date = card.parentElement?.querySelector<HTMLButtonElement>('.steam-completion');
       if (date && game) {
         date.hidden = !steamSelected(game, draft) || !['completed','playing'].includes(draft.import_status);
@@ -189,7 +194,7 @@ function init() {
     const count = document.createElement('span'); count.className = 'steam-card-achievements'; stats.append(count);
     const check = document.createElement('span'); check.className = 'steam-card-check'; check.textContent = '✓'; check.setAttribute('aria-hidden', 'true');
     node.append(image, title, stats, check);
-    listen(node, 'click', () => { draft.overrides[game.app_id] = !steamSelected(game, draft); changed(); });
+    listen(node, 'click', () => { if (game.mapping_state === 'unavailable') return; draft.overrides[game.app_id] = !steamSelected(game, draft); changed(); });
     cards.set(game.app_id, node);
     const wrapper = document.createElement('article'); wrapper.className = 'steam-game'; wrapper.append(node);
     const date = document.createElement('button'); date.type = 'button'; date.className = 'steam-completion';
@@ -251,10 +256,11 @@ function init() {
     get('resume').hidden = data.imported;
     if (data.imported) return;
     const status = data.job?.status;
-    get('loading').hidden = status === 'completed';
-    get('picker').hidden = status !== 'completed';
+    const available = data.library.length > 0 || status === 'completed';
+    get('loading').hidden = available;
+    get('picker').hidden = !available;
     get('retry').hidden = status !== 'failed' && status !== 'cancelled';
-    if (status === 'completed') {
+    if (available) {
       const epoch = ++reviewEpoch; importing = false;
       games = data.library; byId = new Map(games.map(game => [game.app_id, game]));
       draft = { ...defaultSteamDraft(), ...data.draft };
@@ -333,7 +339,7 @@ function init() {
       .then(async result => {
         sessionStorage.removeItem(`steam-import:${active!.id}:${active!.generation}`);
         get('review').hidden = true; get('resume').hidden = true; void closeDialog(dialog); active = undefined; await list();
-        message(`Imported ${result.imported} games.${result.skipped ? ` ${result.skipped} existing add-ons or editions could not be added as independent games.` : ''} Steam now uses your account sync schedule.`);
+        message(`Imported ${result.imported} games. Steam now uses your account sync schedule.`);
       })
       .catch(error => { fail(error); if (active) void load(active.id).catch(fail); })
       .finally(() => { button.disabled = false; button.textContent = 'Import selected'; });

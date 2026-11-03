@@ -100,6 +100,11 @@ async def preparation(factory, user_id, connection_id, job_id):
         state=await db.get(SteamConnection,connection_id,with_for_update=True)
         if not state or state.user_id!=user_id:
             return
+        if state.imported:
+            job = await running_job(db, job_id)
+            job.status = SyncStatus.completed
+            await db.commit()
+            return
         state.library=await attach_dates(db,state.library)
         state.library = await steam_cache.read_progress(db, user_id, state.steam_id, state.library)
         state.fetched_at = now()
@@ -140,9 +145,17 @@ async def apply_games(db, state, library, selected, *, initial=False, add_apps=N
             work = await db.get(CatalogueEntity, mapping[app])
         elif identity:
             work = await db.get(CatalogueEntity, identity.entity_id)
+            # Old Steam-only roots are retained for existing progress, but may
+            # not acquire new imported membership without a canonical identity.
+            if initial or app in additions:
+                from core.game_metadata import native_id
+                if not await native_id(db, work):
+                    continue
         elif initial or app in additions:
             evidence = public.get(app, {}).get('igdb_classification')
             native = verified_import_native(evidence)
+            if not native or not capabilities({'game_class':evidence.get('game_class','unknown')}).independent:
+                continue
             existing = await catalogue.resolve_identity(db, 'igdb.game', native) if native else None
             if existing:
                 work = await db.get(CatalogueEntity, existing.entity_id)
@@ -154,7 +167,7 @@ async def apply_games(db, state, library, selected, *, initial=False, add_apps=N
                     identities.append({'namespace': 'igdb.game', 'external_id': native})
                 work = await catalogue.upsert_entity(db, {
                     'kind': 'game', 'name': data['name'], 'image_url': data['poster'],
-                    'attributes': {'game_class': data.get('game_class', 'game'),
+                    'attributes': {'game_class': evidence['game_class'],
                         **({'igdb_id': native} if native else {}),
                         **({'release_date': data['release_date'], 'release_date_precision': 'day' if len(data['release_date']) == 10 else 'month' if len(data['release_date']) == 7 else 'year'} if data.get('release_date') else {})},
                     'identities': identities,

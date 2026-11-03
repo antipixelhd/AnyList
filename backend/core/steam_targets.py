@@ -26,6 +26,33 @@ async def targets(db, apps):
         MetadataSnapshot.external_id.in_(apps),MetadataSnapshot.entity_id.is_not(None)))).all())
 
 
+async def import_states(db, games, *, settled=False):
+    """Batch indexed identities first; public evidence never contains viewer state."""
+    from core.steam_sync import verified_import_native
+    apps = [game['app_id'] for game in games]
+    native = CatalogueIdentity.__table__.alias('native')
+    known = dict((await db.execute(select(CatalogueIdentity.external_id, native.c.external_id).join(
+        native, native.c.entity_id == CatalogueIdentity.entity_id).where(
+        CatalogueIdentity.namespace == 'steam.app', CatalogueIdentity.external_id.in_(apps),
+        native.c.namespace == 'igdb.game'))).all())
+    combined = await targets(db, apps)
+    public = await steam_cache.public_metadata(db, apps)
+    result = {}
+    for app in apps:
+        evidence = public.get(app, {}).get('igdb_classification')
+        if app in known or app in combined:
+            result[app] = 'ready'
+        elif app in COMPONENTS:
+            # Components remain individually selectable; their target resolves
+            # independently and selection never implies selecting its siblings.
+            result[app] = 'pending' if not settled else 'ready'
+        elif verified_import_native(evidence):
+            result[app] = 'ready' if capabilities({'game_class':evidence.get('game_class','unknown')}).independent else 'unavailable'
+        else:
+            result[app] = 'unavailable' if settled or isinstance(evidence, dict) and evidence.get('state') in ('unmatched','ambiguous') else 'pending'
+    return result
+
+
 async def assign(db, app, target_app, *, evidence):
     """Caller holds catalogue write lock; operator/provider evidence is required."""
     from core.game_achievement_source import native_app
@@ -70,10 +97,14 @@ async def classify(factory, games, *, source=None):
                     missing[app]=COMPONENTS[app]
         await db.commit()
         cached=await steam_cache.public_metadata(db,apps)
+        native = CatalogueIdentity.__table__.alias('native')
+        known = set(await db.scalars(select(CatalogueIdentity.external_id).join(native,
+            native.c.entity_id == CatalogueIdentity.entity_id).where(CatalogueIdentity.namespace=='steam.app',
+            CatalogueIdentity.external_id.in_(apps),native.c.namespace=='igdb.game')))
     if source is None and not (settings.igdb_client_id and settings.igdb_client_secret):
         return
     stamp=steam_cache.now()
-    due=[app for app in apps if not cached.get(app,{}).get('classification_known') and (
+    due=[app for app in apps if app not in known and app not in COMPONENTS and (
         not cached.get(app,{}).get('classification_checked_at') or
         datetime.fromisoformat(cached[app]['classification_checked_at'])<=stamp-timedelta(days=30))]
     source=source or GameBrowseSources(factory)

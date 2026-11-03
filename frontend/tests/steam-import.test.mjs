@@ -8,6 +8,26 @@ const games = [
   {app_id:'3',name:'Gamma',playtime_minutes:15,achievement_count:3,achievement_total:20},
   {app_id:'4',name:'Delta',playtime_minutes:0,achievement_count:0,achievement_total:2},
 ];
+test('pending mappings stay selectable; unavailable mappings override saved selection without deleting it',()=>{
+  const draft=defaultSteamDraft();draft.overrides['1']=true;
+  const game={...games[0],mapping_state:'pending',achievement_refresh_due:false,achievement_state:'ready'};
+  assert.equal(steamSelected(game,draft),true);
+  assert.equal(steamProgressPending(game),true);
+  game.mapping_state='unavailable';
+  assert.equal(steamSelected(game,draft),false);
+  assert.equal(steamProgressPending(game),false);
+  assert.equal(draft.overrides['1'],true);
+  game.mapping_state='ready';
+  assert.equal(steamSelected(game,draft),true);
+});
+test('combined apps remain independently selectable',()=>{
+  const draft=defaultSteamDraft();
+  const main={...games[0],app_id:'202970',mapping_state:'ready'};
+  const component={...games[0],app_id:'212910',mapping_state:'ready'};
+  draft.overrides[main.app_id]=false;draft.overrides[component.app_id]=true;
+  assert.equal(steamSelected(main,draft),false);
+  assert.equal(steamSelected(component,draft),true);
+});
 test('default OR thresholds select played games or a single achievement without hiding rows', () => {
   const draft = defaultSteamDraft();
   assert.deepEqual(games.map(g=>steamSelected(g,draft)),[true,true,true,false]);

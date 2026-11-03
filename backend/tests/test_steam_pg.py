@@ -30,6 +30,55 @@ def game(app, minutes, count=None, total=None):
 class SteamDatabaseTests(unittest.IsolatedAsyncioTestCase):
     cleanup = fixture.GamesDatabaseTests.cleanup
 
+    async def test_import_rechecks_generation_after_provider_wait(self):
+        await self.connect()
+        async def changed(*args,**kwargs):
+            async with self.Session() as db:
+                state = await db.get(SteamConnection,self.id)
+                state.generation += 1
+                await db.commit()
+        with patch('core.steam_targets.classify',side_effect=changed):
+            response = await self.client.post(f'/connections/steam/{self.id}/import',
+                json={'generation':1,'selected_apps':['20']})
+        self.assertEqual(response.status_code,409,response.text)
+        async with self.Session() as db:
+            state = await db.get(SteamConnection,self.id)
+            self.assertFalse(state.imported)
+            self.assertNotIn('20',state.checkpoints)
+
+    async def test_picker_and_draft_are_available_while_mapping_is_running(self):
+        await self.connect()
+        async with self.Session() as db:
+            job = await steam.latest_job(db,self.user.id,self.id)
+            job.status = SyncStatus.running
+            await db.commit()
+        response = await self.client.get(f'/connections/steam/{self.id}')
+        self.assertEqual(response.status_code,200)
+        self.assertEqual(len(response.json()['library']),3)
+        response = await self.client.put(f'/connections/steam/{self.id}/draft',json={'generation':1,'overrides':{'20':True}})
+        self.assertEqual(response.status_code,200,response.text)
+        with patch('core.steam_targets.classify',new_callable=AsyncMock) as classify:
+            response = await self.client.post(f'/connections/steam/{self.id}/import',json={'generation':1,'selected_apps':['20','999999']})
+            self.assertEqual(response.status_code,422)
+            classify.assert_not_awaited()
+            response = await self.client.post(f'/connections/steam/{self.id}/import',json={'generation':1,'selected_apps':['20']})
+            self.assertEqual(response.status_code,200,response.text)
+            classify.assert_awaited_once()
+        async with self.Session() as db:
+            state = await db.get(SteamConnection,self.id)
+            self.assertTrue(state.imported)
+            self.assertEqual(state.selection,['20'])
+
+    async def test_mapping_status_distinguishes_pending_misses_and_combined_selection(self):
+        from core import steam_targets
+        await self.connect()
+        async with self.Session() as db:
+            games = [game('999999',60),game('212910',60),game('20',60)]
+            states = await steam_targets.import_states(db,games)
+            self.assertEqual(states,{'999999':'pending','212910':'pending','20':'ready'})
+            states = await steam_targets.import_states(db,games,settled=True)
+            self.assertEqual(states,{'999999':'unavailable','212910':'ready','20':'ready'})
+
     async def test_exact_import_reuses_existing_igdb_root_and_preserves_metadata(self):
         from core import catalogue, steam_cache
         from core.game_metadata import IDENTITY_JOB
@@ -96,24 +145,19 @@ class SteamDatabaseTests(unittest.IsolatedAsyncioTestCase):
                     await steam_sync.apply_games(db,state,[game(app,60,1,3)],[app],initial=True)
                     await db.commit()
                     identity = await catalogue.resolve_identity(db,'steam.app',app)
-                    self.assertNotEqual(identity.entity_id,canonical)
+                    self.assertIsNone(identity)
 
-    async def test_import_enqueues_shared_low_priority_mapping_without_provider_wait(self):
+    async def test_unresolved_import_creates_no_game_or_membership(self):
         from core.game_metadata import IDENTITY_JOB
         await self.connect()
         async with self.Session() as db:
-            state=await db.get(SteamConnection,self.id)
-            await steam_sync.apply_games(db,state,[game('20',60,1,3)],['20'],initial=True)
+            before = await db.scalar(select(func.count(CatalogueEntity.id)))
+            state = await db.get(SteamConnection,self.id)
+            await steam_sync.apply_games(db,state,[game('999999',60,1,3)],['999999'],initial=True)
             await db.commit()
-            job=await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.kind==IDENTITY_JOB))
-            imported=await db.scalar(select(CatalogueIdentity).where(CatalogueIdentity.namespace=='steam.app',CatalogueIdentity.external_id=='20'))
-            self.assertEqual(job.entity_id,imported.entity_id)
-            self.assertEqual(job.coverage['priority'],'background');self.assertIsNotNone(job.next_attempt_at)
-            entry=await db.scalar(select(GameEntry).where(GameEntry.work_id==imported.entity_id))
-            self.assertEqual((entry.total_seconds,entry.achievement_count),(3600,1))
-            await steam_sync.apply_games(db,state,[game('20',70,2,3)],['20'])
-            await db.commit()
-            self.assertEqual(await db.scalar(select(func.count(MetadataSnapshot.id)).where(MetadataSnapshot.kind==IDENTITY_JOB)),1)
+            self.assertNotIn('999999',state.checkpoints)
+            self.assertEqual(await db.scalar(select(func.count(CatalogueEntity.id))),before)
+            self.assertIsNone(await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.kind==IDENTITY_JOB)))
 
     async def test_initial_import_without_dates_silently_saves_status_and_counters(self):
         await self.connect()
@@ -202,6 +246,10 @@ class SteamDatabaseTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_exact_classification_rejects_non_game_without_title_guessing(self):
         from core import steam_targets
+        async with self.Session() as db:
+            await db.execute(delete(MetadataSnapshot).where(MetadataSnapshot.provider=='steam',
+                MetadataSnapshot.kind=='steam_import_app', MetadataSnapshot.external_id=='20'))
+            await db.commit()
         source=SimpleNamespace(steam_games=AsyncMock(return_value=[
             {'uid':'20','game':{'id':123,'name':'A soundtrack','game_type':{'id':3,'type':'Bundle'}}}]))
         await steam_targets.classify(self.Session,[game('20',50)],source=source)
@@ -323,6 +371,12 @@ class SteamDatabaseTests(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
         await fixture.GamesDatabaseTests.asyncSetUp(self)
+        # Ordinary progress tests use verified public identity evidence. Missing,
+        # ambiguous and failed mapping cases override it explicitly.
+        from core import steam_cache
+        await steam_cache.save_public(self.Session, [{'app_id':app,'igdb_classification':{
+            'version':1,'state':'bound','igdb_id':str(900000+int(app)), 'game_class':'game',
+            'checked_at':steam_sync.now().isoformat()}} for app in ('20','30','40')])
         self.client._transport.app.include_router(steam.router)
         self.source = SimpleNamespace(profile=AsyncMock(return_value={'steam_id': '76561198000000000', 'name': 'Test player'}),
             metadata=AsyncMock(return_value={'release_date': '2022-02-25'}),
