@@ -41,7 +41,7 @@ const facts = data ? [
 ].filter(([,value]) => value) : [];
 const years = [...new Set(data?.works.map(contributorYear) || [])];
 const worksSource=data?.game_company_status||data?.game_person_status;
-const worksPending=games&&!!(worksSource?.pending||worksSource?.identity_pending)&&!worksSource?.error;
+const worksPending=games&&!!worksSource?.pending&&!worksSource?.error;
 const imageRoute='direct';
 const portrait = artwork(data?.image || null, 'w342',imageRoute);
 const backdrop = artwork(data?.works.find(work => work.backdrop)?.backdrop || null, 'w1280',imageRoute);

@@ -8,7 +8,7 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 from time import monotonic
 
-from sqlalchemy import Integer, String, cast, delete, func, literal, or_, select, update
+from sqlalchemy import Integer, String, case, cast, delete, func, literal, or_, select, update
 from sqlalchemy.dialects.postgresql import insert,JSONB
 
 from core import catalogue
@@ -383,9 +383,12 @@ class GameIMDbPersonEnrichment:
                 raise ProviderError('incomplete_cache')
             projection=uuid.uuid4().hex
             mapping=await project_mapped(db,native,[row for page in pages for row in page],projection,source_generation=generation)
-            from core.game_imdb_review import write_index
-            component.payload={**component.payload,**await write_index(db,native,generation,
-                [row for page in pages for row in page],entity_id=job.entity_id)}
+            # Mapping changes do not change the source index. Rebuilding every
+            # index page for every four discovered games amplifies cold work.
+            if component.payload.get('index_generation')!=generation:
+                from core.game_imdb_review import write_index
+                component.payload={**component.payload,**await write_index(db,native,generation,
+                    [row for page in pages for row in page],entity_id=job.entity_id)}
             component.coverage={**mapping,**({'person_version':component.coverage['person_version']} if 'person_version' in component.coverage else {}),'source_complete':True,'projection_revision':projection,
                 'binding_revision':await binding_revision(db)}
             state.pop('projection_only',None)
@@ -418,10 +421,14 @@ class GameIMDbPersonEnrichment:
             queued=(await db.execute(select(MetadataSnapshot.kind,MetadataSnapshot.external_id).where(MetadataSnapshot.provider=='imdb',
                 MetadataSnapshot.kind.in_((JOB,IDENTITY_JOB)),
                 MetadataSnapshot.next_attempt_at<=now(),or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=now()))
-                .order_by(MetadataSnapshot.next_attempt_at,MetadataSnapshot.id).limit(1))).one_or_none()
+                .order_by(case((MetadataSnapshot.payload['projection_only'].astext=='true',0),
+                    (MetadataSnapshot.kind==JOB,1),else_=2),
+                    MetadataSnapshot.next_attempt_at,MetadataSnapshot.id).limit(1))).one_or_none()
         if queued:
             if queued.kind==IDENTITY_JOB:await GamePersonIdentity(self.sessions).run(queued.external_id)
             else:await self.run(queued.external_id)
+            return True
+        return False
 
 
 async def scheduler():
@@ -437,7 +444,7 @@ async def scheduler():
                 if monotonic()>=next_backfill:
                     async with AsyncSessionLocal() as db:await backfill(db)
                     next_backfill=monotonic()+60
-                await service.tick()
+                if await service.tick():delay=0
             except asyncio.CancelledError:raise
             except Exception:delay=30
             await asyncio.sleep(delay)

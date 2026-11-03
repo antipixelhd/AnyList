@@ -248,7 +248,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
       }
     }
   },state=>{
-    sourcePending=!!state&&(state.pending||!!state.identity_pending)&&!state.error;
+    sourcePending=!!state?.pending&&!state.error;
     updateEmpty();
   });
   const requestPage=async(path:string,requestSignal:AbortSignal):Promise<ContributorPage>=>{

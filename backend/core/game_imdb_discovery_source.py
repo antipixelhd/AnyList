@@ -17,8 +17,8 @@ from core.game_release_dates import FIELDS as RELEASE_FIELDS
 from core.wikidata_claims import best_claims,qualified,snak_value
 
 SIZE=20
-FIELDS=('id,name,slug,summary,first_release_date,game_type.type,version_parent,parent_game.name,parent_game.game_type.type,'
-    'cover.url,artworks.url,artworks.width,artworks.height,artworks.image_type,screenshots.url,screenshots.width,screenshots.height,genres.name,platforms.name,platforms.platform_family.name,'
+FIELDS=('id,name,slug,first_release_date,game_type.type,version_parent,parent_game.name,parent_game.game_type.type,'
+    'cover.url,genres.name,platforms.name,platforms.platform_family.name,'
     'involved_companies.developer,involved_companies.publisher,involved_companies.supporting,involved_companies.porting,'
     'involved_companies.company.name,involved_companies.company.logo.url,involved_companies.company.country,'
     'external_games.uid,external_games.url,external_games.external_game_source.name,'+RELEASE_FIELDS)
@@ -194,11 +194,28 @@ class GameIMDbDiscoverySource:
         outputs=[]
         deep_remaining=8
         indexed={row['native']:row for row in await lookup(self.sessions,'imdb',natives=ids)}
-        for outcome in result['outcomes']:
-            native=outcome['id'];title=dict(titles[native]);local=indexed.get(native)
+        prepared={}
+        for native in ids:
+            title=dict(titles[native]);local=indexed.get(native)
             if local:
                 title['aliases']=local['value'].get('aliases',[])
                 if title.get('year') is None:title['year']=local['value'].get('year')
+            prepared[native]=title
+        acquired_titles={}
+        if isinstance(self.sources,GameBrowseSources):
+            from core.game_candidate_queries import GameCandidateQueries
+            from core.game_version_scope import original_parent
+            candidates=[]
+            for row in result['outcomes']:
+                reference=result.get('version_references',{}).get(row['id'])
+                reconsider=bool(reference and original_parent(prepared[row['id']],reference))
+                if row.get('reason')!='explicit_identity_conflict' and (row['status'] not in ('verified','excluded') or reconsider):
+                    candidates.append(row['id'])
+            batched=GameCandidateQueries(self.sources)
+            acquired_titles=dict(zip(candidates,await asyncio.gather(
+                *(retrieve(batched,prepared[native]) for native in candidates),return_exceptions=True)))
+        for outcome in result['outcomes']:
+            native=outcome['id'];title=prepared[native];local=indexed.get(native)
             from core.game_version_scope import original_parent
             reference=result.get('version_references',{}).get(outcome['id'])
             scope_parent=original_parent(title,reference) if reference else None
@@ -208,7 +225,9 @@ class GameIMDbDiscoverySource:
                 outputs.append(outcome);continue
             if title.get('id')!=native or not isinstance(title.get('title'),str) or not title['title'].strip():
                 raise ProviderError('bad_response')
-            try:acquired=await retrieve(self.sources,title)
+            try:
+                acquired=acquired_titles[native] if native in acquired_titles else await retrieve(self.sources,title)
+                if isinstance(acquired,BaseException):raise acquired
             except ProviderError as error:
                 outputs.append({'id':native,'status':'unresolved','reason':error.code,
                     **({'retry_after':60} if error.code!='coverage_limited' else {})});continue

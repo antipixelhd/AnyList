@@ -75,10 +75,16 @@ async def retrieve(sources, title):
                 parent=json.dumps(parents[name],ensure_ascii=False);full=json.dumps(parents[name]+': '+name,ensure_ascii=False)
                 queries=[('search',f'search {quoted}; where parent_game.name ~ {parent};'),
                     ('exact',f'where parent_game.name ~ {parent} & (name ~ {quoted} | name ~ {full} | alternative_names.name ~ {quoted} | alternative_names.name ~ {full});')]
-            for branch, query in queries:
+            # Search and exact-name branches are independent, but both are
+            # required evidence. One IGDB multiquery avoids a second network
+            # round trip and provider interval without weakening completeness.
+            first_queries=[f'fields {FIELDS}; {query} limit {PAGE}; offset 0;' for _,query in queries]
+            batch=getattr(sources,'igdb_queries',None)
+            first_pages=await batch(first_queries) if batch else [None]*len(queries)
+            for (branch, query),first in zip(queries,first_pages):
                 complete = False
                 for page in range(MAX_PAGES):
-                    rows = await sources.igdb('games', f'fields {FIELDS}; {query} limit {PAGE}; offset {page * PAGE};')
+                    rows = first if page==0 and batch else await sources.igdb('games', f'fields {FIELDS}; {query} limit {PAGE}; offset {page * PAGE};')
                     if not isinstance(rows, list) or len(rows) > PAGE or any(
                         not isinstance(row, dict) or type(row.get('id')) is not int or row['id'] <= 0
                         or not isinstance(row.get('name'), str) for row in rows):

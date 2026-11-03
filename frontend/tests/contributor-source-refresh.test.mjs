@@ -77,14 +77,32 @@ test('transient discovery failures respect cooldown and offer recovered works wi
   await f.tick();assert.equal(f.paint.at(-1),true);assert.equal(f.timers.length,0);
 }));
 
-test('persistent retry states stop after twenty status reads and navigation clears long cooldowns',()=>fixture(async f=>{
+test('healthy cold acquisition continues past twenty polls and navigation clears cooldowns',()=>fixture(async f=>{
   f.resource.update({id:'nm1',pending:true,complete:false});
   f.reply({id:'nm1',pending:true,complete:false,error:'unavailable',retry_after:3600});
   for(let index=0;index<20;index++)await f.tick();
-  assert.equal(f.calls.length,20);assert.equal(f.timers.length,0);assert.equal(f.paint.at(-1),false);
+  assert.equal(f.calls.length,20);assert.equal(f.timers.length,1);assert.equal(f.paint.at(-1),false);
+  f.reply({id:'nm1',pending:false,complete:true,revision:'late'});await f.tick();
+  assert.equal(f.paint.at(-1),true);assert.equal(f.timers.length,0);
   f.resource.update({id:'nm1',pending:true,complete:false,error:'rate_limited',retry_after:3600});
   assert.equal(f.timers[0].delay,3600000);f.controller.abort();assert.equal(f.timers.length,0);
 }));
+
+test('temporary status transport failures retry and successful reads reset the failure budget',async()=>{
+  const original=globalThis.fetch;
+  try{await fixture(async f=>{
+    f.resource.update({id:'nm1',pending:true,complete:false});
+    globalThis.fetch=async()=>{throw new TypeError('offline');};
+    await f.tick();assert.equal(f.timers[0].delay,3000);
+    await f.tick();assert.equal(f.timers[0].delay,6000);
+    globalThis.fetch=async()=>Response.json({id:'nm1',pending:true,complete:false});
+    await f.tick();
+    globalThis.fetch=async()=>new Response('',{status:503});
+    await f.tick();assert.equal(f.timers[0].delay,3000);
+    for(let i=0;i<3;i++)await f.tick();
+    assert.equal(f.timers.length,0);
+  });}finally{globalThis.fetch=original;}
+});
 
 test('company portfolios poll an approval-protected compact status and preserve the shared refresh behavior',()=>fixture(async f=>{
   f.resource.update({id:'42',source:'igdb-company',pending:true,complete:false,fetched_at:'old'});

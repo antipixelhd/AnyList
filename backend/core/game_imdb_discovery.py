@@ -186,7 +186,7 @@ class GamePersonDiscovery:
                 if repeat:state.update(page=0,offset=0,processed=0,retry_after=0)
                 job.payload=state
                 job.error_code=None;job.attempts=0;job.lease_token=job.lease_until=None
-                job.next_attempt_at=now()+timedelta(seconds=retry_after) if repeat else None if complete else now()+timedelta(seconds=2)
+                job.next_attempt_at=now()+timedelta(seconds=retry_after) if repeat else None if complete else now()
                 job.expires_at=now()+timedelta(days=1) if complete and not repeat else None
                 # Publish each verified batch. A later provider failure must
                 # not hold already discovered participation behind completion.
@@ -230,14 +230,22 @@ class GamePersonDiscovery:
             native=await db.scalar(select(MetadataSnapshot.external_id).where(MetadataSnapshot.provider=='imdb',MetadataSnapshot.kind==JOB,
                 MetadataSnapshot.next_attempt_at<=now(),or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=now()))
                 .order_by(MetadataSnapshot.next_attempt_at,MetadataSnapshot.id).limit(1))
-        if native:await self.run(native)
+        if native:
+            await self.run(native)
+            return True
+        return False
 
 
 async def scheduler():
     from db import AsyncSessionLocal
     service=GamePersonDiscovery(AsyncSessionLocal)
     while True:
-        try:await service.tick()
+        try:
+            # Provider lanes already bound acquisition. Sleep only when idle;
+            # a fixed pause for every four games accumulates across a career.
+            if await service.tick():
+                await asyncio.sleep(0)
+                continue
         except asyncio.CancelledError:raise
         except Exception:await asyncio.sleep(30)
         await asyncio.sleep(2)

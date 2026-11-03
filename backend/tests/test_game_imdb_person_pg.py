@@ -268,6 +268,22 @@ class PersonEnrichmentTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotEqual(refreshed['revision'],original['revision'])
             self.assertEqual(refreshed['mapping']['unmapped_games'],0)
 
+    async def test_mapping_reprojection_reuses_the_complete_source_index(self):
+        from core.game_imdb_person import queue_projection
+        from unittest.mock import patch
+        await self.service.run('nm1')
+        async with self.Session() as db:
+            component=await db.scalar(snapshot(COMPONENT,'nm1'))
+            original=dict(component.payload)
+            await queue_projection(db,'nm1');await db.commit()
+        with patch('core.game_imdb_review.write_index',AsyncMock(side_effect=AssertionError('Unchanged source index'))) as rebuild:
+            self.assertTrue(await self.service.tick())
+        rebuild.assert_not_awaited()
+        async with self.Session() as db:
+            component=await db.scalar(snapshot(COMPONENT,'nm1'))
+            self.assertEqual(component.payload,original)
+        self.source.credits.assert_awaited_once()
+
     async def test_cancelled_fetch_retains_committed_cursor_and_releases_its_lease(self):
         entered=asyncio.Event()
         async def load(native,cursor,**kwargs):

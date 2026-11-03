@@ -19,7 +19,7 @@ export function contributorSourceRefresh(signal:AbortSignal, ready:(available:bo
     const company=initial?.source==='igdb-company';
     if(signal.aborted||!initial||!(initial.pending||initial.identity_pending)||!(company?/^[1-9][0-9]*$/:/^nm[0-9]+$/).test(initial.id))return;
     const current=generation;
-    let attempts=0,captionRevision:string|null|undefined;
+    let failures=0,captionRevision:string|null|undefined;
     let observed=initial;
     const retryable=(error?:string|null)=>!error||['rate_limited','timeout','unavailable','network_error','incomplete_cache','stale_mapping','retry_pending','refreshing'].includes(error);
     const schedule=(delay:number)=>{timer=setTimeout(()=>void poll(),Math.max(3000,Math.min(3600000,delay*1000)));};
@@ -35,9 +35,10 @@ export function contributorSourceRefresh(signal:AbortSignal, ready:(available:bo
           ids.slice(0,100).forEach(id=>query.append('work_id',String(id)));
         }
         const response=await fetch(`/api/proxy/tracking/games/${path}${query.size?`?${query}`:''}`,{signal:request.signal,cache:'no-store'});
-        if(!response.ok)return;
+        if(!response.ok)throw new Error('Status unavailable');
         const next:GamePersonStatus=await response.json();
         if(signal.aborted||generation!==current||next.id!==initial.id)return;
+        failures=0;
         progress?.(next);
         if(next.roles)captions?.apply(next.roles);
         // A display budget is not a collection limit. Refresh further mounted
@@ -63,8 +64,13 @@ export function contributorSourceRefresh(signal:AbortSignal, ready:(available:bo
           observed=next;ready(true);
         }
         if(!next.pending&&!next.identity_pending&&next.complete)return;
-        if((next.pending||next.identity_pending)&&retryable(next.error)&&++attempts<20)schedule(next.retry_after||3);
-      }catch{ /* Saved works remain usable during failures or navigation. */ }
+        if((next.pending||next.identity_pending)&&retryable(next.error))schedule(next.retry_after||3);
+      }catch{
+        // A healthy cold portfolio can legitimately take over twenty polls.
+        // Bound consecutive transport failures, rather than successful reads;
+        // navigation still owns cancellation and provider cooldowns still win.
+        if(!signal.aborted&&generation===current&&++failures<=3)schedule(3*failures);
+      }
     };
     if(retryable(initial.error))schedule(initial.retry_after||3);
   },stop};

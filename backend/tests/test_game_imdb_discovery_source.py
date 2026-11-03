@@ -248,6 +248,9 @@ class DiscoverySourceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['outcomes'][1]['document']['work']['attributes']['game_class'],'remaster')
         self.assertFalse(result['outcomes'][0]['document']['coverage']['credits_complete'])
         self.assertNotIn('search ',self.sources.igdb.await_args.args[1])
+        self.assertIn('cover.url',self.sources.igdb.await_args.args[1])
+        self.assertNotIn('screenshots.',self.sources.igdb.await_args.args[1])
+        self.assertNotIn('artworks.',self.sources.igdb.await_args.args[1])
 
     async def test_query_service_outage_recovers_exact_statement_candidates_and_verifies_claims(self):
         self.http.request.side_effect=[ProviderError('rate_limited',3600),{'query':{'search':[{'title':'Q1'},{'title':'Q2'}]}}]

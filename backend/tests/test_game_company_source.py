@@ -39,6 +39,10 @@ class CompanySourceTests(unittest.IsolatedAsyncioTestCase):
         result=await source.page('70',100)
         self.assertFalse(result['complete']);self.assertEqual(result['cursor'],100+SIZE)
         self.assertIn('company=70 & id>100',source.api.igdb.call_args_list[0].args[1])
+        query=source.api.igdb.call_args_list[1].args[1]
+        self.assertIn('cover.url',query)
+        self.assertNotIn('artworks.',query)
+        self.assertNotIn('summary',query)
 
     async def test_missing_game_identity_and_wrong_company_are_failures_not_empty_results(self):
         for values in [[[involved(1,10)],[]],[[involved(1,10,company=99)]]]:

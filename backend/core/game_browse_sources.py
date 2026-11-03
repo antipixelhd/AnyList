@@ -117,6 +117,30 @@ class GameBrowseSources:
         async with _slots:
             return await self.api.igdb(endpoint, query)
 
+    async def igdb_queries(self, queries):
+        """Batch independent game queries without changing their result scopes."""
+        if not isinstance(queries, list) or not 1 <= len(queries) <= 10:
+            raise ProviderError('invalid_request')
+        if len(queries) == 1:
+            return [await self.igdb('games', queries[0])]
+        names = [f'q{index}' for index in range(len(queries))]
+        body = ' '.join(f'query games "{name}" {{ {query} }};' for name, query in zip(names, queries))
+        try:
+            response = await self.igdb('multiquery', body)
+        except ProviderError as error:
+            # The transport's body limit applies to the aggregate response.
+            # Split an oversized batch without reducing any branch's coverage.
+            if error.code!='payload_too_large':raise
+            middle=len(queries)//2
+            return await self.igdb_queries(queries[:middle])+await self.igdb_queries(queries[middle:])
+        if (not isinstance(response, list) or len(response) != len(names)
+                or any(not isinstance(row, dict) or row.get('name') not in names
+                       or not isinstance(row.get('result'), list) or row.get('error') for row in response)
+                or len({row['name'] for row in response}) != len(names)):
+            raise ProviderError('bad_response')
+        results = {row['name']: row['result'] for row in response}
+        return [results[name] for name in names]
+
     async def request(self, provider, url, **kwargs):
         if provider == 'wikidata':
             kwargs['headers'] = {'User-Agent':'AnyList catalogue/1 (https://github.com/antipixelhd/AnyList)'}
