@@ -17,6 +17,7 @@ import {contributorAvailability,disabledContributorOption} from './contributor-a
 import {mountGamePersonImages} from './game-person-images';
 import {contributorPages} from './contributor-pages';
 import {bindContributorTabIntent} from './contributor-tab-intent';
+import {createContributorWorksMotion, orderContributorNodes} from './contributor-works-motion';
 
 export function initializeContributorPage(root: HTMLElement, signal: AbortSignal) {
   if(root.dataset.mediaType==='game')mountGamePersonImages(root,signal);
@@ -25,6 +26,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
   const data: ContributorPage = JSON.parse(root.querySelector('[data-contributor-data]')!.textContent!);
   const region = root.querySelector<HTMLElement>('[data-contributor-works]')!;
   const switchView = createContentTransition(region, signal);
+  const worksMotion = createContributorWorksMotion(region, signal);
   let requestedView = root.dataset.view;
   const aliases = root.querySelector<HTMLDetailsElement>('.contributor-aliases');
   if (aliases) mountDetailsMotion(aliases, signal);
@@ -117,6 +119,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
       const view = button.dataset.contributorView!;
       if (requestedView === view) return;
       requestedView = view;
+      worksMotion.cancel();
       void switchView(() => {
         root.dataset.view = view;
         region.classList.toggle('browse-grid', view === 'grid');
@@ -412,7 +415,8 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
       if(requestedWrites!==writeVersion){syncAgain=true;return;}
       // Reuse mounted cards and preserve the top visible card's position. New
       // works arrive chronologically inside the user's existing loaded window.
-      const anchor=region.getBoundingClientRect().top<0?[...items.keys()].find(card=>card.getBoundingClientRect().bottom>0):undefined;
+      const animateWorks=worksMotion.capture();
+      const anchor=region.getBoundingClientRect().top<0?[...region.querySelectorAll<HTMLElement>('[data-work-key]')].find(card=>!card.hidden&&card.getBoundingClientRect().bottom>0&&card.getBoundingClientRect().top<innerHeight):undefined;
       const top=anchor?.getBoundingClientRect().top;
       const focused=document.activeElement instanceof HTMLElement?document.activeElement:null;
       const wanted=new Set(works.map(work=>work.key));
@@ -431,19 +435,20 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
       }
       const groups=[...region.querySelectorAll<HTMLElement>('[data-contributor-year]')];
       groups.sort((a,b)=>(b.dataset.contributorYear==='Undated'?'':b.dataset.contributorYear!).localeCompare(a.dataset.contributorYear==='Undated'?'':a.dataset.contributorYear!));
+      orderContributorNodes(region,groups);
+      const cardsByKey=new Map([...items].map(([card,item])=>[item.key,card]));
       for(const group of groups){
-        region.append(group);
-        for(const work of works.filter(work=>contributorYear(work)===group.dataset.contributorYear)){
-          const card=[...items].find(([,item])=>item.key===work.key)?.[0];
-          if(card)group.querySelector('.contributor-year-works')!.append(card);
-        }
+        const cards=works.filter(work=>contributorYear(work)===group.dataset.contributorYear)
+          .map(work=>cardsByKey.get(work.key)!).filter(Boolean);
+        orderContributorNodes(group.querySelector<HTMLElement>('.contributor-year-works')!,cards);
       }
-      if(anchor?.isConnected&&top!==undefined)window.scrollBy(0,anchor.getBoundingClientRect().top-top);
+      if(anchor?.isConnected&&top!==undefined)window.scrollBy({top:anchor.getBoundingClientRect().top-top,behavior:'instant'});
       if(focused?.isConnected&&document.activeElement!==focused)focused.focus({preventScroll:true});
       data.page=next.page;data.source=next.source;data.next_cursor=next.next_cursor;data.has_more=next.has_more;
       data.total=next.total;data.list_count=next.list_count;
       const count=root.querySelector('[data-contributor-list-count]');if(count)count.textContent=String(next.list_count||0);
       more.hidden=!data.has_more;updateEmpty();
+      animateWorks();
       syncFailures=0;
     }catch{
       // A final source revision must survive a transient browser read failure.
