@@ -15,7 +15,7 @@ class CandidateQueryTests(unittest.IsolatedAsyncioTestCase):
         source=SimpleNamespace(cache=object(),igdb_queries=AsyncMock(side_effect=lambda queries:[[query] for query in queries]))
         batch=GameCandidateQueries(source)
         first=asyncio.create_task(batch.igdb_queries(['search 1','exact 1']))
-        await asyncio.sleep(.001)
+        await asyncio.sleep(.015)
         rest=[asyncio.create_task(batch.igdb_queries([f'search {i}',f'exact {i}'])) for i in range(2,5)]
         result=await asyncio.gather(first,*rest)
         source.igdb_queries.assert_awaited_once()
@@ -68,3 +68,36 @@ class CandidateQueryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await second,['second'])
         for invalid in ([],['query']*11):
             with self.assertRaises(ProviderError):await batch.igdb_queries(invalid)
+
+    async def test_queue_bound_rejects_excess_work_and_close_cancels_all_waiters(self):
+        entered,release=asyncio.Event(),asyncio.Event()
+        async def fetch(queries):entered.set();await release.wait();return [[query] for query in queries]
+        batch=GameCandidateQueries(SimpleNamespace(cache=object(),igdb_queries=fetch))
+        calls=[asyncio.create_task(batch.igdb('games',str(i))) for i in range(batch.MAX_PENDING)]
+        await entered.wait()
+        with self.assertRaises(ProviderError) as error:await batch.igdb('games','overflow')
+        self.assertEqual(error.exception.code,'rate_limited')
+        await batch.close()
+        values=await asyncio.gather(*calls,return_exceptions=True)
+        self.assertTrue(all(isinstance(value,asyncio.CancelledError) for value in values))
+        self.assertIsNone(batch.flight);self.assertEqual(batch.pending,[])
+        with self.assertRaises(ProviderError):await batch.igdb('games','closed')
+
+    async def test_close_before_dispatch_starts_settles_the_queued_caller(self):
+        source=SimpleNamespace(cache=object(),igdb_queries=AsyncMock())
+        batch=GameCandidateQueries(source)
+        task=asyncio.create_task(batch.igdb('games','queued'))
+        await asyncio.sleep(0)
+        await batch.close()
+        with self.assertRaises(asyncio.CancelledError):await asyncio.wait_for(task,1)
+        source.igdb_queries.assert_not_awaited()
+
+    async def test_one_failed_dispatch_does_not_discard_the_next_queued_batch(self):
+        source=SimpleNamespace(cache=object(),igdb_queries=AsyncMock(side_effect=[
+            ProviderError('unavailable'),[['recovered']]]))
+        batch=GameCandidateQueries(source)
+        first=asyncio.create_task(batch.igdb_queries(['query']*10))
+        second=asyncio.create_task(batch.igdb('games','next'))
+        values=await asyncio.gather(first,second,return_exceptions=True)
+        self.assertIsInstance(values[0],ProviderError)
+        self.assertEqual(values[1],['recovered'])

@@ -22,7 +22,8 @@ JOB='game_person_discovery'
 MAP='game_person_title_map'
 VERSION=15
 MAX_ACQUIRE=4
-_slots=asyncio.Semaphore(1)
+WORKERS=2
+_slots=asyncio.Semaphore(WORKERS)
 
 
 def status(row):
@@ -62,18 +63,28 @@ class GamePersonDiscovery:
         async with _slots:
             return await self._run(native)
 
-    async def _run(self,native):
-        from core.game_imdb_person import COMPONENT
-        from core.game_imdb_review import INDEX
+    async def claim(self,native=None):
         async with self.sessions() as db:
-            job=await db.scalar(snapshot(JOB,native).with_for_update())
-            if not job or not job.next_attempt_at or job.next_attempt_at>now() or job.lease_until and job.lease_until>now():return 'cached'
+            query=select(MetadataSnapshot).where(MetadataSnapshot.provider=='imdb',MetadataSnapshot.kind==JOB,
+                MetadataSnapshot.next_attempt_at<=now(),or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=now()))
+            if native is not None:query=query.where(MetadataSnapshot.external_id==native)
+            query=query.order_by(MetadataSnapshot.next_attempt_at,MetadataSnapshot.id).limit(1).with_for_update(skip_locked=True)
+            job=await db.scalar(query)
+            if not job:return None
             token=uuid.uuid4().hex;job.lease_token=token;job.lease_until=now()+timedelta(minutes=3)
             state=dict(job.payload or {})
             # A cursor is certified only for the policy that processed its prefix.
             if (job.coverage or {}).get('matcher_version')!=VERSION:
                 state.update(page=0,offset=0,processed=0,retry_after=0)
             await db.commit()
+            return job.external_id,token,state
+
+    async def _run(self,native,*,claimed=None):
+        from core.game_imdb_person import COMPONENT
+        from core.game_imdb_review import INDEX
+        claimed=claimed or await self.claim(native)
+        if not claimed:return 'cached'
+        native,token,state=claimed
         try:
             async with self.sessions() as db:
                 component=(await db.execute(snapshot(COMPONENT,native).with_only_columns(
@@ -170,7 +181,9 @@ class GamePersonDiscovery:
                     await db.rollback();await self.release(native,token,restart=generation);return 'changed'
                 from core.game_credit_parents import reject_automatic_parents
                 await reject_automatic_parents(db,[row['id'] for row in outcomes if row['status'] in ('conflict','excluded')])
-                for outcome in outcomes:
+                # Different careers retain different source tie orders. Lock
+                # shared mapping rows consistently without reordering traversal.
+                for outcome in sorted(outcomes,key=lambda value:value['id']):
                     statement=insert(MetadataSnapshot).values(provider='wikidata',kind=MAP,external_id=outcome['id'],
                         entity_id=outcome.get('work_id'),payload=outcome,coverage={'verified':outcome['status'] in ('verified','excluded')},
                         fetched_at=now(),expires_at=now()+lifetime(outcome))
@@ -226,26 +239,32 @@ class GamePersonDiscovery:
             await db.commit()
 
     async def tick(self):
-        async with self.sessions() as db:
-            native=await db.scalar(select(MetadataSnapshot.external_id).where(MetadataSnapshot.provider=='imdb',MetadataSnapshot.kind==JOB,
-                MetadataSnapshot.next_attempt_at<=now(),or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=now()))
-                .order_by(MetadataSnapshot.next_attempt_at,MetadataSnapshot.id).limit(1))
-        if native:
-            await self.run(native)
+        async with _slots:
+            claimed=await self.claim()
+            if not claimed:return False
+            await self._run(claimed[0],claimed=claimed)
             return True
-        return False
+
+    async def worker(self):
+        while True:
+            try:
+                if await self.tick():
+                    await asyncio.sleep(0)
+                    continue
+            except asyncio.CancelledError:raise
+            except Exception:
+                await asyncio.sleep(30)
+            await asyncio.sleep(2)
+
+    async def serve(self):
+        tasks=[asyncio.create_task(self.worker()) for _ in range(WORKERS)]
+        try:await asyncio.gather(*tasks)
+        finally:
+            for task in tasks:task.cancel()
+            await asyncio.gather(*tasks,return_exceptions=True)
+            if isinstance(self.source,GameIMDbDiscoverySource):await self.source.close()
 
 
 async def scheduler():
     from db import AsyncSessionLocal
-    service=GamePersonDiscovery(AsyncSessionLocal)
-    while True:
-        try:
-            # Provider lanes already bound acquisition. Sleep only when idle;
-            # a fixed pause for every four games accumulates across a career.
-            if await service.tick():
-                await asyncio.sleep(0)
-                continue
-        except asyncio.CancelledError:raise
-        except Exception:await asyncio.sleep(30)
-        await asyncio.sleep(2)
+    await GamePersonDiscovery(AsyncSessionLocal).serve()

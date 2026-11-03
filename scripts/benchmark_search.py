@@ -99,6 +99,10 @@ async def main(args):
             process.check_returncode()
             source = process.stdout
             exec(compile(source, module.__file__, 'exec'), module.__dict__)  # noqa: S102 -- trusted local revision, benchmark process only
+    if args.case in (['game_people_pipeline'],['game_people_pipeline_shared']):
+        from benchmark_game_pipeline import run
+        await run(args)
+        return
     cold_portfolios={'game_person_cold','game_company_cold'}
     if args.case and cold_portfolios.intersection(args.case):
         if not set(args.case)<=cold_portfolios:

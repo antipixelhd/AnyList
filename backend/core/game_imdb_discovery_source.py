@@ -77,6 +77,10 @@ class GameIMDbDiscoverySource:
         self.sessions=sessions
         self.sources=sources or GameBrowseSources(sessions)
         self.wiki=wiki or GameCreditSources(self.sources)
+        self._candidate_queries=None
+
+    async def close(self):
+        if self._candidate_queries:await self._candidate_queries.close()
 
     async def items(self,ids):
         if self.sessions is not None:
@@ -211,7 +215,8 @@ class GameIMDbDiscoverySource:
                 reconsider=bool(reference and original_parent(prepared[row['id']],reference))
                 if row.get('reason')!='explicit_identity_conflict' and (row['status'] not in ('verified','excluded') or reconsider):
                     candidates.append(row['id'])
-            batched=GameCandidateQueries(self.sources)
+            if self._candidate_queries is None:self._candidate_queries=GameCandidateQueries(self.sources)
+            batched=self._candidate_queries
             acquired_titles=dict(zip(candidates,await asyncio.gather(
                 *(retrieve(batched,prepared[native]) for native in candidates),return_exceptions=True)))
         for outcome in result['outcomes']:

@@ -55,6 +55,152 @@ class PortfolioDiscoveryTests(unittest.IsolatedAsyncioTestCase):
             data=await view(db,'nm1',check_mapping=True);await db.commit()
         return data
 
+    async def another_person(self,native='nm2',title='tt4',*,titles=None):
+        from core.game_imdb_person import request
+        async with self.Session() as db:
+            person=CatalogueEntity(kind='person',name=native);db.add(person);await db.flush()
+            db.add(CatalogueIdentity(entity_id=person.id,namespace='imdb.person',external_id=native,source='imdb'))
+            await db.flush();await request(db,person.id);await db.commit()
+        records=[credit(value) for value in titles] if titles is not None else [credit(title)]
+        self.connection.credits.return_value=page(records,len(records))
+        self.assertEqual(await self.person_service.run(native),'ready')
+
+    async def test_slow_person_does_not_block_a_second_person_and_same_person_keeps_one_lease(self):
+        await self.another_person()
+        entered,release=asyncio.Event(),asyncio.Event()
+        async def load(ids):
+            if 'tt2' in ids:entered.set();await release.wait()
+            return {'outcomes':[{'id':native,'status':'unmapped'} for native in ids],'stale':False}
+        self.source.page.side_effect=load
+        first=asyncio.create_task(self.service.run('nm1'))
+        try:
+            await asyncio.wait_for(entered.wait(),3)
+            self.assertEqual(await asyncio.wait_for(self.service.run('nm1'),3),'cached')
+            self.assertEqual(await asyncio.wait_for(self.service.run('nm2'),3),'ready')
+            self.assertFalse(first.done())
+            self.assertEqual(self.source.page.await_count,2)
+        finally:release.set();await first
+
+    async def test_claim_skips_a_locked_job_and_expired_lease_is_recoverable(self):
+        await self.another_person()
+        async with self.Session() as locked:
+            job=await locked.scalar(snapshot(JOB,'nm1').with_for_update())
+            claimed=await asyncio.wait_for(self.service.claim(),3)
+            self.assertEqual(claimed[0],'nm2')
+            await self.service.release('nm2',claimed[1])
+            await locked.rollback()
+        first=await self.service.claim('nm1')
+        self.assertIsNotNone(first)
+        self.assertIsNone(await self.service.claim('nm1'))
+        async with self.Session() as db:
+            job=await db.scalar(snapshot(JOB,'nm1'));job.lease_until=now()-timedelta(seconds=1)
+            await db.commit()
+        recovered=await self.service.claim('nm1')
+        self.assertNotEqual(first[1],recovered[1])
+        await self.service.release('nm1',first[1])
+        async with self.Session() as db:
+            job=await db.scalar(snapshot(JOB,'nm1'));self.assertEqual(job.lease_token,recovered[1])
+        await self.service.release('nm1',recovered[1])
+
+    async def test_two_workers_claim_distinct_people_and_shutdown_releases_both_for_restart(self):
+        await self.another_person()
+        entered=asyncio.Event();active=set()
+        async def load(ids):
+            active.add(tuple(ids))
+            if len(active)==2:entered.set()
+            await asyncio.Event().wait()
+        self.source.page.side_effect=load
+        task=asyncio.create_task(self.service.serve())
+        try:await asyncio.wait_for(entered.wait(),5)
+        finally:
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):await task
+        async with self.Session() as db:
+            for native in ('nm1','nm2'):
+                job=await db.scalar(snapshot(JOB,native))
+                self.assertIsNone(job.lease_token);self.assertIsNone(job.lease_until)
+                self.assertEqual(job.payload['processed'],0)
+                self.assertIsNone(job.error_code)
+        self.source.page.side_effect=lambda ids:{'outcomes':[{'id':value,'status':'unmapped'} for value in ids],'stale':False}
+        self.assertEqual(await asyncio.gather(self.service.run('nm1'),self.service.run('nm2')),['ready','ready'])
+
+    async def test_cooldown_of_one_person_does_not_prevent_another_ready_job(self):
+        await self.another_person()
+        async with self.Session() as db:
+            job=await db.scalar(snapshot(JOB,'nm1'));job.next_attempt_at=now()+timedelta(minutes=2)
+            job.error_code='rate_limited';await db.commit()
+        self.source.page.return_value={'outcomes':[{'id':'tt4','status':'unmapped'}],'stale':False}
+        self.assertTrue(await self.service.tick())
+        async with self.Session() as db:
+            first=await db.scalar(snapshot(JOB,'nm1'));other=await db.scalar(snapshot(JOB,'nm2'))
+            self.assertEqual(first.error_code,'rate_limited');self.assertFalse(first.coverage.get('complete'))
+            self.assertTrue(other.coverage['complete'])
+
+    async def test_parallel_people_can_publish_the_same_canonical_game_without_duplicates(self):
+        await self.another_person(title='tt2')
+        self.source.page.side_effect=lambda ids:{'outcomes':[outcome(native,20 if native=='tt2' else 30) for native in ids],'stale':False}
+        self.assertEqual(await asyncio.gather(self.service.run('nm1'),self.service.run('nm2')),['ready','ready'])
+        await self.person_service.run('nm1');await self.person_service.run('nm2')
+        async with self.Session() as db:
+            bindings=list(await db.scalars(select(CatalogueIdentity).where(CatalogueIdentity.namespace=='imdb.title',
+                CatalogueIdentity.external_id=='tt2')))
+            self.assertEqual(len(bindings),1)
+            participants=list(await db.scalars(select(CatalogueCredit.contributor_id).where(
+                CatalogueCredit.work_id==bindings[0].entity_id,CatalogueCredit.scope=='person')))
+            self.assertEqual(len(participants),2);self.assertEqual(len(set(participants)),2)
+
+    async def test_worker_pool_bounds_three_people_to_two_in_flight_batches(self):
+        await self.another_person();await self.another_person('nm3','tt5')
+        entered,release=asyncio.Event(),asyncio.Event();active=0;maximum=0;calls=0
+        async def load(ids):
+            nonlocal active,maximum,calls
+            calls+=1;active+=1;maximum=max(maximum,active)
+            if active==2:entered.set()
+            try:await release.wait()
+            finally:active-=1
+            return {'outcomes':[{'id':native,'status':'unmapped'} for native in ids],'stale':False}
+        self.source.page.side_effect=load
+        task=asyncio.create_task(self.service.serve())
+        try:
+            await asyncio.wait_for(entered.wait(),5)
+            self.assertEqual(calls,2);self.assertEqual(maximum,2)
+            release.set()
+            async with asyncio.timeout(5):
+                while calls<3:await asyncio.sleep(.01)
+        finally:
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):await task
+        self.assertEqual(maximum,2)
+
+    async def test_overlapping_unmapped_titles_lock_maps_in_id_order_despite_reverse_source_order(self):
+        from sqlalchemy.ext.asyncio import AsyncSession
+        from unittest.mock import patch
+        await self.another_person(titles=['tt3','tt2'])
+        self.source.page.side_effect=lambda ids:{'outcomes':[{'id':value,'status':'unmapped'} for value in ids],'stale':False}
+        original=AsyncSession.execute
+        arrived=0;both=asyncio.Event();orders={}
+        async def execute(db,statement,*args,**kwargs):
+            nonlocal arrived
+            params=statement.compile().params if getattr(statement,'is_insert',False) else {}
+            mapping=params.get('kind')==MAP
+            first=mapping and id(db) not in orders
+            if first:
+                orders[id(db)]=[];arrived+=1
+                if arrived==2:both.set()
+                await asyncio.wait_for(both.wait(),3)
+            result=await original(db,statement,*args,**kwargs)
+            if mapping:
+                orders[id(db)].append(params['external_id'])
+                # Let the peer acquire its first row too. Opposite lock orders
+                # deadlock on the second insert; sorted orders serialize safely.
+                if first:await asyncio.sleep(.05)
+            return result
+        with patch.object(AsyncSession,'execute',execute):
+            results=await asyncio.wait_for(asyncio.gather(self.service.run('nm1'),self.service.run('nm2')),10)
+        self.assertEqual(results,['ready','ready'])
+        self.assertEqual(list(orders.values()),[['tt2','tt3'],['tt2','tt3']])
+        self.assertCountEqual([call.args[0] for call in self.source.page.await_args_list],[['tt2','tt3'],['tt3','tt2']])
+
     async def resume_policy(self,policy):
         from core.game_imdb_discovery import VERSION
         self.source.page.side_effect=lambda ids:{'outcomes':[{'id':native,'status':'unmapped'} for native in ids],'stale':False}
