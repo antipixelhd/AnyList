@@ -3,12 +3,12 @@ import re
 import unicodedata
 from datetime import date, datetime, timezone
 from urllib.parse import urlsplit
-from core.game_types import igdb_game_class
+from core.game_types import igdb_game_class, mobile_only
 from core.game_release_dates import game_release, release
 
-VERSION = 8
+VERSION = 9
 # Existing positives retain their criteria; annual sports scopes require v8.
-SUPPORTED_VERSIONS = (6, 7, VERSION)
+SUPPORTED_VERSIONS = (6, 7, 8, VERSION)
 
 
 def same_game_port(other,winner):
@@ -212,6 +212,8 @@ def decide(title, candidates, *, complete, branches, corroboration=None):
     ranked = []
     from core.game_wikidata_title_support import agrees as wiki_agrees
     for raw in candidates:
+        if mobile_only(raw):
+            continue
         primary = spelling(raw.get('name'))
         aliases = {spelling(row.get('name')) for row in raw.get('alternative_names') or [] if isinstance(row, dict)}
         scoped=scoped_title(raw,title)

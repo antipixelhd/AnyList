@@ -2,7 +2,7 @@
 import asyncio
 from core.catalogue_providers import ProviderError
 from core.game_browse_sources import GameBrowseSources,positive
-from core.game_types import capabilities,igdb_game_class
+from core.game_types import capabilities,igdb_game_class,mobile_only
 from core.catalogue_normalize import normalize_igdb
 from core.game_release_dates import FIELDS as RELEASE_FIELDS
 
@@ -18,6 +18,8 @@ def documents(rows,games):
     result=[];omitted=0
     for record in rows:
         raw=games[record['game']]
+        if mobile_only(raw):
+            continue
         work=raw;seen=set()
         for _ in range(4):
             if work['id'] in seen:work=None;break
@@ -31,7 +33,7 @@ def documents(rows,games):
         else:work=None
         if not work or igdb_game_class(work) in ('unknown','port') or work.get('version_parent'):
             omitted+=1;continue
-        if not capabilities({'game_class':igdb_game_class(work)}).searchable:continue
+        if mobile_only(work) or not capabilities({'game_class':igdb_game_class(work)}).searchable:continue
         # Expansion pages require an explicit, independently playable base.
         if igdb_game_class(work)=='expansion':
             parent=work.get('parent_game')

@@ -12,7 +12,7 @@ from core.config import settings
 from core.game_source_cache import GameSourceCache
 from core.game_search import broader_query, matches_partial
 from core.game_release_dates import FIELDS as RELEASE_FIELDS, in_range, game_release, release
-from core.game_types import INDEPENDENT, platform_group, search_candidate, canonical_game, candidate_fields, game_platforms
+from core.game_types import INDEPENDENT, platform_group, search_candidate, canonical_game, candidate_fields, game_platforms, mobile_platform
 from db import AsyncSessionLocal
 
 _slots = asyncio.Semaphore(2)
@@ -42,7 +42,7 @@ def card(raw, *, expansions=False):
         igdb_slug=work.get('slug'),
         poster=candidate['image_url'], release_date=candidate['release_date'],
         release_date_precision=candidate['release_date_precision'], release_quarter=candidate['release_quarter'],
-        year=(candidate['release_date'] or '')[:4] or None, game_class=candidate['game_class'],is_erotic=candidate['is_erotic'],
+        year=(candidate['release_date'] or '')[:4] or None, game_class=candidate['game_class'],is_erotic=candidate['is_erotic'],mobile_only=False,
         genres=[{'id': f'igdb.genre:{g["id"]}', 'name': g['name']} for g in work.get('genres') or []
                 if positive(g.get('id')) and isinstance(g.get('name'), str)],
         platforms=platforms, platform_ids=[f'igdb.platform:{p["id"]}' for p in available])
@@ -164,6 +164,7 @@ class GameBrowseSources:
             self.reference('platforms', 'id,name,platform_family.name'))
         groups = {name: [] for name in ('PC', 'PlayStation', 'Xbox', 'Nintendo', 'Other devices')}
         for row in platforms['data']['rows']:
+            if mobile_platform(row):continue
             group = platform_group(row)
             label = group if group in groups else 'Other devices'
             # PC's three source platforms are never separate UI devices.

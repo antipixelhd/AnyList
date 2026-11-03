@@ -400,7 +400,7 @@ def game_artwork(raw):
 def normalize_igdb(raw):
     from core.game_release_dates import game_release, release
     from core.game_store_source import igdb_age_ratings
-    from core.game_types import igdb_game_class, platform_group, game_platforms
+    from core.game_types import igdb_game_class, platform_group, game_platforms, mobile_only
     doc = document(
         entity(
             "game",
@@ -410,6 +410,8 @@ def normalize_igdb(raw):
             artwork=raw.get("cover"),
             attributes={
                 "game_class": igdb_game_class(raw),
+                "mobile_only": mobile_only(raw),
+                "platform_evidence": raw.get('platforms') or [],
                 "age_ratings": igdb_age_ratings(raw.get('age_ratings')),
                 "igdb_id": str(raw['id']),
                 "igdb_slug": raw.get('slug'),
@@ -495,6 +497,8 @@ def normalize_igdb(raw):
         for r in raw.get(field) or []:
             if not isinstance(r, dict):
                 r = {"id": r}
+            if mobile_only(r):
+                continue
             parent = r.get("version_parent")
             target = (
                 entity(

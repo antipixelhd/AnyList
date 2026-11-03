@@ -14,6 +14,21 @@ from models.users import UserSettings
 class GameContentDatabaseTests(unittest.IsolatedAsyncioTestCase):
     cleanup=fixture.GamesDatabaseTests.cleanup
 
+    async def test_mobile_policy_migration_roundtrip_keeps_search_functions_valid(self):
+        import importlib
+        from alembic.migration import MigrationContext
+        from alembic.operations import Operations
+        from sqlalchemy import text
+        migration=importlib.import_module('migrations.versions.mt077_mobile_game_policy')
+        def apply(connection):
+            with Operations.context(MigrationContext.configure(connection)):
+                migration.upgrade()
+                definition=connection.execute(text("SELECT pg_get_functiondef('refresh_game_contributor_search(integer[])'::regprocedure)")).scalar_one()
+                self.assertIn("w.attributes->>'mobile_only'",definition)
+                migration.downgrade()
+                migration.upgrade()
+        async with self.engine.begin() as connection:await connection.run_sync(apply)
+
     async def asyncSetUp(self):
         await fixture.GamesDatabaseTests.asyncSetUp(self)
         self.rows=[{'igdb_id':i,'title':name,'type':'game','game_class':'game','is_erotic':erotic,

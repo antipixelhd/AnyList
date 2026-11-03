@@ -20,7 +20,7 @@ from models.games import GameChildState, GameEntry
 CATEGORIES = {'trending':'Trending','most_played':'Most Played','sellers':'Top sellers',
     'newest':'Newest','popular':'All-time popular','score':'Highest rated'}
 PAGE_AGE = timedelta(hours=2)
-RELEASE_POLICY='game-content-v1'
+RELEASE_POLICY='game-content-v2-no-mobile'
 
 
 def digest(value):
@@ -92,6 +92,8 @@ async def filters(sources, *, category, genres='', platforms='', start=None, end
 
 
 def matches(row, query):
+    from core.game_types import mobile_only
+    if mobile_only(row):return False
     if query.get('hide_erotic_games',True) and row.get('is_erotic'):return False
     if query['genres'] and not set(query['genres']).intersection(g['id'] for g in row.get('genres',[])):
         return False

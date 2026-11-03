@@ -22,6 +22,23 @@ TYPE_NAMES = {
 INDEPENDENT = frozenset({'game', 'standalone_expansion', 'remake', 'remaster', 'expanded_game', 'port'})
 PLAYABLE_CHILDREN = frozenset({'dlc', 'expansion'})
 CREDIT_CHILDREN = frozenset({'dlc', 'expansion', 'update', 'episode'})
+# Provider platform identities, including pre-smartphone releases. Dedicated
+# handheld consoles (DS, PSP, Switch, etc.) are not mobile-phone platforms.
+MOBILE_PLATFORMS = frozenset({'34','39','42','44','55','73','74','405','417'})
+MOBILE_NAMES = frozenset({'android','ios','n-gage','tapwave zodiac','legacy mobile device',
+    'blackberry os','windows phone','windows mobile','palm os'})
+
+
+def mobile_platform(platform):
+    return isinstance(platform,dict) and (str(platform.get('id')).removeprefix('igdb.platform:') in MOBILE_PLATFORMS
+        or str(platform.get('name','')).casefold() in MOBILE_NAMES)
+
+
+def mobile_only(raw):
+    """Only positive platform evidence excludes a title; unknown stays unknown."""
+    if (raw or {}).get('mobile_only') is True:return True
+    platforms = (raw or {}).get('platforms') or []
+    return bool(platforms) and all(mobile_platform(platform) for platform in platforms)
 # IGDB's general DLC type also contains item/cosmetic products. Keep source
 # identity/type intact; conservatively omit those products from playable lists.
 # Explicit Expansions take precedence over ambiguous product-name exclusions.
@@ -30,6 +47,7 @@ _NONPLAYABLE_DLC = re.compile(r'\b(pack|soundtrack|artbook|costume|cosmetic|skin
 
 
 def playable_child(attributes,name=''):
+    if mobile_only(attributes):return False
     kind=(attributes or {}).get('game_class')
     return kind=='expansion' or kind=='dlc' and not _NONPLAYABLE_DLC.search(name)
 
@@ -57,6 +75,8 @@ class GameCapabilities:
 
 def capabilities(attributes: dict | None) -> GameCapabilities:
     kind = (attributes or {}).get('game_class', 'unknown')
+    if (attributes or {}).get('mobile_only') is True or mobile_only(attributes):
+        return GameCapabilities(kind,False,False,False,False)
     return GameCapabilities(kind, kind in INDEPENDENT, kind in PLAYABLE_CHILDREN,
                             kind in INDEPENDENT or kind == 'expansion', kind == 'expansion')
 
@@ -82,7 +102,7 @@ def canonical_game(raw: dict) -> dict | None:
         elif igdb_game_class(work)=='port':
             work=work.get('parent_game')
         else:
-            return work
+            return None if mobile_only(work) else work
     return None
 
 
@@ -92,7 +112,7 @@ def game_platforms(raw: dict) -> list[dict]:
     for port in raw.get('ports') or []:
         if isinstance(port,dict) and igdb_game_class(port)=='port':
             rows.extend(port.get('platforms') or [])
-    return list({row['id']:row for row in rows if isinstance(row,dict) and isinstance(row.get('id'),int)
+    return list({row['id']:row for row in rows if isinstance(row,dict) and not mobile_platform(row) and isinstance(row.get('id'),int)
                  and not isinstance(row['id'],bool) and row['id']>0}.values())
 
 

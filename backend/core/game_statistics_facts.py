@@ -30,7 +30,7 @@ async def load_facts(db,user_id):
         work.attributes['completion_estimates'].label('estimates'),
         func.jsonb_build_object('total',work.attributes['achievement_catalogue']['total']).label('achievements')).join(
         work,work.id==entry.work_id).where(entry.user_id==user_id,work.kind=='game',
-        work.attributes['game_class'].astext.in_(INDEPENDENT-{'port'}),work.attributes['adult'].astext.is_distinct_from('true'))
+        work.attributes['game_class'].astext.in_(INDEPENDENT-{'port'}),work.attributes['adult'].astext.is_distinct_from('true'),work.attributes['mobile_only'].astext.is_distinct_from('true'))
     result=await db.execute(query)
     facts=await asyncio.to_thread(lambda:[dict(row) for row in result.mappings()])
     if not facts:return [],[]

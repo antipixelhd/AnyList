@@ -49,6 +49,9 @@ def project(title_id,item,raw,games):
 
 
 def project_game(title_id,raw,games,evidence):
+    from core.game_types import mobile_only
+    if mobile_only(raw):
+        return {'id':title_id,'status':'excluded','reason':'mobile_only','igdb_id':raw['id'],'evidence':evidence}
     kind=igdb_game_class(raw)
     if raw.get('version_parent') or kind=='port':
         # Preserve source identity; an edition-specific IMDb record must not

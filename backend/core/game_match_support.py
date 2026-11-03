@@ -10,7 +10,7 @@ from core.game_imdb_source import IMDbGameSource
 from core.game_store_source import store_request, store_data
 from core.game_title_match import products, spelling, years
 from core.game_release_dates import game_release
-from core.game_types import igdb_game_class
+from core.game_types import igdb_game_class, mobile_only
 
 KINDS={'game_match_credits','game_match_store','game_match_news','game_match_identity','game_match_wiki'}
 
@@ -64,6 +64,9 @@ async def cached(sources, provider, kind, key, loader):
 
 async def corroborate(sources,title,candidates):
     """Return positive evidence; missing coverage is never negative identity proof."""
+    candidates=[raw for raw in candidates if not mobile_only(raw)]
+    if not candidates:
+        return {},[]
     names={spelling(title['title']),*[spelling(name) for name in title.get('aliases',[])]}
     selected=[raw for raw in candidates if spelling(raw.get('name')) in names and not raw.get('version_parent')]
     evidence={};snapshots=[]

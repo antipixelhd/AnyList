@@ -7,7 +7,7 @@ from difflib import SequenceMatcher
 from core.catalogue_providers import ProviderError
 from core.game_credit_sources import GameCreditSources,verify_game
 from core.game_title_match import spelling,decide
-from core.game_types import INDEPENDENT,CREDIT_CHILDREN,igdb_game_class
+from core.game_types import INDEPENDENT,CREDIT_CHILDREN,igdb_game_class,mobile_only
 from core.wikidata_claims import best_claims,claims,snak_value
 
 
@@ -23,7 +23,7 @@ def agrees(row,title):
 
 def discovery_candidate(raw,title):
     """Similarity selects a lookup only; it never establishes a mapping."""
-    if (not isinstance(raw.get('slug'),str) or not raw['slug'] or raw.get('version_parent')
+    if (mobile_only(raw) or not isinstance(raw.get('slug'),str) or not raw['slug'] or raw.get('version_parent')
             or igdb_game_class(raw) not in (INDEPENDENT-{'port'})|CREDIT_CHILDREN):return False
     names=[spelling(raw.get('name')),*[spelling(row.get('name')) for row in raw.get('alternative_names') or [] if isinstance(row,dict)]]
     targets=[spelling(title.get('title')),*[spelling(name) for name in title.get('aliases',[])]]

@@ -82,7 +82,7 @@ def game_credits(entity_id, kind):
                 else_=CatalogueCredit.character_label).label('character_label')).where(
             CatalogueCredit.contributor_id.in_(aliases), role_filter,
             CatalogueCredit.attributes['source_active'].astext.is_distinct_from('false'),
-            work.kind == 'game', work.attributes['adult'].astext.is_distinct_from('true'),
+            work.kind == 'game', work.attributes['adult'].astext.is_distinct_from('true'),work.attributes['mobile_only'].astext.is_distinct_from('true'),
             or_(work.attributes['game_class'].astext.in_(independent), and_(
                 work.attributes['game_class'].astext == 'expansion', expansion_base.exists(), literal(kind!='actor'))))
     main = projected(credited).select_from(CatalogueCredit).join(credited, credited.id == CatalogueCredit.work_id)
@@ -97,7 +97,8 @@ def game_credits(entity_id, kind):
     port = projected(work).select_from(CatalogueCredit).join(credited,
         credited.id == CatalogueCredit.work_id).join(ports, and_(ports.c.child == credited.id,
         ports.c.relation == 'port')).join(work, work.id == ports.c.parent).where(
-        credited.kind == 'game', credited.attributes['game_class'].astext == 'port')
+        credited.kind == 'game', credited.attributes['game_class'].astext == 'port',
+        credited.attributes['mobile_only'].astext.is_distinct_from('true'))
     if kind == 'actor':
         direct=aliased(CatalogueCredit)
         direct_participation=select(direct.id).where(direct.work_id==work.id,
@@ -108,7 +109,8 @@ def game_credits(entity_id, kind):
             credited.id==CatalogueCredit.work_id).join(ports,and_(ports.c.child==credited.id,
             ports.c.relation==credited.attributes['game_class'].astext)).join(work,work.id==ports.c.parent).where(
             credited.kind=='game',credited.attributes['game_class'].astext.in_(CREDIT_CHILDREN),
-            credited.attributes['adult'].astext.is_distinct_from('true'),~direct_participation)
+            credited.attributes['adult'].astext.is_distinct_from('true'),
+            credited.attributes['mobile_only'].astext.is_distinct_from('true'),~direct_participation)
         return main.union_all(port,child).cte('game_contributor_credits')
     return main.union_all(port).cte('game_contributor_credits')
 

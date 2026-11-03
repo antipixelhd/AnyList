@@ -343,7 +343,7 @@ IGDB_FIELDS = (
             "ports",
             "similar_games",
         )
-        for projection in ("name", "summary", "cover.url", "first_release_date", "game_type.type", "release_dates.date", "release_dates.date_format.format", "release_dates.y", "release_dates.m", "release_dates.d", "release_dates.status.name", "version_parent.name", "version_parent.summary", "version_parent.cover.url", "version_parent.first_release_date", "version_parent.game_type.type")
+        for projection in ("platforms.id", "name", "summary", "cover.url", "first_release_date", "game_type.type", "release_dates.date", "release_dates.date_format.format", "release_dates.y", "release_dates.m", "release_dates.d", "release_dates.status.name", "version_parent.name", "version_parent.summary", "version_parent.cover.url", "version_parent.first_release_date", "version_parent.game_type.type")
     )
     + ',ports.platforms.name,ports.platforms.platform_family.name'
 )
