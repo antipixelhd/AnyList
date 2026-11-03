@@ -19,6 +19,7 @@ from core.wikidata_claims import best_claims,qualified,snak_value
 SIZE=20
 FIELDS=('id,name,slug,first_release_date,game_type.type,version_parent,parent_game.name,parent_game.game_type.type,'
     'cover.url,genres.name,platforms.name,platforms.platform_family.name,'
+    'ports.game_type.type,ports.platforms.name,ports.platforms.platform_family.name,'
     'involved_companies.developer,involved_companies.publisher,involved_companies.supporting,involved_companies.porting,'
     'involved_companies.company.name,involved_companies.company.logo.url,involved_companies.company.country,'
     'external_games.uid,external_games.url,external_games.external_game_source.name,'+RELEASE_FIELDS)

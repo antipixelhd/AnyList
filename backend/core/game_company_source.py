@@ -20,10 +20,12 @@ def documents(rows,games):
         raw=games[record['game']]
         if mobile_only(raw):
             continue
-        work=raw;seen=set()
+        work=raw;seen=set();ports=[]
         for _ in range(4):
             if work['id'] in seen:work=None;break
             seen.add(work['id'])
+            if igdb_game_class(work)=='port':
+                ports.append({key:work[key] for key in ('id','game_type','platforms') if key in work})
             parent=work.get('version_parent')
             if parent is None and igdb_game_class(work)=='port':parent=work.get('parent_game')
             if parent is None:break
@@ -33,6 +35,7 @@ def documents(rows,games):
         else:work=None
         if not work or igdb_game_class(work) in ('unknown','port') or work.get('version_parent'):
             omitted+=1;continue
+        if ports:work={**work,'ports':[*work.get('ports',[]),*ports]}
         if mobile_only(work) or not capabilities({'game_class':igdb_game_class(work)}).searchable:continue
         # Expansion pages require an explicit, independently playable base.
         if igdb_game_class(work)=='expansion':

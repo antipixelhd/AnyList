@@ -37,7 +37,13 @@ def mobile_platform(platform):
 def mobile_only(raw):
     """Only positive platform evidence excludes a title; unknown stays unknown."""
     if (raw or {}).get('mobile_only') is True:return True
-    platforms = (raw or {}).get('platforms') or []
+    platforms = list((raw or {}).get('platforms') or [])
+    # A phone-origin work can also have a real PC/console release. Individual
+    # phone ports remain excluded, but non-mobile ports qualify their parent.
+    if igdb_game_class(raw or {}) != 'port':
+        for port in (raw or {}).get('ports') or []:
+            if isinstance(port,dict) and igdb_game_class(port)=='port':
+                platforms.extend(port.get('platforms') or [])
     return bool(platforms) and all(mobile_platform(platform) for platform in platforms)
 # IGDB's general DLC type also contains item/cosmetic products. Keep source
 # identity/type intact; conservatively omit those products from playable lists.
@@ -89,7 +95,7 @@ def candidate_fields(fields: str) -> str:
 
 
 def canonical_game(raw: dict) -> dict | None:
-    work,seen = raw,set()
+    work,seen,ports = raw,set(),[]
     for _ in range(4):
         if not isinstance(work,dict):
             return None
@@ -100,8 +106,11 @@ def canonical_game(raw: dict) -> dict | None:
         if work.get('version_parent') is not None:
             work=work['version_parent']
         elif igdb_game_class(work)=='port':
+            ports.append({key:work[key] for key in ('id','game_type','platforms') if key in work})
             work=work.get('parent_game')
         else:
+            if ports:
+                work={**work,'ports':[*work.get('ports',[]),*ports]}
             return None if mobile_only(work) else work
     return None
 

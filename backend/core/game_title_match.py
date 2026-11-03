@@ -6,9 +6,9 @@ from urllib.parse import urlsplit
 from core.game_types import igdb_game_class, mobile_only
 from core.game_release_dates import game_release, release
 
-VERSION = 9
+VERSION = 10
 # Existing positives retain their criteria; annual sports scopes require v8.
-SUPPORTED_VERSIONS = (6, 7, 8, VERSION)
+SUPPORTED_VERSIONS = (6, 7, 8, 9, VERSION)
 
 
 def same_game_port(other,winner):

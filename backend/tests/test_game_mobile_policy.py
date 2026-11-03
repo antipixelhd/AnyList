@@ -51,9 +51,64 @@ class MobilePolicyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['igdb_id'],1)
         self.assertEqual(len(result['evidence']['candidates']),1)
 
+    def test_phone_origin_with_verified_pc_port_keeps_canonical_pc_game(self):
+        original=game(1,[{'id':34,'name':'Android'}])
+        pc=game(2,[{'id':6,'name':'PC (Microsoft Windows)'}],game_type={'id':11},parent_game=original)
+        # The parent payload need not list the child whose reference brought
+        # us here. Canonicalization must retain that explicit PC evidence.
+        resolved=canonical_game(pc)
+        self.assertEqual(resolved['id'],1)
+        self.assertEqual([p['id'] for p in game_platforms(resolved)],[6])
+        self.assertEqual(search_candidate(pc)['external_id'],'1')
+        self.assertNotIn('ports',original)  # Never mutate shared provider data.
+        original_with_pc={**original,'ports':[{key:pc[key] for key in ('id','game_type','platforms')}]}
+        self.assertFalse(mobile_only(original_with_pc))
+        self.assertEqual(search_candidate(original_with_pc)['external_id'],'1')
+        attrs=normalize_igdb(original_with_pc)['work']['attributes']
+        self.assertFalse(attrs['mobile_only'])
+        self.assertTrue(capabilities(attrs).independent)
+        self.assertEqual(attrs['platform_evidence'],original['platforms'])
+        phone_port=game(3,[{'id':39}],game_type={'id':11},parent_game=original_with_pc)
+        self.assertTrue(mobile_only(phone_port))
+
     async def test_mobile_only_candidates_do_not_trigger_expensive_support(self):
         source=SimpleNamespace(igdb=AsyncMock(side_effect=AssertionError('provider fan-out')))
         self.assertEqual(await corroborate(source,{'id':'tt1','title':'Same title'},[game(2,[{'id':55}])]),({},[]))
+
+    async def test_discovery_fetch_and_matching_retain_pc_port_identity_evidence(self):
+        from core.game_imdb_discovery_source import GameIMDbDiscoverySource,project_game
+        from core.game_title_candidates import FIELDS,identity_facts,observations
+        raw=game(1,[{'id':34}],ports=[game(2,[{'id':6}],game_type={'id':11})])
+        source=SimpleNamespace(igdb=AsyncMock(return_value=[raw]))
+        discovery=GameIMDbDiscoverySource(None,sources=source,wiki=SimpleNamespace())
+        games=await discovery.games({1})
+        query=source.igdb.call_args.args[1]
+        self.assertIn('ports.platforms.name',query)
+        self.assertIn('ports.platforms.name',FIELDS)
+        self.assertIn('ports.game_type.type',query)
+        facts=identity_facts(games[1])
+        self.assertEqual(facts['ports'],raw['ports'])
+        without_pc={**raw,'ports':[]}
+        self.assertNotEqual(observations([raw]),observations([without_pc]))
+        title={'id':'tt1','title':'Same title','year':2020}
+        result=decide(title,[facts],complete=True,branches=[])
+        self.assertEqual(result['status'],'verified')
+        projected=project_game('tt1',games[1],games,result['evidence'])
+        self.assertEqual(projected['status'],'verified')
+        self.assertFalse(projected['document']['work']['attributes']['mobile_only'])
+
+    def test_company_pc_port_keeps_phone_origin_parent_without_parent_port_listing(self):
+        from core.game_company_source import documents
+        original=game(1,[{'id':34}])
+        pc=game(2,[{'id':6}],game_type={'id':11},parent_game={'id':1})
+        result,omitted=documents([{'game':2,'developer':True}],{1:original,2:pc})
+        self.assertEqual(omitted,0)
+        self.assertEqual(len(result),1)
+        attrs=result[0]['doc']['work']['attributes']
+        self.assertEqual(attrs['igdb_id'],'1')
+        self.assertFalse(attrs['mobile_only'])
+        self.assertEqual([p['id'] for p in attrs['platforms']],['6'])
+        self.assertNotIn('ports',original)
 
     def test_mobile_related_cards_are_not_published(self):
         raw=game(1,[{'id':6}],similar_games=[game(2,[{'id':34}]),game(3,[{'id':130}])])
