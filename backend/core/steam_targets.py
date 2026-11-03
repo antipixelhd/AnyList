@@ -116,9 +116,12 @@ async def classify(factory, games, *, source=None):
             if len(rows)>=500 and not matches:
                 continue  # A capped provider response cannot certify absence.
             item={'app_id':app,'classification_checked_at':stamp.isoformat()}
+            evidence={'version':1,'state':'unmatched' if not matches else 'ambiguous','checked_at':stamp.isoformat()}
             if len(matches)==1:
                 raw=next(iter(matches.values()))
                 item.update(game_class=igdb_game_class(raw),igdb_id=str(raw['id']))
+                evidence.update(state='bound' if len(rows)<500 else 'partial',game_class=item['game_class'],igdb_id=item['igdb_id'])
+            item['igdb_classification']=evidence
             values.append(item)
         await steam_cache.save_public(factory,values)
 

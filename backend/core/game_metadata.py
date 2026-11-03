@@ -1,23 +1,25 @@
 """Hydrate requested canonical game stubs through the existing IGDB snapshot."""
 import asyncio
+import uuid
 from dataclasses import dataclass,field
 from time import monotonic
-from datetime import timedelta
+from datetime import datetime,timedelta
 
-from sqlalchemy import or_,select,update
+from sqlalchemy import or_,select,update,exists
 from sqlalchemy.dialects.postgresql import insert
 
 from core import catalogue
 from core.catalogue_providers import CatalogueProviders,ProviderHTTP
-from core.game_imdb_enrichment import now
+from core.game_imdb_enrichment import now,request as admit,status as job_status,snapshot
 from core.game_types import capabilities
 from core.game_release_dates import VERSION as RELEASE_VERSION
 from core.catalogue_normalize import GAME_ARTWORK_VERSION,game_artwork
-from models.catalogue import CatalogueIdentity,MetadataSnapshot
+from models.catalogue import CatalogueEntity,CatalogueIdentity,MetadataSnapshot
 
 _flights={}
 _slots=asyncio.Semaphore(2)
 _character_slots=asyncio.Semaphore(2)
+IDENTITY_JOB='game_steam_identity'
 
 
 @dataclass
@@ -36,6 +38,27 @@ async def native_id(db,work,identities=None):
     primary=str((work.attributes or {}).get('igdb_id') or '')
     native=primary if primary in ids else next(iter(ids)) if len(ids)==1 and not primary else None
     return native if native and native.isdecimal() and 0<int(native)<=2147483647 else None
+
+
+async def unmapped_steam_app(db,work,identities=None):
+    from core.game_ratings import app_id
+    if not work:return None
+    if identities is None:
+        identities=list(await db.scalars(select(CatalogueIdentity).where(CatalogueIdentity.entity_id==work.id)))
+    if (work.attributes or {}).get('igdb_id') or any(row.namespace=='igdb.game' for row in identities):return None
+    return await app_id(db,work,identities)
+
+
+async def queue_imports(db,work_ids):
+    """Durable, public mapping work; never wait for providers in an import."""
+    if not work_ids:return
+    mapped=exists().where(CatalogueIdentity.entity_id==CatalogueEntity.id,CatalogueIdentity.namespace=='igdb.game')
+    ids=list(await db.scalars(select(CatalogueEntity.id).where(CatalogueEntity.id.in_(work_ids),
+        ~mapped,CatalogueEntity.attributes['igdb_id'].astext.is_(None))))
+    for offset in range(0,len(ids),250):
+        statement=insert(MetadataSnapshot).values([{'provider':'igdb','kind':IDENTITY_JOB,'external_id':str(work_id),
+            'entity_id':work_id,'next_attempt_at':now(),'coverage':{'priority':'background'}} for work_id in ids[offset:offset+250]])
+        await db.execute(statement.on_conflict_do_nothing(constraint='uq_catalogue_snapshot'))
 
 
 async def header(db,native):
@@ -132,18 +155,102 @@ class GameMetadata:
         self.factory=factory;self.scope=scope if scope is not None else factory
         self.providers=providers or CatalogueProviders(ProviderHTTP(session_factory=factory))
 
-    def start(self,native,expected):
+    def start(self,native,expected,*,identity=False):
         key=(id(self.scope),native)
         flight=_flights.get(key)
         if flight:return flight
         if len(_flights)>=64:return None
         flight=Flight();_flights[key]=flight
-        flight.task=asyncio.create_task(self.refresh(flight,native,expected))
+        flight.task=asyncio.create_task(self.refresh_identity(flight,expected) if identity else self.refresh(flight,native,expected))
         def done(task):
             if _flights.get(key) is flight:_flights.pop(key,None)
             if not task.cancelled():task.exception()
         flight.task.add_done_callback(done)
         return flight
+
+    async def refresh_identity(self,flight,expected):
+        """Resolve imported Steam stubs by exact provider references, never names."""
+        from core.game_browse_sources import GameBrowseSources
+        from core.game_ratings import app_id,GameRatings
+        from core.game_types import canonical_game,igdb_game_class,IGDB_TYPES
+        from core.steam_cache import PUBLIC_KIND
+        from models.catalogue import CatalogueEntity
+        token=uuid.uuid4().hex
+        query=snapshot(IDENTITY_JOB,expected,provider='igdb')
+        async with _slots:
+            async with self.factory() as db:
+                job=await db.scalar(query.with_for_update())
+                if not job or not job.next_attempt_at or job.next_attempt_at>now() or job.lease_until and job.lease_until>now():return
+                work=await db.get(CatalogueEntity,expected)
+                app=await unmapped_steam_app(db,work)
+                cached=await db.scalar(select(MetadataSnapshot.payload).where(MetadataSnapshot.provider=='steam',
+                    MetadataSnapshot.kind==PUBLIC_KIND,MetadataSnapshot.external_id==app)) if app else None
+                job.lease_token=token;job.lease_until=now()+timedelta(minutes=3)
+                await db.commit()
+            try:
+                if not app:raise catalogue.IdentityConflict('Steam identity is unavailable')
+                rows=None
+                # Preparation already batch-resolves exact app references. Reuse
+                # a recent positive classification rather than fetch it again.
+                evidence=cached.get('igdb_classification') if isinstance(cached,dict) else None
+                if isinstance(evidence,dict) and evidence.get('version')==1 and evidence.get('state')=='bound':
+                    candidate=str(evidence.get('igdb_id') or '')
+                    kind=next((key for key,value in IGDB_TYPES.items() if value==evidence.get('game_class')),None)
+                    try:recent=now()-timedelta(days=30)<=datetime.fromisoformat(evidence.get('checked_at',''))<=now()
+                    except (ValueError,TypeError):recent=False
+                    if recent and kind is not None and candidate.isdecimal() and 0<int(candidate)<=2147483647:
+                        rows=[{'uid':app,'game':{'id':int(candidate),'game_type':kind}}]
+                if rows is None:
+                    async with asyncio.timeout(45):
+                        rows=await GameBrowseSources(self.factory).steam_games([int(app)])
+                matches={}
+                for row in rows:
+                    if str(row.get('uid',''))!=app:continue
+                    raw=canonical_game(row.get('game'))
+                    if not raw:raise catalogue.IdentityConflict('Incomplete Steam reference')
+                    matches[str(raw['id'])]=raw
+                # Capped responses and competing references cannot certify a match.
+                if len(rows)>=500 or len(matches)>1:raise catalogue.IdentityConflict('Ambiguous Steam reference')
+                if matches and not capabilities({'game_class':igdb_game_class(next(iter(matches.values())))}).searchable:
+                    matches={}
+                async with self.factory() as db:
+                    await catalogue.write_lock(db)
+                    job=await db.scalar(query.with_for_update())
+                    if not job or job.lease_token!=token:return
+                    work=await db.get(CatalogueEntity,expected)
+                    native=await native_id(db,work)
+                    if await app_id(db,work)!=app or not native and await unmapped_steam_app(db,work)!=app:
+                        raise catalogue.IdentityConflict('Steam or IGDB identity changed')
+                    if matches:
+                        matched=next(iter(matches))
+                        if native and native!=matched or (work.attributes or {}).get('igdb_id') not in (None,'',matched):
+                            raise catalogue.IdentityConflict('IGDB identity changed')
+                        raw=matches[matched]
+                        # upsert rejects references already owned by another work;
+                        # it cannot merge memberships or move private tracking.
+                        await catalogue.upsert_entity(db,{'kind':'game','name':work.name,
+                            'attributes':{'igdb_id':matched,'game_class':igdb_game_class(raw)},
+                            'identities':[{'namespace':'steam.app','external_id':app},
+                                {'namespace':'igdb.game','external_id':matched}]},'igdb')
+                        foreground=(job.coverage or {}).get('priority')!='background'
+                        if foreground:
+                            native,state=await request(db,work)
+                            if not native:raise catalogue.IdentityConflict('IGDB identity is unavailable')
+                    job.coverage={**(job.coverage or {}),'state':'complete' if matches else 'unavailable','complete':True}
+                    job.fetched_at=now();job.expires_at=now()+timedelta(days=30)
+                    job.error_code=None;job.next_attempt_at=None;job.lease_token=job.lease_until=None
+                    await db.commit()
+                if matches and foreground:self.start(native,expected)
+            except BaseException as error:
+                async with self.factory() as db:
+                    # Roll back the entire publication before recording a failure.
+                    job=await db.scalar(query.with_for_update())
+                    if job and job.lease_token==token:
+                        if isinstance(error,asyncio.CancelledError):job.next_attempt_at=now()
+                        else:GameRatings.fail(job,error)
+                        job.lease_token=job.lease_until=None;await db.commit()
+                if isinstance(error,asyncio.CancelledError):raise
+            finally:flight.primary.set()
 
     async def refresh(self,flight,native,expected):
         primary_held=False;characters_held=False
@@ -165,13 +272,33 @@ class GameMetadata:
             flight.primary.set()
 
     async def ensure(self,db,work,*,identities=None,wait_seconds=15):
+        deadline=monotonic()+wait_seconds
+        identity_changed=False
         native,state=await request(db,work,identities=identities)
+        if not native:
+            if await unmapped_steam_app(db,work,identities):
+                state=await admit(db,work.id,kind=IDENTITY_JOB,provider='igdb')
+                await db.execute(update(MetadataSnapshot).where(MetadataSnapshot.provider=='igdb',
+                    MetadataSnapshot.kind==IDENTITY_JOB,MetadataSnapshot.external_id==str(work.id),
+                    MetadataSnapshot.coverage['priority'].astext.is_distinct_from('interactive')).values(
+                        coverage=MetadataSnapshot.coverage.op('||')({'priority':'interactive'})))
+                await db.commit()
+                if state['pending'] and not state.get('error'):
+                    flight=self.start(f'steam:{work.id}',work.id,identity=True)
+                    if flight:
+                        try:await asyncio.wait_for(flight.primary.wait(),max(.001,deadline-monotonic()))
+                        except TimeoutError:pass
+                await db.refresh(work);identities=None
+                if not await native_id(db,work):
+                    state=await job_status(db,work.id,kind=IDENTITY_JOB,provider='igdb');await db.commit()
+                    return {**state,'state':state['state'] if state['pending'] else 'unavailable','primary_ready':False},False
+                identity_changed=True
+                native,state=await request(db,work)
         await db.commit()  # Waiting never reserves the request's SQL connection.
         initial=state['primary_ready']
-        if not native or not state['pending'] or state.get('error'):return state,False
+        if not native or not state['pending'] or state.get('error'):return state,identity_changed
         flight=self.start(native,work.id)
-        if initial or not flight:return state,False
-        deadline=monotonic()+wait_seconds
+        if initial or not flight:return state,identity_changed
         while monotonic()<deadline:
             try:
                 if flight.task.done():await asyncio.sleep(min(1,max(0,deadline-monotonic())))
@@ -180,7 +307,7 @@ class GameMetadata:
             state=status(await header(db,native),work.id);await db.commit()
             if state['primary_ready'] or state['error'] or not state['pending']:break
         state=status(await header(db,native),work.id);await db.commit()
-        return state,state['primary_ready'] and not initial
+        return state,identity_changed or state['primary_ready'] and not initial
 
     async def resolve(self,db,native,*,wait_seconds=15):
         identity=await catalogue.resolve_identity(db,'igdb.game',native)
@@ -207,10 +334,20 @@ class GameMetadata:
 
     async def tick(self):
         async with self.factory() as db:
+            identity_query=select(MetadataSnapshot.entity_id).where(
+                MetadataSnapshot.provider=='igdb',MetadataSnapshot.kind==IDENTITY_JOB,
+                MetadataSnapshot.next_attempt_at<=now(),or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=now()))
+            imports=list(await db.scalars(identity_query.where(MetadataSnapshot.coverage['priority'].astext.is_distinct_from('background'))
+                .order_by(MetadataSnapshot.next_attempt_at,MetadataSnapshot.id).limit(2)))
             jobs=(await db.execute(select(MetadataSnapshot.external_id,MetadataSnapshot.entity_id).where(
                 MetadataSnapshot.provider=='igdb',MetadataSnapshot.kind=='game',MetadataSnapshot.entity_id.is_not(None),
                 MetadataSnapshot.next_attempt_at<=now(),or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=now()))
                 .order_by(MetadataSnapshot.next_attempt_at,MetadataSnapshot.id).limit(2))).all()
+            background=None
+            if not jobs and not imports and not any(scope==id(self.scope) and not flight.primary.is_set() for (scope,_),flight in _flights.items()):
+                background=await db.scalar(identity_query.where(MetadataSnapshot.coverage['priority'].astext=='background')
+                    .order_by(MetadataSnapshot.next_attempt_at,MetadataSnapshot.id).limit(1))
+        for work_id in imports:self.start(f'steam:{work_id}',work_id,identity=True)
         for native,expected in jobs:
             async with self.factory() as db:
                 from models.catalogue import CatalogueEntity
@@ -224,6 +361,11 @@ class GameMetadata:
             # optional characters here would block the next scheduler tick and
             # starve unrelated primary jobs despite free primary slots.
             self.start(native,expected)
+        if background is not None:
+            flight=self.start(f'steam:{background}',background,identity=True)
+            if flight:await asyncio.shield(flight.task)
+            return True
+        return False
 
 
 async def scheduler():
@@ -232,7 +374,8 @@ async def scheduler():
     try:
         while True:
             delay=5
-            try:await service.tick()
+            try:
+                if await service.tick():delay=0
             except asyncio.CancelledError:raise
             except Exception:delay=30
             await asyncio.sleep(delay)

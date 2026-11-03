@@ -222,6 +222,8 @@ async def apply_games(db, state, library, selected, *, initial=False, add_apps=N
                 **({'achievement_count': game['achievement_count']} if state.sync_achievements and game.get('achievement_count') is not None else {}),
                 **({'achievement_checked_at': game['achievement_checked_at']} if game.get('achievement_checked_at') else {})}
     state.checkpoints = checkpoints
+    from core.game_metadata import queue_imports
+    await queue_imports(db,list(groups))
     return changed
 
 

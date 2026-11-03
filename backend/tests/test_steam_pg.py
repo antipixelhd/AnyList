@@ -6,7 +6,7 @@ from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, select, text, func
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 
@@ -14,7 +14,7 @@ import test_games_pg as fixture
 from core import steam_sync
 from models import MediaServerConnection, SteamConnection, SyncJob, SyncStatus
 from models.base import CollectionSource
-from models.catalogue import CatalogueEntity, CatalogueIdentity
+from models.catalogue import CatalogueEntity, CatalogueIdentity, MetadataSnapshot
 from models.games import GameEntry,GameActivity
 from models.steam import SteamPlayerGame
 from routers import steam
@@ -29,6 +29,23 @@ def game(app, minutes, count=None, total=None):
 @unittest.skipUnless(fixture.URL, 'Requires disposable Games PostgreSQL')
 class SteamDatabaseTests(unittest.IsolatedAsyncioTestCase):
     cleanup = fixture.GamesDatabaseTests.cleanup
+
+    async def test_import_enqueues_shared_low_priority_mapping_without_provider_wait(self):
+        from core.game_metadata import IDENTITY_JOB
+        await self.connect()
+        async with self.Session() as db:
+            state=await db.get(SteamConnection,self.id)
+            await steam_sync.apply_games(db,state,[game('20',60,1,3)],['20'],initial=True)
+            await db.commit()
+            job=await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.kind==IDENTITY_JOB))
+            imported=await db.scalar(select(CatalogueIdentity).where(CatalogueIdentity.namespace=='steam.app',CatalogueIdentity.external_id=='20'))
+            self.assertEqual(job.entity_id,imported.entity_id)
+            self.assertEqual(job.coverage['priority'],'background');self.assertIsNotNone(job.next_attempt_at)
+            entry=await db.scalar(select(GameEntry).where(GameEntry.work_id==imported.entity_id))
+            self.assertEqual((entry.total_seconds,entry.achievement_count),(3600,1))
+            await steam_sync.apply_games(db,state,[game('20',70,2,3)],['20'])
+            await db.commit()
+            self.assertEqual(await db.scalar(select(func.count(MetadataSnapshot.id)).where(MetadataSnapshot.kind==IDENTITY_JOB)),1)
 
     async def test_initial_import_without_dates_silently_saves_status_and_counters(self):
         await self.connect()

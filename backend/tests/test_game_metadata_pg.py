@@ -7,13 +7,17 @@ from unittest.mock import AsyncMock,patch
 
 from sqlalchemy import select,func,event,delete
 import test_games_pg as fixture
-from core.game_metadata import GameMetadata,_flights,header,status,request
+from core.game_metadata import GameMetadata,_flights,header,status,request,queue_imports,IDENTITY_JOB
 from core.game_release_dates import VERSION as RELEASE_VERSION
 from core.game_imdb_enrichment import now
 from core.catalogue_providers import ProviderError,CatalogueProviders
 from core.catalogue_normalize import normalize_igdb,GAME_ARTWORK_VERSION
 from models.catalogue import CatalogueEntity,CatalogueIdentity,MetadataSnapshot,CharacterAppearance
 from models.games import GameEntry
+
+
+async def catalogue_identity(db,native):
+    return await db.scalar(select(CatalogueIdentity).where(CatalogueIdentity.namespace=='igdb.game',CatalogueIdentity.external_id==native))
 
 
 class Provider:
@@ -44,6 +48,188 @@ class Provider:
 @unittest.skipUnless(fixture.URL,'Requires explicit disposable Games PostgreSQL')
 class GameMetadataTests(unittest.IsolatedAsyncioTestCase):
     cleanup=fixture.GamesDatabaseTests.cleanup
+
+    async def steam_stub(self):
+        async with self.Session() as db:
+            await db.execute(delete(CatalogueIdentity).where(CatalogueIdentity.entity_id==self.base,CatalogueIdentity.namespace=='igdb.game'))
+            await db.commit()
+        source=AsyncMock(return_value=[{'uid':'1245620','game':{'id':119133,'name':'Exact app reference',
+            'game_type':{'id':0,'type':'Main Game'}}}])
+        self.steam_patch=patch('core.game_browse_sources.GameBrowseSources.steam_games',source)
+        self.steam_patch.start();self.addCleanup(self.steam_patch.stop)
+        return source
+
+    async def test_steam_only_import_hydrates_overview_and_preserves_membership(self):
+        source=await self.steam_stub()
+        data=(await self.detail()).json()
+        for _ in range(3):
+            if data['game_metadata_status']['primary_ready']:break
+            await asyncio.sleep(.05);data=(await self.detail()).json()
+        self.assertTrue(data['game_metadata_status']['primary_ready'],data['game_metadata_status'])
+        self.assertEqual(data['overview'],'Full primary synopsis');self.assertEqual(data['entry']['score'],9)
+        source.assert_awaited_once_with([1245620]);self.assertEqual(self.provider.called,1)
+        await self.finish()
+        warm=(await self.detail()).json();self.assertEqual(warm['overview'],data['overview'])
+        source.assert_awaited_once()
+        async with self.Session() as db:
+            mapping=await catalogue_identity(db,'119133')
+            self.assertEqual(mapping.entity_id,self.base)
+            entry=await db.scalar(select(GameEntry).where(GameEntry.work_id==self.base))
+            self.assertEqual((entry.total_seconds,entry.completion_seconds,entry.notes),(198000,144000,'private note'))
+
+    async def test_slow_steam_identity_is_pending_shared_and_survives_departing_waiter(self):
+        source=await self.steam_stub();proceed=asyncio.Event();started=asyncio.Event();rows=source.return_value
+        async def slow(*args):started.set();await proceed.wait();return rows
+        source.side_effect=slow
+        waiting=asyncio.create_task(self.detail());await started.wait();waiting.cancel()
+        with self.assertRaises(asyncio.CancelledError):await waiting
+        data=(await self.detail()).json()
+        self.assertFalse(data['game_metadata_status']['primary_ready']);self.assertTrue(data['game_metadata_status']['pending'])
+        source.assert_awaited_once();proceed.set()
+        flight=_flights[(id(self.engine),f'steam:{self.base}')];await flight.task
+        data=(await self.detail()).json();self.assertEqual(data['overview'],'Full primary synopsis')
+        await self.finish();source.assert_awaited_once()
+
+    async def test_steam_lookup_failure_remains_retryable_and_respects_cooldown(self):
+        source=await self.steam_stub();source.side_effect=ProviderError('unavailable',120)
+        for _ in range(2):
+            state=(await self.detail()).json()['game_metadata_status']
+            self.assertTrue(state['pending']);self.assertEqual(state['error'],'unavailable')
+            self.assertGreaterEqual(state['retry_after'],119)
+        source.assert_awaited_once();self.assertEqual(self.provider.called,0)
+
+    async def test_verified_missing_steam_reference_is_cached(self):
+        source=await self.steam_stub();source.return_value=[]
+        for _ in range(2):
+            state=(await self.detail()).json()['game_metadata_status']
+            self.assertFalse(state['primary_ready']);self.assertFalse(state['pending']);self.assertEqual(state['state'],'unavailable')
+        source.assert_awaited_once();self.assertEqual(self.provider.called,0)
+
+    async def test_ambiguous_steam_references_do_not_bind(self):
+        source=await self.steam_stub()
+        source.return_value.append({'uid':'1245620','game':{'id':1942,'name':'Different game','game_type':{'type':'Main Game'}}})
+        state=(await self.detail()).json()['game_metadata_status']
+        self.assertEqual(state['error'],'identity_conflict');self.assertEqual(self.provider.called,0)
+        async with self.Session() as db:self.assertIsNone(await catalogue_identity(db,'119133'))
+
+    async def test_steam_reference_owned_by_other_work_does_not_merge_tracking(self):
+        await self.steam_stub()
+        async with self.Session() as db:
+            db.add(CatalogueIdentity(entity_id=self.unknown,namespace='igdb.game',external_id='119133',source='igdb'));await db.commit()
+        state=(await self.detail()).json()['game_metadata_status']
+        self.assertEqual(state['error'],'identity_conflict');self.assertEqual(self.provider.called,0)
+        async with self.Session() as db:
+            self.assertEqual((await catalogue_identity(db,'119133')).entity_id,self.unknown)
+            self.assertEqual(await db.scalar(select(func.count(GameEntry.id)).where(GameEntry.work_id==self.base)),1)
+
+    async def test_changed_steam_identity_rejects_late_provider_reference(self):
+        source=await self.steam_stub();proceed=asyncio.Event();started=asyncio.Event();rows=source.return_value
+        async def slow(*args):started.set();await proceed.wait();return rows
+        source.side_effect=slow
+        request_task=asyncio.create_task(self.detail());await started.wait()
+        async with self.Session() as db:
+            db.add(CatalogueIdentity(entity_id=self.base,namespace='steam.app',external_id='42',source='reviewed'))
+            work=await db.get(CatalogueEntity,self.base)
+            work.attributes={**work.attributes,'steam_primary_app_id':'42'};await db.commit()
+        proceed.set();state=(await request_task).json()['game_metadata_status']
+        self.assertEqual(state['error'],'identity_conflict');self.assertEqual(self.provider.called,0)
+
+    async def test_import_queue_resolves_mapping_without_fetching_full_details(self):
+        source=await self.steam_stub()
+        async with self.Session() as db:
+            await queue_imports(db,[self.base]);await queue_imports(db,[self.base]);await db.commit()
+            job=await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.kind==IDENTITY_JOB))
+            self.assertEqual(job.coverage['priority'],'background')
+        self.assertTrue(await self.service.tick())
+        source.assert_awaited_once_with([1245620]);self.assertEqual(self.provider.called,0)
+        async with self.Session() as db:
+            self.assertEqual((await catalogue_identity(db,'119133')).entity_id,self.base)
+            await queue_imports(db,[self.base]);await db.commit()
+            self.assertEqual(await db.scalar(select(func.count(MetadataSnapshot.id)).where(MetadataSnapshot.kind==IDENTITY_JOB)),1)
+        data=(await self.detail()).json();self.assertEqual(data['overview'],'Full primary synopsis');await self.finish()
+        source.assert_awaited_once()
+
+    async def test_import_mapping_reuses_recent_exact_classification(self):
+        from core.steam_cache import PUBLIC_KIND
+        source=await self.steam_stub()
+        async with self.Session() as db:
+            db.add(MetadataSnapshot(provider='steam',kind=PUBLIC_KIND,external_id='1245620',payload={
+                'igdb_classification':{'version':1,'state':'bound','igdb_id':'119133','game_class':'game','checked_at':now().isoformat()}}))
+            await queue_imports(db,[self.base]);await db.commit()
+        self.assertTrue(await self.service.tick());source.assert_not_awaited();self.assertEqual(self.provider.called,0)
+        async with self.Session() as db:self.assertEqual((await catalogue_identity(db,'119133')).entity_id,self.base)
+
+    async def test_stale_import_classification_is_revalidated(self):
+        from core.steam_cache import PUBLIC_KIND
+        source=await self.steam_stub()
+        async with self.Session() as db:
+            db.add(MetadataSnapshot(provider='steam',kind=PUBLIC_KIND,external_id='1245620',payload={
+                'igdb_classification':{'version':1,'state':'bound','igdb_id':'1942','game_class':'game','checked_at':(now()-timedelta(days=31)).isoformat()}}))
+            await queue_imports(db,[self.base]);await db.commit()
+        self.assertTrue(await self.service.tick());source.assert_awaited_once_with([1245620])
+        async with self.Session() as db:self.assertEqual((await catalogue_identity(db,'119133')).entity_id,self.base)
+
+    async def test_negative_classification_refresh_cannot_certify_retained_positive(self):
+        from core import steam_cache,steam_targets
+        from types import SimpleNamespace
+        source=await self.steam_stub()
+        stale=(now()-timedelta(days=31)).isoformat()
+        initial={'app_id':'1245620','igdb_id':'1942','game_class':'game','classification_checked_at':stale,
+            'igdb_classification':{'version':1,'state':'bound','igdb_id':'1942','game_class':'game','checked_at':stale}}
+        for response in ([],[{'uid':'1245620','game':{'id':1942,'game_type':0}},
+                {'uid':'1245620','game':{'id':119133,'game_type':0}}]):
+            await steam_cache.save_public(self.Session,[initial])
+            await steam_targets.classify(self.Session,[{'app_id':'1245620'}],
+                source=SimpleNamespace(steam_games=AsyncMock(return_value=response)))
+            async with self.Session() as db:
+                cached=(await steam_cache.public_metadata(db,['1245620']))['1245620']
+                self.assertEqual(cached['igdb_id'],'1942')  # Retained legacy display field is not proof.
+                self.assertNotEqual(cached['igdb_classification']['state'],'bound')
+        async with self.Session() as db:await queue_imports(db,[self.base]);await db.commit()
+        self.assertTrue(await self.service.tick());source.assert_awaited_once_with([1245620])
+        async with self.Session() as db:self.assertEqual((await catalogue_identity(db,'119133')).entity_id,self.base)
+
+    async def test_page_promotes_and_shares_running_import_mapping(self):
+        source=await self.steam_stub();proceed=asyncio.Event();started=asyncio.Event();rows=source.return_value
+        async def slow(*args):started.set();await proceed.wait();return rows
+        source.side_effect=slow
+        async with self.Session() as db:await queue_imports(db,[self.base]);await db.commit()
+        ticking=asyncio.create_task(self.service.tick());await started.wait()
+        data=(await self.detail()).json();self.assertTrue(data['game_metadata_status']['pending'])
+        source.assert_awaited_once();proceed.set();await ticking
+        data=(await self.detail()).json();self.assertEqual(data['overview'],'Full primary synopsis')
+        await self.finish();source.assert_awaited_once()
+
+    async def test_import_mapping_yields_to_interactive_primary_work(self):
+        source=await self.steam_stub();proceed=asyncio.Event();original=self.provider.detail
+        async def slow(*args,**kwargs):await proceed.wait();return await original(*args,**kwargs)
+        self.provider.detail=slow
+        async with self.Session() as db:
+            await queue_imports(db,[self.base])
+            other=await db.get(CatalogueEntity,self.unknown)
+            db.add(CatalogueIdentity(entity_id=other.id,namespace='igdb.game',external_id='1942',source='igdb'))
+            await db.flush();await request(db,other);await db.commit()
+        self.assertFalse(await self.service.tick());source.assert_not_awaited()
+        primary=_flights[(id(self.engine),'1942')]
+        self.assertFalse(await self.service.tick());source.assert_not_awaited()
+        proceed.set();self.provider.release.set();await primary.task
+        self.assertTrue(await self.service.tick());source.assert_awaited_once()
+
+    async def test_cancelled_import_mapping_releases_lease_for_scheduler_recovery(self):
+        source=await self.steam_stub();started=asyncio.Event();rows=source.return_value
+        async def slow(*args):started.set();await asyncio.Event().wait()
+        source.side_effect=slow
+        async with self.Session() as db:await queue_imports(db,[self.base]);await db.commit()
+        ticking=asyncio.create_task(self.service.tick());await started.wait()
+        flight=_flights[(id(self.engine),f'steam:{self.base}')];flight.task.cancel()
+        with self.assertRaises(asyncio.CancelledError):await ticking
+        async with self.Session() as db:
+            job=await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.kind==IDENTITY_JOB))
+            self.assertIsNone(job.lease_until);self.assertIsNotNone(job.next_attempt_at);self.assertIsNone(job.error_code)
+        source.side_effect=None;source.return_value=rows
+        self.assertTrue(await self.service.tick());self.assertEqual(self.provider.called,0)
+
+
     async def test_slow_primary_returns_usable_shell_then_public_primary_without_private_payload(self):
         proceed=asyncio.Event();original=self.provider.detail
         async def slow(*args,**kwargs):await proceed.wait();return await original(*args,**kwargs)
@@ -218,7 +404,7 @@ class GameMetadataTests(unittest.IsolatedAsyncioTestCase):
              'platform':{'id':6,'name':'PC (Microsoft Windows)'}}]}
         async with self.Session() as db:
             work=await db.get(CatalogueEntity,self.base)
-            work.attributes={**work.attributes,'release_date':'2027-03-01'}
+            work.attributes={**work.attributes,'release_date':'2027-03-01','steam_primary_app_id':'42'}
             work.field_sources={**work.field_sources,'attributes.release_date':'igdb'}
             old=CatalogueEntity(kind='release',name='Superseded release')
             db.add(old);await db.flush()
