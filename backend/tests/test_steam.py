@@ -12,6 +12,19 @@ from routers.steam import Draft, selected_games
 
 
 class SteamTests(unittest.IsolatedAsyncioTestCase):
+    def test_import_requires_recent_complete_exact_identity_evidence(self):
+        from core.steam_sync import verified_import_native, now
+        evidence = {'version':1,'state':'bound','igdb_id':'11208','checked_at':now().isoformat()}
+        self.assertEqual(verified_import_native(evidence),'11208')
+        for changes in ({'state':'ambiguous'}, {'state':'partial'}, {'version':2},
+                        {'checked_at':(now()-timedelta(days=31)).isoformat()},
+                        {'checked_at':(now()+timedelta(days=1)).isoformat()},
+                        {'checked_at':'invalid'}, {'checked_at':None},
+                        {'igdb_id':'0'}, {'igdb_id':'2147483648'}, {'igdb_id':'wrong'}):
+            with self.subTest(changes=changes):
+                self.assertIsNone(verified_import_native({**evidence,**changes}))
+        self.assertIsNone(verified_import_native(None))
+
     def test_profile_forms_and_untrusted_urls(self):
         native = '76561198000000000'
         for value in (native, f'https://steamcommunity.com/profiles/{native}/', f'steamcommunity.com/profiles/{native}?l=english', f'http://www.steamcommunity.com/profiles/{native}'):

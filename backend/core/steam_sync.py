@@ -19,6 +19,18 @@ def now():
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def verified_import_native(evidence):
+    if not isinstance(evidence, dict) or evidence.get('version') != 1 or evidence.get('state') != 'bound':
+        return None
+    try:
+        checked = datetime.fromisoformat(evidence.get('checked_at', ''))
+        recent = now() - timedelta(days=30) <= checked <= now()
+    except (ValueError, TypeError):
+        return None
+    candidate = str(evidence.get('igdb_id') or '')
+    return candidate if recent and candidate.isdecimal() and 0 < int(candidate) <= 2147483647 else None
+
+
 async def background_details(factory, user_id, connection_id, job_id):
     """Owned by the server, so dismissing or leaving the picker cannot stop it."""
     async with factory() as db:
@@ -113,6 +125,9 @@ async def apply_games(db, state, library, selected, *, initial=False, add_apps=N
     additions = set(add_apps or ())
     today = datetime.now(ZoneInfo(state.timezone or 'UTC')).date()
     await catalogue.write_lock(db)
+    # Resolve before creating a Steam-only root. Preparation's exact public
+    # evidence is authoritative only while recent, complete and unambiguous.
+    public = await steam_cache.public_metadata(db, list(selected))
     mapping = await steam_targets.targets(db, selected)
     await steam_targets.retarget(db, state, mapping)
     checkpoints, groups = dict(state.checkpoints), {}
@@ -126,12 +141,24 @@ async def apply_games(db, state, library, selected, *, initial=False, add_apps=N
         elif identity:
             work = await db.get(CatalogueEntity, identity.entity_id)
         elif initial or app in additions:
-            work = await catalogue.upsert_entity(db, {
-                'kind': 'game', 'name': data['name'], 'image_url': data['poster'],
-                'attributes': {'game_class': data.get('game_class', 'game'),
-                    **({'release_date': data['release_date'], 'release_date_precision': 'day' if len(data['release_date']) == 10 else 'month' if len(data['release_date']) == 7 else 'year'} if data.get('release_date') else {})},
-                'identities': [{'namespace': 'steam.app', 'external_id': app}],
-            }, 'steam')
+            evidence = public.get(app, {}).get('igdb_classification')
+            native = verified_import_native(evidence)
+            existing = await catalogue.resolve_identity(db, 'igdb.game', native) if native else None
+            if existing:
+                work = await db.get(CatalogueEntity, existing.entity_id)
+                await catalogue.bind_identity(db, work.id, 'steam.app', app, 'igdb',
+                    {'igdb_classification': evidence})
+            else:
+                identities = [{'namespace': 'steam.app', 'external_id': app}]
+                if native:
+                    identities.append({'namespace': 'igdb.game', 'external_id': native})
+                work = await catalogue.upsert_entity(db, {
+                    'kind': 'game', 'name': data['name'], 'image_url': data['poster'],
+                    'attributes': {'game_class': data.get('game_class', 'game'),
+                        **({'igdb_id': native} if native else {}),
+                        **({'release_date': data['release_date'], 'release_date_precision': 'day' if len(data['release_date']) == 10 else 'month' if len(data['release_date']) == 7 else 'year'} if data.get('release_date') else {})},
+                    'identities': identities,
+                }, 'steam')
         else:
             continue
         if work and app not in mapping and data.get('game_class') and data['game_class']!='unknown' and (work.field_sources or {}).get('attributes.game_class') in (None,'steam'):

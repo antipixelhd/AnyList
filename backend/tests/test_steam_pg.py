@@ -30,6 +30,74 @@ def game(app, minutes, count=None, total=None):
 class SteamDatabaseTests(unittest.IsolatedAsyncioTestCase):
     cleanup = fixture.GamesDatabaseTests.cleanup
 
+    async def test_exact_import_reuses_existing_igdb_root_and_preserves_metadata(self):
+        from core import catalogue, steam_cache
+        from core.game_metadata import IDENTITY_JOB
+        await self.connect()
+        async with self.Session() as db:
+            work = await catalogue.upsert_entity(db, {'kind':'game','name':'Canonical game',
+                'description':'Existing rich metadata','attributes':{'igdb_id':'11208','game_class':'game'},
+                'identities':[{'namespace':'igdb.game','external_id':'11208'}]}, 'igdb')
+            work_id = work.id
+            await db.commit()
+        await steam_cache.save_public(self.Session, [{'app_id':'20','igdb_classification':{
+            'version':1,'state':'bound','igdb_id':'11208','game_class':'game',
+            'checked_at':steam_sync.now().isoformat()}}])
+        async with self.Session() as db:
+            before = await db.scalar(select(func.count(CatalogueEntity.id)))
+            state = await db.get(SteamConnection,self.id)
+            for minutes in (60,70):
+                await steam_sync.apply_games(db,state,[game('20',minutes,1,3)],['20'],initial=minutes==60)
+                await db.commit()
+            identity = await catalogue.resolve_identity(db,'steam.app','20')
+            self.assertEqual(identity.entity_id,work_id)
+            self.assertEqual(await db.scalar(select(func.count(CatalogueEntity.id))),before)
+            work = await db.get(CatalogueEntity,work_id)
+            self.assertEqual((work.name,work.description),('Canonical game','Existing rich metadata'))
+            entry = await db.scalar(select(GameEntry).where(GameEntry.work_id==work_id))
+            self.assertEqual((entry.total_seconds,entry.achievement_count),(4200,1))
+            self.assertIsNone(await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.kind==IDENTITY_JOB)))
+
+    async def test_exact_import_creates_both_identities_before_later_igdb_ingestion(self):
+        from core import catalogue, steam_cache
+        await self.connect()
+        await steam_cache.save_public(self.Session, [{'app_id':'20','igdb_classification':{
+            'version':1,'state':'bound','igdb_id':'11208','game_class':'game',
+            'checked_at':steam_sync.now().isoformat()}}])
+        async with self.Session() as db:
+            state = await db.get(SteamConnection,self.id)
+            await steam_sync.apply_games(db,state,[game('20',60,1,3)],['20'],initial=True)
+            await db.commit()
+            imported = await catalogue.resolve_identity(db,'steam.app','20')
+            later = await catalogue.upsert_entity(db, {'kind':'game','name':'Canonical game',
+                'attributes':{'igdb_id':'11208','game_class':'game'},
+                'identities':[{'namespace':'igdb.game','external_id':'11208'}]}, 'igdb')
+            self.assertEqual(imported.entity_id,later.id)
+
+    async def test_import_does_not_bind_unverified_or_expired_igdb_candidates(self):
+        from core import catalogue, steam_cache
+        await self.connect()
+        async with self.Session() as db:
+            work = await catalogue.upsert_entity(db, {'kind':'game','name':'Canonical game',
+                'attributes':{'igdb_id':'11208','game_class':'game'},
+                'identities':[{'namespace':'igdb.game','external_id':'11208'}]}, 'igdb')
+            canonical = work.id
+            await db.commit()
+        for app,evidence in [
+            ('20',{'state':'ambiguous','checked_at':steam_sync.now().isoformat()}),
+            ('30',{'state':'bound','checked_at':(steam_sync.now()-timedelta(days=31)).isoformat()}),
+            ('40',{'state':'bound','checked_at':'invalid'}),
+        ]:
+            with self.subTest(app=app):
+                await steam_cache.save_public(self.Session,[{'app_id':app,'igdb_classification':{
+                    'version':1,'igdb_id':'11208','game_class':'game',**evidence}}])
+                async with self.Session() as db:
+                    state = await db.get(SteamConnection,self.id)
+                    await steam_sync.apply_games(db,state,[game(app,60,1,3)],[app],initial=True)
+                    await db.commit()
+                    identity = await catalogue.resolve_identity(db,'steam.app',app)
+                    self.assertNotEqual(identity.entity_id,canonical)
+
     async def test_import_enqueues_shared_low_priority_mapping_without_provider_wait(self):
         from core.game_metadata import IDENTITY_JOB
         await self.connect()
