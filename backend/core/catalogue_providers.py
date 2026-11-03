@@ -172,6 +172,10 @@ class ProviderHTTP:
                     if delay > 5:
                         raise ProviderError('rate_limited', delay)
                     await asyncio.sleep(delay)
+                # IGDB's start-rate budget does not require an additional
+                # interval after a slow response. The lock still spans I/O.
+                started=datetime.now(timezone.utc).replace(tzinfo=None)
+                now=started
                 month = now.strftime("%Y-%m")
                 if row.month != month:
                     row.month, row.request_count = month, 0
@@ -198,9 +202,9 @@ class ProviderHTTP:
                 try:
                     yield
                 finally:
-                    row.next_request_at = datetime.now(timezone.utc).replace(
-                        tzinfo=None
-                    ) + timedelta(seconds=interval)
+                    base=started if provider=='igdb' else datetime.now(timezone.utc).replace(tzinfo=None)
+                    deadline=base+timedelta(seconds=interval)
+                    row.next_request_at=func.greatest(MetadataProviderBudget.next_request_at,deadline) if provider=='igdb' else deadline
                     await db.commit()
         else:
             lock = _local_locks.setdefault(provider, asyncio.Lock())
@@ -209,10 +213,12 @@ class ProviderHTTP:
                 if delay > 5:
                     raise ProviderError('rate_limited', delay)
                 await asyncio.sleep(delay)
+                started=time.monotonic()
                 try:
                     yield
                 finally:
-                    _local_next[provider] = time.monotonic() + interval
+                    base=started if provider=='igdb' else time.monotonic()
+                    _local_next[provider] = max(_local_next.get(provider,0),base+interval)
 
     async def defer(self, provider, delay):
         """Share cooldowns; callers return a retry state without a long wait."""

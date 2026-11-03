@@ -61,27 +61,31 @@ async def retrieve(sources, title):
     async def load():
         found, branches = {}, []
         expanded=list(names);parents={};keyword=None;joined_keyword=None
+        def finish(complete):
+            identity=[identity_facts(row) for _,row in sorted(found.items())]
+            fingerprint=hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()
+            return {'rows':list(found.values()),'complete':complete,'branches':branches,
+                'scope_key':key,'scope_names':sorted({spelling(name) for name in [*expanded,*parents.values()]}),
+                'scope_fingerprint':fingerprint,'keyword_scope_version':1,'episode_scope_version':1}
         for position,name in enumerate(expanded):
             observed={}
             # Search supplies punctuation/alias candidates; exact case-insensitive
             # name filters are a separate branch, rather than a top-hit decision.
             quoted = json.dumps(name,ensure_ascii=False)
-            queries=[('search', f'search {quoted};'),('exact', f'where name ~ {quoted} | alternative_names.name ~ {quoted};')]
+            queries=[('exact', f'where name ~ {quoted} | alternative_names.name ~ {quoted};'),('search', f'search {quoted};')]
             if name==keyword:queries=[('keyword',f'search {quoted};')]
             if name==joined_keyword:queries=[('joined_keyword',f'search {quoted};')]
             if name==title['title']+' '+str(annual_year):
                 queries=[('annual_'+kind,query) for kind,query in queries]
             if name in parents:
                 parent=json.dumps(parents[name],ensure_ascii=False);full=json.dumps(parents[name]+': '+name,ensure_ascii=False)
-                queries=[('search',f'search {quoted}; where parent_game.name ~ {parent};'),
-                    ('exact',f'where parent_game.name ~ {parent} & (name ~ {quoted} | name ~ {full} | alternative_names.name ~ {quoted} | alternative_names.name ~ {full});')]
-            # Search and exact-name branches are independent, but both are
-            # required evidence. One IGDB multiquery avoids a second network
-            # round trip and provider interval without weakening completeness.
-            first_queries=[f'fields {FIELDS}; {query} limit {PAGE}; offset 0;' for _,query in queries]
+                queries=[('exact',f'where parent_game.name ~ {parent} & (name ~ {quoted} | name ~ {full} | alternative_names.name ~ {quoted} | alternative_names.name ~ {full});'),
+                    ('search',f'search {quoted}; where parent_game.name ~ {parent};')]
+            # Exact evidence can prove a terminal tie before a search is
+            # necessary. A positive still needs the full independent search.
             batch=getattr(sources,'igdb_queries',None)
-            first_pages=await batch(first_queries) if batch else [None]*len(queries)
-            for (branch, query),first in zip(queries,first_pages):
+            for branch,query in queries:
+                first=(await batch([f'fields {FIELDS}; {query} limit {PAGE}; offset 0;']))[0] if batch else None
                 complete = False
                 for page in range(MAX_PAGES):
                     rows = first if page==0 and batch else await sources.igdb('games', f'fields {FIELDS}; {query} limit {PAGE}; offset {page * PAGE};')
@@ -91,6 +95,12 @@ async def retrieve(sources, title):
                         raise ProviderError('bad_response')
                     found.update((row['id'], row) for row in rows)
                     observed.update((row['id'], row) for row in rows)
+                    if len(found)>1:
+                        from core.game_title_match import decide,terminal_exact_tie
+                        proof=decide(title,list(found.values()),complete=False,branches=[])
+                        if terminal_exact_tie(proof['evidence']['candidates']):
+                            branches.append({'name':name,'kind':branch,'complete':False,'pages':page+1})
+                            return finish(False)
                     if len(rows) < PAGE:
                         complete = True
                         break
@@ -126,11 +136,7 @@ async def retrieve(sources, title):
             if (position==len(expanded)-1 and annual_year and annual_name not in expanded
                     and all(row['complete'] for row in branches) and sports_family(found.values())):
                 expanded.append(annual_name)
-        identity=[identity_facts(row) for _,row in sorted(found.items())]
-        fingerprint=hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()
-        return {'rows': list(found.values()), 'complete': all(row['complete'] for row in branches), 'branches': branches,
-            'scope_key':key,'scope_names':sorted({spelling(name) for name in [*expanded,*parents.values()]}),
-            'scope_fingerprint':fingerprint,'keyword_scope_version':1,'episode_scope_version':1}
+        return finish(all(row['complete'] for row in branches))
 
     result=await sources.cache.get('igdb', 'game_title_candidates', key, load,
                                    ttl=timedelta(days=1), max_stale=timedelta(days=7),

@@ -55,6 +55,52 @@ class PortfolioDiscoveryTests(unittest.IsolatedAsyncioTestCase):
             data=await view(db,'nm1',check_mapping=True);await db.commit()
         return data
 
+    async def test_verified_prefix_survives_slow_failed_sibling_without_advancing_its_cursor(self):
+        from core.game_imdb_discovery_source import GameIMDbDiscoverySource
+        ready,release=asyncio.Event(),asyncio.Event()
+        async def acquire(ids,*,titles,on_progress):
+            await on_progress([outcome()]);ready.set();await release.wait()
+            raise ProviderError('timeout')
+        source=object.__new__(GameIMDbDiscoverySource);source.page=acquire
+        self.service.source=source
+        task=asyncio.create_task(self.service.run('nm1'))
+        try:
+            await asyncio.wait_for(ready.wait(),5)
+            self.assertFalse(task.done())
+            async with self.Session() as db:
+                job=await db.scalar(snapshot(JOB,'nm1'))
+                self.assertEqual(job.payload.get('processed',0),0)
+            await self.person_service.run('nm1')
+            async with self.Session() as db:
+                self.assertEqual((await view(db,'nm1'))['mapping']['mapped_games'],2)
+        finally:release.set()
+        self.assertEqual(await task,'partial')
+        async with self.Session() as db:
+            value=await db.scalar(snapshot(MAP,'tt2',provider='wikidata'))
+            self.assertEqual(value.payload['status'],'verified')
+
+    async def test_igdb_shared_lane_keeps_serialization_and_start_spacing(self):
+        import time
+        from core.catalogue_providers import ProviderHTTP
+        from unittest.mock import patch
+        from core import catalogue_providers
+        first,second=ProviderHTTP(session_factory=self.Session),ProviderHTTP(session_factory=self.Session)
+        active=0;maximum=0;starts=[];ends=[]
+        async def load(http):
+            nonlocal active,maximum
+            async with http.lane('igdb'):
+                starts.append(time.monotonic());active+=1;maximum=max(maximum,active)
+                await asyncio.sleep(.08);active-=1;ends.append(time.monotonic())
+        with patch.dict(catalogue_providers.INTERVALS,{'igdb':.05}):
+            await asyncio.gather(load(first),load(second))
+        self.assertEqual(maximum,1)
+        self.assertGreaterEqual(starts[1]-starts[0],.05)
+        # The persisted deadline is the start budget, not finish plus budget.
+        from models.catalogue import MetadataProviderBudget
+        async with self.Session() as db:
+            budget=await db.get(MetadataProviderBudget,'igdb')
+            self.assertLess(budget.next_request_at,now())
+
     async def test_transport_upgrade_retries_completed_bad_response_outcomes_from_saved_source(self):
         from core.game_imdb_discovery import VERSION
         async with self.Session() as db:

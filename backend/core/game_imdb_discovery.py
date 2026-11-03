@@ -126,27 +126,9 @@ class GamePersonDiscovery:
                 missing=missing[:MAX_ACQUIRE]
                 batch_ids={row['id'] for row in batch}
                 cached={key:value for key,value in cached.items() if key in batch_ids}
-            try:
-                async with asyncio.timeout(55):
-                    if missing and isinstance(self.source,GameIMDbDiscoverySource):
-                        result=await self.source.page(missing,titles={row['id']:row for row in batch if row['id'] in missing})
-                    else:
-                        result=await self.source.page(missing) if missing else {'outcomes':[],'stale':False}
-                if result.get('stale'):raise ProviderError('stale_mapping')
-            except (ProviderError,TimeoutError) as error:
-                # Acquisition failures use the same per-title retry accounting;
-                # no stale result may publish new verified participation.
-                result={'outcomes':[{'id':native,'status':'unresolved',
-                    'reason':getattr(error,'code','timeout'),'retry_after':60} for native in missing],'stale':False}
-            supplied=result.get('outcomes')
-            if (not isinstance(supplied,list) or len(supplied)!=len(missing) or any(not isinstance(row,dict) for row in supplied)
-                or any(not isinstance(row.get('id'),str) for row in supplied)
-                or {row.get('id') for row in supplied}!=set(missing)
-                or any(row.get('status') not in ('verified','excluded','unresolved','unmapped','conflict') for row in supplied)):
-                raise ProviderError('bad_response')
-            outcomes=[]
-            retry_after=max([state.get('retry_after',0),*[value.get('retry_after',0) for value in cached.values()]],default=0)
-            for outcome in supplied:
+            published={}
+            async def prepare_outcome(outcome):
+                if outcome['id'] in published:return dict(published[outcome['id']])
                 value=dict(outcome)
                 if value['status']=='verified':
                     try:
@@ -168,6 +150,43 @@ class GamePersonDiscovery:
                         value['work_id']=work_id
                     except catalogue.IdentityConflict:
                         value={'id':value['id'],'status':'conflict'}
+                published[outcome['id']]=dict(value)
+                return value
+
+            async def progress(rows):
+                ready=[row for row in rows if row['status']=='verified' and row['id'] not in published]
+                if not ready:return
+                async with self.sessions() as db:
+                    owner=await db.scalar(snapshot(JOB,native).with_only_columns(MetadataSnapshot.lease_token))
+                    generation=await db.scalar(snapshot(COMPONENT,native).with_only_columns(MetadataSnapshot.payload['generation'].astext))
+                    if owner!=token or generation!=component.generation:raise ProviderError('stale_mapping')
+                for outcome in ready:await prepare_outcome(outcome)
+                async with self.sessions() as db:
+                    from core.game_imdb_person import queue_projection
+                    await queue_projection(db,native);await db.commit()
+
+            try:
+                async with asyncio.timeout(55):
+                    if missing and isinstance(self.source,GameIMDbDiscoverySource):
+                        result=await self.source.page(missing,titles={row['id']:row for row in batch if row['id'] in missing},on_progress=progress)
+                    else:
+                        result=await self.source.page(missing) if missing else {'outcomes':[],'stale':False}
+                if result.get('stale'):raise ProviderError('stale_mapping')
+            except (ProviderError,TimeoutError) as error:
+                # Acquisition failures use the same per-title retry accounting;
+                # no stale result may publish new verified participation.
+                result={'outcomes':[{'id':native,'status':'unresolved',
+                    'reason':getattr(error,'code','timeout'),'retry_after':60} for native in missing],'stale':False}
+            supplied=result.get('outcomes')
+            if (not isinstance(supplied,list) or len(supplied)!=len(missing) or any(not isinstance(row,dict) for row in supplied)
+                or any(not isinstance(row.get('id'),str) for row in supplied)
+                or {row.get('id') for row in supplied}!=set(missing)
+                or any(row.get('status') not in ('verified','excluded','unresolved','unmapped','conflict') for row in supplied)):
+                raise ProviderError('bad_response')
+            outcomes=[]
+            retry_after=max([state.get('retry_after',0),*[value.get('retry_after',0) for value in cached.values()]],default=0)
+            for outcome in supplied:
+                value=await prepare_outcome(outcome)
                 value.pop('document',None);value['matcher_version']=VERSION
                 value=prepare(value,titles[value['id']],previous.get(value['id']))
                 value['dependencies']=list(dict.fromkeys([*value.get('dependencies',[]),f'imdb:{value["id"]}',f'wikidata-imdb:{value["id"]}']))

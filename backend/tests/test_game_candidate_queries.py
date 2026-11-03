@@ -11,16 +11,45 @@ from core.game_candidate_queries import GameCandidateQueries
 
 
 class CandidateQueryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_identical_queries_share_transport_and_preserve_each_order(self):
+        source=SimpleNamespace(cache=object(),igdb_queries=AsyncMock(side_effect=lambda queries:[[q] for q in queries]))
+        batch=GameCandidateQueries(source)
+        first,second=await asyncio.gather(batch.igdb_queries(['one','two']),batch.igdb_queries(['two','one']))
+        self.assertEqual(first,[['one'],['two']]);self.assertEqual(second,[['two'],['one']])
+        source.igdb_queries.assert_awaited_once_with(['one','two'])
+
+    async def test_fast_title_finishes_before_sibling_search_and_failure(self):
+        entered,release=asyncio.Event(),asyncio.Event()
+        async def fetch(queries):
+            if queries==['search "slow";']:
+                entered.set();await release.wait();raise ProviderError('unavailable')
+            return [[q] for q in queries]
+        batch=GameCandidateQueries(SimpleNamespace(cache=object(),igdb_queries=fetch))
+        first=asyncio.create_task(batch.igdb_queries(['search "fast";','exact fast']))
+        second=asyncio.create_task(batch.igdb_queries(['search "slow";','exact slow']))
+        await entered.wait()
+        try:self.assertEqual(await asyncio.wait_for(first,1),[['search "fast";'],['exact fast']])
+        finally:release.set()
+        with self.assertRaises(ProviderError):await second
+
     async def test_staggered_cache_misses_share_the_same_provider_request(self):
         source=SimpleNamespace(cache=object(),igdb_queries=AsyncMock(side_effect=lambda queries:[[query] for query in queries]))
         batch=GameCandidateQueries(source)
-        first=asyncio.create_task(batch.igdb_queries(['search 1','exact 1']))
-        await asyncio.sleep(.015)
-        rest=[asyncio.create_task(batch.igdb_queries([f'search {i}',f'exact {i}'])) for i in range(2,5)]
-        result=await asyncio.gather(first,*rest)
+        from unittest.mock import patch
+        entered,release=asyncio.Event(),asyncio.Event()
+        sleep=asyncio.sleep
+        async def collect(delay):
+            if delay==batch.COLLECTION_SECONDS:entered.set();await release.wait()
+            else:await sleep(delay)
+        with patch('core.game_candidate_queries.asyncio.sleep',side_effect=collect):
+            first=asyncio.create_task(batch.igdb_queries(['query 1','exact 1']))
+            await entered.wait()
+            rest=[asyncio.create_task(batch.igdb_queries([f'query {i}',f'exact {i}'])) for i in range(2,5)]
+            await sleep(0);release.set()
+            result=await asyncio.gather(first,*rest)
         source.igdb_queries.assert_awaited_once()
         self.assertEqual(len(source.igdb_queries.await_args.args[0]),8)
-        self.assertEqual(result[0],[['search 1'],['exact 1']])
+        self.assertEqual(result[0],[['query 1'],['exact 1']])
 
     async def test_a_slow_sibling_does_not_block_an_already_ready_query(self):
         entered,release=asyncio.Event(),asyncio.Event()
@@ -45,9 +74,9 @@ class CandidateQueryTests(unittest.IsolatedAsyncioTestCase):
             return [[query] for query in queries]
         source=SimpleNamespace(cache=object(),igdb_queries=AsyncMock(side_effect=fetch))
         batch=GameCandidateQueries(source)
-        result=await asyncio.gather(*(batch.igdb_queries([f'search {i}',f'exact {i}']) for i in range(7)))
+        result=await asyncio.gather(*(batch.igdb_queries([f'query {i}',f'exact {i}']) for i in range(7)))
         self.assertEqual(sizes,[10,4])
-        self.assertEqual(result,[[[f'search {i}'],[f'exact {i}']] for i in range(7)])
+        self.assertEqual(result,[[[f'query {i}'],[f'exact {i}']] for i in range(7)])
 
     async def test_failure_reaches_every_waiter_and_next_batch_recovers(self):
         source=SimpleNamespace(cache=object(),igdb_queries=AsyncMock(side_effect=ProviderError('unavailable')))

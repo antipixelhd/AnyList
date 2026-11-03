@@ -176,6 +176,20 @@ class NormalizationTests(unittest.TestCase):
 
 
 class ClientTests(unittest.IsolatedAsyncioTestCase):
+    async def test_igdb_start_spacing_does_not_add_a_pause_after_slow_io_or_shorten_deferral(self):
+        import asyncio,time
+        providers._local_next.clear()
+        http=providers.ProviderHTTP()
+        with patch.dict(providers.INTERVALS,{'igdb':.01}):
+            async with http.lane('igdb'):
+                await asyncio.sleep(.025)
+            self.assertLess(providers._local_next['igdb'],time.monotonic())
+            async with http.lane('igdb'):
+                await http.defer('igdb',2)
+                deferred=providers._local_next['igdb']
+            self.assertGreaterEqual(providers._local_next['igdb'],deferred)
+        providers._local_next.clear()
+
     async def test_wikidata_query_cooldown_does_not_block_exact_entity_reads(self):
         providers._local_next.clear()
         async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request:

@@ -1,5 +1,6 @@
 """Bounded IGDB dispatcher shared by a discovery service's title acquisitions."""
 import asyncio
+import re
 from core.catalogue_providers import ProviderError
 
 
@@ -42,16 +43,31 @@ class GameCandidateQueries:
                 while self.pending and size+len(self.pending[0][0])<=10:
                     item=self.pending.pop(0);batch.append(item);size+=len(item[0])
                 self.active=batch
+                queries=list(dict.fromkeys(query for values,future in batch if not future.cancelled() for query in values))
+                filters=[query for query in queries if not re.search(r'(?:^|;)\s*search\s+',query)]
+                groups=([filters] if filters else [])+[[query] for query in queries if query not in filters]
+                async def acquire(values):
+                    try:
+                        rows=await self.sources.igdb_queries(values)
+                        if len(rows)!=len(values):raise ProviderError('bad_response')
+                        return values,rows,None
+                    except Exception as error:return values,None,error
+                tasks=[asyncio.create_task(acquire(values)) for values in groups]
+                known={};errors={}
                 try:
-                    rows=await self.sources.igdb_queries([query for queries,_ in batch for query in queries])
-                except Exception as error:
-                    for _,future in batch:
-                        if not future.done():future.set_exception(error)
-                else:
-                    offset=0
-                    for queries,future in batch:
-                        if not future.done():future.set_result(rows[offset:offset+len(queries)])
-                        offset+=len(queries)
+                    for completed in asyncio.as_completed(tasks):
+                        values,rows,error=await completed
+                        if error:errors.update((query,error) for query in values)
+                        else:known.update(zip(values,rows))
+                        for requested,future in batch:
+                            if future.done():continue
+                            error=next((errors[query] for query in requested if query in errors),None)
+                            if error:future.set_exception(error)
+                            elif all(query in known for query in requested):future.set_result([known[query] for query in requested])
+                finally:
+                    for task in tasks:
+                        if not task.done():task.cancel()
+                    await asyncio.gather(*tasks,return_exceptions=True)
                 self.active=[]
         finally:
             for _,future in self.active+self.pending:

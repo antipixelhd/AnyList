@@ -202,6 +202,12 @@ def annual_title(raw,title):
     return {'version':1,'year':year,'base':match[1],'genre':'Sport'}
 
 
+def terminal_exact_tie(ranked):
+    return sum(row['rank']==3 and row['year_match'] and not row['edition']
+        and row['game_class'] in ('game','standalone_expansion','remake','remaster','expanded_game')
+        for row in ranked)>=2
+
+
 def decide(title, candidates, *, complete, branches, corroboration=None):
     """An incomplete provider result can rank candidates, but cannot accept one."""
     names = {spelling(title.get('title')): 'primary'}
@@ -243,6 +249,8 @@ def decide(title, candidates, *, complete, branches, corroboration=None):
     evidence = {'version': VERSION, 'retrieval_complete': complete, 'branches': branches,
                 'imdb': title, 'candidates': ranked}
     if not complete:
+        if terminal_exact_tie(ranked):
+            return {'status':'unresolved','reason':'ambiguous_candidates','evidence':evidence}
         return {'status': 'unresolved', 'reason': 'incomplete_candidates', 'evidence': evidence}
     eligible = [row for row in ranked if (row['year_match'] or supported(row,title)) and not row['edition'] and row['game_class'] != 'unknown']
     eligible=[row for row in eligible if not any(other['id']!=row['id'] and (same_game_port(row,other) or cancelled_scope(row,other,title)) for other in eligible)]

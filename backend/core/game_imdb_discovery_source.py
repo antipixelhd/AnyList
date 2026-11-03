@@ -185,7 +185,16 @@ class GameIMDbDiscoverySource:
             result[row['id']]=row
         return result
 
-    async def page(self,ids,*,titles=None):
+    async def page(self,ids,*,titles=None,on_progress=None):
+        tasks=[]
+        try:
+            return await self._page(ids,titles=titles,on_progress=on_progress,tasks=tasks)
+        finally:
+            for task in tasks:
+                if not task.done():task.cancel()
+            if tasks:await asyncio.gather(*tasks,return_exceptions=True)
+
+    async def _page(self,ids,*,titles=None,on_progress=None,tasks=None):
         if titles is None:
             return await self.explicit_page(ids)
         from core.game_title_candidates import retrieve
@@ -221,10 +230,12 @@ class GameIMDbDiscoverySource:
                     candidates.append(row['id'])
             if self._candidate_queries is None:self._candidate_queries=GameCandidateQueries(self.sources)
             batched=self._candidate_queries
-            acquired_titles=dict(zip(candidates,await asyncio.gather(
-                *(retrieve(batched,prepared[native]) for native in candidates),return_exceptions=True)))
+            acquired_titles={native:asyncio.create_task(retrieve(batched,prepared[native])) for native in candidates}
+            tasks.extend(acquired_titles.values())
         for outcome in result['outcomes']:
             native=outcome['id'];title=prepared[native];local=indexed.get(native)
+            if on_progress and outputs and native in acquired_titles and not acquired_titles[native].done() and not result.get('stale'):
+                await on_progress(outputs)
             from core.game_version_scope import original_parent
             reference=result.get('version_references',{}).get(outcome['id'])
             scope_parent=original_parent(title,reference) if reference else None
@@ -235,7 +246,7 @@ class GameIMDbDiscoverySource:
             if title.get('id')!=native or not isinstance(title.get('title'),str) or not title['title'].strip():
                 raise ProviderError('bad_response')
             try:
-                acquired=acquired_titles[native] if native in acquired_titles else await retrieve(self.sources,title)
+                acquired=await acquired_titles[native] if native in acquired_titles else await retrieve(self.sources,title)
                 if isinstance(acquired,BaseException):raise acquired
             except ProviderError as error:
                 outputs.append({'id':native,'status':'unresolved','reason':error.code,
@@ -259,6 +270,7 @@ class GameIMDbDiscoverySource:
                 budget=min(4,deep_remaining)
                 if budget<=.05:
                     outputs.append({'id':native,'status':'unresolved','reason':'corroboration_deferred','retry_after':2});continue
+                if on_progress and outputs and not result.get('stale'):await on_progress(outputs)
                 started=monotonic()
                 try:
                     async with asyncio.timeout(budget):extra,deeper=await corroborate(self.sources,title,data['rows'])

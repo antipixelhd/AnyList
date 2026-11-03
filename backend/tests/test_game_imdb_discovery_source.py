@@ -27,6 +27,31 @@ class Cache:
 
 
 class DiscoverySourceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_ready_prefix_is_published_before_slow_acquisition_and_cancel_cleans_up(self):
+        import asyncio
+        from core.game_browse_sources import GameBrowseSources
+        from test_game_title_match import game
+        self.response([])
+        self.api.explicit_page=AsyncMock(return_value={'outcomes':[
+            {'id':'tt1','status':'unmapped'},{'id':'tt2','status':'unmapped'}],'stale':False})
+        sources=object.__new__(GameBrowseSources);sources.cache=Cache();self.api.sources=sources
+        ready,blocked,cancelled=asyncio.Event(),asyncio.Event(),asyncio.Event()
+        async def acquire(source,title):
+            if title['id']=='tt2':
+                try:await blocked.wait()
+                finally:cancelled.set()
+            return {'data':{'rows':[game(int(title['id'][2:]),title['title'])],
+                'complete':True,'branches':[]},'stale':False}
+        async def publish(rows):
+            self.assertEqual([row['id'] for row in rows],['tt1']);ready.set()
+        with patch('core.game_title_candidates.retrieve',side_effect=acquire):
+            task=asyncio.create_task(self.api.page(['tt1','tt2'],titles={f'tt{i}':{
+                'id':f'tt{i}','title':f'Example {i}','year':2017} for i in (1,2)},on_progress=publish))
+            await asyncio.wait_for(ready.wait(),1)
+            self.assertFalse(task.done());task.cancel()
+            with self.assertRaises(asyncio.CancelledError):await task
+            self.assertTrue(cancelled.is_set())
+
     async def test_exact_released_namesake_tie_never_spends_deep_verification(self):
         from test_game_title_match import game
         self.response([])

@@ -241,15 +241,35 @@ class CandidateRetrievalTests(unittest.IsolatedAsyncioTestCase):
         self.title = {'id': 'tt1', 'title': 'Spacelords', 'year': 2017}
 
     async def test_all_pages_and_both_query_branches_are_consumed(self):
-        self.sources.igdb.side_effect = [[game(i) for i in range(1, PAGE + 1)], [game(200)], []]
+        self.sources.igdb.side_effect = [[game(i,name=f"Unrelated {i}") for i in range(1, PAGE + 1)], [game(200)], []]
         result = (await retrieve(self.sources, self.title))['data']
         self.assertTrue(result['complete'])
         self.assertEqual(len(result['rows']), PAGE + 1)
         self.assertIn('offset 100', self.sources.igdb.await_args_list[1].args[1])
-        self.assertIn('alternative_names.name', self.sources.igdb.await_args_list[2].args[1])
+        self.assertIn('alternative_names.name', self.sources.igdb.await_args_list[0].args[1])
+
+    async def test_terminal_exact_tie_stops_overflow_and_aliases_without_certifying_scope(self):
+        self.sources.igdb.return_value=[game(1),game(2)]
+        data=(await retrieve(self.sources,{**self.title,'aliases':['Another spelling']}))['data']
+        self.assertFalse(data['complete']);self.assertEqual(self.sources.igdb.await_count,1)
+        result=decide(self.title,data['rows'],complete=data['complete'],branches=data['branches'])
+        self.assertEqual((result['status'],result['reason']),('unresolved','ambiguous_candidates'))
+
+    async def test_terminal_exact_tie_does_not_even_admit_a_batched_search(self):
+        self.sources.igdb_queries=AsyncMock(return_value=[[game(1),game(2)]])
+        data=(await retrieve(self.sources,self.title))['data']
+        self.assertFalse(data['complete']);self.sources.igdb_queries.assert_awaited_once()
+        self.assertNotIn('search ',self.sources.igdb_queries.await_args.args[0][0])
+        self.sources.igdb.assert_not_awaited()
+
+    async def test_one_exact_hit_still_checks_search_for_an_alias_competitor(self):
+        self.sources.igdb_queries=AsyncMock(side_effect=[[[game(1)]],[[game(2,'Other',alternative_names=[{'name':'Spacelords'}])]]])
+        data=(await retrieve(self.sources,self.title))['data']
+        self.assertEqual(self.sources.igdb_queries.await_count,2)
+        self.assertEqual(decide(self.title,data['rows'],complete=data['complete'],branches=data['branches'])['reason'],'unresolved_alias_scope')
 
     async def test_exhausted_budget_is_explicitly_incomplete(self):
-        self.sources.igdb.return_value = [game(i) for i in range(1, PAGE + 1)]
+        self.sources.igdb.return_value = [game(i,name=f"Unrelated {i}") for i in range(1, PAGE + 1)]
         result = (await retrieve(self.sources, self.title))['data']
         self.assertFalse(result['complete'])
         self.assertEqual(self.sources.igdb.await_count, 2 * MAX_PAGES)
