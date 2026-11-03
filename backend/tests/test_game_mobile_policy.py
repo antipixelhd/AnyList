@@ -31,6 +31,9 @@ class MobilePolicyTests(unittest.IsolatedAsyncioTestCase):
         for platforms in ([],[{'id':6}],[{'id':130}],[{'id':38}],[{'id':46}], [{'id':99999}]):
             self.assertFalse(mobile_only(game(1,platforms)))
         self.assertTrue(mobile_only({'platforms':[{'id':'igdb.platform:34'}]}))
+        unknown=normalize_igdb(game(1,[]))['work']['attributes']
+        self.assertNotIn('mobile_only',unknown)
+        self.assertNotIn('platform_evidence',unknown)
 
     def test_mixed_release_keeps_original_and_phone_port_never_adds_a_mobile_tag(self):
         original=game(1,[{'id':12,'name':'Xbox 360'}],ports=[{

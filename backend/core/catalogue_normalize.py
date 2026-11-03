@@ -410,8 +410,8 @@ def normalize_igdb(raw):
             artwork=raw.get("cover"),
             attributes={
                 "game_class": igdb_game_class(raw),
-                "mobile_only": mobile_only(raw),
-                "platform_evidence": raw.get('platforms') or [],
+                **({'mobile_only':mobile_only(raw),'platform_evidence':raw['platforms']}
+                   if raw.get('platforms') else {}),
                 "age_ratings": igdb_age_ratings(raw.get('age_ratings')),
                 "igdb_id": str(raw['id']),
                 "igdb_slug": raw.get('slug'),
