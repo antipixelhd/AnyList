@@ -11,6 +11,33 @@ from core.game_candidate_queries import GameCandidateQueries
 
 
 class CandidateQueryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_staggered_cache_misses_share_the_same_provider_request(self):
+        source=SimpleNamespace(cache=object(),igdb_queries=AsyncMock(side_effect=lambda queries:[[query] for query in queries]))
+        batch=GameCandidateQueries(source)
+        first=asyncio.create_task(batch.igdb_queries(['search 1','exact 1']))
+        await asyncio.sleep(.001)
+        rest=[asyncio.create_task(batch.igdb_queries([f'search {i}',f'exact {i}'])) for i in range(2,5)]
+        result=await asyncio.gather(first,*rest)
+        source.igdb_queries.assert_awaited_once()
+        self.assertEqual(len(source.igdb_queries.await_args.args[0]),8)
+        self.assertEqual(result[0],[['search 1'],['exact 1']])
+
+    async def test_a_slow_sibling_does_not_block_an_already_ready_query(self):
+        entered,release=asyncio.Event(),asyncio.Event()
+        calls=[]
+        async def fetch(queries):calls.append(queries);entered.set();return [[query] for query in queries]
+        batch=GameCandidateQueries(SimpleNamespace(cache=object(),igdb_queries=fetch))
+        async def slow_cache():
+            await release.wait()
+            return await batch.igdb('games','late')
+        late=asyncio.create_task(slow_cache())
+        task=asyncio.create_task(batch.igdb('games','ready'))
+        await asyncio.wait_for(entered.wait(),1)
+        self.assertEqual(await task,['ready'])
+        self.assertFalse(late.done())
+        release.set();self.assertEqual(await late,['late'])
+        self.assertEqual(calls,[['ready'],['late']])
+
     async def test_siblings_share_bounded_requests_and_keep_their_own_order(self):
         sizes=[]
         async def fetch(queries):

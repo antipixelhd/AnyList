@@ -4,6 +4,10 @@ from core.catalogue_providers import ProviderError
 
 
 class GameCandidateQueries:
+    # Durable cache admission spans several awaits. One event-loop yield lets
+    # the first miss monopolize the serialized provider lane before siblings
+    # arrive. Briefly collect those siblings without waiting for a slow cache.
+    COLLECTION_SECONDS=.010
     def __init__(self, sources):
         self.sources=sources
         self.cache=sources.cache
@@ -23,7 +27,7 @@ class GameCandidateQueries:
 
     async def flush(self):
         # Let sibling title acquisitions reach the same provider boundary.
-        await asyncio.sleep(0)
+        await asyncio.sleep(self.COLLECTION_SECONDS)
         try:
             while self.pending:
                 batch=[];size=0

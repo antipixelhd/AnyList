@@ -36,6 +36,13 @@ async def run(args):
         async with fixture.engine.begin() as connection:
             await connection.run_sync(lambda conn:GameMappingGeneration.metadata.create_all(conn))
         counts=Counter()
+        stages=Counter()
+        def timed(name,operation):
+            async def call(*values,**options):
+                begin=time.perf_counter()
+                try:return await operation(*values,**options)
+                finally:stages[name]+=(time.perf_counter()-begin)*1000
+            return call
         def sql(conn,cursor,statement,parameters,context,many):
             reading=getattr(getattr(context.compiled,'statement',None),'is_select',False) or statement.lstrip().upper().startswith('SELECT')
             counts['db_reads' if reading else 'db_writes']+=1
@@ -77,6 +84,9 @@ async def run(args):
                 sources=GameBrowseSources(fixture.Session)
                 sources.api.validate=lambda *args:None
                 async def igdb(endpoint,query):
+                    width=len(re.findall(r'query games "q[0-9]+"',query)) if endpoint=='multiquery' else 1
+                    counts['igdb_logical_queries']+=width
+                    counts[f'igdb_batch_width:{width}']+=1
                     await provider('igdb/'+endpoint)
                     def result(text):
                         found=re.search(r'(?:search |name ~ )"Portfolio ([0-9]+)"',text)
@@ -89,6 +99,9 @@ async def run(args):
                     await provider('wikidata/reverse');return {'results':{'bindings':[]}}
                 sources.api.http.request=wiki
                 discover=GamePersonDiscovery(fixture.Session,source=GameIMDbDiscoverySource(fixture.Session,sources=sources))
+                discover.source.page=timed('acquisition_matching_ms',discover.source.page)
+                discover.ingest=timed('ingestion_ms',discover.ingest)
+                discover.bindings.save=timed('binding_ms',discover.bindings.save)
                 ticks=0
                 while ticks<30:
                     ticks+=1
@@ -101,7 +114,7 @@ async def run(args):
                         async with fixture.Session() as db:
                             job=await db.scalar(snapshot(DISCOVERY,'nm9000000'))
                             raise RuntimeError(f'{outcome}: {job.error_code}')
-                    await person.run('nm9000000')
+                    await timed('projection_ms',person.run)('nm9000000')
                     response=await fixture.client.get(f'/tracking/contributors/actor/catalogue:{entity_id}',params={'media_type':'game'})
                     if response.status_code!=200:raise RuntimeError(response.text)
                     data=response.json()
@@ -147,7 +160,8 @@ async def run(args):
                 raise RuntimeError(f'Warm portfolio performed acquisition or writes: {dict(counts)}')
             samples.append({'case':label,'ms':elapsed,'first_works_ms':first_ms,'first_works_count':first_count,
                 'total':data['known_works'],'result_identity':hashlib.sha256(json.dumps(identity).encode()).hexdigest(),
-                'payload_bytes':payload_bytes,'warm_ms':warm_ms,'warm_db_reads':counts['db_reads'],**measured})
+                'payload_bytes':payload_bytes,'warm_ms':warm_ms,'warm_db_reads':counts['db_reads'],
+                'stages_ms':{key:round(value,2) for key,value in stages.items()},**measured})
         finally:
             event.remove(fixture.engine.sync_engine,'before_cursor_execute',sql)
             await fixture.asyncTearDown()

@@ -90,11 +90,13 @@ async def main(args):
             raise SystemExit('--baseline-ref must be a local commit SHA')
         # Execute trusted repository source in this process only; never switch
         # branches or overwrite the user's checkout to compare revisions.
-        for name in ('game_browse_sources','game_title_candidates','game_imdb_discovery_source','game_imdb_discovery','game_credit_projection','media_details','game_statistics_facts','game_statistics','tmdb', 'discovery_policy', 'catalog_search', 'release_browse', 'browse',
+        for name in ('game_candidate_queries','game_browse_sources','game_title_candidates','game_imdb_discovery_source','game_imdb_discovery','game_credit_projection','media_details','game_statistics_facts','game_statistics','tmdb', 'discovery_policy', 'catalog_search', 'release_browse', 'browse',
                      'person_identities', 'game_imdb_person', 'game_contributor_works', 'game_person_images', 'contributor_evidence', 'studio_discovery', 'contributor_details', 'contributor_search'):
             module = importlib.import_module('core.' + name)
             process = await asyncio.to_thread(subprocess.run, ['git', 'show', f'{args.baseline_ref}:backend/core/{name}.py'],
-                cwd=ROOT, check=True, capture_output=True, text=True, encoding='utf-8')
+                cwd=ROOT, check=False, capture_output=True, text=True, encoding='utf-8')
+            if process.returncode and name=='game_candidate_queries':continue  # predates batching
+            process.check_returncode()
             source = process.stdout
             exec(compile(source, module.__file__, 'exec'), module.__dict__)  # noqa: S102 -- trusted local revision, benchmark process only
     cold_portfolios={'game_person_cold','game_company_cold'}
