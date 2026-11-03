@@ -23,7 +23,13 @@ def change(reverse=False):
         trigger=[(new,old,count) for old,new,count in trigger]
     edit('refresh_game_contributor_search(integer[])',replacements)
     edit('contributor_game_work_changed()',trigger)
-    op.execute('SELECT refresh_game_contributor_search(ARRAY(SELECT entity_id FROM catalogue_contributor_search WHERE game_work_count>0))')
+    # Only these contributors can lose qualification. A full index rebuild
+    # scans unrelated careers and holds the preview offline during deployment.
+    op.execute("""SELECT refresh_game_contributor_search(ARRAY(
+        SELECT DISTINCT coalesce(p.canonical_person_id,p.canonical_company_id,p.id)
+        FROM catalogue_credits c JOIN catalogue_entities p ON p.id=c.contributor_id
+        JOIN catalogue_entities w ON w.id=c.work_id
+        WHERE w.kind='game' AND w.attributes->>'mobile_only'='true'))""")
 
 
 def upgrade():change()
