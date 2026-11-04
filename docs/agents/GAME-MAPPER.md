@@ -314,3 +314,66 @@ additional checks cover reserve preference, borrowing, the three-position cap
 and cancellation releasing all positions. All final portfolio fingerprints,
 complete payloads and logical query counts match their starting-tree controls.
 No schema changes were needed in this follow-up.
+
+## Live Mercer and Activision check — 4 November 2026
+
+Committed backend `0ab1455e` was uploaded to a separate VPS temporary directory
+and exercised with actual IMDb/IGDB/Wikidata/Steam calls. Every case used fresh
+disposable PostgreSQL data. Provider credentials stayed on the VPS. The deployed
+checkout and application databases were not changed. Only the two reviewed
+public mappings used by the saved benchmark were seeded: White Knight Chronicles
+II → 7483 and Warframe: Tau → parent Warframe 2903.
+
+| Foreground-priority cold works pipeline | Saved live reference | Current live runs |
+| --- | --- | --- |
+| Mercer, first 245 visible works | 2.861 s | 3.476 / 3.434 s |
+| Mercer, 247 works | 4.999 s | 4.551 / 5.045 s |
+| Mercer, all 257 reference works | 25.013 s | 27.290 / 23.522 s |
+| Activision, final visible portfolio | 695 at 4.649 s | 693 at 4.910 / 4.921 s |
+
+Mercer membership matches the saved 257 canonical IGDB identities exactly, with
+no missing or additional works. The two foreground samples bracket the saved
+completion time; they do not demonstrate a reliable live speedup. Initial bulk
+publication is about 0.6 s slower than the saved sample. Live response variability
+and different validation progress prevent attributing that difference to a
+specific scheduling stage from these samples alone.
+
+Activision's count change is explained by provider data. The saved raw IGDB
+responses classify Spider-Man 3 IDs 200967 and 252200 as main games (`game_type=0`)
+with no parent. Direct live probes now classify both as ports of 5178 (GBA and
+Nintendo DS respectively). The current portfolio contains parent 5178 and every
+other historical canonical work: exactly the old 695 minus those two ports, with
+no additions. The existing company projection collapses ports into their parent;
+the policy was not changed for this test. The full compatibility run received
+1,213 participation records instead of the saved 1,214 and completed the company
+job without an error. Both port participation records still exist upstream, so
+that one-record source-count difference is separate from the two-work collapse.
+
+The compatibility harness also ran without an interactive context, as older
+saved scripts did: Mercer reached 257 at 30.071 / 25.729 / 43.904 s; Activision
+reached 693 at 7.075 / 6.999 / 7.073 s. The foreground runs above seed requests
+under `work_context(DIRECT, user)` to exercise current website priority admission.
+All runs retain the same normalized membership. No job error codes were reported.
+
+Each foreground Mercer run made six `ProviderHTTP.request` calls for IMDb (two
+person-source connections), 20 IGDB, nine Wikidata and eight Steam calls, compared
+with the saved six/17/10/eight. Activision made 14/15 IGDB calls. These counters
+include concurrent validation admitted before stopping at the visible milestone;
+they count provider-method invocations, not independently instrumented transport
+retries. The first compatibility run intentionally observed five extra seconds
+after the milestone, so its final counters are not directly comparable.
+
+These are backend publication milestones with 0.5-second observation, not browser
+paint or full accepted-title validation completion. Mercer still had discovery
+validation queued after all 257 works were visible, just as in the saved report.
+Live foreground contention against other website users was not simulated.
+The final benchmark worker did not exit promptly during cancellation/teardown
+after emitting both results; it was terminated from its verified temporary
+working directory. That cancellation wait remains unprofiled and is not included
+in publication timings. All temporary databases/roles were removed, and zero
+remaining benchmark databases/roles were verified. Raw public
+results, membership comparisons and the classification probe are stored locally
+as `mapper-live-actual.log`, `mapper-live-repeat-{2,3}.log`,
+`mapper-live-foreground-{1,2}.log` and `mapper-live-studio-probe.jsonl` under
+`.local-design/search-browse`. The compatible harness adapters are under
+`.local-design`; these raw artifacts remain outside Git.
