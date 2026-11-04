@@ -2,6 +2,7 @@
 import os
 import unittest
 import uuid
+from urllib.parse import urlsplit
 
 os.environ.setdefault('SECRET_KEY', 'list-deletion-test')
 os.environ.setdefault('DATABASE_URL', 'postgresql+asyncpg://test:test@localhost/test')
@@ -23,13 +24,14 @@ from models import (
 from models.catalogue import CatalogueEntity, CatalogueIdentity
 from routers.auth import router
 
-URL = os.getenv('LIST_DELETION_TEST_DATABASE_URL')
+URL = os.getenv('LIST_DELETION_TEST_DATABASE_URL') or os.getenv('TRACKING_TEST_DATABASE_URL')
 
 
 @unittest.skipUnless(URL, 'Requires explicit disposable PostgreSQL')
 class ListDeletionTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        if ':55449/' not in URL or not URL.endswith('/anylist_test'):
+        target = urlsplit(URL)
+        if target.hostname not in ('localhost', '127.0.0.1') or target.port not in (5432, 55449) or target.path != '/anylist_test':
             raise RuntimeError('Refusing non-disposable list-deletion database')
         self.schema = 'list_delete_' + uuid.uuid4().hex
         self.admin = create_async_engine(URL)
