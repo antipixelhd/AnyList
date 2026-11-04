@@ -35,26 +35,36 @@ continue immediately, with durable timestamps ordering competing continuations.
 
 Direct demand can boost the first provisional bulk job into priority 0 alongside
 cold details. Priority 1 is its fallback admission class; lower-priority classes
-1–5 share the single lower-priority in-flight permit.
+1–5 share two background positions and cannot occupy the foreground reserve.
 
 Within a provider priority, admission selects the least recently served user,
 then that user's least recently served entity. Opening extra pages does not buy
 extra user turns. Public cache subscribers and canonical jobs publish durable
 demand, so a later subscriber can promote already queued shared work. Candidate
 queries retain their subscribers' context and batch within a job/priority group.
+Within an entity's turn, candidates needed for the next source-prefix publication
+precede later siblings. Each physical query carries only its actual subscribers,
+so a sibling cannot inherit that earlier position or another query's promotion.
 
-IGDB retains the 300 ms start interval and at most two in-flight requests.
-**At most one request from priorities 1–5 may be in flight.** Unsent work never
-reserves a future start or slot. A new foreground request can therefore encounter
-only one already transmitted lower-priority request. Existing higher-priority
-requests still share their user/entity turns. Other catalogue providers retain
+IGDB retains the 300 ms start interval with three shared in-flight positions.
+**Background work may use positions 0/1; position 2 is reserved for priority 0.**
+Foreground work takes its reserve first, then may borrow either background
+position. Unsent work never reserves a future start or slot. A foreground call
+therefore need not wait for a background request to finish, even with both
+background positions occupied. Shared rate limits, cooldowns and existing
+foreground work still apply. [IGDB documents four starts per second and eight
+open requests](https://api-docs.igdb.com/#rate-limits); this service stays below
+both limits. Existing higher-priority requests share their user/entity turns.
+Other catalogue providers retain
 their concurrency, minimum start intervals, cooldowns and daily/monthly budgets.
 
 One local dispatcher per provider/database checks the shared queue while there
 are local waiters. Waits release SQL connections. Short database critical sections
 select starts; transaction-owned advisory slots remain held through HTTP and are
 released on cancellation or process loss. Waiting tickets expire unless renewed.
-Automatic admission yields after 500 ms of contention without recording failed
+Automatic admission yields after 500 ms when higher-priority work is queued;
+its own healthy in-flight requests and rate spacing do not cause it to cancel
+and restart. Yielding does not record failed
 or negative evidence. Providers still enforce their network timeouts after admission.
 
 ## Automatic relevance
@@ -97,7 +107,7 @@ shared contributor weights, including contributors removed by a refreshed game.
 Setting it false is an operator-level disable; it does not disable foreground
 mapping. The admin Game mapper tab persists Start/Stop independently in the
 database. Stopping prevents new automatic HTTP starts; an already transmitted
-request may publish, and work also needed by a user remains eligible.
+requests may publish, and work also needed by a user remains eligible.
 
 The admin endpoint reads scheduling aggregates, never filmography payloads.
 The runner wakes on local observations and controls, with a bounded cross-process
@@ -150,7 +160,7 @@ suites retain two failures also reproduced at the starting commit: the gallery
 viewer test's missing `artworkActions` fixture and the archived-performer detail
 test's empty people projection. Live beta/provider latency was not measured.
 
-## Benchmark record
+## Initial benchmark record (superseded scheduling policy)
 
 The baseline is the complete starting tree at
 `73331dbda5f820a2c00de8fa9c7e80fbafddc4c5`, replayed in an isolated local
@@ -218,3 +228,89 @@ scheduled continuation measurements, excluding initial source acquisition and
 browser paint. They establish a real single-job regression; it has not been
 corrected by this documentation update. Raw results are `mapper-single-*.json`
 and the fixture adapter is `.local-design/mapper-single-benchmark.py`.
+
+### Regression fixes and reserved foreground capacity
+
+The user approved two background calls with separate foreground capacity.
+The current three-position policy above replaces the initial single-background-
+position limit. Both background calls can continue while a foreground call starts
+at the next allowed rate interval; they cannot occupy its reserve. This restores
+parallel acquisition without admitting a FIFO queue upstream.
+
+Matching retains complete independent exact/search branches. Fresh complete
+Wikidata reverse batches serve subset turns, including verified empty results,
+without renewing timestamps. Initial and contended turns retain four titles;
+after its first turn a lone eligible career can fill a ten-query batch. Leased
+competitors count; automatic-only jobs excluded from normal workers do not
+disable the lone-user optimization. Collection waits are bounded at 50/75 ms.
+Publication-prefix ordering applies after user/entity fairness, and physical
+requests carry only their actual subscribers' scopes.
+
+Admission now registers a ticket in one SQL statement, skips fairness-history
+reads for a sole contender, upserts both turn keys together and avoids deleting
+an already-deleted successful ticket again. A post-commit cancellation guard
+releases a slot that could not be handed to its cancelled waiter. Automatic work
+yields to queued higher-priority demand, rather than cancelling its own slow
+batch after 500 ms.
+
+| Single 12-work scheduled career, median of three | Before service | Regressed service | Current |
+| --- | ---: | ---: | ---: |
+| 50 ms provider responses, completion | 5.328 s | 5.797 s | 5.188 s |
+| 750 ms provider responses, completion | 11.349 s | 15.635 s | 9.166 s |
+| 50 ms responses, first publication | 1.042 s | 1.628 s | 1.046 s |
+| 750 ms responses, first publication | 3.689 s | 3.864 s | 3.067 s |
+
+Every single-career result retains the same canonical fingerprint and 24 logical
+IGDB queries. Physical requests fall from 18 to 15: IGDB 15 → 14, Wikidata 3 → 1.
+First-publication card counts depend on batching; these are database publication
+timings, excluding initial IMDb acquisition, browser paint and real upstream
+variability. The executable harness now supports `--pipeline-people 1`, `2` and
+`3`; historical replay uses the complete starting tree and the documented
+single-career fixture adapter.
+
+| Additional workload | Before service | Regressed service | Current |
+| --- | ---: | ---: | ---: |
+| Two distinct careers, actual admission | 17.33 s | 25.51 s | 18.00 s |
+| Two shared careers, actual admission | 12.42 s | 17.15 s | 12.03 s |
+| 60-work person, controlled 50 ms transport | 12.87 s | 13.59 s | 11.50 s |
+| 60-work person, controlled 750 ms transport | 57.54 s | 47.96 s | 30.84 s |
+
+The two-career samples retain every participation identity and use 32 requests
+instead of 36 for distinct careers, and 17 instead of 18 for shared careers.
+The distinct-career drain is about 4% above the original single sample, with
+durable fairness and reserved foreground admission. Current first publications
+are 3.24/6.68 s for distinct careers and 3.99/4.13 s for shared careers; publication
+sizes vary. Three distinct careers finish in 25.94 s, with first publications
+at 3.09/5.81/9.20 s. No historical three-career timing is claimed.
+
+Complete 60-work person acquisition retains its full fingerprint and payload,
+with 76 requests instead of 94 and 120 logical IGDB queries unchanged. Reads
+fall from 1,820 to 1,462 in the 50 ms fixture; writes are 1,038 → 1,053 against
+the original tree, or 1,234 → 1,053 against the regressed service. These transport
+fixtures bypass real HTTP admission, so their gains are separate from actual
+rate-limited pipeline timings. Company membership, payload and three provider
+requests remain unchanged, with 293 reads/316 writes versus 290/316 originally.
+Single-sample timing varies; paired company controls are recorded separately.
+Three sequential before/after company pairs at 750 ms resolve that variance:
+median completion 3.261 → 3.186 s, first publication 1.160 → 1.161 s, identical
+fingerprints and provider/write counts. Their raw files are
+`mapper-company-control-{before,after}-{1,2,3}.json`.
+
+The performance fixes passed five Sol implementation checks. P1 (should), a
+cancellation during admission commit that could leak a slot, was fixed. After
+the user approved reserved capacity, a separate architecture preflight and two
+narrow implementation checks approved that revision and R1 (should), automatic
+self-cancellation under its own contention. No findings were declined. The
+configured model was `gpt-6.1-sol` at high effort; usage was not exposed.
+The first follow-up review covered seven files, +116/−34; the final diff is
+13 files, +433/−77, including regression tests, benchmark options and this guide.
+
+Verification: 83 matcher/collector/scheduler unit checks passed, followed by the
+33-check scheduler/PostgreSQL suite and three final automatic-pressure/Stop
+checks. The latter confirm that four automatic requests survive their own slow
+calls, yield to queued higher-priority work, and still obey Stop. Independent
+dispatchers verify foreground admission while both background calls remain held;
+additional checks cover reserve preference, borrowing, the three-position cap
+and cancellation releasing all positions. All final portfolio fingerprints,
+complete payloads and logical query counts match their starting-tree controls.
+No schema changes were needed in this follow-up.

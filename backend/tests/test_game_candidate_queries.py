@@ -11,6 +11,23 @@ from core.game_candidate_queries import GameCandidateQueries
 
 
 class CandidateQueryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_search_admission_keeps_only_its_subscribers_publication_order(self):
+        from core.game_work import current,work_context
+        calls={}
+        async def fetch(queries):
+            calls[tuple(queries)]=current.get().scopes
+            return [[query] for query in queries]
+        batch=GameCandidateQueries(SimpleNamespace(cache=object(),igdb_queries=fetch))
+        async def title(order):
+            with work_context(2,'user:1','job:career',replace=True):
+                with work_context(scope=f'candidate-order:{order:04}'):
+                    return await batch.igdb_queries([f'search "title {order}";'])
+        await asyncio.gather(title(0),title(1))
+        self.assertIn('candidate-order:0000',calls[('search "title 0";',)])
+        self.assertNotIn('candidate-order:0001',calls[('search "title 0";',)])
+        self.assertIn('candidate-order:0001',calls[('search "title 1";',)])
+        self.assertNotIn('candidate-order:0000',calls[('search "title 1";',)])
+
     async def test_identical_queries_share_transport_and_preserve_each_order(self):
         source=SimpleNamespace(cache=object(),igdb_queries=AsyncMock(side_effect=lambda queries:[[q] for q in queries]))
         batch=GameCandidateQueries(source)

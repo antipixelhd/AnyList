@@ -25,6 +25,18 @@ WORKERS=2
 _slots=asyncio.Semaphore(WORKERS)
 
 
+async def acquisition_budget(sessions,processed):
+    from core.game_work import eligible_jobs
+    # Keep the initial turn small. Later, fill a transport batch only
+    # while alone; leased jobs still count so new arrivals get bounded turns.
+    if not processed:return MAX_ACQUIRE
+    async with sessions() as db:
+        contenders=list(await db.scalars(select(MetadataSnapshot.id).where(
+            MetadataSnapshot.provider=='imdb',MetadataSnapshot.kind==JOB,
+            MetadataSnapshot.next_attempt_at<=now(),eligible_jobs()).limit(2)))
+    return 10 if len(contenders)==1 else MAX_ACQUIRE
+
+
 def status(row):
     return status_view(SimpleNamespace(complete=(row.coverage or {}).get('complete'),
         coverage=(row.coverage or {}).get('state','unknown'),received=(row.coverage or {}).get('received',0),
@@ -126,6 +138,11 @@ class GamePersonDiscovery:
                     and value.get('status')!='verified' and value.get('matcher_version')==VERSION
                     and ('source_title' not in value or value['source_title']==source_title(titles[key]))}
             missing=[value for value in ids if value not in known and value not in cached]
+            # A sole career can fill one provider batch without delaying another
+            # career's worker turn. Contended jobs keep the small quantum.
+            candidate_budget=MAX_ACQUIRE
+            if isinstance(self.source,GameIMDbDiscoverySource):
+                candidate_budget=await acquisition_budget(self.sessions,state.get('processed',0))
             # Legacy sources retain the small acquisition contract. The real
             # source batches identity lookups and applies this budget only to
             # fuzzy matching; unattempted titles never become negative evidence.
@@ -177,7 +194,7 @@ class GamePersonDiscovery:
             try:
                 async with asyncio.timeout(55):
                     if missing and isinstance(self.source,GameIMDbDiscoverySource):
-                        result=await self.source.page(missing,titles={row['id']:row for row in batch if row['id'] in missing},on_progress=progress,candidate_budget=MAX_ACQUIRE)
+                        result=await self.source.page(missing,titles={row['id']:row for row in batch if row['id'] in missing},on_progress=progress,candidate_budget=candidate_budget)
                     else:
                         result=await self.source.page(missing) if missing else {'outcomes':[],'stale':False}
                 if result.get('stale'):raise ProviderError('stale_mapping')

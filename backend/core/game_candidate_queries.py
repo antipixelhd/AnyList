@@ -1,16 +1,19 @@
 """Bounded IGDB dispatcher shared by a discovery service's title acquisitions."""
 import asyncio
 import re
-from contextvars import copy_context
+from contextvars import ContextVar, copy_context
 from core.catalogue_providers import ProviderError
+
+collection_size=ContextVar('game_candidate_collection_size',default=4)
 
 
 class GameCandidateQueries:
     # Durable cache admission spans several awaits. One event-loop yield lets
     # the first miss monopolize the serialized provider lane before siblings
-    # arrive. Collect for at most 25ms, including competing cache subscribers,
+    # arrive. Large lone continuations get 75ms to fill one transport call;
+    # initial and competing turns retain their short collection window.
     # without waiting indefinitely for a slow cache.
-    COLLECTION_SECONDS=.025
+    COLLECTION_SECONDS=.050
     MAX_PENDING=32
     def __init__(self, sources):
         self.sources=sources
@@ -38,7 +41,7 @@ class GameCandidateQueries:
     async def flush(self):
         # Let sibling title acquisitions reach the same provider boundary.
         try:
-            await asyncio.sleep(self.COLLECTION_SECONDS)
+            await asyncio.sleep(.075 if collection_size.get()>4 else self.COLLECTION_SECONDS)
             while self.pending:
                 batch=[];size=0
                 from core.game_work import current, Work
@@ -58,10 +61,16 @@ class GameCandidateQueries:
                         if len(rows)!=len(values):raise ProviderError('bad_response')
                         return values,rows,None
                     except Exception as error:return values,None,error
-                context=batch[0][2].copy()
-                scopes=tuple(dict.fromkeys(scope for _,_,ctx in batch for scope in ctx.get(current,current.get()).scopes))
-                context.run(current.set,Work(admission[0],admission[1],scopes))
-                tasks=[asyncio.create_task(acquire(values),context=context.copy()) for values in groups]
+                tasks=[]
+                for values in groups:
+                    # Each physical request carries only its subscribers. A
+                    # later sibling must not borrow an earlier title's turn.
+                    subscribers=[item for item in batch if any(query in values for query in item[0])]
+                    context=subscribers[0][2].copy()
+                    scopes=tuple(dict.fromkeys(scope for _,_,ctx in subscribers
+                        for scope in ctx.get(current,current.get()).scopes))
+                    context.run(current.set,Work(admission[0],admission[1],scopes))
+                    tasks.append(asyncio.create_task(acquire(values),context=context))
                 known={};errors={}
                 try:
                     for completed in asyncio.as_completed(tasks):

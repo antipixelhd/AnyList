@@ -9,6 +9,15 @@ from core.game_work import choose, now
 
 
 class FairAdmissionTests(unittest.TestCase):
+    def test_publication_prefix_precedes_late_siblings_without_buying_user_turns(self):
+        first=self.ticket('a','job:one',sequence=5)
+        first.scopes.append('candidate-order:0000')
+        later=self.ticket('a','job:one')
+        later.scopes.append('candidate-order:0001')
+        other=self.ticket('b','job:other',sequence=10)
+        self.assertIs(choose([later,first],{},{},now())[1],first)
+        self.assertIs(choose([later,first,other],{}, {'igdb:2:a':now()},now())[1],other)
+
     def ticket(self,owner,scope,priority=2,sequence=0):
         return Row(id=f'{owner}-{scope}',provider='igdb',priority=priority,owner=owner,
             scopes=[scope],created_at=now()+timedelta(milliseconds=sequence))

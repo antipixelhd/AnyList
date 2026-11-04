@@ -101,6 +101,26 @@ class GameIMDbDiscoverySource:
                         if native in claims:known[native].append(item['id'])
                 if all(known.values()):
                     return {'data':{'items':known},'stale':False,'fetched_at':records[0]['observed_at'].isoformat()}
+            # A deferred matching quantum requests a subset of the same identity
+            # group. Reuse its complete reverse evidence, including verified
+            # empty results, without renewing freshness or making another call.
+            from sqlalchemy import select
+            from sqlalchemy.dialects.postgresql import array
+            from core.game_source_cache import utcnow
+            from models.catalogue import MetadataSnapshot
+            async with self.sessions() as db:
+                covering=(await db.execute(select(MetadataSnapshot.payload,
+                    MetadataSnapshot.fetched_at,MetadataSnapshot.external_id).where(
+                        MetadataSnapshot.provider=='wikidata',MetadataSnapshot.kind=='game_imdb_reverse',
+                        MetadataSnapshot.external_id.startswith('v1:'),
+                        MetadataSnapshot.expires_at>utcnow(),
+                        MetadataSnapshot.payload['items'].has_all(array(list(ids))))
+                    .order_by(MetadataSnapshot.fetched_at.desc()).limit(1))).first()
+            if covering:
+                payload,fetched,key=covering
+                return {'data':{'items':{native:payload['items'][native] for native in ids}},
+                    'stale':False,'fetched_at':fetched.isoformat(),
+                    'support_snapshots':[{'kind':'game_imdb_reverse','key':key[3:],'fetched_at':fetched.isoformat()}]}
         key=hashlib.sha256(json.dumps(sorted(ids)).encode()).hexdigest()
         async def load():
             values=' '.join(json.dumps(value) for value in sorted(ids))
@@ -246,10 +266,16 @@ class GameIMDbDiscoverySource:
         if ready and on_progress and not result.get('stale'):await on_progress(ready)
         acquired_titles={}
         if isinstance(self.sources,GameBrowseSources):
-            from core.game_candidate_queries import GameCandidateQueries
+            from core.game_candidate_queries import GameCandidateQueries,collection_size
             if self._candidate_queries is None:self._candidate_queries=GameCandidateQueries(self.sources)
             batched=self._candidate_queries
-            acquired_titles={native:asyncio.create_task(retrieve(batched,prepared[native])) for native in candidates}
+            collection_token=collection_size.set(candidate_budget or len(candidates))
+            try:
+                from core.game_work import work_context
+                for position,native in enumerate(candidates):
+                    with work_context(scope=f'candidate-order:{position:04}'):
+                        acquired_titles[native]=asyncio.create_task(retrieve(batched,prepared[native]))
+            finally:collection_size.reset(collection_token)
             tasks.extend(acquired_titles.values())
         for outcome in result['outcomes']:
             native=outcome['id'];title=prepared[native];local=indexed.get(native)

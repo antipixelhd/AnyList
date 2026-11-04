@@ -130,7 +130,7 @@ class ProviderHTTP:
 
     @asynccontextmanager
     async def lane(self, provider):
-        """Share provider budgets; allow two rate-spaced IGDB requests in flight."""
+        """Share budgets with reserved foreground capacity on database deployments."""
         if self.session_factory:
             from core.game_work import provider_slot
             async with provider_slot(self.session_factory, provider):

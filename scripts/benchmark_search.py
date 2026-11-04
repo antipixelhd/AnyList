@@ -88,6 +88,8 @@ async def main(args):
         raise SystemExit('--critic-blocking-reference requires --case game_browse_critic')
     if args.primary_blocking_reference and (not args.case or 'game_details_cold' not in args.case):
         raise SystemExit('--primary-blocking-reference requires --case game_details_cold')
+    if args.pipeline_people!=2 and args.case not in (['game_people_pipeline'],['game_people_pipeline_shared']):
+        raise SystemExit('--pipeline-people requires one game_people_pipeline case')
     if args.baseline_ref:
         if not re.fullmatch(r'[0-9a-fA-F]{7,40}', args.baseline_ref):
             raise SystemExit('--baseline-ref must be a local commit SHA')
@@ -1277,6 +1279,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', required=True)
     parser.add_argument('--rounds', type=int, default=3)
+    parser.add_argument('--pipeline-people',type=int,choices=(1,2,3),default=2)
     parser.add_argument('--provider-delay-ms', type=float, default=50)
     parser.add_argument('--baseline-ref', help='Load benchmarked modules from a trusted local commit SHA')
     parser.add_argument('--critic-blocking-reference',action='store_true',

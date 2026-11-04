@@ -5,6 +5,7 @@ transaction-owned slot until it finishes. Waiting owns no database connection.
 """
 import asyncio
 import hashlib
+import json
 import time
 import uuid
 from collections import OrderedDict
@@ -14,7 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import IntEnum
 
-from sqlalchemy import case, delete, func, select, text
+from sqlalchemy import DateTime, String, bindparam, case, delete, func, select, text
 from sqlalchemy.dialects.postgresql import insert
 
 from models.catalogue import MetadataProviderBudget, MetadataSnapshot
@@ -137,6 +138,7 @@ def _lock_key(value):
 async def prune_ephemeral(db):
     """Scheduler hygiene remains active when automatic ingestion is disabled."""
     for model,column,condition in (
+            (GameProviderTicket,GameProviderTicket.id,GameProviderTicket.expires_at<=now()),
             (GameProviderTurn,GameProviderTurn.key,GameProviderTurn.served_at<now()-timedelta(days=7)),
             (GameWorkDemand,GameWorkDemand.key,(GameWorkDemand.active_until<now()-timedelta(days=1)) & GameWorkDemand.key.startswith('cache:'))):
         old=select(column).where(condition).limit(250)
@@ -157,7 +159,9 @@ def choose(tickets, demands, turns, stamp):
         entity = next((scope for scope in ticket.scopes if scope.startswith('job:')),ticket.scopes[-1] if ticket.scopes else 'request')
         owner_key = f'{ticket.provider}:{priority}:{owner}'
         entity_key = f'{owner_key}:{entity}'
-        rank = (priority, turns.get(owner_key, datetime.min), turns.get(entity_key, datetime.min), ticket.created_at, ticket.id)
+        order=min((int(scope[16:]) for scope in ticket.scopes
+            if scope.startswith('candidate-order:') and scope[16:].isdigit()),default=0)
+        rank = (priority, turns.get(owner_key, datetime.min), turns.get(entity_key, datetime.min), order, ticket.created_at, ticket.id)
         ranked.append((rank, ticket, owner_key, entity_key))
     return min(ranked, key=lambda row:row[0]) if ranked else None
 
@@ -193,14 +197,17 @@ class Dispatcher:
                     _housekeeping[key]=time.monotonic()+30
                     _housekeeping.move_to_end(key)
                     while len(_housekeeping)>32:_housekeeping.popitem(last=False)
-                await db.execute(delete(GameProviderTicket).where(GameProviderTicket.expires_at <= stamp))
-                count = await db.scalar(select(func.count()).select_from(GameProviderTicket).where(GameProviderTicket.provider==provider))
-                if count >= 256:
+                inserted=await db.scalar(text('''INSERT INTO game_provider_tickets
+                    (id,provider,priority,owner,scopes,created_at,expires_at)
+                    SELECT :id,:provider,:priority,:owner,CAST(:scopes AS jsonb),:created,:expires
+                    WHERE (SELECT count(*) FROM game_provider_tickets
+                        WHERE provider=:provider AND expires_at>:created)<256 RETURNING id''').bindparams(
+                            bindparam('provider',type_=String),bindparam('created',type_=DateTime)),
+                    {'id':ticket_id,'provider':provider,'priority':int(work.priority),'owner':work.owner,
+                     'scopes':json.dumps(list(work.scopes)),'created':stamp,'expires':stamp+timedelta(seconds=5)})
+                if inserted is None:
                     from core.catalogue_providers import ProviderError
                     raise ProviderError('rate_limited', 1)
-                db.add(GameProviderTicket(id=ticket_id, provider=provider, priority=work.priority,
-                    owner=work.owner, scopes=list(work.scopes), created_at=stamp,
-                    expires_at=stamp + timedelta(seconds=5)))
                 await db.commit()
             if self.task is None:
                 self.task = asyncio.create_task(self.run())
@@ -223,9 +230,12 @@ class Dispatcher:
             if not future.done():
                 future.cancel()
             try:
-                async with self.sessions() as db:
-                    await db.execute(delete(GameProviderTicket).where(GameProviderTicket.id == ticket_id))
-                    await db.commit()
+                # Admission already removed this ticket in its committed start.
+                # Only an unsent cancellation/error needs queue cleanup.
+                if slot is None:
+                    async with self.sessions() as db:
+                        await db.execute(delete(GameProviderTicket).where(GameProviderTicket.id == ticket_id))
+                        await db.commit()
             finally:
                 self.wake.set()
                 self.retire()
@@ -248,9 +258,12 @@ class Dispatcher:
                     GameProviderTicket.expires_at > stamp)))
                 scopes = {scope for ticket in tickets for scope in ticket.scopes}
                 demands = {row.key:row for row in await db.scalars(select(GameWorkDemand).where(GameWorkDemand.key.in_(scopes)))} if scopes else {}
+                tickets=[ticket for ticket in tickets if ticket.id not in self.pending or not self.pending[ticket.id][0].done()]
+                highest=choose(tickets,demands,{},stamp)
+                pressured=highest is not None and highest[0][0]<Priority.AUTOMATIC
                 for ticket in tickets:
                     local=self.pending.get(ticket.id)
-                    if local and not local[0].done() and time.monotonic()-local[1]>.5:
+                    if pressured and local and time.monotonic()-local[1]>.5:
                         effective=choose([ticket],demands,{},stamp)[0][0]
                         if effective==Priority.AUTOMATIC:local[0].set_exception(PriorityYield())
                 tickets=[ticket for ticket in tickets if ticket.id not in self.pending or not self.pending[ticket.id][0].done()]
@@ -262,8 +275,10 @@ class Dispatcher:
                     for priority, owner in possible:
                         key = f'{ticket.provider}:{priority}:{owner}'
                         turn_keys.update((key, f'{key}:{entity}'))
+                # With one contender there is no fairness decision to make.
+                # Still record its turn so a later subscriber receives its turn.
                 turns = dict((await db.execute(select(GameProviderTurn.key, GameProviderTurn.served_at)
-                    .where(GameProviderTurn.key.in_(turn_keys)))).all()) if turn_keys else {}
+                    .where(GameProviderTurn.key.in_(turn_keys)))).all()) if len(tickets)>1 else {}
                 selected = choose(tickets, demands, turns, stamp)
                 if not selected:
                     return .2
@@ -281,18 +296,16 @@ class Dispatcher:
                         future.set_exception(PriorityYield())
                         return 0
                 budget = await db.get(MetadataProviderBudget, ticket.provider)
-                delay = max(0, (budget.next_request_at - stamp).total_seconds()) if budget and budget.next_request_at else 0
+                delay = max(0, (budget.next_request_at - now()).total_seconds()) if budget and budget.next_request_at else 0
                 if delay > 5:
                     future.set_exception(ProviderError('rate_limited', delay))
                     return 0
                 if delay:
                     return min(.15, delay)
-                capacity = 2 if ticket.provider == 'igdb' else 1
-                if rank[0] >= Priority.FIRST_WORKS and not await slot.scalar(
-                        text('SELECT pg_try_advisory_xact_lock(:key)'),
-                        {'key':_lock_key(f'catalogue-{ticket.provider}-lower-priority')}):
-                    return .05
-                for index in range(capacity):
+                # Background can use two positions, but never the foreground
+                # reserve. Direct work takes its reserve first, then borrows.
+                indices=((2,0,1) if rank[0]==Priority.DIRECT else (0,1)) if ticket.provider=='igdb' else (0,)
+                for index in indices:
                     if await slot.scalar(text('SELECT pg_try_advisory_xact_lock(:key)'),
                             {'key':_lock_key(f'catalogue-{ticket.provider}-slot:{index}')}):
                         break
@@ -322,12 +335,14 @@ class Dispatcher:
                 budget.request_count += 1
                 interval=1.1 if ticket.provider=='openlibrary' and not settings.openlibrary_contact_email else INTERVALS[ticket.provider]
                 budget.next_request_at = max(budget.next_request_at or stamp,now()+timedelta(seconds=interval))
-                for key in (owner_key, entity_key):
-                    statement = insert(GameProviderTurn).values(key=key, served_at=stamp)
-                    await db.execute(statement.on_conflict_do_update(index_elements=['key'], set_={'served_at':stamp}))
+                statement = insert(GameProviderTurn).values([
+                    {'key':key,'served_at':stamp} for key in (owner_key,entity_key)])
+                await db.execute(statement.on_conflict_do_update(index_elements=['key'],set_={'served_at':stamp}))
                 await db.execute(delete(GameProviderTicket).where(GameProviderTicket.id == ticket.id))
                 # Commit admission, retaining only slot's transaction through HTTP.
                 await db.commit()
+                if future.done():
+                    return 0  # Cancellation during commit leaves slot ownership here.
                 admitted = True
                 future.set_result(slot)
                 return 0

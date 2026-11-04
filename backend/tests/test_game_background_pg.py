@@ -19,6 +19,134 @@ from models.game_runner import GameMapperEdge, GameMapperItem, GameMapperInteres
 class BackgroundMappingTests(unittest.IsolatedAsyncioTestCase):
     cleanup=fixture.GamesDatabaseTests.cleanup
 
+    async def test_automatic_batch_does_not_yield_to_its_own_slow_requests(self):
+        entered=asyncio.Event();release=asyncio.Event();active=0;sent=[]
+        http=ProviderHTTP(session_factory=self.Session)
+        async def request(index):
+            nonlocal active
+            with work_context(Priority.AUTOMATIC,'automatic',f'work:{index}',replace=True):
+                async with http.lane('igdb'):
+                    active+=1;sent.append(index)
+                    self.assertLessEqual(active,2)
+                    if active==2:entered.set()
+                    await release.wait();active-=1
+        with patch.dict('core.catalogue_providers.INTERVALS',{'igdb':.01}):
+            tasks=[asyncio.create_task(request(index)) for index in range(4)]
+            try:
+                await asyncio.wait_for(entered.wait(),3)
+                await asyncio.sleep(.7)
+                self.assertFalse(any(task.done() for task in tasks))
+                release.set();await asyncio.wait_for(asyncio.gather(*tasks),5)
+                self.assertEqual(len(sent),4)
+            finally:
+                release.set();await asyncio.gather(*tasks,return_exceptions=True)
+
+    async def test_automatic_waiter_still_yields_to_queued_higher_priority_work(self):
+        from core.game_work import PriorityYield
+        entered=asyncio.Event();release=asyncio.Event();active=0
+        http=ProviderHTTP(session_factory=self.Session)
+        async def held():
+            nonlocal active
+            with work_context(Priority.FINISH,'higher',replace=True):
+                async with http.lane('igdb'):
+                    active+=1
+                    if active==2:entered.set()
+                    await release.wait()
+        async def queued(priority):
+            with work_context(priority,str(priority),replace=True):
+                async with http.lane('igdb'):
+                    self.assertNotEqual(priority,Priority.AUTOMATIC)
+        with patch.dict('core.catalogue_providers.INTERVALS',{'igdb':.01}):
+            tasks=[asyncio.create_task(held()) for _ in range(2)]
+            try:
+                await asyncio.wait_for(entered.wait(),3)
+                automatic=asyncio.create_task(queued(Priority.AUTOMATIC));tasks.append(automatic)
+                higher=asyncio.create_task(queued(Priority.FINISH));tasks.append(higher)
+                with self.assertRaises(PriorityYield):await asyncio.wait_for(automatic,3)
+                self.assertFalse(higher.done())
+                release.set();await asyncio.wait_for(higher,5)
+            finally:
+                release.set();await asyncio.gather(*tasks,return_exceptions=True)
+
+    async def test_cancellation_during_admission_commit_releases_unhanded_slot(self):
+        from core.game_work import _dispatchers,_lock_key
+        from sqlalchemy.sql import operators
+        blocked,release=asyncio.Event(),asyncio.Event()
+        execute,commit=AsyncSession.execute,AsyncSession.commit
+        async def marked(db,statement,*args,**kwargs):
+            if (isinstance(statement,Delete) and statement.table.name=='game_provider_tickets'
+                    and getattr(statement.whereclause,'operator',None) is operators.eq):
+                db.info['block_mapper_admission']=True
+            return await execute(db,statement,*args,**kwargs)
+        async def committed(db):
+            result=await commit(db)
+            if db.info.pop('block_mapper_admission',False) and not blocked.is_set():
+                blocked.set();await release.wait()
+            return result
+        async def request():
+            with work_context(Priority.FINISH,'viewer',replace=True):
+                async with ProviderHTTP(session_factory=self.Session).lane('igdb'):
+                    self.fail('Cancelled waiter must not send HTTP')
+        with patch.object(AsyncSession,'execute',marked),patch.object(AsyncSession,'commit',committed):
+            task=asyncio.create_task(request())
+            try:
+                await asyncio.wait_for(blocked.wait(),5)
+                pump=next(value.task for value in _dispatchers.values() if value.sessions is self.Session)
+                task.cancel();await asyncio.gather(task,return_exceptions=True)
+            finally:
+                release.set()
+                task.cancel();await asyncio.gather(task,return_exceptions=True)
+            await asyncio.wait_for(asyncio.shield(pump),5)
+        async with self.Session() as db:
+            for key in [f'catalogue-igdb-slot:{index}' for index in range(3)]:
+                self.assertTrue(await db.scalar(text('SELECT pg_try_advisory_xact_lock(:key)'),{'key':_lock_key(key)}))
+            self.assertEqual(await db.scalar(select(func.count()).select_from(GameProviderTicket)),0)
+
+    async def test_lone_continuation_expands_but_arrivals_restore_small_turns(self):
+        from core.game_imdb_discovery import acquisition_budget,JOB
+        async with self.Session() as db:
+            db.add(MetadataSnapshot(provider='imdb',kind=JOB,external_id='nm1',
+                next_attempt_at=now(),lease_until=now()+timedelta(minutes=3),lease_token='running'))
+            await db.commit()
+        self.assertEqual(await acquisition_budget(self.Session,0),4)
+        self.assertEqual(await acquisition_budget(self.Session,4),10)
+        from core.game_work import demand,job_key
+        async with self.Session() as db:
+            db.add(MetadataSnapshot(provider='imdb',kind=JOB,external_id='nm9',next_attempt_at=now()))
+            with work_context(Priority.AUTOMATIC,'automatic'):
+                await demand(db,job_key('imdb',JOB,'nm9'))
+            await db.commit()
+        self.assertEqual(await acquisition_budget(self.Session,4),10)
+        for native in ('nm2','nm3'):
+            async with self.Session() as db:
+                db.add(MetadataSnapshot(provider='imdb',kind=JOB,external_id=native,next_attempt_at=now()))
+                await db.commit()
+            self.assertEqual(await acquisition_budget(self.Session,4),4)
+
+    async def test_reverse_identity_subset_reuses_fresh_empty_and_positive_evidence(self):
+        from core.game_imdb_discovery_source import GameIMDbDiscoverySource
+        source=GameIMDbDiscoverySource(self.Session)
+        fetched=now()-timedelta(hours=1)
+        fetched=fetched.replace(microsecond=fetched.microsecond//1000*1000)
+        async with self.Session() as db:
+            db.add(MetadataSnapshot(provider='wikidata',kind='game_imdb_reverse',external_id='v1:cover',
+                payload={'items':{'tt1':[],'tt2':['Q2'],'tt3':['Q3']}},
+                fetched_at=fetched,expires_at=now()+timedelta(days=1)))
+            await db.commit()
+        with patch.object(source.sources.api.http,'request',AsyncMock(return_value={'results':{'bindings':[]}})) as http:
+            result=await source.items(['tt1','tt2'])
+            self.assertEqual(result['data']['items'],{'tt1':[],'tt2':['Q2']})
+            self.assertEqual(result['support_snapshots'][0]['key'],'cover')
+            self.assertEqual(result['fetched_at'],fetched.isoformat())
+            http.assert_not_awaited()
+            async with self.Session() as db:
+                row=await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.external_id=='v1:cover'))
+                row.expires_at=now()-timedelta(seconds=1)
+                await db.commit()
+            result=await source.items(['tt1','tt2'])
+            self.assertEqual(result['data']['items'],{'tt1':[],'tt2':[]})
+            http.assert_awaited_once()
+
     async def asyncSetUp(self):
         await fixture.GamesDatabaseTests.asyncSetUp(self)
         async with self.Session() as db:
@@ -58,36 +186,72 @@ class BackgroundMappingTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNotNone(await db.scalar(select(MetadataSnapshot.id).where(eligible_jobs())))
 
     async def test_direct_request_bypasses_all_unsent_lower_priority_work(self):
+        from core.game_work import Dispatcher
         starts=[];low_active=0;max_low=0
-        first=asyncio.Event();release=asyncio.Event()
-        http=ProviderHTTP(session_factory=self.Session)
+        first=asyncio.Event();both=asyncio.Event();release=asyncio.Event()
+        pumps=[Dispatcher(self.Session,'igdb') for _ in range(3)]
         async def lower(index):
             nonlocal low_active,max_low
             with work_context(Priority.FIRST_WORKS,'background',f'work:{index}',replace=True):
-                async with http.lane('igdb'):
+                async with pumps[index%2].enter('igdb'):
                     starts.append(index);low_active+=1;max_low=max(max_low,low_active)
-                    if index==0:first.set();await release.wait()
+                    if index==0:first.set()
+                    if low_active==2:both.set()
+                    if index<2:await release.wait()
                     else:await asyncio.sleep(.01)
                     low_active-=1
         async def direct():
             with work_context(Priority.DIRECT,'user:1',replace=True):
-                async with http.lane('igdb'):starts.append('direct')
+                async with pumps[2].enter('igdb'):
+                    self.assertEqual(low_active,2)
+                    starts.append('direct')
         with patch.dict('core.catalogue_providers.INTERVALS',{'igdb':.01}):
             tasks=[asyncio.create_task(lower(0))]
             try:
                 await asyncio.wait_for(first.wait(),3)
-                tasks.extend(asyncio.create_task(lower(index)) for index in range(1,8))
+                tasks.append(asyncio.create_task(lower(1)))
+                await asyncio.wait_for(both.wait(),3)
+                tasks.extend(asyncio.create_task(lower(index)) for index in range(2,8))
                 await asyncio.wait_for(direct(),3)
-                self.assertEqual(starts,[0,'direct'])
+                self.assertEqual(starts,[0,1,'direct'])
                 release.set();await asyncio.wait_for(asyncio.gather(*tasks),10)
             finally:
                 release.set()
                 for task in tasks:
                     if not task.done():task.cancel()
                 await asyncio.gather(*tasks,return_exceptions=True)
-        self.assertEqual(max_low,1)
+        self.assertEqual(max_low,2)
         async with self.Session() as db:
             self.assertEqual(await db.scalar(select(func.count()).select_from(GameProviderTicket)),0)
+
+    async def test_foreground_prefers_reserve_borrows_background_and_caps_total_at_three(self):
+        from core.game_work import _lock_key
+        http=ProviderHTTP(session_factory=self.Session)
+        started=asyncio.Queue();release=[asyncio.Event() for _ in range(4)]
+        async def direct(index):
+            with work_context(Priority.DIRECT,f'user:{index}',replace=True):
+                async with http.lane('igdb'):
+                    started.put_nowait(index);await release[index].wait()
+        tasks=[]
+        with patch.dict('core.catalogue_providers.INTERVALS',{'igdb':.01}):
+            try:
+                tasks.append(asyncio.create_task(direct(0)))
+                self.assertEqual(await asyncio.wait_for(started.get(),3),0)
+                async with self.Session() as db:
+                    for index in (0,1,2):
+                        free=await db.scalar(text('SELECT pg_try_advisory_xact_lock(:key)'),
+                            {'key':_lock_key(f'catalogue-igdb-slot:{index}')})
+                        self.assertEqual(free,index!=2)
+                for index in (1,2):
+                    tasks.append(asyncio.create_task(direct(index)))
+                    self.assertEqual(await asyncio.wait_for(started.get(),3),index)
+                tasks.append(asyncio.create_task(direct(3)))
+                with self.assertRaises(TimeoutError):await asyncio.wait_for(started.get(),.15)
+                release[2].set()
+                self.assertEqual(await asyncio.wait_for(started.get(),3),3)
+            finally:
+                for event in release:event.set()
+                await asyncio.gather(*tasks,return_exceptions=True)
 
     async def test_stop_cancels_an_automatic_admission_without_poisoning_evidence(self):
         http=ProviderHTTP(session_factory=self.Session)
@@ -102,19 +266,24 @@ class BackgroundMappingTests(unittest.IsolatedAsyncioTestCase):
     async def test_cancelled_waiter_releases_ticket_and_does_not_reserve_a_slot(self):
         http=ProviderHTTP(session_factory=self.Session)
         entered=asyncio.Event();release=asyncio.Event()
+        active=0
         async def held():
+            nonlocal active
             with work_context(Priority.FINISH,'one',replace=True):
-                async with http.lane('igdb'):entered.set();await release.wait()
+                async with http.lane('igdb'):
+                    active+=1
+                    if active==2:entered.set()
+                    await release.wait()
         async def waiting():
             with work_context(Priority.FINISH,'two',replace=True):
-                async with http.lane('igdb'):self.fail('Lower-priority concurrency exceeded one')
-        first=asyncio.create_task(held())
+                async with http.lane('igdb'):self.fail('Lower-priority concurrency exceeded two')
+        holders=[asyncio.create_task(held()) for _ in range(2)]
         try:
             await asyncio.wait_for(entered.wait(),3)
             waiter=asyncio.create_task(waiting());await asyncio.sleep(.05)
             waiter.cancel();await asyncio.gather(waiter,return_exceptions=True)
             async with self.Session() as db:self.assertEqual(await db.scalar(select(func.count()).select_from(GameProviderTicket)),0)
-        finally:release.set();await first
+        finally:release.set();await asyncio.gather(*holders)
 
     async def test_expired_still_relevant_game_is_due_again(self):
         service=GameBackground(self.Session)
@@ -186,24 +355,19 @@ class BackgroundMappingTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('payload',response.json())
         self.assertIn('no-store',response.headers['cache-control'])
 
-    async def test_cancellation_during_ticket_cleanup_closes_admitted_slot(self):
+    async def test_cancellation_during_admitted_http_closes_slot_and_removes_ticket(self):
         from core.game_work import _lock_key
-        execute=AsyncSession.execute;cleanup=asyncio.Event();deletes=0
-        async def delayed(db,statement,*args,**kwargs):
-            nonlocal deletes
-            if isinstance(statement,Delete) and statement.table.name=='game_provider_tickets':
-                deletes+=1
-                if deletes==3:cleanup.set();await asyncio.Event().wait()
-            return await execute(db,statement,*args,**kwargs)
+        entered=asyncio.Event()
         async def request():
             with work_context(Priority.DIRECT,'viewer',replace=True):
-                async with ProviderHTTP(session_factory=self.Session).lane('igdb'):pass
-        with patch.object(AsyncSession,'execute',delayed):
-            task=asyncio.create_task(request())
-            try:await asyncio.wait_for(cleanup.wait(),5)
-            finally:task.cancel();await asyncio.gather(task,return_exceptions=True)
+                async with ProviderHTTP(session_factory=self.Session).lane('igdb'):
+                    entered.set();await asyncio.Event().wait()
+        task=asyncio.create_task(request())
+        try:await asyncio.wait_for(entered.wait(),5)
+        finally:task.cancel();await asyncio.gather(task,return_exceptions=True)
         async with self.Session() as db:
-            for slot in range(2):
+            self.assertEqual(await db.scalar(select(func.count()).select_from(GameProviderTicket)),0)
+            for slot in range(3):
                 self.assertTrue(await db.scalar(text('SELECT pg_try_advisory_xact_lock(:key)'),
                     {'key':_lock_key(f'catalogue-igdb-slot:{slot}')}))
 

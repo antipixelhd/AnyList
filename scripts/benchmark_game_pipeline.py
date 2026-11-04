@@ -59,7 +59,7 @@ async def run(args):
             await provider('wikidata_query');return {'results':{'bindings':[]}}
         sources.api.igdb=igdb;sources.api.http.request=wiki
         person=GameIMDbPersonEnrichment(fixture.Session)
-        for index in range(2):
+        for index in range(getattr(args,'pipeline_people',2)):
             native=f'nm{9000000+index}'
             async with fixture.Session() as db:
                 entity=CatalogueEntity(kind='person',name=f'Person {index}');db.add(entity);await db.flush()
@@ -125,7 +125,7 @@ async def run(args):
                 identities[native]=[list(row) for row in rows]
                 job=await db.scalar(snapshot(discovery.JOB,native))
                 if not job.coverage.get('complete'):raise RuntimeError('Premature completion')
-        result={'case':args.case[0],'environment':'real database/cache/provider lanes; controlled HTTP; two pre-indexed 12-work careers',
+        result={'case':args.case[0],'environment':f'real database/cache/provider lanes; controlled HTTP; {len(people)} pre-indexed 12-work careers',
             'provider_delay_ms':args.provider_delay_ms,'baseline_ref':args.baseline_ref,'ms':elapsed,
             'first_works_ms':first,'complete_ms':finished,'publications':publications,
             'result_identity':hashlib.sha256(json.dumps(identities,sort_keys=True).encode()).hexdigest(),
