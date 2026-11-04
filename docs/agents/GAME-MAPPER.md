@@ -194,3 +194,27 @@ Raw JSON, SQL patterns, test logs and screenshots remain local under the ignored
 `.local-design/search-browse` directory. No live user data or provider credentials
 were used. Migration verification applied the actual full Alembic chain to a
 disposable database; deployment databases were not changed by this patch.
+
+### Follow-up: one scheduled portfolio
+
+The initial pass did not establish non-regression for a single job through real
+provider admission. A follow-up replay used the same pipeline fixture in both
+complete trees, changing only `for index in range(2)` to `range(1)` in the fixture
+to seed one pre-indexed 12-work career. Three sequential before/after pairs ran
+at each provider delay, with fresh disposable schemas and no competing jobs.
+
+| Provider delay | Median completion before → after | First publication before → after |
+| --- | --- | --- |
+| 50 ms | 5.328 → 5.797 s (+8.8%) | 1.042 → 1.628 s |
+| 750 ms | 11.349 → 15.635 s (+37.8%) | 3.689 → 3.864 s |
+
+All twelve runs retained the same complete fingerprint and 18 provider requests
+(15 IGDB, three Wikidata; 24 logical IGDB queries). First-publication card counts
+vary with batching, so those times do not compare a fixed number of cards.
+At 750 ms the old single career reached two concurrent IGDB calls internally;
+the new lower-priority limit allows one. At 50 ms both reached only one, so the
+measured regression also includes uncontended scheduling overhead. These are
+scheduled continuation measurements, excluding initial source acquisition and
+browser paint. They establish a real single-job regression; it has not been
+corrected by this documentation update. Raw results are `mapper-single-*.json`
+and the fixture adapter is `.local-design/mapper-single-benchmark.py`.
