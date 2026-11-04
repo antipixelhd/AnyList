@@ -19,6 +19,90 @@ from models.game_runner import GameMapperEdge, GameMapperItem, GameMapperInteres
 class BackgroundMappingTests(unittest.IsolatedAsyncioTestCase):
     cleanup=fixture.GamesDatabaseTests.cleanup
 
+    async def test_restart_waits_for_canonical_lease_then_reuses_saved_cursor(self):
+        from core.game_imdb_enrichment import snapshot
+        from core.game_company_works import JOB
+        from types import SimpleNamespace
+        cursor={'phase':'variants','after':42,'deferred':[]}
+        async with self.Session() as db:
+            db.add(MetadataSnapshot(provider='igdb',kind=JOB,external_id='123',entity_id=self.base,
+                payload=cursor,coverage={'state':'partial'},next_attempt_at=now(),
+                lease_token='old-process',lease_until=now()+timedelta(minutes=3)))
+            await db.commit()
+        async def finish(native):
+            async with self.Session() as db:
+                row=await db.scalar(snapshot(JOB,native,provider='igdb'))
+                self.assertEqual(row.payload,cursor)
+                row.lease_token=row.lease_until=row.next_attempt_at=None
+                row.expires_at=now()+timedelta(days=1)
+                await db.commit()
+        worker=SimpleNamespace(_run=AsyncMock(side_effect=finish))
+        service=GameBackground(self.Session)
+        with work_context(Priority.AUTOMATIC,'automatic'):
+            deadline=await service.canonical_job('igdb',JOB,'123',self.base,worker)
+            self.assertLess(deadline,now()+timedelta(seconds=3))
+            worker._run.assert_not_awaited()
+            async with self.Session() as db:
+                row=await db.scalar(snapshot(JOB,'123',provider='igdb'))
+                row.lease_until=now()-timedelta(seconds=1);await db.commit()
+            await service.canonical_job('igdb',JOB,'123',self.base,worker)
+            worker._run.assert_awaited_once_with('123')
+        async with self.Session() as db:
+            self.assertEqual(await db.scalar(select(func.count()).select_from(MetadataSnapshot).where(
+                MetadataSnapshot.provider=='igdb',MetadataSnapshot.kind==JOB,MetadataSnapshot.external_id=='123')),1)
+
+    async def test_status_uses_only_local_names_for_games_people_and_studios(self):
+        from core.game_background import summary
+        async with self.Session() as db:
+            person=CatalogueEntity(kind='person',name='Local Actor')
+            studio=CatalogueEntity(kind='organization',name='Local Studio')
+            db.add_all([person,studio]);await db.flush()
+            db.add_all([CatalogueIdentity(entity_id=person.id,namespace='imdb.person',external_id='nm123',source='imdb'),
+                CatalogueIdentity(entity_id=studio.id,namespace='igdb.company',external_id='123',source='igdb')])
+            runner=await state(db);runner.lease_until=now()+timedelta(minutes=1)
+            await db.commit()
+            with patch.object(ProviderHTTP,'request',side_effect=AssertionError('Status must never fetch providers')):
+                for key,expected in [('game:10',(await db.get(CatalogueEntity,self.base)).name),
+                        ('person:nm123','Local Actor'),('studio:123','Local Studio'),('game:999999',None)]:
+                    runner.payload={**runner.payload,'current':key};await db.commit()
+                    result=await summary(db)
+                    self.assertEqual(result['current'],key)
+                    self.assertEqual(result['current_name'],expected)
+
+    async def test_cancelled_stage_is_resumed_once_by_a_replacement_runner(self):
+        entered=asyncio.Event()
+        service=GameBackground(self.Session)
+        service.seed_lists=AsyncMock(return_value=False)
+        async def blocked(item):entered.set();await asyncio.Event().wait()
+        service.game=blocked
+        async with self.Session() as db:
+            await observe(db,[('10',self.base)],category=1,source='restart-test')
+            await db.commit()
+        task=asyncio.create_task(service.tick())
+        try:
+            await asyncio.wait_for(entered.wait(),5)
+            other=GameBackground(self.Session)
+            self.assertFalse(await other.tick())
+        finally:
+            task.cancel();await asyncio.gather(task,return_exceptions=True)
+        async with self.Session() as db:
+            runner=await state(db)
+            self.assertIsNone(runner.lease_token)
+            self.assertIsNone(runner.payload.get('current'))
+            self.assertEqual((await db.get(GameMapperItem,'game:10')).processed,0)
+            # A killed process can leave a stale display lease. The live DB
+            # advisory lock, rather than this hint, determines ownership.
+            runner.lease_token='abandoned';runner.lease_until=now()+timedelta(minutes=2)
+            await db.commit()
+        replacement=GameBackground(self.Session)
+        replacement.seed_lists=AsyncMock(return_value=False)
+        replacement.game=AsyncMock(return_value=now()+timedelta(days=1))
+        self.assertTrue(await replacement.tick())
+        replacement.game.assert_awaited_once()
+        async with self.Session() as db:
+            item=await db.get(GameMapperItem,'game:10')
+            self.assertEqual((item.processed,item.quanta),(1,1))
+
     async def test_automatic_batch_does_not_yield_to_its_own_slow_requests(self):
         entered=asyncio.Event();release=asyncio.Event();active=0;sent=[]
         http=ProviderHTTP(session_factory=self.Session)

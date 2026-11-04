@@ -472,10 +472,19 @@ async def summary(db):
         .group_by(GameMapperItem.kind,GameMapperItem.category))).all()
     games={str(category):sum(row.queued for row in rows if row.kind=='game' and row.category==category) for category in CLASSES}
     active=bool(runner.lease_until and runner.lease_until>now())
+    current=runner.payload.get('current') if active else None
+    current_name=None
+    if current:
+        kind,_,native=current.partition(':')
+        namespace={'game':'igdb.game','person':'imdb.person','studio':'igdb.company'}.get(kind)
+        if namespace:
+            current_name=await db.scalar(select(CatalogueEntity.name).join(CatalogueIdentity,
+                CatalogueIdentity.entity_id==CatalogueEntity.id).where(
+                    CatalogueIdentity.namespace==namespace,CatalogueIdentity.external_id==native).limit(1))
     return {'enabled':runner.enabled,'available':settings.game_background_mapper_enabled,
         'state':'disabled' if not settings.game_background_mapper_enabled else 'stopped' if not runner.enabled else 'running' if active else 'idle',
         'heartbeat':runner.heartbeat.isoformat()+'Z' if runner.heartbeat else None,
-        'current':runner.payload.get('current') if active else None,
+        'current':current,'current_name':current_name,
         'queued_games':sum(games.values()),'categories':games,
         'people':sum(row.total for row in rows if row.kind=='person'),
         'studios':sum(row.total for row in rows if row.kind=='studio'),

@@ -1,5 +1,5 @@
 import {formatDateTime} from './date-time';
-type Runner={enabled:boolean;available:boolean;state:string;heartbeat:string|null;current:string|null;categories:Record<string,number>;[key:string]:unknown};
+type Runner={enabled:boolean;available:boolean;state:string;heartbeat:string|null;current:string|null;current_name?:string|null;categories:Record<string,number>;[key:string]:unknown};
 let dispose:(()=>void)|undefined;
 
 export function installGameRunner(){
@@ -20,7 +20,7 @@ export function installGameRunner(){
     write('#runner-state',({running:'Running',idle:'Waiting for idle capacity',stopped:'Stopped',disabled:'Disabled by server configuration'} as Record<string,string>)[value.state]||value.state);
     root.querySelectorAll<HTMLElement>('[data-value]').forEach(node=>{node.textContent=Number(value[node.dataset.value!]??0).toLocaleString();});
     root.querySelectorAll<HTMLElement>('[data-category]').forEach(node=>{node.textContent=Number(value.categories[node.dataset.category!]??0).toLocaleString();});
-    write('#runner-current',value.current||'—');
+    write('#runner-current',value.current_name||value.current||'—');
     write('#runner-heartbeat',value.heartbeat?formatDateTime(value.heartbeat,'time'): '—');
     toggle.textContent=value.enabled?'Stop':'Start';
     toggle.disabled=!value.available||changing;

@@ -117,6 +117,23 @@ the request and timer. Category counts exclude the open-ended catalogue frontier
 Completed-check counters include successful repeat checks; games checked is a
 distinct game count.
 
+Current work displays a locally stored catalogue name when its public identity
+is known, falling back to the queue key. Each active status poll adds one indexed
+scalar name lookup; it never requests a provider or hydrates an entity payload.
+
+Deployments stop the old services before replacing source or running migrations.
+Shutdown cancels and awaits workers. Committed cursors/queue rows persist;
+transaction-owned advisory locks release when connections close, and canonical
+publication checks its lease token. A hard-killed canonical job may wait up to
+three minutes for its old lease; interrupted provider requests/pages can repeat.
+The mapper's display lease does not prevent a replacement from acquiring the
+actual database guard. Focused PostgreSQL checks cover cancellation/replacement,
+exclusion of a concurrent runner, old canonical lease expiry with cursor reuse,
+and game/person/studio name lookup with provider requests forbidden. They do not
+simulate a full process-kill deployment. All three passed; frontend check/build
+and an authenticated rendered-page check passed. One Sol review approved this
+change with no findings (`gpt-6.1-sol`, high effort; usage not exposed).
+
 ## Verification
 
 Use disposable PostgreSQL only. `test_game_work` covers ranking; the
