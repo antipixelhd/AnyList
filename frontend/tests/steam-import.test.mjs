@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { defaultSteamDraft, sortSteamGames, steamSelected, steamProgressPending } from '../src/lib/steam-import.ts';
+import { defaultSteamDraft, sortSteamGames, steamSelected, steamProgressPending, steamStatus, filterSteamGames, reconcileSteamCards, chooseSteamStatus, steamAccentText, steamScrollAnchor } from '../src/lib/steam-import.ts';
 
 const games = [
   {app_id:'1',name:'Alpha',playtime_minutes:30,achievement_count:null,achievement_total:null},
@@ -8,6 +8,76 @@ const games = [
   {app_id:'3',name:'Gamma',playtime_minutes:15,achievement_count:3,achievement_total:20},
   {app_id:'4',name:'Delta',playtime_minutes:0,achievement_count:0,achievement_total:2},
 ];
+test('live search covers the full library, ignores accents/case and preserves draft choices', () => {
+  const library = [...games, ...Array.from({length:100}, (_,i)=>({...games[0],app_id:String(i+10),name:`Other ${i}`})), {...games[0],app_id:'500',name:'Pokémon Mystery Dungeon'}];
+  const draft = defaultSteamDraft(); draft.statuses['500']='playing'; draft.overrides['500']=true;
+  assert.deepEqual(filterSteamGames(library,'  DUNGEON pokemon ').map(g=>g.app_id),['500']);
+  assert.equal(filterSteamGames(library,'no such game').length,0);
+  assert.equal(filterSteamGames(library,' ').length,library.length);
+  assert.equal(library.length,105);
+  assert.equal(steamStatus(library.at(-1),draft),'playing');
+  assert.equal(steamSelected(library.at(-1),draft),true);
+});
+test('per-game status survives serialization and enrichment, with compatibility for older drafts', () => {
+  const draft = defaultSteamDraft(); draft.import_status='paused'; draft.statuses['1']='playing'; draft.statuses['2']='planning';
+  const restored=JSON.parse(JSON.stringify(draft));
+  assert.equal(steamStatus({...games[0],achievement_count:5},restored),'playing');
+  assert.equal(steamStatus(games[1],restored),'planning');
+  assert.equal(steamStatus(games[2],restored),'paused');
+  assert.equal(steamStatus(games[0],defaultSteamDraft()),'completed');
+});
+test('Don’t import is explicit while preserving the previous status and dates for reselection', () => {
+  const draft=defaultSteamDraft(),game=games[0];
+  chooseSteamStatus(game,draft,'playing'); draft.start_dates[game.app_id]='2021-06-03';
+  assert.equal(steamSelected(game,draft),true); assert.equal(steamStatus(game,draft),'playing');
+  chooseSteamStatus(game,draft,'skip');
+  assert.equal(steamSelected(game,draft),false); assert.equal(steamStatus(game,draft),'playing');
+  assert.equal(draft.start_dates[game.app_id],'2021-06-03');
+  draft.overrides[game.app_id]=true;
+  assert.equal(steamStatus(game,draft),'playing');
+  chooseSteamStatus(game,draft,'planning');
+  assert.equal(steamSelected(game,draft),true); assert.equal(steamStatus(game,draft),'planning');
+});
+test('profile accent labels keep readable contrast across light and dark profile colors',()=>{
+  assert.equal(steamAccentText('#3db4f2'),'#0b1622');
+  assert.equal(steamAccentText('#facc15'),'#0b1622');
+  assert.equal(steamAccentText('#22c55e'),'#0b1622');
+  assert.equal(steamAccentText('#1e3a8a'),'#ffffff');
+  assert.equal(steamAccentText('#000000'),'#ffffff');
+  assert.equal(steamAccentText('invalid'),'#0b1622');
+});
+test('selected-only reconciliation anchors a surviving neighbor instead of the excluded card',()=>{
+  const node=(appId,top,options={})=>({dataset:{appId},isConnected:true,parentElement:{hidden:false},
+    getBoundingClientRect:()=>({top,height:100}),...options});
+  const removed=node('1',250),neighbor=node('2',450),later=node('3',650);
+  const bounds={top:200,bottom:800};
+  assert.equal(steamScrollAnchor([removed,neighbor,later],new Set(['2','3']),bounds).element,neighbor);
+  assert.equal(steamScrollAnchor([node('0',100),removed,neighbor],new Set(['0','1','2']),bounds).element,removed);
+  assert.equal(steamScrollAnchor([node('1',250,{parentElement:{hidden:true}}),neighbor],new Set(['1','2']),bounds).element,neighbor);
+  assert.equal(steamScrollAnchor([removed,neighbor],new Set(),bounds),undefined);
+});
+test('filtering preserves mounted cards and their controls while sorting keeps keyboard order', () => {
+  const grid={children:[],get firstElementChild(){return this.children[0]??null;},insertBefore(node,cursor){
+    const old=this.children.indexOf(node); if(old>=0)this.children.splice(old,1);
+    const target=cursor===null?this.children.length:this.children.indexOf(cursor);
+    this.children.splice(target,0,node); node.parentElement=this;
+  }};
+  const card=id=>({id,hidden:false,parentElement:null,control:{status:'completed'},
+    get nextElementSibling(){const rows=this.parentElement.children;return rows[rows.indexOf(this)+1]??null;}});
+  const alpha=card('alpha'),beta=card('beta');
+  reconcileSteamCards(grid,[alpha,beta]); beta.control.status='playing';
+  for(let i=0;i<3;i++) {
+    reconcileSteamCards(grid,[alpha]);
+    assert.equal(beta.parentElement,grid); assert.equal(beta.hidden,true);
+    assert.equal(grid.children.length,2);
+    reconcileSteamCards(grid,[beta,alpha]);
+    assert.equal(beta.hidden,false); assert.equal(beta.control.status,'playing');
+    assert.deepEqual(grid.children.map(row=>row.id),['beta','alpha']);
+  }
+  reconcileSteamCards(grid,[]);
+  assert(grid.children.every(row=>row.hidden));
+  assert.equal(grid.children.length,2);
+});
 test('late software evidence defeats manual selection and stops progress polling',()=>{
   const draft=defaultSteamDraft();draft.overrides['431960']=true;
   const game={...games[0],app_id:'431960',mapping_state:'pending',achievement_state:'loading',achievement_refresh_due:true};

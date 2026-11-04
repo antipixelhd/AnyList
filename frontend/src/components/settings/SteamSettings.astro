@@ -1,9 +1,11 @@
 ---
 import CalendarDateInput from '../CalendarDateInput.astro';
+import Icon from '../Icon.astro';
+import '../../styles/steam-import.css';
 ---
 <section data-steam-settings class="steam-settings space-y-4">
   <h2 class="section-headline border-b border-zinc-800 pb-2">Games</h2>
-  <div class="rounded-2xl bg-zinc-900 p-5 space-y-4">
+  <div class="steam-connection space-y-4">
     <h3 class="font-medium text-zinc-100">Steam</h3>
     <div data-steam-connections class="space-y-4"></div>
     <form data-steam-connect class="space-y-4">
@@ -17,94 +19,56 @@ import CalendarDateInput from '../CalendarDateInput.astro';
       </div>
       <button type="submit" class="steam-primary">Connect Steam</button>
     </form>
-    <p data-steam-message role="status" class="text-sm text-zinc-400" hidden></p>
+    <p data-steam-message role="status" class="steam-message" hidden></p>
   </div>
   <button data-steam-resume type="button" class="steam-primary" hidden>Continue Steam import</button>
   <dialog data-steam-dialog class="steam-workflow" aria-labelledby="steam-import-heading">
-  <header class="steam-workflow-header"><div><p class="text-sm text-zinc-400">Steam import</p><h2 id="steam-import-heading">Choose your games</h2></div><div class="flex gap-5"><button data-steam-later type="button">Complete later</button><button data-steam-cancel type="button">Cancel import</button></div></header>
-  <div data-steam-review class="space-y-5" hidden>
-    <div data-steam-loading class="space-y-3" hidden>
-      <p class="text-zinc-200">Loading your Steam library…</p>
-      <progress class="w-full accent-indigo-400" max="1" value="0"></progress>
-      <p data-steam-loading-count class="text-sm text-zinc-400"></p>
+    <header class="steam-workflow-header">
+      <div><p class="steam-eyebrow">Steam library</p><h2 id="steam-import-heading" tabindex="-1" autofocus>Choose your games</h2></div>
+      <button data-steam-later type="button" class="steam-icon-button" aria-label="Save and close Steam import"><Icon name="close" /></button>
+    </header>
+    <div data-steam-review class="steam-review" hidden>
+      <p data-steam-review-message class="steam-message" role="status" hidden></p>
+      <div data-steam-loading class="steam-loading" hidden>
+        <p>Loading your Steam library…</p><progress max="1" aria-label="Loading Steam library"></progress>
+        <p data-steam-loading-count></p>
+      </div>
+      <div data-steam-picker class="steam-picker" hidden>
+        <div data-steam-controls class="steam-controls">
+          <div class="steam-toolbar">
+            <label class="steam-search"><Icon name="search" /><input data-steam-search type="search" aria-label="Search Steam library" placeholder="Search your library…" autocomplete="off" spellcheck="false" /></label>
+          </div>
+          <div class="steam-utility">
+          <div class="steam-view-tabs" role="group" aria-label="Show Steam games">
+            <button data-steam-view-all type="button" aria-pressed="true">All <span data-steam-total></span></button>
+            <button data-steam-view-selected type="button" aria-pressed="false">Selected <span data-steam-selected-total></span></button>
+          </div>
+          <label class="steam-sort"><span class="sr-only">Sort Steam games</span><select data-steam-sort aria-label="Sort Steam games"><option value="playtime">Most played</option><option value="alphabetical">Name A–Z</option><option value="completion">Achievement completion</option></select></label>
+          </div>
+          <details class="steam-selection-rules">
+            <summary><Icon name="sliders" /><span>Auto-select games</span><Icon name="chevron-down" class="steam-disclosure-arrow" /></summary>
+            <div class="steam-rule-content">
+              <p>Match either minimum. Your individual choices take priority.</p>
+              <div class="steam-filters">
+                <label class="steam-threshold"><span><input type="checkbox" data-steam-playtime-enabled checked /> Playtime</span><span><input aria-label="Minimum playtime in minutes" data-steam-minutes type="number" min="0" max="10000000" value="30" /> min</span></label>
+                <label class="steam-threshold"><span><input type="checkbox" data-steam-achievements-enabled checked /> Achievements</span><input aria-label="Minimum achievements" data-steam-achievements type="number" min="0" max="50000" value="1" /></label>
+              </div>
+              <button type="button" data-steam-reset class="steam-text-button">Reset choices</button>
+            </div>
+          </details>
+          <div data-steam-progress-region class="steam-progress"><span>Updating achievements</span><span data-steam-progress-label></span><progress data-steam-progress max="1" value="0" aria-label="Loading achievement details"></progress></div>
+          <p data-steam-results class="sr-only" role="status" aria-live="polite"></p>
+        </div>
+        <div data-steam-scroll class="steam-library">
+          <div data-steam-grid class="steam-grid"></div>
+          <div data-steam-empty class="steam-empty" hidden><Icon name="search" /><h3>No games found</h3><p>Try another name.</p><button type="button" data-steam-clear-search class="steam-text-button">Clear search</button></div>
+          <button data-steam-more type="button" class="steam-more steam-text-button" hidden>Show more games</button>
+        </div>
+        <footer class="steam-import-bar"><div><strong data-steam-selected></strong><button data-steam-cancel type="button" class="steam-text-button">Cancel import</button></div><button type="button" data-steam-import class="steam-primary">Import selected <Icon name="arrow-right" /></button></footer>
+      </div>
+      <button type="button" data-steam-retry class="steam-primary" hidden>Retry loading</button>
     </div>
-    <div data-steam-picker hidden>
-      <div class="flex flex-wrap items-center justify-between gap-3 mb-5">
-        <span></span>
-        <button type="button" data-steam-reset class="text-sm text-zinc-400 hover:text-white">Reset</button>
-      </div>
-      <div class="steam-filters">
-        <label class="steam-threshold">Import as <select data-steam-status aria-label="Imported game status"><option value="completed">Completed</option><option value="playing">Playing</option><option value="planning">Planning to play</option><option value="paused">Paused</option><option value="dropped">Dropped</option></select></label>
-        <label class="steam-threshold"><span><input type="checkbox" data-steam-playtime-enabled checked /> Minimum playtime</span><span><input aria-label="Minimum playtime in minutes" data-steam-minutes type="number" min="0" max="10000000" value="30" /> min</span></label>
-        <label class="steam-threshold"><span><input type="checkbox" data-steam-achievements-enabled checked /> Minimum achievements</span><input aria-label="Minimum achievements" data-steam-achievements type="number" min="0" max="50000" value="1" /></label>
-      </div>
-      <div class="steam-progress"><div class="flex justify-between text-sm"><span>Achievement details</span><span data-steam-progress-label></span></div><progress data-steam-progress max="1" value="0" aria-label="Loading achievement details"></progress></div>
-      <div class="flex flex-wrap items-center justify-between gap-3 my-5 text-sm text-zinc-400">
-        <p>Either threshold selects a game. Your card choices take priority.</p>
-        <label>Sort <select data-steam-sort aria-label="Sort Steam games" class="rounded-lg bg-zinc-800 p-2 text-zinc-200"><option value="playtime">Playtime</option><option value="alphabetical">Alphabetical</option><option value="completion">Completion</option></select></label>
-      </div>
-      <div data-steam-grid class="steam-grid"></div>
-      <button data-steam-more type="button" class="block mx-auto mt-5 text-sm text-zinc-400 hover:text-white" hidden>Show more games</button>
-      <div class="steam-import-bar"><span data-steam-selected class="text-sm text-zinc-300"></span><button type="button" data-steam-import class="steam-primary">Import selected</button></div>
-    </div>
-    <button type="button" data-steam-retry class="steam-primary" hidden>Retry loading</button>
-  </div>
   </dialog>
-  <dialog data-steam-date-dialog class="steam-date-dialog" aria-labelledby="steam-date-heading"><form method="dialog"><h2 id="steam-date-heading">Completion date</h2><CalendarDateInput id="steam-completion-date" name="completion_date" label="Completion date" /><div class="flex justify-between gap-4 mt-6"><button value="discard" formnovalidate>Discard date</button><button value="cancel" formnovalidate>Cancel</button><button class="steam-primary" value="save">Save date</button></div></form></dialog>
+  <dialog data-steam-date-dialog class="steam-date-dialog" aria-labelledby="steam-date-heading"><form method="dialog"><h2 id="steam-date-heading">Completion date</h2><p data-steam-date-game class="steam-date-game"></p><CalendarDateInput id="steam-completion-date" name="completion_date" label="Completion date" /><div class="steam-date-actions"><button value="discard" formnovalidate class="steam-text-button">Clear date</button><button value="cancel" formnovalidate class="steam-text-button">Cancel</button><button class="steam-primary" value="save">Save</button></div></form></dialog>
 </section>
-
-<style>
-  .steam-settings input,.steam-settings select,.steam-settings button { outline:none; -webkit-tap-highlight-color:transparent; }
-  .steam-settings input:focus-visible,.steam-settings select:focus-visible { background:#3f3f46; }
-  .steam-settings button:focus-visible { color:white; background:#4338ca; }
-  .steam-settings input[type=checkbox] { accent-color:#818cf8; margin-right:.4rem; }
-  .steam-primary { background:#4f46e5; color:white; padding:10px 16px; border-radius:8px; font-size:14px; transition:background .15s; }
-  .steam-primary:hover { background:#6366f1; }
-  .steam-primary:disabled { opacity:.5; cursor:wait; }
-  .steam-filters { display:flex; flex-wrap:wrap; gap:1rem 2rem; }
-  .steam-threshold { display:flex; align-items:center; gap:10px; font-size:14px; color:#d4d4d8; }
-  .steam-threshold input[type=number] { width:5rem; background:#27272a; border-radius:.4rem; padding:.4rem .5rem; }
-  .steam-workflow { width:min(1240px,96vw); max-width:none; height:92dvh; max-height:96dvh; padding:0; border:0; border-radius:1.25rem; background:var(--surface,#121e2b); color:var(--text,#e4e4e7); overflow:auto; }
-  .steam-workflow::backdrop,.steam-date-dialog::backdrop { background:#030912bb; backdrop-filter:blur(8px); }
-  .steam-workflow-header { display:flex; justify-content:space-between; align-items:center; gap:2rem; padding:1.5rem 2rem; background:var(--surface,#121e2b); position:sticky; top:0; z-index:3; }
-  .steam-workflow-header h2 { font-size:28px; font-weight:650; }
-  .steam-workflow-header button:focus-visible { background:transparent; color:white; }
-  [data-steam-review] { padding:1rem 2rem 2rem; }
-  .steam-progress { margin-top:1.25rem; color:#a1a1aa; }
-  .steam-progress progress { width:100%; height:5px; accent-color:#818cf8; }
-  .steam-progress progress::-webkit-progress-bar { background:#ffffff12; border-radius:8px; }
-  .steam-progress progress::-webkit-progress-value { background:#818cf8; border-radius:8px; transition:width .3s; }
-  .steam-date-dialog { --field:#1c3042; --text:#e4e4e7; --muted:#94a3b8; --bright:#fff; --type-control-size:16px; width:min(420px,94vw); padding:24px; border:0; border-radius:16px; background:#152334; color:#e4e4e7; }
-  .steam-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:1rem; }
-  .steam-import-bar { position:sticky; bottom:1rem; display:flex; justify-content:space-between; align-items:center; gap:1rem; margin-top:1.5rem; padding:1rem; border-radius:.75rem; background:#18181bf2; backdrop-filter:blur(12px); }
-  @media(max-width:600px) { .steam-grid { grid-template-columns:1fr; } .steam-workflow { width:100vw; height:100dvh; max-height:100dvh; border-radius:0; } .steam-workflow-header,[data-steam-review] { padding:16px; } .steam-workflow-header { gap:12px; } .steam-workflow-header h2 { font-size:20px; } }
-  @media(prefers-reduced-motion:reduce) { .steam-primary { transition:none; } }
-</style>
-<style is:global>
-  .steam-card { position:relative; min-width:0; text-align:left; padding:.4rem; border-radius:.7rem; color:#a1a1aa; background:transparent; transition:background .15s,color .15s; }
-  .steam-card[aria-pressed=true] { background:#312e8166; color:#e4e4e7; }
-  .steam-card:hover:not([aria-disabled=true]) { color:white; }
-  .steam-card[aria-disabled=true] { opacity:.4; cursor:not-allowed; }
-  .steam-card:focus-visible { background:#4338ca99; outline:none; }
-  .steam-card img { width:100%; aspect-ratio:2/3; object-fit:cover; border-radius:.45rem; background:#27272a; }
-  .steam-game { padding:1rem; border-radius:.85rem; background:#ffffff04; transition:background .2s; }
-  .steam-game:has([aria-pressed=true]) { background:#6366f11c; }
-  .steam-game .steam-card { display:grid; grid-template-columns:90px minmax(0,1fr); gap:.4rem .9rem; width:100%; background:transparent; padding:0; }
-  .steam-game .steam-card img { grid-row:1/4; }
-  .steam-game .steam-card-title { font-size:16px; line-height:24px; margin:0; }
-  .steam-game .steam-card-stats { font-size:14px; line-height:22px; margin:0; }
-  .steam-game .steam-card-achievements { min-height:22px; line-height:22px; }
-  .steam-game .steam-card-check { display:none; }
-  .steam-game .steam-card[aria-pressed=true] .steam-card-title::before { content:'✓ '; color:#a5b4fc; }
-  .steam-completion { margin-left:calc(90px + .9rem); text-align:left; font-size:13px; line-height:20px; color:#b9b6ed; padding:6px 0; }
-  .steam-card-title { display:block; margin-top:.5rem; font-size:.8rem; font-weight:500; line-height:1.4; }
-  .steam-card-stats { display:block; font-size:.75rem; color:#a1a1aa; margin-top:.3rem; }
-  .steam-card-achievements { display:block; min-height:1.125rem; line-height:1.125rem; }
-  .steam-card-achievements[data-loading] { width:5rem; }
-  .steam-card-achievements[data-loading]::before { content:''; display:block; height:.65rem; transform:translateY(.2rem); border-radius:.25rem; background:#3f3f46; animation:steam-count-pulse 1.4s ease-in-out infinite; }
-  @keyframes steam-count-pulse { 50% { opacity:.35; } }
-  .steam-card-check { position:absolute; right:.75rem; top:.75rem; border-radius:50%; background:#4f46e5; color:white; width:1.5rem; height:1.5rem; text-align:center; line-height:1.5rem; opacity:0; }
-  .steam-card[aria-pressed=true] .steam-card-check { opacity:1; }
-  @media(prefers-reduced-motion:reduce) { .steam-card { transition:none; } .steam-card-achievements[data-loading]::before { animation:none; } }
-</style>
 <script src="../../scripts/steam-settings.ts"></script>

@@ -46,6 +46,7 @@ class Connect(Options):
 
 
 class Draft(BaseModel):
+    statuses: dict[str, Literal['completed', 'playing', 'planning', 'paused', 'dropped']] = Field(default_factory=dict, max_length=100000)
     start_dates: dict[str, date | None] = Field(default_factory=dict, max_length=100000)
     import_status: Literal['completed', 'playing', 'planning', 'paused', 'dropped'] = 'completed'
     completion_dates: dict[str, date | None] = Field(default_factory=dict, max_length=100000)
@@ -264,7 +265,7 @@ async def validate_draft(db, viewer, connection_id, body):
     if state.imported or state.generation != body.generation:
         raise HTTPException(409, 'Steam import changed. Reload to continue.')
     apps = {row['app_id'] for row in state.library}
-    if body.overrides.keys() - apps:
+    if (body.overrides.keys() | body.statuses.keys() | body.start_dates.keys() | body.completion_dates.keys()) - apps:
         raise HTTPException(422, 'Selection contains games outside this Steam library.')
     return state
 
@@ -299,7 +300,8 @@ async def commit_import(connection_id: int, body: ImportSelection, background: B
     await require_idle_account(db, viewer.id)
     state = await validate_draft(db, viewer, connection_id, body)
     await steam_sync.apply_games(db, state, library, selection, initial=True,
-        initial_status=body.import_status, completion_dates=body.completion_dates,start_dates=body.start_dates)
+        initial_status=body.import_status, statuses=body.statuses,
+        completion_dates=body.completion_dates, start_dates=body.start_dates)
     accepted = [app for app in selection if app in state.checkpoints]
     state.selection, state.imported, state.draft = accepted, True, {}
     state.known_apps = sorted(row['app_id'] for row in library)

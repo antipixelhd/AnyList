@@ -224,6 +224,22 @@ class SteamDatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(state.checkpoints['20']['playtime_minutes'],50)
             await db.commit()
 
+    async def test_component_status_uses_primary_choice_independent_of_selection_order(self):
+        from core import catalogue,steam_targets
+        await self.connect()
+        async with self.Session() as db:
+            await catalogue.write_lock(db)
+            work=await steam_targets.assign(db,'20','1245620',evidence={'review':'confirmed component'})
+            state=await db.get(SteamConnection,self.id)
+            rows=[game('20',40,1,2),game('1245620',60,2,3)]
+            await steam_sync.apply_games(db,state,rows,['20','1245620'],initial=True,
+                statuses={'20':'completed','1245620':'playing'},start_dates={'1245620':date(2021,6,3)},
+                completion_dates={'20':date(2020,5,4)})
+            entry=await db.scalar(select(GameEntry).where(GameEntry.user_id==self.user.id,GameEntry.work_id==work.id))
+            self.assertEqual(entry.status,'playing')
+            self.assertEqual(entry.start_date,date(2021,6,3))
+            self.assertIsNone(entry.finish_date)
+
     async def test_existing_component_membership_moves_without_reimporting_time(self):
         from core import catalogue,steam_targets
         await self.imported()
@@ -359,6 +375,38 @@ class SteamDatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(str(rows['1245620'].finish_date), '2023-11-14')
             self.assertEqual(str(rows['20'].finish_date), '2020-05-04')
             self.assertIsNone(rows['30'].finish_date)
+
+    async def test_review_persists_and_imports_individual_statuses_and_dates(self):
+        await self.connect()
+        path = f'/connections/steam/{self.id}'
+        draft = {'generation':1, 'statuses':{'1245620':'playing','20':'completed','30':'planning'},
+                 'start_dates':{'1245620':'2021-06-03'}, 'completion_dates':{'20':'2020-05-04'},
+                 'selected_apps':['1245620','20','30']}
+        response = await self.client.put(path+'/draft',json=draft)
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertEqual((await self.client.get(path)).json()['draft']['statuses'],draft['statuses'])
+        response = await self.client.post(path+'/import',json=draft)
+        self.assertEqual(response.status_code,200,response.text)
+        async with self.Session() as db:
+            rows = dict((await db.execute(select(CatalogueIdentity.external_id,GameEntry).join(
+                GameEntry,GameEntry.work_id==CatalogueIdentity.entity_id).where(GameEntry.user_id==self.user.id,
+                CatalogueIdentity.namespace=='steam.app'))).all())
+            self.assertEqual(rows['1245620'].status,'playing')
+            self.assertEqual(rows['1245620'].start_date,date(2021,6,3))
+            self.assertIsNone(rows['1245620'].finish_date)
+            self.assertEqual(rows['20'].status,'completed')
+            self.assertEqual(rows['20'].finish_date,date(2020,5,4))
+            self.assertEqual(rows['30'].status,'planning')
+            self.assertIsNone(rows['30'].start_date)
+            self.assertIsNone(rows['30'].finish_date)
+
+    async def test_review_rejects_foreign_statuses_and_invalid_values(self):
+        await self.connect()
+        path=f'/connections/steam/{self.id}'
+        for values in ({'statuses':{'999999':'playing'}}, {'statuses':{'20':'invalid'}}, {'start_dates':{'999999':'2020-01-01'}}):
+            for action,method in (('/draft',self.client.put),('/import',self.client.post)):
+                response=await method(path+action,json={'generation':1,**values})
+                self.assertEqual(response.status_code,422,response.text)
 
     async def test_background_details_survive_independent_review_requests(self):
         await self.connect()
