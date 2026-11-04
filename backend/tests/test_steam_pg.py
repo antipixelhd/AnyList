@@ -127,10 +127,9 @@ class SteamDatabaseTests(unittest.IsolatedAsyncioTestCase):
         from core import catalogue, steam_cache
         await self.connect()
         async with self.Session() as db:
-            work = await catalogue.upsert_entity(db, {'kind':'game','name':'Canonical game',
+            await catalogue.upsert_entity(db, {'kind':'game','name':'Canonical game',
                 'attributes':{'igdb_id':'11208','game_class':'game'},
                 'identities':[{'namespace':'igdb.game','external_id':'11208'}]}, 'igdb')
-            canonical = work.id
             await db.commit()
         for app,evidence in [
             ('20',{'state':'ambiguous','checked_at':steam_sync.now().isoformat()}),
@@ -371,6 +370,11 @@ class SteamDatabaseTests(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
         await fixture.GamesDatabaseTests.asyncSetUp(self)
+        # Ordinary import/progress fixtures represent an already canonical
+        # Steam game. Legacy-only admission is exercised separately.
+        async with self.Session() as db:
+            db.add(CatalogueIdentity(entity_id=self.base, namespace='igdb.game', external_id='119133', source='igdb'))
+            await db.commit()
         # Ordinary progress tests use verified public identity evidence. Missing,
         # ambiguous and failed mapping cases override it explicitly.
         from core import steam_cache
@@ -580,7 +584,7 @@ class SteamDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.progress())['provider_requests'], 0)
         async with self.Session() as db:
             rows = list(await db.scalars(select(MetadataSnapshot).where(MetadataSnapshot.kind == PUBLIC_KIND)))
-            self.assertEqual({row.external_id for row in rows}, {'1245620', '20', '30'})
+            self.assertEqual({row.external_id for row in rows}, {'1245620', '20', '30', '40'})
             self.assertTrue(all('playtime_minutes' not in row.payload and 'achievement_count' not in row.payload for row in rows))
 
     async def test_overlapping_progress_requests_share_the_durable_claim(self):

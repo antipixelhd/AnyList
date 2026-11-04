@@ -14,6 +14,7 @@ from sqlalchemy import select, text
 from core import catalogue
 from core.game_browse_sources import GameBrowseSources
 from core.game_types import canonical_game, capabilities, igdb_game_class, mobile_only
+from core.game_identity_reconciliation import reconcile
 from db import AsyncSessionLocal, engine
 from models.catalogue import CatalogueIdentity, CatalogueEntity
 
@@ -78,6 +79,8 @@ async def run(args, *, factory=AsyncSessionLocal, source=None):
                     root = await db.get(CatalogueEntity, expected)
                     previous = await catalogue.resolve_identity(db, 'igdb.game', native)
                     duplicate_id = previous.entity_id if previous and previous.entity_id != expected else None
+                    await reconcile(db, [{'namespace': 'steam.app', 'external_id': app},
+                        {'namespace': 'igdb.game', 'external_id': native}], 'igdb', {'game_class': kind})
                     row = await catalogue.upsert_entity(db, {'kind': 'game', 'name': root.name,
                         'attributes': {'igdb_id': native, 'game_class': kind},
                         'identities': [{'namespace': 'steam.app', 'external_id': app},

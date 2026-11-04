@@ -5,6 +5,7 @@ from sqlalchemy import select, text
 
 from core.statistics_snapshots import CONTRACT_VERSION, utcnow
 from models.sync import SyncJob, SyncStatus
+from core.game_health import ORPHANS
 
 JOB_TYPE = 'data_health'
 LOCK_KEY = 714903421
@@ -40,6 +41,8 @@ WITH tracked AS (
 
 # Counts use records/roles/groups as indicated, not repeated user memberships.
 CHECKS = [
+ ('orphaned_games', 'Games without an IGDB identity', 'Legacy Steam or tracked game records without a canonical IGDB identity. Run a game scan to verify possible matches.', 'warning', 'games', 'game_scan',
+  f"SELECT id,name,CASE WHEN cardinality(apps)>0 THEN 'Steam app ' || array_to_string(apps,', ') ELSE 'No verified provider identity' END AS detail FROM ({ORPHANS}) g"),
  ('identity_conflicts', 'Conflicting title identities', 'Provider identities point to different catalogue titles. Review before changing mappings.', 'warning', 'titles', None,
   "SELECT id,name,'Review identity mappings' AS detail FROM titles WHERE root_count>1"),
  ('unmatched_titles', 'Titles without a catalogue match', 'Tracked movies and series without a verified catalogue identity.', 'warning', 'titles', 'metadata',
@@ -100,7 +103,7 @@ def job_view(job):
             'step': job.current_step, 'completed_steps': job.processed_items,
             'total_steps': job.total_items, 'results': stats.get('results', {}),
             'error': 'Repair did not finish. Completed steps were preserved; retry is safe.' if status in ('failed', 'interrupted') else None,
-            'updated_at': job.updated_at.replace(tzinfo=timezone.utc)}
+            'updated_at': job.updated_at.replace(tzinfo=timezone.utc), 'game_scan': stats.get('game_scan')}
 
 
 async def latest_job(db):
@@ -120,6 +123,9 @@ async def report(db):
     for code, label, description, severity, unit, action, _ in CHECKS:
         row = rows.get(code, {})
         examples = row.get('examples', [])
+        if code == 'orphaned_games':
+            for example in examples:
+                example['href'] = f"/games/{example['id']}"
         if code in ('identity_conflicts','unmatched_titles','genres','country','posters','cast','staff','studios','history_runtime','planned_runtime','orphan_episodes','duplicate_media'):
             for example in examples:
                 example['href'] = f"/title/{example['id']}"
@@ -130,7 +136,7 @@ async def report(db):
             'catalogue_records': totals.catalogue, 'checks': checks, 'job': job_view(await latest_job(db))}
 
 
-async def enqueue(db, user_id, action):
+async def enqueue(db, user_id, action, *, scan_job_id=None, after_id=0):
     """Serialize enqueues across workers with the same lock held by the runner."""
     if not await db.scalar(text('SELECT pg_try_advisory_xact_lock(:key)'), {'key': LOCK_KEY}):
         return None
@@ -142,8 +148,8 @@ async def enqueue(db, user_id, action):
         job.status = SyncStatus.failed
         job.error_message = 'interrupted'
     job = SyncJob(user_id=user_id, source='tmdb', job_type=JOB_TYPE, status=SyncStatus.pending,
-                  total_items=1 if action == 'statistics' else 2 if action == 'characters' else 6,
-                  processed_items=0, stats={'action': action, 'results': {}},
+                  total_items=1 if action in ('statistics', 'game_scan', 'game_reconcile') else 2 if action == 'characters' else 6,
+                  processed_items=0, stats={'action': action, 'results': {}, 'scan_job_id': scan_job_id, 'after_id': after_id},
                   created_at=utcnow(), updated_at=utcnow())
     db.add(job)
     await db.commit()

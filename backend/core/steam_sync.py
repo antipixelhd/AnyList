@@ -126,6 +126,7 @@ async def attach_dates(db, library):
 async def apply_games(db, state, library, selected, *, initial=False, add_apps=None, initial_status='completed', completion_dates=None,start_dates=None):
     """One list write per canonical game; source app counters remain independent."""
     from core import steam_targets
+    from core.game_metadata import native_id
     by_app = {row['app_id']: row for row in library}
     additions = set(add_apps or ())
     today = datetime.now(ZoneInfo(state.timezone or 'UTC')).date()
@@ -134,9 +135,18 @@ async def apply_games(db, state, library, selected, *, initial=False, add_apps=N
     # evidence is authoritative only while recent, complete and unambiguous.
     public = await steam_cache.public_metadata(db, list(selected))
     mapping = await steam_targets.targets(db, selected)
-    await steam_targets.retarget(db, state, mapping)
+    canonical_admission = {}
+    for target in set(mapping.values()):
+        work = await db.get(CatalogueEntity, target)
+        canonical_admission[target] = bool(work and await native_id(db, work))
+    # Retargeting itself moves private membership and checkpoints. Reject an
+    # orphan destination before that mutation, including ordinary progress sync.
+    await steam_targets.retarget(db, state, {app: target for app, target in mapping.items()
+        if canonical_admission[target]})
     checkpoints, groups = dict(state.checkpoints), {}
     for app in dict.fromkeys(selected):
+        if app in mapping and not canonical_admission[mapping[app]]:
+            continue
         data = by_app.get(app)
         if data is None:
             continue
@@ -145,12 +155,6 @@ async def apply_games(db, state, library, selected, *, initial=False, add_apps=N
             work = await db.get(CatalogueEntity, mapping[app])
         elif identity:
             work = await db.get(CatalogueEntity, identity.entity_id)
-            # Old Steam-only roots are retained for existing progress, but may
-            # not acquire new imported membership without a canonical identity.
-            if initial or app in additions:
-                from core.game_metadata import native_id
-                if not await native_id(db, work):
-                    continue
         elif initial or app in additions:
             evidence = public.get(app, {}).get('igdb_classification')
             native = verified_import_native(evidence)
@@ -174,6 +178,14 @@ async def apply_games(db, state, library, selected, *, initial=False, add_apps=N
                 }, 'steam')
         else:
             continue
+        # Every admission path, including combined-app progress targets, must
+        # already resolve to a canonical IGDB game. Legacy progress can still
+        # sync, but an import/auto-add cannot create another orphan membership.
+        if work and (initial or app in additions):
+            if work.id not in canonical_admission:
+                canonical_admission[work.id] = bool(await native_id(db, work))
+            if not canonical_admission[work.id]:
+                continue
         if work and app not in mapping and data.get('game_class') and data['game_class']!='unknown' and (work.field_sources or {}).get('attributes.game_class') in (None,'steam'):
             catalogue.merge_fields(work,{'attributes':{'game_class':data['game_class']}},'igdb')
         if not work or not capabilities(work.attributes).independent:
@@ -262,8 +274,6 @@ async def apply_games(db, state, library, selected, *, initial=False, add_apps=N
                 **({'achievement_count': game['achievement_count']} if state.sync_achievements and game.get('achievement_count') is not None else {}),
                 **({'achievement_checked_at': game['achievement_checked_at']} if game.get('achievement_checked_at') else {})}
     state.checkpoints = checkpoints
-    from core.game_metadata import queue_imports
-    await queue_imports(db,list(groups))
     return changed
 
 

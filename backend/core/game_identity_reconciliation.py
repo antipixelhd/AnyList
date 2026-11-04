@@ -52,13 +52,22 @@ async def discovery_identities(db, values):
     eligible = {row.entity_id for row in mappings if row.igdb_id is None}
     if len(eligible) > 1:
         raise catalogue.IdentityConflict('Steam references identify multiple imported roots')
+    if eligible:
+        existing = await catalogue.resolve_identity(db, 'igdb.game', primary[0]['external_id'])
+        if existing and existing.entity_id not in eligible:
+            # Both records already exist: leave their reconciliation to the
+            # explicit admin scan. Discovery keeps the established IGDB root.
+            return projected
     projected['identities'] = [*primary, *[i for i in steam if any(
         m.external_id == str(i['external_id']) and m.entity_id in eligible for m in mappings)]]
     return projected
 
 
 async def reconcile(db, identities, source, attributes=None):
-    """Only an IGDB-supplied exact bridge may reconcile an imported stub."""
+    """Manual repair only: require an exact IGDB-supplied bridge.
+
+    Normal catalogue/discovery writes never invoke this merge boundary.
+    """
     if source != 'igdb':
         return
     from core import catalogue

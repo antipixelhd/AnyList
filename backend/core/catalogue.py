@@ -231,9 +231,6 @@ async def upsert_entity(db, values, source):
     ids = values.get("identities") or []
     if not ids:
         raise IdentityConflict("Canonical records require an identity")
-    if values['kind'] == 'game':
-        from core.game_identity_reconciliation import reconcile
-        await reconcile(db, ids, source, values.get('attributes'))
     if values['kind'] == 'person':
         from core.person_identities import reconcile_person_identities
         await reconcile_person_identities(db, ids, source)

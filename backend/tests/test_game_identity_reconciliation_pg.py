@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from core import catalogue
 from core.catalogue_normalize import normalize_igdb
 from core.game_company_works import prepare_primary_game
-from core.game_identity_reconciliation import alias_target
+from core.game_identity_reconciliation import alias_target, reconcile
 from core.game_imdb_discovery import GamePersonDiscovery
 from models import Base, User, GameEntry, GameActivity, GameFavorite, GameAchievement, GameAchievementUnlock, SteamConnection, MediaServerConnection, UserProfileData
 from models.catalogue import CatalogueEntity, CatalogueIdentity, CatalogueCredit, CharacterAppearance, CharacterPerformance, MetadataSnapshot
@@ -75,6 +75,11 @@ class GameBridgeTests(unittest.IsolatedAsyncioTestCase):
         doc = document(); doc['work']['identities'] = doc['work']['identities'][:1]
         row = await catalogue.ingest_document(db, doc, 'igdb')
         return row
+
+    async def manual_reconcile(self, db):
+        values = document()['work']
+        await reconcile(db, values['identities'], 'igdb', values['attributes'])
+        return await catalogue.upsert_entity(db, values, 'igdb')
 
     async def assert_private_preserved(self, db):
         entry = await db.get(GameEntry, self.entry_id)
@@ -138,7 +143,7 @@ class GameBridgeTests(unittest.IsolatedAsyncioTestCase):
             db.add(UserProfileData(user_id=self.user.id, game_banners={str(old_id): 'https://example.test/banner.jpg'}))
             await db.commit()
         async with self.Session() as db:
-            row = await catalogue.upsert_entity(db, document()['work'], 'igdb'); await db.commit()
+            row = await self.manual_reconcile(db); await db.commit()
             self.assertEqual(row.id, self.root)
             self.assertIsNone(await db.get(CatalogueEntity, old_id))
             self.assertEqual(await alias_target(db, old_id), self.root)
@@ -161,7 +166,7 @@ class GameBridgeTests(unittest.IsolatedAsyncioTestCase):
             db.add(GameEntry(user_id=self.user.id, work_id=old_id, status='completed', notes='Different decision'))
             await db.commit()
             with self.assertRaises(catalogue.IdentityConflict):
-                await catalogue.upsert_entity(db, document()['work'], 'igdb')
+                await self.manual_reconcile(db)
             await db.rollback()
         async with self.Session() as db:
             self.assertIsNotNone(await db.get(CatalogueEntity, old_id))
@@ -175,7 +180,7 @@ class GameBridgeTests(unittest.IsolatedAsyncioTestCase):
             root.protected_fields = duplicate.protected_fields = ['name']
             await db.commit()
             with self.assertRaises(catalogue.IdentityConflict):
-                await catalogue.upsert_entity(db, document()['work'], 'igdb')
+                await self.manual_reconcile(db)
             await db.rollback()
 
     async def test_port_reference_does_not_merge_existing_different_igdb_game(self):
@@ -227,7 +232,7 @@ class GameBridgeTests(unittest.IsolatedAsyncioTestCase):
         from routers.games import router
         async with self.Session() as db:
             old_id = (await self.duplicate(db)).id
-            await catalogue.upsert_entity(db, document()['work'], 'igdb'); await db.commit()
+            await self.manual_reconcile(db); await db.commit()
         app = FastAPI(); app.include_router(router)
         async def database():
             async with self.Session() as db:
@@ -239,3 +244,17 @@ class GameBridgeTests(unittest.IsolatedAsyncioTestCase):
             response = await client.get(f'/tracking/games/works/{old_id}')
             self.assertEqual(response.status_code, 200, response.text)
             self.assertEqual(response.json()['subject']['catalogue_id'], self.root)
+
+    async def test_normal_discovery_and_metadata_never_merge_existing_records(self):
+        async with self.Session() as db:
+            duplicate_id = (await self.duplicate(db)).id
+            await db.commit()
+            with self.assertRaises(catalogue.IdentityConflict):
+                await catalogue.upsert_entity(db, document()['work'], 'igdb')
+            await db.rollback()
+        self.assertEqual(await GamePersonDiscovery(self.Session).ingest(document()), duplicate_id)
+        async with self.Session() as db:
+            self.assertIsNotNone(await db.get(CatalogueEntity, duplicate_id))
+            self.assertIsNone(await alias_target(db, duplicate_id))
+            self.assertIsNone(await catalogue.resolve_identity(db, 'igdb.game', '999'))
+            await self.assert_private_preserved(db)

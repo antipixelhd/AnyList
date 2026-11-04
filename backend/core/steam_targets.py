@@ -112,6 +112,8 @@ async def classify(factory, games, *, source=None):
         from core.catalogue_normalize import image
         try:
             parents=await source.steam_games([int(app) for app in set(missing.values())])
+            if len(parents) >= 500:
+                parents=[]  # A capped component lookup cannot certify uniqueness.
         except ProviderError:
             parents=[]
         candidates={app:{} for app in missing.values()}
