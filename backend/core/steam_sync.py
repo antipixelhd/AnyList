@@ -98,7 +98,14 @@ async def preparation(factory, user_id, connection_id, job_id):
             return
         library=list(state.library)
     from core.steam_targets import classify
-    await classify(factory,library)
+    try:
+        await classify(factory,library)
+    except SteamError as error:
+        async with factory() as db:
+            await db.execute(update(SyncJob).where(SyncJob.id == job_id, SyncJob.status == SyncStatus.running)
+                .values(status=SyncStatus.failed, error_message=str(error)))
+            await db.commit()
+        return
     async with factory() as db:
         state=await db.get(SteamConnection,connection_id,with_for_update=True)
         if not state or state.user_id!=user_id:

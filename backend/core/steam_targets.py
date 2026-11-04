@@ -50,6 +50,10 @@ async def import_states(db, games, *, settled=False):
             result[app] = 'pending' if not settled else 'ready'
         elif verified_import_native(evidence):
             result[app] = 'ready' if capabilities({'game_class':evidence.get('game_class','unknown')}).independent else 'unavailable'
+        elif not settled and settings.steam_web_api_key and isinstance(evidence, dict) and evidence.get('state') == 'unmatched':
+            # The batch miss is not final while redirect fallback is running.
+            # Keep the picker polling until preparation settles or maps it.
+            result[app] = 'pending'
         else:
             result[app] = 'unavailable' if settled or isinstance(evidence, dict) and evidence.get('state') in ('unmatched','ambiguous') else 'pending'
     return result
@@ -84,7 +88,7 @@ async def assign(db, app, target_app, *, evidence):
     return work
 
 
-async def classify(factory, games, *, source=None):
+async def classify(factory, games, *, source=None, redirect_probe=None):
     """Batch exact IGDB app references. No title matching or per-game fan-out."""
     from core.game_browse_sources import GameBrowseSources
     from core import steam_software
@@ -109,10 +113,11 @@ async def classify(factory, games, *, source=None):
         known = set(await db.scalars(select(CatalogueIdentity.external_id).join(native,
             native.c.entity_id == CatalogueIdentity.entity_id).where(CatalogueIdentity.namespace=='steam.app',
             CatalogueIdentity.external_id.in_(apps),native.c.namespace=='igdb.game')))
+        combined = await targets(db, apps)
     if source is None and not (settings.igdb_client_id and settings.igdb_client_secret):
         return
     stamp=steam_cache.now()
-    due=[app for app in apps if app not in known and app not in COMPONENTS and (
+    due=[app for app in apps if app not in known and app not in combined and app not in COMPONENTS and (
         not cached.get(app,{}).get('classification_checked_at') or
         datetime.fromisoformat(cached[app]['classification_checked_at'])<=stamp-timedelta(days=30))]
     source=source or GameBrowseSources(factory)
@@ -148,23 +153,35 @@ async def classify(factory, games, *, source=None):
         except ProviderError:
             continue
         found={app:{} for app in batch}
+        incomplete=set()
         for row in rows:
             app=str(row.get('uid',''));raw=canonical_game(row.get('game'))
             if app in found and raw:
                 found[app][raw['id']]=raw
+            elif app in found:
+                incomplete.add(app)
         values=[]
         for app,matches in found.items():
             if len(rows)>=500 and not matches:
                 continue  # A capped provider response cannot certify absence.
             item={'app_id':app,'classification_checked_at':stamp.isoformat()}
-            evidence={'version':1,'state':'unmatched' if not matches else 'ambiguous','checked_at':stamp.isoformat()}
-            if len(matches)==1:
+            evidence={'version':1,'state':'unknown' if app in incomplete else 'unmatched' if not matches else 'ambiguous','checked_at':stamp.isoformat()}
+            if len(matches)==1 and app not in incomplete:
                 raw=next(iter(matches.values()))
                 item.update(game_class=igdb_game_class(raw),igdb_id=str(raw['id']))
                 evidence.update(state='bound' if len(rows)<500 else 'partial',game_class=item['game_class'],igdb_id=item['igdb_id'])
             item['igdb_classification']=evidence
             values.append(item)
         await steam_cache.save_public(factory,values)
+        for item in values:
+            cached.setdefault(item['app_id'], {}).update(item)
+    if settings.steam_web_api_key or redirect_probe is not None:
+        from core.steam_redirects import associate
+        fallback = [app for app in apps if app not in known and app not in combined and app not in COMPONENTS
+            and cached.get(app, {}).get('igdb_classification', {}).get('state') == 'unmatched'
+            and cached.get(app, {}).get('classification_checked_at')
+            and stamp - timedelta(days=30) <= datetime.fromisoformat(cached[app]['classification_checked_at']) <= stamp]
+        await associate(factory, fallback, source, probe=redirect_probe)
 
 
 async def retarget(db, state, mapping):

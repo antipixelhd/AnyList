@@ -292,7 +292,10 @@ async def commit_import(connection_id: int, body: ImportSelection, background: B
     selected_library = [game for game in library if game['app_id'] in selected_ids]
     await db.commit()
     from core.steam_targets import classify
-    await classify(AsyncSessionLocal, selected_library)
+    try:
+        await classify(AsyncSessionLocal, selected_library)
+    except SteamError as error:
+        raise HTTPException(409, str(error)) from None
     await require_idle_account(db, viewer.id)
     state = await validate_draft(db, viewer, connection_id, body)
     await steam_sync.apply_games(db, state, library, selection, initial=True,

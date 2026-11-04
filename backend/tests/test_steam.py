@@ -49,6 +49,9 @@ class SteamTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result,{'10':'ready','20':'ready','30':'unavailable','40':'pending','212910':'pending'})
             result = await steam_targets.import_states(db,games,settled=True)
             self.assertEqual(result,{'10':'ready','20':'ready','30':'unavailable','40':'unavailable','212910':'ready'})
+            with patch.object(steam_targets.settings, 'steam_web_api_key', 'configured'):
+                self.assertEqual((await steam_targets.import_states(db,games))['30'], 'pending')
+                self.assertEqual((await steam_targets.import_states(db,games,settled=True))['30'], 'unavailable')
 
     def test_import_requires_recent_complete_exact_identity_evidence(self):
         from core.steam_sync import verified_import_native, now
