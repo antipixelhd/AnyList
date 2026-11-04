@@ -54,7 +54,7 @@ async def status(db,entity_id,*,enqueue=False):
     rows=(await db.execute(select(MetadataSnapshot.external_id,
         MetadataSnapshot.coverage['state'].astext.label('coverage'),MetadataSnapshot.coverage['complete'].as_boolean().label('complete'),
         MetadataSnapshot.coverage['received'].as_integer().label('received'),MetadataSnapshot.coverage['total'].as_integer().label('total'),
-        MetadataSnapshot.coverage['generation'].astext.label('generation'),MetadataSnapshot.fetched_at,
+        MetadataSnapshot.coverage['generation'].astext.label('generation'),MetadataSnapshot.coverage['works_pending'].as_boolean().label('works_pending'),MetadataSnapshot.fetched_at,
         MetadataSnapshot.lease_until,MetadataSnapshot.next_attempt_at,MetadataSnapshot.error_code,MetadataSnapshot.expires_at).where(
         MetadataSnapshot.provider=='igdb',MetadataSnapshot.kind==JOB,MetadataSnapshot.external_id.in_(ids)))).all()
     states=[status_view(row) for row in rows]
@@ -63,6 +63,7 @@ async def status(db,entity_id,*,enqueue=False):
     fetched=max((row.fetched_at for row in rows if row.fetched_at),default=None)
     revision=hashlib.sha256(str(sorted((row.external_id,row.generation) for row in rows)).encode()).hexdigest()
     return {'id':str(company.id),'source':'igdb-company','complete':complete,'pending':pending,
+        'works_pending':pending and any(row.works_pending is not False for row in rows),
         'coverage':'complete' if complete and all(row.coverage=='complete' for row in rows) else 'partial' if rows else 'unknown',
         'received':sum(row.received or 0 for row in rows),'retry_after':max((value['retry_after'] for value in states),default=3),
         'error':next((value['error'] for value in states if value['error']),None),
@@ -196,7 +197,9 @@ class GameCompanyWorks:
             job.entity_id=company.id;job.payload=dict(state);job.error_code=None;job.attempts=0
             job.coverage={'state':'partial' if state['omitted'] else 'complete' if state['complete'] else 'partial',
                 'complete':state['complete'],'received':state['received'],'total':state['received'] if state['complete'] else None,
-                'generation':state['generation']}
+                'generation':state['generation'],
+                'works_pending':not state['complete'] and (not isinstance(state['cursor'],dict) or state['cursor'].get('phase')=='primary' or any(
+                    str(record['id']) not in state['cursor'].get('accepted',[]) for record in state['cursor'].get('deferred',[])))}
             job.fetched_at=now();await db.commit();return True
 
     async def release(self,native,token,delay=0):

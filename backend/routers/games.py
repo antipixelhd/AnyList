@@ -136,6 +136,7 @@ async def imdb_person_status(native: Annotated[str,Path(pattern=r'^nm[0-9]+$',ma
         from core.game_contributor_works import role_captions
         person=await db.get(CatalogueEntity,identity.entity_id)
         result['roles']=await role_captions(db,person.canonical_person_id or person.id,kind,set(work_id))
+        result['characters_pending']=any(row.get('characters_pending') for row in result['roles'])
     return result
 
 

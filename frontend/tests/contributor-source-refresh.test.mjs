@@ -148,3 +148,30 @@ test('caption publication covers every mounted card in sequential bounded batche
     assert.equal(new Set(published.map(row=>row.id)).size,211);
   }finally{controller.abort();globalThis.fetch=original.fetch;globalThis.setTimeout=original.set;globalThis.clearTimeout=original.clear;}
 });
+
+test('character-only enrichment polls after the works are complete and then stops',()=>fixture(async f=>{
+ f.resource.update({id:'nm1',pending:false,complete:true,works_pending:false,characters_pending:true});
+ f.reply({id:'nm1',pending:false,complete:true,works_pending:false,characters_pending:true});
+ await f.tick();assert.equal(f.timers.length,1);
+ f.reply({id:'nm1',pending:false,complete:true,works_pending:false,characters_pending:false});
+ await f.tick();assert.equal(f.timers.length,0);
+}));
+
+test('pending characters beyond the first caption batch keep silent polling alive',async()=>{
+ const original={fetch:globalThis.fetch,set:globalThis.setTimeout,clear:globalThis.clearTimeout};
+ const timers=[],sizes=[],controller=new AbortController();let phase=0;
+ globalThis.setTimeout=callback=>{timers.push(callback);return callback;};globalThis.clearTimeout=()=>{};
+ globalThis.fetch=async path=>{
+  const ids=new URL(path,'https://test.invalid').searchParams.getAll('work_id').map(Number);sizes.push(ids.length);
+  const pending=phase===0&&ids.includes(101);
+  return Response.json({id:'nm1',pending:false,works_pending:false,complete:true,revision:'same',characters_pending:pending,
+   roles:ids.map(id=>({id,roles:['Actor'],characters:[],characters_pending:pending&&id===101}))});
+ };
+ try{
+  const resource=contributorSourceRefresh(controller.signal,()=>{},{kind:'actor',ids:()=>Array.from({length:211},(_,i)=>i+1),apply:()=>{}});
+  resource.update({id:'nm1',pending:false,works_pending:false,complete:true,revision:'same',characters_pending:true});
+  timers.shift()();await new Promise(resolve=>setImmediate(resolve));assert.equal(timers.length,1);
+  phase=1;timers.shift()();await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(sizes,[100,100,11,100,100,11]);assert.equal(timers.length,0);
+ }finally{controller.abort();globalThis.fetch=original.fetch;globalThis.setTimeout=original.set;globalThis.clearTimeout=original.clear;}
+});

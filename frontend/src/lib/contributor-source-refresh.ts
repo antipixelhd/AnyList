@@ -1,7 +1,8 @@
 export interface GamePersonStatus {
   source?:'igdb-company';
+  works_current?:number;works_total?:number|null;works_pending?:boolean;characters_pending?:boolean;
   id:string; pending:boolean; complete:boolean; identity_pending?:boolean; retry_after?:number; error?:string|null; fetched_at?:string|null; revision?:string|null;
-  roles?:{id:number;roles:string[];characters:string[]}[];
+  roles?:{id:number;roles:string[];characters:string[];characters_pending?:boolean}[];
 }
 
 // Report each public revision. The page reconciles its mounted window while
@@ -17,9 +18,9 @@ export function contributorSourceRefresh(signal:AbortSignal, ready:(available:bo
     stop();
     progress?.(initial||null);
     const company=initial?.source==='igdb-company';
-    if(signal.aborted||!initial||!(initial.pending||initial.identity_pending)||!(company?/^[1-9][0-9]*$/:/^nm[0-9]+$/).test(initial.id))return;
+    if(signal.aborted||!initial||!(initial.pending||initial.identity_pending||initial.characters_pending)||!(company?/^[1-9][0-9]*$/:/^nm[0-9]+$/).test(initial.id))return;
     const current=generation;
-    let failures=0,captionRevision:string|null|undefined;
+    let failures=0,captionRevision:string|null|undefined,captionPending=!!initial.characters_pending;
     let observed=initial;
     const retryable=(error?:string|null)=>!error||['rate_limited','timeout','unavailable','network_error','incomplete_cache','stale_mapping','retry_pending','refreshing'].includes(error);
     const schedule=(delay:number)=>{timer=setTimeout(()=>void poll(),Math.max(3000,Math.min(3600000,delay*1000)));};
@@ -38,33 +39,35 @@ export function contributorSourceRefresh(signal:AbortSignal, ready:(available:bo
         if(!response.ok)throw new Error('Status unavailable');
         const next:GamePersonStatus=await response.json();
         if(signal.aborted||generation!==current||next.id!==initial.id)return;
-        failures=0;
         progress?.(next);
         if(next.roles)captions?.apply(next.roles);
         // A display budget is not a collection limit. Refresh further mounted
         // cards sequentially only when public evidence changes, with the same
         // route-generation cancellation and at most one request in flight.
-        if(!company&&captions&&next.revision!==captionRevision){
+        if(!company&&captions&&(captionPending||next.characters_pending||next.revision!==captionRevision)){
+          let pending=!!next.characters_pending;
           for(let offset=100;offset<ids.length;offset+=100){
             if(signal.aborted||generation!==current)return;
             const batch=new URLSearchParams({kind:captions.kind});
             ids.slice(offset,offset+100).forEach(id=>batch.append('work_id',String(id)));
             const response=await fetch(`/api/proxy/tracking/games/${path}?${batch}`,{signal:request.signal,cache:'no-store'});
-            if(!response.ok)break;
+            if(!response.ok)throw new Error('Caption status unavailable');
             const data:GamePersonStatus=await response.json();
             if(signal.aborted||generation!==current||data.id!==initial.id)return;
             if(data.roles)captions.apply(data.roles);
+            pending=pending||!!data.characters_pending;
           }
-          captionRevision=next.revision;
+          captionRevision=next.revision;captionPending=pending;next.characters_pending=pending;
         }
+        failures=0;
         // A usable projection can grow before every remote identity has been
         // attempted. Offer it without waiting for a rate-limited tail, and
         // never replace the user's scrolled list or open editor automatically.
         if(next.fetched_at&&next.fetched_at!==observed.fetched_at||next.revision&&next.revision!==observed.revision){
           observed=next;ready(true);
         }
-        if(!next.pending&&!next.identity_pending&&next.complete)return;
-        if((next.pending||next.identity_pending)&&retryable(next.error))schedule(next.retry_after||3);
+        if(!next.pending&&!next.identity_pending&&!next.characters_pending&&next.complete)return;
+        if((next.pending||next.identity_pending||next.characters_pending)&&retryable(next.error))schedule(next.retry_after||3);
       }catch{
         // A healthy cold portfolio can legitimately take over twenty polls.
         // Bound consecutive transport failures, rather than successful reads;

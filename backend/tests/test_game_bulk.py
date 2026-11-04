@@ -12,6 +12,13 @@ def game(native,name='Title',kind=0,platforms=None,**extra):
 
 
 class BulkSourceTests(unittest.TestCase):
+    def test_character_pending_survives_the_public_work_schema_without_warm_payload_noise(self):
+        from schemas_contributors import ContributorWork
+        pending=ContributorWork(key='game:1',type='game',title='Game',characters_pending=True)
+        self.assertTrue(pending.model_dump()['characters_pending'])
+        ready=ContributorWork(key='game:1',type='game',title='Game')
+        self.assertNotIn('characters_pending',ready.model_dump())
+
     def test_explicit_dubbing_jobs_are_acting_but_other_miscellaneous_jobs_are_not(self):
         from core.game_credit_roles import source_role
         from core.game_imdb_person import game_rows

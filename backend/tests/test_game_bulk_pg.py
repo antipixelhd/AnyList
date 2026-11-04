@@ -39,6 +39,53 @@ class BulkDatabaseTests(unittest.IsolatedAsyncioTestCase):
             state=await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.provider=='igdb',MetadataSnapshot.kind=='game',MetadataSnapshot.external_id=='100'))
             self.assertEqual(state.coverage['priority'],'background')
 
+    async def test_work_progress_ignores_accepted_validation_and_tracks_missing_candidates(self):
+        from core.game_bulk import status
+        from core.game_imdb_discovery import MAP,VERSION
+        from core.game_imdb_enrichment import now
+        from datetime import timedelta
+        games,_,_=await self.seed(1)
+        async with self.Session() as db:
+            db.add(MetadataSnapshot(provider='anylist',kind='game_bulk',external_id=f'{self.person_id}:actor',
+                entity_id=self.person_id,coverage={'source_complete':True},payload={
+                    'source_ids':['tt1','tt2','tt3'],'rows':[{'source':'tt1','work_id':games[0].id,'role':'actor'}]}))
+            await db.flush()
+            state=await status(db,self.person_id,'actor',{'pending':True})
+            self.assertEqual((state['works_current'],state['works_total'],state['works_pending']),(1,3,True))
+            for native,outcome in [('tt2','excluded'),('tt3','verified')]:
+                db.add(MetadataSnapshot(provider='wikidata',kind=MAP,external_id=native,
+                    payload={'matcher_version':VERSION,'status':outcome},expires_at=now()+timedelta(days=1)))
+            await db.flush()
+            state=await status(db,self.person_id,'actor',{'pending':True})
+            self.assertEqual(state['works_total'],2)
+            db.add(CatalogueCredit(work_id=games[0].id,contributor_id=self.person_id,provider='imdb',scope='person',
+                source_key='published-tt3',role='actor',attributes={'imdb_title_id':'tt3','source_active':True}))
+            await db.flush()
+            state=await status(db,self.person_id,'actor',{'pending':True})
+            self.assertEqual((state['works_total'],state['works_pending'],state['pending']),(1,False,True))
+
+    async def test_character_skeleton_requires_pending_work_and_stops_on_failure(self):
+        from core.game_contributor_works import pending_characters
+        from core.game_imdb_enrichment import now
+        games,_,_=await self.seed(1)
+        async with self.Session() as db:
+            job=MetadataSnapshot(provider='igdb',kind='game',external_id='10',entity_id=games[0].id,
+                coverage={'characters_complete':False},next_attempt_at=now())
+            db.add(job);await db.flush()
+            self.assertEqual(await pending_characters(db,{games[0].id}),{games[0].id})
+            job.error_code='unavailable';await db.flush()
+            self.assertEqual(await pending_characters(db,{games[0].id}),set())
+            db.add_all([CatalogueCredit(work_id=games[0].id,contributor_id=self.person_id,provider='imdb',scope='person',
+                source_key='waiting-caption',role='actor',attributes={'source_active':True}),
+                MetadataSnapshot(provider='imdb',kind='game_person_discovery',external_id='nm1',entity_id=self.person_id,next_attempt_at=now())])
+            await db.flush()
+            self.assertEqual(await pending_characters(db,{games[0].id}),{games[0].id})
+            job.coverage={'characters_complete':True};job.next_attempt_at=None;job.error_code=None
+            await db.flush()
+            self.assertEqual(await pending_characters(db,{games[0].id}),set(),
+                'Completed empty character acquisition must not regain a skeleton during career validation')
+
+
     async def test_shared_filtered_source_survives_a_cancelled_bulk_subscriber(self):
         import asyncio
         from core.game_imdb_source import IMDbGameSource

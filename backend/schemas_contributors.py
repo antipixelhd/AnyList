@@ -51,6 +51,7 @@ class ContributorWork(BaseModel):
     release_date: str | None = None
     roles: list[str] = Field(default_factory=list)
     characters: list[str] = Field(default_factory=list)
+    characters_pending: bool = Field(default=False,exclude_if=lambda value:not value)
     credit_sources: list[ContributorCreditSource] = Field(default_factory=list,exclude_if=lambda value:not value)
     list_status: str | None = None
     score: float | None = None

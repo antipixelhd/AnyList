@@ -24,13 +24,48 @@ async def request(db,entity_id,kind,native):
         _wake.set()
 
 
-async def status(db,entity_id,kind,state):
+async def status(db,entity_id,kind,state,*,current=None):
     row=(await db.execute(snapshot(JOB,f'{entity_id}:{kind}',provider=PROVIDER).with_only_columns(
-        MetadataSnapshot.fetched_at,MetadataSnapshot.next_attempt_at,MetadataSnapshot.lease_until))).one_or_none()
+        MetadataSnapshot.fetched_at,MetadataSnapshot.next_attempt_at,MetadataSnapshot.lease_until,MetadataSnapshot.coverage,
+        func.jsonb_typeof(MetadataSnapshot.payload['source_ids']).label('source_ids_type')))).one_or_none()
     if not row:return state
     pending=bool(row.next_attempt_at or row.lease_until and row.lease_until>now())
-    return {**state,'revision':f'{state.get("revision","")}:{row.fetched_at}',
+    result={**state,'revision':f'{state.get("revision","")}:{row.fetched_at}',
         **({'pending':True,'complete':False,'retry_after':2} if pending else {})}
+    if current is None:
+        from core.game_contributor_works import game_credits
+        credits=game_credits(entity_id,kind)
+        current=await db.scalar(select(func.count(func.distinct(credits.c.id))))
+    remaining=None
+    if row.source_ids_type=='array' and row.coverage.get('source_complete'):
+        source=func.jsonb_array_elements_text(MetadataSnapshot.payload['source_ids']).table_valued('id').render_derived(name='source_progress')
+        sources=select(source.c.id).select_from(MetadataSnapshot).join(source,literal(True)).where(MetadataSnapshot.provider==PROVIDER,MetadataSnapshot.kind==JOB,
+            MetadataSnapshot.external_id==f'{entity_id}:{kind}').subquery()
+        accepted=func.jsonb_to_recordset(MetadataSnapshot.payload['rows']).table_valued(
+            column('source',String)).render_derived(name='accepted_progress',with_types=True)
+        accepted_ids=select(accepted.c.source).select_from(MetadataSnapshot).join(accepted,literal(True)).where(
+            MetadataSnapshot.provider==PROVIDER,MetadataSnapshot.kind==JOB,MetadataSnapshot.external_id==f'{entity_id}:{kind}')
+        from models.catalogue import CatalogueCredit
+        if kind!='studio':
+            from sqlalchemy.orm import aliased
+            from core.game_imdb_discovery import MAP,VERSION
+            mapped=aliased(MetadataSnapshot)
+            settled=select(mapped.external_id).where(mapped.provider=='wikidata',mapped.kind==MAP,
+                mapped.expires_at>now(),mapped.payload['matcher_version'].as_integer()==VERSION,
+                mapped.payload['retry_after'].as_integer().is_(None),mapped.payload['status'].astext!='verified')
+        else:
+            settled=select(literal('',String)).where(literal(False))
+        remaining=await db.scalar(select(func.count(func.distinct(sources.c.id))).where(
+            sources.c.id.not_in(accepted_ids),sources.c.id.not_in(settled),
+            ~select(literal(1)).where(CatalogueCredit.contributor_id==entity_id,
+                CatalogueCredit.provider=='imdb' if kind!='studio' else CatalogueCredit.provider=='igdb',
+                (CatalogueCredit.attributes['imdb_title_id'].astext if kind!='studio' else CatalogueCredit.attributes['source_record']['id'].astext)==sources.c.id,
+                CatalogueCredit.attributes['source_active'].astext.is_distinct_from('false')).exists()))
+    works_pending=bool(result.get('pending') and (pending or remaining is None or remaining>0))
+    if kind=='studio':works_pending=bool(pending or result.get('works_pending',works_pending))
+    return {**result,'works_pending':works_pending,'works_current':current,
+        'works_total':current+remaining if remaining is not None else None}
+
 
 
 def projection(entity_id,kind,verified):
@@ -185,9 +220,10 @@ class GameBulk:
                 job=await db.scalar(snapshot(JOB,key,provider=PROVIDER).with_for_update())
                 if not job or job.lease_token!=token:return True
                 if candidates:await publish(db,job,candidates)
+                job.payload={**(job.payload or {}),'source_ids':sorted(getattr(self.source,'candidate_sources',set()))}
                 if coverage['kind']!='studio':
                     job.payload={**(job.payload or {}),'priority_sources':sorted(getattr(self.source,'priority_sources',set()))}
-                job.coverage={**coverage,'complete':complete,'state':'ready' if complete else 'partial'}
+                job.coverage={**coverage,'complete':complete,'source_complete':getattr(self.source,'source_complete',complete),'state':'ready' if complete else 'partial'}
                 job.expires_at=now()+timedelta(days=7 if complete else 1)
                 job.next_attempt_at=None;job.lease_until=None;job.lease_token=None;await db.commit()
         except BaseException as error:

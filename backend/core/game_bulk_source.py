@@ -159,12 +159,15 @@ class GameBulkSource:
             source=GameBulkSource(self.sessions,client)
             result=await source._acquire(native,kind)
             self.priority_sources=getattr(source,'priority_sources',set())
+            self.candidate_sources=getattr(source,'candidate_sources',set())
+            self.source_complete=getattr(source,'source_complete',False)
             return result
 
     async def _acquire(self,native,kind):
         """A failed/expired deadline returns usable positives, never negatives."""
         self.api.validate('igdb','game')
         source=[];rows=[];tasks=[];candidates=[];complete=False
+        self.candidate_sources=set();self.source_complete=False
         try:
             async with asyncio.timeout(3.85):
                 if kind=='studio':
@@ -184,9 +187,11 @@ class GameBulkSource:
                             available=platforms(game)
                             if available and all(str(value) in MOBILE_PLATFORMS for value in available):continue
                             winner=studio_root(game)
+                            if igdb_game_class(game) in independent|{'expansion','port','unknown'}:
+                                self.candidate_sources.add(str(record['id']))
                             roles=[role for role in ROLES if record.get(role) is True]
                             if winner and roles and eligible(winner,kind):candidates.append({'game':winner,'source':str(record['id']),'roles':roles})
-                        if len(page)<500:complete=True;break
+                        if len(page)<500:complete=True;self.source_complete=True;break
                 else:
                     imdb=IMDbGameSource(self.http);after=None;seen=set();received=0;expected=None
                     async def headers(batch):
@@ -206,7 +211,7 @@ class GameBulkSource:
                         source.extend(batch.values());tasks.append(asyncio.create_task(headers(list(batch.values()))))
                         if not value['has_next']:
                             if received!=expected:raise ProviderError('incomplete_cache')
-                            complete=True;break
+                            complete=True;self.source_complete=True;break
                         after=value['cursor']
                         if after in seen:raise ProviderError('bad_response')
                         seen.add(after)
@@ -223,6 +228,8 @@ class GameBulkSource:
                 if not task.done():task.cancel()
             if tasks:await asyncio.gather(*tasks,return_exceptions=True)
         if kind!='studio':
+            from core.game_credit_roles import SOURCE_ACTING
+            self.candidate_sources={row['imdb_id'] for row in source if any(role!='thanks' and (role in SOURCE_ACTING)==(kind=='actor') for role in row['roles'])}
             candidates=await asyncio.to_thread(person_candidates,source,rows,kind)
             self.priority_sources=await asyncio.to_thread(promising_sources,source,rows,kind)
         return candidates,complete

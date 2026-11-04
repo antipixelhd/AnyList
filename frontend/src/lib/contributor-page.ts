@@ -1,3 +1,4 @@
+import {mountWorkProgress,workProgress} from './contributor-work-progress';
 import { bindBrowseCardActions, bindBrowseCardTouch, paintBrowseCardState, sameBrowseTitle } from './browse-card-actions';
 import { contributorParams, contributorYear, contributorMediaLabel,contributorCreditScope, workHref, type ContributorPage, type ContributorWork } from './contributor-page-data';
 import { editorStore } from './editor-store';
@@ -54,6 +55,11 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
   const ready = new Set<string>();
   const params = contributorParams(new URLSearchParams(root.dataset.contributorQuery ?? location.search), data.list_count !== null);
   let sourcePending=false,pagePending=false;
+  const paintProgress=mountWorkProgress(root,signal);
+  const paintCaption=(caption:HTMLElement,item:{characters:string[];roles:string[];characters_pending?:boolean})=>{
+    caption.textContent=[...item.characters,...item.roles.filter(role=>!['Actor','Production'].includes(role))].join(' / ');
+    caption.title=caption.textContent;caption.toggleAttribute('data-character-pending',!!item.characters_pending&&!item.characters.length);
+  };
   let availabilityChanged=(_state:string)=>{};
   if(root.dataset.contributorAvailability==='true')contributorAvailability(root.dataset.endpoint!,data.key,signal,domains=>{
     form.querySelectorAll<HTMLInputElement>('input[name=domain],input[name=media_type]').forEach(input=>{
@@ -138,7 +144,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     });
     const hasWorks=[...items.keys()].some(card => !card.hidden);
     const pending=!!filterRequest||params.get('media_type')==='game'&&sourcePending&&!hasWorks;
-    const busy=!!filterRequest||pagePending||syncing||params.get('media_type')==='game'&&sourcePending;
+    const busy=!!filterRequest||pagePending||params.get('media_type')==='game'&&sourcePending;
     const indicator=root.querySelector<HTMLElement>('[data-contributor-busy]')!;
     indicator.dataset.active=String(busy);indicator.setAttribute('aria-hidden',String(!busy));
     region.setAttribute('aria-busy',String(busy));
@@ -201,8 +207,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
       card.querySelector('.browse-poster-link')!.setAttribute('aria-label', item.title);
       card.querySelector('[data-year]')!.textContent = item.year || '';
       const credit = card.querySelector<HTMLElement>('[data-work-credit]')!;
-      credit.textContent = [...item.characters,...item.roles.filter(role => !['Actor','Production'].includes(role))].join(' / ');
-      credit.title = credit.textContent;
+      paintCaption(credit,item);
       const date = card.querySelector<HTMLTimeElement>('[data-work-date]')!;
       date.hidden = !item.release_date; setLocalDateTime(date, item.release_date, 'month-day');
       card.querySelector<HTMLElement>('[data-work-type]')!.textContent = contributorMediaLabel(item.type);
@@ -245,13 +250,14 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
         if(!next)continue;
         // Only public role text changes. Do not re-seed private/optimistic
         // tracking, replace cards, alter ordering, paging or scroll position.
-        item.characters=next.characters;item.roles=next.roles;
+        item.characters=next.characters;item.roles=next.roles;item.characters_pending=next.characters_pending;
         const caption=card.querySelector<HTMLElement>('[data-work-credit]');
-        if(caption){caption.textContent=[...next.characters,...next.roles.filter(role=>!['Actor','Production'].includes(role))].join(' / ');caption.title=caption.textContent;}
+        if(caption)paintCaption(caption,next);
       }
     }
   },state=>{
-    sourcePending=!!state?.pending&&!state.error;
+    sourcePending=workProgress(state,data.known_works).pending&&!state?.error;
+    paintProgress({...state,works_pending:sourcePending},data.known_works);
     updateEmpty();
   });
   const requestPage=async(path:string,requestSignal:AbortSignal):Promise<ContributorPage>=>{
@@ -296,6 +302,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
       const next=await prediction.consume(path,signal)??await requestPage(path,signal);
       if(signal.aborted||current!==revision)return;
       append(next.works);
+      sourceRefresh.update(next.game_company_status||next.game_person_status);
       data.page=next.page;data.source=next.source;data.next_cursor=next.next_cursor;data.has_more=next.has_more;
       more.hidden=!data.has_more;
     }catch(cause){
@@ -426,7 +433,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
         if(existing){
           Object.assign(existing[1],work);paint(existing[0],existing[1]);
           const caption=existing[0].querySelector<HTMLElement>('[data-work-credit]');
-          if(caption){caption.textContent=[...work.characters,...work.roles.filter(role=>!['Actor','Production'].includes(role))].join(' / ');caption.title=caption.textContent;}
+          if(caption)paintCaption(caption,work);
         }
       }
       append(works);
@@ -445,7 +452,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
       if(anchor?.isConnected&&top!==undefined)window.scrollBy({top:anchor.getBoundingClientRect().top-top,behavior:'instant'});
       if(focused?.isConnected&&document.activeElement!==focused)focused.focus({preventScroll:true});
       data.page=next.page;data.source=next.source;data.next_cursor=next.next_cursor;data.has_more=next.has_more;
-      data.total=next.total;data.list_count=next.list_count;
+      data.total=next.total;data.list_count=next.list_count;data.known_works=next.known_works;
       const count=root.querySelector('[data-contributor-list-count]');if(count)count.textContent=String(next.list_count||0);
       more.hidden=!data.has_more;updateEmpty();
       animateWorks();

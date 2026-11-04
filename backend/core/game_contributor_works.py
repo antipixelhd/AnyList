@@ -122,6 +122,44 @@ def game_credits(entity_id, kind):
     return select(verified).union_all(projection(entity_id,kind,verified)).cte('game_contributor_credits')
 
 
+async def pending_characters(db,work_ids):
+    from models.catalogue import MetadataSnapshot
+    from core.game_imdb_enrichment import now
+    jobs=select(MetadataSnapshot.entity_id).where(MetadataSnapshot.provider=='igdb',MetadataSnapshot.kind=='game',
+        MetadataSnapshot.entity_id.in_(work_ids),MetadataSnapshot.error_code.is_(None),
+        MetadataSnapshot.coverage['characters_complete'].astext.is_distinct_from('true'),
+        or_(MetadataSnapshot.next_attempt_at.is_not(None),MetadataSnapshot.lease_until>now()))
+    if not work_ids:return set()
+    from sqlalchemy import Integer,column
+    from sqlalchemy.orm import aliased
+    active=aliased(MetadataSnapshot)
+    bulk=func.jsonb_to_recordset(MetadataSnapshot.payload['rows']).table_valued(
+        column('work_id',Integer)).render_derived(name='pending_character_rows',with_types=True)
+    awaiting=select(bulk.c.work_id).select_from(MetadataSnapshot).join(bulk,literal(True)).where(
+        MetadataSnapshot.provider=='anylist',MetadataSnapshot.kind=='game_bulk',bulk.c.work_id.in_(work_ids),
+        select(active.id).where(active.provider=='imdb',active.kind.in_(('game_person_job','game_person_discovery')),
+            active.entity_id==MetadataSnapshot.entity_id,active.error_code.is_(None),
+            or_(active.next_attempt_at.is_not(None),active.lease_until>now())).exists())
+    # Participation may publish before the final career tick queues detail jobs.
+    # Keep that known enrichment handoff pending rather than flashing an empty caption.
+    waiting_people=select(active.entity_id).where(active.provider=='imdb',
+        active.kind.in_(('game_person_job','game_person_discovery')),active.error_code.is_(None),
+        or_(active.next_attempt_at.is_not(None),active.lease_until>now()))
+    future=select(CatalogueCredit.work_id).where(CatalogueCredit.provider=='imdb',CatalogueCredit.scope=='person',
+        CatalogueCredit.role.in_(ACTING),CatalogueCredit.contributor_id.in_(waiting_people),
+        CatalogueCredit.attributes['source_active'].astext.is_distinct_from('false'))
+    parents=select(CatalogueRelationship.target_id).where(CatalogueRelationship.source_id.in_(future),
+        CatalogueRelationship.relation.in_(('port',*CREDIT_CHILDREN)),
+        CatalogueRelationship.attributes['source_active'].astext.is_distinct_from('false'))
+    future_ids=future.union(parents).subquery()
+    queued=select(future_ids.c.work_id).where(future_ids.c.work_id.in_(work_ids))
+    candidates=jobs.union(awaiting,queued).subquery()
+    completed=aliased(MetadataSnapshot)
+    return set(await db.scalars(select(candidates.c.entity_id).where(~select(completed.id).where(
+        completed.provider=='igdb',completed.kind=='game',completed.entity_id==candidates.c.entity_id,
+        completed.coverage['characters_complete'].astext=='true').exists())))
+
+
 async def role_captions(db,entity_id,kind,work_ids):
     """Small public projection for displayed works, never a title hydration fan-out."""
     credits=game_credits(entity_id,kind)
@@ -132,7 +170,9 @@ async def role_captions(db,entity_id,kind,work_ids):
         item=result.setdefault(identifier,{'id':identifier,'roles':set(),'characters':set()})
         item['roles'].add(label or role.replace('_',' ').title())
         if character and role in ACTING:item['characters'].add(character)
-    return [{**item,'roles':sorted(item['roles']),'characters':sorted(item['characters'])} for item in result.values()]
+    pending=await pending_characters(db,work_ids) if kind=='actor' else set()
+    return [{**item,'roles':sorted(item['roles']),'characters':sorted(item['characters']),
+        **({'characters_pending':True} if item['id'] in pending and not item['characters'] else {})} for item in result.values()]
 
 
 async def works_page(db, viewer, entity_id, kind, *, key, list_scope, status, page, cursor):
@@ -208,6 +248,7 @@ async def works_page(db, viewer, entity_id, kind, *, key, list_scope, status, pa
             item['roles'].append(label or role.replace('_', ' ').title())
             if character and role in ACTING:
                 item['characters'].append(character)
+    pending=await pending_characters(db,set(displayed)) if kind=='actor' else set()
     result = []
     for item in displayed.values():
         if item.get('credit_sources'):item['credit_sources'].sort(key=lambda row:(row['kind'],row['title']))
@@ -215,6 +256,7 @@ async def works_page(db, viewer, entity_id, kind, *, key, list_scope, status, pa
         result.append({**item, 'key': f'game:{item["id"]}', 'type': 'game', 'href': f'/games/{item["id"]}',
             'year': released[:4], 'release_date': released or None,
             'roles': sorted(set(item['roles'])), 'characters': sorted(set(item['characters'])),
+            'characters_pending':item['id'] in pending and not item['characters'],
             'entry': None, 'rating_mode': 'manual'})
     next_cursor = json.dumps({'v': 1, 'scope': scope, 'generation': generation,
         'after': [rows[-1]['released'], rows[-1]['id']]}, separators=(',', ':')) if has_more else None

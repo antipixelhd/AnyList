@@ -358,9 +358,6 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
         ids=[row.external_id for row in identities if row.namespace==namespace]
         if ids and state.get('pending'):
             await game_bulk.request(db,entity.id,kind,ids[0]);await db.commit()
-        state=await game_bulk.status(db,entity.id,kind,state)
-        if kind=='studio':company_state=state
-        else:imdb_state=state
     if not entity and not legacy and not profile.get("name") and not local:
         return None
     # Empty cached fields must not hide a real provider value. Explicitly
@@ -393,6 +390,11 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
             key=f'catalogue:{entity.id}' if entity else key, list_scope=list_scope, status=status,
             page=page, cursor=cursor)
         roles, works, list_count = game_result['roles'], game_result['works'], game_result['list_count']
+        if entity and (company_state or imdb_state):
+            from core.game_bulk import status as bulk_status
+            if kind=='studio':company_state=await bulk_status(db,entity.id,kind,company_state,current=game_result['known_works'])
+            else:imdb_state=await bulk_status(db,entity.id,kind,imdb_state,current=game_result['known_works'])
+        if imdb_state:imdb_state['characters_pending']=any(work.get('characters_pending') for work in works)
         total, has_more, next_cursor = game_result['total'], game_result['has_more'], game_result['next_cursor']
         result_source, all_known, share_summary = 'local', [], None
         if sharing:

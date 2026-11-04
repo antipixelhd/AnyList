@@ -4,6 +4,7 @@ import {browseCardHref} from './browse-card-data.ts';
 export interface ContributorWork extends BrowseItem {
   entry: Record<string, any> | null;
   key: string; href: string | null; release_date: string | null; roles: string[]; characters: string[];
+  characters_pending?:boolean;
   credit_sources?:{kind:string;title:string}[];
 }
 export function contributorCreditScope(work: Pick<ContributorWork,'title'|'credit_sources'>) {
