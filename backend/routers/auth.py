@@ -15,7 +15,7 @@ from sqlalchemy import delete, func, or_, and_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 from datetime import datetime, timedelta, timezone
-from typing import Annotated
+from typing import Annotated, Literal
 from jose import jwt, JWTError
 
 from db import get_db
@@ -414,6 +414,19 @@ async def delete_user_me(
     await db.execute(delete(User).where(User.id == current_user.id))
     await db.commit()
     return {"status": "account deleted"}
+
+
+@router.delete("/me/lists/{category}")
+async def delete_user_list(
+    category: Literal['movies', 'series', 'games'],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    confirm: Annotated[Literal['delete'], Query()],
+) -> dict[str, str]:
+    from core.list_deletion import delete_list_data
+    await delete_list_data(db, current_user.id, category)
+    await db.commit()
+    return {'status': 'deleted', 'category': category}
 
 async def _settings_response(settings: UserSettings, db: AsyncSession) -> schemas.UserSettings:
     """Build a UserSettings schema response, injecting computed fields."""
