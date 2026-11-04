@@ -20,6 +20,10 @@ from models.catalogue import CatalogueEntity, CatalogueIdentity, CatalogueCredit
 BINDING_REVISION='game_binding_revision'
 
 
+class GameNotEligible(catalogue.IdentityConflict):
+    pass
+
+
 def verified_bindings(title_ids=None):
     """Explicit bindings whose current IGDB root still agrees with their evidence."""
     igdb=aliased(CatalogueIdentity)
@@ -49,8 +53,9 @@ def now():
 
 async def context(db,work_id,*,participation=False):
     work=await db.get(CatalogueEntity,work_id)
-    from core.game_types import CREDIT_CHILDREN,INDEPENDENT
-    child = bool(work and participation and (work.attributes or {}).get('game_class') in CREDIT_CHILDREN)
+    from core.game_types import CREDIT_CHILDREN,INDEPENDENT,mobile_only
+    child = bool(work and participation and not mobile_only(work.attributes)
+                 and (work.attributes or {}).get('game_class') in CREDIT_CHILDREN)
     if child:
         parent=aliased(CatalogueEntity)
         parents=(await db.execute(select(CatalogueRelationship.target_id,parent.kind,parent.attributes['game_class'].astext).join(parent,parent.id==CatalogueRelationship.target_id).where(
@@ -58,7 +63,7 @@ async def context(db,work_id,*,participation=False):
             CatalogueRelationship.attributes['source_active'].astext.is_distinct_from('false')))).all()
         child=len(parents)==1 and parents[0][1]=='game' and parents[0][2] in INDEPENDENT-{'port'}
     if not work or work.kind!='game' or not (capabilities(work.attributes).searchable or child):
-        raise catalogue.IdentityConflict('A searchable IGDB game or expansion is required')
+        raise GameNotEligible('A searchable IGDB game or expansion is required')
     identities=list(await db.scalars(select(CatalogueIdentity).where(CatalogueIdentity.entity_id==work_id)))
     game_ids=[row for row in identities if row.namespace=='igdb.game']
     native={row.external_id for row in game_ids}
@@ -119,7 +124,17 @@ class GameIMDbBindings:
 
     async def resolve(self,work_id):
         async with self.sessions() as db:
-            work,native,binding,items=await context(db,work_id,participation=True)
+            try:
+                work,native,binding,items=await context(db,work_id,participation=True)
+            except GameNotEligible:
+                work=await db.get(CatalogueEntity,work_id)
+                from core.game_types import CREDIT_CHILDREN, mobile_only
+                attrs=(work.attributes or {}) if work else {}
+                if work and work.kind=='game' and not mobile_only(attrs) and attrs.get('game_class','unknown') in CREDIT_CHILDREN|{'unknown'}:
+                    # Primary/type/parent evidence may still be arriving. This
+                    # dependency gap is not a verified exclusion.
+                    raise ProviderError('retry_pending')
+                return {'status':'excluded','imdb_id':None}
             if binding:
                 # A reviewed selection is never remapped by background lookup.
                 bound_native=(binding.evidence or {}).get('igdb_id')

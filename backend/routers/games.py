@@ -361,7 +361,7 @@ async def search_games(db: DB, viewer: Viewer, q: Annotated[str, Query(min_lengt
 
 
 @router.post('/resolve/{igdb_id}')
-async def resolve_game(igdb_id: WorkId, db: DB, viewer: Viewer) -> dict:
+async def resolve_game(igdb_id: Annotated[int,Path(gt=0,le=2147483647)], db: DB, viewer: Viewer) -> dict:
     from core.game_metadata import GameMetadata
     from core.catalogue_providers import ProviderError
     from sqlalchemy.ext.asyncio import async_sessionmaker

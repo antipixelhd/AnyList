@@ -10,6 +10,8 @@ from sqlalchemy.dialects.postgresql import insert
 
 from core import catalogue
 from core.catalogue_providers import ProviderError
+from core.enrichment_retry import (CONTENT_FAILURES, content_recheck, schedule_failure,
+    requested_coverage, pause_unused, retain_demand, release_context)
 from core.game_imdb_bindings import GameIMDbBindings, context
 from core.game_imdb_projection import credit_document
 from models.catalogue import CatalogueCredit, CharacterPerformance, MetadataSnapshot
@@ -47,11 +49,16 @@ async def request(db,work_id,*,kind=JOB,entity_id=None,provider='imdb'):
             return await status(db,work_id)
     if row and (row.next_attempt_at or row.lease_until and row.lease_until>stamp
                 or row.expires_at and row.expires_at>stamp):
+        if row.next_attempt_at and (not row.requested_at or row.requested_at< (stamp-timedelta(days=1)).isoformat()):
+            await db.execute(update(MetadataSnapshot).where(MetadataSnapshot.provider==provider,
+                MetadataSnapshot.kind==kind,MetadataSnapshot.external_id==str(work_id)).values(
+                    coverage=MetadataSnapshot.coverage.op('||')(requested_coverage(stamp))))
         return view
     statement=insert(MetadataSnapshot).values(provider=provider,kind=kind,external_id=str(work_id),
-        entity_id=entity_id if entity_id is not None else work_id,next_attempt_at=stamp)
+        entity_id=entity_id if entity_id is not None else work_id,next_attempt_at=stamp,coverage=requested_coverage(stamp))
     await db.execute(statement.on_conflict_do_update(
-        constraint='uq_catalogue_snapshot',set_={'next_attempt_at':stamp},where=(
+        constraint='uq_catalogue_snapshot',set_={'next_attempt_at':stamp,
+            'coverage':MetadataSnapshot.coverage.op('||')(requested_coverage(stamp))},where=(
             MetadataSnapshot.next_attempt_at.is_(None)
             & or_(MetadataSnapshot.expires_at.is_(None),MetadataSnapshot.expires_at<=stamp)
             & or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=stamp))))
@@ -61,7 +68,8 @@ async def request(db,work_id,*,kind=JOB,entity_id=None,provider='imdb'):
 async def retry_unmapped(db,work_id):
     await db.execute(update(MetadataSnapshot).where(MetadataSnapshot.provider=='imdb',
         MetadataSnapshot.kind==JOB,MetadataSnapshot.external_id==str(work_id),
-        MetadataSnapshot.coverage['state'].astext=='unmapped',MetadataSnapshot.next_attempt_at.is_(None),
+        or_(MetadataSnapshot.coverage['state'].astext.in_(('unmapped','unresolved')),
+            MetadataSnapshot.coverage['retry_mode'].astext=='on_demand'),MetadataSnapshot.next_attempt_at.is_(None),
         or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=now()))
         .values(payload={},coverage={},expires_at=None,next_attempt_at=now(),error_code=None,attempts=0,
             lease_token=None,lease_until=None)
@@ -74,6 +82,7 @@ async def header(db,work_id,*,kind=JOB,provider='imdb'):
         MetadataSnapshot.coverage['complete'].as_boolean().label('complete'),
         MetadataSnapshot.coverage['received'].as_integer().label('received'),
         MetadataSnapshot.coverage['total'].as_integer().label('total'),
+        MetadataSnapshot.coverage['requested_at'].astext.label('requested_at'),
         MetadataSnapshot.lease_until,MetadataSnapshot.next_attempt_at,MetadataSnapshot.error_code,
         MetadataSnapshot.expires_at))).one_or_none()
 
@@ -123,6 +132,8 @@ class GameIMDbEnrichment:
             job=await db.scalar(snapshot(JOB,work_id).with_for_update())
             if not job or not job.next_attempt_at or job.next_attempt_at>now() or job.lease_until and job.lease_until>now():
                 return None
+            if pause_unused(job,now()):
+                await db.commit();return None
             token=uuid.uuid4().hex
             job.lease_token=token
             job.lease_until=now()+timedelta(minutes=3)
@@ -189,7 +200,7 @@ class GameIMDbEnrichment:
             await catalogue.write_lock(db)
             job=await db.scalar(snapshot(JOB,work_id).with_for_update())
             if not job or job.lease_token!=token:return False
-            work,native,binding,_=await context(db,work_id)
+            work,native,binding,_=await context(db,work_id,participation=True)
             from core.game_title_match import SUPPORTED_VERSIONS
             evidence=(binding.evidence or {}) if binding else {}
             if ((job.coverage or {}).get('mapping_revalidation')!=state.get('_mapping_request')
@@ -275,8 +286,8 @@ class GameIMDbEnrichment:
                 established=bool(release and release[:4].isdigit() and int(release[:4])<now().year)
                 job.expires_at=now()+timedelta(days=(30 if established else 7) if state['complete'] else 1)
             job.payload=dict(state)
-            job.coverage={**{key:state.get(key) for key in ('state','complete','received','total')},
-                'mapping_revalidation':state.get('_mapping_request')}
+            job.coverage=retain_demand(job,{**{key:state.get(key) for key in ('state','complete','received','total')},
+                'mapping_revalidation':state.get('_mapping_request')})
             job.fetched_at=now()
             job.error_code=None
             job.attempts=0
@@ -291,8 +302,8 @@ class GameIMDbEnrichment:
                     job.lease_token=job.lease_until=None;job.next_attempt_at=now();job.expires_at=None
                     await db.commit();return
                 job.payload=dict(state)
-                job.coverage={**{key:state.get(key) for key in ('state','complete','received','total')},
-                    'mapping_revalidation':state.get('_mapping_request')}
+                job.coverage=retain_demand(job,{**{key:state.get(key) for key in ('state','complete','received','total')},
+                    'mapping_revalidation':state.get('_mapping_request')})
                 job.lease_token=job.lease_until=None
                 job.next_attempt_at=now()+timedelta(seconds=2)
                 await db.commit()
@@ -302,15 +313,16 @@ class GameIMDbEnrichment:
             job=await db.scalar(snapshot(JOB,work_id).with_for_update())
             if job and job.lease_token==token:
                 marker=(job.coverage or {}).get('mapping_revalidation')
-                if marker!=expected_request or marker and state not in ('conflict','excluded'):
+                if marker!=expected_request:
                     job.lease_token=job.lease_until=None
-                    job.next_attempt_at=now()+timedelta(seconds=0 if marker!=expected_request else 3600)
+                    job.next_attempt_at=now()
                     job.expires_at=None
                     await db.commit();return
                 job.payload={'state':state,'complete':False}
-                job.coverage={'state':state,'complete':False}
+                job.coverage=retain_demand(job,{'state':state,'complete':False,'retry_mode':'on_demand'})
                 job.lease_token=job.lease_until=job.next_attempt_at=None
-                job.expires_at=now()+timedelta(days=7)
+                job.expires_at=content_recheck(await release_context(db,work_id),now())
+                job.error_code=None;job.attempts=0
                 await db.commit()
 
     async def fail(self,work_id,token,code,*,restart=False,retry_after=None):
@@ -321,10 +333,8 @@ class GameIMDbEnrichment:
                     job.payload={'state':'partial','complete':False}
                     job.coverage={**(job.coverage or {}),'state':'partial','complete':False}
                 job.lease_token=job.lease_until=None
-                job.attempts+=1
-                job.error_code=code
-                delay=retry_after if isinstance(retry_after,(int,float)) and 0<retry_after<=3600 else 60*2**min(6,job.attempts-1)
-                job.next_attempt_at=now()+timedelta(seconds=min(3600,delay))
+                release=await release_context(db,work_id) if code in CONTENT_FAILURES else None
+                schedule_failure(job,code,now(),work=release,retry_after=retry_after)
                 await db.commit()
 
     async def release(self,work_id,token):

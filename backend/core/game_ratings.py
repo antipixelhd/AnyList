@@ -6,6 +6,7 @@ from datetime import timedelta,timezone
 from sqlalchemy import or_,select,update
 
 from core import catalogue
+from core.enrichment_retry import schedule_failure, pause_unused, retain_demand
 from core.game_rating_source import GameRatingSource,PARTS
 from core.game_offers import steam_identity
 from core.game_types import capabilities
@@ -99,6 +100,8 @@ class GameRatings:
         async with self.factory() as db:
             job=await db.scalar(snapshot(self.job,work_id).with_for_update())
             if not job or not job.next_attempt_at or job.next_attempt_at>now() or job.lease_until and job.lease_until>now():return 'cached'
+            if pause_unused(job,now()):
+                await db.commit();return 'cached'
             work=await db.get(CatalogueEntity,work_id);app=await app_id(db,work)
             if not app:
                 job.error_code='identity_conflict';job.next_attempt_at=None;job.expires_at=now()+timedelta(days=1)
@@ -107,10 +110,12 @@ class GameRatings:
                 MetadataSnapshot.provider=='steam',MetadataSnapshot.entity_id==work_id,
                 MetadataSnapshot.kind.in_([self.component_kind(part) for part in self.parts])))}
             # A failed component can retry without fetching successful siblings.
-            due=[part for part in self.parts if part not in components or not components[part].expires_at or
-                components[part].expires_at<=now() or (components[part].coverage or {}).get('steam_app_id')!=app]
+            due=[part for part in self.parts if part not in components or
+                (components[part].coverage or {}).get('retry_steam_app_id',
+                    (components[part].coverage or {}).get('steam_app_id'))!=app or
+                (not components[part].next_attempt_at or components[part].next_attempt_at<=now()) and
+                (not components[part].expires_at or components[part].expires_at<=now())]
             job.lease_token=token;job.lease_until=now()+timedelta(minutes=3);await db.commit()
-        failures=[]
         try:
             for part in due:
                 try:
@@ -128,37 +133,67 @@ class GameRatings:
                             record=MetadataSnapshot(provider='steam',kind=self.component_kind(part),external_id=str(work_id),entity_id=work_id);db.add(record)
                         record.payload=value;record.coverage={'state':'complete','complete':True,'steam_app_id':app}
                         record.fetched_at=now();record.expires_at=now()+self.retention(part)
+                        record.error_code=record.next_attempt_at=None;record.attempts=0
                         await self.publish_component(db,work,app,part,value)
                         await db.commit()
                 except catalogue.IdentityConflict:raise
-                except Exception as error:failures.append(error)
+                except Exception as error:
+                    async with self.factory() as db:
+                        job=await db.scalar(snapshot(self.job,work_id).with_for_update())
+                        if not job or job.lease_token!=token:return 'superseded'
+                        work=await db.get(CatalogueEntity,work_id)
+                        if await app_id(db,work)!=app:raise catalogue.IdentityConflict('Game Steam identity changed')
+                        record=await db.scalar(snapshot(self.component_kind(part),work_id))
+                        if not record:
+                            record=MetadataSnapshot(provider='steam',kind=self.component_kind(part),external_id=str(work_id),entity_id=work_id)
+                            db.add(record)
+                        previous_target=(record.coverage or {}).get('retry_steam_app_id',
+                            (record.coverage or {}).get('steam_app_id'))
+                        if previous_target!=app:
+                            record.attempts=0;record.error_code=None
+                            record.coverage={**(record.coverage or {}),'same_failure_count':0}
+                        if (job.coverage or {}).get('retry_mode') is None and job.error_code==getattr(error,'code',None) and previous_target in (None,app):
+                            # Legacy jobs had one shared failure counter. Keep
+                            # its provider backoff when splitting components;
+                            # rollout must not create a burst of fresh retries.
+                            record.attempts=max(record.attempts or 0,job.attempts or 0)
+                        record.coverage={**(record.coverage or {}),'retry_steam_app_id':app,'state':'partial','complete':False}
+                        self.fail(record,error,work=work)
+                        await db.commit()
             async with self.factory() as db:
                 job=await db.scalar(snapshot(self.job,work_id).with_for_update())
                 if not job or job.lease_token!=token:return 'superseded'
-                if failures:self.fail(job,failures[0])
+                records=(await db.execute(select(MetadataSnapshot.expires_at,MetadataSnapshot.next_attempt_at,
+                    MetadataSnapshot.error_code,MetadataSnapshot.attempts).where(MetadataSnapshot.provider=='steam',
+                    MetadataSnapshot.entity_id==work_id,MetadataSnapshot.kind.in_([self.component_kind(part) for part in self.parts])))).all()
+                errors=[r for r in records if r.error_code]
+                deadlines=[r.next_attempt_at for r in errors if r.next_attempt_at]
+                expiry=min((r.expires_at for r in records if r.expires_at),default=None)
+                if errors:
+                    job.error_code=errors[0].error_code;job.attempts=max(r.attempts for r in errors)
+                    job.next_attempt_at=min(deadlines) if deadlines else None
+                    job.expires_at=None if deadlines else expiry
+                    job.coverage=retain_demand(job,{'state':'partial','complete':False,'steam_app_id':app,
+                                  'retry_mode':'background' if deadlines else 'on_demand'})
                 else:
-                    expiry=await db.scalar(select(MetadataSnapshot.expires_at).where(MetadataSnapshot.provider=='steam',
-                        MetadataSnapshot.entity_id==work_id,MetadataSnapshot.kind.in_([self.component_kind(part) for part in self.parts]))
-                        .order_by(MetadataSnapshot.expires_at).limit(1))
-                    job.coverage={'state':'complete','complete':True,'steam_app_id':app}
+                    job.coverage=retain_demand(job,{'state':'complete','complete':True,'steam_app_id':app})
                     job.fetched_at=now();job.expires_at=expiry or now()+timedelta(hours=6)
                     job.next_attempt_at=job.error_code=None;job.attempts=0
                 job.lease_token=job.lease_until=None;await db.commit()
-            return 'partial' if failures else 'ready'
+            return 'partial' if errors else 'ready'
         except asyncio.CancelledError:
             await self.release(work_id,token);raise
         except Exception as error:
             async with self.factory() as db:
                 job=await db.scalar(snapshot(self.job,work_id).with_for_update())
                 if job and job.lease_token==token:
-                    self.fail(job,error);job.lease_token=job.lease_until=None;await db.commit()
+                    self.fail(job,error,work=await db.get(CatalogueEntity,work_id));job.lease_token=job.lease_until=None;await db.commit()
             return 'retry'
 
     @staticmethod
-    def fail(job,error):
-        job.attempts+=1;job.error_code=getattr(error,'code','identity_conflict' if isinstance(error,catalogue.IdentityConflict) else 'timeout' if isinstance(error,TimeoutError) else 'ingestion_failed')
-        delay=max(getattr(error,'retry_after',0) or 0,min(3600,60*2**min(job.attempts-1,6)))
-        job.next_attempt_at=now()+timedelta(seconds=min(86400,max(1,delay)))
+    def fail(job,error,*,work=None):
+        code=getattr(error,'code','identity_conflict' if isinstance(error,catalogue.IdentityConflict) else 'timeout' if isinstance(error,TimeoutError) else 'ingestion_failed')
+        schedule_failure(job,code,now(),work=work,retry_after=getattr(error,'retry_after',None))
         job.coverage={**(job.coverage or {}),'state':'partial','complete':False}
 
     async def release(self,work_id,token):

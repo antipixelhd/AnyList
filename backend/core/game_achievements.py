@@ -32,7 +32,7 @@ async def view(db,work,*,enqueue=False):
     if enqueue and settings.steam_web_api_key and (not previous.get('schema_enabled') or previous.get('definitions_stale')):
         await db.execute(update(MetadataSnapshot).where(MetadataSnapshot.provider=='steam',
             MetadataSnapshot.entity_id==work.id,MetadataSnapshot.kind.in_((JOB,PREFIX+'schema')),
-            MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.next_attempt_at.is_(None))
+            MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.next_attempt_at.is_(None),MetadataSnapshot.error_code.is_(None))
             .values(expires_at=None).execution_options(synchronize_session=False))
     if enqueue and previous.get('steam_app_id') and previous['steam_app_id']!=app:
         await db.execute(update(MetadataSnapshot).where(MetadataSnapshot.provider=='steam',
@@ -105,7 +105,7 @@ class GameAchievements(GameRatings):
             'schema_enabled':bool(settings.steam_web_api_key),'language':'english',
             'fetched_at':value['fetched_at'],'global_fetched_at':global_data.get('fetched_at'),
             'schema_fetched_at':schema.get('fetched_at') if known_schema else None,
-            'definitions_stale':known_schema and (not definitions_current or any(row.kind==PREFIX+'schema' and (not row.expires_at or row.expires_at<=now()) for row in records)),
+            'definitions_stale':known_schema and (not definitions_current or any(row.kind==PREFIX+'schema' and (row.error_code or not row.expires_at or row.expires_at<=now()) for row in records)),
             'total_source':'player_progress' if public_newer else 'schema' if known_schema else 'global_percentages'}
         catalogue.merge_fields(work,{'attributes':{'achievement_catalogue':metadata}},'steam')
         from core.steam_cache import merge_total

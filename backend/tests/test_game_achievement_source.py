@@ -58,6 +58,14 @@ class AchievementSourceTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result['total'],1)
             self.assertEqual(result['definitions'][0]['name'],'A Stick!')
 
+    def test_omitted_achievement_catalogue_is_unknown_content_not_zero_or_malformed(self):
+        for raw in [{'game':{}},{'game':{'availableGameStats':{'stats':[{'name':'stat'}]}}}]:
+            with self.assertRaises(ProviderError) as raised:definitions(raw,'10')
+            self.assertEqual(raised.exception.code,'content_unavailable')
+        with self.assertRaises(ProviderError) as raised:
+            definitions({'game':{'availableGameStats':{'achievements':None}}},'10')
+        self.assertEqual(raised.exception.code,'bad_response')
+
     async def test_invalid_app_or_component_never_requests_remote_data(self):
         http=SimpleNamespace(request=AsyncMock());source=GameAchievementSource(http=http,key='')
         for app,part in [('0','globals'),('10/','schema'),('4294967296','globals'),('10','players')]:

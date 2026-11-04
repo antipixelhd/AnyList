@@ -27,6 +27,8 @@ from models.catalogue import (
 )
 from .catalogue_normalize import NAMESPACE_KINDS, PRIMARY, identity, document, image
 from .catalogue_providers import ProviderError
+from .enrichment_retry import (CONTENT_FAILURES, schedule_failure, pause_unused,
+    retain_demand, release_context, requested_coverage, public_coverage)
 
 
 class IdentityConflict(Exception):
@@ -619,7 +621,7 @@ def refresh_result(row, status):
         "fetched_at": row.fetched_at,
         "error_code": row.error_code,
         "next_attempt_at": row.next_attempt_at,
-        "coverage": row.coverage or {},
+        "coverage": public_coverage(row.coverage),
     }
 
 
@@ -650,8 +652,7 @@ async def record_refresh_failure(db, row, token, error, base_delay):
         await db.refresh(row, with_for_update=True)
         if row.lease_token != token:
             return "refreshing", False
-        row.attempts += 1
-        row.error_code = (
+        code = (
             error.code
             if isinstance(error, ProviderError)
             else "identity_conflict"
@@ -660,14 +661,9 @@ async def record_refresh_failure(db, row, token, error, base_delay):
             if isinstance(error, asyncio.TimeoutError)
             else "ingestion_failed"
         )
-        row.next_attempt_at = datetime.now(timezone.utc).replace(
-            tzinfo=None
-        ) + timedelta(
-            seconds=max(
-                getattr(error, "retry_after", 0) or 0,
-                min(86400, base_delay * 2 ** min(row.attempts, 10)),
-            )
-        )
+        work=await release_context(db,row.entity_id) if code in CONTENT_FAILURES else None
+        schedule_failure(row,code,datetime.now(timezone.utc).replace(tzinfo=None),work=work,
+                         retry_after=getattr(error,'retry_after',None),base_delay=base_delay*2,max_delay=86400)
         return ("last_good" if row.fetched_at else "failed"), True
     except Exception:
         await db.rollback()
@@ -699,7 +695,8 @@ async def refresh_metadata(
     await write_lock(db)
     await db.execute(
         insert(MetadataSnapshot)
-        .values(provider=provider, kind=snapshot_kind, external_id=snapshot_id)
+        .values(provider=provider, kind=snapshot_kind, external_id=snapshot_id,
+                coverage=requested_coverage(datetime.now(timezone.utc).replace(tzinfo=None)))
         .on_conflict_do_nothing()
     )
     row = (
@@ -742,7 +739,7 @@ async def refresh_metadata(
             async with db.begin_nested():
                 entity=await ingest_document(db,doc,provider)
                 if expected_entity_id and entity.id!=expected_entity_id:raise IdentityConflict('Existing title bridge requires review')
-                row.entity_id=entity.id;row.payload=payload;row.coverage={**doc.get('coverage',{}),'primary_complete':True}
+                row.entity_id=entity.id;row.payload=payload;row.coverage=retain_demand(row,{**doc.get('coverage',{}),'primary_complete':True})
                 row.fetched_at=datetime.now(timezone.utc).replace(tzinfo=None);row.expires_at=None
                 row.error_code=None
         await db.commit()
@@ -781,7 +778,7 @@ async def refresh_metadata(
                 raise IdentityConflict('Existing title bridge requires review')
             row.entity_id = entity.id
             row.payload = payload
-            row.coverage = doc.get("coverage", {})
+            row.coverage = retain_demand(row,doc.get("coverage", {}))
             row.fetched_at = datetime.now(timezone.utc).replace(tzinfo=None)
             row.expires_at = row.fetched_at + timedelta(
                 days=30 if provider == "hardcover" else 7
@@ -833,7 +830,8 @@ async def refresh_prices(db, providers, work_id, appid, country):
     await write_lock(db)
     await db.execute(
         insert(MetadataSnapshot)
-        .values(provider="itad", kind="price", external_id=key)
+        .values(provider="itad", kind="price", external_id=key,
+                coverage=requested_coverage(datetime.now(timezone.utc).replace(tzinfo=None)))
         .on_conflict_do_nothing()
     )
     state = (
@@ -853,6 +851,9 @@ async def refresh_prices(db, providers, work_id, appid, country):
         result = refresh_result(state, cached_status)
         await db.commit()
         return result
+    if pause_unused(state,now):
+        result=refresh_result(state,'last_good' if state.fetched_at else 'failed')
+        await db.commit();return result
     token = uuid.uuid4().hex
     state.lease_token = token
     state.lease_until = now + timedelta(minutes=3)
@@ -907,7 +908,7 @@ async def refresh_prices(db, providers, work_id, appid, country):
             )
             state.entity_id = work_id
             state.payload = prices["payload"]
-            state.coverage={'state':'complete','complete':True,'steam_app_id':appid,'country':country}
+            state.coverage=retain_demand(state,{'state':'complete','complete':True,'steam_app_id':appid,'country':country})
             state.fetched_at = datetime.now(timezone.utc).replace(tzinfo=None)
             state.expires_at = state.fetched_at + timedelta(hours=6)
             state.error_code = None

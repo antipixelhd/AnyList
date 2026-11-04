@@ -2,7 +2,7 @@
 import json
 import re
 from datetime import timedelta
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 from core.catalogue_providers import ProviderError,ProviderHTTP
 from core.game_store_source import store_data,store_request
@@ -45,7 +45,8 @@ def critic(raw,app):
         try:
             if not isinstance(url,str):raise ValueError()
             parsed=urlsplit(url)
-            if parsed.scheme!='https' or parsed.hostname not in ('metacritic.com','www.metacritic.com') or parsed.username or parsed.password or not parsed.path.startswith('/game/'):raise ValueError()
+            if parsed.scheme not in ('http','https') or parsed.hostname not in ('metacritic.com','www.metacritic.com') or parsed.username or parsed.password or parsed.port or not parsed.path.startswith('/game/'):raise ValueError()
+            url=urlunsplit(('https',parsed.netloc,parsed.path,parsed.query,parsed.fragment))
         except ValueError:raise ProviderError('bad_response') from None
     return {'score':value['score'],'url':url,'source':'steam_store','platform':'PC'}
 

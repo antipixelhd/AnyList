@@ -1,5 +1,6 @@
 """Admin health and repair safety against an explicitly disposable PostgreSQL DB."""
 import json
+import importlib
 import os
 import unittest
 from datetime import timedelta
@@ -8,6 +9,8 @@ from unittest.mock import AsyncMock, patch
 import httpx
 from fastapi import FastAPI, HTTPException
 from sqlalchemy import func, select, text, update
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
 
 import test_statistics_pg as statistics_fixture
 from core import catalogue, data_health, statistics_snapshots as snapshots
@@ -29,6 +32,57 @@ URL = os.getenv('STATISTICS_TEST_DATABASE_URL') or os.getenv('TRACKING_TEST_DATA
 
 @unittest.skipUnless(URL, 'Requires explicit disposable statistics PostgreSQL')
 class DataHealthTests(unittest.IsolatedAsyncioTestCase):
+    async def test_retry_migration_clears_settled_errors_and_releases_only_fixed_demanded_jobs(self):
+        async with self.Session() as db:
+            root=await db.scalar(select(CatalogueEntity.id).limit(1))
+            settled=MetadataSnapshot(provider='imdb',kind='game_credit_job',external_id='settled',entity_id=root,
+                error_code='rate_limited',attempts=4,coverage={'state':'unmapped'},expires_at=snapshots.utcnow()+timedelta(days=7))
+            retry=MetadataSnapshot(provider='steam',kind='game_ratings_job',external_id='fixed',entity_id=root,
+                error_code='bad_response',attempts=172,next_attempt_at=snapshots.utcnow()+timedelta(hours=1))
+            restricted=MetadataSnapshot(provider='steam',kind='game_achievement_job',external_id='restriction',entity_id=root,
+                error_code='forbidden',attempts=12,next_attempt_at=snapshots.utcnow()+timedelta(hours=1))
+            leased=MetadataSnapshot(provider='steam',kind='game_ratings_job',external_id='leased',entity_id=root,
+                error_code='bad_response',attempts=10,next_attempt_at=snapshots.utcnow()+timedelta(hours=1),
+                lease_token='owned',lease_until=snapshots.utcnow()+timedelta(minutes=3))
+            db.add_all([settled,retry,restricted,leased]);await db.commit()
+            ids=[row.id for row in (settled,retry,restricted,leased)]
+            restriction_deadline=restricted.next_attempt_at
+        async with self.engine.begin() as conn:
+            def migrate(sync):
+                with Operations.context(MigrationContext.configure(sync)):
+                    importlib.import_module('migrations.versions.mt079_enrichment_retries').upgrade()
+            await conn.run_sync(migrate)
+        async with self.Session() as db:
+            settled,retry,restricted,leased=[await db.get(MetadataSnapshot,key) for key in ids]
+            self.assertIsNone(settled.error_code);self.assertIsNone(settled.next_attempt_at)
+            self.assertEqual(retry.attempts,0);self.assertLessEqual(retry.next_attempt_at,snapshots.utcnow())
+            self.assertEqual(restricted.error_code,'forbidden');self.assertEqual(restricted.next_attempt_at,restriction_deadline)
+            self.assertEqual(leased.attempts,10);self.assertEqual(leased.lease_token,'owned')
+            self.assertEqual(await db.scalar(select(func.count()).select_from(WatchEvent)),1)
+
+    async def test_provider_report_separates_jobs_caches_and_deferred_unknowns(self):
+        async with self.Session() as db:
+            entity_id=await db.scalar(select(CatalogueEntity.id).limit(1))
+            db.add_all([
+                MetadataSnapshot(provider='steam',kind='game_achievement_job',external_id='1',entity_id=entity_id,
+                    error_code='forbidden',attempts=12,next_attempt_at=snapshots.utcnow()+timedelta(hours=1)),
+                MetadataSnapshot(provider='steam',kind='game_achievement_globals',external_id='1',entity_id=entity_id,
+                    error_code='forbidden',attempts=12,next_attempt_at=snapshots.utcnow()+timedelta(hours=1)),
+                MetadataSnapshot(provider='wikidata',kind='game_credit_bridge',external_id='v1:lookup',
+                    error_code='PRIVATE_KEY',attempts=1),
+                MetadataSnapshot(provider='tmdb',kind='movie',external_id='on-demand',entity_id=entity_id,
+                    error_code='unavailable',attempts=2,next_attempt_at=snapshots.utcnow()+timedelta(hours=1)),
+                MetadataSnapshot(provider='tvdb',kind='character_art',external_id='1',entity_id=entity_id,error_code='identity_conflict',attempts=3,
+                    expires_at=snapshots.utcnow()+timedelta(days=90)),
+            ])
+            await db.commit()
+        data=(await self.client.get('/admin/data-health')).json()
+        checks={row['code']:row for row in data['checks']}
+        self.assertEqual(checks['provider_failures']['count'],1)
+        self.assertEqual(checks['provider_cache_failures']['count'],2)
+        self.assertEqual(checks['provider_deferred']['count'],1)
+        self.assertNotIn('PRIVATE_KEY',str(data))
+
     async def asyncSetUp(self):
         # Reuse the neighbouring migration-backed fixture, without inheriting tests.
         await statistics_fixture.StatisticsDatabaseTests.asyncSetUp(self)
@@ -74,7 +128,7 @@ class DataHealthTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(checks['country']['count'], 1)
         self.assertEqual(checks['character_links']['count'], 1)
         self.assertEqual(checks['character_images']['count'], 0)
-        self.assertEqual(checks['provider_failures']['count'], 1)
+        self.assertEqual(checks['provider_cache_failures']['count'], 1)
         self.assertNotIn('PRIVATE_KEY', response.text)
         self.assertNotIn('private@example.test', response.text)
         async with self.Session() as db:

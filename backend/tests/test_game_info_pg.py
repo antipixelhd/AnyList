@@ -35,7 +35,9 @@ class GameInfoTests(unittest.IsolatedAsyncioTestCase):
     async def due(self):
         async with self.Session() as db:
             job=await db.scalar(snapshot(JOB,self.base,provider='steam'));job.next_attempt_at=now()-timedelta(seconds=1)
-            record=await db.scalar(snapshot('game_store_info',self.base,provider='steam'));record.expires_at=now()-timedelta(seconds=1);await db.commit()
+            record=await db.scalar(snapshot('game_store_info',self.base,provider='steam'));record.expires_at=now()-timedelta(seconds=1)
+            if record.next_attempt_at:record.next_attempt_at=now()-timedelta(seconds=1)
+            await db.commit()
 
     async def test_idempotent_shared_cache_and_private_safe_warm_reads(self):
         self.assertEqual(await self.service.run(self.base),'ready');self.assertEqual(await self.service.run(self.base),'cached');self.source.fetch.assert_awaited_once()

@@ -60,6 +60,8 @@ from models.games import GameActivity, GameEntry, GameFavorite
 from models.users import UserSettings
 from routers.games import router as games_router
 from sqlalchemy import delete, event, or_, select
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
 from test_statistics_pg import StatisticsDatabaseTests
 
 
@@ -112,6 +114,15 @@ async def main(args):
         return
     fixture = StatisticsDatabaseTests()
     await fixture.asyncSetUp()
+    if args.case and any(name.startswith('game_title_mapping') for name in args.case):
+        # Mapping generations use the legacy metadata registry, so the common
+        # statistics fixture's Base.create_all does not create these tables.
+        # Install their real migration before timing either comparison arm.
+        async with fixture.engine.begin() as conn:
+            def mapping_setup(sync):
+                with Operations.context(MigrationContext.configure(sync)):
+                    importlib.import_module('migrations.versions.mt070_game_mapping_index').upgrade()
+            await conn.run_sync(mapping_setup)
     samples = []
     counters = Counter()
     sql_patterns = {}

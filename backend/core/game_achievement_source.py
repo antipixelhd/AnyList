@@ -46,6 +46,10 @@ def definitions(raw,app):
     game=raw.get('game') if isinstance(raw,dict) else None
     stats=game.get('availableGameStats') if isinstance(game,dict) else None
     rows=stats.get('achievements') if isinstance(stats,dict) else None
+    if isinstance(game,dict) and (stats is None or isinstance(stats,dict) and 'achievements' not in stats):
+        # Steam can publish stats without an achievement catalogue. This is an
+        # observed gap, never proof of zero achievements or a malformed array.
+        raise ProviderError('content_unavailable')
     # An omitted field or {} is not proof that this game has zero achievements.
     # Steam legitimately returns an empty gameName (for example TUNIC).
     # The requested app scopes this response; only the explicit definitions

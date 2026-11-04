@@ -14,7 +14,7 @@ from core.game_imdb_enrichment import GameIMDbEnrichment, request, status, snaps
 from models import User, Media
 from models.base import MediaType
 from models.catalogue import (CatalogueCredit, CatalogueEntity, CatalogueIdentity, MetadataSnapshot,
-                              CharacterAppearance, CharacterPerformance)
+                              CharacterAppearance, CharacterPerformance, CatalogueRelationship)
 from models.games import GameEntry
 
 
@@ -30,6 +30,63 @@ def page(rows,total,more=False,cursor=None):
 
 @unittest.skipUnless(fixture.URL,'Requires explicit disposable catalogue PostgreSQL')
 class IMDbEnrichmentTests(unittest.IsolatedAsyncioTestCase):
+    async def test_changed_dependency_wakes_parked_stale_binding_without_restarting_active_retry(self):
+        from core.game_mapping_lifecycle import invalidate
+        async with self.Session() as db:
+            binding=await db.scalar(select(CatalogueIdentity).where(CatalogueIdentity.namespace=='imdb.title'))
+            binding.source='matched';binding.evidence={**binding.evidence,'mapping_state':'stale','dependencies':['igdb:10']}
+            job=await db.scalar(snapshot(JOB,self.work_id))
+            job.coverage={'state':'unresolved','retry_mode':'on_demand'}
+            job.next_attempt_at=None;job.expires_at=now()+timedelta(days=90);await db.commit()
+            await invalidate(db,['igdb:other']);await db.commit()
+            await db.refresh(job);self.assertIsNone(job.next_attempt_at)
+            await invalidate(db,['igdb:10']);await db.commit()
+            await db.refresh(job);self.assertIsNotNone(job.next_attempt_at);self.assertIsNone(job.expires_at)
+            marker=job.coverage['mapping_revalidation']
+            await invalidate(db,['igdb:10']);await db.commit();await db.refresh(job)
+            self.assertEqual(job.coverage['mapping_revalidation'],marker)
+
+    async def test_dlc_credits_publish_against_verified_participation_parent(self):
+        async with self.Session() as db:
+            work=await db.get(CatalogueEntity,self.work_id)
+            work.attributes={**work.attributes,'game_class':'dlc'}
+            parent=CatalogueEntity(kind='game',name='Parent',attributes={'game_class':'game','igdb_id':'11'})
+            db.add(parent);await db.flush()
+            db.add(CatalogueRelationship(source_id=work.id,target_id=parent.id,relation='dlc',provider='igdb',attributes={}))
+            await db.commit()
+        self.assertEqual(await self.service.run(self.work_id),'ready')
+        self.assertEqual(len(await self.active()),2)
+        async with self.Session() as db:
+            self.assertIsNone((await db.scalar(snapshot(JOB,self.work_id))).error_code)
+            self.assertEqual((await db.scalar(select(GameEntry))).notes,'Private draft')
+
+    async def test_settled_unmatched_job_clears_old_error_and_uses_age_based_demand(self):
+        async with self.Session() as db:
+            job=await db.scalar(snapshot(JOB,self.work_id))
+            job.error_code='rate_limited';job.attempts=9
+            job.coverage={'mapping_revalidation':'current'};await db.commit()
+        self.bindings.resolve.return_value={'status':'unresolved'}
+        self.assertEqual(await self.service.run(self.work_id),'unresolved')
+        self.source.credits.assert_not_awaited()
+        async with self.Session() as db:
+            job=await db.scalar(snapshot(JOB,self.work_id))
+            self.assertIsNone(job.error_code);self.assertIsNone(job.next_attempt_at)
+            self.assertEqual(job.attempts,0)
+            self.assertGreater(job.expires_at,now()+timedelta(days=89))
+
+    async def test_repeated_identity_failure_waits_for_demand_and_new_binding_recovers(self):
+        self.bindings.resolve.side_effect=ProviderError('identity_conflict')
+        for _ in range(3):
+            await self.due();self.assertEqual(await self.service.run(self.work_id),'retry')
+        async with self.Session() as db:
+            job=await db.scalar(snapshot(JOB,self.work_id))
+            self.assertIsNone(job.next_attempt_at);self.assertGreater(job.expires_at,now()+timedelta(days=89))
+            self.assertFalse((await request(db,self.work_id))['pending'])
+            from core.game_imdb_enrichment import retry_unmapped
+            await retry_unmapped(db,self.work_id);await db.commit()
+        self.bindings.resolve.side_effect=None
+        self.assertEqual(await self.service.run(self.work_id),'ready')
+
     async def test_unmapped_job_without_a_verified_root_keeps_its_cooldown(self):
         async with self.Session() as db:
             job=await db.scalar(snapshot(JOB,self.work_id))

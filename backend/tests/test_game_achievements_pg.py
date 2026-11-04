@@ -16,7 +16,7 @@ from core.game_achievements import GameAchievements,JOB,PREFIX,view
 from core.game_imdb_enrichment import now
 from core.game_ratings import snapshot
 from core.game_tracking import states
-from models.catalogue import CatalogueEntity,CatalogueIdentity
+from models.catalogue import CatalogueEntity,CatalogueIdentity,MetadataSnapshot
 from models.games import GameAchievement,GameAchievementUnlock,GameEntry
 from models.game_statistics import GameStatsState
 
@@ -70,6 +70,9 @@ class AchievementDatabaseTests(unittest.IsolatedAsyncioTestCase):
             job=await db.scalar(snapshot(JOB,self.base));job.next_attempt_at=now()-timedelta(seconds=1);job.expires_at=None
             for part in parts:
                 row=await db.scalar(snapshot(PREFIX+part,self.base));row.expires_at=now()-timedelta(seconds=1)
+            for row in await db.scalars(select(MetadataSnapshot).where(MetadataSnapshot.entity_id==self.base,
+                MetadataSnapshot.kind.in_([PREFIX+'globals',PREFIX+'schema']),MetadataSnapshot.next_attempt_at.is_not(None))):
+                row.next_attempt_at=now()-timedelta(seconds=1)
             await db.commit()
 
     async def test_viewer_membership_selects_schema_or_global_order_before_pagination(self):

@@ -25,6 +25,61 @@ def component(part):
 @unittest.skipUnless(fixture.URL,'Requires explicit disposable Games PostgreSQL')
 class GameRatingsDatabaseTests(unittest.IsolatedAsyncioTestCase):
     cleanup=fixture.GamesDatabaseTests.cleanup
+    async def test_legacy_provider_backoff_survives_component_retry_adoption(self):
+        async with self.Session() as db:
+            job=await db.scalar(snapshot(JOB,self.base))
+            job.error_code='forbidden';job.attempts=142
+            job.coverage={'state':'partial','complete':False};await db.commit()
+        self.source.fetch.side_effect=ProviderError('forbidden')
+        self.assertEqual(await self.service.run(self.base),'partial')
+        async with self.Session() as db:
+            job=await db.scalar(snapshot(JOB,self.base))
+            self.assertEqual(job.attempts,143)
+            self.assertGreater(job.next_attempt_at,now()+timedelta(minutes=59))
+
+    async def test_unused_provider_failure_pauses_and_new_demand_recovers_without_losing_data(self):
+        self.source.fetch.side_effect=ProviderError('forbidden')
+        self.assertEqual(await self.service.run(self.base),'partial')
+        self.source.fetch.reset_mock()
+        async with self.Session() as db:
+            job=await db.scalar(snapshot(JOB,self.base))
+            job.coverage={**job.coverage,'requested_at':(now()-timedelta(days=8)).isoformat()}
+            job.next_attempt_at=now()-timedelta(seconds=1);await db.commit()
+        self.assertEqual(await self.service.run(self.base),'cached')
+        self.source.fetch.assert_not_awaited()
+        async with self.Session() as db:
+            job=await db.scalar(snapshot(JOB,self.base));self.assertIsNone(job.next_attempt_at)
+            self.assertLessEqual(job.expires_at,now());self.assertEqual(job.error_code,'forbidden')
+            state=await view(db,await db.get(CatalogueEntity,self.base),enqueue=True)
+            self.assertTrue(state['status']['pending']);await db.commit()
+        await self.due();self.source.fetch.side_effect=lambda app,part,stamp:component(part)
+        self.assertEqual(await self.service.run(self.base),'ready')
+
+    async def test_stable_gap_parks_only_its_component_and_refreshes_live_ratings(self):
+        async with self.Session() as db:
+            work=await db.get(CatalogueEntity,self.base)
+            work.attributes={**work.attributes,'release_date':'2020-01-01'};await db.commit()
+        async def partial(app,part,stamp):
+            if part=='critic':raise ProviderError('content_unavailable')
+            return component(part)
+        self.source.fetch.side_effect=partial
+        for _ in range(3):
+            await self.due();self.assertEqual(await self.service.run(self.base),'partial')
+        async with self.Session() as db:
+            critic=await db.scalar(snapshot('game_rating_critic',self.base))
+            self.assertIsNone(critic.payload);self.assertIsNone(critic.next_attempt_at)
+            self.assertGreater(critic.expires_at,now()+timedelta(days=89))
+            self.assertFalse((await view(db,await db.get(CatalogueEntity,self.base),enqueue=True))['status']['pending'])
+        self.source.fetch.reset_mock()
+        await self.due('recent');self.assertEqual(await self.service.run(self.base),'partial')
+        self.source.fetch.assert_awaited_once();self.assertEqual(self.source.fetch.call_args.args[1],'recent')
+        async with self.Session() as db:
+            critic=await db.scalar(snapshot('game_rating_critic',self.base))
+            critic.expires_at=now()-timedelta(seconds=1);await db.commit()
+        self.source.fetch.side_effect=lambda app,part,stamp:component(part)
+        await self.due();self.assertEqual(await self.service.run(self.base),'ready')
+        self.assertEqual((await self.request()).json()['ratings']['critic']['score'],94)
+
     async def asyncSetUp(self):
         await fixture.GamesDatabaseTests.asyncSetUp(self)
         async with self.Session() as db:
@@ -39,6 +94,9 @@ class GameRatingsDatabaseTests(unittest.IsolatedAsyncioTestCase):
             job=await db.scalar(snapshot(JOB,self.base));job.expires_at=now()-timedelta(seconds=1);job.next_attempt_at=now()-timedelta(seconds=1)
             for part in parts:
                 row=await db.scalar(snapshot(f'game_rating_{part}',self.base));row.expires_at=now()-timedelta(seconds=1)
+            for row in await db.scalars(select(MetadataSnapshot).where(MetadataSnapshot.entity_id==self.base,
+                MetadataSnapshot.kind.in_([f'game_rating_{p}' for p in PARTS]),MetadataSnapshot.next_attempt_at.is_not(None))):
+                row.next_attempt_at=now()-timedelta(seconds=1)
             await db.commit()
 
     async def request(self,work=None):return await self.client.get(f'/tracking/games/works/{work or self.base}/ratings')

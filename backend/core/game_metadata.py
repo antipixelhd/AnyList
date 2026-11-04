@@ -8,6 +8,7 @@ from sqlalchemy import or_,select,update,case
 from sqlalchemy.dialects.postgresql import insert
 
 from core import catalogue
+from core.enrichment_retry import requested_coverage, demand_expired
 from core.catalogue_providers import CatalogueProviders,ProviderHTTP
 from core.game_imdb_enrichment import now
 from core.game_types import capabilities
@@ -42,6 +43,7 @@ async def native_id(db,work,identities=None):
 async def header(db,native):
     return (await db.execute(select(MetadataSnapshot.entity_id,MetadataSnapshot.fetched_at,MetadataSnapshot.expires_at,
         MetadataSnapshot.next_attempt_at,MetadataSnapshot.lease_until,MetadataSnapshot.error_code,
+        MetadataSnapshot.coverage['requested_at'].astext.label('requested_at'),
         MetadataSnapshot.coverage['characters_complete'].as_boolean().label('characters_complete'),
         MetadataSnapshot.coverage['release_precision_version'].as_integer().label('release_precision_version'),
         MetadataSnapshot.coverage['artwork_policy_version'].as_integer().label('artwork_policy_version')).where(
@@ -57,7 +59,8 @@ def status(row,expected=None):
     return {'primary_ready':usable,'entity_id':row.entity_id if usable else None,
         'primary_revision':f'{row.fetched_at.isoformat()}:{row.artwork_policy_version}' if usable else None,
         'complete':usable and row.characters_complete is True and not active and not queued and not error,
-        'state':'retry' if error else 'loading' if active else 'pending' if queued else 'ready' if usable else 'unavailable',
+        'state':'unavailable' if error and not usable and not (active or queued) else
+            'retry' if error else 'loading' if active else 'pending' if queued else 'ready' if usable else 'unavailable',
         'pending':active or queued,'error':error,'retry_after':min(3600,retry)}
 
 
@@ -117,10 +120,13 @@ async def request(db,work,*,identities=None):
             or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=stamp)).values(expires_at=stamp))
         row=await header(db,native)
     if row and (row.lease_until and row.lease_until>stamp or row.next_attempt_at or row.expires_at and row.expires_at>stamp):
+        if row.next_attempt_at and (not row.requested_at or row.requested_at<(stamp-timedelta(days=1)).isoformat()):
+            await db.execute(update(MetadataSnapshot).where(MetadataSnapshot.provider=='igdb',MetadataSnapshot.kind=='game',
+                MetadataSnapshot.external_id==native).values(coverage=MetadataSnapshot.coverage.op('||')(requested_coverage(stamp))))
         return native,status(row,work.id)
-    statement=insert(MetadataSnapshot).values(provider='igdb',kind='game',external_id=native,entity_id=work.id,next_attempt_at=stamp)
+    statement=insert(MetadataSnapshot).values(provider='igdb',kind='game',external_id=native,entity_id=work.id,next_attempt_at=stamp,coverage=requested_coverage(stamp))
     await db.execute(statement.on_conflict_do_update(constraint='uq_catalogue_snapshot',
-        set_={'next_attempt_at':stamp,'entity_id':work.id},where=(
+        set_={'next_attempt_at':stamp,'entity_id':work.id,'coverage':MetadataSnapshot.coverage.op('||')(requested_coverage(stamp))},where=(
             or_(MetadataSnapshot.entity_id.is_(None),MetadataSnapshot.entity_id==work.id)
             & MetadataSnapshot.next_attempt_at.is_(None)
             & or_(MetadataSnapshot.expires_at.is_(None),MetadataSnapshot.expires_at<=stamp)
@@ -217,20 +223,32 @@ class GameMetadata:
 
     async def tick(self):
         async with self.factory() as db:
-            jobs=(await db.execute(select(MetadataSnapshot.external_id,MetadataSnapshot.entity_id,MetadataSnapshot.coverage['priority'].astext).where(
+            jobs=(await db.execute(select(MetadataSnapshot.external_id,MetadataSnapshot.entity_id,MetadataSnapshot.coverage['priority'].astext,
+                MetadataSnapshot.coverage['requested_at'].astext,MetadataSnapshot.error_code).where(
                 MetadataSnapshot.provider=='igdb',MetadataSnapshot.kind=='game',MetadataSnapshot.entity_id.is_not(None),
                 MetadataSnapshot.next_attempt_at<=now(),or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=now()))
                 .order_by(case((MetadataSnapshot.coverage['priority'].astext=='background',1),else_=0),MetadataSnapshot.next_attempt_at,MetadataSnapshot.id).limit(2))).all()
         # One background primary at a time reserves capacity for a page click.
         background_started=False
-        for native,expected,background_job in jobs:
+        for native,expected,background_job,requested,error in jobs:
             async with self.factory() as db:
+                if error and demand_expired(requested,now()):
+                    await db.execute(update(MetadataSnapshot).where(MetadataSnapshot.provider=='igdb',MetadataSnapshot.kind=='game',
+                        MetadataSnapshot.external_id==native,MetadataSnapshot.coverage['requested_at'].astext==requested,
+                        or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=now()))
+                        .values(next_attempt_at=None,expires_at=now(),coverage=MetadataSnapshot.coverage.op('||')({'retry_mode':'on_demand'})))
+                    await db.commit();continue
                 from models.catalogue import CatalogueEntity
                 work=await db.get(CatalogueEntity,expected)
-                if not work or await native_id(db,work)!=native:
+                canonical=await native_id(db,work) if work else None
+                if not work or canonical!=native:
+                    alias=bool(canonical and await db.scalar(select(CatalogueIdentity.id).where(
+                        CatalogueIdentity.entity_id==expected,CatalogueIdentity.namespace=='igdb.game',
+                        CatalogueIdentity.external_id==native)))
                     await db.execute(update(MetadataSnapshot).where(MetadataSnapshot.provider=='igdb',MetadataSnapshot.kind=='game',
                         MetadataSnapshot.external_id==native,or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=now()))
-                        .values(next_attempt_at=None,error_code='identity_conflict',expires_at=now()+timedelta(days=1)))
+                        .values(next_attempt_at=None,error_code=None if alias else 'identity_conflict',expires_at=now()+timedelta(days=1),
+                                coverage=MetadataSnapshot.coverage.op('||')({'state':'superseded','canonical_igdb_id':canonical} if alias else {})))
                     await db.commit();continue
             if background_job=='background':
                 if background_started or any(scope==id(self.scope) and not flight.primary.is_set() for (scope,_),flight in _flights.items()):continue

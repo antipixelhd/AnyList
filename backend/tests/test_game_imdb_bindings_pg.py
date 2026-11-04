@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 
 import test_catalogue_pg as fixture
 from core import catalogue
+from core.catalogue_providers import ProviderError
 from core.game_imdb_bindings import GameIMDbBindings
 from core.game_imdb_source import game_header
 from core.game_source_cache import GameSourceCache
@@ -17,6 +18,24 @@ from test_game_credit_sources import item, claim, snak
 
 @unittest.skipUnless(fixture.URL,'Requires explicit disposable catalogue PostgreSQL')
 class IMDbBindingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_unknown_primary_or_missing_child_parent_remains_pending_instead_of_excluded(self):
+        work_id=await self.setup_game()
+        service=self.service()
+        for kind in ('unknown','dlc'):
+            async with self.Session() as db:
+                work=await db.get(CatalogueEntity,work_id)
+                work.attributes={**work.attributes,'game_class':kind};await db.commit()
+            with self.assertRaises(ProviderError) as raised:await service.resolve(work_id)
+            self.assertEqual(raised.exception.code,'retry_pending')
+        async with self.Session() as db:
+            work=await db.get(CatalogueEntity,work_id)
+            work.attributes={**work.attributes,'game_class':'bundle'};await db.commit()
+        self.assertEqual((await service.resolve(work_id))['status'],'excluded')
+        async with self.Session() as db:
+            work=await db.get(CatalogueEntity,work_id)
+            work.attributes={**work.attributes,'game_class':'dlc','mobile_only':True};await db.commit()
+        self.assertEqual((await service.resolve(work_id))['status'],'excluded')
+
     async def test_automatic_binding_wakes_existing_unmapped_credit_job(self):
         from core.game_imdb_enrichment import JOB,now,snapshot
         from datetime import timedelta

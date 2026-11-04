@@ -2,6 +2,7 @@
 import asyncio
 import unittest
 from copy import deepcopy
+from types import SimpleNamespace
 from datetime import timedelta
 from unittest.mock import AsyncMock,patch
 
@@ -18,6 +19,17 @@ from models.games import GameEntry
 
 async def catalogue_identity(db,native):
     return await db.scalar(select(CatalogueIdentity).where(CatalogueIdentity.namespace=='igdb.game',CatalogueIdentity.external_id==native))
+
+
+class MetadataStatusTests(unittest.TestCase):
+    def test_parked_missing_primary_finishes_loading_but_keeps_usable_content_on_failure(self):
+        row=SimpleNamespace(fetched_at=None,entity_id=None,lease_until=None,next_attempt_at=None,
+            error_code='identity_conflict',artwork_policy_version=GAME_ARTWORK_VERSION,characters_complete=False)
+        self.assertEqual(status(row)['state'],'unavailable');self.assertFalse(status(row)['pending'])
+        row.next_attempt_at=now()+timedelta(minutes=1)
+        self.assertEqual(status(row)['state'],'retry');self.assertTrue(status(row)['pending'])
+        row.next_attempt_at=None;row.fetched_at=now();row.entity_id=42
+        self.assertTrue(status(row)['primary_ready']);self.assertFalse(status(row)['complete'])
 
 
 class Provider:
@@ -48,6 +60,31 @@ class Provider:
 @unittest.skipUnless(fixture.URL,'Requires explicit disposable Games PostgreSQL')
 class GameMetadataTests(unittest.IsolatedAsyncioTestCase):
     cleanup=fixture.GamesDatabaseTests.cleanup
+
+    async def test_scheduler_retires_verified_alias_and_pauses_unused_failure_without_provider_work(self):
+        async with self.Session() as db:
+            work=await db.get(CatalogueEntity,self.base)
+            identity=await db.scalar(select(CatalogueIdentity).where(CatalogueIdentity.entity_id==work.id,
+                CatalogueIdentity.namespace=='igdb.game'))
+            native=identity.external_id
+            work.attributes={**work.attributes,'igdb_id':native}
+            db.add(CatalogueIdentity(entity_id=work.id,namespace='igdb.game',external_id='77777',source='igdb'))
+            db.add_all([
+                MetadataSnapshot(provider='igdb',kind='game',external_id=native,entity_id=work.id,
+                    error_code='unavailable',next_attempt_at=now()-timedelta(seconds=1),
+                    coverage={'requested_at':(now()-timedelta(days=8)).isoformat()}),
+                MetadataSnapshot(provider='igdb',kind='game',external_id='77777',entity_id=work.id,
+                    error_code='identity_conflict',next_attempt_at=now()-timedelta(seconds=1)),
+            ]);await db.commit()
+        await self.service.tick();self.assertEqual(self.provider.called,0)
+        async with self.Session() as db:
+            alias=await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.provider=='igdb',
+                MetadataSnapshot.kind=='game',MetadataSnapshot.external_id=='77777'))
+            self.assertIsNone(alias.error_code);self.assertIsNone(alias.next_attempt_at)
+            self.assertEqual(alias.coverage['state'],'superseded')
+            self.assertIsNone((await header(db,native)).next_attempt_at)
+            _,state=await request(db,await db.get(CatalogueEntity,self.base))
+            self.assertTrue(state['pending']);await db.commit()
 
     async def test_legacy_orphan_details_do_not_queue_identity_repair(self):
         async with self.Session() as db:
@@ -233,6 +270,14 @@ class GameMetadataTests(unittest.IsolatedAsyncioTestCase):
         if tasks:await asyncio.gather(*tasks,return_exceptions=True)
 
     async def detail(self):return await self.client.get(f'/catalogue/entities/{self.base}/details')
+    async def primary_detail(self):
+        response=await self.detail()
+        if response.status_code==200 and not response.json()['game_metadata_status']['primary_ready']:
+            flight=_flights.get((id(self.engine),'119133'))
+            if flight:
+                await asyncio.wait_for(flight.primary.wait(),5)
+                response=await self.detail()
+        return response
     async def finish(self):
         flight=_flights.get((id(self.engine),'119133'));self.provider.release.set()
         if flight:await asyncio.shield(flight.task)
@@ -279,8 +324,8 @@ class GameMetadataTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((entry.total_seconds,entry.completion_seconds,entry.score),(198000,144000,9))
         self.assertEqual(self.provider.called,1)
 
-    async def test_real_page_returns_primary_before_characters_and_preserves_concurrent_tracking_and_artwork(self):
-        response=await asyncio.wait_for(self.detail(),8);self.assertEqual(response.status_code,200,response.text)
+    async def test_real_page_progresses_to_primary_before_characters_and_preserves_concurrent_tracking_and_artwork(self):
+        response=await asyncio.wait_for(self.primary_detail(),8);self.assertEqual(response.status_code,200,response.text)
         data=response.json();self.assertEqual(data['overview'],'Full primary synopsis');self.assertEqual(data['title'],'Hydrated game')
         self.assertTrue(data['game_metadata_status']['primary_ready']);self.assertFalse(data['game_character_status']['complete'])
         self.assertFalse(data['game_metadata_status']['complete'])
@@ -314,6 +359,7 @@ class GameMetadataTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_failure_retains_stub_user_state_and_reuses_durable_backoff(self):
         self.provider.fail=ProviderError('unavailable',120)
+        await self.detail();await self.finish()
         for _ in range(2):
             response=await self.detail();self.assertEqual(response.status_code,200,response.text)
             data=response.json();self.assertEqual(data['title'],'Game stub');self.assertEqual(data['entry']['score'],9)
@@ -344,13 +390,15 @@ class GameMetadataTests(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as db:
             await db.execute(delete(CatalogueIdentity).where(CatalogueIdentity.entity_id==self.base,CatalogueIdentity.external_id=='42'));await db.commit()
         self.provider.wrong=True;data=(await self.detail()).json()
+        # The progressive response may precede durable failure publication.
+        await self.finish();data=(await self.detail()).json()
         self.assertEqual(data['game_metadata_status']['error'],'identity_conflict')
         async with self.Session() as db:
             self.assertEqual(await db.scalar(select(func.count()).select_from(CatalogueEntity).where(CatalogueEntity.kind=='game')),5)
             self.assertEqual((await db.get(CatalogueEntity,self.base)).name,'Game stub')
 
     async def test_cancelling_worker_releases_lease_without_erasing_primary_checkpoint(self):
-        await self.detail();flight=_flights[(id(self.engine),'119133')];flight.task.cancel()
+        await self.primary_detail();flight=_flights[(id(self.engine),'119133')];flight.task.cancel()
         with self.assertRaises(asyncio.CancelledError):await flight.task
         async with self.Session() as db:
             row=await header(db,'119133');self.assertIsNone(row.lease_until);self.assertIsNotNone(row.next_attempt_at)
@@ -385,7 +433,7 @@ class GameMetadataTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_failed_optional_characters_preserve_new_primary_and_report_retry_without_claiming_complete(self):
         self.provider.fail_characters=True
-        response=await self.detail();self.assertTrue(response.json()['game_metadata_status']['primary_ready'])
+        response=await self.primary_detail();self.assertTrue(response.json()['game_metadata_status']['primary_ready'])
         await self.finish()
         data=(await self.client.get(f'/tracking/games/works/{self.base}/credits')).json()
         self.assertFalse(data['game_character_status']['complete']);self.assertTrue(data['character_status']['pending'])
@@ -394,7 +442,7 @@ class GameMetadataTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.detail()).json()['overview'],'Full primary synopsis');self.assertEqual(self.provider.called,1)
 
     async def test_identity_change_between_phases_blocks_late_character_publication(self):
-        await self.detail()
+        await self.primary_detail()
         async with self.Session() as db:
             await db.execute(delete(CatalogueIdentity).where(CatalogueIdentity.entity_id==self.base,CatalogueIdentity.namespace=='igdb.game'));await db.commit()
         await self.finish()
@@ -418,6 +466,9 @@ class GameMetadataTests(unittest.IsolatedAsyncioTestCase):
         self.provider.release.set();await asyncio.gather(*(flight.task for flight in flights))
 
     async def test_new_result_resolve_uses_the_same_primary_first_cache_without_creating_tracking(self):
+        for native in (0,-1,2147483648):
+            self.assertEqual((await self.client.post(f'/tracking/games/resolve/{native}')).status_code,422)
+        self.assertEqual(self.provider.called,0)
         response=await asyncio.wait_for(self.client.post('/tracking/games/resolve/401'),8)
         self.assertEqual(response.status_code,200,response.text);identifier=response.json()['id']
         self.assertFalse(self.provider.release.is_set());self.assertEqual(self.provider.called,1)

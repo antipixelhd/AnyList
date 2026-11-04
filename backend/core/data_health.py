@@ -12,6 +12,23 @@ LOCK_KEY = 714903421
 STALE_AFTER = timedelta(minutes=15)
 NAMED_ROLE = r"regexp_replace(regexp_replace(coalesce(c.character_label,''), '\s*\((voice|uncredited|archive (footage|sound))\)\s*', ' ', 'gi'), '[^[:alnum:]_]', '', 'g')<>''"
 HAS_GENRES = "EXISTS (SELECT 1 FROM (SELECT * FROM jsonb_each(legacy) UNION ALL SELECT * FROM jsonb_each(attrs)) v WHERE v.key='genres' AND jsonb_typeof(v.value)='array' AND v.value<>'[]'::jsonb)"
+WORKER_REQUEST = """(s.entity_id IS NOT NULL AND (
+ (s.provider='igdb' AND s.kind='game') OR (s.provider='imdb' AND s.kind='game_credit_job')
+ OR (s.provider='steam' AND s.kind IN ('game_achievement_job','game_ratings_job','game_info_job'))
+ OR (s.provider='tvdb' AND s.kind='character_art') OR (s.provider='itad' AND s.kind='price')))"""
+ERROR_DETAIL = """CASE s.error_code
+ WHEN 'rate_limited' THEN 'Provider rate limit' WHEN 'retry_pending' THEN 'Waiting for a dependency'
+ WHEN 'identity_conflict' THEN 'Identity could not be verified' WHEN 'content_unavailable' THEN 'Provider content unavailable'
+ WHEN 'bad_response' THEN 'Unexpected provider response' WHEN 'forbidden' THEN 'Provider denied access'
+ WHEN 'unauthorized' THEN 'Provider authentication failed' WHEN 'not_found' THEN 'Provider record not found'
+ WHEN 'timeout' THEN 'Provider timed out' ELSE 'Provider request failed' END
+ || ' · ' || s.provider || ' · ' || s.attempts::text || ' attempts'
+ || CASE WHEN s.fetched_at IS NOT NULL THEN ' · Previous data retained' ELSE '' END"""
+FAILURE_ROWS = f"""SELECT s.id,coalesce(e.name,s.provider || ' ' || replace(s.kind,'_',' ')) AS name,
+ {ERROR_DETAIL} AS detail FROM catalogue_metadata_snapshots s
+ LEFT JOIN catalogue_entities e ON e.id=s.entity_id WHERE s.error_code IS NOT NULL
+ AND s.kind NOT IN ('game_rating_all_time','game_rating_recent','game_rating_critic',
+                    'game_achievement_globals','game_achievement_schema','game_store_info')"""
 
 # One cohort shared by all title checks. Prefer an explicit, kind-checked bridge;
 # also inspect verified identities so disagreements cannot look like completeness.
@@ -79,8 +96,12 @@ CHECKS = [
   "SELECT min(id)::int AS id,min(title) AS name, provider || ': ' || external_id || ' · IDs ' || string_agg(id::text,', ' ORDER BY id) AS detail FROM (SELECT id,title,media_type, 'TMDB' AS provider,tmdb_id::text AS external_id FROM media WHERE tmdb_id IS NOT NULL UNION ALL SELECT id,title,media_type,'TVDB',tvdb_id::text FROM media WHERE tvdb_id IS NOT NULL UNION ALL SELECT id,title,media_type,'IMDb',imdb_id FROM media WHERE nullif(imdb_id,'') IS NOT NULL) ids GROUP BY media_type,provider,external_id HAVING count(*)>1"),
  ('duplicate_people', 'People sharing a name', 'Same-name catalogue people are candidates for review, not proof of a duplicate identity.', 'info', 'groups', None,
   "SELECT min(id)::int AS id,min(name) AS name,'Catalogue IDs ' || string_agg(id::text,', ' ORDER BY id) AS detail FROM catalogue_entities WHERE kind='person' AND nullif(trim(name),'') IS NOT NULL GROUP BY lower(trim(name)) HAVING count(*)>1"),
- ('provider_failures', 'Provider enrichment failures', 'Failed metadata requests retain last-good data and provider retry delays. Metadata repair covers tracked screen titles; other providers retry on their normal schedule.', 'warning', 'requests', None,
-  "SELECT s.id,coalesce(e.name,s.provider || ' ' || s.kind) AS name,'Request failed; retry follows provider backoff' AS detail FROM catalogue_metadata_snapshots s LEFT JOIN catalogue_entities e ON e.id=s.entity_id WHERE s.error_code IS NOT NULL"),
+ ('provider_failures', 'Scheduled enrichment retries', 'Failed enrichment jobs with a retry deadline. Provider backoff is respected and usable data is retained.', 'warning', 'requests', None,
+  FAILURE_ROWS + f" AND {WORKER_REQUEST} AND (s.next_attempt_at IS NOT NULL OR s.lease_until>timezone('UTC',now()))"),
+ ('provider_deferred', 'Deferred enrichment gaps', 'Unverified content waiting for an on-demand recheck. These records are not recurring retry jobs.', 'warning', 'requests', None,
+  FAILURE_ROWS + f" AND {WORKER_REQUEST} AND s.next_attempt_at IS NULL AND (s.lease_until IS NULL OR s.lease_until<=timezone('UTC',now()))"),
+ ('provider_cache_failures', 'On-demand provider failures', 'Lookup caches and metadata refreshes retry when needed again, after their cooldown. These are not background retry jobs or title counts.', 'info', 'requests', None,
+  FAILURE_ROWS + f" AND NOT {WORKER_REQUEST}"),
  ('statistics_errors', 'Statistics calculation failures', 'Accounts with a failed calculation. The last successful snapshot is retained.', 'warning', 'accounts', 'statistics',
   "SELECT s.user_id AS id,'Account ' || s.user_id AS name,'Last successful snapshot retained' AS detail FROM user_stats_state s WHERE s.error_code IS NOT NULL"),
  ('statistics_missing', 'Missing or incompatible statistics', 'Accounts with tracking or history that need a current statistics snapshot.', 'warning', 'accounts', 'statistics',

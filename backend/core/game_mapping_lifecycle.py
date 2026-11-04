@@ -1,7 +1,7 @@
 """Targeted evidence invalidation without rewriting reviewed or private state."""
 import uuid
 
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import String, and_, cast, func, or_, select, update
 from sqlalchemy.dialects.postgresql import array, insert
 
 from core.game_imdb_enrichment import now
@@ -41,9 +41,17 @@ async def invalidate(db,keys=(),*,outdated=False,identity_ids=None):
                 legacy_scope_condition(CatalogueIdentity,CatalogueEntity)).exists())
     else:condition=CatalogueIdentity.evidence['dependencies'].op('?|')(array(sorted(set(keys))))
     marker=uuid.uuid4().hex
+    # A changed dependency can release a settled revalidation cooldown. Do not
+    # re-mark an already active retry or wake stale rows on every policy sweep.
+    parked=select(MetadataSnapshot.id).where(MetadataSnapshot.provider=='imdb',
+        MetadataSnapshot.kind=='game_credit_job',MetadataSnapshot.entity_id==CatalogueIdentity.entity_id,
+        MetadataSnapshot.external_id==cast(CatalogueIdentity.entity_id,String),
+        MetadataSnapshot.next_attempt_at.is_(None),MetadataSnapshot.coverage['retry_mode'].astext=='on_demand').exists()
+    state=func.coalesce(CatalogueIdentity.evidence['mapping_state'].astext,'active')
     work_ids=list(await db.scalars(update(CatalogueIdentity).where(
         CatalogueIdentity.namespace=='imdb.title',CatalogueIdentity.source!='reviewed',condition,
-        func.coalesce(CatalogueIdentity.evidence['mapping_state'].astext,'active').not_in(('quarantined','stale'))).values(
+        or_(state.not_in(('quarantined','stale')),
+            and_(bool(keys) or identity_ids is not None,state=='stale',parked))).values(
             evidence=CatalogueIdentity.evidence.op('||')({'mapping_state':'stale','evidence_revision':marker}))
         .returning(CatalogueIdentity.entity_id)))
     if not work_ids:return

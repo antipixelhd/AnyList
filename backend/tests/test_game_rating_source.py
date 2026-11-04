@@ -38,6 +38,15 @@ class GameRatingSourceTests(unittest.TestCase):
             raw({'score':101}),raw({'score':80,'url':'https://evil.test/game/pc/game/'})]:
             with self.assertRaises(ProviderError):critic(value,'42')
 
+    def test_legacy_metacritic_http_links_are_normalized_without_fetching_them(self):
+        raw={'42':{'success':True,'data':{'steam_appid':42,'metacritic':{
+            'score':76,'url':'http://www.metacritic.com/game/pc/star-wars-battlefront'}}}}
+        self.assertEqual(critic(raw,'42')['url'],'https://www.metacritic.com/game/pc/star-wars-battlefront')
+        for url in ['http://evil.test/game/a','http://www.metacritic.com:8080/game/a',
+                    'http://user@www.metacritic.com/game/a','javascript://www.metacritic.com/game/a']:
+            raw['42']['data']['metacritic']['url']=url
+            with self.assertRaises(ProviderError):critic(raw,'42')
+
 
 class GameRatingTransportTests(unittest.IsolatedAsyncioTestCase):
     async def test_first_page_summary_only_uses_standard_api_and_explicit_input_json(self):

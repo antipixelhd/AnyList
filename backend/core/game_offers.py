@@ -2,7 +2,7 @@
 import asyncio
 import logging
 import re
-from datetime import datetime,timezone
+from datetime import datetime,timedelta,timezone
 from urllib.parse import urlsplit
 
 from sqlalchemy import or_,select,update
@@ -10,6 +10,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from core import catalogue
 from core.config import settings
+from core.enrichment_retry import requested_coverage
 from core.catalogue_providers import ProviderError
 from core.countries import country_code
 from core.game_types import capabilities
@@ -31,7 +32,8 @@ def now():return datetime.now(timezone.utc).replace(tzinfo=None)
 
 async def price_header(db,key):
     return (await db.execute(select(MetadataSnapshot.entity_id,MetadataSnapshot.expires_at,MetadataSnapshot.fetched_at,
-        MetadataSnapshot.next_attempt_at,MetadataSnapshot.lease_until,MetadataSnapshot.error_code).where(
+        MetadataSnapshot.next_attempt_at,MetadataSnapshot.lease_until,MetadataSnapshot.error_code,
+        MetadataSnapshot.coverage['requested_at'].astext.label('requested_at')).where(
         MetadataSnapshot.provider=='itad',MetadataSnapshot.kind=='price',MetadataSnapshot.external_id==key))).one_or_none()
 
 
@@ -47,10 +49,13 @@ async def admit(db,key,work_id):
     row=await price_header(db,key);stamp=now()
     active=bool(row and row.lease_until and row.lease_until>stamp)
     if row and (active or row.entity_id==work_id and (row.next_attempt_at or row.expires_at and row.expires_at>stamp)):
+        if row.entity_id==work_id and row.next_attempt_at and (not row.requested_at or row.requested_at<(stamp-timedelta(days=1)).isoformat()):
+            await db.execute(update(MetadataSnapshot).where(MetadataSnapshot.provider=='itad',MetadataSnapshot.kind=='price',
+                MetadataSnapshot.external_id==key).values(coverage=MetadataSnapshot.coverage.op('||')(requested_coverage(stamp))))
         return status_view(row)
-    statement=insert(MetadataSnapshot).values(provider='itad',kind='price',external_id=key,entity_id=work_id,next_attempt_at=stamp)
+    statement=insert(MetadataSnapshot).values(provider='itad',kind='price',external_id=key,entity_id=work_id,next_attempt_at=stamp,coverage=requested_coverage(stamp))
     await db.execute(statement.on_conflict_do_update(constraint='uq_catalogue_snapshot',
-        set_={'next_attempt_at':stamp,'entity_id':work_id},where=(
+        set_={'next_attempt_at':stamp,'entity_id':work_id,'coverage':MetadataSnapshot.coverage.op('||')(requested_coverage(stamp))},where=(
             or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=stamp)
             & or_(MetadataSnapshot.entity_id.is_distinct_from(work_id),
                 MetadataSnapshot.next_attempt_at.is_(None)&or_(MetadataSnapshot.expires_at.is_(None),MetadataSnapshot.expires_at<=stamp)))))

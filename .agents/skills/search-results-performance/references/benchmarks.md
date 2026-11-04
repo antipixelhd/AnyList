@@ -1,5 +1,21 @@
 # Benchmark selection and interpretation
 
+Enrichment retry changes use `game_ratings`, `game_metadata` and `game_offers`
+for cached-read identity, SQL, provider and payload comparisons. These cases do
+not exercise failed workers. Pair them with `test_enrichment_retry`,
+`test_game_ratings_pg`, `test_game_achievements_pg`,
+`test_game_imdb_enrichment_pg`, `test_screen_character_art_pg` and
+`test_data_health_pg`, `test_game_info_pg`, `test_game_offers_pg` and
+`test_game_metadata_pg`: verify release gates, independent component cooldowns,
+changed-identity recovery, last-good data, cancellation and unchanged provider
+restriction/outage backoff. Explicitly advance component failure deadlines as
+well as job deadlines when forcing a retry in controlled tests. Failure writes
+now persist each component's retry evidence; warm reads still perform no writes
+or provider calls. See [enrichment-retries.md](enrichment-retries.md) for the policy.
+The mapping cases install the real mt070 generation/reference tables in their
+disposable schema before timing; these models use a separate metadata registry
+and are not created by the shared statistics fixture's `Base.create_all`.
+
 Run commands from the repository root. The maintained harness is `scripts/benchmark_search.py`; it uses real ASGI routes and PostgreSQL with controlled provider responses. Follow its current CLI and case list when they differ from this reference, then update this reference.
 
 ## Safe setup
