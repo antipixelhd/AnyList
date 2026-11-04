@@ -11,13 +11,14 @@ from core import catalogue
 from core.catalogue_additive import prepare_values
 from core.catalogue_batch import write_credits
 from core.catalogue_providers import ProviderError
-from core.game_company_source import GameCompanySource
+from core.game_company_source import GameCompanySource,_game_rows
 from core.game_imdb_enrichment import now,snapshot as source_snapshot,request as admit,status_view
 from models.catalogue import CatalogueEntity,CatalogueIdentity,CatalogueCredit,MetadataSnapshot
 
 JOB='game_company_job'
 _flights={}
-_slots=asyncio.Semaphore(1)
+WORKERS=2
+_slots=asyncio.Semaphore(WORKERS)
 
 
 def snapshot(native):return source_snapshot(JOB,native,provider='igdb')
@@ -86,19 +87,30 @@ class GameCompanyWorks:
     async def bounded(self,native):
         async with _slots:return await self._run(native)
 
-    async def _run(self,native):
+    async def claim(self,native=None):
         token=uuid.uuid4().hex
         async with self.sessions() as db:
-            job=await db.scalar(snapshot(native).with_for_update())
-            if not job or not job.next_attempt_at or job.next_attempt_at>now() or job.lease_until and job.lease_until>now():return 'cached'
+            query=select(MetadataSnapshot).where(MetadataSnapshot.provider=='igdb',MetadataSnapshot.kind==JOB,
+                MetadataSnapshot.next_attempt_at<=now(),or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=now()))
+            if native is not None:query=query.where(MetadataSnapshot.external_id==native)
+            job=await db.scalar(query.order_by(MetadataSnapshot.next_attempt_at,MetadataSnapshot.id).limit(1).with_for_update(skip_locked=True))
+            if not job:return None
             state=dict(job.payload or {})
             job.lease_token=token;job.lease_until=now()+timedelta(minutes=3);await db.commit()
+            return job.external_id,token,state
+
+    async def _run(self,native,*,claimed=None):
+        claimed=claimed or await self.claim(native)
+        if not claimed:return 'cached'
+        native,token,state=claimed
+        rows_token=_game_rows.set({}) if isinstance(self.source,GameCompanySource) else None
         try:
             recent=False
             try:recent=now()-datetime.fromisoformat(state['started_at'])<timedelta(days=1)
             except (KeyError,TypeError,ValueError):pass
             if not recent or state.get('complete'):
-                state={'generation':uuid.uuid4().hex,'started_at':now().isoformat(),'cursor':0,'received':0,'omitted':0,'complete':False}
+                cursor={'phase':'primary','after':0,'deferred':[]} if isinstance(self.source,GameCompanySource) else 0
+                state={'generation':uuid.uuid4().hex,'started_at':now().isoformat(),'cursor':cursor,'received':0,'omitted':0,'complete':False}
             deadline=monotonic()+55
             for _ in range(self.page_budget):
                 async with asyncio.timeout(max(1,deadline-monotonic())):page=await self.source.page(native,state['cursor'])
@@ -118,6 +130,8 @@ class GameCompanyWorks:
                     job.next_attempt_at=now()+timedelta(seconds=min(3600,max(1,delay)));job.lease_token=job.lease_until=None
                     await db.commit()
             return 'retry'
+        finally:
+            if rows_token is not None:_game_rows.reset(rows_token)
 
     async def publish(self,native,token,state,page):
         async with self.sessions() as db:
@@ -179,23 +193,34 @@ class GameCompanyWorks:
             await db.commit()
 
     async def tick(self):
-        async with self.sessions() as db:
-            native=await db.scalar(select(MetadataSnapshot.external_id).where(MetadataSnapshot.provider=='igdb',MetadataSnapshot.kind==JOB,
-                MetadataSnapshot.next_attempt_at<=now(),or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=now()))
-                .order_by(MetadataSnapshot.next_attempt_at,MetadataSnapshot.id).limit(1))
-        if native:await self.run(native)
+        async with _slots:
+            claimed=await self.claim()
+            if not claimed:return False
+            await self._run(claimed[0],claimed=claimed)
+            return True
+
+    async def worker(self):
+        while True:
+            try:
+                if await self.tick():
+                    await asyncio.sleep(0);continue
+            except asyncio.CancelledError:raise
+            except Exception:await asyncio.sleep(30)
+            await asyncio.sleep(2)
+
+    async def serve(self):
+        tasks=[asyncio.create_task(self.worker()) for _ in range(WORKERS)]
+        try:await asyncio.gather(*tasks)
+        finally:
+            for task in tasks:task.cancel()
+            await asyncio.gather(*tasks,return_exceptions=True)
 
 
 async def scheduler():
     from db import AsyncSessionLocal
     service=GameCompanyWorks(AsyncSessionLocal)
     try:
-        while True:
-            delay=2
-            try:await service.tick()
-            except asyncio.CancelledError:raise
-            except Exception:delay=30
-            await asyncio.sleep(delay)
+        await service.serve()
     finally:
         tasks=[task for (scope,_),task in list(_flights.items()) if scope==id(AsyncSessionLocal)]
         for task in tasks:task.cancel()

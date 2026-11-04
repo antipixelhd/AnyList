@@ -21,6 +21,47 @@ class CompanySourceTests(unittest.IsolatedAsyncioTestCase):
     def source(self,values):
         source=object.__new__(GameCompanySource);source.api=SimpleNamespace(igdb=AsyncMock(side_effect=values));return source
 
+    async def test_primary_scan_defers_ports_and_skips_non_display_metadata(self):
+        rows=[{**involved(1,10),'game':game(10)},
+            {**involved(2,20),'game':game(20,11)},
+            {**involved(3,30),'game':game(30,1)},
+            {**involved(4,40),'game':game(40,14)}]
+        source=self.source([rows,[game(10)],[game(20,11,parent_game={'id':10})],[game(10)]])
+        result=await source.page('70',{'phase':'primary','after':0,'deferred':[]})
+        self.assertFalse(result['complete']);self.assertEqual(result['received'],4)
+        self.assertEqual([r['record']['game'] for r in result['documents']],[10])
+        self.assertNotIn('20',source.api.igdb.call_args_list[1].args[1])
+        tail=await source.page('70',result['cursor'])
+        self.assertTrue(tail['complete']);self.assertEqual(tail['received'],0)
+        self.assertEqual(tail['documents'][0]['doc']['work']['identities'][0]['external_id'],'10')
+        self.assertEqual(tail['documents'][0]['record']['game'],20)
+
+    async def test_primary_paging_preserves_variant_tail_and_unknown_types(self):
+        rows=[{**involved(i+1,i+1),'game':game(i+1,11 if i==0 else 0)} for i in range(SIZE)]
+        source=self.source([rows,[game(i+1) for i in range(1,SIZE)],
+            [{**involved(99,100),'game':game(100,999)}],[game(100,999)]])
+        first=await source.page('70',{'phase':'primary','after':0,'deferred':[]})
+        self.assertEqual(first['cursor']['phase'],'primary')
+        second=await source.page('70',first['cursor'])
+        self.assertEqual(second['omitted'],1)
+        self.assertEqual(second['cursor']['deferred'][0]['game'],1)
+        self.assertEqual(second['cursor']['phase'],'variants');self.assertFalse(second['complete'])
+
+    async def test_variant_tail_reuses_parent_metadata_in_the_owned_acquisition(self):
+        from core.game_company_source import _game_rows
+        source=self.source([[{**involved(1,10),'game':game(10)},
+            {**involved(2,20),'game':game(20,11)}],[game(10)],
+            [game(20,11,parent_game={'id':10})]])
+        token=_game_rows.set({})
+        try:
+            first=await source.page('70',{'phase':'primary','after':0,'deferred':[]})
+            tail=await source.page('70',first['cursor'])
+            self.assertTrue(tail['complete'])
+            self.assertEqual(tail['documents'][0]['doc']['work']['identities'][0]['external_id'],'10')
+            self.assertEqual(source.api.igdb.await_count,3)
+        finally:_game_rows.reset(token)
+        self.assertIsNone(_game_rows.get())
+
     async def test_explicit_role_records_fold_ports_and_editions_but_keep_remasters_and_expansions(self):
         rows=[involved(i,native) for i,native in enumerate((10,20,30,40,50,60,70,80),start=1)]
         base=game(10,summary='Base metadata')

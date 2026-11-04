@@ -27,6 +27,42 @@ class Cache:
 
 
 class DiscoverySourceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_bulk_identity_publishes_ready_primary_before_a_blocked_fuzzy_candidate(self):
+        import asyncio
+        self.response([])
+        self.api.explicit_page=AsyncMock(return_value={'outcomes':[
+            {'id':'tt1','status':'unmapped'},
+            {'id':'tt2','status':'verified','game_class':'game'},
+            {'id':'tt3','status':'unmapped'}],'stale':False})
+        ready,blocked=asyncio.Event(),asyncio.Event()
+        async def publish(rows):
+            if any(row['id']=='tt2' for row in rows):ready.set()
+        async def acquire(*args):
+            await blocked.wait()
+            return {'data':{'rows':[],'complete':True,'branches':[]},'stale':False}
+        titles={f'tt{i}':{'id':f'tt{i}','title':f'Title {i}','year':2017} for i in (1,2,3)}
+        with patch('core.game_title_candidates.retrieve',side_effect=acquire) as fetch:
+            task=asyncio.create_task(self.api.page(list(titles),titles=titles,on_progress=publish,candidate_budget=1))
+            try:
+                await asyncio.wait_for(ready.wait(),1);self.assertFalse(task.done())
+                blocked.set();result=await task
+                self.assertEqual(result['deferred'],['tt3'])
+                self.assertEqual({r['id'] for r in result['outcomes']},{'tt1','tt2'})
+                fetch.assert_awaited_once()
+            finally:
+                task.cancel();await asyncio.gather(task,return_exceptions=True)
+
+    async def test_parent_metadata_reuses_bulk_rows_only_within_the_owned_page(self):
+        self.response([])
+        self.api.sources.igdb=AsyncMock(return_value=[raw(10),raw(20)])
+        async def explicit(ids):
+            await self.api.games({10,20})
+            self.assertEqual(set(await self.api.games({10})),{10})
+            return {'outcomes':[]}
+        self.api.explicit_page=explicit
+        await self.api.page(['tt1']);self.api.sources.igdb.assert_awaited_once()
+        await self.api.page(['tt1']);self.assertEqual(self.api.sources.igdb.await_count,2)
+
     async def test_ready_prefix_is_published_before_slow_acquisition_and_cancel_cleans_up(self):
         import asyncio
         from core.game_browse_sources import GameBrowseSources

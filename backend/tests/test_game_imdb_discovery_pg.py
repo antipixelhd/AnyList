@@ -55,10 +55,28 @@ class PortfolioDiscoveryTests(unittest.IsolatedAsyncioTestCase):
             data=await view(db,'nm1',check_mapping=True);await db.commit()
         return data
 
+    async def test_unattempted_fuzzy_work_stays_pending_without_negative_retry_evidence(self):
+        from core.game_imdb_discovery_source import GameIMDbDiscoverySource
+        from core.game_imdb_review import INDEX
+        source=object.__new__(GameIMDbDiscoverySource)
+        source.page=AsyncMock(return_value={'outcomes':[outcome('tt3',30)],'deferred':['tt2'],'stale':False})
+        self.service.source=source
+        self.assertEqual(await self.service.run('nm1'),'partial')
+        async with self.Session() as db:
+            self.assertIsNone(await db.scalar(snapshot(MAP,'tt2',provider='wikidata')))
+            self.assertEqual((await db.scalar(snapshot(MAP,'tt3',provider='wikidata'))).payload['status'],'verified')
+            job=await db.scalar(snapshot(JOB,'nm1'))
+            records=await db.scalar(select(MetadataSnapshot.payload).where(MetadataSnapshot.kind==INDEX,
+                MetadataSnapshot.entity_id==self.person))
+            self.assertEqual(records['titles'][job.payload['offset']]['id'],'tt2')
+            self.assertFalse(job.coverage['complete'])
+        source.page.return_value={'outcomes':[outcome()],'stale':False}
+        self.assertEqual(await self.service.run('nm1'),'ready')
+
     async def test_verified_prefix_survives_slow_failed_sibling_without_advancing_its_cursor(self):
         from core.game_imdb_discovery_source import GameIMDbDiscoverySource
         ready,release=asyncio.Event(),asyncio.Event()
-        async def acquire(ids,*,titles,on_progress):
+        async def acquire(ids,*,titles,on_progress,candidate_budget):
             await on_progress([outcome()]);ready.set();await release.wait()
             raise ProviderError('timeout')
         source=object.__new__(GameIMDbDiscoverySource);source.page=acquire

@@ -117,10 +117,10 @@ class GamePersonDiscovery:
                     and value.get('status')!='verified' and value.get('matcher_version')==VERSION
                     and ('source_title' not in value or value['source_title']==source_title(titles[key]))}
             missing=[value for value in ids if value not in known and value not in cached]
-            # One title can require many alias queries. Publish small fresh
-            # batches within the shared deadline while advancing cached rows
-            # at the normal page size; never truncate the saved connection.
-            if len(missing)>MAX_ACQUIRE:
+            # Legacy sources retain the small acquisition contract. The real
+            # source batches identity lookups and applies this budget only to
+            # fuzzy matching; unattempted titles never become negative evidence.
+            if not isinstance(self.source,GameIMDbDiscoverySource) and len(missing)>MAX_ACQUIRE:
                 stop=next(index for index,row in enumerate(batch) if row['id']==missing[MAX_ACQUIRE])
                 batch=batch[:stop]
                 missing=missing[:MAX_ACQUIRE]
@@ -168,7 +168,7 @@ class GamePersonDiscovery:
             try:
                 async with asyncio.timeout(55):
                     if missing and isinstance(self.source,GameIMDbDiscoverySource):
-                        result=await self.source.page(missing,titles={row['id']:row for row in batch if row['id'] in missing},on_progress=progress)
+                        result=await self.source.page(missing,titles={row['id']:row for row in batch if row['id'] in missing},on_progress=progress,candidate_budget=MAX_ACQUIRE)
                     else:
                         result=await self.source.page(missing) if missing else {'outcomes':[],'stale':False}
                 if result.get('stale'):raise ProviderError('stale_mapping')
@@ -178,9 +178,13 @@ class GamePersonDiscovery:
                 result={'outcomes':[{'id':native,'status':'unresolved',
                     'reason':getattr(error,'code','timeout'),'retry_after':60} for native in missing],'stale':False}
             supplied=result.get('outcomes')
-            if (not isinstance(supplied,list) or len(supplied)!=len(missing) or any(not isinstance(row,dict) for row in supplied)
+            deferred=result.get('deferred',[])
+            if (not isinstance(deferred,list) or any(not isinstance(value,str) for value in deferred)
+                or len(set(deferred))!=len(deferred) or not set(deferred)<=set(missing)):
+                raise ProviderError('bad_response')
+            if (not isinstance(supplied,list) or len(supplied)!=len(missing)-len(deferred) or any(not isinstance(row,dict) for row in supplied)
                 or any(not isinstance(row.get('id'),str) for row in supplied)
-                or {row.get('id') for row in supplied}!=set(missing)
+                or {row.get('id') for row in supplied}!=set(missing)-set(deferred)
                 or any(row.get('status') not in ('verified','excluded','unresolved','unmapped','conflict') for row in supplied)):
                 raise ProviderError('bad_response')
             outcomes=[]
@@ -209,10 +213,14 @@ class GamePersonDiscovery:
                     await db.execute(statement.on_conflict_do_update(constraint='uq_catalogue_snapshot',set_={
                         'payload':statement.excluded.payload,'coverage':statement.excluded.coverage,
                         'entity_id':statement.excluded.entity_id,'fetched_at':statement.excluded.fetched_at,'expires_at':statement.excluded.expires_at}))
-                offset+=len(batch)
+                # Sparse verified siblings may already be published. Keep the
+                # durable cursor behind unattempted work, without saving a
+                # false negative or spending its transient retry allowance.
+                advanced=next((index for index,row in enumerate(batch) if row['id'] in deferred),len(batch))
+                offset+=advanced
                 if offset>=len(records):page+=1;offset=0
                 complete=page>=(component.pages or 0)
-                state.update(page=page,offset=offset,processed=state.get('processed',0)+len(batch),retry_after=retry_after)
+                state.update(page=page,offset=offset,processed=state.get('processed',0)+advanced,retry_after=retry_after)
                 repeat=complete and retry_after>0
                 job.coverage={'complete':complete and not repeat,'state':'complete' if complete and not repeat else 'partial','received':state['processed'],'matcher_version':VERSION}
                 if repeat:state.update(page=0,offset=0,processed=0,retry_after=0)

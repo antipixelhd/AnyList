@@ -28,6 +28,28 @@ def page(items,*,cursor=1,complete=True):
 @unittest.skipUnless(fixture.URL,'Requires disposable Games PostgreSQL')
 class CompanyWorksTests(unittest.IsolatedAsyncioTestCase):
     cleanup=fixture.GamesDatabaseTests.cleanup
+
+    async def test_large_company_does_not_hold_a_second_company_behind_its_http(self):
+        from core import game_company_works as module
+        module._slots=asyncio.Semaphore(module.WORKERS)
+        self.addCleanup(setattr,module,'_slots',asyncio.Semaphore(module.WORKERS))
+        async with self.Session() as db:
+            other=CatalogueEntity(kind='organization',name='Small company');db.add(other);await db.flush()
+            db.add(CatalogueIdentity(entity_id=other.id,namespace='igdb.company',external_id='71',source='igdb'))
+            await db.flush();await status(db,other.id,enqueue=True);await db.commit()
+        entered,release=asyncio.Event(),asyncio.Event()
+        async def load(native,cursor):
+            if native=='70':entered.set();await release.wait()
+            return page([item()])
+        self.source.page.side_effect=load
+        slow=asyncio.create_task(self.service.tick())
+        try:
+            await asyncio.wait_for(entered.wait(),3)
+            self.assertTrue(await asyncio.wait_for(self.service.tick(),3))
+            self.assertFalse(slow.done())
+            async with self.Session() as db:
+                self.assertTrue((await db.scalar(snapshot('71'))).coverage['complete'])
+        finally:release.set();await slow
     async def asyncSetUp(self):
         await fixture.GamesDatabaseTests.asyncSetUp(self)
         async with self.Session() as db:

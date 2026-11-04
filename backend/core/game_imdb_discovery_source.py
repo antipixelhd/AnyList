@@ -5,6 +5,7 @@ import json
 import re
 from time import monotonic
 from datetime import timedelta
+from contextvars import ContextVar
 
 from core.catalogue_normalize import normalize_igdb
 from core.catalogue_providers import ProviderError
@@ -17,6 +18,7 @@ from core.game_release_dates import FIELDS as RELEASE_FIELDS
 from core.wikidata_claims import best_claims,qualified,snak_value
 
 SIZE=20
+_game_rows=ContextVar('discovery_game_rows',default=None)
 FIELDS=('id,name,slug,first_release_date,game_type.type,version_parent,parent_game.name,parent_game.game_type.type,'
     'cover.url,genres.name,platforms.name,platforms.platform_family.name,'
     'ports.game_type.type,ports.platforms.name,ports.platforms.platform_family.name,'
@@ -171,6 +173,10 @@ class GameIMDbDiscoverySource:
         return {'items':result}
 
     async def games(self,ids=(),slugs=()):
+        cached=_game_rows.get()
+        if cached is not None and all(native in cached for native in ids) and all(
+                any(row.get('slug')==slug for row in cached.values()) for slug in slugs):
+            return {native:row for native,row in cached.items() if native in ids or row.get('slug') in slugs}
         clauses=[]
         if ids:clauses.append('id=('+','.join(map(str,sorted(ids)))+')')
         if slugs:clauses.append('slug=('+','.join(json.dumps(value) for value in sorted(slugs))+')')
@@ -183,18 +189,21 @@ class GameIMDbDiscoverySource:
                 or not row['name'].strip() or row['id'] in result
                 or row['id'] not in ids and row.get('slug') not in slugs):raise ProviderError('bad_response')
             result[row['id']]=row
+        if cached is not None:cached.update(result)
         return result
 
-    async def page(self,ids,*,titles=None,on_progress=None):
+    async def page(self,ids,*,titles=None,on_progress=None,candidate_budget=None):
         tasks=[]
+        token=_game_rows.set({})
         try:
-            return await self._page(ids,titles=titles,on_progress=on_progress,tasks=tasks)
+            return await self._page(ids,titles=titles,on_progress=on_progress,tasks=tasks,candidate_budget=candidate_budget)
         finally:
             for task in tasks:
                 if not task.done():task.cancel()
             if tasks:await asyncio.gather(*tasks,return_exceptions=True)
+            _game_rows.reset(token)
 
-    async def _page(self,ids,*,titles=None,on_progress=None,tasks=None):
+    async def _page(self,ids,*,titles=None,on_progress=None,tasks=None,candidate_budget=None):
         if titles is None:
             return await self.explicit_page(ids)
         from core.game_title_candidates import retrieve
@@ -202,6 +211,7 @@ class GameIMDbDiscoverySource:
         from core.game_mapping_policy import corroboration_useful
         from core.game_mapping_index import lookup,wikidata_generation
         if not isinstance(titles,dict) or set(titles)!=set(ids):raise ProviderError('invalid_request')
+        if candidate_budget is not None and (type(candidate_budget) is not int or not 1<=candidate_budget<=SIZE):raise ProviderError('invalid_request')
         wiki_generation=await wikidata_generation(self.sessions)
         try:
             result=await self.explicit_page(ids)
@@ -218,22 +228,32 @@ class GameIMDbDiscoverySource:
                 title['aliases']=local['value'].get('aliases',[])
                 if title.get('year') is None:title['year']=local['value'].get('year')
             prepared[native]=title
+        # Resolve the whole cheap identity group before budgeting fuzzy work.
+        # Known child/version matching follows the primary inventory.
+        def priority(row):
+            return row.get('game_class') in CREDIT_CHILDREN|{'port'} or row.get('reason')=='edition_or_port'
+        result['outcomes']=sorted(result['outcomes'],key=priority)
+        from core.game_version_scope import original_parent
+        candidates=[]
+        for row in result['outcomes']:
+            reference=result.get('version_references',{}).get(row['id'])
+            reconsider=bool(reference and original_parent(prepared[row['id']],reference))
+            if row.get('reason')!='explicit_identity_conflict' and (row['status'] not in ('verified','excluded') or reconsider):
+                candidates.append(row['id'])
+        deferred=candidates[candidate_budget:] if candidate_budget is not None else []
+        candidates=[native for native in candidates if native not in deferred]
+        ready=[row for row in result['outcomes'] if row['status']=='verified' and row['id'] not in candidates+deferred and not priority(row)]
+        if ready and on_progress and not result.get('stale'):await on_progress(ready)
         acquired_titles={}
         if isinstance(self.sources,GameBrowseSources):
             from core.game_candidate_queries import GameCandidateQueries
-            from core.game_version_scope import original_parent
-            candidates=[]
-            for row in result['outcomes']:
-                reference=result.get('version_references',{}).get(row['id'])
-                reconsider=bool(reference and original_parent(prepared[row['id']],reference))
-                if row.get('reason')!='explicit_identity_conflict' and (row['status'] not in ('verified','excluded') or reconsider):
-                    candidates.append(row['id'])
             if self._candidate_queries is None:self._candidate_queries=GameCandidateQueries(self.sources)
             batched=self._candidate_queries
             acquired_titles={native:asyncio.create_task(retrieve(batched,prepared[native])) for native in candidates}
             tasks.extend(acquired_titles.values())
         for outcome in result['outcomes']:
             native=outcome['id'];title=prepared[native];local=indexed.get(native)
+            if native in deferred:continue
             if on_progress and outputs and native in acquired_titles and not acquired_titles[native].done() and not result.get('stale'):
                 await on_progress(outputs)
             from core.game_version_scope import original_parent
@@ -326,7 +346,7 @@ class GameIMDbDiscoverySource:
                 outputs.append(projected);continue
             projected=project_game(native,raw,games,evidence)
             projected['binding_source']='matched';outputs.append(projected)
-        return {**result,'outcomes':outputs}
+        return {**result,'outcomes':outputs,**({'deferred':deferred} if deferred else {})}
 
     async def explicit_page(self,ids):
         if not isinstance(ids,list) or not ids or len(ids)>SIZE or any(
@@ -356,6 +376,7 @@ class GameIMDbDiscoverySource:
                 matches=[value for value in games.values() if value['id']==reference.get('id') or value.get('slug')==reference.get('slug') and 'slug' in reference]
                 outcomes[native]=project(native,item,matches[0],games) if len(matches)==1 else {
                     'id':native,'status':'unresolved','reason':'igdb_metadata'}
+                if len(matches)==1:outcomes[native]['game_class']=igdb_game_class(matches[0])
                 if len(matches)==1 and outcomes[native]['status']=='verified' and igdb_game_class(matches[0]) in ('remake','remaster'):
                     from core.game_version_scope import reference_game
                     version_references[native]=reference_game(matches[0])
