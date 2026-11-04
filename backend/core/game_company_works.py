@@ -105,6 +105,10 @@ class GameCompanyWorks:
         native,token,state=claimed
         rows_token=_game_rows.set({}) if isinstance(self.source,GameCompanySource) else None
         try:
+            if isinstance(self.source,GameCompanySource):
+                from core.game_bulk import defer_verification
+                async with self.sessions() as db:
+                    if await defer_verification(db,'igdb',JOB,native,token,('studio',)):return 'bulk_pending'
             recent=False
             try:recent=now()-datetime.fromisoformat(state['started_at'])<timedelta(days=1)
             except (KeyError,TypeError,ValueError):pass
@@ -177,6 +181,11 @@ class GameCompanyWorks:
                         CatalogueCredit.attributes['company_connection'].astext==native,
                         CatalogueCredit.attributes['company_generation'].astext!=state['generation']).values(
                             attributes=CatalogueCredit.attributes.op('||')({'source_active':False})))
+                from core.game_bulk import queue_metadata
+                await queue_metadata(db,company.id,'studio')
+                if not state['omitted']:
+                    from core.game_bulk import retire
+                    await retire(db,company.id,'studio')
                 job.next_attempt_at=job.lease_token=job.lease_until=None;job.expires_at=now()+timedelta(days=1 if state['omitted'] else 7)
             else:job.lease_until=now()+timedelta(minutes=3)
             job.entity_id=company.id;job.payload=dict(state);job.error_code=None;job.attempts=0

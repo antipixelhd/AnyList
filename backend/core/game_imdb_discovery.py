@@ -213,6 +213,10 @@ class GamePersonDiscovery:
                     await db.execute(statement.on_conflict_do_update(constraint='uq_catalogue_snapshot',set_={
                         'payload':statement.excluded.payload,'coverage':statement.excluded.coverage,
                         'entity_id':statement.excluded.entity_id,'fetched_at':statement.excluded.fetched_at,'expires_at':statement.excluded.expires_at}))
+                from core.game_bulk import retire
+                settled=set(known)|{key for key,value in cached.items() if value.get('status') in ('excluded','conflict')}|{row['id'] for row in outcomes if row['status'] in ('verified','excluded','conflict')}
+                if settled and job.entity_id:
+                    for role_kind in ('actor','staff'):await retire(db,job.entity_id,role_kind,settled)
                 # Sparse verified siblings may already be published. Keep the
                 # durable cursor behind unattempted work, without saving a
                 # false negative or spending its transient retry allowance.

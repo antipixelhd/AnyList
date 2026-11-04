@@ -351,6 +351,16 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
             await db.commit()
             # Restricted profiles must never become public person biographies.
             imdb_profile=imdb_state.get('profile') or {}
+    if games and entity and (company_state or imdb_state):
+        from core import game_bulk
+        state=company_state if kind=='studio' else imdb_state
+        namespace='igdb.company' if kind=='studio' else 'imdb.person'
+        ids=[row.external_id for row in identities if row.namespace==namespace]
+        if ids and state.get('pending'):
+            await game_bulk.request(db,entity.id,kind,ids[0]);await db.commit()
+        state=await game_bulk.status(db,entity.id,kind,state)
+        if kind=='studio':company_state=state
+        else:imdb_state=state
     if not entity and not legacy and not profile.get("name") and not local:
         return None
     # Empty cached fields must not hide a real provider value. Explicitly

@@ -129,6 +129,9 @@ async def imdb_person_status(native: Annotated[str,Path(pattern=r'^nm[0-9]+$',ma
     if not identity:raise HTTPException(404,'Person not found')
     # Status-only polls neither enqueue more people nor read raw filmographies.
     result=await view(db,native,include_profile=False)
+    from core.game_bulk import status as bulk_status
+    person=await db.get(CatalogueEntity,identity.entity_id)
+    result=await bulk_status(db,person.canonical_person_id or person.id,kind,result)
     if work_id:
         from core.game_contributor_works import role_captions
         person=await db.get(CatalogueEntity,identity.entity_id)
@@ -151,7 +154,8 @@ async def company_works_status(company_id:Annotated[int,Path(gt=0)],db:DB,viewer
     from core.game_company_works import status
     result=await status(db,company_id)
     if not result:raise HTTPException(404,'Company source not found')
-    return result
+    from core.game_bulk import status as bulk_status
+    return await bulk_status(db,company_id,'studio',result)
 
 
 @router.get('/people/{native}/imdb/titles')

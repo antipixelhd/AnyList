@@ -5,7 +5,7 @@ from dataclasses import dataclass,field
 from time import monotonic
 from datetime import datetime,timedelta
 
-from sqlalchemy import or_,select,update,exists
+from sqlalchemy import or_,select,update,exists,case
 from sqlalchemy.dialects.postgresql import insert
 
 from core import catalogue
@@ -294,6 +294,11 @@ class GameMetadata:
                     return {**state,'state':state['state'] if state['pending'] else 'unavailable','primary_ready':False},False
                 identity_changed=True
                 native,state=await request(db,work)
+        if native and state['pending']:
+            await db.execute(update(MetadataSnapshot).where(MetadataSnapshot.provider=='igdb',
+                MetadataSnapshot.kind=='game',MetadataSnapshot.external_id==native,
+                MetadataSnapshot.coverage['priority'].astext=='background').values(
+                    coverage=MetadataSnapshot.coverage.op('||')({'priority':'interactive'})))
         await db.commit()  # Waiting never reserves the request's SQL connection.
         initial=state['primary_ready']
         if not native or not state['pending'] or state.get('error'):return state,identity_changed
@@ -339,16 +344,18 @@ class GameMetadata:
                 MetadataSnapshot.next_attempt_at<=now(),or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=now()))
             imports=list(await db.scalars(identity_query.where(MetadataSnapshot.coverage['priority'].astext.is_distinct_from('background'))
                 .order_by(MetadataSnapshot.next_attempt_at,MetadataSnapshot.id).limit(2)))
-            jobs=(await db.execute(select(MetadataSnapshot.external_id,MetadataSnapshot.entity_id).where(
+            jobs=(await db.execute(select(MetadataSnapshot.external_id,MetadataSnapshot.entity_id,MetadataSnapshot.coverage['priority'].astext).where(
                 MetadataSnapshot.provider=='igdb',MetadataSnapshot.kind=='game',MetadataSnapshot.entity_id.is_not(None),
                 MetadataSnapshot.next_attempt_at<=now(),or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=now()))
-                .order_by(MetadataSnapshot.next_attempt_at,MetadataSnapshot.id).limit(2))).all()
+                .order_by(case((MetadataSnapshot.coverage['priority'].astext=='background',1),else_=0),MetadataSnapshot.next_attempt_at,MetadataSnapshot.id).limit(2))).all()
             background=None
             if not jobs and not imports and not any(scope==id(self.scope) and not flight.primary.is_set() for (scope,_),flight in _flights.items()):
                 background=await db.scalar(identity_query.where(MetadataSnapshot.coverage['priority'].astext=='background')
                     .order_by(MetadataSnapshot.next_attempt_at,MetadataSnapshot.id).limit(1))
         for work_id in imports:self.start(f'steam:{work_id}',work_id,identity=True)
-        for native,expected in jobs:
+        # One background primary at a time reserves capacity for a page click.
+        background_started=False
+        for native,expected,background_job in jobs:
             async with self.factory() as db:
                 from models.catalogue import CatalogueEntity
                 work=await db.get(CatalogueEntity,expected)
@@ -357,6 +364,9 @@ class GameMetadata:
                         MetadataSnapshot.external_id==native,or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=now()))
                         .values(next_attempt_at=None,error_code='identity_conflict',expires_at=now()+timedelta(days=1)))
                     await db.commit();continue
+            if background_job=='background':
+                if background_started or any(scope==id(self.scope) and not flight.primary.is_set() for (scope,_),flight in _flights.items()):continue
+                background_started=True
             # Flights own their leases, exceptions and lifecycle. Waiting for
             # optional characters here would block the next scheduler tick and
             # starve unrelated primary jobs despite free primary slots.

@@ -276,6 +276,10 @@ class GameIMDbPersonEnrichment:
         try:
             if state.get('projection_only'):
                 return await self.reproject(native,token,state)
+            if isinstance(self.source,IMDbGameSource):
+                from core.game_bulk import defer_verification
+                async with self.sessions() as db:
+                    if await defer_verification(db,'imdb',JOB,native,token,('actor','staff')):return 'bulk_pending'
             recent=False
             if isinstance(state.get('started_at'),str):
                 try:recent=now()-datetime.fromisoformat(state['started_at'])<timedelta(days=1)
@@ -356,6 +360,9 @@ class GameIMDbPersonEnrichment:
                 if mapping.get('unmapped_games'):
                     from core.game_imdb_discovery import request as discover
                     await discover(db,native,state['generation'],job.entity_id)
+                else:
+                    from core.game_bulk import queue_metadata
+                    for role_kind in ('actor','staff'):await queue_metadata(db,job.entity_id,role_kind)
                 from core.game_person_identity import request as resolve_person
                 await resolve_person(db,native,job.entity_id,component.payload.get('identity_bridge'),enqueue=True)
                 state['state']='complete';state.pop('cursor');state.pop('seen')
@@ -383,6 +390,12 @@ class GameIMDbPersonEnrichment:
                 raise ProviderError('incomplete_cache')
             projection=uuid.uuid4().hex
             mapping=await project_mapped(db,native,[row for page in pages for row in page],projection,source_generation=generation)
+            from core.game_imdb_discovery import JOB as DISCOVERY_JOB
+            discovery_complete=await db.scalar(snapshot(DISCOVERY_JOB,native).with_only_columns(
+                MetadataSnapshot.coverage['complete'].as_boolean())) if mapping.get('unmapped_games') else True
+            if discovery_complete and job.entity_id:
+                from core.game_bulk import queue_metadata
+                for role_kind in ('actor','staff'):await queue_metadata(db,job.entity_id,role_kind)
             # Mapping changes do not change the source index. Rebuilding every
             # index page for every four discovered games amplifies cold work.
             if component.payload.get('index_generation')!=generation:

@@ -33,7 +33,7 @@ class GameWorksChanged(ValueError):
     """A continuation must restart after its eligible collection changes."""
 
 
-def game_credits(entity_id, kind):
+def verified_game_credits(entity_id, kind):
     contributor = CatalogueEntity
     aliases = select(contributor.id).where(or_(contributor.id == entity_id,
         contributor.canonical_person_id == entity_id, contributor.canonical_company_id == entity_id))
@@ -111,9 +111,15 @@ def game_credits(entity_id, kind):
             credited.kind=='game',credited.attributes['game_class'].astext.in_(CREDIT_CHILDREN),
             credited.attributes['adult'].astext.is_distinct_from('true'),
             credited.attributes['mobile_only'].astext.is_distinct_from('true'),~direct_participation)
-        return main.union_all(port,child).cte('game_contributor_credits')
-    return main.union_all(port).cte('game_contributor_credits')
+        return main.union_all(port,child).cte('verified_game_contributor_credits')
+    return main.union_all(port).cte('verified_game_contributor_credits')
 
+
+
+def game_credits(entity_id, kind):
+    from core.game_bulk import projection
+    verified=verified_game_credits(entity_id,kind)
+    return select(verified).union_all(projection(entity_id,kind,verified)).cte('game_contributor_credits')
 
 
 async def role_captions(db,entity_id,kind,work_ids):
