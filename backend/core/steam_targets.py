@@ -40,7 +40,9 @@ async def import_states(db, games, *, settled=False):
     result = {}
     for app in apps:
         evidence = public.get(app, {}).get('igdb_classification')
-        if app in known or app in combined:
+        if public.get(app, {}).get('steam_app_type') == 'software':
+            result[app] = 'software'
+        elif app in known or app in combined:
             result[app] = 'ready'
         elif app in COMPONENTS:
             # Components remain individually selectable; their target resolves
@@ -85,6 +87,13 @@ async def assign(db, app, target_app, *, evidence):
 async def classify(factory, games, *, source=None):
     """Batch exact IGDB app references. No title matching or per-game fan-out."""
     from core.game_browse_sources import GameBrowseSources
+    from core import steam_software
+    await steam_software.classify(factory, games)
+    async with factory() as db:
+        cached = await steam_cache.public_metadata(db, [game['app_id'] for game in games])
+    games = [game for game in games if cached.get(game['app_id'], {}).get('steam_app_type') != 'software']
+    if not games:
+        return
     apps=list(dict.fromkeys(game['app_id'] for game in games))
     missing={}
     async with factory() as db:
@@ -96,7 +105,6 @@ async def classify(factory, games, *, source=None):
                 else:
                     missing[app]=COMPONENTS[app]
         await db.commit()
-        cached=await steam_cache.public_metadata(db,apps)
         native = CatalogueIdentity.__table__.alias('native')
         known = set(await db.scalars(select(CatalogueIdentity.external_id).join(native,
             native.c.entity_id == CatalogueIdentity.entity_id).where(CatalogueIdentity.namespace=='steam.app',

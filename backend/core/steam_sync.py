@@ -44,7 +44,10 @@ async def background_details(factory, user_id, connection_id, job_id):
         source = SteamSource(factory)
         library.sort(key=lambda game: -game['playtime_minutes'])
         async with factory() as db:
+            library = await attach_dates(db, library)
             observed = await steam_cache.read_progress(db, user_id, native, library)
+        observed = [game for game in observed if game.get('steam_app_type') != 'software']
+        library = [game for game in library if game.get('steam_app_type') != 'software']
         pending = [game for game in observed if game['achievement_refresh_due'] or game['achievement_state'] == 'loading' or game.get('achievement_refreshing')]
         while pending:
             for offset in range(0, len(pending), 4):
@@ -120,7 +123,7 @@ async def preparation(factory, user_id, connection_id, job_id):
 async def attach_dates(db, library):
     public = await steam_cache.public_metadata(db, [game['app_id'] for game in library])
     return [{**game, **{key:value for key,value in public.get(game['app_id'], {}).items()
-        if key in ('poster','release_date','game_class') and value is not None}} for game in library]
+        if key in ('poster','release_date','game_class','steam_app_type') and value is not None}} for game in library]
 
 
 async def apply_games(db, state, library, selected, *, initial=False, add_apps=None, initial_status='completed', completion_dates=None,start_dates=None):
@@ -134,6 +137,7 @@ async def apply_games(db, state, library, selected, *, initial=False, add_apps=N
     # Resolve before creating a Steam-only root. Preparation's exact public
     # evidence is authoritative only while recent, complete and unambiguous.
     public = await steam_cache.public_metadata(db, list(selected))
+    selected = [app for app in selected if public.get(app, {}).get('steam_app_type') != 'software']
     mapping = await steam_targets.targets(db, selected)
     canonical_admission = {}
     for target in set(mapping.values()):
@@ -321,7 +325,7 @@ async def sync(factory, user_id, job_id, connection_id):
         async with factory() as db:
             library = await attach_dates(db, library)
             library = await steam_cache.read_progress(db, user_id, native, library)
-        pending = [row for row in library if row['app_id'] in target_ids and achievements_enabled and row['achievement_refresh_due']]
+        pending = [row for row in library if row['app_id'] in target_ids and row.get('steam_app_type') != 'software' and achievements_enabled and row['achievement_refresh_due']]
         pending.sort(key=lambda row: (not achievement_due(row, checkpoints.get(row['app_id'], {}), now()),
                                      checkpoints.get(row['app_id'], {}).get('achievement_checked_at', '')))
         requests, patches = 0, {}

@@ -109,7 +109,7 @@ async def save_public(factory, games, *, release_checked=False):
         values = []
         for game in games[offset:offset+200]:
             payload = {key: game[key] for key in ('name', 'poster', 'release_date', 'artwork_checked_at', 'poster_verified',
-                'game_class', 'igdb_id', 'classification_checked_at', 'igdb_classification') if game.get(key) is not None}
+                'game_class', 'igdb_id', 'classification_checked_at', 'igdb_classification', 'steam_app_type') if game.get(key) is not None}
             if release_checked:
                 payload.update(release_date=game.get('release_date'), release_checked_at=stamp.isoformat())
             values.append({'provider': 'steam', 'kind': PUBLIC_KIND, 'external_id': game['app_id'],

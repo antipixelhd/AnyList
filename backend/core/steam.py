@@ -124,6 +124,32 @@ class SteamSource:
             raise SteamError('Steam achievements are temporarily unavailable. Retry to finish loading them.') from None
         return achievement_data(raw)
 
+    async def software(self):
+        """Public software IDs, paginated independently of a player's library."""
+        if not self.key:
+            raise SteamError('Steam is not configured.')
+        apps, cursor = set(), 0
+        for _ in range(5):
+            raw = await self.http.request('steam', 'GET', API + 'IStoreService/GetAppList/v1/',
+                attempts=1, timeout=15, params={'key': self.key, 'include_games': 'false',
+                    'include_dlc': 'false', 'include_software': 'true', 'include_videos': 'false',
+                    'include_hardware': 'false', 'max_results': 50000, 'last_appid': cursor})
+            response = raw.get('response', {}) if isinstance(raw, dict) else {}
+            rows = response.get('apps')
+            if not isinstance(rows, list) or len(rows) > 50000:
+                raise ProviderError('bad_response')
+            ids = [row.get('appid') for row in rows if isinstance(row, dict)]
+            if len(ids) != len(rows) or any(type(app) is not int or not cursor < app <= 4294967295 for app in ids) or ids != sorted(set(ids)):
+                raise ProviderError('bad_response')
+            apps.update(str(app) for app in ids)
+            more = response.get('have_more_results')
+            if more is False or (more is None and len(rows) < 50000):
+                return apps
+            if more is not True or not ids or response.get('last_appid') != ids[-1]:
+                raise ProviderError('bad_response')
+            cursor = ids[-1]
+        raise ProviderError('incomplete')
+
     async def metadata(self, app):
         """Public store details are shared and loaded only for exposed cards."""
         from core.game_store_source import store_data, store_request

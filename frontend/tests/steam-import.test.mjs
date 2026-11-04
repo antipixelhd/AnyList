@@ -8,6 +8,15 @@ const games = [
   {app_id:'3',name:'Gamma',playtime_minutes:15,achievement_count:3,achievement_total:20},
   {app_id:'4',name:'Delta',playtime_minutes:0,achievement_count:0,achievement_total:2},
 ];
+test('late software evidence defeats manual selection and stops progress polling',()=>{
+  const draft=defaultSteamDraft();draft.overrides['431960']=true;
+  const game={...games[0],app_id:'431960',mapping_state:'pending',achievement_state:'loading',achievement_refresh_due:true};
+  assert.equal(steamSelected(game,draft),true);
+  game.mapping_state='software';
+  assert.equal(steamSelected(game,draft),false);
+  assert.equal(steamProgressPending(game),false);
+  assert.equal(draft.overrides['431960'],true);
+});
 test('pending mappings stay selectable; unavailable mappings override saved selection without deleting it',()=>{
   const draft=defaultSteamDraft();draft.overrides['1']=true;
   const game={...games[0],mapping_state:'pending',achievement_refresh_due:false,achievement_state:'ready'};

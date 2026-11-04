@@ -73,11 +73,12 @@ function init() {
   function paintCount(game: SteamGame) {
     const node = cards.get(game.app_id)?.querySelector<HTMLElement>('.steam-card-achievements');
     if (!node) return;
-    const loading = game.achievement_count === null && game.achievement_state === 'loading';
+    const software = game.mapping_state === 'software';
+    const loading = !software && game.achievement_count === null && game.achievement_state === 'loading';
     node.toggleAttribute('data-loading', loading);
     if (loading) node.setAttribute('role', 'img'); else node.removeAttribute('role');
     node.setAttribute('aria-label', loading ? 'Loading achievements' : '');
-    node.textContent = loading ? '' : game.achievement_count === null ? 'Achievements unavailable'
+    node.textContent = software ? 'Software' : loading ? '' : game.achievement_count === null ? 'Achievements unavailable'
       : `${game.achievement_count}${game.achievement_total !== null ? `/${game.achievement_total}` : ''} achievements`;
   }
   async function loadProgress(epoch: number, id: number, generation: number) {
@@ -163,9 +164,9 @@ function init() {
       const game = byId.get(id);
       if (game) {
         card.setAttribute('aria-pressed', String(steamSelected(game, draft)));
-        const unavailable = game.mapping_state === 'unavailable';
+        const unavailable = game.mapping_state === 'unavailable' || game.mapping_state === 'software';
         card.setAttribute('aria-disabled', String(unavailable));
-        card.title = unavailable ? 'Unavailable' : '';
+        card.title = game.mapping_state === 'software' ? 'Software cannot be imported' : unavailable ? 'Unavailable' : '';
       }
       const date = card.parentElement?.querySelector<HTMLButtonElement>('.steam-completion');
       if (date && game) {
@@ -174,7 +175,7 @@ function init() {
       }
     }
     get('selected').textContent = `${games.filter(game => steamSelected(game, draft)).length} of ${games.length} selected`;
-    const settled = games.filter(game => game.achievement_state !== 'loading' && !game.achievement_refreshing).length;
+    const settled = games.filter(game => game.mapping_state === 'software' || (game.achievement_state !== 'loading' && !game.achievement_refreshing)).length;
     get<HTMLProgressElement>('progress').max = games.length || 1; get<HTMLProgressElement>('progress').value = settled;
     get('progress-label').textContent = `${settled} / ${games.length}`;
   }
@@ -194,7 +195,7 @@ function init() {
     const count = document.createElement('span'); count.className = 'steam-card-achievements'; stats.append(count);
     const check = document.createElement('span'); check.className = 'steam-card-check'; check.textContent = '✓'; check.setAttribute('aria-hidden', 'true');
     node.append(image, title, stats, check);
-    listen(node, 'click', () => { if (game.mapping_state === 'unavailable') return; draft.overrides[game.app_id] = !steamSelected(game, draft); changed(); });
+    listen(node, 'click', () => { if (game.mapping_state === 'unavailable' || game.mapping_state === 'software') return; draft.overrides[game.app_id] = !steamSelected(game, draft); changed(); });
     cards.set(game.app_id, node);
     const wrapper = document.createElement('article'); wrapper.className = 'steam-game'; wrapper.append(node);
     const date = document.createElement('button'); date.type = 'button'; date.className = 'steam-completion';

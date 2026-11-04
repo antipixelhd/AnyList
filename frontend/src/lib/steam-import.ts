@@ -1,11 +1,12 @@
 export type SteamGame = {
   app_id: string; name: string; poster: string; release_date: string | null;
   last_played?: number | null;
-  mapping_state?: 'pending' | 'ready' | 'unavailable';
+  mapping_state?: 'pending' | 'ready' | 'unavailable' | 'software';
   playtime_minutes: number; achievement_count: number | null; achievement_total: number | null;
   achievement_state?: 'loading' | 'ready' | 'unavailable'; achievement_refresh_due?: boolean; achievement_refreshing?: boolean;
 };
 export function steamProgressPending(game: SteamGame): boolean {
+  if (game.mapping_state === 'software') return false;
   return game.mapping_state === 'pending' || game.achievement_refresh_due !== false || game.achievement_state === 'loading' || game.achievement_refreshing === true;
 }
 export type SteamDraft = {
@@ -21,7 +22,7 @@ export function defaultSteamDraft(): SteamDraft {
     achievements_enabled: true, overrides: {}, sort: 'playtime' };
 }
 export function steamSelected(game: SteamGame, draft: SteamDraft): boolean {
-  if (game.mapping_state === 'unavailable') return false;
+  if (game.mapping_state === 'unavailable' || game.mapping_state === 'software') return false;
   if (Object.hasOwn(draft.overrides, game.app_id)) return draft.overrides[game.app_id];
   return (draft.playtime_enabled && game.playtime_minutes >= draft.minimum_playtime)
     || (draft.achievements_enabled && game.achievement_count !== null && game.achievement_count >= draft.minimum_achievements);

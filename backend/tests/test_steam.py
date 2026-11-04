@@ -12,6 +12,27 @@ from routers.steam import Draft, selected_games
 
 
 class SteamTests(unittest.IsolatedAsyncioTestCase):
+    async def test_software_catalog_uses_public_type_filter_and_complete_pagination(self):
+        http = AsyncMock()
+        source = SteamSource(http=http, key='test-key')
+        http.request.side_effect = [
+            {'response': {'apps': [{'appid': 431960}], 'have_more_results': True, 'last_appid': 431960}},
+            {'response': {'apps': [{'appid': 1091501}], 'have_more_results': False}}]
+        self.assertEqual(await source.software(), {'431960', '1091501'})
+        first, second = http.request.await_args_list
+        self.assertEqual(first.args[2], 'https://api.steampowered.com/IStoreService/GetAppList/v1/')
+        self.assertEqual(first.kwargs['params']['include_games'], 'false')
+        self.assertEqual(first.kwargs['params']['include_software'], 'true')
+        self.assertEqual(second.kwargs['params']['last_appid'], 431960)
+        self.assertNotIn('steamid', first.kwargs['params'])
+        self.assertNotEqual(first.kwargs.get('cache'), False)
+        from core.catalogue_providers import ProviderError
+        for raw in ({}, {'response': {'apps': [{'appid': True}]}},
+                {'response': {'apps': [{'appid': 20}], 'have_more_results': True, 'last_appid': 0}}):
+            http.request.side_effect = None; http.request.return_value = raw
+            with self.assertRaises(ProviderError):
+                await source.software()
+
     async def test_mapping_projection_reuses_known_ids_and_keeps_components_selectable(self):
         from core import steam_targets
         from core.steam_sync import now

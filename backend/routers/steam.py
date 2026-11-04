@@ -191,7 +191,7 @@ async def review(connection_id: int, db: DB, viewer: Viewer) -> dict:
     from core.steam_targets import import_states
     library = await steam_cache.read_progress(db, viewer.id, state.steam_id, state.library)
     states = await import_states(db, library, settled=bool(job and job.status in (SyncStatus.completed, SyncStatus.failed, SyncStatus.cancelled)))
-    library = [{**game, 'mapping_state':states[game['app_id']]} for game in library]
+    library = [{**game, 'mapping_state':states[game['app_id']]} for game in library if states[game['app_id']] != 'software']
     return {**summary(state), 'library': library, 'draft': state.draft,
         'job': {'status': job.status.value, 'current': job.processed_items, 'total': job.total_items,
                 'error': job.error_message, 'warnings': job.warnings or []} if job else None}
