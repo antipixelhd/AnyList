@@ -109,13 +109,21 @@ class GameMetadataTests(unittest.IsolatedAsyncioTestCase):
         source=await self.steam_stub()
         source.return_value.append({'uid':'1245620','game':{'id':1942,'name':'Different game','game_type':{'type':'Main Game'}}})
         state=(await self.detail()).json()['game_metadata_status']
+        flight=_flights.get((id(self.engine),f'steam:{self.base}'))
+        if flight:await flight.task
+        state=(await self.detail()).json()['game_metadata_status']
         self.assertEqual(state['error'],'identity_conflict');self.assertEqual(self.provider.called,0)
         async with self.Session() as db:self.assertIsNone(await catalogue_identity(db,'119133'))
 
     async def test_steam_reference_owned_by_other_work_does_not_merge_tracking(self):
         await self.steam_stub()
         async with self.Session() as db:
-            db.add(CatalogueIdentity(entity_id=self.unknown,namespace='igdb.game',external_id='119133',source='igdb'));await db.commit()
+            db.add(CatalogueIdentity(entity_id=self.unknown,namespace='igdb.game',external_id='119133',source='igdb'))
+            db.add(GameEntry(user_id=self.user.id,work_id=self.unknown,status='completed',notes='Separate private decision'))
+            await db.commit()
+        await self.detail()
+        flight=_flights.get((id(self.engine),f'steam:{self.base}'))
+        if flight:await flight.task
         state=(await self.detail()).json()['game_metadata_status']
         self.assertEqual(state['error'],'identity_conflict');self.assertEqual(self.provider.called,0)
         async with self.Session() as db:
@@ -131,7 +139,10 @@ class GameMetadataTests(unittest.IsolatedAsyncioTestCase):
             db.add(CatalogueIdentity(entity_id=self.base,namespace='steam.app',external_id='42',source='reviewed'))
             work=await db.get(CatalogueEntity,self.base)
             work.attributes={**work.attributes,'steam_primary_app_id':'42'};await db.commit()
-        proceed.set();state=(await request_task).json()['game_metadata_status']
+        proceed.set();await request_task
+        flight=_flights.get((id(self.engine),f'steam:{self.base}'))
+        if flight:await flight.task
+        state=(await self.detail()).json()['game_metadata_status']
         self.assertEqual(state['error'],'identity_conflict');self.assertEqual(self.provider.called,0)
 
     async def test_import_queue_resolves_mapping_without_fetching_full_details(self):

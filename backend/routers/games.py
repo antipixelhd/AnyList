@@ -26,7 +26,12 @@ DB = Annotated[AsyncSession, Depends(get_db)]
 Reader = Annotated[User, Depends(get_current_user_or_api_key)]
 Writer = Annotated[User, Depends(get_current_user)]
 Viewer = Annotated[User | None, Depends(get_optional_user_or_api_key)]
-WorkId = Annotated[int, Path(gt=0)]
+async def canonical_game_id(work_id: Annotated[int, Path(gt=0)], db: DB) -> int:
+    from core.game_identity_reconciliation import alias_target
+    return await alias_target(db, work_id) or work_id
+
+
+WorkId = Annotated[int, Depends(canonical_game_id)]
 Admin = Annotated[User, Depends(require_admin)]
 
 

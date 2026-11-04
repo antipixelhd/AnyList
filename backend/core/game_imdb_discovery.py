@@ -8,15 +8,14 @@ from sqlalchemy import select,or_,func
 from sqlalchemy.dialects.postgresql import insert
 
 from core import catalogue
-from core.catalogue_additive import prepare_values
 from core.catalogue_providers import ProviderError
-from core.game_company_works import primary_game
-from core.game_imdb_bindings import GameIMDbBindings,verified_bindings
+from core.game_company_works import prepare_primary_game
+from core.game_imdb_bindings import GameIMDbBindings
 from core.game_imdb_discovery_source import GameIMDbDiscoverySource,SIZE
 from core.game_imdb_enrichment import now,snapshot,status_view
 from core.game_types import CREDIT_CHILDREN
 from core.game_mapping_policy import prepare,lifetime,source_title
-from models.catalogue import CatalogueIdentity,MetadataSnapshot
+from models.catalogue import MetadataSnapshot
 
 JOB='game_person_discovery'
 MAP='game_person_title_map'
@@ -249,11 +248,11 @@ class GamePersonDiscovery:
     async def ingest(self,doc):
         async with self.sessions() as db:
             await catalogue.write_lock(db)
-            projected={**doc,'work':await prepare_values(db,primary_game(doc['work']),'igdb'),
+            projected={**doc,'work':await prepare_primary_game(db,doc['work']),
                 'relationships':[],'releases':[],'editions':[]}
             for edge in doc['relationships']:
                 if edge['relation'] in CREDIT_CHILDREN and not edge.get('reverse'):
-                    projected['relationships'].append({**edge,'target':await prepare_values(db,primary_game(edge['target']),'igdb')})
+                    projected['relationships'].append({**edge,'target':await prepare_primary_game(db,edge['target'])})
             work=await catalogue.ingest_document(db,projected,'igdb');await db.commit()
             return work.id
 

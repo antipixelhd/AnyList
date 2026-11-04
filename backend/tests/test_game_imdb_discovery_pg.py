@@ -128,19 +128,23 @@ class PortfolioDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         providers._local_igdb_slots=None
         self.addCleanup(setattr,providers,'_local_igdb_slots',None)
         http=providers.ProviderHTTP(session_factory=self.Session)
-        waiting=asyncio.Event();sleep=asyncio.sleep
+        waiting=asyncio.Event();resume=asyncio.Event();sleep=asyncio.sleep
         async def observed_sleep(delay):
-            if delay>0:waiting.set()
-            await sleep(delay)
+            if delay>0:
+                waiting.set();await resume.wait()
+            else:await sleep(delay)
         async def load():
             async with providers.ProviderHTTP(session_factory=self.Session).lane('igdb'):
                 self.fail('Ignored database cooldown published during wait')
-        with patch.dict(providers.INTERVALS,{'igdb':.25}),patch.object(providers.asyncio,'sleep',observed_sleep):
+        # Synchronize the delayed waiter explicitly; SQL startup can exceed a
+        # 250ms interval on a busy disposable PostgreSQL instance.
+        with patch.dict(providers.INTERVALS,{'igdb':4}),patch.object(providers.asyncio,'sleep',observed_sleep):
             async with http.lane('igdb'):
                 task=asyncio.create_task(load())
                 try:
                     await asyncio.wait_for(waiting.wait(),2)
                     await http.defer('igdb',10)
+                    resume.set()
                     with self.assertRaises(ProviderError) as error:await asyncio.wait_for(task,2)
                     self.assertEqual(error.exception.code,'rate_limited')
                     self.assertGreater(error.exception.retry_after,9)
@@ -502,7 +506,7 @@ class PortfolioDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sources.api.http.request.await_count,1)  # Reverse Wiki check, no cast/store fan-out.
 
     async def test_stale_automatic_parent_retains_existing_role_but_cannot_create_new_participation(self):
-        from core.game_credit_parents import person_bindings,KIND
+        from core.game_credit_parents import person_bindings
         from core.game_mapping_lifecycle import invalidate
         from core.game_imdb_person import queue_projection,project_mapped
         await self.automatic_edition()
@@ -703,7 +707,8 @@ class PortfolioDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as db:
             identity=await db.scalar(select(CatalogueIdentity).where(CatalogueIdentity.namespace=='imdb.title',CatalogueIdentity.external_id=='tt2'))
             self.assertEqual(identity.source,'matched');self.assertEqual(identity.evidence['igdb_id'],'20')
-            self.assertEqual(identity.evidence['matcher_version'],8)
+            from core.game_title_match import VERSION
+            self.assertEqual(identity.evidence['matcher_version'],VERSION)
             self.assertTrue(next(r for r in identity.evidence['matching']['candidates'] if r['id']==20)['annual_title_scope'])
             credit_id=await db.scalar(select(CatalogueCredit.id).where(CatalogueCredit.work_id==identity.entity_id,
                 CatalogueCredit.contributor_id==self.person,CatalogueCredit.attributes['source_active'].astext=='true'))

@@ -68,6 +68,9 @@ async def fill_document(db, document, provider, *, credit_groups=None):
 
 async def prepare_values(db, values, provider, *, row=None, return_row=False):
     values = deepcopy(values)
+    if row is None and values['kind'] == 'game':
+        from core.game_identity_reconciliation import reconcile
+        await reconcile(db, values.get('identities', []), provider, values.get('attributes'))
     if row is None and values['kind'] == 'person':
         from core.person_identities import reconcile_person_identities
         await reconcile_person_identities(db, values.get('identities', []), provider)

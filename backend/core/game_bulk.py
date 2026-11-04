@@ -4,7 +4,7 @@ import uuid
 from datetime import timedelta, datetime, timezone
 
 from sqlalchemy import Integer, String, column, func, literal, or_, select, update
-from sqlalchemy.dialects.postgresql import JSONB, insert
+from sqlalchemy.dialects.postgresql import insert
 from core.game_imdb_enrichment import now, request as admit, snapshot
 from core.game_types import igdb_game_class
 from models.catalogue import CatalogueEntity, CatalogueIdentity, CatalogueRelationship, MetadataSnapshot
@@ -156,6 +156,24 @@ async def publish(db,job,candidates):
         if igdb_game_class(game)=='expansion' and isinstance(parent,dict):games[str(parent['id'])]=parent
     known=dict((await db.execute(select(CatalogueIdentity.external_id,CatalogueIdentity.entity_id).where(
         CatalogueIdentity.namespace=='igdb.game',CatalogueIdentity.external_id.in_(games)))).all()) if games else {}
+    from core.catalogue_normalize import igdb_steam_identities
+    from core.game_identity_reconciliation import discovery_identities
+    steam_by_game = {native: igdb_steam_identities(game) for native, game in games.items()}
+    apps = {identity['external_id'] for identities in steam_by_game.values() for identity in identities}
+    bound_native = CatalogueIdentity.__table__.alias('bound_native')
+    legacy_apps = set(await db.scalars(select(CatalogueIdentity.external_id).where(
+        CatalogueIdentity.namespace == 'steam.app', CatalogueIdentity.external_id.in_(apps),
+        ~select(bound_native.c.id).where(bound_native.c.entity_id == CatalogueIdentity.entity_id,
+            bound_native.c.namespace == 'igdb.game').exists()))) if apps else set()
+    for native, game in games.items():
+        steam = steam_by_game[native]
+        if not any(identity['external_id'] in legacy_apps for identity in steam):
+            continue
+        values = await discovery_identities(db, {'kind': 'game', 'name': game['name'],
+            'attributes': {'game_class': igdb_game_class(game)},
+            'identities': [{'namespace': 'igdb.game', 'external_id': native}, *steam]})
+        if len(values['identities']) > 1:
+            known[native] = (await catalogue.upsert_entity(db, values, 'igdb')).id
     new=[]
     for native,game in games.items():
         if native in known:continue

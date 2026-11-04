@@ -152,6 +152,11 @@ async def card_data(db, path):
         from core.catalogue_normalize import image
         from core.game_tracking import base_work_id
         work = await db.get(CatalogueEntity, int(key))
+        if work is None:
+            from core.game_identity_reconciliation import alias_target
+            canonical = await alias_target(db, int(key))
+            if canonical:
+                work = await db.get(CatalogueEntity, canonical)
         if not work or work.kind != 'game' or not capabilities(work.attributes).searchable:
             raise HTTPException(404, 'Game not found')
         attrs = work.attributes or {}

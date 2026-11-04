@@ -397,6 +397,12 @@ def game_artwork(raw):
             'scene_artwork':ordered,'artwork_policy_version':GAME_ARTWORK_VERSION}
 
 
+def igdb_steam_identities(raw):
+    return [identity('steam.app', x['uid']) for x in raw.get('external_games') or []
+            if (x.get('external_game_source') or {}).get('name') == 'Steam'
+            and steam_app(x.get('url')) == str(x.get('uid'))]
+
+
 def normalize_igdb(raw):
     from core.game_release_dates import game_release, release
     from core.game_store_source import igdb_age_ratings
@@ -427,11 +433,7 @@ def normalize_igdb(raw):
             },
         )
     )
-    for x in raw.get("external_games") or []:
-        if (x.get("external_game_source") or {}).get("name") == "Steam" and steam_app(
-            x.get("url")
-        ) == str(x.get("uid")):
-            doc["work"]["identities"].append(identity("steam.app", x["uid"]))
+    doc['work']['identities'].extend(igdb_steam_identities(raw))
     for p in raw.get("involved_companies") or []:
         c = p.get("company")
         if not isinstance(c, dict):

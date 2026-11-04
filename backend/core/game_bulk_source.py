@@ -10,10 +10,11 @@ from core.game_types import igdb_game_class, INDEPENDENT, MOBILE_PLATFORMS
 from core.game_imdb_source import IMDbGameSource
 
 independent=INDEPENDENT-{'port'}
-PARENT_FIELDS = 'id,name,game_type,platforms,cover.image_id,themes'
+STEAM_FIELDS = 'external_games.uid,external_games.url,external_games.external_game_source.name'
+PARENT_FIELDS = 'id,name,game_type,platforms,cover.image_id,themes,' + STEAM_FIELDS
 FIELDS = ('id,name,slug,alternative_names.name,game_type,first_release_date,'
     'release_dates.y,release_dates.date_format.format,release_dates.status.name,'
-    'platforms,ports.game_type,ports.platforms,cover.image_id,themes,' +
+    'platforms,ports.game_type,ports.platforms,cover.image_id,themes,' + STEAM_FIELDS + ',' +
     ','.join(prefix + field for prefix in ('parent_game.', 'version_parent.') for field in PARENT_FIELDS.split(',')))
 
 
@@ -173,7 +174,7 @@ class GameBulkSource:
                 if kind=='studio':
                     from core.game_company_source import ROLES
                     after=0
-                    compact='id,name,game_type,platforms,ports.game_type,ports.platforms,cover.image_id,first_release_date,themes'
+                    compact='id,name,game_type,platforms,ports.game_type,ports.platforms,cover.image_id,first_release_date,themes,' + STEAM_FIELDS
                     fields=','.join('game.'+prefix+field for prefix in ('','parent_game.','version_parent.',
                         'parent_game.parent_game.','parent_game.version_parent.',
                         'version_parent.parent_game.','version_parent.version_parent.') for field in compact.split(','))

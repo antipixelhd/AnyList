@@ -25,12 +25,20 @@ def snapshot(native):return source_snapshot(JOB,native,provider='igdb')
 
 
 def primary_game(values):
-    """Secondary store IDs never select or merge an IGDB catalogue root."""
+    """Primary-only projection for store references not accepted as equivalence."""
     primary=[row for row in values['identities'] if row['namespace']=='igdb.game']
     if len(primary)!=1:raise catalogue.IdentityConflict('One explicit IGDB game root is required')
     candidates=[row for row in values['identities'] if row not in primary]
     return {**values,'identities':primary,'attributes':{**values.get('attributes',{}),
         **({'source_identity_candidates':candidates} if candidates else {})}}
+
+
+async def prepare_primary_game(db, values):
+    from core.game_identity_reconciliation import discovery_identities
+    # Keep the primary-only projection for incompatible port/edition store
+    # references, while retaining exact bridges to legacy imported stubs.
+    projected = await discovery_identities(db, values)
+    return await prepare_values(db, projected, 'igdb')
 
 
 async def company_root(db,native):
@@ -156,11 +164,11 @@ class GameCompanyWorks:
                 if native_game not in known:
                     try:
                         async with db.begin_nested():
-                            values=await prepare_values(db,primary_game(doc['work']),'igdb')
+                            values=await prepare_primary_game(db,doc['work'])
                             projected={**doc,'work':values,'relationships':[],'releases':[],'editions':[]}
                             for edge in doc['relationships']:
                                 if edge['relation']=='expansion' and not edge.get('reverse'):
-                                    projected['relationships'].append({**edge,'target':await prepare_values(db,primary_game(edge['target']),'igdb')})
+                                    projected['relationships'].append({**edge,'target':await prepare_primary_game(db,edge['target'])})
                             work=await catalogue.ingest_document(db,projected,'igdb')
                             for candidate in doc['work']['identities'][1:]:
                                 existing=await catalogue.resolve_identity(db,candidate['namespace'],candidate['external_id'])

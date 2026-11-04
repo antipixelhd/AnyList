@@ -306,6 +306,11 @@ async def media_detail(entity_id: Annotated[int, Path(gt=0)], db: DB, current_us
     from core.tracking_access import catalog_access
     await catalog_access(db, current_user)
     work = await db.get(CatalogueEntity, entity_id)
+    if work is None:
+        from core.game_identity_reconciliation import alias_target
+        canonical = await alias_target(db, entity_id)
+        if canonical:
+            work = await db.get(CatalogueEntity, canonical)
     if not work or work.kind not in ('game', 'book'):
         raise HTTPException(404, "Game or book not found")
     await authorize_entity(db, work, current_user)
