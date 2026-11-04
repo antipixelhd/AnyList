@@ -166,6 +166,59 @@ class GameContributorTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('credit_sources',works[games[0].id])
         self.assertNotIn('Ambiguous child',str(data))
 
+    async def test_actor_expansion_uses_own_identity_and_child_state(self):
+        games,alias,_=await self.seed(3)
+        async with self.Session() as db:
+            await db.execute(delete(CatalogueCredit).where(CatalogueCredit.work_id==games[2].id))
+            expansion=CatalogueEntity(kind='game',name='Lies of P: Overture',image_url='https://example.test/overture.jpg',
+                attributes={'game_class':'expansion','release_date':'2025-06-05'})
+            orphan=CatalogueEntity(kind='game',name='Unverified expansion',attributes={'game_class':'expansion'})
+            db.add_all([expansion,orphan]);await db.flush()
+            db.add(CatalogueRelationship(source_id=expansion.id,target_id=games[2].id,relation='expansion',provider='igdb'))
+            for work in (expansion,orphan):
+                db.add(CatalogueCredit(work_id=work.id,contributor_id=alias,provider='imdb',scope='person',
+                    source_key=f'expansion-{work.id}',role='voice_actor',character_label='Lumacchio'))
+            parent=GameEntry(user_id=self.user_id,work_id=games[2].id,status='playing',score=8)
+            db.add(parent);await db.flush()
+            db.add(GameChildState(user_id=self.user_id,work_id=expansion.id,base_work_id=games[2].id,
+                base_entry_id=parent.id,status='completed',score=9))
+            await db.commit()
+        data=(await self.request(media_type='game')).json()
+        self.assertEqual((data['total'],data['list_count']),(3,2))
+        works={row['id']:row for row in data['works']}
+        self.assertNotIn(games[2].id,works)
+        self.assertNotIn(orphan.id,works)
+        added=works[expansion.id]
+        self.assertEqual((added['title'],added['href'],added['release_date']),
+            ('Lies of P: Overture',f'/games/{expansion.id}','2025-06-05'))
+        self.assertEqual((added['poster'],added['base_work_id'],added['game_class']),
+            ('https://example.test/overture.jpg',games[2].id,'expansion'))
+        self.assertEqual((added['list_status'],added['score'],added['characters']),('completed',9,['Lumacchio']))
+        self.assertNotIn('credit_sources',added)
+        self.assertTrue(added['base_listed'])
+        async with self.Session() as db:
+            await db.delete(await db.get(GameEntry,parent.id));await db.commit()
+        unlisted=(await self.request(media_type='game')).json()
+        hidden=next(row for row in unlisted['works'] if row['id']==expansion.id)
+        self.assertFalse(hidden['base_listed'])
+        self.assertIsNone(hidden['list_status'])
+        self.assertIsNone(hidden['score'])
+        async with self.Session() as db:
+            db.add(GameEntry(user_id=self.user_id,work_id=games[2].id,status='planning'))
+            await db.commit()
+        available=(await self.request(media_type='game')).json()
+        ready=next(row for row in available['works'] if row['id']==expansion.id)
+        self.assertTrue(ready['base_listed'])
+        self.assertIsNone(ready['list_status'])
+        # A direct base-game credit, including one on the canonical person,
+        # still suppresses the alias's expansion credit on the works page.
+        async with self.Session() as db:
+            db.add(CatalogueCredit(work_id=games[2].id,contributor_id=self.person_id,provider='imdb',
+                source_key='base-participation',role='actor'))
+            await db.commit()
+        updated=(await self.request(media_type='game')).json()
+        self.assertEqual({row['id'] for row in updated['works']},{g.id for g in games})
+
     async def test_continuations_bind_scope_and_restart_when_collection_changes(self):
         await self.seed()
         first = (await self.request(media_type='game')).json()

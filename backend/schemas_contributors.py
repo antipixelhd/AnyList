@@ -43,6 +43,8 @@ class ContributorWork(BaseModel):
     tmdb_id: int | None = None
     type: Literal["movie", "series", "game"]
     game_class: str | None = None
+    base_work_id: int | None = Field(default=None,exclude_if=lambda value:value is None)
+    base_listed: bool | None = Field(default=None,exclude_if=lambda value:value is None)
     title: str
     poster: str | None = None
     backdrop: str | None = None

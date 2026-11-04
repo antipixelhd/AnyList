@@ -66,7 +66,7 @@ def verified_game_credits(entity_id, kind):
         person_credit.attributes['source_active'].astext.is_distinct_from('false'),
         person_credit.character_label.is_not(None),person_credit.character_label!='').correlate(CatalogueCredit).scalar_subquery()
     independent = INDEPENDENT - {'port'}
-    def projected(work, *, child=False):
+    def projected(work, *, child=False, expansion=False):
         expansion_base = select(expansions.c.parent).join(base, base.id == expansions.c.parent).where(
             expansions.c.child == work.id, expansions.c.relation == 'expansion', base.kind == 'game',
             base.attributes['game_class'].astext.in_(independent)).correlate(work)
@@ -84,14 +84,23 @@ def verified_game_credits(entity_id, kind):
             CatalogueCredit.attributes['source_active'].astext.is_distinct_from('false'),
             work.kind == 'game', work.attributes['adult'].astext.is_distinct_from('true'),work.attributes['mobile_only'].astext.is_distinct_from('true'),
             or_(work.attributes['game_class'].astext.in_(independent), and_(
-                work.attributes['game_class'].astext == 'expansion', expansion_base.exists(), literal(kind!='actor'))))
-    main = projected(credited).select_from(CatalogueCredit).join(credited, credited.id == CatalogueCredit.work_id)
+                work.attributes['game_class'].astext == 'expansion', expansion_base.exists(), literal(kind!='actor' or expansion))))
+    main = projected(credited,expansion=True).select_from(CatalogueCredit).join(credited, credited.id == CatalogueCredit.work_id)
     if kind=='actor':
         direct=aliased(CatalogueCredit)
         main=main.where(or_(CatalogueCredit.attributes['credited_child']['kind'].astext.is_(None),
             ~select(direct.id).where(direct.work_id==credited.id,direct.contributor_id.in_(aliases),direct.role.in_(ACTING),
                 direct.attributes['credited_child']['kind'].astext.is_(None),
                 direct.attributes['source_active'].astext.is_distinct_from('false')).correlate(credited).exists()))
+        # Keep playable expansions as their own works, while preserving the
+        # existing suppression for actors already credited on the base game.
+        main=main.where(case((credited.attributes['game_class'].astext=='expansion',
+            ~select(direct.id).join(CatalogueRelationship,direct.work_id==CatalogueRelationship.target_id).where(
+                CatalogueRelationship.source_id==credited.id,CatalogueRelationship.relation=='expansion',
+                CatalogueRelationship.attributes['source_active'].astext.is_distinct_from('false'),
+                direct.contributor_id.in_(aliases),direct.role.in_(ACTING),
+                direct.attributes['credited_child']['kind'].astext.is_(None),
+                direct.attributes['source_active'].astext.is_distinct_from('false')).correlate(credited).exists()),else_=True))
     # Separate branches retain indexed PK joins. A CASE in the root join caused
     # quadratic scans of game metadata even when no port existed (measured).
     port = projected(work).select_from(CatalogueCredit).join(credited,
@@ -108,7 +117,7 @@ def verified_game_credits(entity_id, kind):
         child = projected(work,child=True).select_from(CatalogueCredit).join(credited,
             credited.id==CatalogueCredit.work_id).join(ports,and_(ports.c.child==credited.id,
             ports.c.relation==credited.attributes['game_class'].astext)).join(work,work.id==ports.c.parent).where(
-            credited.kind=='game',credited.attributes['game_class'].astext.in_(CREDIT_CHILDREN),
+            credited.kind=='game',credited.attributes['game_class'].astext.in_(CREDIT_CHILDREN-{'expansion'}),
             credited.attributes['adult'].astext.is_distinct_from('true'),
             credited.attributes['mobile_only'].astext.is_distinct_from('true'),~direct_participation)
         return main.union_all(port,child).cte('verified_game_contributor_credits')
@@ -237,6 +246,14 @@ async def works_page(db, viewer, entity_id, kind, *, key, list_scope, status, pa
     has_more = len(rows) > PAGE_SIZE
     rows = rows[:PAGE_SIZE]
     displayed = {row['id']: {**dict(row), 'roles': [], 'characters': []} for row in rows}
+    # Only visible expansions need hover eligibility. Keep this private read
+    # out of count/paging queries and batch all displayed bases together.
+    base_ids={row['base_work_id'] for row in rows if row['game_class']=='expansion' and row['base_work_id']}
+    if viewer and base_ids:
+        listed_bases=set(await db.scalars(select(GameEntry.work_id).where(
+            GameEntry.user_id==viewer.id,GameEntry.work_id.in_(base_ids))))
+        for item in displayed.values():
+            if item['game_class']=='expansion':item['base_listed']=item['base_work_id'] in listed_bases
     if displayed:
         associations = (await db.execute(select(credits.c.id, credits.c.role, credits.c.role_label,
             credits.c.character_label,credits.c.credit_kind,credits.c.credit_title).where(credits.c.id.in_(displayed)).distinct())).all()

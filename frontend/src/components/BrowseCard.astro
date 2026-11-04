@@ -3,7 +3,7 @@ import Icon from "./Icon.astro";
 import { responsiveArtwork } from "../lib/responsive-artwork";
 import { formatDateTime, requestDateLocale } from '../lib/date-time';
 import { contributorMediaLabel,contributorCreditScope } from '../lib/contributor-page-data';
-import {browseCardHref,browseCardKey,browseStatusLabel,browseActionLabel,expansionCard} from '../lib/browse-card-data';
+import {browseCardHref,browseCardKey,browseStatusLabel,browseActionLabel,browseCardCanEdit,browseCardQuickActions} from '../lib/browse-card-data';
 const {
   item = { title: "", type: "movie" },
   signedIn = false,
@@ -75,7 +75,7 @@ const href=browseCardHref(item);
       )}
     </span>
     {signedIn && (template || item.id || item.tmdb_id || item.igdb_id) && (
-      <div class="browse-actions" data-motion-static>
+      <div class="browse-actions" data-motion-static hidden={!browseCardCanEdit(item)}>
         <button
           type="button"
           data-browse-action="edit"
@@ -85,7 +85,7 @@ const href=browseCardHref(item);
           <span data-editor-icon="add" hidden={!!state}><Icon name="plus" /></span>
           <span data-editor-icon="edit" hidden={!state}><Icon name="edit" /></span>
         </button>
-        <div class="browse-extra-actions" hidden={expansionCard(item)}>
+        <div class="browse-extra-actions" hidden={!browseCardQuickActions(item)}>
           <button type="button" data-browse-action="watch" hidden={state === (game?'playing':'watching')} aria-label={`${browseActionLabel('watch',game)} ${item.title}`} data-tooltip={browseActionLabel('watch',game)}><Icon name="play" /></button>
           <button
             type="button"
