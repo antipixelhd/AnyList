@@ -23,7 +23,7 @@ from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity
 JOB='game_person_job'
 PAGE='game_person_page'
 COMPONENT='game_person_credits'
-VERSION=2
+VERSION=3
 _flights={}
 _slots=asyncio.Semaphore(1)
 
@@ -127,13 +127,15 @@ def game_rows(rows):
         if not isinstance(title,dict) or not isinstance(title.get('titleType'),dict) or not title['titleType'].get('id'):
             omitted+=1;continue
         if title['titleType']['id']!='videoGame':continue
-        native=title.get('id');role=(row.get('category') or {}).get('id')
+        from core.game_credit_roles import source_role,voice_characters
+        native=title.get('id');role=source_role(row)
         if not isinstance(native,str) or not TITLE_ID.fullmatch(native) or not isinstance(role,str) or not ROLE.fullmatch(role):
             omitted+=1;continue
         key=(native,role)
-        item=games.setdefault(key,{'title_id':native,'category':role,'position':index,'characters':[],'attributes':[]})
+        item=games.setdefault(key,{'title_id':native,'category':role,'position':index,'characters':[],'attributes':[],'source_category':(row.get('category') or {}).get('id'),'jobs':row.get('jobs') or []})
         for field,label in (('characters','name'),('attributes','text')):
             item[field]=list(dict.fromkeys([*item[field],*texts(row.get(field),label)]))
+        item['characters']=list(dict.fromkeys([*item['characters'],*voice_characters(row)]))
     return list(games.values()),omitted
 
 
@@ -205,9 +207,9 @@ async def project_mapped(db,native,rows,generation,*,source_generation=None):
             'position':None,'attributes':{'work_domain':'game','source_active':True,
                 'imdb_person_id':native,'imdb_person_evidence':True,'imdb_person_generation':generation,
                 'imdb_person_source_generation':source_generation or generation,
-                'imdb_title_id':row['title_id'],'imdb_category':row['category'],
+                'imdb_title_id':row['title_id'],'imdb_category':row['category'],'imdb_source_category':row.get('source_category',row['category']),'imdb_jobs':row.get('jobs',[]),
                 'credited_child':child_credits.get(row['title_id']),
-                'person_credit_order':row['position'],'voice':True if any(value.casefold()=='voice' for value in attributes) else None,
+                'person_credit_order':row['position'],'voice':True if role=='voice_actor' or any(value.casefold()=='voice' for value in attributes) else None,
                 'languages':list(dict.fromkeys(VERSIONS[value] for value in attributes if value in VERSIONS)),
                 'game_role':{'characters':characters,'text_characters':characters},
                 'person_character_evidence':bool(characters),
@@ -286,9 +288,9 @@ class GameIMDbPersonEnrichment:
             if isinstance(state.get('started_at'),str):
                 try:recent=now()-datetime.fromisoformat(state['started_at'])<timedelta(days=1)
                 except ValueError:pass
-            if not recent or 'cursor' not in state:
+            if not recent or 'cursor' not in state or isinstance(self.source,IMDbGameSource) and state.get('source_version')!=2:
                 state={'state':'partial','generation':uuid.uuid4().hex,'started_at':now().isoformat(),
-                    'cursor':None,'seen':[],'received':0,'total':None,'pages':0,'complete':False}
+                    'cursor':None,'seen':[],'received':0,'total':None,'pages':0,'complete':False,'source_version':2}
             deadline=monotonic()+55
             for _ in range(self.page_budget):
                 async with asyncio.timeout(max(1,deadline-monotonic())):

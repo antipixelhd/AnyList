@@ -39,22 +39,64 @@ class BulkDatabaseTests(unittest.IsolatedAsyncioTestCase):
             state=await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.provider=='igdb',MetadataSnapshot.kind=='game',MetadataSnapshot.external_id=='100'))
             self.assertEqual(state.coverage['priority'],'background')
 
+    async def test_shared_filtered_source_survives_a_cancelled_bulk_subscriber(self):
+        import asyncio
+        from core.game_imdb_source import IMDbGameSource
+        from core.catalogue_providers import ProviderHTTP
+        ready=asyncio.Event();release=asyncio.Event();calls=[]
+        async def query(http,*args,**kwargs):
+            self.assertIsNone(http.client)
+            calls.append(kwargs['json']);ready.set();await release.wait()
+            return {'data':{'name':{'id':'nm1','nameText':{'text':'Fixture'},'credits':{
+                'total':0,'edges':[],'pageInfo':{'hasNextPage':False,'endCursor':None}}}}}
+        source=IMDbGameSource(ProviderHTTP(session_factory=self.Session))
+        with patch.object(ProviderHTTP,'request',query):
+            first=asyncio.create_task(source.credits('nm1',person=True))
+            await asyncio.wait_for(ready.wait(),5)
+            second=asyncio.create_task(IMDbGameSource(ProviderHTTP(session_factory=self.Session)).credits('nm1',person=True))
+            first.cancel();await asyncio.gather(first,return_exceptions=True)
+            release.set();result=await asyncio.wait_for(second,5)
+            self.assertEqual(result['rows'],[])
+            self.assertEqual((await source.credits('nm1',person=True))['total'],0)
+        self.assertEqual(len(calls),1)
+        self.assertIn('first: 250',calls[0]['query'])
+
+    async def test_reviewed_main_game_and_custom_update_parent_survive_projection(self):
+        from core.game_imdb_person import project_mapped
+        from core.game_credit_parents import KIND
+        from test_game_imdb_person_pg import credit
+        games,_,_=await self.seed(2)
+        async with self.Session() as db:
+            db.add_all([CatalogueIdentity(entity_id=self.person_id,namespace='imdb.person',external_id='nm1',source='imdb'),
+                CatalogueIdentity(entity_id=games[0].id,namespace='igdb.game',external_id='7483',source='igdb'),
+                CatalogueIdentity(entity_id=games[0].id,namespace='imdb.title',external_id='tt2073708',source='reviewed',evidence={'igdb_id':'7483','title_type':'videoGame','mapping_state':'active'}),
+                CatalogueIdentity(entity_id=games[1].id,namespace='igdb.game',external_id='2903',source='igdb'),
+                MetadataSnapshot(provider='imdb',kind=KIND,external_id='tt43706487',entity_id=games[1].id,
+                    payload={'kind':'update','title':'Warframe: Tau','source_url':'https://www.warframe.com/en/tau'},coverage={'reviewed':True})])
+            await db.flush()
+            await project_mapped(db,'nm1',[credit('tt2073708'),credit('tt43706487')],'fresh')
+            await db.commit()
+            credits=(await db.execute(select(CatalogueCredit.work_id,CatalogueCredit.attributes).where(
+                CatalogueCredit.contributor_id==self.person_id,CatalogueCredit.provider=='imdb'))).all()
+            self.assertEqual({row.work_id for row in credits},{games[0].id,games[1].id})
+            self.assertEqual(next(row.attributes['credited_child']['kind'] for row in credits if row.work_id==games[1].id),'update')
+
     async def test_missing_titles_get_a_separate_durable_discovery_order(self):
         from core.game_imdb_review import write_index,INDEX,PRIORITY_INDEX
         async with self.Session() as db:
             db.add(MetadataSnapshot(provider='anylist',kind='game_bulk',external_id=f'{self.person_id}:actor',
-                entity_id=self.person_id,payload={'rows':[{'source':'tt1','work_id':1,'role':'actor'}]}))
+                entity_id=self.person_id,payload={'rows':[{'source':'tt1','work_id':1,'role':'actor'}],'priority_sources':['tt3']}))
             await db.flush()
             rows=[{'category':{'id':'actor'},'title':{'id':native,'titleType':{'id':'videoGame'},
-                'titleText':{'text':native},'releaseYear':{'year':year}}} for native,year in [('tt1',2025),('tt2',2020)]]
+                'titleText':{'text':native},'releaseYear':{'year':year}}} for native,year in [('tt1',2025),('tt2',2020),('tt3',None)]]
             result=await write_index(db,'nm1','generation',rows,entity_id=self.person_id)
             self.assertTrue(result['index_priority'])
             ordered=await db.scalar(select(MetadataSnapshot.payload).where(MetadataSnapshot.kind==PRIORITY_INDEX,
                 MetadataSnapshot.external_id=='nm1:generation:priority:0'))
-            self.assertEqual([row['id'] for row in ordered['titles']],['tt2','tt1'])
+            self.assertEqual([row['id'] for row in ordered['titles']],['tt3','tt2','tt1'])
             original=await db.scalar(select(MetadataSnapshot.payload).where(MetadataSnapshot.kind==INDEX,
                 MetadataSnapshot.external_id=='nm1:generation:0'))
-            self.assertEqual([row['id'] for row in original['titles']],['tt1','tt2'])
+            self.assertEqual([row['id'] for row in original['titles']],['tt1','tt2','tt3'])
             self.assertEqual(await db.scalar(select(func.count()).select_from(MetadataSnapshot).where(
                 MetadataSnapshot.kind==INDEX,MetadataSnapshot.external_id.like('nm1:generation:%'))),1)
 

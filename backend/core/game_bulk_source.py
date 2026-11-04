@@ -15,10 +15,7 @@ FIELDS = ('id,name,slug,alternative_names.name,game_type,first_release_date,'
     'release_dates.y,release_dates.date_format.format,release_dates.status.name,'
     'platforms,ports.game_type,ports.platforms,cover.image_id,themes,' +
     ','.join(prefix + field for prefix in ('parent_game.', 'version_parent.') for field in PARENT_FIELDS.split(',')))
-QUERY = ('query($id:ID!, $after:ID) { name(id:$id) { id '
-    'credits(first:250,after:$after,filter:{titleType:"videoGame"}) { '
-    'total pageInfo { hasNextPage endCursor } edges { node { category { id } '
-    'title { id titleText { text } titleType { id } releaseYear { year } primaryImage { url } } } } } } }')
+
 
 
 def header_query(source):
@@ -47,6 +44,11 @@ def header_query(source):
         if alt_slug and alt_slug != slug:
             extra_slugs.add(alt_slug)
             if row['year']: extra_slugs.add(alt_slug + '-' + str(row['year']))
+        # Existing title-format matching treats an article after a subtitle
+        # separator as spelling. Include that bounded slug variant in retrieval.
+        parts=row['title'].split(':',1)
+        if len(parts)==2 and not parts[1].strip().casefold().startswith('the '):
+            extra_slugs.add(re.sub(r'[^a-z0-9]+','-',spelling(parts[0]+' the '+parts[1])).strip('-'))
         if '&' in row['title']:
             extra_slugs.add(re.sub(r'[^a-z0-9]+', '-', spelling(row['title'].replace('&', ' and '))).strip('-'))
     slug_values = '(' + ','.join(json.dumps(value) for value in sorted(slugs)) + ')'
@@ -135,6 +137,17 @@ def studio_root(row):
     return None
 
 
+def promising_sources(source,rows,kind):
+    """Scheduling evidence only: matching playable names may still lack a year."""
+    names=set()
+    for row in rows:
+        winner=root(row) if kind=='actor' else studio_root(row)
+        if not isinstance(winner,dict) or not eligible(winner,kind):continue
+        for name in [row['name'],*[alias['name'] for alias in row.get('alternative_names',[])]]:
+            names.update({spelling(name),*title_formats(name)})
+    return {row['imdb_id'] for row in source if {spelling(row['title']),*title_formats(row['title'])}&names}
+
+
 class GameBulkSource:
     def __init__(self,sessions,client=None):
         self.sessions=sessions
@@ -143,7 +156,10 @@ class GameBulkSource:
 
     async def acquire(self,native,kind):
         async with httpx.AsyncClient(timeout=5) as client:
-            return await GameBulkSource(self.sessions,client)._acquire(native,kind)
+            source=GameBulkSource(self.sessions,client)
+            result=await source._acquire(native,kind)
+            self.priority_sources=getattr(source,'priority_sources',set())
+            return result
 
     async def _acquire(self,native,kind):
         """A failed/expired deadline returns usable positives, never negatives."""
@@ -178,17 +194,15 @@ class GameBulkSource:
                         if not isinstance(data,list) or len(data)>=500:raise ProviderError('coverage_limited')
                         rows.extend(data)
                     for _ in range(40):
-                        body=await imdb.query(QUERY,{'id':native,'after':after})
-                        from core.game_imdb_source import page as parse_page
-                        value=parse_page((body.get('name') or {}).get('credits'),250)
-                        if (body.get('name') or {}).get('id')!=native:raise ProviderError('identity_conflict')
+                        value=await imdb.credits(native,after,person=True)
                         if expected is not None and expected!=value['total']:raise ProviderError('changed_connection')
                         expected=value['total'];received+=len(value['rows']);batch={}
                         for item in value['rows']:
                             title=item.get('title') or {}
                             if (title.get('titleType') or {}).get('id')!='videoGame':raise ProviderError('bad_response')
                             entry=batch.setdefault(title['id'],{'imdb_id':title['id'],'title':title['titleText']['text'],'year':(title.get('releaseYear') or {}).get('year'),'roles':[]})
-                            entry['roles'].append(item['category']['id'])
+                            from core.game_credit_roles import source_role
+                            entry['roles'].append(source_role(item))
                         source.extend(batch.values());tasks.append(asyncio.create_task(headers(list(batch.values()))))
                         if not value['has_next']:
                             if received!=expected:raise ProviderError('incomplete_cache')
@@ -208,5 +222,7 @@ class GameBulkSource:
             for task in tasks:
                 if not task.done():task.cancel()
             if tasks:await asyncio.gather(*tasks,return_exceptions=True)
-        if kind!='studio':candidates=await asyncio.to_thread(person_candidates,source,rows,kind)
+        if kind!='studio':
+            candidates=await asyncio.to_thread(person_candidates,source,rows,kind)
+            self.priority_sources=await asyncio.to_thread(promising_sources,source,rows,kind)
         return candidates,complete

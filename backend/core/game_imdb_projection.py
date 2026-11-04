@@ -29,21 +29,22 @@ def credit_document(igdb_id,title_id,rows,*,generation,offset=0,occurrences=None
         person=raw.get('name') or {}
         native,name=person.get('id'),(person.get('nameText') or {}).get('text')
         category=raw.get('category') or {}
-        role=category.get('id')
+        from core.game_credit_roles import source_role,voice_characters
+        role=source_role(raw)
         if (not isinstance(native,str) or not PERSON_ID.fullmatch(native) or
             not isinstance(name,str) or not name.strip() or not isinstance(role,str) or not ROLE.fullmatch(role)):
             omitted+=1
             continue
         attributes=texts(raw.get('attributes'),'text')
-        characters=texts(raw.get('characters'),'name')
+        characters=list(dict.fromkeys([*texts(raw.get('characters'),'name'),*voice_characters(raw)]))
         jobs=texts(raw.get('jobs'),'text')
         fingerprint=json.dumps([native,role,raw.get('characters'),raw.get('attributes'),raw.get('jobs')],
                                ensure_ascii=False,sort_keys=True,separators=(',',':'))
         digest=hashlib.sha256(fingerprint.encode()).hexdigest()
         ordinal=occurrences.get(digest,0)
         occurrences[digest]=ordinal+1
-        cast=role in ('actor','actress','cast')
-        voice=True if cast and any(value.casefold()=='voice' for value in attributes) else None
+        cast=role in ('actor','actress','cast','voice_actor')
+        voice=True if role=='voice_actor' or cast and any(value.casefold()=='voice' for value in attributes) else None
         canonical_role='voice_actor' if voice else 'actor' if cast else role
         languages=list(dict.fromkeys(VERSIONS[value] for value in attributes if value in VERSIONS))
         doc['credits'].append({

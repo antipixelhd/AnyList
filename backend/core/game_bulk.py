@@ -159,7 +159,7 @@ async def publish(db,job,candidates):
         state=(await db.execute(snapshot(COMPANY_JOB,job.coverage['native'],provider='igdb').with_only_columns(
             MetadataSnapshot.coverage['complete'].as_boolean(),MetadataSnapshot.next_attempt_at,MetadataSnapshot.lease_until))).one_or_none()
         if state and state[0] and not state[1] and not (state[2] and state[2]>now()):rows=[]
-    job.payload={'rows':rows};job.fetched_at=now()
+    job.payload={**(job.payload or {}),'rows':rows};job.fetched_at=now()
 
 
 class GameBulk:
@@ -185,6 +185,8 @@ class GameBulk:
                 job=await db.scalar(snapshot(JOB,key,provider=PROVIDER).with_for_update())
                 if not job or job.lease_token!=token:return True
                 if candidates:await publish(db,job,candidates)
+                if coverage['kind']!='studio':
+                    job.payload={**(job.payload or {}),'priority_sources':sorted(getattr(self.source,'priority_sources',set()))}
                 job.coverage={**coverage,'complete':complete,'state':'ready' if complete else 'partial'}
                 job.expires_at=now()+timedelta(days=7 if complete else 1)
                 job.next_attempt_at=None;job.lease_until=None;job.lease_token=None;await db.commit()

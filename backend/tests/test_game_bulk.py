@@ -12,6 +12,34 @@ def game(native,name='Title',kind=0,platforms=None,**extra):
 
 
 class BulkSourceTests(unittest.TestCase):
+    def test_explicit_dubbing_jobs_are_acting_but_other_miscellaneous_jobs_are_not(self):
+        from core.game_credit_roles import source_role
+        from core.game_imdb_person import game_rows
+        from core.game_imdb_review import title_index
+        base={'category':{'id':'miscellaneous'},'title':{'id':'tt1','titleType':{'id':'videoGame'},
+            'titleText':{'text':'Game'},'releaseYear':{'year':2024}}}
+        row={**base,'jobs':[{'text':'voice actor: Goro Majima'}]}
+        self.assertEqual(source_role(row),'voice_actor')
+        games,omitted=game_rows([row]);self.assertEqual(omitted,0)
+        self.assertEqual(games[0]['category'],'voice_actor')
+        self.assertEqual(games[0]['source_category'],'miscellaneous')
+        self.assertEqual(games[0]['characters'],['Goro Majima'])
+        self.assertEqual(title_index([row])[0]['roles'],['voice_actor'])
+        from core.game_imdb_projection import credit_document
+        doc,_=credit_document('1','tt1',[{**row,'name':{'id':'nm1','nameText':{'text':'Actor'}}}],generation='fresh')
+        self.assertEqual(doc['credits'][0]['role'],'voice_actor')
+        self.assertEqual(doc['credits'][0]['character_label'],'Goro Majima')
+        self.assertEqual(doc['credits'][0]['attributes']['imdb_category']['id'],'miscellaneous')
+        for job in ['facial motion capture','voice director','voice actor:']:
+            self.assertEqual(source_role({**base,'jobs':[{'text':job}]}),'miscellaneous')
+
+    def test_unknown_year_playable_name_is_only_a_scheduling_hint(self):
+        from core.game_bulk_source import promising_sources
+        source=[{'imdb_id':'tt1','title':'Title','year':None,'roles':['actor']}]
+        self.assertEqual(person_candidates(source,[game(1)],'actor'),[])
+        self.assertEqual(promising_sources(source,[game(1)],'actor'),{'tt1'})
+        self.assertEqual(promising_sources(source,[game(1,platforms=[34])],'actor'),set())
+
     def test_unknown_competitor_is_not_a_negative(self):
         source=[{'imdb_id':'tt1','title':'Title','year':2020,'roles':['actor']}]
         self.assertEqual(len(person_candidates(source,[game(1)],'actor')),1)
@@ -46,3 +74,4 @@ class BulkSourceTests(unittest.TestCase):
         self.assertIn('Star Wars Battlefront II',query)
         self.assertIn('star-wars-battlefront-2',query)
         self.assertIn('limit 500',query)
+        self.assertIn('bladestorm-the-hundred-years-war',header_query([{'title':'BladeStorm: Hundred Years War','year':2007}]))

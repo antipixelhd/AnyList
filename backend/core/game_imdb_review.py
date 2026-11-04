@@ -25,7 +25,8 @@ def title_index(rows):
     for position,row in enumerate(rows):
         title=row.get('title') or {}
         if (title.get('titleType') or {}).get('id')!='videoGame':continue
-        native=title['id'];role=row['category']['id']
+        from core.game_credit_roles import source_role
+        native=title['id'];role=source_role(row)
         name=(title.get('titleText') or {}).get('text')
         year=(title.get('releaseYear') or {}).get('year')
         record=titles.setdefault(native,{'id':native,'title':native,'year':None,'roles':[],'position':position})
@@ -42,14 +43,18 @@ async def write_index(db,native,generation,rows,*,entity_id):
     titles.sort(key=lambda row:(row['year'] or 0,-row['position']),reverse=True)
     from core.game_bulk import accepted_sources
     accepted=await accepted_sources(db,entity_id,('actor','staff'))
-    prioritized=sorted(titles,key=lambda row:row['id'] in accepted) if accepted else titles
+    hints=await db.scalars(select(MetadataSnapshot.payload['priority_sources']).where(
+        MetadataSnapshot.provider=='anylist',MetadataSnapshot.kind=='game_bulk',
+        MetadataSnapshot.external_id.in_([f'{entity_id}:actor',f'{entity_id}:staff'])))
+    promising={native for values in hints if isinstance(values,list) for native in values}
+    prioritized=sorted(titles,key=lambda row:(row['id'] in accepted,row['id'] not in promising))
     pages=(len(titles)+SIZE-1)//SIZE
     for page in range(pages):
         statement=insert(MetadataSnapshot).values(provider='imdb',kind=INDEX,external_id=f'{native}:{generation}:{page}',
             entity_id=entity_id,payload={'titles':titles[page*SIZE:(page+1)*SIZE]},coverage={'page':page},fetched_at=now())
         await db.execute(statement.on_conflict_do_update(constraint='uq_catalogue_snapshot',
             set_={'payload':statement.excluded.payload,'fetched_at':statement.excluded.fetched_at}))
-    if accepted:
+    if accepted or promising:
         for page in range(pages):
             statement=insert(MetadataSnapshot).values(provider='imdb',kind=PRIORITY_INDEX,
                 external_id=f'{native}:{generation}:priority:{page}',entity_id=entity_id,
@@ -58,7 +63,7 @@ async def write_index(db,native,generation,rows,*,entity_id):
                 set_={'payload':statement.excluded.payload,'fetched_at':statement.excluded.fetched_at}))
     await db.execute(delete(MetadataSnapshot).where(MetadataSnapshot.provider=='imdb',MetadataSnapshot.kind.in_((INDEX,PRIORITY_INDEX)),
         MetadataSnapshot.external_id.like(f'{native}:%'),~MetadataSnapshot.external_id.like(f'{native}:{generation}:%')))
-    return {'index_generation':generation,'index_pages':pages,'index_titles':len(titles),'index_priority':bool(accepted)}
+    return {'index_generation':generation,'index_pages':pages,'index_titles':len(titles),'index_priority':bool(accepted or promising)}
 
 
 async def review_titles(db,native,*,page=1,query='',scope='unmapped',generation=None,title_id=None,bindings=None):

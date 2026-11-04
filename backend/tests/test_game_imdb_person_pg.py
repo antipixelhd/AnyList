@@ -27,6 +27,41 @@ def page(rows,total,more=False,cursor=None,bio='A biography mentioning game work
 
 @unittest.skipUnless(fixture.URL,'Requires explicit disposable catalogue PostgreSQL')
 class PersonEnrichmentTests(unittest.IsolatedAsyncioTestCase):
+    async def test_explicit_miscellaneous_voice_survives_stale_mapping_revalidation(self):
+        row={**credit(role='miscellaneous'),'jobs':[{'text':'voice actor: Goro Majima'}]}
+        self.source.credits.return_value=page([row],1)
+        self.assertEqual(await self.service.run('nm1'),'ready')
+        published=await self.active()
+        self.assertEqual(published[0].role,'voice_actor')
+        self.assertEqual(published[0].attributes['imdb_category'],'voice_actor')
+        self.assertEqual(published[0].attributes['imdb_source_category'],'miscellaneous')
+        async with self.Session() as db:
+            binding=await db.scalar(select(CatalogueIdentity).where(CatalogueIdentity.namespace=='imdb.title',CatalogueIdentity.external_id=='tt1'))
+            binding.evidence={**binding.evidence,'mapping_state':'stale'}
+            from core.game_imdb_person import queue_projection
+            await queue_projection(db,'nm1');await db.commit()
+        self.assertEqual(await self.service.run('nm1'),'ready')
+        retained=await self.active()
+        self.assertEqual(len(retained),1)
+        self.assertEqual(retained[0].role,'voice_actor')
+        self.assertEqual(retained[0].character_label,'Goro Majima')
+
+    async def test_unfiltered_source_cursor_is_not_reused_for_filtered_connection(self):
+        from core.game_imdb_source import IMDbGameSource
+        async with self.Session() as db:
+            job=await db.scalar(snapshot(JOB,'nm1'))
+            job.payload={'generation':'old','started_at':now().isoformat(),'cursor':'unfiltered-cursor',
+                'seen':[],'received':50,'total':650,'pages':1,'complete':False}
+            await db.commit()
+        source=IMDbGameSource();source.credits=AsyncMock(return_value=page([credit()],1))
+        self.service.source=source
+        self.assertEqual(await self.service.run('nm1'),'ready')
+        source.credits.assert_awaited_once_with('nm1',None,person=True)
+        async with self.Session() as db:
+            job=await db.scalar(snapshot(JOB,'nm1'))
+            self.assertEqual(job.payload['source_version'],2)
+            self.assertEqual(job.payload['received'],1)
+
     async def test_supported_v6_binding_can_publish_new_person_participation(self):
         from core.game_title_match import decide
         from core.game_contributor_works import works_page

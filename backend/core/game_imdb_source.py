@@ -4,6 +4,8 @@ Technical access is not a supported API guarantee or permission to reuse data.
 The caller owns durable component leases, cached evidence and authorization.
 """
 import re
+import hashlib
+from datetime import timedelta
 from urllib.parse import quote
 
 from core.catalogue_providers import ProviderError, ProviderHTTP
@@ -36,12 +38,13 @@ PERSON_CREDITS = '''query GamePersonCredits($id: ID!, $after: ID, $profile: Bool
     deathDate @include(if: $profile) { dateComponents { year month day } }
     primaryProfessions @include(if: $profile) { category { text } }
     bio @include(if: $profile) { text { plainText } }
-    credits(first: 50, after: $after) {
+    credits(first: 250, after: $after, filter: {titleType: "videoGame"}) {
       total pageInfo { hasNextPage endCursor }
       edges { node {
         title { id titleText { text } titleType { id } releaseYear { year } }
         category { id }
         ... on Cast { characters { name } attributes { text } }
+        ... on Crew { jobs { text } }
       } }
     }
   }
@@ -139,6 +142,24 @@ class IMDbGameSource:
         identifier(native,person)
         if after is not None and (not isinstance(after,str) or not 1<=len(after)<=4096):
             raise ProviderError('invalid_request')
+        sessions=getattr(self.http,'session_factory',None)
+        if person and sessions:
+            from core.game_source_cache import GameSourceCache
+            key=hashlib.sha256((native+':2:'+str(after)).encode()).hexdigest()
+            # The shared loader owns its transport, so a bulk deadline cannot
+            # close a client still needed by the verifier waiting on this page.
+            async def load():
+                return await IMDbGameSource(ProviderHTTP(session_factory=sessions))._credits(native,after,person=True)
+            cached=await GameSourceCache(sessions).get('imdb','game_person_source',key,load,
+                ttl=timedelta(minutes=5),max_stale=timedelta(minutes=5))
+            if cached['stale']:raise ProviderError('retry_pending')
+            return cached['data']
+        return await self._credits(native,after,person=person)
+
+    async def _credits(self,native,after=None,*,person=False):
+        identifier(native,person)
+        if after is not None and (not isinstance(after,str) or not 1<=len(after)<=4096):
+            raise ProviderError('invalid_request')
         body=await self.query(PERSON_CREDITS if person else TITLE_CREDITS,
             {'id':native,'after':after,**({'profile':after is None} if person else {})})
         raw=body.get('name' if person else 'title')
@@ -150,7 +171,7 @@ class IMDbGameSource:
             header=game_header(raw,native)
         if body.get('_denied_fields'):
             header['unavailable_fields']=body['_denied_fields']
-        return {'header':header, **page(raw.get('credits'),50 if person else 100)}
+        return {'header':header, **page(raw.get('credits'),250 if person else 100)}
 
     async def candidates(self,term):
         if not isinstance(term,str) or not 2<=len(term.strip())<=100:raise ProviderError('invalid_request')
