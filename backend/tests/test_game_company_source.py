@@ -21,6 +21,18 @@ class CompanySourceTests(unittest.IsolatedAsyncioTestCase):
     def source(self,values):
         source=object.__new__(GameCompanySource);source.api=SimpleNamespace(igdb=AsyncMock(side_effect=values));return source
 
+    async def test_bulk_accepted_records_wait_until_missing_variants_are_loaded(self):
+        rows=[{**involved(1,10),'game':game(10)},
+            {**involved(2,20),'game':game(20,11)},
+            {**involved(3,30),'game':game(30)}]
+        source=self.source([rows,[game(30)], [game(20,11,parent_game={'id':30}),game(10)],[game(30)]])
+        first=await source.page('70',{'phase':'primary','after':0,'deferred':[],'accepted':['1']})
+        self.assertEqual([r['record']['id'] for r in first['documents']],[3])
+        self.assertIn('limit 500',source.api.igdb.call_args_list[0].args[1])
+        tail=await source.page('70',first['cursor'])
+        self.assertEqual([r['record']['id'] for r in tail['documents']],[2,1])
+        self.assertTrue(tail['complete'])
+
     async def test_primary_scan_defers_ports_and_skips_non_display_metadata(self):
         rows=[{**involved(1,10),'game':game(10)},
             {**involved(2,20),'game':game(20,11)},

@@ -114,6 +114,11 @@ class GameCompanyWorks:
             except (KeyError,TypeError,ValueError):pass
             if not recent or state.get('complete'):
                 cursor={'phase':'primary','after':0,'deferred':[]} if isinstance(self.source,GameCompanySource) else 0
+                if isinstance(cursor,dict):
+                    from core.game_bulk import accepted_sources
+                    async with self.sessions() as db:
+                        entity_id=await db.scalar(snapshot(native).with_only_columns(MetadataSnapshot.entity_id))
+                        cursor['accepted']=sorted(await accepted_sources(db,entity_id,('studio',)))
                 state={'generation':uuid.uuid4().hex,'started_at':now().isoformat(),'cursor':cursor,'received':0,'omitted':0,'complete':False}
             deadline=monotonic()+55
             for _ in range(self.page_budget):

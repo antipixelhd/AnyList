@@ -229,6 +229,8 @@ async def project_mapped(db,native,rows,generation,*,source_generation=None):
         ~select(CharacterPerformance.id).where(CharacterPerformance.credit_id==CatalogueCredit.id,
             CharacterPerformance.source=='reviewed').exists()).values(
                 attributes=CatalogueCredit.attributes.op('||')({'source_active':False})).execution_options(synchronize_session=False))
+    from core.game_bulk import retire
+    for role_kind in ('actor','staff'):await retire(db,root,role_kind,set(bindings))
     role_coverage={}
     for kind in ('actor','staff'):
         titles={row['title_id'] for row in games if (row['category'] in SOURCE_ACTING)==(kind=='actor') and row['category']!='thanks'}

@@ -63,7 +63,7 @@ def documents(rows,games):
 
 
 class GameCompanySource:
-    def __init__(self,sessions):self.api=GameBrowseSources(sessions)
+    def __init__(self,sessions):self.sessions=sessions;self.api=GameBrowseSources(sessions)
 
     async def page(self,native,after=0):
         if isinstance(after,dict):return await self.primary_page(native,after)
@@ -84,12 +84,15 @@ class GameCompanySource:
         after=cursor.get('after');phase=cursor.get('phase');deferred=cursor.get('deferred')
         if (not positive(int(native)) or type(after) is not int or after<0 or phase not in ('primary','variants')
                 or not isinstance(deferred,list)):raise ProviderError('invalid_request')
+        accepted=set(cursor.get('accepted',[]))
         if phase=='variants':
+            deferred=sorted(deferred,key=lambda row:str(row['id']) in accepted)
             selected=deferred[:SIZE];remaining=deferred[SIZE:]
-            return await self.acquire(selected,{'phase':phase,'after':after,'deferred':remaining},not remaining,received=0)
+            return await self.acquire(selected,{'phase':phase,'after':after,'deferred':remaining,'accepted':list(accepted)},not remaining,received=0)
+        scan_size=500 if accepted else SIZE
         rows=await self.api.igdb('involved_companies',
-            f'fields id,company,game.id,game.game_type.type,game.version_parent,developer,publisher,supporting,porting; where company={int(native)} & id>{after}; sort id asc; limit {SIZE};')
-        if not isinstance(rows,list) or len(rows)>SIZE:raise ProviderError('bad_response')
+            f'fields id,company,game.id,game.game_type.type,game.version_parent,developer,publisher,supporting,porting; where company={int(native)} & id>{after}; sort id asc; limit {scan_size};')
+        if not isinstance(rows,list) or len(rows)>scan_size:raise ProviderError('bad_response')
         selected=[];pending=list(deferred);previous=after
         for row in rows:
             if (not isinstance(row,dict) or not positive(row.get('id')) or row['id']<=previous
@@ -98,12 +101,14 @@ class GameCompanySource:
             if any(role in row and type(row[role]) is not bool for role in ROLES):raise ProviderError('bad_response')
             previous=row['id'];game=row['game'];kind=igdb_game_class(game)
             record={**row,'game':game['id']}
-            if game.get('version_parent') or kind=='port':pending.append(record)
+            if str(row['id']) in accepted or game.get('version_parent') or kind=='port':pending.append(record)
             elif kind=='unknown' or kind in INDEPENDENT|{'expansion'}:selected.append(record)
             # Verified non-display DLC/update/bundle categories need no full
             # metadata or parent fan-out for a company works projection.
-        scanned=len(rows)<SIZE
-        next_cursor={'phase':'variants' if scanned else 'primary','after':previous,'deferred':pending}
+        if len(selected)>SIZE:
+            pending=selected[SIZE:]+pending;selected=selected[:SIZE]
+        scanned=len(rows)<scan_size
+        next_cursor={'phase':'variants' if scanned else 'primary','after':previous,'deferred':pending,'accepted':list(accepted)}
         return await self.acquire(selected,next_cursor,scanned and not pending,received=len(rows))
 
     async def acquire(self,rows,cursor,complete,*,received=None):

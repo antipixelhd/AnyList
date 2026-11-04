@@ -81,7 +81,7 @@ class GamePersonDiscovery:
 
     async def _run(self,native,*,claimed=None):
         from core.game_imdb_person import COMPONENT
-        from core.game_imdb_review import INDEX
+        from core.game_imdb_review import INDEX,PRIORITY_INDEX
         claimed=claimed or await self.claim(native)
         if not claimed:return 'cached'
         native,token,state=claimed
@@ -89,12 +89,12 @@ class GamePersonDiscovery:
             async with self.sessions() as db:
                 component=(await db.execute(snapshot(COMPONENT,native).with_only_columns(
                     MetadataSnapshot.payload['generation'].astext.label('generation'),
-                    MetadataSnapshot.payload['index_pages'].as_integer().label('pages'),MetadataSnapshot.coverage))).one_or_none()
+                    MetadataSnapshot.payload['index_pages'].as_integer().label('pages'),MetadataSnapshot.payload['index_priority'].as_boolean().label('priority'),MetadataSnapshot.coverage))).one_or_none()
                 if not component or not component.coverage.get('source_complete'):raise ProviderError('incomplete_cache')
                 if component.generation!=state.get('generation'):
                     await self.release(native,token,restart=component.generation);return 'changed'
                 page=state.get('page',0);offset=state.get('offset',0)
-                records=await db.scalar(snapshot(INDEX,f'{native}:{component.generation}:{page}').with_only_columns(
+                records=await db.scalar(snapshot(PRIORITY_INDEX if component.priority else INDEX,f'{native}:{component.generation}:priority:{page}' if component.priority else f'{native}:{component.generation}:{page}').with_only_columns(
                     MetadataSnapshot.payload['titles'])) if page<(component.pages or 0) else []
                 if records is None:raise ProviderError('incomplete_cache')
                 batch=records[offset:offset+SIZE]
@@ -214,7 +214,7 @@ class GamePersonDiscovery:
                         'payload':statement.excluded.payload,'coverage':statement.excluded.coverage,
                         'entity_id':statement.excluded.entity_id,'fetched_at':statement.excluded.fetched_at,'expires_at':statement.excluded.expires_at}))
                 from core.game_bulk import retire
-                settled=set(known)|{key for key,value in cached.items() if value.get('status') in ('excluded','conflict')}|{row['id'] for row in outcomes if row['status'] in ('verified','excluded','conflict')}
+                settled={key for key,value in cached.items() if value.get('status') in ('excluded','conflict')}|{row['id'] for row in outcomes if row['status'] in ('excluded','conflict')}
                 if settled and job.entity_id:
                     for role_kind in ('actor','staff'):await retire(db,job.entity_id,role_kind,settled)
                 # Sparse verified siblings may already be published. Keep the

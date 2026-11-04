@@ -39,6 +39,25 @@ class BulkDatabaseTests(unittest.IsolatedAsyncioTestCase):
             state=await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.provider=='igdb',MetadataSnapshot.kind=='game',MetadataSnapshot.external_id=='100'))
             self.assertEqual(state.coverage['priority'],'background')
 
+    async def test_missing_titles_get_a_separate_durable_discovery_order(self):
+        from core.game_imdb_review import write_index,INDEX,PRIORITY_INDEX
+        async with self.Session() as db:
+            db.add(MetadataSnapshot(provider='anylist',kind='game_bulk',external_id=f'{self.person_id}:actor',
+                entity_id=self.person_id,payload={'rows':[{'source':'tt1','work_id':1,'role':'actor'}]}))
+            await db.flush()
+            rows=[{'category':{'id':'actor'},'title':{'id':native,'titleType':{'id':'videoGame'},
+                'titleText':{'text':native},'releaseYear':{'year':year}}} for native,year in [('tt1',2025),('tt2',2020)]]
+            result=await write_index(db,'nm1','generation',rows,entity_id=self.person_id)
+            self.assertTrue(result['index_priority'])
+            ordered=await db.scalar(select(MetadataSnapshot.payload).where(MetadataSnapshot.kind==PRIORITY_INDEX,
+                MetadataSnapshot.external_id=='nm1:generation:priority:0'))
+            self.assertEqual([row['id'] for row in ordered['titles']],['tt2','tt1'])
+            original=await db.scalar(select(MetadataSnapshot.payload).where(MetadataSnapshot.kind==INDEX,
+                MetadataSnapshot.external_id=='nm1:generation:0'))
+            self.assertEqual([row['id'] for row in original['titles']],['tt1','tt2'])
+            self.assertEqual(await db.scalar(select(func.count()).select_from(MetadataSnapshot).where(
+                MetadataSnapshot.kind==INDEX,MetadataSnapshot.external_id.like('nm1:generation:%'))),1)
+
     async def test_completed_negative_wins_a_late_bulk_publication(self):
         from datetime import timedelta
         from core.game_imdb_enrichment import now
@@ -98,8 +117,19 @@ class BulkFinalProjectionTests(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as db:
             await db.execute(delete(CatalogueCredit).where(CatalogueCredit.contributor_id==self.person))
             await db.commit()
+        async with self.Session() as db:
+            db.add(MetadataSnapshot(provider='anylist',kind='game_bulk',external_id=f'{self.person}:actor',
+                entity_id=self.person,payload={'rows':[{'source':'tt2','work_id':self.base,'role':'actor'}]}))
+            await db.commit()
         self.assertEqual(await self.service.run('nm1'),'ready')
+        async with self.Session() as db:
+            job=await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.kind=='game_bulk'))
+            self.assertEqual(len(job.payload['rows']),1,'Retain positive until credits are published')
         self.assertEqual(await self.person_service.run('nm1'),'ready')
+        async with self.Session() as db:
+            job=await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.kind=='game_bulk'))
+            self.assertEqual(job.payload['rows'],[])
+
         async with self.Session() as db:
             jobs=(await db.execute(select(MetadataSnapshot.external_id,MetadataSnapshot.coverage).where(
                 MetadataSnapshot.provider=='igdb',MetadataSnapshot.kind=='game',MetadataSnapshot.external_id.in_(('20','30'))))).all()

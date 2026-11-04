@@ -12,6 +12,7 @@ from core.game_imdb_bindings import verified_bindings,BINDING_REVISION
 from models.catalogue import CatalogueEntity,CatalogueIdentity,MetadataSnapshot
 
 INDEX='game_person_index'
+PRIORITY_INDEX='game_person_priority'
 SIZE=50
 
 
@@ -39,15 +40,25 @@ async def write_index(db,native,generation,rows,*,entity_id):
     # Source connection order is not release order. Map the newest known works
     # first so useful recent participation publishes ahead of the older tail.
     titles.sort(key=lambda row:(row['year'] or 0,-row['position']),reverse=True)
+    from core.game_bulk import accepted_sources
+    accepted=await accepted_sources(db,entity_id,('actor','staff'))
+    prioritized=sorted(titles,key=lambda row:row['id'] in accepted) if accepted else titles
     pages=(len(titles)+SIZE-1)//SIZE
     for page in range(pages):
         statement=insert(MetadataSnapshot).values(provider='imdb',kind=INDEX,external_id=f'{native}:{generation}:{page}',
             entity_id=entity_id,payload={'titles':titles[page*SIZE:(page+1)*SIZE]},coverage={'page':page},fetched_at=now())
         await db.execute(statement.on_conflict_do_update(constraint='uq_catalogue_snapshot',
             set_={'payload':statement.excluded.payload,'fetched_at':statement.excluded.fetched_at}))
-    await db.execute(delete(MetadataSnapshot).where(MetadataSnapshot.provider=='imdb',MetadataSnapshot.kind==INDEX,
+    if accepted:
+        for page in range(pages):
+            statement=insert(MetadataSnapshot).values(provider='imdb',kind=PRIORITY_INDEX,
+                external_id=f'{native}:{generation}:priority:{page}',entity_id=entity_id,
+                payload={'titles':prioritized[page*SIZE:(page+1)*SIZE]},coverage={'page':page},fetched_at=now())
+            await db.execute(statement.on_conflict_do_update(constraint='uq_catalogue_snapshot',
+                set_={'payload':statement.excluded.payload,'fetched_at':statement.excluded.fetched_at}))
+    await db.execute(delete(MetadataSnapshot).where(MetadataSnapshot.provider=='imdb',MetadataSnapshot.kind.in_((INDEX,PRIORITY_INDEX)),
         MetadataSnapshot.external_id.like(f'{native}:%'),~MetadataSnapshot.external_id.like(f'{native}:{generation}:%')))
-    return {'index_generation':generation,'index_pages':pages,'index_titles':len(titles)}
+    return {'index_generation':generation,'index_pages':pages,'index_titles':len(titles),'index_priority':bool(accepted)}
 
 
 async def review_titles(db,native,*,page=1,query='',scope='unmapped',generation=None,title_id=None,bindings=None):

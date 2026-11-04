@@ -54,6 +54,14 @@ def projection(entity_id,kind,verified):
         work.attributes['mobile_only'].astext.is_distinct_from('true'))
 
 
+async def accepted_sources(db,entity_id,kinds):
+    rows=func.jsonb_to_recordset(MetadataSnapshot.payload['rows']).table_valued(
+        column('source',String)).render_derived(name='accepted_rows',with_types=True)
+    return set(await db.scalars(select(rows.c.source).select_from(MetadataSnapshot).join(rows,literal(True)).where(
+        MetadataSnapshot.provider==PROVIDER,MetadataSnapshot.kind==JOB,
+        MetadataSnapshot.external_id.in_([f'{entity_id}:{kind}' for kind in kinds]))))
+
+
 async def retire(db,entity_id,kind,sources=None):
     """Retire only established outcomes; provider failures never erase candidates."""
     row=await db.scalar(snapshot(JOB,f'{entity_id}:{kind}',provider=PROVIDER).with_for_update())
