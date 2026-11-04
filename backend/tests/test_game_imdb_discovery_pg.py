@@ -105,12 +105,16 @@ class PortfolioDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         catalogue_providers._local_igdb_slots=None
         self.addCleanup(setattr,catalogue_providers,'_local_igdb_slots',None)
         first,second=ProviderHTTP(session_factory=self.Session),ProviderHTTP(session_factory=self.Session)
-        active=0;maximum=0;starts=[];ends=[]
+        active=0;maximum=0;starts=[];ends=[];paired=asyncio.Event()
         async def load(http):
             nonlocal active,maximum
-            async with http.lane('igdb'):
-                starts.append(time.monotonic());active+=1;maximum=max(maximum,active)
-                await asyncio.sleep(.16);active-=1;ends.append(time.monotonic())
+            from core.game_work import work_context, Priority
+            with work_context(Priority.DIRECT,'foreground'):
+                async with http.lane('igdb'):
+                    starts.append(time.monotonic());active+=1;maximum=max(maximum,active)
+                    if active==2:paired.set()
+                    await asyncio.wait_for(paired.wait(),5)
+                    await asyncio.sleep(.1);active-=1;ends.append(time.monotonic())
         with patch.dict(catalogue_providers.INTERVALS,{'igdb':.05}):
             await asyncio.gather(*(load(first if index%2 else second) for index in range(5)))
         self.assertEqual(maximum,2)
@@ -128,17 +132,19 @@ class PortfolioDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         providers._local_igdb_slots=None
         self.addCleanup(setattr,providers,'_local_igdb_slots',None)
         http=providers.ProviderHTTP(session_factory=self.Session)
-        waiting=asyncio.Event();resume=asyncio.Event();sleep=asyncio.sleep
-        async def observed_sleep(delay):
+        from core.game_work import Dispatcher
+        waiting=asyncio.Event();resume=asyncio.Event();arbitrate=Dispatcher.arbitrate
+        async def observed_admission(dispatcher):
+            delay=await arbitrate(dispatcher)
             if delay>0:
                 waiting.set();await resume.wait()
-            else:await sleep(delay)
+            return delay
         async def load():
             async with providers.ProviderHTTP(session_factory=self.Session).lane('igdb'):
                 self.fail('Ignored database cooldown published during wait')
         # Synchronize the delayed waiter explicitly; SQL startup can exceed a
         # 250ms interval on a busy disposable PostgreSQL instance.
-        with patch.dict(providers.INTERVALS,{'igdb':4}),patch.object(providers.asyncio,'sleep',observed_sleep):
+        with patch.dict(providers.INTERVALS,{'igdb':4}),patch.object(Dispatcher,'arbitrate',observed_admission):
             async with http.lane('igdb'):
                 task=asyncio.create_task(load())
                 try:

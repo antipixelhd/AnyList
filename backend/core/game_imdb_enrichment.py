@@ -38,6 +38,9 @@ async def request(db,work_id,*,kind=JOB,entity_id=None,provider='imdb'):
     stamp=now()
     row=await header(db,work_id,kind=kind,provider=provider)
     view=status_view(row)
+    from core.game_work import demand, job_key
+    if not row or view['pending'] or not row.expires_at or row.expires_at <= stamp:
+        await demand(db, job_key(provider, kind, work_id),reset=not row or not view['pending'])
     if kind==JOB and provider=='imdb' and row and row.coverage=='unmapped' and not view['pending']:
         # A later automatic/person discovery may have supplied the missing
         # identity since this negative job was cached. Recover existing jobs
@@ -143,6 +146,11 @@ class GameIMDbEnrichment:
             return token,state
 
     async def _run(self,work_id):
+        from core.game_work import job_context
+        async with job_context(self.sessions, 'imdb', JOB, work_id):
+            return await self._execute(work_id)
+
+    async def _execute(self,work_id):
         claimed=await self.claim(work_id)
         if not claimed:return 'cached'
         token,state=claimed
@@ -305,7 +313,7 @@ class GameIMDbEnrichment:
                 job.coverage=retain_demand(job,{**{key:state.get(key) for key in ('state','complete','received','total')},
                     'mapping_revalidation':state.get('_mapping_request')})
                 job.lease_token=job.lease_until=None
-                job.next_attempt_at=now()+timedelta(seconds=2)
+                job.next_attempt_at=now()
                 await db.commit()
 
     async def finish_unmatched(self,work_id,token,state,*,expected_request=None):
@@ -345,21 +353,24 @@ class GameIMDbEnrichment:
             await db.commit()
 
     async def tick(self):
+        from core.game_work import eligible_jobs, job_order
         async with self.sessions() as db:
             ids=list(await db.scalars(select(MetadataSnapshot.entity_id).where(MetadataSnapshot.provider=='imdb',
-                MetadataSnapshot.kind==JOB,MetadataSnapshot.next_attempt_at<=now(),
+                MetadataSnapshot.kind==JOB,MetadataSnapshot.next_attempt_at<=now(),eligible_jobs(),
                 or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=now()))
-                .order_by(MetadataSnapshot.next_attempt_at,MetadataSnapshot.id).limit(2)))
+                .order_by(job_order(),MetadataSnapshot.next_attempt_at,MetadataSnapshot.id).limit(2)))
         if ids:await asyncio.gather(*(self.run(work_id) for work_id in ids))
+        return bool(ids)
 
 
 async def scheduler():
     from db import AsyncSessionLocal
-    service=GameIMDbEnrichment(AsyncSessionLocal)
+    service=GameIMDbEnrichment(AsyncSessionLocal,page_budget=1)
     try:
         while True:
             delay=2
-            try:await service.tick()
+            try:
+                if await service.tick():delay=0
             except asyncio.CancelledError:raise
             except Exception:
                 log.warning('Game credit queue is temporarily unavailable')

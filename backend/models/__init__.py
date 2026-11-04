@@ -48,6 +48,8 @@ from .catalogue import (CatalogueEntity, CatalogueIdentity, CatalogueLegacyLink,
 from .timestamps import configure_millisecond_timestamps
 configure_millisecond_timestamps(Base)
 
+from .game_runner import GameWorkDemand, GameProviderTicket, GameProviderTurn, GameMapperState, GameMapperItem, GameMapperInterest, GameMapperEdge
+
 __all__ = [
     "Base",
     "UserRole", "MediaType", "CollectionSource",

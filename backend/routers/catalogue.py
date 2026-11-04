@@ -2,7 +2,7 @@
 
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -300,7 +300,7 @@ async def screen_character(character_id: Annotated[int, Path(gt=0)], db: DB, cur
 
 
 @router.get("/entities/{entity_id}/details")
-async def media_detail(entity_id: Annotated[int, Path(gt=0)], db: DB, current_user: OptionalCaller, response:Response,
+async def media_detail(entity_id: Annotated[int, Path(gt=0)], db: DB, current_user: OptionalCaller, response:Response, background:BackgroundTasks,
     country:Annotated[str|None,Query(pattern=r'^[A-Za-z]{2}$')]=None) -> dict:
     from core.media_details import catalogue_title
     from core.tracking_access import catalog_access
@@ -317,6 +317,8 @@ async def media_detail(entity_id: Annotated[int, Path(gt=0)], db: DB, current_us
     response.headers['Cache-Control']='private, no-store'
     identities=None;metadata_status=None
     if work.kind=='game':
+        from core.game_background import observe_work
+        background.add_task(observe_work,work.id,db.bind,current_user.id if current_user else None)
         from core.game_metadata import GameMetadata
         from sqlalchemy.ext.asyncio import async_sessionmaker
         identities=list(await db.scalars(select(CatalogueIdentity).where(CatalogueIdentity.entity_id==work.id)))

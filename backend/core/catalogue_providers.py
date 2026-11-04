@@ -12,8 +12,7 @@ from email.utils import parsedate_to_datetime
 from urllib.parse import urlsplit
 
 import httpx
-from sqlalchemy import select, text, update, func
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import update, func
 
 from core.config import settings
 from models.catalogue import MetadataProviderBudget
@@ -132,6 +131,11 @@ class ProviderHTTP:
     @asynccontextmanager
     async def lane(self, provider):
         """Share provider budgets; allow two rate-spaced IGDB requests in flight."""
+        if self.session_factory:
+            from core.game_work import provider_slot
+            async with provider_slot(self.session_factory, provider):
+                yield
+            return
         if provider != 'igdb':
             async with self._budget_lane(provider):
                 yield
@@ -140,125 +144,26 @@ class ProviderHTTP:
         if _local_igdb_slots is None:_local_igdb_slots=asyncio.Semaphore(2)
         # Bound local slot waiters before they occupy database connections.
         async with _local_igdb_slots:
-            async with self._igdb_slot():
-                # Commit the start reservation before I/O, so a slow response
-                # does not hold the rate lock. Shared Retry-After still wins.
-                async with self._budget_lane(provider):
-                    pass
-                yield
-
-    @asynccontextmanager
-    async def _igdb_slot(self):
-        if self.session_factory:
-            # Transaction-owned slots bound concurrency across worker processes
-            # and release on cancellation/connection loss without stale leases.
-            keys=[int.from_bytes(hashlib.sha256(f'catalogue-igdb-slot:{slot}'.encode()).digest()[:8],
-                'big',signed=True) for slot in range(2)]
-            async with self.session_factory() as db:
-                for key in keys:
-                    if await db.scalar(text('SELECT pg_try_advisory_xact_lock(:key)'),{'key':key}):
-                        break
-                else:
-                    await db.execute(text('SELECT pg_advisory_xact_lock(:key)'),{'key':keys[0]})
-                yield
-        else:
+            async with self._budget_lane(provider):
+                pass
             yield
 
     @asynccontextmanager
     async def _budget_lane(self, provider):
-        """Reserve provider starts; retain RAWG monthly and Hardcover daily budgets.
-
-        A dedicated session owns the transaction advisory rate lock. IGDB
-        reserves only the start; other providers hold it through HTTP. Never
-        use the caller's catalogue/history transaction for this.
-        """
-        interval = (
-            1.1
-            if provider == "openlibrary" and not settings.openlibrary_contact_email
-            else INTERVALS[provider]
-        )
-        if self.session_factory:
-            async with self.session_factory() as db:
-                await db.execute(
-                    text("SELECT pg_advisory_xact_lock(:key)"),
-                    {
-                        "key": int.from_bytes(
-                            hashlib.sha256(
-                                ("catalogue-provider:" + provider).encode()
-                            ).digest()[:8],
-                            "big",
-                            signed=True,
-                        )
-                    },
-                )
-                await db.execute(
-                    insert(MetadataProviderBudget)
-                    .values(provider=provider)
-                    .on_conflict_do_nothing()
-                )
-                row = (
-                    await db.execute(
-                        select(MetadataProviderBudget).where(
-                            MetadataProviderBudget.provider == provider
-                        )
-                    )
-                ).scalar_one()
-                now = datetime.now(timezone.utc).replace(tzinfo=None)
-                while row.next_request_at and row.next_request_at > now:
-                    delay = (row.next_request_at - now).total_seconds()
-                    if delay > 5:
-                        raise ProviderError('rate_limited', delay)
-                    await asyncio.sleep(delay)
-                    # Another in-flight request can publish Retry-After while
-                    # this reservation waits. Do not admit from a stale row.
-                    await db.refresh(row,attribute_names=['next_request_at'])
-                    now = datetime.now(timezone.utc).replace(tzinfo=None)
-                # IGDB reserves starts without an extra interval after I/O.
-                started=datetime.now(timezone.utc).replace(tzinfo=None)
-                now=started
-                month = now.strftime("%Y-%m")
-                if row.month != month:
-                    row.month, row.request_count = month, 0
-                if (
-                    provider == "rawg"
-                    and row.request_count >= settings.rawg_monthly_budget
-                ):
-                    raise ProviderError("monthly_budget")
-                if provider in {"hardcover", "steam"}:
-                    day = now.strftime("%Y-%m-%d")
-                    if row.day != day:
-                        row.day, row.daily_request_count = day, 0
-                    budget_limit = settings.hardcover_daily_budget if provider == 'hardcover' else settings.steam_daily_budget
-                    if row.daily_request_count >= budget_limit:
-                        tomorrow = now.replace(
-                            hour=0, minute=0, second=0, microsecond=0
-                        ) + timedelta(days=1)
-                        raise ProviderError(
-                            "daily_budget", (tomorrow - now).total_seconds()
-                        )
-                    row.daily_request_count += 1
-                row.request_count += 1
-                # Persist request accounting even when HTTP fails.
-                try:
-                    yield
-                finally:
-                    base=started if provider=='igdb' else datetime.now(timezone.utc).replace(tzinfo=None)
-                    deadline=base+timedelta(seconds=interval)
-                    row.next_request_at=func.greatest(MetadataProviderBudget.next_request_at,deadline) if provider=='igdb' else deadline
-                    await db.commit()
-        else:
-            lock = _local_locks.setdefault(provider, asyncio.Lock())
-            async with lock:
-                while (delay := max(0, _local_next.get(provider, 0) - time.monotonic())):
-                    if delay > 5:
-                        raise ProviderError('rate_limited', delay)
-                    await asyncio.sleep(delay)
-                started=time.monotonic()
-                try:
-                    yield
-                finally:
-                    base=started if provider=='igdb' else time.monotonic()
-                    _local_next[provider] = max(_local_next.get(provider,0),base+interval)
+        """In-memory fallback for clients without a database deployment."""
+        interval = 1.1 if provider == "openlibrary" and not settings.openlibrary_contact_email else INTERVALS[provider]
+        lock = _local_locks.setdefault(provider, asyncio.Lock())
+        async with lock:
+            while (delay := max(0, _local_next.get(provider, 0) - time.monotonic())):
+                if delay > 5:
+                    raise ProviderError('rate_limited', delay)
+                await asyncio.sleep(delay)
+            started = time.monotonic()
+            try:
+                yield
+            finally:
+                base = started if provider == 'igdb' else time.monotonic()
+                _local_next[provider] = max(_local_next.get(provider, 0), base + interval)
 
     async def defer(self, provider, delay):
         """Share cooldowns; callers return a retry state without a long wait."""

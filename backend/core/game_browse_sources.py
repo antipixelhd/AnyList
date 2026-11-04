@@ -15,7 +15,6 @@ from core.game_release_dates import FIELDS as RELEASE_FIELDS, in_range, game_rel
 from core.game_types import INDEPENDENT, platform_group, search_candidate, canonical_game, candidate_fields, game_platforms, mobile_platform
 from db import AsyncSessionLocal
 
-_slots = asyncio.Semaphore(2)
 BASE_FIELDS = 'id,slug,name,cover.url,first_release_date,game_type.type,genres.name,platforms.name,platforms.platform_family.name,rating_count,ports.game_type.type,ports.platforms.name,ports.platforms.platform_family.name,'+RELEASE_FIELDS
 CARD_FIELDS = candidate_fields(BASE_FIELDS)
 SLUG = re.compile(r'[a-z0-9][a-z0-9_-]{0,199}\Z')
@@ -114,8 +113,7 @@ class GameBrowseSources:
 
     async def igdb(self, endpoint, query):
         self.api.validate('igdb', 'game')
-        async with _slots:
-            return await self.api.igdb(endpoint, query)
+        return await self.api.igdb(endpoint, query)
 
     async def igdb_queries(self, queries):
         """Batch independent game queries without changing their result scopes."""
@@ -158,8 +156,7 @@ class GameBrowseSources:
     async def request(self, provider, url, **kwargs):
         if provider == 'wikidata':
             kwargs['headers'] = {'User-Agent':'AnyList catalogue/1 (https://github.com/antipixelhd/AnyList)'}
-        async with _slots:
-            return await self.api.http.request(provider, 'GET', url, **kwargs)
+        return await self.api.http.request(provider, 'GET', url, **kwargs)
 
     async def defer(self,provider,seconds):
         await self.api.http.defer(provider,seconds)

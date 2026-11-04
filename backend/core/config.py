@@ -58,6 +58,7 @@ class Settings(BaseSettings):
 
     enable_registrations: bool = False
     new_accounts_games_access: bool = False
+    game_background_mapper_enabled: bool = True
     registration_max_allowed_users: int = 0
 
     # Server defaults survive database resets; account/global DB overrides win.

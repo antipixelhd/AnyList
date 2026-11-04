@@ -39,12 +39,15 @@ async def header(db,native):
 
 
 async def request(db,native,generation,entity_id):
+    from core.game_work import demand, job_key
     row=await header(db,native)
     stamp=now()
     if row and (row.lease_until and row.lease_until>stamp or row.next_attempt_at):
+        await demand(db,job_key('imdb',JOB,native))
         return status(row)
     if row and row.generation==generation and row.coverage.get('matcher_version')==VERSION and row.expires_at and row.expires_at>stamp:
         return status(row)
+    await demand(db,job_key('imdb',JOB,native),reset=True)
     statement=insert(MetadataSnapshot).values(provider='imdb',kind=JOB,external_id=native,entity_id=entity_id,
         payload={'generation':generation,'page':0,'offset':0,'processed':0},coverage={'complete':False},next_attempt_at=stamp)
     await db.execute(statement.on_conflict_do_update(constraint='uq_catalogue_snapshot',set_={
@@ -63,11 +66,13 @@ class GamePersonDiscovery:
             return await self._run(native)
 
     async def claim(self,native=None):
+        from core.game_work import eligible_jobs, job_order
         async with self.sessions() as db:
             query=select(MetadataSnapshot).where(MetadataSnapshot.provider=='imdb',MetadataSnapshot.kind==JOB,
                 MetadataSnapshot.next_attempt_at<=now(),or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=now()))
             if native is not None:query=query.where(MetadataSnapshot.external_id==native)
-            query=query.order_by(MetadataSnapshot.next_attempt_at,MetadataSnapshot.id).limit(1).with_for_update(skip_locked=True)
+            else:query=query.where(eligible_jobs())
+            query=query.order_by(job_order(),MetadataSnapshot.next_attempt_at,MetadataSnapshot.id).limit(1).with_for_update(skip_locked=True)
             job=await db.scalar(query)
             if not job:return None
             token=uuid.uuid4().hex;job.lease_token=token;job.lease_until=now()+timedelta(minutes=3)
@@ -79,6 +84,11 @@ class GamePersonDiscovery:
             return job.external_id,token,state
 
     async def _run(self,native,*,claimed=None):
+        from core.game_work import job_context
+        async with job_context(self.sessions,'imdb',JOB,native):
+            return await self._execute(native,claimed=claimed)
+
+    async def _execute(self,native,*,claimed=None):
         from core.game_imdb_person import COMPONENT
         from core.game_imdb_review import INDEX,PRIORITY_INDEX
         claimed=claimed or await self.claim(native)

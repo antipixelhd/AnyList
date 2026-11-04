@@ -390,7 +390,7 @@ async def browse_facets(db: DB, viewer: Viewer) -> dict:
 
 
 @router.get('/browse')
-async def browse_games(db: DB, viewer: Viewer,
+async def browse_games(db: DB, viewer: Viewer, background:BackgroundTasks,
         category: Literal['trending','most_played','sellers','newest','popular','score'] = 'trending',
         genres: Annotated[str, Query(max_length=1000)] = '',
         platforms: Annotated[str, Query(max_length=5000)] = '',
@@ -415,7 +415,11 @@ async def browse_games(db: DB, viewer: Viewer,
             start=start,end=end,q=q,min_metacritic=min_metacritic,timeline=timeline,hide_erotic_games=hide_erotic)
         page = await service.page(query,limit=limit,cursor=cursor,
             wait_seconds=.15 if min_metacritic else None)
-        return await game_browse.project(db,viewer_id,page)
+        result=await game_browse.project(db,viewer_id,page)
+        if cursor is None and not q and not genres and not platforms and not start and not end and not timeline:
+            from core.game_background import observe_browse
+            background.add_task(observe_browse,db.bind,viewer_id,category,result['results'])
+        return result
     except ProviderError as cause:
         code = 409 if cause.code=='cursor_expired' else 422 if cause.code in {'invalid_request','invalid_cursor'} else 503
         message = 'This Games page expired. Refresh the results.' if code==409 else 'Invalid game filters or page.' if code==422 else 'Games are temporarily unavailable.'
@@ -447,27 +451,34 @@ async def game_children(work_id:WorkId,db:DB,viewer:Reader,
 async def save_entry(work_id: WorkId, body: GamePatch, db: DB, viewer: Writer,background:BackgroundTasks) -> GameEntryOut:
     result=await tracking.save_entry(db, viewer.id, work_id, body)
     background.add_task(request_game_metadata,work_id,db.bind)
+    from core.game_background import observe_work
+    background.add_task(observe_work,work_id,db.bind,viewer.id,1)
     return result
 
 
 @router.delete('/entries/{work_id}')
-async def remove_entry(work_id: WorkId, db: DB, viewer: Writer,
+async def remove_entry(work_id: WorkId, db: DB, viewer: Writer,background:BackgroundTasks,
                        revision: Annotated[int, Query(ge=1)],
                        confirmed: bool = False) -> dict:
     if not confirmed:
         raise HTTPException(409, 'Confirm removal of the base game and its listed expansions')
     await tracking.remove_entry(db, viewer.id, work_id, revision)
+    from core.game_background import observe_work
+    background.add_task(observe_work,work_id,db.bind,viewer.id,1)
     return {'deleted': True}
 
 
 @router.patch('/children/{work_id}')
-async def save_child(work_id: WorkId, body: ChildPatch, db: DB, viewer: Writer,
+async def save_child(work_id: WorkId, body: ChildPatch, db: DB, viewer: Writer,background:BackgroundTasks,
                      listed: bool = True) -> GameEntryOut:
-    return await tracking.save_child(db, viewer.id, work_id, body, listed=listed)
+    result=await tracking.save_child(db, viewer.id, work_id, body, listed=listed)
+    from core.game_background import observe_work
+    background.add_task(observe_work,work_id,db.bind,viewer.id,1)
+    return result
 
 
 @router.delete('/children/{work_id}')
-async def unlist_child(work_id: WorkId, db: DB, viewer: Writer,
+async def unlist_child(work_id: WorkId, db: DB, viewer: Writer,background:BackgroundTasks,
                        revision: Annotated[int, Query(ge=1)]) -> GameEntryOut:
     await tracking.lock_owner(db, viewer.id)
     await tracking.work(db, work_id)
@@ -478,6 +489,8 @@ async def unlist_child(work_id: WorkId, db: DB, viewer: Writer,
         row.base_entry_id = None
         row.revision += 1
     await db.commit()
+    from core.game_background import observe_work
+    background.add_task(observe_work,work_id,db.bind,viewer.id,1)
     return (await tracking.states(db, viewer.id, [work_id]))[0]
 
 
@@ -488,13 +501,15 @@ async def favorite_order(body: GameFavoriteOrder, db: DB, viewer: Writer) -> dic
 
 
 @router.put('/favorites/{work_id}')
-async def set_favorite(work_id: WorkId, body: FavoritePatch, db: DB, viewer: Writer) -> GameEntryOut:
+async def set_favorite(work_id: WorkId, body: FavoritePatch, db: DB, viewer: Writer,background:BackgroundTasks) -> GameEntryOut:
     await tracking.lock_owner(db, viewer.id)
     entity = await tracking.work(db, work_id)
     if not capabilities(entity.attributes).independent:
         raise HTTPException(422, 'Only independently playable games can be favorites')
     await tracking.set_favorite(db, viewer.id, work_id, body.favorite)
     await db.commit()
+    from core.game_background import observe_work
+    background.add_task(observe_work,work_id,db.bind,viewer.id,1)
     return (await tracking.states(db, viewer.id, [work_id]))[0]
 
 

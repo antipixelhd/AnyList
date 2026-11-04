@@ -108,6 +108,9 @@ async def request(db,work,*,identities=None):
     if not native:return None,{'state':'unavailable','primary_ready':False,'pending':False,'complete':False,
         'error':'identity_unavailable','retry_after':0}
     row=await header(db,native);stamp=now()
+    if not row or row.next_attempt_at or not row.expires_at or row.expires_at<=stamp:
+        from core.game_work import demand, job_key
+        await demand(db,job_key('igdb','game',native))
     if row and row.entity_id not in (None,work.id):
         return None,{'state':'unavailable','primary_ready':False,'pending':False,'complete':False,'error':'identity_conflict','retry_after':0}
     if row and row.fetched_at and row.artwork_policy_version in (1,2,3,4):
@@ -154,10 +157,17 @@ class GameMetadata:
 
 
     async def refresh(self,flight,native,expected):
+        from core.game_work import job_context
+        async with job_context(self.factory,'igdb','game',native):
+            return await self._refresh(flight,native,expected)
+
+    async def _refresh(self,flight,native,expected):
         primary_held=False;characters_held=False
         async def primary(entity_id):
             nonlocal primary_held,characters_held
             flight.entity_id=entity_id;flight.primary.set()
+            from core.game_work import current, Work, Priority
+            current.set(Work(Priority.FINISH,current.get().owner))
             if primary_held:_slots.release();primary_held=False
             await _character_slots.acquire();characters_held=True
         try:
@@ -206,6 +216,8 @@ class GameMetadata:
             state,changed=await self.ensure(db,work)
             if changed:await db.refresh(work)
             return work.id if state['primary_ready'] else None
+        from core.game_work import demand, job_key
+        await demand(db,job_key('igdb','game',native))
         await db.commit()
         flight=self.start(native,None)
         if not flight:return None
@@ -222,12 +234,13 @@ class GameMetadata:
         return None
 
     async def tick(self):
+        from core.game_work import eligible_jobs, job_order
         async with self.factory() as db:
             jobs=(await db.execute(select(MetadataSnapshot.external_id,MetadataSnapshot.entity_id,MetadataSnapshot.coverage['priority'].astext,
                 MetadataSnapshot.coverage['requested_at'].astext,MetadataSnapshot.error_code).where(
-                MetadataSnapshot.provider=='igdb',MetadataSnapshot.kind=='game',MetadataSnapshot.entity_id.is_not(None),
+                MetadataSnapshot.provider=='igdb',MetadataSnapshot.kind=='game',MetadataSnapshot.entity_id.is_not(None),eligible_jobs(),
                 MetadataSnapshot.next_attempt_at<=now(),or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=now()))
-                .order_by(case((MetadataSnapshot.coverage['priority'].astext=='background',1),else_=0),MetadataSnapshot.next_attempt_at,MetadataSnapshot.id).limit(2))).all()
+                .order_by(job_order(),case((MetadataSnapshot.coverage['priority'].astext=='background',1),else_=0),MetadataSnapshot.next_attempt_at,MetadataSnapshot.id).limit(2))).all()
         # One background primary at a time reserves capacity for a page click.
         background_started=False
         for native,expected,background_job,requested,error in jobs:

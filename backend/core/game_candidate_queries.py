@@ -1,6 +1,7 @@
 """Bounded IGDB dispatcher shared by a discovery service's title acquisitions."""
 import asyncio
 import re
+from contextvars import copy_context
 from core.catalogue_providers import ProviderError
 
 
@@ -28,7 +29,7 @@ class GameCandidateQueries:
         if self.closed:raise ProviderError('unavailable')
         if len(self.pending)+len(self.active)>=self.MAX_PENDING:raise ProviderError('rate_limited',2)
         future=asyncio.get_running_loop().create_future()
-        self.pending.append((queries,future))
+        self.pending.append((queries,future,copy_context()))
         if self.flight is None:
             self.flight=asyncio.create_task(self.flush())
             self.flight.add_done_callback(lambda task:task.exception() if not task.cancelled() else None)
@@ -40,10 +41,15 @@ class GameCandidateQueries:
             await asyncio.sleep(self.COLLECTION_SECONDS)
             while self.pending:
                 batch=[];size=0
-                while self.pending and size+len(self.pending[0][0])<=10:
+                from core.game_work import current, Work
+                def group(context):
+                    work=context.get(current,current.get())
+                    return work.priority,work.owner,tuple(scope for scope in work.scopes if scope.startswith('job:'))
+                admission=group(self.pending[0][2])
+                while self.pending and size+len(self.pending[0][0])<=10 and group(self.pending[0][2])==admission:
                     item=self.pending.pop(0);batch.append(item);size+=len(item[0])
                 self.active=batch
-                queries=list(dict.fromkeys(query for values,future in batch if not future.cancelled() for query in values))
+                queries=list(dict.fromkeys(query for values,future,_ in batch if not future.cancelled() for query in values))
                 filters=[query for query in queries if not re.search(r'(?:^|;)\s*search\s+',query)]
                 groups=([filters] if filters else [])+[[query] for query in queries if query not in filters]
                 async def acquire(values):
@@ -52,14 +58,17 @@ class GameCandidateQueries:
                         if len(rows)!=len(values):raise ProviderError('bad_response')
                         return values,rows,None
                     except Exception as error:return values,None,error
-                tasks=[asyncio.create_task(acquire(values)) for values in groups]
+                context=batch[0][2].copy()
+                scopes=tuple(dict.fromkeys(scope for _,_,ctx in batch for scope in ctx.get(current,current.get()).scopes))
+                context.run(current.set,Work(admission[0],admission[1],scopes))
+                tasks=[asyncio.create_task(acquire(values),context=context.copy()) for values in groups]
                 known={};errors={}
                 try:
                     for completed in asyncio.as_completed(tasks):
                         values,rows,error=await completed
                         if error:errors.update((query,error) for query in values)
                         else:known.update(zip(values,rows))
-                        for requested,future in batch:
+                        for requested,future,_ in batch:
                             if future.done():continue
                             error=next((errors[query] for query in requested if query in errors),None)
                             if error:future.set_exception(error)
@@ -70,7 +79,7 @@ class GameCandidateQueries:
                     await asyncio.gather(*tasks,return_exceptions=True)
                 self.active=[]
         finally:
-            for _,future in self.active+self.pending:
+            for _,future,_ in self.active+self.pending:
                 if not future.done():future.cancel()
             self.active=[];self.pending=[];self.flight=None
 
@@ -81,6 +90,6 @@ class GameCandidateQueries:
             task.cancel()
             await asyncio.gather(task,return_exceptions=True)
         # A task cancelled before its first turn never enters flush's finally.
-        for _,future in self.active+self.pending:
+        for _,future,_ in self.active+self.pending:
             if not future.done():future.cancel()
         self.active=[];self.pending=[];self.flight=None

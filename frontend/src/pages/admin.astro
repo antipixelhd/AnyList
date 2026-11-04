@@ -1,5 +1,6 @@
 ---
 import Icon from "../components/Icon.astro";
+import AdminTabs from '../components/AdminTabs.astro';
 import TrackerSettings from "../layouts/TrackerSettings.astro";
 import { api } from "../lib/api";
 import type { AdminUser } from "../lib/api";
@@ -22,6 +23,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
 ---
 
 <TrackerSettings title="Administration">
+  <AdminTabs />
   <div id="app-data"
     data-token={token}
     data-current-user-id={user!.id}

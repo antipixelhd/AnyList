@@ -97,18 +97,25 @@ class GameCompanyWorks:
         async with _slots:return await self._run(native)
 
     async def claim(self,native=None):
+        from core.game_work import eligible_jobs, job_order
         token=uuid.uuid4().hex
         async with self.sessions() as db:
             query=select(MetadataSnapshot).where(MetadataSnapshot.provider=='igdb',MetadataSnapshot.kind==JOB,
                 MetadataSnapshot.next_attempt_at<=now(),or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=now()))
             if native is not None:query=query.where(MetadataSnapshot.external_id==native)
-            job=await db.scalar(query.order_by(MetadataSnapshot.next_attempt_at,MetadataSnapshot.id).limit(1).with_for_update(skip_locked=True))
+            else:query=query.where(eligible_jobs())
+            job=await db.scalar(query.order_by(job_order(),MetadataSnapshot.next_attempt_at,MetadataSnapshot.id).limit(1).with_for_update(skip_locked=True))
             if not job:return None
             state=dict(job.payload or {})
             job.lease_token=token;job.lease_until=now()+timedelta(minutes=3);await db.commit()
             return job.external_id,token,state
 
     async def _run(self,native,*,claimed=None):
+        from core.game_work import job_context
+        async with job_context(self.sessions,'igdb',JOB,native):
+            return await self._execute(native,claimed=claimed)
+
+    async def _execute(self,native,*,claimed=None):
         claimed=claimed or await self.claim(native)
         if not claimed:return 'cached'
         native,token,state=claimed
@@ -135,7 +142,7 @@ class GameCompanyWorks:
                 if not await self.publish(native,token,state,page):return 'superseded'
                 if state['complete']:return 'ready'
                 if monotonic()>=deadline:break
-            await self.release(native,token,delay=2);return 'partial'
+            await self.release(native,token);return 'partial'
         except asyncio.CancelledError:
             await self.release(native,token);raise
         except Exception as cause:
@@ -243,7 +250,7 @@ class GameCompanyWorks:
 
 async def scheduler():
     from db import AsyncSessionLocal
-    service=GameCompanyWorks(AsyncSessionLocal)
+    service=GameCompanyWorks(AsyncSessionLocal,page_budget=1)
     try:
         await service.serve()
     finally:

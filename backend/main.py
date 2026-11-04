@@ -67,6 +67,8 @@ app = FastAPI(title="AnyList", version=settings.app_version, lifespan=lifespan, 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
+from core.game_work import GameWorkMiddleware
+app.add_middleware(GameWorkMiddleware)
 
 
 @app.get("/openapi.json", include_in_schema=False)
@@ -96,6 +98,8 @@ app.add_middleware(
 
 from routers import tracking
 from routers import games
+from routers import admin_game_runner
+app.include_router(admin_game_runner.router)
 from routers import catalogue
 app.include_router(catalogue.router)
 app.include_router(games.router)

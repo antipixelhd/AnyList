@@ -15,9 +15,11 @@ _wake=asyncio.Event()
 
 
 async def request(db,entity_id,kind,native):
+    from core.game_work import demand, job_key, Priority
     key=f'{entity_id}:{kind}'
     state=await admit(db,key,kind=JOB,provider=PROVIDER,entity_id=entity_id)
     if state['pending']:
+        await demand(db,job_key(PROVIDER,JOB,key),priority=Priority.FIRST_WORKS)
         await db.execute(update(MetadataSnapshot).where(MetadataSnapshot.provider==PROVIDER,
             MetadataSnapshot.kind==JOB,MetadataSnapshot.external_id==key).values(
                 coverage=MetadataSnapshot.coverage.op('||')({'native':str(native),'kind':kind})))
@@ -109,6 +111,8 @@ async def retire(db,entity_id,kind,sources=None):
 
 async def queue_metadata(db,entity_id,kind):
     """After participation verification, hydrate canonical works at idle priority."""
+    from core.game_work import current, Priority
+    if current.get().priority==Priority.AUTOMATIC:return
     from core.game_contributor_works import verified_game_credits
     credits=verified_game_credits(entity_id,kind)
     records=(await db.execute(select(CatalogueIdentity.external_id,CatalogueIdentity.entity_id).where(
@@ -231,7 +235,9 @@ class GameBulk:
             job.lease_token=token;job.lease_until=now()+timedelta(minutes=1)
             key=job.external_id;coverage=dict(job.coverage);await db.commit()
         try:
-            candidates,complete=await self.source.acquire(coverage['native'],coverage['kind'])
+            from core.game_work import job_context
+            async with job_context(self.sessions,PROVIDER,JOB,key,first=True):
+                candidates,complete=await self.source.acquire(coverage['native'],coverage['kind'])
             async with self.sessions() as db:
                 from core import catalogue
                 await catalogue.write_lock(db)

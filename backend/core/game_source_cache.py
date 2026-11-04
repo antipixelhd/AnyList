@@ -55,6 +55,10 @@ class GameSourceCache:
             MetadataSnapshot.kind == kind, or_(MetadataSnapshot.lease_until.is_(None), MetadataSnapshot.lease_until <= now))
         overflow = overflow.order_by(func.coalesce(MetadataSnapshot.fetched_at, MetadataSnapshot.next_attempt_at)
             .desc().nullslast(), MetadataSnapshot.id.desc()).offset(self.max_records)
+        from models.game_runner import GameWorkDemand
+        scopes=select('cache:'+provider+':'+kind+':'+func.substr(MetadataSnapshot.external_id,len(SCHEMA_VERSION)+2)).where(
+            MetadataSnapshot.id.in_(overflow))
+        await db.execute(delete(GameWorkDemand).where(GameWorkDemand.key.in_(scopes),GameWorkDemand.active_until<=now))
         await db.execute(delete(MetadataSnapshot).where(MetadataSnapshot.id.in_(overflow))
             .execution_options(synchronize_session=False))
 
@@ -85,13 +89,19 @@ class GameSourceCache:
         if progressive and previous and row.lease_until and row.lease_until > now:
             return previous
         flight_key = (id(self.sessions), SCHEMA_VERSION, provider, kind, key)
+        from core.game_work import demand, work_context, current, Priority
+        scope=f'cache:{provider}:{kind}:{key}'
+        async with self.sessions() as db:
+            await demand(db,scope,reset=not row or not row.lease_until or row.lease_until<=now)
+            await db.commit()
         task = _flights.get(flight_key)
         if task is None:
             if len(_flights) >= 64:
                 if previous:
                     return previous
                 raise ProviderError('rate_limited')
-            task = asyncio.create_task(self.refresh(provider, kind, key, loader, ttl, max_stale, progressive=progressive, accept=accept))
+            with work_context(max(current.get().priority,Priority.FINISH),scope=scope):
+                task = asyncio.create_task(self.refresh(provider, kind, key, loader, ttl, max_stale, progressive=progressive, accept=accept))
             _flights[flight_key] = task
             def finished(done):
                 if _flights.get(flight_key) is done:
@@ -168,6 +178,14 @@ class GameSourceCache:
             if provider=='igdb' and kind=='game_title_candidates':
                 from core.game_title_candidates import observations
                 data={**data,'scope_observations':await asyncio.to_thread(observations,data.get('rows',[]))}
+        except asyncio.CancelledError:
+            from sqlalchemy import update
+            async with self.sessions() as db:
+                await db.execute(update(MetadataSnapshot).where(MetadataSnapshot.provider==provider,
+                    MetadataSnapshot.kind==kind,MetadataSnapshot.external_id==f'{SCHEMA_VERSION}:{key}',
+                    MetadataSnapshot.lease_token==token).values(lease_token=None,lease_until=None))
+                await db.commit()
+            raise
         except (ProviderError, asyncio.TimeoutError) as cause:
             error = cause.code if isinstance(cause, ProviderError) else 'unavailable'
         except Exception:

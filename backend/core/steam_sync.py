@@ -301,6 +301,12 @@ async def run_steam_sync(user_id, job_id, _a=0, _b=0, connection_id=None):
 
 
 async def sync(factory, user_id, job_id, connection_id):
+    from core.game_work import work_context, Priority
+    with work_context(Priority.CONNECTION,f'user:{user_id}',replace=True):
+        return await _sync(factory,user_id,job_id,connection_id)
+
+
+async def _sync(factory, user_id, job_id, connection_id):
     async with factory() as db:
         if not await mark_job_running_unless_cancelled(db, job_id, current_step='Syncing Steam'):
             return

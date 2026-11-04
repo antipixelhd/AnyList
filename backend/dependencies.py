@@ -21,6 +21,15 @@ import schemas
 DEVICE_TOKEN_TYPE = "device"
 
 
+def _work_user(user):
+    """Different sessions/API credentials still share one user's provider turns."""
+    if user is not None and getattr(user,'id',None) is not None:
+        from dataclasses import replace
+        from core.game_work import current
+        current.set(replace(current.get(),owner=f'user:{user.id}'))
+    return user
+
+
 async def _user_from_device_grant(db: AsyncSession, payload: dict) -> Optional[User]:
     """Resolve a device-scoped access token to its user, re-checking the
     backing grant on every request so a revoked grant (Connected Apps ->
@@ -50,7 +59,7 @@ async def _user_from_device_grant(db: AsyncSession, payload: dict) -> Optional[U
     # get_current_user_or_api_key - these non-session callers hit data
     # endpoints, not the profile-rendering pages.
     user_result = await db.execute(select(User).where(User.id == user_id))
-    return user_result.scalar_one_or_none()
+    return _work_user(user_result.scalar_one_or_none())
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="auth/login", auto_error=False)
@@ -97,7 +106,7 @@ async def get_current_user(
     
     if user is None or not session_is_current(user, payload):
         raise credentials_exception
-    return user
+    return _work_user(user)
 
 async def require_admin(current_user: User = Depends(get_current_user)) -> User:
     if not current_user.is_admin:
@@ -132,7 +141,7 @@ async def get_optional_user(
     query = select(User).where(User.id == user_id).options(selectinload(User.profile))
     result = await db.execute(query)
     user = result.scalar_one_or_none()
-    return user if user is not None and session_is_current(user, payload) else None
+    return _work_user(user) if user is not None and session_is_current(user, payload) else None
 
 
 async def get_tracking_write_user(
@@ -162,7 +171,7 @@ async def get_tracking_write_user(
             user = await _user_from_device_grant(db, payload)
             if user is None:
                 raise credentials_exception
-            return user
+            return _work_user(user)
         user_id = int(payload.get("sub"))
     except HTTPException:
         raise
@@ -173,7 +182,7 @@ async def get_tracking_write_user(
     user = result.scalar_one_or_none()
     if user is None or not session_is_current(user, payload):
         raise credentials_exception
-    return user
+    return _work_user(user)
 
 
 async def get_current_user_or_api_key(
@@ -186,14 +195,14 @@ async def get_current_user_or_api_key(
     X-Api-Key header) — the same key already used by webhooks and the Radarr/Sonarr
     compat endpoints — for callers that can't hold a JWT (e.g. external scripts)."""
     if jwt_user:
-        return jwt_user
+        return _work_user(jwt_user)
 
     key = api_key or x_api_key
     if key:
         result = await db.execute(select(User).where(User.api_key == key))
         user = result.scalar_one_or_none()
         if user:
-            return user
+            return _work_user(user)
 
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -213,13 +222,13 @@ async def get_optional_user_or_api_key(
     to treating the caller as an anonymous visitor rather than rejecting them
     outright (e.g. a list/profile page that may itself be public)."""
     if jwt_user:
-        return jwt_user
+        return _work_user(jwt_user)
 
     key = api_key or x_api_key
     if key:
         result = await db.execute(select(User).where(User.api_key == key))
         user = result.scalar_one_or_none()
         if user:
-            return user
+            return _work_user(user)
 
     return None

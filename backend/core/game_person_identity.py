@@ -55,11 +55,16 @@ async def request(db, native, entity_id, checked, *, enqueue):
 async def backfill(db, *, limit=4):
     """Upgrade already requested cached people, not a provider-wide crawl."""
     job = aliased(MetadataSnapshot)
+    from core.game_work import effective_priority, Priority
+    from models.game_runner import GameWorkDemand
     rows = (await db.execute(select(MetadataSnapshot.external_id, MetadataSnapshot.entity_id,
         MetadataSnapshot.payload['identity_bridge'].label('checked')).outerjoin(job,
             (job.provider == 'imdb') & (job.kind == JOB) & (job.external_id == MetadataSnapshot.external_id)).where(
         MetadataSnapshot.provider == 'imdb', MetadataSnapshot.kind == COMPONENT,
         MetadataSnapshot.coverage['source_complete'].as_boolean().is_(True),
+        ~select(GameWorkDemand.key).where(GameWorkDemand.key==
+            'job:imdb:game_person_job:'+MetadataSnapshot.external_id,
+            effective_priority()==Priority.AUTOMATIC).exists(),
         func.coalesce(MetadataSnapshot.payload['identity_bridge']['version'].as_integer(), 0) != VERSION,
         job.next_attempt_at.is_(None), or_(job.lease_until.is_(None), job.lease_until <= now()),
         or_(job.id.is_(None), func.coalesce(job.payload['identity']['version'].as_integer(), 0) != VERSION)
@@ -96,6 +101,11 @@ class GamePersonIdentity:
         self.sessions = sessions
 
     async def run(self, native):
+        from core.game_work import job_context
+        async with job_context(self.sessions,'imdb',JOB,native):
+            return await self._run(native)
+
+    async def _run(self, native):
         identifier(native, person=True)
         async with self.sessions() as db:
             job = await db.scalar(snapshot(JOB, native).with_for_update())

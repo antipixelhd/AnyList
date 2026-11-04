@@ -16,7 +16,7 @@ from core.catalogue_providers import ProviderError, ProviderHTTP
 from core.game_imdb_enrichment import now, snapshot, request as admit, status as job_status
 from core.game_imdb_source import IMDbGameSource, identifier, TITLE_ID
 from core.game_imdb_projection import ROLE,texts,VERSIONS
-from core.game_imdb_bindings import revision as binding_revision, verified_bindings
+from core.game_imdb_bindings import revision as binding_revision
 from core.game_credit_roles import ACTING,SOURCE_ACTING,CREDIT_POLICY_VERSION
 from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity, MetadataSnapshot, CharacterPerformance
 
@@ -274,6 +274,11 @@ class GameIMDbPersonEnrichment:
             await db.commit();return token,state
 
     async def _run(self,native):
+        from core.game_work import job_context
+        async with job_context(self.sessions,'imdb',JOB,native):
+            return await self._execute(native)
+
+    async def _execute(self,native):
         claimed=await self.claim(native)
         if not claimed:return 'cached'
         token,state=claimed
@@ -304,7 +309,7 @@ class GameIMDbPersonEnrichment:
                 if not await self.publish(native,token,state,page):return 'superseded'
                 if not page['has_next']:return 'ready'
                 if monotonic()>=deadline:break
-            await self.release(native,token,delay=2)
+            await self.release(native,token)
             return 'partial'
         except asyncio.CancelledError:
             await self.release(native,token);raise
@@ -368,7 +373,9 @@ class GameIMDbPersonEnrichment:
                     from core.game_bulk import queue_metadata
                     for role_kind in ('actor','staff'):await queue_metadata(db,job.entity_id,role_kind)
                 from core.game_person_identity import request as resolve_person
-                await resolve_person(db,native,job.entity_id,component.payload.get('identity_bridge'),enqueue=True)
+                from core.game_work import current, Priority
+                if current.get().priority!=Priority.AUTOMATIC:
+                    await resolve_person(db,native,job.entity_id,component.payload.get('identity_bridge'),enqueue=True)
                 state['state']='complete';state.pop('cursor');state.pop('seen')
                 job.next_attempt_at=job.lease_token=job.lease_until=None
                 job.expires_at=now()+timedelta(days=30)
@@ -433,12 +440,13 @@ class GameIMDbPersonEnrichment:
             job.next_attempt_at=now()+timedelta(seconds=min(3600,delay));await db.commit()
 
     async def tick(self):
+        from core.game_work import eligible_jobs, job_order
         from core.game_person_identity import JOB as IDENTITY_JOB,GamePersonIdentity
         async with self.sessions() as db:
             queued=(await db.execute(select(MetadataSnapshot.kind,MetadataSnapshot.external_id).where(MetadataSnapshot.provider=='imdb',
-                MetadataSnapshot.kind.in_((JOB,IDENTITY_JOB)),
+                MetadataSnapshot.kind.in_((JOB,IDENTITY_JOB)),eligible_jobs(),
                 MetadataSnapshot.next_attempt_at<=now(),or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=now()))
-                .order_by(case((MetadataSnapshot.payload['projection_only'].astext=='true',0),
+                .order_by(job_order(),case((MetadataSnapshot.payload['projection_only'].astext=='true',0),
                     (MetadataSnapshot.kind==JOB,1),else_=2),
                     MetadataSnapshot.next_attempt_at,MetadataSnapshot.id).limit(1))).one_or_none()
         if queued:
@@ -452,7 +460,7 @@ async def scheduler():
     from db import AsyncSessionLocal
     from time import monotonic
     from core.game_person_identity import backfill
-    service=GameIMDbPersonEnrichment(AsyncSessionLocal)
+    service=GameIMDbPersonEnrichment(AsyncSessionLocal,page_budget=1)
     next_backfill=0
     try:
         while True:
