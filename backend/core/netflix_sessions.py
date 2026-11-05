@@ -473,6 +473,8 @@ async def _prepare_session(session_id: str, user_id: int, language: str | None) 
             ).with_for_update())).scalar_one_or_none()
             if session is None or session.status != "preparing" or session_id in _cancelled:
                 return
+            from core.watch_state_policy import filter_import_items
+            items = await filter_import_items(db, user_id, items, source)
             await hydrate_existing_items(db, user_id, items)
             from core.streaming_duplicates import remove_covered_items
             items, already_imported = await remove_covered_items(db, user_id, items)
@@ -855,6 +857,10 @@ async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSe
     payload = dict(session.payload or {})
     items = deepcopy(payload.get("items", []))
     _resolve_draft_items(items)
+    from core.watch_state_policy import filter_import_items
+    admitted = await filter_import_items(db, user_id, items, payload.get('source'), for_commit=True)
+    policy_skipped = len(items) - len(admitted)
+    items = admitted
     errors = payload.get("errors", [])
     counts = payload.get("counts") or {}
     unresolved = []
@@ -878,7 +884,7 @@ async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSe
         "movies": 0, "shows": 0, "new_entries": 0, "existing_entries": 0,
         "source_watches": 0, "source_episodes": 0, "duplicates": 0,
         "episodes": 0, "partial_shows": 0,
-        "inferred_episodes": 0, "skipped": 0, "unmatched": 0,
+        "inferred_episodes": 0, "skipped": policy_skipped, "unmatched": 0,
         "cutoff_exclusions": 0, "partial_progress": 0, "errors": len(errors),
         "excluded_rows": int(counts.get("excluded_rows", 0) or 0),
         "guessed_episodes": 0, "discarded_episodes": 0, "covered_episodes": 0,

@@ -117,6 +117,11 @@ class ConnectionEvidenceTests(unittest.IsolatedAsyncioTestCase):
 
 @unittest.skipUnless(os.getenv('TRACKING_TEST_DATABASE_URL'), 'Requires disposable PostgreSQL database')
 class ConnectionDraftDatabaseTests(unittest.IsolatedAsyncioTestCase):
+    async def immediate(self):
+        from models import UserSettings
+        self.db.add(UserSettings(user_id=self.user.id, preferences={'watch_state_sync': 'immediate'}))
+        await self.db.flush()
+
     async def asyncSetUp(self):
         self.engine = create_async_engine(os.environ['TRACKING_TEST_DATABASE_URL'])
         self.connection = await self.engine.connect()
@@ -147,6 +152,61 @@ class ConnectionDraftDatabaseTests(unittest.IsolatedAsyncioTestCase):
     async def draft(self):
         baseline = await self.db.get(StreamBaseline, self.conn.id)
         return await self.db.get(NetflixImportSession, baseline.snapshot['import_session_id'])
+
+    async def test_conservative_first_import_omits_partial_movies_and_keeps_raw_snapshot(self):
+        for provider in ('stremio', 'nuvio'):
+            with self.subTest(provider=provider):
+                self.conn.type = provider
+                row = movie(position=2519999)
+                if provider == 'stremio':
+                    row['watched_time'] = 2519999
+                await self.stage(progress=[row])
+                baseline = await self.db.get(StreamBaseline, self.conn.id)
+                self.assertTrue(baseline.approved)
+                self.assertNotIn('import_session_id', baseline.snapshot)
+                self.assertEqual(baseline.snapshot['records']['progress'], [row])
+                self.assertEqual((await self.db.scalars(select(TrackedEntry))).all(), [])
+                self.assertEqual((await self.db.scalars(select(WatchEvent))).all(), [])
+                await self.db.delete(baseline)
+                await self.db.flush()
+
+    async def test_conservative_partial_unmapped_movie_does_not_block_first_import(self):
+        await stage_first_snapshot(self.db, self.conn, [], [], [movie(position=600000)], {}, 'fixture')
+        baseline = await self.db.get(StreamBaseline, self.conn.id)
+        self.assertTrue(baseline.approved)
+        self.assertNotIn('import_session_id', baseline.snapshot)
+
+    async def test_conservative_is_rechecked_when_committing_an_older_connection_draft(self):
+        from models import UserSettings
+        await self.immediate()
+        await self.stage(progress=[movie(position=600000)])
+        draft = await self.draft()
+        self.assertEqual(len(draft.payload['items']), 1)
+        settings = await self.db.scalar(select(UserSettings).where(UserSettings.user_id == self.user.id))
+        settings.preferences = {'watch_state_sync': 'conservative'}
+        await self.db.flush()
+        stats = await _apply_import(self.db, self.user.id, draft, AsyncMock())
+        self.assertEqual(stats['skipped'], 1)
+        self.assertEqual(stats['new_entries'], 0)
+        self.assertEqual((await self.db.scalars(select(TrackedEntry))).all(), [])
+        self.assertEqual((await self.db.scalars(select(WatchEvent))).all(), [])
+
+    async def test_prime_commit_rejects_below_threshold_even_with_completed_override(self):
+        items = await prepare_items([], [movie(position=2519999)], {'tmdb:42': 42}, 'fixture')
+        items[0]['outcome'].update(status='completed', status_overridden=True)
+        session = SimpleNamespace(id='prime-policy', payload={'source': 'amazon', 'items': items})
+        stats = await _apply_import(self.db, self.user.id, session, AsyncMock())
+        self.assertEqual(stats['skipped'], 1)
+        self.assertEqual(stats['new_entries'], 0)
+        self.assertEqual((await self.db.scalars(select(WatchEvent))).all(), [])
+
+    async def test_prime_seventy_percent_movie_still_imports(self):
+        items = await prepare_items([], [movie()], {'tmdb:42': 42}, 'fixture')
+        session = SimpleNamespace(id='prime-qualified', payload={'source': 'amazon', 'items': items})
+        stats = await _apply_import(self.db, self.user.id, session, AsyncMock())
+        self.assertEqual(stats['movies'], 1)
+        self.assertEqual(stats['new_entries'], 1)
+        self.assertEqual((await self.db.scalars(select(TrackedEntry))).one().status, 'completed')
 
     async def test_watched_disabled_bypasses_review_and_account_reservation(self):
         from core.import_admission import active_import
@@ -355,6 +415,7 @@ class ConnectionDraftDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await remove_covered_items(self.db, self.user.id, items), [])
 
     async def test_repeated_dropped_movie_is_covered_but_later_completion_is_new(self):
+        await self.immediate()
         await self.stage(progress=[movie(position=600000)])
         draft = await self.draft()
         await _apply_import(self.db, self.user.id, draft, AsyncMock())
@@ -442,6 +503,7 @@ class ConnectionDraftDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(await self.db.get(MediaServerConnection, self.conn.id))
 
     async def test_atomic_step_save_and_retry_keep_all_choices(self):
+        await self.immediate()
         from fastapi import HTTPException
         from routers.netflix_import import update_import_decisions
         await self.stage(progress=[movie(position=1200000)])
