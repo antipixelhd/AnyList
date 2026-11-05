@@ -26,17 +26,17 @@ test('per-game status survives serialization and enrichment, with compatibility 
   assert.equal(steamStatus(games[2],restored),'paused');
   assert.equal(steamStatus(games[0],defaultSteamDraft()),'completed');
 });
-test('Don’t import is explicit while preserving the previous status and dates for reselection', () => {
+test('status editing preserves explicit card selection and saved dates', () => {
   const draft=defaultSteamDraft(),game=games[0];
-  chooseSteamStatus(game,draft,'playing'); draft.start_dates[game.app_id]='2021-06-03';
-  assert.equal(steamSelected(game,draft),true); assert.equal(steamStatus(game,draft),'playing');
-  chooseSteamStatus(game,draft,'skip');
-  assert.equal(steamSelected(game,draft),false); assert.equal(steamStatus(game,draft),'playing');
+  draft.overrides[game.app_id]=false; draft.start_dates[game.app_id]='2021-06-03';
+  chooseSteamStatus(game,draft,'playing');
+  assert.equal(steamSelected(game,draft),false);
+  assert.equal(steamStatus(game,draft),'playing');
   assert.equal(draft.start_dates[game.app_id],'2021-06-03');
   draft.overrides[game.app_id]=true;
-  assert.equal(steamStatus(game,draft),'playing');
   chooseSteamStatus(game,draft,'planning');
-  assert.equal(steamSelected(game,draft),true); assert.equal(steamStatus(game,draft),'planning');
+  assert.equal(steamSelected(game,draft),true);
+  assert.equal(steamStatus(game,draft),'planning');
 });
 test('profile accent labels keep readable contrast across light and dark profile colors',()=>{
   assert.equal(steamAccentText('#3db4f2'),'#0b1622');

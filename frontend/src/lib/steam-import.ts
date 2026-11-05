@@ -25,9 +25,8 @@ export function defaultSteamDraft(): SteamDraft {
 export function steamStatus(game: SteamGame, draft: SteamDraft): SteamDraft['import_status'] {
   return draft.statuses[game.app_id] ?? draft.import_status;
 }
-export function chooseSteamStatus(game: SteamGame, draft: SteamDraft, status: SteamDraft['import_status'] | 'skip'): void {
-  draft.overrides[game.app_id] = status !== 'skip';
-  if (status !== 'skip') draft.statuses[game.app_id] = status;
+export function chooseSteamStatus(game: SteamGame, draft: SteamDraft, status: SteamDraft['import_status']): void {
+  draft.statuses[game.app_id] = status;
 }
 export function steamAccentText(color: string): string {
   const channels = color.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i)?.slice(1);
@@ -53,10 +52,13 @@ export function filterSteamGames(games: SteamGame[], query: string): SteamGame[]
 // filtering. Reorder the visible window in DOM order for keyboard navigation.
 export function reconcileSteamCards(grid: HTMLElement, visible: HTMLElement[]): void {
   const exposed = new Set(visible);
-  for (const child of Array.from(grid.children) as HTMLElement[]) child.hidden = !exposed.has(child);
+  for (const child of Array.from(grid.children) as HTMLElement[]) {
+    const hidden = !exposed.has(child);
+    if (child.hidden !== hidden) child.hidden = hidden;
+  }
   let cursor = grid.firstElementChild;
   for (const node of visible) {
-    node.hidden = false;
+    if (node.hidden) node.hidden = false;
     if (node !== cursor) grid.insertBefore(node, cursor);
     cursor = node.nextElementSibling;
   }

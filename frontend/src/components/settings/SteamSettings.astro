@@ -69,6 +69,6 @@ import '../../styles/steam-import.css';
       <button type="button" data-steam-retry class="steam-primary" hidden>Retry loading</button>
     </div>
   </dialog>
-  <dialog data-steam-date-dialog class="steam-date-dialog" aria-labelledby="steam-date-heading"><form method="dialog"><h2 id="steam-date-heading">Completion date</h2><p data-steam-date-game class="steam-date-game"></p><CalendarDateInput id="steam-completion-date" name="completion_date" label="Completion date" /><div class="steam-date-actions"><button value="discard" formnovalidate class="steam-text-button">Clear date</button><button value="cancel" formnovalidate class="steam-text-button">Cancel</button><button class="steam-primary" value="save">Save</button></div></form></dialog>
+  <dialog data-steam-date-dialog class="steam-date-dialog" aria-labelledby="steam-date-heading"><form method="dialog"><h2 id="steam-date-heading">Completion date</h2><p data-steam-date-game class="steam-date-game"></p><p data-steam-last-played class="steam-last-played"></p><CalendarDateInput id="steam-completion-date" name="completion_date" label="Completion date" /><div class="steam-date-actions"><button value="discard" formnovalidate class="steam-text-button">Clear date</button><button value="cancel" formnovalidate class="steam-text-button">Cancel</button><button class="steam-primary" value="save">Save</button></div></form></dialog>
 </section>
 <script src="../../scripts/steam-settings.ts"></script>

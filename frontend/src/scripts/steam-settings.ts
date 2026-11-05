@@ -28,6 +28,7 @@ function init() {
   let query = '';
   let selectedOnly = false;
   let visibleGames: SteamGame[] = [];
+  let orderedGames: SteamGame[] = [];
   let writes: Promise<unknown> = Promise.resolve();
   const cards = new Map<string, HTMLButtonElement>();
   const dialog = get<HTMLDialogElement>('dialog');
@@ -140,17 +141,18 @@ function init() {
   }
   function paintSelections() {
     for (const [id, card] of cards) {
+      if (!card.isConnected || card.parentElement?.hidden) continue;
       const game = byId.get(id);
       if (game) {
         const selected = steamSelected(game, draft);
-        card.setAttribute('aria-pressed', String(selected));
+        if (card.getAttribute('aria-pressed') !== String(selected)) card.setAttribute('aria-pressed', String(selected));
         const unavailable = game.mapping_state === 'unavailable' || game.mapping_state === 'software';
         const wrapper = card.parentElement!;
         wrapper.dataset.unavailable = String(unavailable);
         card.setAttribute('aria-disabled', String(unavailable));
         card.title = game.mapping_state === 'software' ? 'Software cannot be imported' : unavailable ? 'Unavailable' : '';
         const status = wrapper.querySelector<HTMLSelectElement>('.steam-game-status')!;
-        const value = selected ? steamStatus(game, draft) : 'skip';
+        const value = steamStatus(game, draft);
         if (status.value !== value) { status.value = value; status.dispatchEvent(new Event('input', { bubbles: true })); }
         if (status.disabled !== unavailable) status.disabled = unavailable;
       }
@@ -158,7 +160,8 @@ function init() {
       if (date && game) {
         const status = steamStatus(game, draft);
         date.hidden = !steamSelected(game, draft) || !['completed','playing'].includes(status);
-        const value = selectedDate(game); date.textContent = value ? `${status==='playing'?'Started':'Completed'} ${formatDate(value)}` : status==='playing'?'Set start date':'Set completion date';
+        const value = selectedDate(game); const dateLabel = value ? `${status==='playing'?'Start date':'Completion date'} · ${formatDate(value)}  ✎` : status==='playing'?'Set start date  ✎':'Set completion date  ✎';
+        if (date.textContent !== dateLabel) date.textContent = dateLabel;
       }
     }
     const selected = games.filter(game => steamSelected(game, draft)).length;
@@ -197,11 +200,11 @@ function init() {
     const wrapper = document.createElement('article'); wrapper.className = 'steam-game'; wrapper.append(node);
     const choices = document.createElement('div'); choices.className = 'steam-game-controls';
     const status = document.createElement('select'); status.className = 'steam-game-status'; status.setAttribute('aria-label', `Import status for ${game.name}`);
-    for (const [value, label] of [['skip',"Don’t import"],['completed','Completed'],['playing','Playing'],['planning','Planning to play'],['paused','Paused'],['dropped','Dropped']]) {
+    for (const [value, label] of [['completed','Completed'],['playing','Playing'],['paused','Paused'],['dropped','Dropped'],['planning','Planning to play']]) {
       const option = document.createElement('option'); option.value = value; option.textContent = label; status.append(option);
     }
     listen(status, 'change', () => {
-      chooseSteamStatus(game, draft, status.value as SteamDraft['import_status'] | 'skip');
+      chooseSteamStatus(game, draft, status.value as SteamDraft['import_status']);
       changed();
     });
     choices.append(status);
@@ -211,6 +214,7 @@ function init() {
       const label=dateKind==='start'?'Start date':'Completion date';
       dateDialog.querySelector('h2')!.textContent=label;
       get('date-game').textContent = game.name;
+      get('last-played').textContent = game.last_played ? `Last played · ${formatDate(new Date(game.last_played * 1000).toLocaleDateString('sv-SE'))}` : 'Last played · Unknown';
       dateDialog.querySelector('[data-date-display]')?.setAttribute('aria-label',label);
       dateDialog.querySelector('[data-date-picker]')?.setAttribute('aria-label',`Choose ${label.toLowerCase()}`);
       dateDialog.querySelector<HTMLInputElement>('[data-date-iso]')!.value = selectedDate(game) || '';
@@ -222,10 +226,11 @@ function init() {
   }
   function render(preservePosition = true) {
     const focused = document.activeElement as HTMLElement | null;
-    visibleGames = filterSteamGames(sortSteamGames(games, draft.sort), query).filter(game => !selectedOnly || steamSelected(game,draft));
+    if (preservePosition || !orderedGames.length) orderedGames = sortSteamGames(games, draft.sort);
+    visibleGames = filterSteamGames(orderedGames, query).filter(game => !selectedOnly || steamSelected(game,draft));
     const window = visibleGames.slice(0, limit);
     const bounds = scroller.getBoundingClientRect();
-    const anchor = steamScrollAnchor(cards.values(), new Set(window.map(game=>game.app_id)), bounds);
+    const anchor = preservePosition ? steamScrollAnchor(cards.values(), new Set(window.map(game=>game.app_id)), bounds) : undefined;
     reconcileSteamCards(get('grid'), window.map(card));
     get('empty').hidden = visibleGames.length > 0;
     get('empty').querySelector('h3')!.textContent = query.trim() ? 'No games found' : selectedOnly ? 'No selected games' : 'Your library is empty';
@@ -291,7 +296,7 @@ function init() {
         const local = sessionStorage.getItem(`steam-import:${data.id}:${data.generation}`);
         if (local) draft = { ...draft, ...JSON.parse(local) };
       } catch {}
-      get('grid').replaceChildren(); cards.clear(); limit = 80;
+      get('grid').replaceChildren(); cards.clear(); orderedGames = []; limit = 80;
       controls(); render(); message(data.job?.warnings.join(' ') || '');
       if (!dialog.open) showDialog(dialog);
       void loadProgress(epoch, data.id, data.generation);

@@ -33,7 +33,7 @@
 .steam-controls { padding:0 32px 16px; flex-shrink:0; }
 .steam-toolbar { display:flex; gap:16px; }
 .steam-search { display:flex; flex:1; align-items:center; gap:12px; min-width:0; padding:0 14px; border-radius:8px; background:var(--steam-panel); color:var(--steam-muted); }
-.steam-search:focus-within { background:var(--steam-field); color:var(--steam-accent); }
+.steam-search:focus-within { background:var(--steam-panel); color:var(--steam-muted); }
 .steam-search .ui-icon { width:16px; height:16px; flex-shrink:0; }
 .settings-app .steam-settings .steam-search input,.settings-app .steam-settings .steam-search input:focus { width:100%; min-width:0; min-height:46px; padding:10px 0; border:0!important; border-radius:0; background:transparent!important; box-shadow:none!important; font-size:15px; }
 .steam-search input::placeholder { color:var(--steam-muted); opacity:1; }
@@ -139,3 +139,17 @@
   .steam-import-bar .steam-primary .ui-icon { display:none; }
 }
 @media(prefers-reduced-motion:reduce) { .steam-settings * { transition:none!important; animation:none!important; } }
+
+/* Controls retain the importer surface on focus; selection belongs to the card. */
+.steam-view-tabs { padding:3px; border-radius:9px; background:var(--steam-panel); }
+.steam-settings .steam-view-tabs button { color:var(--steam-text); }
+.steam-settings .steam-view-tabs button[aria-pressed=true] { background:color-mix(in srgb,var(--steam-text) 23%,var(--steam-panel)); color:var(--white); font-weight:650; }
+.steam-settings .steam-completion { display:flex; align-items:center; min-height:38px; padding:8px 10px; border-radius:6px; background:color-mix(in srgb,var(--steam-text) 8%,var(--steam-panel)); color:var(--white); font-size:13px; }
+.steam-settings .steam-completion:is(:hover,:focus-visible) { background:color-mix(in srgb,var(--steam-text) 14%,var(--steam-panel)); color:var(--white); }
+.steam-settings .steam-import-bar [data-steam-cancel] { min-height:36px; padding:4px 0; color:var(--white); font-size:13px; }
+.steam-settings .steam-primary { background:color-mix(in srgb,var(--steam-accent) 40%,#000); color:#fff; }
+.steam-settings .steam-primary:is(:hover,:focus-visible) { background:color-mix(in srgb,var(--steam-accent) 44%,#000); color:#fff; }
+
+.steam-last-played { margin:0 0 16px; color:var(--steam-muted); font-size:13px; }
+.steam-settings .steam-view-tabs button:focus-visible { color:var(--steam-accent); background:color-mix(in srgb,var(--steam-text) 32%,var(--steam-panel)); }
+.steam-settings .steam-import-bar [data-steam-cancel]:focus-visible { color:var(--steam-accent); background:color-mix(in srgb,var(--steam-text) 16%,var(--steam-panel)); border-radius:4px; }
