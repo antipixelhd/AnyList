@@ -25,7 +25,7 @@ import '../../styles/steam-import.css';
   <dialog data-steam-dialog class="steam-workflow" aria-labelledby="steam-import-heading">
     <header class="steam-workflow-header">
       <div><p class="steam-eyebrow">Steam library</p><h2 id="steam-import-heading" tabindex="-1" autofocus>Choose your games</h2></div>
-      <button data-steam-later type="button" class="steam-icon-button" aria-label="Save and close Steam import"><Icon name="close" /></button>
+      <button data-steam-later type="button" class="steam-icon-button" aria-label="Close Steam import"><Icon name="close" /></button>
     </header>
     <div data-steam-review class="steam-review" hidden>
       <p data-steam-review-message class="steam-message" role="status" hidden></p>
@@ -64,11 +64,13 @@ import '../../styles/steam-import.css';
           <div data-steam-empty class="steam-empty" hidden><Icon name="search" /><h3>No games found</h3><p>Try another name.</p><button type="button" data-steam-clear-search class="steam-text-button">Clear search</button></div>
           <button data-steam-more type="button" class="steam-more steam-text-button" hidden>Show more games</button>
         </div>
-        <footer class="steam-import-bar"><div><strong data-steam-selected></strong><button data-steam-cancel type="button" class="steam-text-button">Cancel import</button></div><div class="steam-footer-actions"><button data-steam-back type="button" class="steam-secondary" hidden>Back</button><button data-steam-next type="button" class="steam-primary">Continue <Icon name="arrow-right" /></button><button type="button" data-steam-import class="steam-primary" hidden>Import selected <Icon name="arrow-right" /></button></div></footer>
+        <footer class="steam-import-bar"><div><strong data-steam-selected></strong></div><div class="steam-footer-actions"><button data-steam-back type="button" class="steam-secondary" hidden>Back</button><button data-steam-next type="button" class="steam-primary">Continue <Icon name="arrow-right" /></button><button type="button" data-steam-import class="steam-primary" hidden>Import selected <Icon name="arrow-right" /></button></div></footer>
       </div>
       <button type="button" data-steam-retry class="steam-primary" hidden>Retry loading</button>
     </div>
   </dialog>
+  <template data-steam-rating-icon><Icon name="star" /></template>
+  <dialog data-steam-exit-dialog class="steam-exit-dialog" aria-labelledby="steam-exit-heading"><h2 id="steam-exit-heading">Leave Steam import?</h2><p>Your choices can be saved for later.</p><p data-steam-exit-error role="alert" hidden></p><div class="steam-exit-actions"><button data-steam-abort type="button" class="steam-abort">Abort import</button><button data-steam-keep-editing type="button" autofocus class="steam-secondary">Keep editing</button><button data-steam-save-exit type="button" class="steam-primary">Save & close</button></div></dialog>
   <template data-steam-date-template><CalendarDateInput id="steam-review-date" name="review_date" label="Completion date" /></template>
 </section>
 <script src="../../scripts/steam-settings.ts"></script>

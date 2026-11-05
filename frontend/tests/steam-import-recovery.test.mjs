@@ -25,14 +25,14 @@ test('Steam import can retry after both the import and recovery read fail', asyn
   handler();
   assert.equal(context.importing,true);
   assert.equal(get('controls').inert,true);
-  assert.equal(get('cancel').disabled,true);
+
   await new Promise(setImmediate);
   assert.equal(requests,1);
   assert.equal(failures,2);
   assert.equal(context.importing,false);
   assert.equal(get('import').disabled,false);
   assert.equal(get('controls').inert,false);
-  assert.equal(get('cancel').disabled,false);
+
   context.request=async()=>{requests++;return {imported:1};};
   handler();
   await new Promise(setImmediate);

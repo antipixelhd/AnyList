@@ -206,3 +206,29 @@
  .settings-app .steam-settings .steam-rating input { width:70px; }
  .steam-review-fields { gap:8px; }
 }
+.steam-game { min-height:136px; align-self:start; }
+.steam-game-controls { display:grid; grid-template-rows:0fr; opacity:0; margin-top:0; transition:grid-template-rows 100ms ease-out,opacity 80ms ease-out,margin-top 100ms ease-out; }
+.steam-game-controls-inner { min-height:0; overflow:hidden; }
+.steam-game-controls.is-visible { grid-template-rows:1fr; opacity:1; margin-top:10px; }
+.steam-card-check { transition:none; }
+.steam-details { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px 28px; align-items:start; }
+.steam-review-game { grid-template-columns:48px minmax(0,1fr); gap:12px 16px; padding:20px; border:0; border-radius:10px; background:var(--steam-panel); }
+.steam-review-fields { grid-column:1/-1; justify-content:flex-start; align-items:flex-end; gap:16px; }
+.steam-date-field { flex:0 1 260px; min-width:0; max-width:260px; }
+.steam-date-field-head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.steam-date-field-head .steam-text-button { min-height:24px; padding:0; color:var(--steam-text); font-size:12px; }
+.settings-app .steam-settings .steam-date-field input { width:100%; background:var(--steam-bg)!important; }
+.steam-settings .steam-date-field [data-date-picker]:hover { background:transparent; color:var(--muted); }
+.steam-settings .steam-date-field [data-date-picker]:focus-visible { background:transparent; color:var(--steam-accent); }
+.steam-quick-rate { display:inline-flex; align-items:center; justify-content:center; gap:8px; min-height:44px; min-width:92px; padding:10px 14px; border:0; border-radius:6px; background:#fbbf24; color:#152030; font-size:14px; font-weight:600; }
+.steam-quick-rate .ui-icon { width:15px; height:15px; }
+.steam-settings .steam-quick-rate:is(:hover,:focus-visible) { background:#fcd34d; color:#152030; }
+.steam-settings .steam-exit-dialog { position:fixed; inset:0; margin:auto; padding:28px; width:min(490px,calc(100vw - 32px)); max-height:calc(100dvh - 32px); overflow:auto; border:0; border-radius:14px; background:var(--steam-panel); color:var(--steam-text); }
+.steam-exit-dialog::backdrop { background:#030912b8; backdrop-filter:blur(8px); }
+.steam-exit-dialog h2 { font-size:22px; font-weight:650; color:var(--white); }
+.steam-exit-dialog p { margin-top:12px; font-size:14px; }
+.steam-exit-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; align-items:center; gap:12px; margin-top:28px; }
+.steam-exit-actions .steam-abort { margin-right:auto; min-height:44px; color:#fda4af; font-size:14px; }
+[data-steam-exit-error] { color:#fda4af; }
+@media(max-width:800px) { .steam-details { grid-template-columns:minmax(0,1fr); gap:14px; } .steam-review-game { padding:16px; } }
+@media(max-width:360px) { .steam-review-fields { gap:10px; } .steam-quick-rate { min-width:80px; padding-inline:10px; } }

@@ -30,6 +30,8 @@ function init() {
   let visibleGames: SteamGame[] = [];
   let orderedGames: SteamGame[] = [];
   let writes: Promise<unknown> = Promise.resolve();
+  let loadVersion = 0;
+  let paused = false;
   const cards = new Map<string, HTMLButtonElement>();
   const dialog = get<HTMLDialogElement>('dialog');
   let detailsController = new AbortController();
@@ -38,10 +40,50 @@ function init() {
   const scroller = get('scroll');
   const finishDate = (game: SteamGame) => Object.hasOwn(draft.completion_dates, game.app_id) ? draft.completion_dates[game.app_id]
     : game.last_played ? new Date(game.last_played * 1000).toLocaleDateString('sv-SE') : null;
-  listen(get('resume'), 'click', () => showDialog(dialog));
-  listen(get('later'), 'click', () => { if (importing) return; clearTimeout(saveTimer); save(); void closeDialog(dialog); });
-  listen(dialog, 'cancel', event => { event.preventDefault(); if (importing) return; clearTimeout(saveTimer); save(); void closeDialog(dialog); });
-  listen(get('cancel'), 'click', () => { if (!importing) get('connections').querySelector<HTMLButtonElement>('button')?.click(); });
+  listen(get('resume'), 'click', () => {
+    paused=false; showDialog(dialog);
+    if(active) {
+      if(get('picker').hidden) void load(active.id).catch(fail);
+      else void loadProgress(++reviewEpoch,active.id,active.generation);
+    }
+  });
+  const exitDialog = get<HTMLDialogElement>('exit-dialog');
+  let leaving = false;
+  listen(exitDialog,'cancel',event=>{if(leaving)event.preventDefault();});
+  function confirmExit() { if (!importing) { get('exit-error').hidden = true; showDialog(exitDialog); get('keep-editing').focus({preventScroll:true}); } }
+  listen(get('later'),'click',confirmExit);
+  listen(dialog,'cancel',event=>{event.preventDefault();confirmExit();});
+  listen(get('keep-editing'),'click',()=>{void closeDialog(exitDialog);});
+  async function leave(abort: boolean) {
+    if (!active || importing || leaving) return;
+    if (!abort && reviewGames && get('details').querySelector('input:invalid')) {
+      get('exit-error').textContent='Correct the date before saving. Choose Keep editing to return.';
+      get('exit-error').hidden=false; return;
+    }
+    leaving = true;
+    const connection = active;
+    clearTimeout(saveTimer);
+    const buttons = exitDialog.querySelectorAll<HTMLButtonElement>('button');
+    buttons.forEach(button=>button.disabled=true);
+    try {
+      if (abort) {
+        await writes.catch(()=>{});
+        const response = await fetch(`/api/proxy/auth/connections/${connection.id}`,{method:'DELETE',signal});
+        if (!response.ok) throw new Error('Could not abort the import. Try again.');
+        reviewEpoch++; clearTimeout(timer);
+        sessionStorage.removeItem(`steam-import:${connection.id}:${connection.generation}`);
+        active=undefined; get('review').hidden=true; get('resume').hidden=true;
+      } else { save(); await writes; }
+      paused=true; loadVersion++; reviewEpoch++; clearTimeout(timer);
+      await closeDialog(exitDialog); await closeDialog(dialog);
+      if (abort) await list();
+    } catch(error) {
+      get('exit-error').textContent = error instanceof Error ? error.message : 'Could not save your import. Try again.';
+      get('exit-error').hidden=false;
+    } finally { leaving=false; buttons.forEach(button=>button.disabled=false); }
+  }
+  listen(get('abort'),'click',()=>{void leave(true);});
+  listen(get('save-exit'),'click',()=>{void leave(false);});
   let reviewEpoch = 0;
   let importing = false;
   const observer = new IntersectionObserver(entries => { if (entries.some(e => e.isIntersecting)) more(); }, { root: scroller, rootMargin: '300px' });
@@ -143,6 +185,10 @@ function init() {
         wrapper.dataset.unavailable = String(unavailable);
         card.setAttribute('aria-disabled', String(unavailable));
         card.title = game.mapping_state === 'software' ? 'Software cannot be imported' : unavailable ? 'Unavailable' : '';
+        const choices = wrapper.querySelector<HTMLElement>('.steam-game-controls')!;
+        choices.classList.toggle('is-visible',selected && !unavailable);
+        choices.inert = !selected || unavailable;
+        choices.setAttribute('aria-hidden',String(!selected || unavailable));
         const status = wrapper.querySelector<HTMLSelectElement>('.steam-game-status')!;
         const value = steamStatus(game, draft);
         if (status.value !== value) { status.value = value; status.dispatchEvent(new Event('input', { bubbles: true })); }
@@ -186,6 +232,7 @@ function init() {
     cards.set(game.app_id, node);
     const wrapper = document.createElement('article'); wrapper.className = 'steam-game'; wrapper.append(node);
     const choices = document.createElement('div'); choices.className = 'steam-game-controls';
+    const choicesInner = document.createElement('div'); choicesInner.className='steam-game-controls-inner'; choices.append(choicesInner);
     const status = document.createElement('select'); status.className = 'steam-game-status'; status.setAttribute('aria-label', `Import status for ${game.name}`);
     for (const [value, label] of [['completed','Completed'],['playing','Playing'],['paused','Paused'],['dropped','Dropped'],['planning','Planning to play']]) {
       const option = document.createElement('option'); option.value = value; option.textContent = label; status.append(option);
@@ -194,7 +241,7 @@ function init() {
       chooseSteamStatus(game, draft, status.value as SteamDraft['import_status']);
       changed();
     });
-    choices.append(status);
+    choicesInner.append(status);
     wrapper.append(choices);
     paintCount(game);
     return wrapper;
@@ -251,8 +298,10 @@ function init() {
   }
   listen(get('reset'), 'click', () => { draft = defaultSteamDraft(); controls(); render(); changed(); });
   async function load(id: number) {
+    if (paused) return;
+    const version = loadVersion;
     const data = await request<Review>(`/${id}`);
-    if (signal.aborted) return;
+    if (signal.aborted || paused || version !== loadVersion) return;
     active = data;
     get('review').hidden = data.imported;
     get('resume').hidden = data.imported;
@@ -317,12 +366,13 @@ function init() {
           get('review').hidden = true; get('resume').hidden = true; void closeDialog(dialog); active = undefined; await list(); message('Steam disconnected.');
         }).catch(fail).finally(() => { remove.disabled = false; });
       });
-      row.append(remove); get('connections').append(row);
+      if (conn.imported) row.append(remove);
+      get('connections').append(row);
       if (!conn.imported) await load(conn.id);
     }
   }
   listen(get('connect'), 'submit', event => {
-    event.preventDefault(); const form = get<HTMLFormElement>('connect'); const submit = form.querySelector<HTMLButtonElement>('button[type=submit]')!;
+    event.preventDefault(); paused=false; loadVersion++; const form = get<HTMLFormElement>('connect'); const submit = form.querySelector<HTMLButtonElement>('button[type=submit]')!;
     submit.disabled = true; submit.textContent = 'Checking Steam…'; message('');
     const values = new FormData(form);
     void request<Connection>('', 'POST', { profile: values.get('profile'), sync_achievements: values.has('achievements'), sync_playtime: values.has('playtime'),
@@ -334,7 +384,7 @@ function init() {
     get('details').hidden = !details; get('empty').hidden = details || visibleGames.length > 0;
     get('more').hidden = details || limit >= visibleGames.length;
     get('next').hidden = details; get('import').hidden = !details; get('back').hidden = !details;
-    get('cancel').hidden = details;
+
     get('details-more').hidden = !details || reviewLimit >= (reviewGames?.length || 0);
     get('dialog').querySelector('h2')!.textContent = details ? 'Dates & ratings' : 'Choose your games';
     if (!details) { reviewGames = null; detailsController.abort(); }
@@ -362,7 +412,9 @@ function init() {
         control.querySelector('[data-date-picker]')?.setAttribute('aria-label', `Choose ${caption.textContent.toLowerCase()} for ${game.name}`);
         iso.value = status === 'completed' ? finishDate(game) || '' : draft.start_dates[game.app_id] || '';
         const clear = document.createElement('button'); clear.type = 'button'; clear.textContent = 'Clear'; clear.className = 'steam-text-button'; clear.setAttribute('aria-label', `Clear ${caption.textContent.toLowerCase()} for ${game.name}`);
-        label.append(caption,control); fields.append(label,clear);
+        const dateField = document.createElement('div'); dateField.className='steam-date-field';
+        const dateHead = document.createElement('div'); dateHead.className='steam-date-field-head';
+        dateHead.append(caption,clear); label.append(dateHead,control); dateField.append(label); fields.append(dateField);
         const refresh = setupCalendarDateInputs(label,detailsController.signal);
         const update = () => { (status==='completed'?draft.completion_dates:draft.start_dates)[game.app_id] = iso.value || null; changed(); };
         iso.addEventListener('change',update,{signal:detailsController.signal});
@@ -370,11 +422,24 @@ function init() {
         clear.addEventListener('click',()=>{iso.value='';refresh();update();},{signal:detailsController.signal});
         refresh();
       }
-      const ratingLabel = document.createElement('label'); ratingLabel.className = 'steam-review-field steam-rating';
-      const ratingCaption = document.createElement('span'); ratingCaption.textContent = 'Rating / 10';
-      const rating = document.createElement('input'); rating.type = 'number'; rating.min = '0.5'; rating.max = '10'; rating.step = '0.5'; rating.placeholder = '—'; rating.value = draft.ratings[game.app_id]?.toString() || ''; rating.setAttribute('aria-label', `Rating for ${game.name}`);
-      rating.addEventListener('input',()=>{rating.setAttribute('aria-invalid',String(!rating.validity.valid));if(rating.validity.valid){draft.ratings[game.app_id]=rating.value===''?null:Number(rating.value);changed();}},{signal:detailsController.signal});
-      ratingLabel.append(ratingCaption,rating); fields.append(ratingLabel); row.append(fields); container.append(row);
+      const rating = document.createElement('button'); rating.type='button'; rating.className='steam-quick-rate';
+      const icon = get<HTMLTemplateElement>('rating-icon').content.cloneNode(true);
+      const value = document.createElement('span');
+      const paintRating = () => {
+        const score=draft.ratings[game.app_id]; value.textContent=score == null ? 'Rate' : `${score.toFixed(1)} / 10`;
+        rating.setAttribute('aria-label',`Rate ${game.name}${score == null ? '' : `. Current score: ${score}`}`);
+      };
+      rating.append(icon,value); paintRating();
+      const reviewSignal = detailsController.signal;
+      rating.addEventListener('click',()=>{
+        const quickRate = (window as any).anyListQuickRate;
+        if (!quickRate) return;
+        quickRate({title:game.name,posterSrc:game.poster,score:draft.ratings[game.app_id] ?? null,onScore:(score:number|null)=>{
+          if (reviewSignal.aborted) return;
+          draft.ratings[game.app_id]=score;paintRating();changed();
+        }});
+      },{signal:reviewSignal});
+      fields.append(rating); row.append(fields); container.append(row);
     }
     get('details-more').hidden = reviewLimit >= reviewGames!.length;
   }
@@ -400,7 +465,7 @@ function init() {
       start_dates:Object.fromEntries(selectedGames.map(game=>[game.app_id,draft.start_dates[game.app_id]||null])) };
     clearTimeout(saveTimer); const button = get<HTMLButtonElement>('import'); button.disabled = true; button.textContent = 'Importing…';
     get('scroll').inert = true; get('controls').inert = true; get<HTMLButtonElement>('back').disabled = true;
-    get<HTMLButtonElement>('later').disabled = true; get<HTMLButtonElement>('cancel').disabled = true;
+    get<HTMLButtonElement>('later').disabled = true;
     void writes.catch(() => {}).then(() => request<{ imported: number; skipped?: number }>(`/${active!.id}/import`, 'POST', selection))
       .then(async result => {
         sessionStorage.removeItem(`steam-import:${active!.id}:${active!.generation}`);
@@ -410,7 +475,7 @@ function init() {
       .catch(async error => { if (active) await load(active.id).catch(fail); fail(error); })
       .finally(() => {
         importing = false; get<HTMLButtonElement>('back').disabled = false; get('scroll').inert = false; get('controls').inert = false;
-        get<HTMLButtonElement>('later').disabled = false; get<HTMLButtonElement>('cancel').disabled = false;
+        get<HTMLButtonElement>('later').disabled = false;
         button.textContent = 'Import selected'; paintSelections();
       });
   });
