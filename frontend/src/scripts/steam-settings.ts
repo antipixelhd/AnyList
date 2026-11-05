@@ -32,28 +32,20 @@ function init() {
   let writes: Promise<unknown> = Promise.resolve();
   const cards = new Map<string, HTMLButtonElement>();
   const dialog = get<HTMLDialogElement>('dialog');
-  const dateDialog = get<HTMLDialogElement>('date-dialog');
+  let detailsController = new AbortController();
+  let reviewGames: SteamGame[] | null = null;
+  let reviewLimit = 40;
   const scroller = get('scroll');
-  const refreshDate = setupCalendarDateInputs(dateDialog, signal);
-  let dateApp: string | undefined;
-  let dateKind:'start'|'completion'='completion';
-  const selectedDate=(game:SteamGame)=>steamStatus(game, draft)==='playing'?draft.start_dates[game.app_id]||null:finishDate(game);
   const finishDate = (game: SteamGame) => Object.hasOwn(draft.completion_dates, game.app_id) ? draft.completion_dates[game.app_id]
     : game.last_played ? new Date(game.last_played * 1000).toLocaleDateString('sv-SE') : null;
   listen(get('resume'), 'click', () => showDialog(dialog));
   listen(get('later'), 'click', () => { if (importing) return; clearTimeout(saveTimer); save(); void closeDialog(dialog); });
   listen(dialog, 'cancel', event => { event.preventDefault(); if (importing) return; clearTimeout(saveTimer); save(); void closeDialog(dialog); });
   listen(get('cancel'), 'click', () => { if (!importing) get('connections').querySelector<HTMLButtonElement>('button')?.click(); });
-  listen(dateDialog, 'close', () => {
-    if (!dateApp || !['save','discard'].includes(dateDialog.returnValue)) return;
-    const input = dateDialog.querySelector<HTMLInputElement>('[data-date-iso]')!;
-    (dateKind==='start'?draft.start_dates:draft.completion_dates)[dateApp] = dateDialog.returnValue === 'discard' ? null : input.value || null;
-    changed(); dateApp = undefined;
-  });
   let reviewEpoch = 0;
   let importing = false;
   const observer = new IntersectionObserver(entries => { if (entries.some(e => e.isIntersecting)) more(); }, { root: scroller, rootMargin: '300px' });
-  cleanup = () => { reviewEpoch++; controller.abort(); clearTimeout(timer); clearTimeout(saveTimer); observer.disconnect(); };
+  cleanup = () => { reviewEpoch++; controller.abort(); detailsController.abort(); clearTimeout(timer); clearTimeout(saveTimer); observer.disconnect(); };
   async function request<T>(path = '', method = 'GET', body?: unknown): Promise<T> {
     const response = await fetch(`/api/proxy/connections/steam${path}`, { method, signal,
       headers: { 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
@@ -87,7 +79,7 @@ function init() {
         const result = await request<{ games: SteamGame[] }>(`/${id}/achievement-progress`);
         if (epoch !== reviewEpoch || signal.aborted || importing) return;
         for (const value of result.games) { const game = byId.get(value.app_id); if (game) { Object.assign(game, value); paintCount(game); } }
-        if (draft.sort === 'completion' || selectedOnly) render(); else paintSelections();
+        if (!reviewGames && (draft.sort === 'completion' || selectedOnly)) render(); else paintSelections();
         if (!games.some(steamProgressPending)) return;
         await new Promise<void>(resolve => { const finish = () => { clearTimeout(wait); signal.removeEventListener('abort', finish); resolve(); }; const wait = setTimeout(finish, 1500); signal.addEventListener('abort', finish, {once:true}); });
       }
@@ -115,7 +107,7 @@ function init() {
         for (const game of batch) { game.achievement_state = 'unavailable'; paintCount(game); }
       }
       // Only automatic selections change. Explicit card choices stay in draft.overrides.
-      if (draft.sort === 'completion' || selectedOnly) render(); else paintSelections();
+      if (!reviewGames && (draft.sort === 'completion' || selectedOnly)) render(); else paintSelections();
       if (pending.length && pending.every(game => game.achievement_refresh_due === false)) {
         await new Promise<void>(resolve => {
           const finish = () => { clearTimeout(wait); signal.removeEventListener('abort', finish); resolve(); };
@@ -137,7 +129,7 @@ function init() {
       try { sessionStorage.setItem(`steam-import:${active.id}:${active.generation}`, JSON.stringify(draft)); } catch {}
     }
     clearTimeout(saveTimer); saveTimer = setTimeout(save, 350);
-    if (selectedOnly) render(); else paintSelections();
+    if (selectedOnly && !reviewGames) render(); else paintSelections();
   }
   function paintSelections() {
     for (const [id, card] of cards) {
@@ -156,21 +148,16 @@ function init() {
         if (status.value !== value) { status.value = value; status.dispatchEvent(new Event('input', { bubbles: true })); }
         if (status.disabled !== unavailable) status.disabled = unavailable;
       }
-      const date = card.parentElement?.querySelector<HTMLButtonElement>('.steam-completion');
-      if (date && game) {
-        const status = steamStatus(game, draft);
-        date.hidden = !steamSelected(game, draft) || !['completed','playing'].includes(status);
-        const value = selectedDate(game); const dateLabel = value ? `${status==='playing'?'Start date':'Completion date'} · ${formatDate(value)}  ✎` : status==='playing'?'Set start date  ✎':'Set completion date  ✎';
-        if (date.textContent !== dateLabel) date.textContent = dateLabel;
-      }
+
     }
-    const selected = games.filter(game => steamSelected(game, draft)).length;
-    get('selected').textContent = `${selected.toLocaleString()} of ${games.length.toLocaleString()} selected`;
+    const selected = reviewGames ? reviewGames.filter(game=>game.mapping_state!=='unavailable' && game.mapping_state!=='software').length : games.filter(game => steamSelected(game, draft)).length;
+    get('selected').textContent = reviewGames ? `${selected.toLocaleString()} games` : `${selected.toLocaleString()} of ${games.length.toLocaleString()} selected`;
     get('total').textContent = games.length.toLocaleString();
     get('selected-total').textContent = selected.toLocaleString();
     get('view-all').setAttribute('aria-pressed',String(!selectedOnly));
     get('view-selected').setAttribute('aria-pressed',String(selectedOnly));
     get<HTMLButtonElement>('import').disabled = importing || selected === 0;
+    get<HTMLButtonElement>('next').disabled = selected === 0;
     const settled = games.filter(game => game.mapping_state === 'software' || (game.achievement_state !== 'loading' && !game.achievement_refreshing)).length;
     get<HTMLProgressElement>('progress').max = games.length || 1; get<HTMLProgressElement>('progress').value = settled;
     get('progress-label').textContent = `${settled} / ${games.length}`;
@@ -208,19 +195,7 @@ function init() {
       changed();
     });
     choices.append(status);
-    const date = document.createElement('button'); date.type = 'button'; date.className = 'steam-completion';
-    listen(date, 'click', () => {
-      dateApp = game.app_id; dateKind=steamStatus(game,draft)==='playing'?'start':'completion'; dateDialog.returnValue = '';
-      const label=dateKind==='start'?'Start date':'Completion date';
-      dateDialog.querySelector('h2')!.textContent=label;
-      get('date-game').textContent = game.name;
-      get('last-played').textContent = game.last_played ? `Last played · ${formatDate(new Date(game.last_played * 1000).toLocaleDateString('sv-SE'))}` : 'Last played · Unknown';
-      dateDialog.querySelector('[data-date-display]')?.setAttribute('aria-label',label);
-      dateDialog.querySelector('[data-date-picker]')?.setAttribute('aria-label',`Choose ${label.toLowerCase()}`);
-      dateDialog.querySelector<HTMLInputElement>('[data-date-iso]')!.value = selectedDate(game) || '';
-      refreshDate(); showDialog(dateDialog);
-    });
-    choices.append(date); wrapper.append(choices);
+    wrapper.append(choices);
     paintCount(game);
     return wrapper;
   }
@@ -238,7 +213,7 @@ function init() {
     get('clear-search').hidden = !query.trim() && !selectedOnly;
     get('clear-search').textContent = query.trim() ? 'Clear search' : 'View all games';
     get('results').textContent = query.trim() ? `${visibleGames.length.toLocaleString()} ${visibleGames.length === 1 ? 'game' : 'games'} found` : `${games.length.toLocaleString()} games in your library`;
-    const moreNode = get('more'); moreNode.hidden = limit >= visibleGames.length;
+    const moreNode = get('more'); moreNode.hidden = !!reviewGames || limit >= visibleGames.length;
     observer.disconnect(); if (!moreNode.hidden) observer.observe(moreNode);
     paintSelections();
     if (focused && host?.contains(focused)) focused.focus({ preventScroll: true });
@@ -296,7 +271,7 @@ function init() {
         const local = sessionStorage.getItem(`steam-import:${data.id}:${data.generation}`);
         if (local) draft = { ...draft, ...JSON.parse(local) };
       } catch {}
-      get('grid').replaceChildren(); cards.clear(); orderedGames = []; limit = 80;
+      setStep(false); get('grid').replaceChildren(); cards.clear(); orderedGames = []; limit = 80;
       controls(); render(); message(data.job?.warnings.join(' ') || '');
       if (!dialog.open) showDialog(dialog);
       void loadProgress(epoch, data.id, data.generation);
@@ -354,16 +329,77 @@ function init() {
       auto_add_games: values.has('auto-add'), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone })
       .then(() => list()).catch(fail).finally(() => { submit.disabled = false; submit.textContent = 'Connect Steam'; });
   });
+  function setStep(details: boolean) {
+    get('controls').hidden = details; get('grid').hidden = details;
+    get('details').hidden = !details; get('empty').hidden = details || visibleGames.length > 0;
+    get('more').hidden = details || limit >= visibleGames.length;
+    get('next').hidden = details; get('import').hidden = !details; get('back').hidden = !details;
+    get('cancel').hidden = details;
+    get('details-more').hidden = !details || reviewLimit >= (reviewGames?.length || 0);
+    get('dialog').querySelector('h2')!.textContent = details ? 'Dates & ratings' : 'Choose your games';
+    if (!details) { reviewGames = null; detailsController.abort(); }
+    scroller.scrollTop = 0;
+  }
+  function appendDetails() {
+    const container = get('details');
+    for (const game of reviewGames!.slice(container.children.length, reviewLimit)) {
+      const row = document.createElement('article'); row.className = 'steam-review-game';
+      const image = document.createElement('img'); if (game.poster) image.src = game.poster; image.alt = ''; image.loading = 'lazy';
+      const info = document.createElement('div'); info.className = 'steam-review-info';
+      const title = document.createElement('h3'); title.textContent = game.name;
+      const last = document.createElement('p'); last.textContent = game.last_played ? `Last played · ${formatDate(new Date(game.last_played*1000).toLocaleDateString('sv-SE'))}` : 'Last played · Unknown';
+      info.append(title,last); row.append(image,info);
+      const fields = document.createElement('div'); fields.className = 'steam-review-fields';
+      const status = steamStatus(game,draft);
+      if (status === 'completed' || status === 'playing') {
+        const label = document.createElement('label'); label.className = 'steam-review-field';
+        const caption = document.createElement('span'); caption.textContent = status === 'completed' ? 'Completion date' : 'Start date';
+        const control = get<HTMLTemplateElement>('date-template').content.cloneNode(true) as DocumentFragment;
+        const iso = control.querySelector<HTMLInputElement>('[data-date-iso]')!;
+        const display = control.querySelector<HTMLInputElement>('[data-date-display]')!;
+        display.id = `steam-date-${game.app_id}`; label.htmlFor = display.id;
+        display.setAttribute('aria-label', `${caption.textContent} for ${game.name}`);
+        control.querySelector('[data-date-picker]')?.setAttribute('aria-label', `Choose ${caption.textContent.toLowerCase()} for ${game.name}`);
+        iso.value = status === 'completed' ? finishDate(game) || '' : draft.start_dates[game.app_id] || '';
+        const clear = document.createElement('button'); clear.type = 'button'; clear.textContent = 'Clear'; clear.className = 'steam-text-button'; clear.setAttribute('aria-label', `Clear ${caption.textContent.toLowerCase()} for ${game.name}`);
+        label.append(caption,control); fields.append(label,clear);
+        const refresh = setupCalendarDateInputs(label,detailsController.signal);
+        const update = () => { (status==='completed'?draft.completion_dates:draft.start_dates)[game.app_id] = iso.value || null; changed(); };
+        iso.addEventListener('change',update,{signal:detailsController.signal});
+        display.addEventListener('input',()=>{if(display.validity.valid) update();},{signal:detailsController.signal});
+        clear.addEventListener('click',()=>{iso.value='';refresh();update();},{signal:detailsController.signal});
+        refresh();
+      }
+      const ratingLabel = document.createElement('label'); ratingLabel.className = 'steam-review-field steam-rating';
+      const ratingCaption = document.createElement('span'); ratingCaption.textContent = 'Rating / 10';
+      const rating = document.createElement('input'); rating.type = 'number'; rating.min = '0.5'; rating.max = '10'; rating.step = '0.5'; rating.placeholder = '—'; rating.value = draft.ratings[game.app_id]?.toString() || ''; rating.setAttribute('aria-label', `Rating for ${game.name}`);
+      rating.addEventListener('input',()=>{rating.setAttribute('aria-invalid',String(!rating.validity.valid));if(rating.validity.valid){draft.ratings[game.app_id]=rating.value===''?null:Number(rating.value);changed();}},{signal:detailsController.signal});
+      ratingLabel.append(ratingCaption,rating); fields.append(ratingLabel); row.append(fields); container.append(row);
+    }
+    get('details-more').hidden = reviewLimit >= reviewGames!.length;
+  }
+  listen(get('next'),'click',()=>{
+    reviewGames = sortSteamGames(games.filter(game=>steamSelected(game,draft)),draft.sort);
+    if (!reviewGames.length) return;
+    detailsController.abort(); detailsController = new AbortController(); reviewLimit = 40;
+    get('details').replaceChildren(); appendDetails(); setStep(true); changed();
+    get('dialog').querySelector<HTMLElement>('h2')!.focus({preventScroll:true});
+  });
+  listen(get('back'),'click',()=>{setStep(false);render(false);get('search').focus();});
+  listen(get('details-more'),'click',()=>{reviewLimit+=40;appendDetails();});
   listen(get('retry'), 'click', () => { if (active) void request(`/${active.id}/retry`, 'POST').then(() => load(active!.id)).catch(fail); });
   listen(get('import'), 'click', () => {
     if (!active || importing) return;
+    if (!reviewGames) { message('Review your selected games before importing.', true); return; }
+    const invalid = get('details').querySelector<HTMLInputElement>('input:invalid');
+    if (invalid) { invalid.reportValidity(); return; }
     importing = true; reviewEpoch++;
-    const selectedGames = games.filter(game => steamSelected(game, draft));
+    const selectedGames = reviewGames.filter(game => game.mapping_state !== 'unavailable' && game.mapping_state !== 'software');
     const selection = { ...payload(), selected_apps: selectedGames.map(game => game.app_id),
       completion_dates: Object.fromEntries(selectedGames.map(game => [game.app_id, finishDate(game)])),
       start_dates:Object.fromEntries(selectedGames.map(game=>[game.app_id,draft.start_dates[game.app_id]||null])) };
     clearTimeout(saveTimer); const button = get<HTMLButtonElement>('import'); button.disabled = true; button.textContent = 'Importing…';
-    get('scroll').inert = true; get('controls').inert = true;
+    get('scroll').inert = true; get('controls').inert = true; get<HTMLButtonElement>('back').disabled = true;
     get<HTMLButtonElement>('later').disabled = true; get<HTMLButtonElement>('cancel').disabled = true;
     void writes.catch(() => {}).then(() => request<{ imported: number; skipped?: number }>(`/${active!.id}/import`, 'POST', selection))
       .then(async result => {
@@ -373,7 +409,7 @@ function init() {
       })
       .catch(async error => { if (active) await load(active.id).catch(fail); fail(error); })
       .finally(() => {
-        importing = false; get('scroll').inert = false; get('controls').inert = false;
+        importing = false; get<HTMLButtonElement>('back').disabled = false; get('scroll').inert = false; get('controls').inert = false;
         get<HTMLButtonElement>('later').disabled = false; get<HTMLButtonElement>('cancel').disabled = false;
         button.textContent = 'Import selected'; paintSelections();
       });

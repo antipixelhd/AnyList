@@ -133,7 +133,7 @@ async def attach_dates(db, library):
         if key in ('poster','release_date','game_class','steam_app_type') and value is not None}} for game in library]
 
 
-async def apply_games(db, state, library, selected, *, initial=False, add_apps=None, initial_status='completed', statuses=None, completion_dates=None,start_dates=None):
+async def apply_games(db, state, library, selected, *, initial=False, add_apps=None, initial_status='completed', statuses=None, ratings=None, completion_dates=None,start_dates=None):
     """One list write per canonical game; source app counters remain independent."""
     from core import steam_targets
     from core.game_metadata import native_id
@@ -225,13 +225,15 @@ async def apply_games(db, state, library, selected, *, initial=False, add_apps=N
             db.add(entry)
         priors = {game['app_id']: dict(checkpoints.get(game['app_id'], {})) for game in games}
         previous = (entry.status, entry.start_date, entry.finish_date, entry.total_seconds,
-                    entry.achievement_mode, entry.achievement_count, entry.achievement_percentage)
+                    entry.achievement_mode, entry.achievement_count, entry.achievement_percentage, entry.score)
         if initial:
             # Several Steam apps can contribute to one canonical game. Prefer
             # its primary app's choice, then a stable app ID, regardless of sort.
             primary = (work.attributes or {}).get('steam_primary_app_id')
             status_game = min(games, key=lambda game: (game['app_id'] != str(primary), int(game['app_id'])))
             entry.status = (statuses or {}).get(status_game['app_id'], initial_status)
+            if status_game['app_id'] in (ratings or {}):
+                entry.score = ratings[status_game['app_id']]
             status_games = [game for game in games if (statuses or {}).get(game['app_id'], initial_status) == entry.status]
             if entry.status=='playing':
                 dates=[value for game in status_games if (value:=(start_dates or {}).get(game['app_id'])) is not None]
@@ -274,7 +276,7 @@ async def apply_games(db, state, library, selected, *, initial=False, add_apps=N
                 _, total, _ = game_tracking.achievement_metadata(work)
                 entry.achievement_percentage = 100 * entry.achievement_count / total if total and entry.achievement_count <= total else None
         current = (entry.status, entry.start_date, entry.finish_date, entry.total_seconds,
-                   entry.achievement_mode, entry.achievement_count, entry.achievement_percentage)
+                   entry.achievement_mode, entry.achievement_count, entry.achievement_percentage, entry.score)
         if created or previous != current:
             entry.revision = (entry.revision or 0) + 1
             await db.flush()

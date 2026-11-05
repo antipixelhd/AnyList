@@ -45,7 +45,7 @@ import '../../styles/steam-import.css';
           </div>
           <label class="steam-sort"><span class="sr-only">Sort Steam games</span><select data-steam-sort aria-label="Sort Steam games"><option value="playtime">Most played</option><option value="alphabetical">Name A–Z</option><option value="completion">Achievement completion</option></select></label>
           </div>
-          <details class="steam-selection-rules">
+          <div class="steam-rule-row"><details class="steam-selection-rules">
             <summary><Icon name="sliders" /><span>Auto-select games</span><Icon name="chevron-down" class="steam-disclosure-arrow" /></summary>
             <div class="steam-rule-content">
               <p>Match either minimum. Your individual choices take priority.</p>
@@ -56,19 +56,19 @@ import '../../styles/steam-import.css';
               <button type="button" data-steam-reset class="steam-text-button">Reset choices</button>
             </div>
           </details>
-          <div data-steam-progress-region class="steam-progress"><span>Updating achievements</span><span data-steam-progress-label></span><progress data-steam-progress max="1" value="0" aria-label="Loading achievement details"></progress></div>
+          <div data-steam-progress-region class="steam-progress" role="status"><span class="steam-spinner" aria-hidden="true"></span><span>Updating achievements</span><span data-steam-progress-label></span><progress data-steam-progress max="1" value="0" aria-label="Loading achievement details"></progress></div></div>
           <p data-steam-results class="sr-only" role="status" aria-live="polite"></p>
         </div>
         <div data-steam-scroll class="steam-library">
-          <div data-steam-grid class="steam-grid"></div>
+          <div data-steam-grid class="steam-grid"></div><div data-steam-details class="steam-details" hidden></div><button data-steam-details-more type="button" class="steam-more steam-text-button" hidden>Show more games</button>
           <div data-steam-empty class="steam-empty" hidden><Icon name="search" /><h3>No games found</h3><p>Try another name.</p><button type="button" data-steam-clear-search class="steam-text-button">Clear search</button></div>
           <button data-steam-more type="button" class="steam-more steam-text-button" hidden>Show more games</button>
         </div>
-        <footer class="steam-import-bar"><div><strong data-steam-selected></strong><button data-steam-cancel type="button" class="steam-text-button">Cancel import</button></div><button type="button" data-steam-import class="steam-primary">Import selected <Icon name="arrow-right" /></button></footer>
+        <footer class="steam-import-bar"><div><strong data-steam-selected></strong><button data-steam-cancel type="button" class="steam-text-button">Cancel import</button></div><div class="steam-footer-actions"><button data-steam-back type="button" class="steam-secondary" hidden>Back</button><button data-steam-next type="button" class="steam-primary">Continue <Icon name="arrow-right" /></button><button type="button" data-steam-import class="steam-primary" hidden>Import selected <Icon name="arrow-right" /></button></div></footer>
       </div>
       <button type="button" data-steam-retry class="steam-primary" hidden>Retry loading</button>
     </div>
   </dialog>
-  <dialog data-steam-date-dialog class="steam-date-dialog" aria-labelledby="steam-date-heading"><form method="dialog"><h2 id="steam-date-heading">Completion date</h2><p data-steam-date-game class="steam-date-game"></p><p data-steam-last-played class="steam-last-played"></p><CalendarDateInput id="steam-completion-date" name="completion_date" label="Completion date" /><div class="steam-date-actions"><button value="discard" formnovalidate class="steam-text-button">Clear date</button><button value="cancel" formnovalidate class="steam-text-button">Cancel</button><button class="steam-primary" value="save">Save</button></div></form></dialog>
+  <template data-steam-date-template><CalendarDateInput id="steam-review-date" name="review_date" label="Completion date" /></template>
 </section>
 <script src="../../scripts/steam-settings.ts"></script>

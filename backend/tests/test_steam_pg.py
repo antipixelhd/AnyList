@@ -400,6 +400,31 @@ class SteamDatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(rows['30'].start_date)
             self.assertIsNone(rows['30'].finish_date)
 
+    async def test_ratings_persist_import_and_validate_library_membership(self):
+        await self.connect()
+        path=f'/connections/steam/{self.id}'
+        draft={'generation':1,'ratings':{'20':8.5,'30':None},'selected_apps':['20','30'],
+               'completion_dates':{'20':None,'30':'2020-05-04'}}
+        response=await self.client.put(path+'/draft',json=draft)
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertEqual((await self.client.get(path)).json()['draft']['ratings'],draft['ratings'])
+        for ratings in ({'999999':8},{'20':11},{'20':0}):
+            response=await self.client.post(path+'/import',json={'generation':1,'ratings':ratings})
+            self.assertEqual(response.status_code,422,response.text)
+        response=await self.client.post(path+'/import',json=draft)
+        self.assertEqual(response.status_code,200,response.text)
+        async with self.Session() as db:
+            rows=dict((await db.execute(select(CatalogueIdentity.external_id,GameEntry).join(
+                GameEntry,GameEntry.work_id==CatalogueIdentity.entity_id).where(GameEntry.user_id==self.user.id,
+                CatalogueIdentity.namespace=='steam.app'))).all())
+            self.assertEqual(rows['20'].score,8.5)
+            self.assertIsNone(rows['20'].finish_date)
+            self.assertIsNone(rows['30'].score)
+            self.assertEqual(rows['30'].finish_date,date(2020,5,4))
+            state=await db.get(SteamConnection,self.id)
+            await steam_sync.apply_games(db,state,[game('20',120,1,3)],['20'],ratings={'20':1})
+            self.assertEqual(rows['20'].score,8.5)
+
     async def test_review_rejects_foreign_statuses_and_invalid_values(self):
         await self.connect()
         path=f'/connections/steam/{self.id}'

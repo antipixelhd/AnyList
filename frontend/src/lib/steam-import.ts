@@ -10,6 +10,7 @@ export function steamProgressPending(game: SteamGame): boolean {
   return game.mapping_state === 'pending' || game.achievement_refresh_due !== false || game.achievement_state === 'loading' || game.achievement_refreshing === true;
 }
 export type SteamDraft = {
+  ratings: Record<string, number | null>;
   statuses: Record<string, SteamDraft['import_status']>;
   import_status: 'completed' | 'playing' | 'planning' | 'paused' | 'dropped';
   completion_dates: Record<string, string | null>;
@@ -19,7 +20,7 @@ export type SteamDraft = {
   overrides: Record<string, boolean>; sort: 'playtime' | 'alphabetical' | 'completion';
 };
 export function defaultSteamDraft(): SteamDraft {
-  return { statuses: {}, import_status: 'completed', completion_dates: {}, start_dates:{}, minimum_playtime: 30, minimum_achievements: 1, playtime_enabled: true,
+  return { ratings: {}, statuses: {}, import_status: 'completed', completion_dates: {}, start_dates:{}, minimum_playtime: 30, minimum_achievements: 1, playtime_enabled: true,
     achievements_enabled: true, overrides: {}, sort: 'playtime' };
 }
 export function steamStatus(game: SteamGame, draft: SteamDraft): SteamDraft['import_status'] {

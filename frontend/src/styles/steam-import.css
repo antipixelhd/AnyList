@@ -153,3 +153,56 @@
 .steam-last-played { margin:0 0 16px; color:var(--steam-muted); font-size:13px; }
 .steam-settings .steam-view-tabs button:focus-visible { color:var(--steam-accent); background:color-mix(in srgb,var(--steam-text) 32%,var(--steam-panel)); }
 .steam-settings .steam-import-bar [data-steam-cancel]:focus-visible { color:var(--steam-accent); background:color-mix(in srgb,var(--steam-text) 16%,var(--steam-panel)); border-radius:4px; }
+.steam-settings .steam-workflow { width:min(1360px,calc(100vw - 48px)); height:min(1040px,calc(100dvh - 40px)); max-height:calc(100dvh - 40px); }
+.steam-workflow-header { padding:16px 24px 12px; }
+.steam-eyebrow { display:none; }
+.steam-workflow-header h2 { font-size:24px; }
+.steam-controls { display:grid; grid-template-columns:minmax(240px,1fr) auto; gap:8px 20px; padding:0 24px 12px; }
+.steam-utility { margin:0; align-items:center; }
+.steam-sort { width:200px; }
+.steam-rule-row { grid-column:1/-1; display:flex; align-items:flex-start; gap:24px; }
+.steam-rule-row .steam-selection-rules { margin:0; }
+.steam-rule-row .steam-progress { margin:0; min-height:36px; gap:8px; }
+.steam-progress progress { display:none; }
+.steam-spinner { width:12px; height:12px; border:2px solid color-mix(in srgb,var(--steam-muted) 30%,transparent); border-top-color:var(--steam-muted); border-radius:50%; animation:steam-spin .8s linear infinite; }
+@keyframes steam-spin { to { transform:rotate(360deg); } }
+.steam-import-bar { padding:10px 24px; }
+.steam-import-bar > div:first-child { flex-direction:row; align-items:center; gap:24px; }
+.steam-import-bar > .steam-footer-actions { flex-direction:row; align-items:center; gap:16px; }
+.steam-secondary { min-height:44px; padding:10px 16px; background:transparent; color:var(--white); border-radius:6px; }
+.steam-details { display:flex; flex-direction:column; }
+.steam-review-game { display:grid; grid-template-columns:48px minmax(140px,1fr) auto; align-items:center; gap:20px; padding:20px 0; border-bottom:1px solid var(--border); }
+.steam-review-game > img { width:48px; height:72px; object-fit:cover; border-radius:4px; }
+.steam-review-info h3 { color:var(--white); font-size:16px; font-weight:600; }
+.steam-review-info p { color:var(--steam-muted); font-size:13px; margin-top:6px; }
+.steam-review-fields { display:flex; align-items:flex-end; gap:16px; }
+.steam-review-field { display:flex; flex-direction:column; gap:6px; font-size:13px; color:var(--steam-text); }
+.steam-review-field .calendar-input { margin:0; }
+.settings-app .steam-settings .steam-review-field input { width:200px; min-height:42px; background:var(--steam-panel)!important; border:0!important; box-shadow:none!important; }
+.settings-app .steam-settings .steam-rating input { width:100px; padding:8px 12px; }
+.steam-review-fields > .steam-text-button { min-height:42px; }
+@media(max-width:800px) {
+ .steam-settings .steam-workflow { width:100vw; height:100dvh; max-height:100dvh; border-radius:0; }
+ .steam-controls { display:flex; flex-direction:column; gap:8px; padding:0 20px 12px; }
+ .steam-utility { width:100%; }
+ .steam-sort { width:min(150px,42%); }
+ .steam-rule-row { gap:16px; flex-wrap:wrap; }
+ .steam-rule-row:not(:has(details[open])) { flex-wrap:nowrap; gap:12px; }
+ .steam-rule-row .steam-progress { flex:1; min-width:0; }
+ .steam-rule-row .steam-progress [data-steam-progress-label] { display:none; }
+ .steam-spinner { flex-shrink:0; }
+ .steam-progress { font-size:11px; }
+ .steam-workflow-header { padding:14px 20px 12px; }
+ .steam-review-game { grid-template-columns:40px minmax(0,1fr); gap:12px; padding:18px 0; }
+ .steam-review-game > img { width:40px; height:60px; }
+ .steam-review-fields { grid-column:1/-1; flex-wrap:wrap; gap:12px; }
+ .settings-app .steam-settings .steam-review-field input { width:170px; }
+ .settings-app .steam-settings .steam-rating input { width:80px; }
+ .steam-import-bar { padding:10px 20px max(10px,env(safe-area-inset-bottom)); }
+ .steam-import-bar > div:first-child { flex-direction:column; align-items:flex-start; gap:0; }
+}
+@media(max-width:360px) {
+ .settings-app .steam-settings .steam-review-field input { width:145px; }
+ .settings-app .steam-settings .steam-rating input { width:70px; }
+ .steam-review-fields { gap:8px; }
+}
