@@ -44,6 +44,12 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
   }));
   signal.addEventListener('abort', () => cancelUiMotion(root), {once:true});
   const form = root.querySelector<HTMLFormElement>('[data-contributor-filters]')!;
+  const listButton=form.querySelector<HTMLButtonElement>('[data-contributor-list-toggle]');
+  const paintListButton=()=>listButton?.setAttribute('aria-pressed',String((form.elements.namedItem('list_scope') as HTMLInputElement|null)?.checked===true));
+  listButton?.addEventListener('click',()=>{
+    const scope=form.elements.namedItem('list_scope') as HTMLInputElement;
+    scope.checked=!scope.checked;form.requestSubmit();
+  },{signal});
   const template = root.querySelector<HTMLTemplateElement>('[data-contributor-template]')!;
   const more = root.querySelector<HTMLButtonElement>('[data-contributor-more]')!;
   const error = root.querySelector<HTMLElement>('[data-contributor-error]')!;
@@ -92,6 +98,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     form.querySelectorAll<HTMLInputElement>('[name=media_type]').forEach(input=>input.checked=input.value===(type==='game'?'all':type));
     const scope=form.elements.namedItem('list_scope') as HTMLInputElement|null;
     if(scope)scope.checked=params.get('list_scope')==='in';
+    paintListButton();
     syncDomainFields();
   };
   form.addEventListener('change', () => {
@@ -318,6 +325,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
   signal.addEventListener('abort',()=>retained.clear(),{once:true});
   form.addEventListener('submit',event=>{
     event.preventDefault();prediction.cancel();filterRequest?.abort();switchView.cancel();
+    paintListButton();
     const worksAnchor = new URL(form.action).hash === '#contributor-works';
     const request=new AbortController(),current=++revision;
     filterRequest=request;error.hidden=true;region.setAttribute('aria-busy','true');
