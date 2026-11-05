@@ -10,6 +10,7 @@ import { personAge, personDate } from '../lib/person-page-data';
 import { countryLabel } from '../lib/stats-overview-data';
 import { biographyPreview, contributorParams, contributorYear, type ContributorPage } from '../lib/contributor-page-data';
 import {viewerMediaPreferences} from '../lib/viewer-media-preferences';
+import {contributorBanner} from '../lib/contributor-banner';
 import '../styles/browse.css';
 import '../styles/detail-background.css';
 import '../styles/contributor-details.css';
@@ -46,8 +47,7 @@ const worksCurrent=worksSource?.works_current??data?.known_works??0;
 const worksTotal=worksSource?.works_total;
 const imageRoute='direct';
 const portrait = artwork(data?.image || null, 'w342',imageRoute);
-const backdrop = artwork(data?.works.find(work => work.backdrop)?.backdrop || null, 'w1280',imageRoute);
-const banner = kind === 'studio' ? data?.banner : null;
+const banner = contributorBanner(data?.works||[],kind==='studio'?data?.banner:null,params.get('list_scope')==='in');
 const next = new URL(Astro.url);
 if (data) {
   if (games) next.searchParams.set('media_type','game');
@@ -59,9 +59,9 @@ const listLink = new URLSearchParams(params);
 listLink.delete('cursor'); listLink.delete('page'); listLink.delete('source');
 listLink.set('list_scope','in'); listLink.set('view',view);
 ---
-<Tracker title={data?.name || (kind === 'studio' ? 'Studio' : 'Person')} shareDescription={data?.roles.join(' · ')} preloadBodyFonts predictionArtwork={[portrait,banner||backdrop].filter(Boolean)} requiresGamesAccess={games}>
+<Tracker title={data?.name || (kind === 'studio' ? 'Studio' : 'Person')} shareDescription={data?.roles.join(' · ')} preloadBodyFonts predictionArtwork={[portrait,banner.src].filter(Boolean)} requiresGamesAccess={games}>
   {data ? <article class:list={['contributor-page', {'is-person':kind !== 'studio'}]} data-contributor-page data-view={view} data-media-type={params.get('media_type') || 'all'} data-contributor-query={params.toString()} data-endpoint={endpoint} data-contributor-availability={domains.can_access_games?'true':undefined}>
-    <div class:list={['contributor-banner', {'is-logo':!!banner}]} aria-hidden="true">{(banner || backdrop) && <img src={banner || backdrop} alt="" fetchpriority="high" data-contributor-banner data-banner-fallback={backdrop || undefined} />}{kind !== 'studio' && <div class="contributor-banner-shade"></div>}</div>
+    <div class:list={['contributor-banner', {'is-logo':banner.isLogo}]} aria-hidden="true"><img src={banner.src||undefined} hidden={!banner.src} alt="" fetchpriority="high" data-contributor-banner />{kind !== 'studio' && <div class="contributor-banner-shade"></div>}</div>
     <div class="page-width contributor-layout">
       <aside class:list={['contributor-sidebar', {'is-studio':kind === 'studio'}]}>
         <button class="contributor-portrait" type="button" data-game-person-portrait={games&&kind!=='studio'&&/^catalogue:\d+$/.test(data.key)?data.key.slice(10):undefined} data-portrait-image={artwork(data.image,'original',imageRoute)} data-portrait-caption={data.name} disabled={!portrait} aria-label={`Expand ${data.name} image`}>{portrait && <img src={portrait} alt={data.name} fetchpriority="high" />}<span data-contributor-portrait-fallback hidden={!!portrait}><Icon name={kind === 'studio' ? 'film' : 'user'} /></span></button>

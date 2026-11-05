@@ -19,6 +19,7 @@ import {mountGamePersonImages} from './game-person-images';
 import {contributorPages} from './contributor-pages';
 import {bindContributorTabIntent} from './contributor-tab-intent';
 import {createContributorWorksMotion, orderContributorNodes} from './contributor-works-motion';
+import {mountContributorBanner} from './contributor-banner';
 
 export function initializeContributorPage(root: HTMLElement, signal: AbortSignal) {
   if(root.dataset.mediaType==='game')mountGamePersonImages(root,signal);
@@ -67,17 +68,9 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     });
     availabilityChanged(JSON.stringify(domains));
   });
-  const banner = root.querySelector<HTMLImageElement>('[data-contributor-banner]');
-  const missingBanner = () => {
-    if (!banner) return;
-    banner.closest('.contributor-banner')?.classList.remove('is-logo');
-    const fallback = banner.dataset.bannerFallback;
-    delete banner.dataset.bannerFallback;
-    if (fallback && fallback !== banner.getAttribute('src')) banner.src = fallback;
-    else banner.hidden = true;
-  };
-  banner?.addEventListener('error', missingBanner, {signal});
-  if (banner?.complete && !banner.naturalWidth) missingBanner();
+  const paintBanner=mountContributorBanner(root.querySelector<HTMLImageElement>('[data-contributor-banner]')!,signal);
+  const updateBanner=()=>paintBanner([...region.querySelectorAll<HTMLElement>('[data-work-key]')]
+    .filter(card=>!card.hidden).map(card=>items.get(card)!).filter(Boolean),data.kind==='studio'?data.banner:null);
   const portrait = root.querySelector<HTMLImageElement>('.contributor-portrait img');
   const missingPortrait = () => {
     if (portrait) portrait.hidden = true;
@@ -150,6 +143,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
     region.setAttribute('aria-busy',String(busy));
     root.querySelector<HTMLElement>('[data-contributor-empty]')!.hidden = hasWorks||pending;
     root.querySelector<HTMLElement>('[data-contributor-loading]')!.hidden = !pending;
+    updateBanner();
   };
   const paint = (card: HTMLElement, item: ContributorWork) => {
     const href = workHref(item);
