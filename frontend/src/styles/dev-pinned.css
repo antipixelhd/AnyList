@@ -1,0 +1,14 @@
+/* No production page opts in to these experimental rails. */
+[data-pinned-preview] :is(.lab-workbench,.lab-footer) { display:none; }
+.pinned-preview-switch { display:flex; gap:8px; align-items:center; padding:18px 0; }
+.pinned-preview-switch a { padding:9px 16px; border-radius:22px; color:var(--muted); font-weight:650; transition:background-color .18s,color .18s; }
+.pinned-preview-switch a[aria-current=page] { background:var(--blue); color:white; }
+.pinned-preview-switch a:hover,.pinned-preview-switch a:focus-visible { background:color-mix(in srgb,var(--blue) 22%,var(--panel)); color:var(--bright); outline:none; }
+.pinned-preview-switch a[aria-current=page]:hover { background:color-mix(in srgb,var(--blue) 85%,white); color:white; }
+.pinned-rail-content { display:contents; }
+@media (min-width:1101px) {
+  .pinned-rail-content { display:flow-root; }
+  [data-pinned-preview] .pinned-rail { align-self:stretch; position:relative; }
+  [data-pinned-preview] .lab-secondary-column.pinned-rail { display:block; }
+  [data-pinned-preview] .lab-secondary-column .pinned-rail-content { display:flex; flex-direction:column; gap:30px; }
+}
