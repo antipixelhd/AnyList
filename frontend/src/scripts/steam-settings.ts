@@ -423,13 +423,12 @@ function init() {
         refresh();
       }
       const rating = document.createElement('button'); rating.type='button'; rating.className='steam-quick-rate';
-      const icon = get<HTMLTemplateElement>('rating-icon').content.cloneNode(true);
       const value = document.createElement('span');
       const paintRating = () => {
-        const score=draft.ratings[game.app_id]; value.textContent=score == null ? 'Rate' : `${score.toFixed(1)} / 10`;
+        const score=draft.ratings[game.app_id]; value.textContent=score == null ? '? / 10' : `${score.toFixed(1)} / 10`;
         rating.setAttribute('aria-label',`Rate ${game.name}${score == null ? '' : `. Current score: ${score}`}`);
       };
-      rating.append(icon,value); paintRating();
+      rating.append(value); paintRating();
       const reviewSignal = detailsController.signal;
       rating.addEventListener('click',()=>{
         const quickRate = (window as any).anyListQuickRate;

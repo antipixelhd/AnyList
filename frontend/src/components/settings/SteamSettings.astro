@@ -69,7 +69,6 @@ import '../../styles/steam-import.css';
       <button type="button" data-steam-retry class="steam-primary" hidden>Retry loading</button>
     </div>
   </dialog>
-  <template data-steam-rating-icon><Icon name="star" /></template>
   <dialog data-steam-exit-dialog class="steam-exit-dialog" aria-labelledby="steam-exit-heading"><h2 id="steam-exit-heading">Leave Steam import?</h2><p>Your choices can be saved for later.</p><p data-steam-exit-error role="alert" hidden></p><div class="steam-exit-actions"><button data-steam-abort type="button" class="steam-abort">Abort import</button><button data-steam-keep-editing type="button" autofocus class="steam-secondary">Keep editing</button><button data-steam-save-exit type="button" class="steam-primary">Save & close</button></div></dialog>
   <template data-steam-date-template><CalendarDateInput id="steam-review-date" name="review_date" label="Completion date" /></template>
 </section>
