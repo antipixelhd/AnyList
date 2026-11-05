@@ -174,6 +174,18 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
         <label class="setting-switch-row" for="show-games"><span><strong>Games</strong></span><input id="show-games" type="checkbox" checked={trackingPrefs.show_games}/></label>
         <p class="settings-note">Controls your navigation and discovery. Saved entries, direct links and other users’ profiles remain available.</p>
       </section>
+      <section>
+        <div class="mb-4 border-b border-zinc-800 pb-2"><h2 class="section-headline">Watch state sync</h2></div>
+        <div class="settings-inline-grid settings-single-column">
+          <label>Automatically set Watching
+            <select id="watch-state-sync" aria-describedby="watch-state-sync-help">
+              <option value="conservative" selected={trackingPrefs.watch_state_sync !== 'immediate'}>Conservative</option>
+              <option value="immediate" selected={trackingPrefs.watch_state_sync === 'immediate'}>Immediate</option>
+            </select>
+          </label>
+        </div>
+        <p id="watch-state-sync-help" class="setting-help">Conservative keeps sampled movies off Watching and adds a series only after a completed episode; Immediate can add either as soon as playback progress syncs. Resume positions still sync between connections in both modes.</p>
+      </section>
       <!-- List presentation -->
       <section>
         <div class="mb-4 border-b border-zinc-800 pb-2">
@@ -585,7 +597,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
       const revision = (trackingRevisions.get(field) || 0) + 1;
       trackingRevisions.set(field, revision);
       const requestedValue = control instanceof HTMLInputElement && control.type === 'checkbox' ? String(control.checked) : control.value;
-      const statusKey = field === 'minimum_popularity' ? 'minimum-popularity' : field === 'include_rereleases' ? 'include-rereleases' : field === 'remove_specials_seasons' ? 'remove-specials-seasons' : 'combine-lists';
+      const statusKey = field === 'watch_state_sync' ? 'watch-state-sync' : field === 'minimum_popularity' ? 'minimum-popularity' : field === 'include_rereleases' ? 'include-rereleases' : field === 'remove_specials_seasons' ? 'remove-specials-seasons' : 'combine-lists';
       if (field === 'combine_lists') publishCombinePreference(requestedValue === 'true');
       if(field.startsWith('show_'))document.dispatchEvent(new CustomEvent('anylist:media-domains-changed',{detail:{[field]:requestedValue==='true'}}));
       setStatus(statusKey, 'Saving…', 'saving');
@@ -618,6 +630,11 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
     }
     combineLists?.addEventListener('change', () => saveTrackingPreferences({ combine_lists: combineLists.checked }, combineLists, 'combine_lists'));
     defaultSort?.addEventListener('change', () => saveTrackingPreferences({ default_sort: defaultSort.value }, defaultSort, 'default_sort'));
+    const watchStateSync = document.getElementById('watch-state-sync') as HTMLSelectElement | null;
+    if (watchStateSync) {
+      watchStateSync.dataset.savedValue = watchStateSync.value;
+      watchStateSync.addEventListener('change', () => saveTrackingPreferences({ watch_state_sync: watchStateSync.value }, watchStateSync, 'watch_state_sync'));
+    }
     removeSpecials?.addEventListener('change', () => saveTrackingPreferences({ remove_specials_seasons: removeSpecials.checked }, removeSpecials, 'remove_specials_seasons'));
 
     // Completion-rating Web Push is enrolled per browser/PWA installation.

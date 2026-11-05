@@ -1757,6 +1757,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(initial.json(),{
             'minimum_popularity':25,'include_rereleases':False,
             'auto_confirm':False,'combine_lists':True,
+            'watch_state_sync':'conservative',
             'show_movies_series':True,'show_games':True,'show_game_achievements':True,'hide_erotic_games':True,
             'default_sort':'title',
             'low_priority_notifications':True,'low_priority_retention_days':7,
@@ -1795,6 +1796,23 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(invalid.status_code, 422, invalid.text)
         enabled = await self.client.patch('/tracking/preferences', json={'remove_specials_seasons': True})
         self.assertTrue(enabled.json()['remove_specials_seasons'])
+
+    async def test_watch_state_sync_defaults_for_existing_accounts_and_is_private(self):
+        initial = await self.client.get('/tracking/preferences')
+        self.assertEqual(initial.json()['watch_state_sync'], 'conservative')
+        changed = await self.client.patch('/tracking/preferences', json={'watch_state_sync': 'immediate'})
+        self.assertEqual(changed.status_code, 200, changed.text)
+        self.assertEqual(changed.json()['watch_state_sync'], 'immediate')
+        unrelated = await self.client.patch('/tracking/preferences', json={'default_sort': 'score'})
+        self.assertEqual(unrelated.json()['watch_state_sync'], 'immediate')
+        self.viewer = self.friend
+        self.assertEqual((await self.client.get('/tracking/preferences')).json()['watch_state_sync'], 'conservative')
+        self.viewer = self.owner
+        for value in (None, 'reserved', True):
+            invalid = await self.client.patch('/tracking/preferences', json={'watch_state_sync': value})
+            self.assertEqual(invalid.status_code, 422, invalid.text)
+        changed = await self.client.patch('/tracking/preferences', json={'watch_state_sync': 'conservative'})
+        self.assertEqual(changed.json()['watch_state_sync'], 'conservative')
 
     async def test_profile_partial_patch_and_markdown_bio_limit(self):
         changed = await self.client.patch('/profile/me', json={'country': 'DE'})
@@ -4815,6 +4833,10 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(baseline.snapshot, baseline_snapshot)
 
     async def test_nuvio_resumption_clears_both_platforms_without_rehiding(self):
+        # This visibility fixture mocks episode-history application. Exercise
+        # resume-only Watching transitions through the explicit Immediate mode.
+        response = await self.client.patch('/tracking/preferences', json={'watch_state_sync': 'immediate'})
+        self.assertEqual(response.status_code, 200, response.text)
         from core import nuvio
         from core.nuvio_settings import TVSettings, MobileSettings
         from core.nuvio_visibility import sync_next_up_visibility

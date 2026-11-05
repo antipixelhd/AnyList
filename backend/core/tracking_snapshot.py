@@ -403,6 +403,8 @@ async def observe_stream_snapshot(
                         continue
     await release_rewatched_deletions(db, conn, watched, progress, mappings)
     # Streaming-library membership alone never creates a tracked entry.
+    from core.watch_state_policy import conservative_watch_state, has_completed_episode
+    conservative = await conservative_watch_state(db, conn.user_id)
     existing_ids = set((await db.execute(select(TrackedEntry.media_id).where(TrackedEntry.user_id == conn.user_id))).scalars())
     baseline=prior
     first=fresh_import or baseline is None
@@ -628,12 +630,16 @@ async def observe_stream_snapshot(
             if playback_allowed(conn.user_id, conn.id, media.id) is False:
                 continue
             entry = (await db.execute(select(TrackedEntry).where(TrackedEntry.user_id == conn.user_id, TrackedEntry.media_id == media.id))).scalar_one_or_none()
-            if not entry:
-                continue
             newly_tracked = media.id not in existing_ids
             pending = (await db.execute(select(SyncReview.id).where(SyncReview.user_id == conn.user_id,
                 SyncReview.media_id == media.id, SyncReview.state == 'pending', SyncReview.kind.in_(['conflict','playback_removed'])))).first()
             if pending and playback_allowed(conn.user_id, conn.id, media.id) is not True:
+                continue
+            # Resume forwarding must not depend on admission to the user's list.
+            if not entry:
+                if row in changed_active and baseline.approved:
+                    from core.stream_actions import queue_progress_update
+                    await queue_progress_update(db, conn, media, row)
                 continue
             previous_status = entry.status
             previous_start_date = entry.start_date
@@ -665,6 +671,14 @@ async def observe_stream_snapshot(
                 ordering = 'apply'
             if ordering=='stale':
                 continue
+            if conservative and ordering == 'apply' and row in changed_active and entry.status != 'watching' and not any(
+                    item in new_completed for item in observation_rows):
+                allowed = media.media_type == MediaType.series and await has_completed_episode(db, conn.user_id, media)
+                if not allowed:
+                    if baseline.approved:
+                        from core.stream_actions import queue_progress_update
+                        await queue_progress_update(db, conn, media, row)
+                    continue
             if media.media_type==MediaType.series and ordering=='apply':
                 for episode_row in [item for item in observation_rows if item in new_completed] + [row]:
                     is_complete=await apply_series_observation(
