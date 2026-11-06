@@ -45,6 +45,18 @@ class SteamTests(unittest.IsolatedAsyncioTestCase):
                     self.assertGreater(len(requests),first)
                     self.assertTrue(all('key' not in request.url.params for request in requests))
 
+    async def test_wishlist_uses_user_rank_with_unranked_last_and_stable_ties(self):
+        http = AsyncMock()
+        http.request.side_effect = [{'response': {'items': [
+            {'appid':10,'priority':0}, {'appid':20,'priority':3},
+            {'appid':30,'priority':1}, {'appid':40}, {'appid':50,'priority':3},
+            {'appid':60,'priority':True}, {'appid':70,'priority':-1}]}},
+            {'response': {'count':7}}]
+        games = await SteamSource(http=http,key=None).wishlist('76561198000000000')
+        self.assertEqual([row['app_id'] for row in games],['30','20','50','10','40','60','70'])
+        self.assertEqual([row['wishlist_rank'] for row in games],[1,3,3,None,None,None,None])
+        self.assertEqual(http.request.await_count,2)
+
     async def test_software_catalog_uses_public_type_filter_and_complete_pagination(self):
         http = AsyncMock()
         source = SteamSource(http=http, key='test-key')

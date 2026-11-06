@@ -145,10 +145,14 @@ class SteamSource:
             if type(app) is not int or not 0 < app <= 4294967295 or app in seen:
                 raise SteamError('Steam returned an invalid wishlist. Retry before syncing changes.')
             seen.add(app)
+            priority = row.get('priority')
+            rank = priority if type(priority) is int and 0 < priority <= 4294967295 else None
             result.append({'app_id': str(app), 'name': f'Steam {app}', 'playtime_minutes': 0,
+                'wishlist_rank': rank,
                 'poster': f'https://cdn.akamai.steamstatic.com/steam/apps/{app}/library_600x900.jpg',
                 'last_played': None, 'release_date': None, 'achievement_count': None, 'achievement_total': None})
-        return result
+        # Rank zero/omitted means unranked; preserve Steam order within ties.
+        return sorted(result, key=lambda game: game['wishlist_rank'] or 4294967296)
 
     async def software(self):
         """Public software IDs, paginated independently of a player's library."""
