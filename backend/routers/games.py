@@ -243,12 +243,30 @@ async def game_store_info(work_id:WorkId,db:DB,viewer:Reader,country:Annotated[s
 
 
 @router.get('/works/{work_id}/credits')
-async def game_credits(work_id: WorkId, db: DB, viewer: Reader) -> dict:
+async def game_credits(work_id: WorkId, db: DB, viewer: Reader, request_context:Request,
+        revision:Annotated[str|None,Query(max_length=64)]=None) -> dict:
     from core.media_details import work_details
-    from core.game_imdb_enrichment import request
+    from core.game_imdb_enrichment import request,status
+    from core.game_credit_updates import revision as current_revision,wait_for_revision,Disconnected
     work=await tracking.work(db,work_id)
     state=await request(db,work_id)
     await db.commit()
+    token,waitable=await current_revision(db,work_id)
+    await db.commit()
+    if revision==token and waitable:
+        try:
+            admitted=await wait_for_revision(db.bind,work_id,token,disconnected=request_context.is_disconnected)
+        except Disconnected:
+            raise HTTPException(499,'Request cancelled') from None
+        # Approval may change while this read is held. Never reuse viewer data
+        # from another subscriber or project against the old ORM snapshot.
+        fresh_viewer=await db.get(User,viewer.id,populate_existing=True)
+        from core.game_access import require
+        require(fresh_viewer)
+        await db.refresh(work)
+        state=await status(db,work_id)
+        token,waitable=await current_revision(db,work_id)
+        waitable=waitable and admitted
     details=await work_details(db,work,extras=False)
     character_state=details.get('game_character_status') or {}
     combined={**state}
@@ -257,7 +275,7 @@ async def game_credits(work_id: WorkId, db: DB, viewer: Reader) -> dict:
             error=state.get('error') or character_state.get('error'))
     return {'people':details['people'],'organizations':details['organizations'],
         'game_characters':details.get('game_characters',[]),'game_character_status':character_state,'character_status':combined,
-        'game_credit_status':state}
+        'game_credit_status':state,'credit_updates':{'revision':token,'waitable':waitable}}
 
 
 @router.get('/works/{work_id}/metadata')

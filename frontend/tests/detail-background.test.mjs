@@ -10,6 +10,33 @@ function clock() {
   return {tasks,restore(){globalThis.setTimeout=nativeSet;globalThis.clearTimeout=nativeClear;}};
 }
 
+test('revision subscriptions apply partial data then wait immediately with one request',async()=>{
+  const timer=clock(),nativeFetch=globalThis.fetch,controller=new AbortController(),calls=[],applied=[];
+  let release;
+  globalThis.fetch=async path=>{
+    calls.push(path);
+    if(calls.length===1)return Response.json({state:'partial',pending:true,credit_updates:{revision:'first',waitable:true}});
+    return await new Promise(resolve=>release=()=>resolve(Response.json({state:'ready',credit_updates:{revision:'next',waitable:false}})));
+  };
+  try{
+    const resource=detailBackground('/game/credits?mode=actors',controller.signal,row=>{applied.push(row.state);return row;},()=>{},row=>row.credit_updates);
+    await resource.load();assert.deepEqual(applied,['partial']);
+    const [id,task]=[...timer.tasks.entries()][0];timer.tasks.delete(id);assert.equal(task.delay,0);
+    task.callback();const wait=resource.load();assert.equal(resource.load(),wait);
+    assert.deepEqual(calls,['/game/credits?mode=actors','/game/credits?mode=actors&revision=first']);
+    release();await wait;assert.deepEqual(applied,['partial','ready']);assert.equal(timer.tasks.size,0);
+  }finally{controller.abort();globalThis.fetch=nativeFetch;timer.restore();}
+});
+
+test('revision fallback and errors retain retry cooldowns',async()=>{
+  const timer=clock(),nativeFetch=globalThis.fetch,controller=new AbortController();
+  globalThis.fetch=async()=>Response.json({pending:true,error:'unavailable',retry_after:60,credit_updates:{revision:'same',waitable:true}});
+  try{
+    const resource=detailBackground('/game/credits',controller.signal,row=>row,()=>{},row=>row.credit_updates);
+    await resource.load();assert.equal([...timer.tasks.values()][0].delay,60000);
+  }finally{controller.abort();globalThis.fetch=nativeFetch;timer.restore();}
+});
+
 test('automatic retries retain the error state until usable data arrives',async()=>{
   const timer=clock(),nativeFetch=globalThis.fetch,controller=new AbortController(),states=[];
   let release,calls=0;

@@ -15,6 +15,8 @@ async function handle({ params, request, locals }: Parameters<APIRoute>[0]): Pro
   const path = params.path ?? "";
   const search = new URL(request.url).search;
   const backendUrl = `${BACKEND}/${path}${search}`;
+  const creditWait=request.method==='GET'&&/^tracking\/games\/works\/[1-9]\d*\/credits$/.test(path)
+    &&new URL(request.url).searchParams.has('revision');
 
   const forwardHeaders = new Headers();
 
@@ -68,6 +70,7 @@ async function handle({ params, request, locals }: Parameters<APIRoute>[0]): Pro
       method: request.method,
       headers: forwardHeaders,
       body,
+      ...(creditWait?{signal:request.signal}:{}),
       // Some backend routes (e.g. image serving) 3xx-redirect straight to a
       // third-party host (TMDB) when nothing is locally cached. Following
       // that here would make this dev-server process itself open the
@@ -80,6 +83,7 @@ async function handle({ params, request, locals }: Parameters<APIRoute>[0]): Pro
       redirect: "manual",
     });
   } catch (e) {
+    if(creditWait&&request.signal.aborted)return new Response(null,{status:499});
     console.error(`Proxy request to /${path} failed (${e instanceof Error ? e.name : 'unknown error'})`);
     return new Response(null, { status: 502 });
   }

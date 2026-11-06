@@ -1,6 +1,6 @@
 import {detailBackground, type DetailLoadState} from './detail-background.ts';
 
-type PeopleData = {people:{kind:string}[];credits_status?:string;character_status:DetailLoadState;primary_status?:DetailLoadState;game_credit_status?:DetailLoadState};
+type PeopleData = {people:{kind:string}[];credits_status?:string;character_status:DetailLoadState;primary_status?:DetailLoadState;game_credit_status?:DetailLoadState;credit_updates?:{revision:string;waitable:boolean}};
 
 /** Repair credits independently; optional role artwork follows the usable preview. */
 export function detailPeopleLoading<T extends PeopleData>(id:number, signal:AbortSignal,
@@ -18,7 +18,7 @@ export function detailPeopleLoading<T extends PeopleData>(id:number, signal:Abor
     if(!data.people.some(person=>person.kind==='actor')&&['failed','deferred'].includes(data.credits_status||''))
       return {state:'deferred',pending:true,retry_after:60,error:'unavailable'};
     return separateCharacters?{state:'ready'}:state;
-  },status);
+  },status,!separateCharacters&&/\/games\/works\/[1-9]\d*\/credits$/.test(path)?data=>data.credit_updates:undefined);
   const characters=separateCharacters?detailBackground<T>(options.source?.characters||`${path}?characters=true`,signal,data=>{
     const state=apply(data);
     if(primarySettled&&!signal.aborted)options.warm();

@@ -311,6 +311,8 @@ class GameIMDbEnrichment:
             job.error_code=None
             job.attempts=0
             await db.commit()
+            from core.game_credit_updates import published
+            published(db.bind,work_id)
             return True
 
     async def continue_later(self,work_id,token,state):

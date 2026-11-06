@@ -6,6 +6,21 @@ function context(method = 'GET', headers = {}, query = '', locals = {}) {
   return { params: { path: 'media/example' }, request: new Request(`http://localhost/api/proxy/media/example${query}`, { method, headers }), locals };
 }
 
+test('credit revision waits forward cancellation without changing ordinary proxy reads',async t=>{
+  const controller=new AbortController();
+  const request=new Request('http://localhost/api/proxy/tracking/games/works/7/credits?revision=known',{signal:controller.signal});
+  let started;
+  const entered=new Promise(resolve=>started=resolve);
+  t.mock.method(globalThis,'fetch',async(_,options)=>{
+    if(!options.signal)return new Response(null,{status:204});
+    assert.equal(options.signal,request.signal);started();
+    return await new Promise((resolve,reject)=>options.signal.addEventListener('abort',()=>reject(new DOMException('Aborted','AbortError')),{once:true}));
+  });
+  assert.equal((await GET(context())).status,204);
+  const pending=GET({params:{path:'tracking/games/works/7/credits'},request,locals:{token:'fixture'}});
+  await entered;controller.abort();assert.equal((await pending).status,499);
+});
+
 test('profile uploads reject oversized bodies before forwarding, including absent length headers',async t=>{
   const upstream=t.mock.method(globalThis,'fetch',async()=>new Response(null,{status:204}));
   for(const headers of [{},{'Content-Length':String(4*1024*1024)}]){
