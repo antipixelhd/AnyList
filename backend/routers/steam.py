@@ -28,6 +28,7 @@ Viewer = Annotated[User, Depends(get_current_user)]
 class Options(BaseModel):
     sync_achievements: bool = True
     sync_playtime: bool = True
+    sync_wishlist: bool = False
     auto_add_games: bool = False
     timezone: str = Field(default='UTC', max_length=80)
 
@@ -46,6 +47,7 @@ class Connect(Options):
 
 
 class Draft(BaseModel):
+    wishlist_overrides: dict[str, bool] = Field(default_factory=dict, max_length=100000)
     ratings: dict[str, Annotated[float, Field(ge=0.5, le=10, allow_inf_nan=False)] | None] = Field(default_factory=dict, max_length=100000)
     statuses: dict[str, Literal['completed', 'playing', 'planning', 'paused', 'dropped']] = Field(default_factory=dict, max_length=100000)
     start_dates: dict[str, date | None] = Field(default_factory=dict, max_length=100000)
@@ -69,6 +71,7 @@ class ProgressBatch(MetadataBatch):
 
 
 class ImportSelection(Draft):
+    selected_wishlist: list[str] | None = Field(default=None, max_length=100000)
     selected_apps: list[str] | None = Field(default=None, max_length=100000)
 
 
@@ -127,7 +130,10 @@ async def detail_progress(connection_id: int, db: DB, viewer: Viewer) -> dict:
     job = await latest_job(db, viewer.id, connection_id)
     states = await import_states(db, state.library, settled=bool(job and job.status in (SyncStatus.completed, SyncStatus.failed, SyncStatus.cancelled)))
     games = await steam_cache.read_progress(db, viewer.id, state.steam_id, state.library)
-    return {'games': [{**{key: value for key, value in game.items() if key == 'app_id' or key.startswith('achievement_')},
+    from core.steam_wishlist import present as wishlist_view
+    wishlist = await wishlist_view(db, state.wishlist or [],
+        settled=bool(job and job.status in (SyncStatus.completed, SyncStatus.failed, SyncStatus.cancelled)))
+    return {'wishlist': wishlist, 'games': [{**{key: value for key, value in game.items() if key == 'app_id' or key.startswith('achievement_')},
         'mapping_state': states[game['app_id']]} for game in games]}
 
 
@@ -139,7 +145,7 @@ async def latest_job(db, user_id, connection_id):
 def summary(state):
     return {'id': state.connection_id, 'steam_id': state.steam_id, 'imported': state.imported,
             'sync_achievements': state.sync_achievements, 'sync_playtime': state.sync_playtime,
-            'auto_add_games': state.auto_add_games, 'timezone': state.timezone,
+            'auto_add_games': state.auto_add_games, 'sync_wishlist': state.sync_wishlist, 'timezone': state.timezone,
             'selected_count': len(state.selection), 'generation': state.generation}
 
 
@@ -165,6 +171,11 @@ async def connect(body: Connect, background: BackgroundTasks, db: DB, viewer: Vi
         library = await source.library(profile['steam_id'])
     except SteamError as error:
         raise HTTPException(422, str(error)) from None
+    try:
+        wishlist = await source.wishlist(profile['steam_id'])
+        wishlist_error = None
+    except SteamError as error:
+        wishlist, wishlist_error = None, str(error)
     await require_import_slot(db, viewer.id)
     await require_idle_account(db, viewer.id)
     existing = await db.scalar(select(SteamConnection).where(SteamConnection.user_id == viewer.id,
@@ -179,7 +190,8 @@ async def connect(body: Connect, background: BackgroundTasks, db: DB, viewer: Vi
     await db.flush()
     state = SteamConnection(connection_id=conn.id, user_id=viewer.id, steam_id=profile['steam_id'],
         library=await steam_sync.attach_dates(db, library), sync_achievements=body.sync_achievements, sync_playtime=body.sync_playtime,
-        auto_add_games=body.auto_add_games, timezone=body.timezone)
+        auto_add_games=body.auto_add_games, timezone=body.timezone, sync_wishlist=body.sync_wishlist,
+        wishlist=wishlist, wishlist_state={'error': wishlist_error} if wishlist_error else {})
     db.add(state)
     await db.flush()
     await queue_preparation(db, state, background)
@@ -194,7 +206,11 @@ async def review(connection_id: int, db: DB, viewer: Viewer) -> dict:
     library = await steam_cache.read_progress(db, viewer.id, state.steam_id, state.library)
     states = await import_states(db, library, settled=bool(job and job.status in (SyncStatus.completed, SyncStatus.failed, SyncStatus.cancelled)))
     library = [{**game, 'mapping_state':states[game['app_id']]} for game in library if states[game['app_id']] != 'software']
+    from core.steam_wishlist import present as wishlist_view
+    wishlist = await wishlist_view(db, state.wishlist or [],
+        settled=bool(job and job.status in (SyncStatus.completed, SyncStatus.failed, SyncStatus.cancelled)))
     return {**summary(state), 'library': library, 'draft': state.draft,
+        'wishlist': wishlist, 'wishlist_error': (state.wishlist_state or {}).get('error'),
         'job': {'status': job.status.value, 'current': job.processed_items, 'total': job.total_items,
                 'error': job.error_message, 'warnings': job.warnings or []} if job else None}
 
@@ -208,6 +224,7 @@ async def options(connection_id: int, body: Options, db: DB, viewer: Viewer) -> 
         state.checkpoints = {app: {k: v for k, v in value.items() if k != 'playtime_minutes'} for app, value in state.checkpoints.items()}
     state.sync_achievements, state.sync_playtime = body.sync_achievements, body.sync_playtime
     state.auto_add_games, state.timezone = body.auto_add_games, body.timezone
+    state.sync_wishlist = body.sync_wishlist
     state.generation += 1
     await db.commit()
     return summary(state)
@@ -268,6 +285,8 @@ async def validate_draft(db, viewer, connection_id, body):
     apps = {row['app_id'] for row in state.library}
     if (body.overrides.keys() | body.statuses.keys() | body.start_dates.keys() | body.completion_dates.keys() | body.ratings.keys()) - apps:
         raise HTTPException(422, 'Selection contains games outside this Steam library.')
+    if body.wishlist_overrides.keys() - {row['app_id'] for row in state.wishlist or []}:
+        raise HTTPException(422, 'Selection contains games outside this Steam wishlist.')
     return state
 
 
@@ -290,28 +309,64 @@ async def commit_import(connection_id: int, body: ImportSelection, background: B
         raise HTTPException(422, 'Selection contains games outside this Steam library.')
     # Finish pending identity checks outside all owner/connection locks. Cached
     # exact references and known Steam IDs make this a cheap no-op when ready.
+    wishlist_ids = ({row['app_id'] for row in state.wishlist or []
+        if body.wishlist_overrides.get(row['app_id'], state.sync_wishlist)}
+        if body.selected_wishlist is None else set(body.selected_wishlist))
+    if wishlist_ids - {row['app_id'] for row in state.wishlist or []}:
+        raise HTTPException(422, 'Selection contains games outside this Steam wishlist.')
+    wishlist = list(state.wishlist or [])
     selected_ids = set(selection)
     selected_library = [game for game in library if game['app_id'] in selected_ids]
     await db.commit()
     from core.steam_targets import classify
     try:
-        await classify(AsyncSessionLocal, selected_library)
+        await classify(AsyncSessionLocal, [*selected_library, *(game for game in wishlist if game['app_id'] in wishlist_ids)])
     except SteamError as error:
         raise HTTPException(409, str(error)) from None
     await require_idle_account(db, viewer.id)
     state = await validate_draft(db, viewer, connection_id, body)
+    if list(state.wishlist or []) != wishlist:
+        raise HTTPException(409, 'Steam wishlist changed. Reload to continue.')
     await steam_sync.apply_games(db, state, library, selection, initial=True,
         initial_status=body.import_status, statuses=body.statuses, ratings=body.ratings,
         completion_dates=body.completion_dates, start_dates=body.start_dates)
+    from core.steam_wishlist import apply as apply_wishlist
+    wishlist_result = await apply_wishlist(db, state, wishlist, library, selected=wishlist_ids)
     accepted = [app for app in selection if app in state.checkpoints]
     state.selection, state.imported, state.draft = accepted, True, {}
     state.known_apps = sorted(row['app_id'] for row in library)
     # The large review payload is temporary. Recurring sync needs only IDs/checkpoints.
     state.library = []
+    state.wishlist = None
     conn = await db.get(MediaServerConnection, connection_id)
     conn.libraries_confirmed = True
     await db.commit()
     from core.steam_artwork import refresh as refresh_artwork
     background.add_task(refresh_artwork, AsyncSessionLocal, library)
-    return {'imported': len({state.checkpoints[app]['work_id'] for app in accepted}), 'selected': len(accepted),
+    return {'imported': len({state.checkpoints[app]['work_id'] for app in accepted}) + wishlist_result['wishlist_added'],
+        **(wishlist_result if wishlist else {}), 'selected': len(accepted),
         **({'skipped': len(selection) - len(accepted)} if len(accepted) != len(selection) else {})}
+
+
+@router.post('/{connection_id}/wishlist')
+async def retry_wishlist(connection_id: int, db: DB, viewer: Viewer) -> dict:
+    state = await owned(db, viewer.id, connection_id)
+    if state.imported:
+        raise HTTPException(409, 'This library has already been imported.')
+    native, generation = state.steam_id, state.generation
+    await db.close()
+    try:
+        games = await SteamSource(AsyncSessionLocal).wishlist(native)
+        from core.steam_targets import classify
+        await classify(AsyncSessionLocal, games)
+    except SteamError as error:
+        raise HTTPException(422, str(error)) from None
+    await game_tracking.lock_owner(db, viewer.id)
+    state = await owned(db, viewer.id, connection_id, lock=True)
+    if state.imported or state.generation != generation:
+        raise HTTPException(409, 'Steam import changed. Reload to continue.')
+    state.wishlist = games
+    state.wishlist_state = {key:value for key,value in (state.wishlist_state or {}).items() if key != 'error'}
+    await db.commit()
+    from core.steam_wishlist import present
+    return {'wishlist': await present(db, games, settled=True), 'wishlist_error': None}

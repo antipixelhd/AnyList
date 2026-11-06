@@ -1,7 +1,7 @@
 import os
 import unittest
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 os.environ.setdefault('SECRET_KEY', 'steam-test-only')
 os.environ.setdefault('DATABASE_URL', 'postgresql+asyncpg://test:test@localhost/test')
@@ -12,6 +12,39 @@ from routers.steam import Draft, selected_games
 
 
 class SteamTests(unittest.IsolatedAsyncioTestCase):
+    async def test_wishlist_checks_steam_result_count_and_private_cache_boundary(self):
+        import httpx
+        from contextlib import asynccontextmanager
+        from core.catalogue_providers import ProviderHTTP
+
+        @asynccontextmanager
+        async def lane(_):
+            yield
+
+        for result, items, count, valid in [('1',[{'appid':40,'priority':0,'date_added':100}],1,True),
+                ('1',[],0,True),('15',[],0,False),('1',[{'appid':40}],2,False),
+                ('1',[{'appid':40},{'appid':40}],2,False),('1',[{'appid':True}],1,False)]:
+            requests=[]
+            def respond(request):
+                requests.append(request)
+                data={'count':count} if 'GetWishlistItemCount' in request.url.path else {'items':items}
+                return httpx.Response(200,headers={'x-eresult':result},json={'response':data})
+            async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+                http=ProviderHTTP(client=client)
+                with patch.object(http,'lane',side_effect=lane):
+                    source=SteamSource(http=http,key=None)
+                    if valid:
+                        self.assertEqual(len(await source.wishlist('76561198000000000')),count)
+                    else:
+                        with self.assertRaises(SteamError):
+                            await source.wishlist('76561198000000000')
+                    # Personal responses never become a shared HTTP-cache hit.
+                    first=len(requests)
+                    try:await source.wishlist('76561198000000000')
+                    except SteamError:pass
+                    self.assertGreater(len(requests),first)
+                    self.assertTrue(all('key' not in request.url.params for request in requests))
+
     async def test_software_catalog_uses_public_type_filter_and_complete_pagination(self):
         http = AsyncMock()
         source = SteamSource(http=http, key='test-key')

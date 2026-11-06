@@ -124,6 +124,32 @@ class SteamSource:
             raise SteamError('Steam achievements are temporarily unavailable. Retry to finish loading them.') from None
         return achievement_data(raw)
 
+    async def wishlist(self, native):
+        """Public, private-cache-free snapshot, certified by Steam result and count."""
+        try:
+            raw = await self.http.request('steam', 'GET', API + 'IWishlistService/GetWishlist/v1/',
+                cache=False, attempts=1, steam_result=True, params={'steamid': native}, timeout=15)
+            count = await self.http.request('steam', 'GET', API + 'IWishlistService/GetWishlistItemCount/v1/',
+                cache=False, attempts=1, steam_result=True, params={'steamid': native}, timeout=15)
+        except ProviderError:
+            raise SteamError('Steam wishlist is private or temporarily unavailable. Make it public and retry.') from None
+        data = raw.get('response') if isinstance(raw, dict) else None
+        header = count.get('response') if isinstance(count, dict) else None
+        rows = data.get('items', []) if isinstance(data, dict) else None
+        total = header.get('count', 0) if isinstance(header, dict) else None
+        if (not isinstance(rows, list) or type(total) is not int or not 0 <= total <= 100000 or len(rows) != total):
+            raise SteamError('Steam returned an incomplete wishlist. Retry before syncing changes.')
+        result, seen = [], set()
+        for row in rows:
+            app = row.get('appid') if isinstance(row, dict) else None
+            if type(app) is not int or not 0 < app <= 4294967295 or app in seen:
+                raise SteamError('Steam returned an invalid wishlist. Retry before syncing changes.')
+            seen.add(app)
+            result.append({'app_id': str(app), 'name': f'Steam {app}', 'playtime_minutes': 0,
+                'poster': f'https://cdn.akamai.steamstatic.com/steam/apps/{app}/library_600x900.jpg',
+                'last_played': None, 'release_date': None, 'achievement_count': None, 'achievement_total': None})
+        return result
+
     async def software(self):
         """Public software IDs, paginated independently of a player's library."""
         if not self.key:

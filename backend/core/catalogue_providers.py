@@ -176,7 +176,7 @@ class ProviderHTTP:
         else:
             _local_next[provider] = max(_local_next.get(provider, 0), time.monotonic() + delay)
 
-    async def request(self, provider, method, url, *, cache=True, attempts=3, **kwargs):
+    async def request(self, provider, method, url, *, cache=True, attempts=3, steam_result=False, **kwargs):
         if type(attempts) is not int or not 1 <= attempts <= 3:
             raise ProviderError('invalid_request')
         # WDQS and the Action API are separate services. A query-service 429
@@ -185,7 +185,7 @@ class ProviderHTTP:
         # Cache keys are digests, never raw credentials. Max 128 responses, 10m.
         key = hashlib.sha256(
             json.dumps(
-                [provider, method, url, kwargs], sort_keys=True, default=str
+                [provider, method, url, kwargs, steam_result], sort_keys=True, default=str
             ).encode()
         ).hexdigest()
         hit = _cache.get(key)
@@ -247,6 +247,8 @@ class ProviderHTTP:
                                 404: "not_found",
                             }.get(status, "bad_response")
                         )
+                    if steam_result and headers.get('x-eresult') != '1':
+                        raise ProviderError('forbidden' if headers.get('x-eresult') == '15' else 'bad_response')
                     try:
                         data = json.loads(body)
                     except ValueError:

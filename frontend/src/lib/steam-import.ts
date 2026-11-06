@@ -10,6 +10,7 @@ export function steamProgressPending(game: SteamGame): boolean {
   return game.mapping_state === 'pending' || game.achievement_refresh_due !== false || game.achievement_state === 'loading' || game.achievement_refreshing === true;
 }
 export type SteamDraft = {
+  wishlist_overrides: Record<string, boolean>;
   ratings: Record<string, number | null>;
   statuses: Record<string, SteamDraft['import_status']>;
   import_status: 'completed' | 'playing' | 'planning' | 'paused' | 'dropped';
@@ -20,8 +21,11 @@ export type SteamDraft = {
   overrides: Record<string, boolean>; sort: 'playtime' | 'alphabetical' | 'completion';
 };
 export function defaultSteamDraft(): SteamDraft {
-  return { ratings: {}, statuses: {}, import_status: 'completed', completion_dates: {}, start_dates:{}, minimum_playtime: 30, minimum_achievements: 1, playtime_enabled: true,
+  return { wishlist_overrides: {}, ratings: {}, statuses: {}, import_status: 'completed', completion_dates: {}, start_dates:{}, minimum_playtime: 30, minimum_achievements: 1, playtime_enabled: true,
     achievements_enabled: true, overrides: {}, sort: 'playtime' };
+}
+export function steamWishlistSelected(game: Pick<SteamGame,'app_id'|'mapping_state'>, draft: SteamDraft, sync: boolean): boolean {
+  return !['software','unavailable'].includes(game.mapping_state || '') && (draft.wishlist_overrides[game.app_id] ?? sync);
 }
 export function steamStatus(game: SteamGame, draft: SteamDraft): SteamDraft['import_status'] {
   return draft.statuses[game.app_id] ?? draft.import_status;

@@ -481,7 +481,7 @@ class SteamDatabaseTests(unittest.IsolatedAsyncioTestCase):
             'version':1,'state':'bound','igdb_id':str(900000+int(app)), 'game_class':'game',
             'checked_at':steam_sync.now().isoformat()}} for app in ('20','30','40')])
         self.client._transport.app.include_router(steam.router)
-        self.source = SimpleNamespace(profile=AsyncMock(return_value={'steam_id': '76561198000000000', 'name': 'Test player'}),
+        self.source = SimpleNamespace(wishlist=AsyncMock(return_value=[]), profile=AsyncMock(return_value={'steam_id': '76561198000000000', 'name': 'Test player'}),
             metadata=AsyncMock(return_value={'release_date': '2022-02-25'}),
             library=AsyncMock(return_value=[game('1245620', 60), game('20', 0), game('30', 0)]),
             achievements=AsyncMock(side_effect=lambda native, app: {'achievement_count': 1 if app == '20' else 0, 'achievement_total': 3}))

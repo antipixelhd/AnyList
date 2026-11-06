@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { defaultSteamDraft, sortSteamGames, steamSelected, steamProgressPending, steamStatus, filterSteamGames, reconcileSteamCards, chooseSteamStatus, steamAccentText, steamScrollAnchor } from '../src/lib/steam-import.ts';
+import { defaultSteamDraft, sortSteamGames, steamSelected, steamProgressPending, steamStatus, filterSteamGames, reconcileSteamCards, chooseSteamStatus, steamAccentText, steamScrollAnchor, steamWishlistSelected } from '../src/lib/steam-import.ts';
 
 const games = [
   {app_id:'1',name:'Alpha',playtime_minutes:30,achievement_count:null,achievement_total:null},
@@ -156,4 +156,17 @@ test('reload keeps observing an in-flight cache claim without repeating provider
   assert.equal(steamProgressPending(game),false);
   game.achievement_state='unavailable';
   assert.equal(steamProgressPending(game),false);
+});
+
+
+test('wishlist defaults follow sync; choices persist and rejection wins over a saved choice',()=>{
+  const draft=defaultSteamDraft(),game={app_id:'40',mapping_state:'pending'};
+  assert.equal(steamWishlistSelected(game,draft,false),false);
+  assert.equal(steamWishlistSelected(game,draft,true),true);
+  draft.wishlist_overrides['40']=false;
+  assert.equal(steamWishlistSelected(game,JSON.parse(JSON.stringify(draft)),true),false);
+  draft.wishlist_overrides['40']=true;
+  assert.equal(steamWishlistSelected(game,draft,false),true);
+  for(const mapping_state of ['unavailable','software'])
+    assert.equal(steamWishlistSelected({...game,mapping_state},draft,true),false);
 });

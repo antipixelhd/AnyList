@@ -18,6 +18,10 @@ class SteamConnection(Base):
     sync_achievements: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default='true')
     sync_playtime: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default='true')
     auto_add_games: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default='false')
+    sync_wishlist: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default='false')
+    # None is inaccessible/unread, never a verified empty wishlist.
+    wishlist: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    wishlist_state: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default='{}')
     timezone: Mapped[str] = mapped_column(String(80), nullable=False, default='UTC', server_default='UTC')
     # All identities observed, including declined games, form the new-game boundary.
     known_apps: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default='[]')

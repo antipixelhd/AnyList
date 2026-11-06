@@ -337,7 +337,7 @@ async def save_child(db, user_id, work_id, patch, *, listed):
     return (await states(db, user_id, [work_id]))[0]
 
 
-async def remove_entry(db, user_id, work_id, revision):
+async def remove_entry(db, user_id, work_id, revision, *, commit=True):
     await lock_owner(db, user_id)
     row = await db.scalar(select(GameEntry).where(GameEntry.user_id == user_id, GameEntry.work_id == work_id))
     require_revision(row, revision)
@@ -353,4 +353,5 @@ async def remove_entry(db, user_id, work_id, revision):
         await db.delete(row)
         await db.execute(delete(GameActivity).where(GameActivity.user_id == user_id, GameActivity.work_id == work_id))
     await db.execute(delete(GameFavorite).where(GameFavorite.user_id == user_id, GameFavorite.work_id == work_id))
-    await db.commit()
+    if commit:
+        await db.commit()

@@ -97,9 +97,10 @@ async def preparation(factory, user_id, connection_id, job_id):
         if not state or state.user_id != user_id:
             return
         library=list(state.library)
+        wishlist=list(state.wishlist or [])
     from core.steam_targets import classify
     try:
-        await classify(factory,library)
+        await classify(factory,[*library, *wishlist])
     except SteamError as error:
         async with factory() as db:
             await db.execute(update(SyncJob).where(SyncJob.id == job_id, SyncJob.status == SyncStatus.running)
@@ -329,8 +330,9 @@ async def _sync(factory, user_id, job_id, connection_id):
             GameEntry.work_id.in_([value['work_id'] for value in checkpoints.values() if value.get('work_id')]))))
         selected = [app for app in selected if checkpoints.get(app, {}).get('work_id') in active_works]
         achievements_enabled, playtime_enabled, auto_add = state.sync_achievements, state.sync_playtime, state.auto_add_games
+        wishlist_enabled = state.sync_wishlist
     try:
-        if not achievements_enabled and not playtime_enabled and not auto_add:
+        if not achievements_enabled and not playtime_enabled and not auto_add and not wishlist_enabled:
             async with factory() as db:
                 job = await running_job(db, job_id)
                 job.status, job.current_step = SyncStatus.completed, 'Steam sync disabled'
@@ -338,8 +340,14 @@ async def _sync(factory, user_id, job_id, connection_id):
             return
         source = SteamSource(factory)
         library = await source.library(native)
+        wishlist, wishlist_error = None, None
+        if wishlist_enabled:
+            try:
+                wishlist = await source.wishlist(native)
+            except SteamError as error:
+                wishlist_error = str(error)
         from core.steam_targets import classify
-        await classify(factory,library)
+        await classify(factory, [*library, *(wishlist or [])])
         additions = {row['app_id'] for row in library} - known if auto_add else set()
         target_ids = set(selected) | additions
         async with factory() as db:
@@ -362,19 +370,25 @@ async def _sync(factory, user_id, job_id, connection_id):
             state = await db.get(SteamConnection, connection_id, with_for_update=True)
             if not state or state.generation != generation:
                 raise SteamError('Steam connection changed during sync. Retry the sync.')
-            changed = await apply_games(db, state, library, [*selected, *sorted(additions)], add_apps=additions)
+            from core.steam_wishlist import handoff_purchases, apply as apply_wishlist
+            handed_off = await handoff_purchases(db, state, library) if wishlist_enabled else []
+            selected = list(dict.fromkeys([*selected, *handed_off]))
+            changed = await apply_games(db, state, library, [*selected, *sorted(additions)], add_apps=additions | set(handed_off))
+            wishlist_result = await apply_wishlist(db, state, wishlist, library) if wishlist is not None else {}
             # Failed admissions remain new on the next sync. Previously declined
             # or deleted apps stay in known and cannot be resurrected.
             state.known_apps = sorted(known | ({row['app_id'] for row in library} - additions)
                 | {app for app in additions if app in state.checkpoints})
-            state.selection = [*selected, *sorted(app for app in additions if app in state.checkpoints)]
+            state.selection = list(dict.fromkeys([*selected, *sorted(app for app in additions if app in state.checkpoints)]))
             job = await running_job(db, job_id)
             job.status, job.current_step = SyncStatus.completed, 'Steam up to date'
             job.total_items = job.processed_items = len(target_ids)
             job.stats = {'updated': changed, 'added': len(state.selection) - len(selected),
-                         'achievement_requests': requests, 'library_requests': 1}
+                         'achievement_requests': requests, 'library_requests': 1, **wishlist_result}
             unknown = sum(row.get('achievement_count') is None for row in patches.values())
             job.warnings = [f'Achievements unavailable for {unknown} games; existing progress was preserved.'] if unknown else []
+            if wishlist_error:
+                job.warnings = [*(job.warnings or []), wishlist_error]
             await db.commit()
         await steam_cache.save_public(factory, library)
         from core.steam_artwork import refresh as refresh_artwork

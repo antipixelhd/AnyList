@@ -90,6 +90,7 @@ async def assign(db, app, target_app, *, evidence):
 
 async def classify(factory, games, *, source=None, redirect_probe=None):
     """Batch exact IGDB app references. No title matching or per-game fan-out."""
+    games = list({game['app_id']: game for game in games}.values())
     from core.game_browse_sources import GameBrowseSources
     from core import steam_software
     await steam_software.classify(factory, games)
@@ -169,6 +170,8 @@ async def classify(factory, games, *, source=None, redirect_probe=None):
             if len(matches)==1 and app not in incomplete:
                 raw=next(iter(matches.values()))
                 item.update(game_class=igdb_game_class(raw),igdb_id=str(raw['id']))
+                from core.catalogue_normalize import image
+                item.update(name=raw.get('name'), poster=image(raw.get('cover')))
                 evidence.update(state='bound' if len(rows)<500 else 'partial',game_class=item['game_class'],igdb_id=item['igdb_id'])
             item['igdb_classification']=evidence
             values.append(item)

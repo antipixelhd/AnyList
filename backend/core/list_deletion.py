@@ -28,6 +28,7 @@ async def delete_list_data(db, user_id: int, category: str) -> None:
         # picker drafts and remove all imported selections/checkpoints.
         await db.execute(update(SteamConnection).where(SteamConnection.user_id == user_id).values(
             library=[], selection=[], checkpoints={}, draft={}, known_apps=[],
+            wishlist=None, wishlist_state={}, sync_wishlist=False,
             imported=False, auto_add_games=False, generation=SteamConnection.generation + 1,
             fetched_at=None,
         ))

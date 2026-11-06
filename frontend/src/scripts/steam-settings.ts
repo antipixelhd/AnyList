@@ -1,11 +1,11 @@
-import { defaultSteamDraft, sortSteamGames, steamSelected, steamProgressPending, steamStatus, filterSteamGames, reconcileSteamCards, chooseSteamStatus, steamAccentText, steamScrollAnchor } from '../lib/steam-import';
+import { defaultSteamDraft, sortSteamGames, steamSelected, steamProgressPending, steamStatus, filterSteamGames, reconcileSteamCards, chooseSteamStatus, steamAccentText, steamScrollAnchor, steamWishlistSelected } from '../lib/steam-import';
 import type { SteamDraft, SteamGame } from '../lib/steam-import';
 import { showDialog, closeDialog } from '../lib/ui-motion';
 import { setupCalendarDateInputs } from '../lib/calendar-date-input';
 import { formatDate } from '../lib/date-time';
 
-type Connection = { id: number; steam_id: string; imported: boolean; sync_achievements: boolean; sync_playtime: boolean; auto_add_games: boolean; selected_count: number; generation: number };
-type Review = Connection & { library: SteamGame[]; draft: Partial<SteamDraft>; job: { status: string; current: number; total: number; error: string | null; warnings: string[] } | null };
+type Connection = { id: number; steam_id: string; imported: boolean; sync_achievements: boolean; sync_playtime: boolean; auto_add_games: boolean; sync_wishlist: boolean; selected_count: number; generation: number };
+type Review = Connection & { wishlist: SteamGame[]; wishlist_error: string | null; library: SteamGame[]; draft: Partial<SteamDraft>; job: { status: string; current: number; total: number; error: string | null; warnings: string[] } | null };
 
 let cleanup: (() => void) | undefined;
 function init() {
@@ -23,6 +23,8 @@ function init() {
   let draft = defaultSteamDraft();
   let active: Review | undefined;
   let games: SteamGame[] = [];
+  let wishlist: SteamGame[] = [], wishlistLimit = 80;
+  let step: 0 | 1 | 2 = 0;
   let byId = new Map<string, SteamGame>();
   let limit = 80;
   let query = '';
@@ -33,6 +35,7 @@ function init() {
   let loadVersion = 0;
   let paused = false;
   const cards = new Map<string, HTMLButtonElement>();
+  const wishlistCards = new Map<string, HTMLElement>();
   const dialog = get<HTMLDialogElement>('dialog');
   let detailsController = new AbortController();
   let reviewGames: SteamGame[] | null = null;
@@ -118,11 +121,12 @@ function init() {
     try {
       await request(`/${id}/background`, 'POST');
       while (epoch === reviewEpoch && !signal.aborted && !importing) {
-        const result = await request<{ games: SteamGame[] }>(`/${id}/achievement-progress`);
+        const result = await request<{ games: SteamGame[]; wishlist: SteamGame[] }>(`/${id}/achievement-progress`);
         if (epoch !== reviewEpoch || signal.aborted || importing) return;
+        if (result.wishlist) { wishlist = result.wishlist; if (step === 2) renderWishlist(); }
         for (const value of result.games) { const game = byId.get(value.app_id); if (game) { Object.assign(game, value); paintCount(game); } }
         if (!reviewGames && (draft.sort === 'completion' || selectedOnly)) render(); else paintSelections();
-        if (!games.some(steamProgressPending)) return;
+        if (!games.some(steamProgressPending) && !wishlist.some(game => game.mapping_state === 'pending')) return;
         await new Promise<void>(resolve => { const finish = () => { clearTimeout(wait); signal.removeEventListener('abort', finish); resolve(); }; const wait = setTimeout(finish, 1500); signal.addEventListener('abort', finish, {once:true}); });
       }
       return;
@@ -202,8 +206,9 @@ function init() {
     get('selected-total').textContent = selected.toLocaleString();
     get('view-all').setAttribute('aria-pressed',String(!selectedOnly));
     get('view-selected').setAttribute('aria-pressed',String(selectedOnly));
-    get<HTMLButtonElement>('import').disabled = importing || selected === 0;
-    get<HTMLButtonElement>('next').disabled = selected === 0;
+    get<HTMLButtonElement>('import').disabled = importing;
+    get<HTMLButtonElement>('next').disabled = importing;
+    if (step === 2) get('selected').textContent = `${wishlist.filter(game => steamWishlistSelected(game, draft, !!active?.sync_wishlist)).length.toLocaleString()} wishlist games selected`;
     const settled = games.filter(game => game.mapping_state === 'software' || (game.achievement_state !== 'loading' && !game.achievement_refreshing)).length;
     get<HTMLProgressElement>('progress').max = games.length || 1; get<HTMLProgressElement>('progress').value = settled;
     get('progress-label').textContent = `${settled} / ${games.length}`;
@@ -314,13 +319,16 @@ function init() {
     get('retry').hidden = status !== 'failed' && status !== 'cancelled';
     if (available) {
       const epoch = ++reviewEpoch; importing = false;
+      wishlist = data.wishlist || []; get('wishlist-grid').replaceChildren(); wishlistCards.clear(); wishlistLimit = 80;
+      get('wishlist-error').textContent = data.wishlist_error || ''; get('wishlist-error').hidden = !data.wishlist_error;
+      get('wishlist-retry').hidden = !data.wishlist_error;
       games = data.library; byId = new Map(games.map(game => [game.app_id, game]));
       draft = { ...defaultSteamDraft(), ...data.draft };
       try {
         const local = sessionStorage.getItem(`steam-import:${data.id}:${data.generation}`);
         if (local) draft = { ...draft, ...JSON.parse(local) };
       } catch {}
-      setStep(false); get('grid').replaceChildren(); cards.clear(); orderedGames = []; limit = 80;
+      setStep(0); get('grid').replaceChildren(); cards.clear(); orderedGames = []; limit = 80;
       controls(); render(); message(data.job?.warnings.join(' ') || '');
       if (!dialog.open) showDialog(dialog);
       void loadProgress(epoch, data.id, data.generation);
@@ -344,14 +352,14 @@ function init() {
       title.textContent = conn.imported ? `${conn.selected_count} games connected` : 'Import in progress'; title.className = 'block text-sm text-zinc-300 hover:text-white';
       row.append(title);
       if (conn.imported) {
-        for (const [field, label] of [['sync_achievements', 'Achievement sync'], ['sync_playtime', 'Playtime sync'], ['auto_add_games', 'Automatically add new games']] as const) {
+        for (const [field, label] of [['sync_achievements', 'Achievement sync'], ['sync_playtime', 'Playtime sync'], ['auto_add_games', 'Automatically add new games'], ['sync_wishlist', 'Wishlist sync (one way)']] as const) {
           const wrapper = document.createElement('label'); wrapper.className = 'inline-flex items-center mr-6 text-sm text-zinc-300';
           const input = document.createElement('input'); input.type = 'checkbox'; input.checked = conn[field];
           listen(input, 'change', () => {
             const inputs = row.querySelectorAll<HTMLInputElement>('input');
             inputs.forEach(control => { control.disabled = true; });
             void request(`/${conn.id}`, 'PATCH', { sync_achievements: conn.sync_achievements, sync_playtime: conn.sync_playtime,
-              auto_add_games: conn.auto_add_games, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, [field]: input.checked })
+              auto_add_games: conn.auto_add_games, sync_wishlist: conn.sync_wishlist, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, [field]: input.checked })
               .then(() => { conn[field] = input.checked; message('Steam settings saved.'); })
               .catch(error => { input.checked = conn[field]; fail(error); }).finally(() => { inputs.forEach(control => { control.disabled = false; }); });
           });
@@ -376,20 +384,74 @@ function init() {
     submit.disabled = true; submit.textContent = 'Checking Steam…'; message('');
     const values = new FormData(form);
     void request<Connection>('', 'POST', { profile: values.get('profile'), sync_achievements: values.has('achievements'), sync_playtime: values.has('playtime'),
-      auto_add_games: values.has('auto-add'), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone })
+      auto_add_games: values.has('auto-add'), sync_wishlist: values.has('wishlist'), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone })
       .then(() => list()).catch(fail).finally(() => { submit.disabled = false; submit.textContent = 'Connect Steam'; });
   });
-  function setStep(details: boolean) {
-    get('controls').hidden = details; get('grid').hidden = details;
-    get('details').hidden = !details; get('empty').hidden = details || visibleGames.length > 0;
-    get('more').hidden = details || limit >= visibleGames.length;
-    get('next').hidden = details; get('import').hidden = !details; get('back').hidden = !details;
-
-    get('details-more').hidden = !details || reviewLimit >= (reviewGames?.length || 0);
-    get('dialog').querySelector('h2')!.textContent = details ? 'Dates & ratings' : 'Choose your games';
-    if (!details) { reviewGames = null; detailsController.abort(); }
-    scroller.scrollTop = 0;
+  function setStep(next: 0 | 1 | 2) {
+    step = next;
+    get('controls').hidden = next !== 0; get('grid').hidden = next !== 0;
+    get('details').hidden = next !== 1; get('wishlist').hidden = next !== 2;
+    get('empty').hidden = next !== 0 || visibleGames.length > 0;
+    get('more').hidden = next !== 0 || limit >= visibleGames.length;
+    get('next').hidden = next === 2; get('import').hidden = next !== 2; get('back').hidden = next === 0;
+    get('details-more').hidden = next !== 1 || reviewLimit >= (reviewGames?.length || 0);
+    get('dialog').querySelector('h2')!.textContent = next === 2 ? 'Choose your wishlist' : next === 1 ? 'Dates & ratings' : 'Choose your games';
+    if (next === 0) { reviewGames = null; detailsController.abort(); }
+    if (next === 2) renderWishlist();
+    scroller.scrollTop = 0; paintSelections();
   }
+  function renderWishlist() {
+    const query = get<HTMLInputElement>('wishlist-search').value;
+    const visible = filterSteamGames(wishlist, query);
+    const grid = get('wishlist-grid');
+    const nodes: HTMLElement[] = [];
+    for (const game of visible.slice(0, wishlistLimit)) {
+      let wrapper = wishlistCards.get(game.app_id);
+      if (!wrapper) {
+        wrapper = document.createElement('article'); wrapper.className = 'steam-game';
+        const button = document.createElement('button'); button.type = 'button'; button.className = 'steam-card';
+        button.dataset.wishlistApp = game.app_id; button.setAttribute('aria-label', game.name);
+        button.setAttribute('aria-pressed', String(steamWishlistSelected(game, draft, !!active?.sync_wishlist)));
+        button.disabled = ['software','unavailable'].includes(game.mapping_state || '');
+        const cover = document.createElement('span'); cover.className = 'steam-cover';
+        const image = document.createElement('img'); image.alt = ''; image.loading = 'lazy'; image.decoding = 'async'; image.src = game.poster;
+        cover.append(image);
+        const title = document.createElement('span'); title.className = 'steam-card-title'; title.textContent = game.name;
+        const check = document.createElement('span'); check.className = 'steam-card-check'; check.textContent = '\u2713'; check.setAttribute('aria-hidden','true');
+        button.append(cover, title, check);
+        button.addEventListener('click', () => {
+          const latest = wishlist.find(row => row.app_id === game.app_id) || game;
+          draft.wishlist_overrides[game.app_id] = !steamWishlistSelected(latest, draft, !!active?.sync_wishlist);
+          button.setAttribute('aria-pressed', String(steamWishlistSelected(latest, draft, !!active?.sync_wishlist))); changed();
+        });
+        wrapper.append(button); wishlistCards.set(game.app_id, wrapper);
+      }
+      const button = wrapper.querySelector<HTMLButtonElement>('button')!;
+      button.disabled = ['software','unavailable'].includes(game.mapping_state || '');
+      button.setAttribute('aria-pressed', String(steamWishlistSelected(game, draft, !!active?.sync_wishlist)));
+      button.setAttribute('aria-label', game.name);
+      wrapper.querySelector('.steam-card-title')!.textContent = game.name;
+      const image = wrapper.querySelector<HTMLImageElement>('img')!;
+      if (image.getAttribute('src') !== game.poster) image.src = game.poster;
+      nodes.push(wrapper);
+    }
+    reconcileSteamCards(grid, nodes);
+    get('wishlist-more').hidden = visible.length <= wishlistLimit;
+    get('wishlist-empty').hidden = visible.length !== 0 || !get('wishlist-error').hidden;
+    get('wishlist-empty').textContent = query.trim() ? 'No games found.' : 'Your wishlist is empty.';
+    paintSelections();
+  }
+  listen(get('wishlist-search'), 'input', () => { wishlistLimit = 80; renderWishlist(); });
+  listen(get('wishlist-more'), 'click', () => { wishlistLimit += 80; renderWishlist(); });
+  for (const [name, selected] of [['wishlist-all',true],['wishlist-none',false]] as const)
+    listen(get(name), 'click', () => { for (const game of wishlist) draft.wishlist_overrides[game.app_id] = selected; renderWishlist(); changed(); });
+  listen(get('wishlist-retry'), 'click', () => {
+    if (!active) return;
+    get<HTMLButtonElement>('wishlist-retry').disabled = true;
+    void request<{wishlist:SteamGame[]}>(`/${active.id}/wishlist`, 'POST').then(data => {
+      wishlist = data.wishlist; get('wishlist-error').hidden = true; get('wishlist-retry').hidden = true; renderWishlist();
+    }).catch(fail).finally(() => { get<HTMLButtonElement>('wishlist-retry').disabled = false; });
+  });
   function appendDetails() {
     const container = get('details');
     for (const game of reviewGames!.slice(container.children.length, reviewLimit)) {
@@ -443,23 +505,27 @@ function init() {
     get('details-more').hidden = reviewLimit >= reviewGames!.length;
   }
   listen(get('next'),'click',()=>{
+    if (step === 1) {
+      const invalid = get('details').querySelector<HTMLInputElement>('input:invalid');
+      if (invalid) { invalid.reportValidity(); return; }
+      setStep(2); changed(); get('dialog').querySelector<HTMLElement>('h2')!.focus({preventScroll:true}); return;
+    }
     reviewGames = sortSteamGames(games.filter(game=>steamSelected(game,draft)),draft.sort);
-    if (!reviewGames.length) return;
     detailsController.abort(); detailsController = new AbortController(); reviewLimit = 40;
-    get('details').replaceChildren(); appendDetails(); setStep(true); changed();
+    get('details').replaceChildren(); appendDetails(); setStep(1); changed();
     get('dialog').querySelector<HTMLElement>('h2')!.focus({preventScroll:true});
   });
-  listen(get('back'),'click',()=>{setStep(false);render(false);get('search').focus();});
+  listen(get('back'),'click',()=>{if (step === 2) { setStep(1); return; } setStep(0);render(false);get('search').focus();});
   listen(get('details-more'),'click',()=>{reviewLimit+=40;appendDetails();});
   listen(get('retry'), 'click', () => { if (active) void request(`/${active.id}/retry`, 'POST').then(() => load(active!.id)).catch(fail); });
   listen(get('import'), 'click', () => {
     if (!active || importing) return;
-    if (!reviewGames) { message('Review your selected games before importing.', true); return; }
+    if (step !== 2 || !reviewGames) { message('Review your selected games before importing.', true); return; }
     const invalid = get('details').querySelector<HTMLInputElement>('input:invalid');
     if (invalid) { invalid.reportValidity(); return; }
     importing = true; reviewEpoch++;
     const selectedGames = reviewGames.filter(game => game.mapping_state !== 'unavailable' && game.mapping_state !== 'software');
-    const selection = { ...payload(), selected_apps: selectedGames.map(game => game.app_id),
+    const selection = { ...payload(), selected_wishlist: wishlist.filter(game => steamWishlistSelected(game, draft, !!active?.sync_wishlist)).map(game => game.app_id), selected_apps: selectedGames.map(game => game.app_id),
       completion_dates: Object.fromEntries(selectedGames.map(game => [game.app_id, finishDate(game)])),
       start_dates:Object.fromEntries(selectedGames.map(game=>[game.app_id,draft.start_dates[game.app_id]||null])) };
     clearTimeout(saveTimer); const button = get<HTMLButtonElement>('import'); button.disabled = true; button.textContent = 'Importing…';
