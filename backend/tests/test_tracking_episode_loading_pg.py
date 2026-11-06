@@ -6,7 +6,8 @@ from unittest.mock import AsyncMock, patch
 from sqlalchemy import func, select
 import test_statistics_pg as fixture
 from core import tracking_episode_loading as loading
-from models import Media, TrackedEntry, User, UserProfileData, WatchEvent
+from models import Media, Show, TrackedEntry, User, UserProfileData, WatchEvent
+from core.tracking_episode_persistence import persist_tmdb_episodes
 from models.base import MediaType, PrivacyLevel
 from models.users import UserSettings
 from dependencies import get_current_user
@@ -173,6 +174,111 @@ class EpisodeLoadingTests(unittest.IsolatedAsyncioTestCase):
             row = await db.scalar(loading.query(self.series))
             self.assertIsNone(row.lease_token)
             self.assertGreater(row.next_attempt_at, loading.now())
+
+    async def test_stale_refresh_revision_waits_for_publication_instead_of_polling(self):
+        await self.client.get(f'/tracking/title/{self.series}/seasons')
+        revision = '2000-01-01T00:00:00+00:00'
+        async with self.Session() as db:
+            media = await db.get(Media, self.series)
+            media.tmdb_data = {**media.tmdb_data, 'tracking_catalogue_refreshed_at': revision}
+            await db.commit()
+        self.release.clear()
+        self.started.clear()
+        first = (await self.client.get(f'/tracking/title/{self.series}/seasons')).json()
+        self.assertTrue(first['season_status']['ready'])
+        self.assertTrue(first['season_status']['waitable'])
+        await asyncio.wait_for(self.started.wait(), 2)
+        next_read = asyncio.create_task(self.client.get(f'/tracking/title/{self.series}/seasons', params={'revision': revision}))
+        try:
+            await asyncio.sleep(.02)
+            self.assertFalse(next_read.done())
+        finally:
+            self.release.set()
+        data = (await asyncio.wait_for(next_read, 1)).json()
+        self.assertFalse(data['season_status']['pending'])
+        self.assertNotEqual(data['catalogue_revision'], revision)
+
+    async def test_batch_refresh_keeps_ids_private_history_and_recovered_metadata(self):
+        data = (await self.client.get(f'/tracking/title/{self.series}/seasons')).json()
+        ids = [episode['id'] for season in data['seasons'] for episode in season['episodes']]
+        async with self.Session() as db:
+            episode = await db.get(Media, ids[0])
+            show_id = episode.show_id
+            episode.runtime = 52
+            episode.poster_path = '/saved.jpg'
+            episode.overview = 'Recovered description'
+            episode.tmdb_data = {'keep': 'source evidence'}
+            episode.tvdb_id = 445566
+            db.add(WatchEvent(user_id=self.user_id, media_id=episode.id, completed=True))
+            await db.commit()
+            rows = list(await db.scalars(select(Media).where(Media.id.in_(ids)).order_by(Media.season_number, Media.episode_number)))
+            await persist_tmdb_episodes(db, show_id, [(row.season_number, {'id': row.tmdb_id,
+                'episode_number': row.episode_number, 'name': 'Updated episode', 'runtime': 0}) for row in rows])
+            await db.commit()
+            await db.refresh(episode)
+            self.assertEqual(episode.id, ids[0])
+            self.assertEqual((episode.runtime, episode.poster_path, episode.overview), (52, '/saved.jpg', 'Recovered description'))
+            self.assertEqual(episode.tvdb_id, 445566)
+            self.assertEqual(episode.tmdb_data, {'keep': 'source evidence'})
+            self.assertEqual(await db.scalar(select(WatchEvent.media_id).where(WatchEvent.media_id == ids[0])), ids[0])
+            # A previously loaded ORM object cannot hide another writer's
+            # corrected identity position from the locked validation read.
+            async with self.Session() as other:
+                changed = await other.get(Media, ids[0])
+                changed.season_number = 99
+                await other.commit()
+            with self.assertRaisesRegex(ValueError, 'numbering changed'):
+                await persist_tmdb_episodes(db, show_id, [(1, {'id': rows[0].tmdb_id, 'episode_number': 1})])
+            await db.rollback()
+
+    async def test_batch_insert_race_reuses_identity_and_rejects_changed_numbering(self):
+        async with self.Session() as db:
+            show = Show(tmdb_id=667788, title='Race fixture', canonical_source='tmdb')
+            db.add(show)
+            await db.commit()
+            show_id = show.id
+        for native, position in ((6677881, (1, 1)), (6677882, (9, 9))):
+            async with self.Session() as db:
+                original = db.scalars
+                raced = False
+                async def interleave(statement, *args, **kwargs):
+                    nonlocal raced
+                    if getattr(statement, 'is_insert', False) and not raced:
+                        raced = True
+                        async with self.Session() as other:
+                            episode = Media(tmdb_id=native, media_type=MediaType.episode, show_id=show_id,
+                                season_number=position[0], episode_number=position[1], title='Concurrent import')
+                            other.add(episode)
+                            await other.flush()
+                            other.add(WatchEvent(user_id=self.user_id, media_id=episode.id, completed=True))
+                            await other.commit()
+                    return await original(statement, *args, **kwargs)
+                with patch.object(db, 'scalars', side_effect=interleave):
+                    if position == (1, 1):
+                        await persist_tmdb_episodes(db, show_id, [(1, {'id': native, 'episode_number': 1, 'name': 'Updated'})])
+                        await db.commit()
+                    else:
+                        with self.assertRaisesRegex(ValueError, 'numbering changed'):
+                            await persist_tmdb_episodes(db, show_id, [(1, {'id': native, 'episode_number': 1})])
+                        await db.rollback()
+            async with self.Session() as db:
+                rows = list(await db.scalars(select(Media).where(Media.tmdb_id == native)))
+                self.assertEqual(len(rows), 1)
+                self.assertEqual((rows[0].season_number, rows[0].episode_number), position)
+                self.assertEqual(await db.scalar(select(WatchEvent.media_id).where(WatchEvent.media_id == rows[0].id)), rows[0].id)
+
+    async def test_large_batches_are_complete_and_duplicate_evidence_is_rejected(self):
+        async with self.Session() as db:
+            show = Show(tmdb_id=776655, title='Long series', canonical_source='tmdb')
+            db.add(show)
+            await db.commit()
+            rows = [(1, {'id': 7760000 + n, 'episode_number': n}) for n in range(1, 502)]
+            await persist_tmdb_episodes(db, show.id, rows)
+            await db.commit()
+            self.assertEqual(await db.scalar(select(func.count()).select_from(Media).where(Media.show_id == show.id)), 501)
+            for bad in ([rows[0], rows[0]], [rows[0], (1, {'id': 8888888, 'episode_number': 1})]):
+                with self.assertRaisesRegex(ValueError, 'duplicate'):
+                    await persist_tmdb_episodes(db, show.id, bad)
 
     async def test_cached_list_progress_is_present_without_episode_rows_and_watch_state_is_private(self):
         loaded = (await self.client.get(f'/tracking/title/{self.series}/seasons')).json()

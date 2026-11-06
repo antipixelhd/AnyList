@@ -135,6 +135,26 @@ class GameMetadataTests(unittest.IsolatedAsyncioTestCase):
         unchanged=await self.client.get(f'/tracking/games/works/{self.base}/metadata',params={'primary':'true','revision':revision})
         self.assertNotIn('primary',unchanged.json())
 
+    async def test_browser_primary_waits_past_old_poll_window_but_not_for_characters(self):
+        proceed = asyncio.Event()
+        original = self.provider.detail
+        async def slow(*args, **kwargs):
+            await proceed.wait()
+            return await original(*args, **kwargs)
+        self.provider.detail = slow
+        shell = await self.detail()
+        self.assertFalse(shell.json()['game_metadata_status']['primary_ready'])
+        pending = asyncio.create_task(self.client.get(f'/tracking/games/works/{self.base}/metadata?primary=true'))
+        try:
+            await asyncio.sleep(2.1)
+            self.assertFalse(pending.done(), 'primary publication must not fall into another browser polling gap')
+        finally:
+            proceed.set()
+        response = await asyncio.wait_for(pending, 2)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()['primary']['overview'], 'Full primary synopsis')
+        self.assertFalse(self.provider.release.is_set(), 'optional characters remain independent')
+
     async def test_scheduler_admits_later_primary_while_optional_character_slots_are_busy(self):
         ids=[]
         async with self.Session() as db:

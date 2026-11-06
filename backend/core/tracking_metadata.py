@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import and_, or_, select
 from core import tmdb, tvdb
 from core.descriptive_metadata import tvdb_fields, tmdb_fields
-from core.enrichment import create_media_safely
+from core.tracking_episode_persistence import persist_tmdb_episodes
 from models import Media, Show
 from models.base import MediaType
 from models.tracking import TrackedEntry
@@ -191,17 +191,7 @@ async def hydrate_tracking_episodes(db, media, api_key=None, tvdb_api_key=None):
         show = Show(tmdb_id=media.tmdb_id, title=media.title, canonical_source='tmdb')
         db.add(show)
         await db.flush()
-    for number, data in fetched:
-        episode, created = await create_media_safely(db, data['id'], MediaType.episode,
-            title=data.get('name') or f'Episode {data["episode_number"]}', show_id=show.id,
-            season_number=number, episode_number=data['episode_number'])
-        if (episode.show_id, episode.season_number, episode.episode_number) != (show.id, number, data['episode_number']):
-            raise ValueError('Episode numbering changed; existing watch history was preserved')
-        episode.release_date = data.get('air_date')
-        episode.title = data.get('name') or episode.title
-        episode.poster_path = data.get('still_path') or episode.poster_path
-        episode.overview = data.get('overview') or episode.overview
-        retain_episode_runtime(episode, data)
+    await persist_tmdb_episodes(db, show.id, fetched)
     air_metadata = {key: details[key] for key in ('status', 'last_episode_to_air', 'next_episode_to_air') if key in details}
     media.status = details.get('status') or media.status
     media.tmdb_data = {**(media.tmdb_data or {}), **tmdb_fields(details, media.tmdb_data), **air_metadata, 'seasons': seasons,

@@ -256,10 +256,10 @@ async def game_metadata_status(work_id:WorkId,db:DB,viewer:Reader,
     from sqlalchemy.ext.asyncio import async_sessionmaker
     work=await tracking.work(db,work_id)
     service=GameMetadata(async_sessionmaker(db.bind,expire_on_commit=False),scope=db.bind)
-    # Share a short wait for the primary event, with the SQL connection released.
+    # The browser's primary read joins publication, with its SQL connection released.
     # Ready data need not wait for another browser polling interval. Warm reads
     # still return immediately and never acquire optional character payloads.
-    state,_=await service.ensure(db,work,wait_seconds=2)
+    state,_=await service.ensure(db,work,wait_seconds=15 if primary else 2)
     if primary and state['primary_ready'] and state.get('primary_revision')!=revision:
         from core.media_details import game_primary_details
         await db.refresh(work)

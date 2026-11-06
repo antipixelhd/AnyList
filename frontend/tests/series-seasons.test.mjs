@@ -58,3 +58,17 @@ test('an open editor can defer installation without repeating the metadata read'
     canApply=true;await loader.load();assert.equal(reads,1);assert.equal(installed,1);
   }finally{lifetime.abort();globalThis.setTimeout=original;}
 });
+
+test('a local stale refresh immediately joins publication with its known revision',async()=>{
+  const original=globalThis.setTimeout,delays=[],revisions=[],published=deferred(),lifetime=new AbortController();
+  globalThis.setTimeout=(fn,delay)=>{delays.push(delay);return 0;};
+  try{
+    let reads=0,applies=0;
+    const stale=ready();stale.data.season_status={ready:true,pending:true,waitable:true,retry_after:2};
+    const loader=createSeasonLoader(revision=>{revisions.push(revision);return ++reads===1?Promise.resolve(stale):published.promise;},()=>{applies++;return true;},lifetime.signal,()=>{});
+    await loader.load();assert.deepEqual(delays,[0]);
+    const waiting=loader.load();assert.equal(applies,1);
+    const fresh=ready();fresh.data.catalogue_revision='two';published.resolve(fresh);await waiting;
+    assert.deepEqual(revisions,[undefined,'one']);assert.equal(applies,2);
+  }finally{lifetime.abort();globalThis.setTimeout=original;}
+});

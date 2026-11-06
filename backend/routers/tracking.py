@@ -1563,7 +1563,8 @@ async def detail_seasons(db, media, viewer, *, include_episodes=True):
 
 @router.get('/title/{media_id}/seasons')
 async def title_seasons(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db)],
-        viewer: Annotated[User, Depends(get_current_user_or_api_key)], response: Response):
+        viewer: Annotated[User, Depends(get_current_user_or_api_key)], response: Response,
+        revision: Annotated[str | None, Query(max_length=80)] = None):
     await catalog_access(db, viewer)
     media = await db.get(Media, media_id)
     if not media or media.media_type != MediaType.series:
@@ -1572,7 +1573,8 @@ async def title_seasons(media_id: Annotated[int, Path(gt=0)], db: Annotated[Asyn
         raise HTTPException(404, 'Series not found')
     response.headers['Cache-Control'] = 'private, no-store'
     from core.tracking_episode_loading import ensure
-    status = await ensure(db, media, viewer.id if viewer else None)
+    status = await ensure(db, media, viewer.id if viewer else None,
+        wait_for_refresh=bool(revision and revision == (media.tmdb_data or {}).get('tracking_catalogue_refreshed_at')))
     await db.refresh(media)
     entry = await db.scalar(select(TrackedEntry).where(TrackedEntry.user_id == viewer.id,
         TrackedEntry.media_id == media.id)) if viewer else None

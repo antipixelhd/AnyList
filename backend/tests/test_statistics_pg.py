@@ -50,6 +50,9 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
             conn.execute(text(f'SET LOCAL search_path TO "{self.schema}"'))
             wanted = [t for t in Base.metadata.sorted_tables if not t.name.startswith("user_stats_") and t.name not in ("stats_metadata_revision", "catalogue_contributor_search", "game_stats_state")]
             Base.metadata.create_all(conn, tables=wanted)
+            # This production identity index is created by its data migration,
+            # rather than Base.metadata; exercise real episode conflict handling.
+            conn.execute(text('CREATE UNIQUE INDEX uq_media_tmdb_type ON media (tmdb_id, media_type) WHERE tmdb_id IS NOT NULL'))
             conn.execute(text("ALTER TABLE catalogue_credits DROP COLUMN character_image_url"))
             conn.execute(text("ALTER TABLE catalogue_credits DROP COLUMN screen_character_id"))
             conn.execute(text("DROP TABLE catalogue_screen_characters"))
