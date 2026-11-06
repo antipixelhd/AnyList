@@ -271,6 +271,7 @@ export interface OidcExchangeResponse {
 export type PrivacyLevel = "public" | "friends_only" | "private";
 
 export interface PersonalDataSelection {
+  games: boolean;
   watched: boolean;
   ratings: boolean;
   collection: boolean;

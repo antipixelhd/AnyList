@@ -270,7 +270,9 @@ export class EditorStore {
           const child=record.title.game_class==='expansion';
           const revision=record.committed?.revision??record.title.game_state?.revision;
           const saved=await this.request(`games/${child?'children':'entries'}/${id}?confirmed=true&revision=${revision}`,{method:'DELETE'});
-          record.title.game_state=child?saved:{...record.title.game_state,listed:false,status:null,revision:null};
+          // Independent entries are erased; only children retain private prefill.
+          record.title.game_state=child?saved:{subject:record.title.subject,title:record.title.title,
+            game_class:record.title.game_class,listed:false,status:null,revision:null,favorite:false};
           if(!child)for(const other of this.records.values()){
             if(other.title.type==='game'&&other.title.base_work_id===id)other.stale=true;
           }

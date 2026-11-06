@@ -46,6 +46,33 @@ class GameStatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
             if (await self.request()).json()['status']=='ready':return
         self.fail('Games statistics were not published')
 
+    async def test_combined_app_denominators_and_component_only_invalidation(self):
+        from core.game_tracking import achievement_metadata
+        async with self.Session() as db:
+            work = await db.get(CatalogueEntity, self.game_id)
+            work.attributes = {**work.attributes, 'steam_progress_apps':['10','20'],
+                'steam_progress_totals':{'10':3,'20':2},
+                'achievement_catalogue':{'total':3,'steam_app_id':'10'}}
+            entry = await db.scalar(select(GameEntry).where(GameEntry.work_id == work.id))
+            entry.achievement_mode = 'count'; entry.achievement_count = 4
+            await db.commit()
+            self.assertEqual(achievement_metadata(work)[1], 5)
+        await self.ready()
+        self.assertEqual((await self.request()).json()['data']['totals']['achievement_percentage'], 80)
+        async with self.Session() as db:
+            work = await db.get(CatalogueEntity, self.game_id)
+            work.attributes = {**work.attributes, 'steam_progress_totals':{'10':3,'20':5}}
+            await db.commit()
+        self.assertEqual((await self.request()).json()['status'], 'pending')
+        await self.ready()
+        self.assertEqual((await self.request()).json()['data']['totals']['achievement_percentage'], 50)
+        async with self.Session() as db:
+            work = await db.get(CatalogueEntity, self.game_id)
+            work.attributes = {**work.attributes, 'steam_progress_totals':{'10':3}}
+            await db.commit()
+        await self.ready()
+        self.assertIsNone((await self.request()).json()['data']['totals']['achievement_percentage'])
+
     async def test_real_route_cached_generation_parent_only_and_screen_scope_stays_separate(self):
         await self.ready();response=await self.request();self.assertEqual(response.status_code,200,response.text)
         data=response.json();self.assertEqual(data['domain'],'game');self.assertEqual(data['data']['totals']['recorded_seconds'],72000)

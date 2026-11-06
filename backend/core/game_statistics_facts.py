@@ -4,6 +4,7 @@ import math
 import statistics
 import re
 from collections import defaultdict
+from types import SimpleNamespace
 from datetime import date
 from urllib.parse import urlencode
 
@@ -28,11 +29,17 @@ async def load_facts(db,user_id):
         work.attributes['genres'].label('genres'),work.attributes['release_date'].astext.label('release_date'),
         work.attributes['genre_filters'].label('genre_filters'),
         work.attributes['completion_estimates'].label('estimates'),
-        func.jsonb_build_object('total',work.attributes['achievement_catalogue']['total']).label('achievements')).join(
+        func.jsonb_build_object('achievement_catalogue',work.attributes['achievement_catalogue'],
+            'steam_progress_apps',work.attributes['steam_progress_apps'],
+            'steam_progress_totals',work.attributes['steam_progress_totals']).label('achievement_attributes')).join(
         work,work.id==entry.work_id).where(entry.user_id==user_id,work.kind=='game',
         work.attributes['game_class'].astext.in_(INDEPENDENT-{'port'}),work.attributes['adult'].astext.is_distinct_from('true'),work.attributes['mobile_only'].astext.is_distinct_from('true'))
     result=await db.execute(query)
     facts=await asyncio.to_thread(lambda:[dict(row) for row in result.mappings()])
+    from core.game_tracking import achievement_metadata
+    for fact in facts:
+        _,total,_=achievement_metadata(SimpleNamespace(attributes=fact.pop('achievement_attributes')))
+        fact['achievements']={'total':total}
     if not facts:return [],[]
     if any(not row.get('genre_filters') for row in facts):
         references=await db.scalar(select(MetadataSnapshot.payload['rows']).where(MetadataSnapshot.provider=='igdb',

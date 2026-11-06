@@ -363,7 +363,10 @@ async def _sync(factory, user_id, job_id, connection_id):
             if not state or state.generation != generation:
                 raise SteamError('Steam connection changed during sync. Retry the sync.')
             changed = await apply_games(db, state, library, [*selected, *sorted(additions)], add_apps=additions)
-            state.known_apps = sorted(known | {row['app_id'] for row in library})
+            # Failed admissions remain new on the next sync. Previously declined
+            # or deleted apps stay in known and cannot be resurrected.
+            state.known_apps = sorted(known | ({row['app_id'] for row in library} - additions)
+                | {app for app in additions if app in state.checkpoints})
             state.selection = [*selected, *sorted(app for app in additions if app in state.checkpoints)]
             job = await running_job(db, job_id)
             job.status, job.current_step = SyncStatus.completed, 'Steam up to date'

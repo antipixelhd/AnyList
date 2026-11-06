@@ -398,6 +398,7 @@ async def build_export_zip(
     user: User,
     settings: UserSettings | None,
     *,
+    include_games: bool = True,
     include_watched: bool = True,
     include_ratings: bool = True,
     include_collection: bool = True,
@@ -427,6 +428,10 @@ async def build_export_zip(
             history, ratings, collection,
             include_watched=include_watched, include_ratings=include_ratings, include_collection=include_collection,
         ))
+
+        if include_games:
+            from core.game_backup import export_games
+            write_json("games.json", await export_games(db, user.id))
 
         if include_watched:
             for i, chunk in enumerate(_chunked(history, HISTORY_CHUNK_SIZE), start=1):

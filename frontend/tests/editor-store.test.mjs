@@ -473,3 +473,21 @@ test('optimistic progress follows ordered episodes across season boundaries and 
   assert.equal(title.entry.season_position,'S1E2');
   assert.equal(title.entry.released_episodes,4);
 });
+
+
+test('deleting an independent game clears private prefill before re-add',async()=>{
+  const original=gameState(7,{listed:true,status:'playing',revision:2,score:9,notes:'erase',
+    start_date:'2025-01-01',total_seconds:36000,completion_seconds:7200,replay_count:2,
+    achievements:{mode:'count',count:4,total:5,exact_count:2}});
+  const calls=[];const store=new EditorStore(async(path)=>{
+    calls.push(path);return {deleted:true};
+  });
+  const title=store.seed(gameTitle(original));
+  await store.remove(title);
+  const reopened=await store.loadSubject(original.subject);
+  assert.equal(reopened.entry,null);
+  for(const key of ['score','notes','start_date','total_seconds','completion_seconds','replay_count','achievements'])
+    assert.equal(reopened.game_state[key],undefined,key);
+  assert.equal(reopened.game_state.favorite,false);
+  assert.equal(calls.length,1);
+});

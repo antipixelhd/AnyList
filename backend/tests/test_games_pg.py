@@ -189,6 +189,7 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 importlib.import_module('migrations.versions.mt072_game_update_credits').upgrade()
                 importlib.import_module('migrations.versions.mt073_game_episode_credits').upgrade()
                 importlib.import_module('migrations.versions.mt080_game_background_runner').upgrade()
+                importlib.import_module("migrations.versions.mt081_game_statistics_totals").upgrade()
 
         async with self.engine.begin() as conn:
             await conn.run_sync(setup)

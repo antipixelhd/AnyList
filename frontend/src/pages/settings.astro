@@ -334,7 +334,7 @@ if (me.totp_enabled) {
   <!-- Delete Confirmation Modal -->
   <!-- Data Export Modal -->
   <div id="export-data-modal" class="fixed inset-0 bg-zinc-950/80 backdrop-blur-sm z-[100] hidden items-center justify-center p-4">
-    <div class="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 max-w-md w-full shadow-2xl">
+    <div class="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 max-w-md w-full shadow-2xl max-h-[calc(100dvh-2rem)] overflow-y-auto">
       <h2 class="text-2xl font-bold text-zinc-100 mb-2">Export your data</h2>
       <p class="text-zinc-400 mb-6 text-sm leading-relaxed">Choose what to include in the export.</p>
       <div class="space-y-2 mb-6">
@@ -344,6 +344,7 @@ if (me.totp_enabled) {
           { key: "collection", label: "Collection" },
           { key: "lists", label: "Lists" },
           { key: "comments", label: "Comments" },
+          { key: "games", label: "Games" },
         ].map(({ key, label }) => (
           <button
             type="button"
@@ -469,6 +470,7 @@ if (me.totp_enabled) {
         resolve(result);
       };
       const onConfirm = () => cleanup({
+        games: selected.has('games'),
         watched: selected.has('watched'),
         ratings: selected.has('ratings'),
         collection: selected.has('collection'),
@@ -663,6 +665,7 @@ if (me.totp_enabled) {
 
       try {
         const params = new URLSearchParams({
+          games: String(selection.games),
           watched: String(selection.watched),
           ratings: String(selection.ratings),
           collection: String(selection.collection),

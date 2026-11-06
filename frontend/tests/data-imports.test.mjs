@@ -96,3 +96,12 @@ test("navigation aborts uploads and suppresses late success, failure, and furthe
     fetch.mock.restore();
   }
 });
+
+
+test('AnyList backup picker remains enabled without a TMDB key',async()=>{
+  const {readFileSync}=await import('node:fs');
+  const source=readFileSync(new URL('../src/components/settings/DataImportSettings.astro',import.meta.url),'utf8');
+  const panel=source.slice(source.indexOf('<div data-import-panel="scrob">'),source.indexOf('<div data-import-panel="trakt"'));
+  assert.doesNotMatch(panel,/hasTmdbKey|disabled=|TMDB Read Access Token is required/);
+  assert.match(panel,/id="scrob_export_file"/);
+});

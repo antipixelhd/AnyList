@@ -30,6 +30,32 @@ def game(app, minutes, count=None, total=None):
 class SteamDatabaseTests(unittest.IsolatedAsyncioTestCase):
     cleanup = fixture.GamesDatabaseTests.cleanup
 
+    async def test_auto_add_retries_failed_admission_after_mapping_recovers(self):
+        from core import steam_cache
+        await self.imported()
+        async with self.Session() as db:
+            state = await db.get(SteamConnection, self.id)
+            state.auto_add_games = True
+            await db.execute(delete(MetadataSnapshot).where(MetadataSnapshot.kind == steam_cache.PUBLIC_KIND,
+                MetadataSnapshot.external_id == '40'))
+            await db.commit()
+        self.source.library.return_value.append(game('40', 60))
+        with patch('core.steam_targets.classify', new_callable=AsyncMock):
+            self.assertEqual((await self.sync())['added'], 0)
+            async with self.Session() as db:
+                self.assertNotIn('40', (await db.get(SteamConnection, self.id)).known_apps)
+            await steam_cache.save_public(self.Session, [{'app_id':'40','igdb_classification':{
+                'version':1,'state':'bound','igdb_id':'900040','game_class':'game',
+                'checked_at':steam_sync.now().isoformat()}}])
+            self.assertEqual((await self.sync())['added'], 1)
+            self.assertEqual((await self.sync())['added'], 0)
+        async with self.Session() as db:
+            state = await db.get(SteamConnection, self.id)
+            self.assertIn('40', state.known_apps)
+            self.assertIn('40', state.selection)
+            # Original declined apps remain excluded.
+            self.assertNotIn('30', state.selection)
+
     async def test_import_rechecks_generation_after_provider_wait(self):
         await self.connect()
         async def changed(*args,**kwargs):
