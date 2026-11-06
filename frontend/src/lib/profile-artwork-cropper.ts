@@ -1,14 +1,16 @@
 import Cropper from 'cropperjs';
-import {boundedProfileSelection,profileCrop,resizeProfileSelection,type CropRect} from './profile-crop-geometry';
+import {boundedProfileSelection,profileCrop,resizeProfileSelection,profileImageFit,profileMobileRegion,type CropRect} from './profile-crop-geometry';
 
 export async function mountProfileCropper(frame:HTMLElement,image:HTMLImageElement,aspect:number,
-  signal:AbortSignal,onChange:(value:{x:number;y:number;zoom:number})=>void) {
+  signal:AbortSignal,onChange:(value:{x:number;y:number;zoom:number})=>void,
+  {mobileAspect,cropOutput=false}:{mobileAspect?:number;cropOutput?:boolean}={}) {
   const handles=['n','e','s','w','ne','nw','se','sw'].map(direction=>`<cropper-handle action="${direction}-resize"></cropper-handle>`).join('');
   const cropper=new Cropper(image,{container:frame,template:`<cropper-canvas background>
     <cropper-image initial-center-size="contain"></cropper-image><cropper-shade hidden></cropper-shade>
-    <cropper-selection movable resizable keyboard outlined precise>
+    <cropper-selection movable resizable keyboard precise>
       <cropper-grid role="grid" covered></cropper-grid><cropper-crosshair centered></cropper-crosshair>
       <cropper-handle action="move" plain></cropper-handle>${handles}
+      ${mobileAspect?'<span class="profile-mobile-guide profile-mobile-guide-start" aria-hidden="true"></span><span class="profile-mobile-guide profile-mobile-guide-end" aria-hidden="true"></span>':''}
     </cropper-selection></cropper-canvas>`});
   const source=cropper.getCropperImage()!,selection=cropper.getCropperSelection()!,canvas=cropper.getCropperCanvas()!;
   selection.aspectRatio=aspect;
@@ -17,8 +19,8 @@ export async function mountProfileCropper(frame:HTMLElement,image:HTMLImageEleme
   try{
     const native=await source.$ready();
     if(signal.aborted)return;
-    frame.style.aspectRatio=String(native.naturalWidth/native.naturalHeight);
-    frame.style.width=`min(100%, calc(58dvh * ${native.naturalWidth/native.naturalHeight}))`;
+    const stage=frame.parentElement!;
+    const guides=[...selection.querySelectorAll<HTMLElement>('.profile-mobile-guide')];
     let bounds:CropRect;
     let crop:CropRect|undefined;
     let fitting=false;
@@ -33,8 +35,12 @@ export async function mountProfileCropper(frame:HTMLElement,image:HTMLImageEleme
       selection.$change(rect.x,rect.y,rect.width,rect.height,aspect);
     },{signal,capture:true});
     const fit=()=>{
+      const size=profileImageFit(native.naturalWidth,native.naturalHeight,stage.clientWidth,stage.clientHeight);
+      if(size.width<=0||size.height<=0)return;
+      frame.style.width=`${size.width}px`;frame.style.height=`${size.height}px`;
       // Keep the source immobile during editing; enable transforms only to fit.
       source.translatable=true;source.scalable=true;
+      source.$resetTransform();
       source.$center('contain');
       source.translatable=false;source.scalable=false;
       const outer=canvas.getBoundingClientRect(),inner=source.getBoundingClientRect();
@@ -56,10 +62,14 @@ export async function mountProfileCropper(frame:HTMLElement,image:HTMLImageEleme
       }
       const scale=native.naturalWidth/bounds.width;
       crop={x:(rect.x-bounds.x)*scale,y:(rect.y-bounds.y)*scale,width:rect.width*scale,height:rect.height*scale};
+      if(mobileAspect){
+        const region=profileMobileRegion(crop,native.naturalWidth,native.naturalHeight,aspect,mobileAspect,cropOutput);
+        guides.forEach((guide,index)=>{guide.hidden=!region;if(region)guide.style.left=`${index?region.right:region.left}%`;});
+      }
       onChange(profileCrop(crop,native.naturalWidth,native.naturalHeight,aspect));
     },{signal});
     fit();
-    const observer=new ResizeObserver(()=>{if(!signal.aborted)fit();});observer.observe(frame);
+    const observer=new ResizeObserver(()=>{if(!signal.aborted)fit();});observer.observe(stage);
     signal.addEventListener('abort',()=>observer.disconnect(),{once:true});
   }catch(error){destroy();throw error;}
 }

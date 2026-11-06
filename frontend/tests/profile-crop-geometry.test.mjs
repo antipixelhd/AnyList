@@ -1,6 +1,40 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {boundedProfileSelection,profileCrop,resizeProfileSelection} from '../src/lib/profile-crop-geometry.ts';
+import {boundedProfileSelection,profileCrop,resizeProfileSelection,profileImageFit,profileMobileRegion,PROFILE_MOBILE_BACKGROUND_ASPECT} from '../src/lib/profile-crop-geometry.ts';
+
+test('the complete source fits portrait and landscape editing areas without clipping',()=>{
+  for(const source of [[1920,1080],[1080,1920],[3840,1240]]){
+    for(const stage of [[342,700],[796,270],[952,600]]){
+      const fit=profileImageFit(...source,...stage);
+      assert.ok(fit.width<=stage[0]+1e-6&&fit.height<=stage[1]+1e-6);
+      assert.ok(Math.abs(fit.width/fit.height-source[0]/source[1])<1e-6);
+      assert.ok(Math.abs(fit.width-stage[0])<1e-6||Math.abs(fit.height-stage[1])<1e-6);
+    }
+  }
+});
+
+test('mobile guides follow actual focal framing instead of assuming a centered crop',()=>{
+  const width=1920,height=1080,aspect=1700/330;
+  for(const x of [0,50,100]){
+    const rect={x:(width-1280)*x/100,y:200,width:1280,height:1280/aspect};
+    const region=profileMobileRegion(rect,width,height,aspect,PROFILE_MOBILE_BACKGROUND_ASPECT);
+    const framing=profileCrop(rect,width,height,aspect);
+    const mobileWidth=Math.min(width,height*PROFILE_MOBILE_BACKGROUND_ASPECT)/framing.zoom;
+    const mobileLeft=(width-mobileWidth)*framing.x/100;
+    assert.ok(Math.abs(rect.x+rect.width*region.left/100-mobileLeft)<1e-6);
+    assert.ok(Math.abs(rect.x+rect.width*region.right/100-mobileLeft-mobileWidth)<1e-6);
+  }
+  assert.equal(profileMobileRegion({x:0,y:0,width:1000,height:1000},1000,1000,1,PROFILE_MOBILE_BACKGROUND_ASPECT),null);
+});
+
+test('upload guides preview the mobile crop of the stored banner, not the uncropped source',()=>{
+  const aspect=1700/330,ratio=PROFILE_MOBILE_BACKGROUND_ASPECT/aspect;
+  for(const x of [0,500]){
+    const region=profileMobileRegion({x,y:200,width:1000,height:1000/aspect},1920,1080,aspect,PROFILE_MOBILE_BACKGROUND_ASPECT,true);
+    assert.ok(Math.abs(region.left-(1-ratio)*50)<1e-6);
+    assert.ok(Math.abs(region.right-(1+ratio)*50)<1e-6);
+  }
+});
 
 test('resize reverses immediately after a large overshoot',()=>{
   const bounds={x:0,y:0,width:800,height:400};

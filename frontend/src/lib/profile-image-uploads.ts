@@ -1,4 +1,5 @@
 import {editProfileImage} from './profile-image-editor';
+import {PROFILE_MOBILE_BACKGROUND_ASPECT} from './profile-crop-geometry';
 
 export function mountProfileImageUploads(root:HTMLElement) {
   const controller=new AbortController(),{signal}=controller;
@@ -20,7 +21,7 @@ export function mountProfileImageUploads(root:HTMLElement) {
         const data=await response.json();if(!response.ok)throw new Error(typeof data.detail==='string'?data.detail:'Upload failed.');
         const stored=avatar?`/api/proxy${data.avatar_url}`:data.background_url;
         paint(`${stored}${stored.includes('?')?'&':'?'}v=${Date.now()}`);
-      });}catch(cause){if(!signal.aborted)report((cause as Error).message);}
+      },avatar?{}:{mobileAspect:PROFILE_MOBILE_BACKGROUND_ASPECT,cropOutput:true});}catch(cause){if(!signal.aborted)report((cause as Error).message);}
       finally{URL.revokeObjectURL(url);zone.disabled=false;input.value='';}
     };
     zone.addEventListener('click',()=>input.click(),{signal});

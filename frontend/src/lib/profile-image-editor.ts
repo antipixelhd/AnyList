@@ -4,10 +4,11 @@ import {showToast} from './toasts';
 export type ProfileFraming={x:number;y:number;zoom:number};
 
 export function editProfileImage(url:string,title:string,aspect:number,signal:AbortSignal,
-  saveImage:(crop:ProfileFraming,signal:AbortSignal)=>Promise<void>):Promise<boolean> {
+  saveImage:(crop:ProfileFraming,signal:AbortSignal)=>Promise<void>,options:{mobileAspect?:number;cropOutput?:boolean}={}):Promise<boolean> {
   return new Promise(resolve=>{
     const editor=document.createElement('dialog');editor.className='profile-artwork-editor';editor.setAttribute('aria-label',title);
     const heading=document.createElement('h2');heading.textContent=title;
+    const stage=document.createElement('div');stage.className='profile-artwork-stage';
     const frame=document.createElement('div');frame.className='profile-artwork-canvas';
     const image=document.createElement('img');image.src=url;image.alt=`${title} crop preview`;frame.append(image);
     let values:ProfileFraming={x:50,y:50,zoom:1},saved=false,saving=false;
@@ -26,12 +27,12 @@ export function editProfileImage(url:string,title:string,aspect:number,signal:Ab
       catch(error){if(!lifetime.signal.aborted)showToast(error instanceof Error?error.message:'Could not save image.','error');}
       finally{saving=false;save.disabled=false;cancel.disabled=false;}
     },{signal:lifetime.signal});
-    buttons.append(cancel,save);editor.append(heading,frame,status,buttons);document.body.append(editor);
+    buttons.append(cancel,save);stage.append(frame,status);editor.append(heading,stage,buttons);document.body.append(editor);
     editor.addEventListener('close',()=>{signal.removeEventListener('abort',cleanup);cleanup();},{once:true});
     editor.showModal();
     void import('./profile-artwork-cropper').then(async({mountProfileCropper})=>{
       if(lifetime.signal.aborted)return;
-      await mountProfileCropper(frame,image,aspect,lifetime.signal,value=>{values=value;});
+      await mountProfileCropper(frame,image,aspect,lifetime.signal,value=>{values=value;},options);
       if(!lifetime.signal.aborted){status.hidden=true;save.disabled=false;}
     }).catch(()=>{if(!lifetime.signal.aborted)status.textContent='Couldn’t load this image. Close and try again.';});
   });
