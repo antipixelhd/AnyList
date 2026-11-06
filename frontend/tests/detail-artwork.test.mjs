@@ -2,6 +2,19 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {detailHeroArtwork, detailSceneArtwork, detailWorkArtwork} from '../src/lib/detail-artwork.ts';
 import {responsiveArtwork} from '../src/lib/responsive-artwork.ts';
+import {commitDetailHero} from '../src/lib/detail-hero.ts';
+
+test('replacing a mobile picture never activates its unused desktop fallback',()=>{
+  const selected='https://images.igdb.com/igdb/image/upload/t_1080p/mobile.jpg';
+  const picture={tagName:'PICTURE',replaceWith(image){image.parentElement=null;}};
+  const hero={src:'https://cdn2.steamgriddb.com/hero/desktop.jpg',className:'lab-hero-image',parentElement:picture,
+    removeAttribute(){},replaceWith(image){assert.equal(this.src,selected);image.parentElement=picture;}};
+  const candidate={src:selected,currentSrc:selected,parentElement:null};
+  let displayed;
+  commitDetailHero(hero,candidate,selected,null,url=>{displayed=url;});
+  assert.equal(displayed,selected);
+  assert.equal(candidate.parentElement,null,'the chosen image stays fixed after viewport changes');
+});
 
 test('related posters use bounded responsive candidates with the active disk policy',()=>{
   const cached=detailWorkArtwork('https://image.tmdb.org/t/p/w500/poster.jpg',true,'proxy');

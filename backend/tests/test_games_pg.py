@@ -36,6 +36,25 @@ URL = os.getenv('GAMES_TEST_DATABASE_URL')
 
 @unittest.skipUnless(URL, 'Requires explicit disposable games PostgreSQL')
 class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
+    async def test_mobile_background_uses_igdb_without_steamgriddb_and_preserves_pin(self):
+        scene='https://images.igdb.com/igdb/image/upload/t_thumb/scene.jpg'
+        async with self.Session() as db:
+            work=await db.get(CatalogueEntity,self.base)
+            work.attributes={**work.attributes,'scene_artwork':[scene],'artwork_policy_version':6}
+            await db.commit()
+        with patch('core.game_artwork.images',AsyncMock()) as source:
+            response=await self.client.get(f'/tracking/games/works/{self.base}/background?provider=igdb&animated=true')
+            self.assertEqual(response.status_code,200,response.text)
+            self.assertEqual(response.json()['backdrop'],scene)
+            self.assertEqual(response.json()['banners'],[scene])
+            source.assert_not_awaited()
+            pinned='https://cdn2.steamgriddb.com/hero/pinned.png'
+            result=await self.client.put(f'/tracking/games/works/{self.base}/banner',json={'image':pinned})
+            self.assertEqual(result.status_code,200,result.text)
+            response=await self.client.get(f'/tracking/games/works/{self.base}/background?provider=igdb')
+            self.assertEqual(response.json()['backdrop'],pinned)
+            source.assert_not_awaited()
+
     async def test_personal_artwork_migration_roundtrip(self):
         migration=importlib.import_module('migrations.versions.mt076_personal_artwork')
         def migrate(connection):

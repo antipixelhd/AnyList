@@ -2,6 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createPrediction,predictionAllowed,predictionManifest,predictivePage,paginationPosition,bindPredictivePagination} from '../src/lib/predictive-loading.ts';
 
+test('prediction warms only the initial viewport hero without spending its budget on the other provider',()=>{
+  const artwork=[{src:'https://cdn.test/poster.jpg'},
+    {src:'https://cdn.test/desktop.jpg',media:'(min-width:651px)'},
+    {src:'https://cdn.test/mobile.jpg',media:'(max-width:650px)'}];
+  const html=`<script id="page-prediction">${JSON.stringify({user:'viewer',requiresGamesAccess:true,artwork})}</script>`;
+  assert.deepEqual(predictionManifest(html,'viewer',true,query=>query==='(max-width:650px)').map(image=>image.src),[artwork[0].src,artwork[2].src]);
+  assert.deepEqual(predictionManifest(html,'viewer',true,query=>query==='(min-width:651px)').map(image=>image.src),[artwork[0].src,artwork[1].src]);
+});
+
 test('category streaming can bypass unfinished warming and reuse completed predictions',async()=>{
   let finish;const controller=new AbortController();
   const prediction=createPrediction(()=>new Promise(resolve=>{finish=resolve;}),controller.signal,()=>true);

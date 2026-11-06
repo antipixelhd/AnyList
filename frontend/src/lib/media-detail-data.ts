@@ -56,6 +56,7 @@ export type DetailMedia = EditorTitle & {
   image_status?: {state:string;error?:string|null;retry_after?:number};
   background_status?: {state:string;error?:string|null;retry_after?:number};
   backdrop_fallback?:string;
+  backdrop_mobile?:string;
   backdrop_fallbacks?:string[];
   preview_status?:{state:string;retry_after?:number};
   artwork_preview?:{image?:string|null;thumbnail?:string|null};

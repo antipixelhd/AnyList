@@ -75,7 +75,7 @@ async def upgrade_cached_artwork(db,work,native):
         MetadataSnapshot.payload['game']['artworks'].label('artworks')).where(
             MetadataSnapshot.provider=='igdb',MetadataSnapshot.kind=='game',MetadataSnapshot.external_id==native,
             MetadataSnapshot.entity_id==work.id,MetadataSnapshot.fetched_at.is_not(None),
-            MetadataSnapshot.coverage['artwork_policy_version'].as_integer().in_((1,2,3,4))).with_for_update())).one_or_none()
+            MetadataSnapshot.coverage['artwork_policy_version'].as_integer().in_(range(1,GAME_ARTWORK_VERSION))).with_for_update())).one_or_none()
     if not source or source.native!=native or any(value is not None and not isinstance(value,list)
         for value in (source.screenshots,source.artworks)):return False
     # Legacy artwork lacks image types: refresh it before declaring logo policy current.
@@ -113,7 +113,7 @@ async def request(db,work,*,identities=None):
         await demand(db,job_key('igdb','game',native))
     if row and row.entity_id not in (None,work.id):
         return None,{'state':'unavailable','primary_ready':False,'pending':False,'complete':False,'error':'identity_conflict','retry_after':0}
-    if row and row.fetched_at and row.artwork_policy_version in (1,2,3,4):
+    if row and row.fetched_at and row.artwork_policy_version in range(1,GAME_ARTWORK_VERSION):
         await upgrade_cached_artwork(db,work,native)
         row=await header(db,native)
     if (row and row.fetched_at and (row.release_precision_version!=RELEASE_VERSION or row.artwork_policy_version!=GAME_ARTWORK_VERSION) and not row.next_attempt_at

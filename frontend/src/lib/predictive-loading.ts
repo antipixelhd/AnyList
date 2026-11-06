@@ -3,8 +3,8 @@ export function predictionAllowed(network: {onLine?:boolean;connection?:{saveDat
 }
 
 /** Read only JSON from HTML text. Parsing a detached document can fetch images. */
-export type PredictionArtwork={src:string;srcset?:string;sizes?:string};
-export function predictionManifest(html:string,user:string,allowGames=false) {
+export type PredictionArtwork={src:string;srcset?:string;sizes?:string;media?:string};
+export function predictionManifest(html:string,user:string,allowGames=false,matches=(query:string)=>matchMedia(query).matches) {
   const script=html.match(/<script\b[^>]*\bid=["']page-prediction["'][^>]*>([\s\S]*?)<\/script>/i);
   if(!script)return;
   try{
@@ -12,6 +12,7 @@ export function predictionManifest(html:string,user:string,allowGames=false) {
     if(value.user!==user||value.requiresGamesAccess===true&&!allowGames||!Array.isArray(value.artwork))return;
     return value.artwork.map((image:unknown)=>typeof image==='string'?{src:image}:image)
       .filter((image:any)=>typeof image?.src==='string'&&(image.src.startsWith('https://')||image.src.startsWith('/api/proxy/media/image/')))
+      .filter((image:any)=>!image.media||typeof image.media==='string'&&matches(image.media))
       .slice(0,2) as PredictionArtwork[];
   }catch{return;}
 }

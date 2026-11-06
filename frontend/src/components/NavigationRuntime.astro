@@ -125,7 +125,10 @@
   }
 
   function sanitizedHtml(doc: Document, url: URL) {
-    const clone = doc.documentElement.cloneNode(true) as HTMLElement;
+    // Copy into an inert template document: cloning into the live document can
+    // start image/preload requests before their media/source attributes exist.
+    const inert = document.createElement('template').content.ownerDocument;
+    const clone = inert.importNode(doc.documentElement, true) as HTMLElement;
     if (url.pathname === '/connections' && !redactedConnections(doc, clone)) return null;
     clone.querySelectorAll('[data-token]').forEach(element => element.removeAttribute('data-token'));
     // An open attribute copied into cached HTML restores a non-modal dialog:

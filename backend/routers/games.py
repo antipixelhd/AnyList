@@ -60,15 +60,25 @@ async def save_game_banner(work_id:WorkId,body:BannerChoice,db:DB,viewer:Writer)
 
 
 @router.get('/works/{work_id}/background')
-async def game_background(work_id:WorkId,db:DB,viewer:Reader,animated:bool=False) -> dict:
+async def game_background(work_id:WorkId,db:DB,viewer:Reader,animated:bool=False,
+        provider:Literal['steamgriddb','igdb']='steamgriddb') -> dict:
     from core.game_artwork import images,cycling
     from core.media_details import primary_details
     work=await tracking.work(db,work_id)
-    rows,state=await images(db,work,'heroes_animated' if animated else 'heroes')
+    # IGDB primary scenes are already cached: mobile needs no banner fan-out.
+    rows,state=([],{'state':'ready'}) if provider=='igdb' else await images(db,work,'heroes_animated' if animated else 'heroes')
     rows=rows[:15]
     primary=primary_details(work)
+    if provider=='igdb' and not primary['backdrop_mobile']:
+        rows,state=await images(db,work,'heroes')
+        rows=rows[:15]
+        primary=primary_details(work)
     from models import UserProfileData
     pinned=await db.scalar(select(UserProfileData.game_banners[str(work_id)].astext).where(UserProfileData.user_id==viewer.id))
+    if provider=='igdb':
+        scenes=primary['backdrop_fallbacks'] or [row['url'] for row in rows]
+        return {**primary,'pinned_banner':pinned,'backdrop':pinned or primary['backdrop_mobile'],
+            'banners':scenes,'cycle_banners':scenes[:6],'background_status':state}
     return {**primary,'pinned_banner':pinned,'backdrop':pinned or (rows[0]['url'] if animated and rows else primary['backdrop']),
         'banners':[row['url'] for row in rows],
         'cycle_banners':cycling(rows),

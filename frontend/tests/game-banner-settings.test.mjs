@@ -2,6 +2,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mountGameBannerSettings} from '../src/lib/game-banner-settings.ts';
 
+test('mobile requests IGDB even with a saved desktop animation preference',async t=>{
+  const requests=[],output=[];
+  t.mock.method(globalThis,'fetch',async url=>{requests.push(url);return {ok:true,json:async()=>({backdrop:'igdb',banners:['igdb'],background_status:{state:'ready'}})};});
+  const previous=Object.getOwnPropertyDescriptor(globalThis,'localStorage');
+  Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{getItem:()=>JSON.stringify({animated:true}),setItem(){}}});
+  t.after(()=>previous?Object.defineProperty(globalThis,'localStorage',previous):delete globalThis.localStorage);
+  const controller=new AbortController();
+  mountGameBannerSettings({addEventListener(){},querySelectorAll:()=>[],querySelector:()=>null},1,'viewer',controller.signal,data=>output.push(data),true);
+  await new Promise(resolve=>setImmediate(resolve));
+  controller.abort();
+  assert.deepEqual(requests,['/api/proxy/tracking/games/works/1/background?animated=false&provider=igdb']);
+  assert.equal(output[0].backdrop,'igdb');
+});
+
 test('cycling advances once per visit and keeps viewer/game preferences separate',async t=>{
   const stored=new Map([['game-banner:viewer:1',JSON.stringify({cycle:true})]]);
   t.mock.method(globalThis,'fetch',async()=>({ok:true,json:async()=>({banners:['a','b','c'],cycle_banners:['a','b','c'],background_status:{state:'ready'}})}));

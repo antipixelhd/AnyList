@@ -35,7 +35,18 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
   const track=lightbox.querySelector<HTMLElement>('[data-image-viewer-track]')!;
   const prepareViewer=bindDetailImageDragDismiss(lightbox,track,signal);
   const name=info.name||root.querySelector('.lab-heading h1')?.textContent||'Image';
-  const initialHero=root.querySelector<HTMLButtonElement>('.lab-hero-art-button')?.dataset.detailImage;
+  const mobileGameHero=info.type==='game'&&matchMedia('(max-width:650px)').matches;
+  if(info.type==='game')root.ownerDocument.querySelectorAll<HTMLLinkElement>('link[rel="preload"][as="image"][media]').forEach(link=>{
+    if(!matchMedia(link.media).matches)link.remove();
+    else link.removeAttribute('media');
+  });
+  const initialHero=(mobileGameHero?info.backdropMobile:info.backdropDesktop)||root.querySelector<HTMLButtonElement>('.lab-hero-art-button')?.dataset.detailImage;
+  const initialPreview=root.querySelector<HTMLImageElement>('.lab-art-image img');
+  if(initialPreview?.parentElement?.tagName==='PICTURE'){
+    const source=mobileGameHero?initialPreview.parentElement.querySelector('source')?.srcset||initialPreview.src:initialPreview.currentSrc||initialPreview.src;
+    if(source)initialPreview.src=source;
+    initialPreview.parentElement.replaceWith(initialPreview);
+  }
   const artworkLimit=info.type==='game'?Infinity:10;
   const posterLimit=info.type==='game'?Infinity:10;
   let gameBannerSelected:string|undefined;
@@ -339,7 +350,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
     if(artwork?.srcset)candidate.srcset=artwork.srcset;
     candidate.sizes=artwork?.sizes||'100vw';candidate.src=artwork?.src||url;
   };
-  const applyImages=(data:Galleries&{poster?:string;backdrop?:string;backdrop_fallback?:string;artwork_thumbnails?:Record<string,string>;image_status?:DetailLoadState;image_replacements?:Record<string,string>})=>{
+  const applyImages=(data:Galleries&{poster?:string;backdrop?:string;backdrop_mobile?:string;backdrop_fallback?:string;artwork_thumbnails?:Record<string,string>;image_status?:DetailLoadState;image_replacements?:Record<string,string>})=>{
       const selected=galleries[active][current];
       galleries.posters=uniqueDetailImages(standalone?[info.posters?.[0],...(data.image_status?.state==='deferred'?galleries.posters:data.posters||[])]:data.posters||[],posterLimit).slice(0,info.type==='game'?Infinity:galleryLimit);
       galleries.artwork=uniqueDetailImages(data.artwork||[],artworkLimit);
@@ -355,7 +366,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
         if(coverImage&&imageKey(coverImage.src)!==imageKey(primary))applyResponsiveArtwork(coverImage,primary,{size:'w500',sizes:coverImage.sizes||'(max-width:650px) 108px, 210px',route:'auto'});
       }
       fallback=data.backdrop_fallback||fallback;
-      paintHero(info.type==='game'&&gameBannerSelected?gameBannerSelected:data.backdrop);
+      paintHero(info.type==='game'&&gameBannerSelected?gameBannerSelected:mobileGameHero?data.backdrop_mobile||data.backdrop:data.backdrop);
       if(!standalone)publishDetailArtwork(editorStore,info,{poster:primary});
       paintPreview();
       const grid=root.querySelector<HTMLElement>('[data-detail-artwork-grid]');
@@ -456,7 +467,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
     artworkActions(data.pinned_banner||'');
     galleries.hero=uniqueDetailImages(data.banners||[],15);
     if(data.backdrop)paintHero(data.backdrop);
-  });
+  },mobileGameHero);
   if(info.heroAvailable&&info.type!=='game'){
     const background=detailBackground<Partial<Galleries>&{artwork_preview?:{image?:string;thumbnail?:string};backdrop?:string;backdrop_fallback?:string;background_status?:DetailLoadState}>(
       `${imagePath}/background`,signal,data=>{

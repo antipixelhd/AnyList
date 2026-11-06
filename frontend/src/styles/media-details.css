@@ -7,6 +7,7 @@
 .media-detail :is(.lab-kicker,.lab-genres) a:focus-visible { outline:none; color:var(--bright); background:color-mix(in srgb,var(--blue) 20%,var(--panel)); }
 .media-detail :is(.lab-hero-image,.lab-heading,.lab-panel) { animation:none; }
 .media-detail .lab-hero { overflow:visible; background:none; }
+.media-detail .lab-hero-picture { display:contents; }
 .media-detail.concept-marquee .lab-hero-content { padding-bottom:16px; }
 .media-detail.concept-marquee .lab-layout { padding-top:16px; }
 .media-detail.concept-marquee[data-has-backdrop=false] .lab-hero { height:auto; }

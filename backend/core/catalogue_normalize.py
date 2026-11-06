@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 from core.countries import country_codes, game_countries, numeric_country, screen_countries
 from core.studio_names import studio_name, studio_attributes
 from core.movie_financials import movie_financials
-GAME_ARTWORK_VERSION = 5
+GAME_ARTWORK_VERSION = 6
 
 
 PRIMARY = {"movie": "tmdb", "series": "tmdb", "game": "igdb", "book": "hardcover"}
@@ -377,7 +377,7 @@ def game_artwork(raw):
     gallery, scenes = [], []
     # IGDB image_types: Artwork, Concept art, Key art without/with logo.
     # Screenshots have no promotional/gameplay classification in the API.
-    priorities={1:0,4:1,2:2,3:3,16:4}
+    priorities={2:0,3:1,1:2,4:3,16:4}
     for field in ('artworks','screenshots'):
         for position,row in enumerate(raw.get(field) or []):
             if not isinstance(row,dict) or row.get('animated'):continue
@@ -387,7 +387,7 @@ def game_artwork(raw):
             if all(type(value) is int and value>0 for value in (width,height)) and max(width,height)<256:continue
             url=image(row)
             if not url:continue
-            priority=priorities.get(kind,0) if field=='artworks' else 5
+            priority=priorities.get(kind,2) if field=='artworks' else 5
             gallery.append((priority,position,url))
             # Wide key art and Steam-shaped banners are valid hero candidates.
             if all(type(value) is int and value>0 for value in (width,height)) and width>=640 and 1.25<=width/height<=4:

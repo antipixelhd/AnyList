@@ -15,7 +15,17 @@ export function nextDetailHero(candidates:(string|undefined)[],failed:Set<string
 /** Publish only the hero actually displayed, so later editor intent reuses it. */
 export function commitDetailHero(hero:HTMLImageElement,candidate:HTMLImageElement,url:string,
   button:HTMLButtonElement|null,committed:(url:string)=>void) {
-  if(candidate!==hero){candidate.className=hero.className;candidate.alt='';hero.replaceWith(candidate);}
+  if(candidate!==hero){
+    candidate.className=hero.className;candidate.alt='';
+    // Detaching a picture's img can otherwise start its unused fallback src.
+    if(hero.parentElement?.tagName==='PICTURE'){
+      hero.removeAttribute('srcset');hero.src=candidate.currentSrc||candidate.src;
+    }
+    hero.replaceWith(candidate);
+  }
+  // Freeze the initial viewport choice once JS owns image loading/recovery.
+  // Otherwise a picture source would override later pinned/cycled images.
+  if(candidate.parentElement?.tagName==='PICTURE')candidate.parentElement.replaceWith(candidate);
   candidate.hidden=false;
   if(button){button.dataset.detailImage=url;button.hidden=false;}
   committed(url);

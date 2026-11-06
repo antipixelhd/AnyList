@@ -54,12 +54,24 @@ class ArtworkTests(unittest.IsolatedAsyncioTestCase):
         normalized=game_artwork({'artworks':[*rows,{'url':'https://cdn.test/icon.jpg','image_type':1,'width':48,'height':48}],
             'screenshots':[{'url':'https://cdn.test/screenshot.jpg','width':3840,'height':2160}]})
         self.assertNotIn('https://cdn.test/icon.jpg',normalized['artwork'])
-        self.assertEqual([url.split('/')[-1] for url in normalized['scene_artwork']],['a1.jpg','a4.jpg','a2.jpg','a3.jpg','screenshot.jpg'])
+        self.assertEqual([url.split('/')[-1] for url in normalized['scene_artwork']],['a2.jpg','a3.jpg','a1.jpg','a4.jpg','screenshot.jpg'])
         work=SimpleNamespace(id=1,kind='game',name='Game',description='',image_url=None,
             protected_fields=[],field_sources={},attributes={**normalized,'steamgriddb_hero':{'image':asset()['url']}})
         data=primary_details(work)
         self.assertEqual(data['backdrop'],asset()['url'])
-        self.assertTrue(data['artwork_preview']['image'].endswith('a1.jpg'))
+        self.assertTrue(data['artwork_preview']['image'].endswith('a2.jpg'))
+        self.assertEqual(data['backdrop_mobile'],normalized['scene_artwork'][0])
         self.assertNotIn(data['artwork_preview']['image'],data['artwork'])
         work.attributes['backdrop_path']=rows[0]['url']
         self.assertEqual(primary_details(work)['backdrop'],rows[0]['url'])
+        self.assertEqual(primary_details(work)['backdrop_mobile'],rows[0]['url'])
+
+    def test_mobile_uses_screenshots_before_steam_when_artwork_is_ineligible(self):
+        screenshot='https://images.igdb.com/igdb/image/upload/t_original/scene.jpg'
+        normalized=game_artwork({'artworks':[{'url':'https://cdn.test/portrait.jpg','image_type':2,'width':600,'height':900}],
+            'screenshots':[{'url':screenshot,'width':1920,'height':1080}]})
+        work=SimpleNamespace(id=1,kind='game',name='Game',description='',image_url=None,
+            protected_fields=[],field_sources={},attributes={**normalized,'steamgriddb_hero':{'image':asset()['url']}})
+        self.assertEqual(primary_details(work)['backdrop_mobile'],screenshot)
+        work.attributes['scene_artwork']=[]
+        self.assertEqual(primary_details(work)['backdrop_mobile'],asset()['url'])

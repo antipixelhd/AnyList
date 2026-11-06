@@ -279,6 +279,22 @@ class GameMetadataTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((entry.total_seconds,entry.completion_seconds,entry.score),(198000,144000,9))
         self.assertEqual(self.provider.called,0)
 
+    async def test_version_five_artwork_reranks_key_art_without_provider_requests(self):
+        await self.seed_cached_artwork()
+        artwork=[{'url':f'https://cdn.test/art-{kind}.jpg','image_type':kind,'width':1920,'height':1080} for kind in (1,3,2)]
+        async with self.Session() as db:
+            saved=await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.external_id=='119133',MetadataSnapshot.kind=='game'))
+            saved.coverage={**saved.coverage,'artwork_policy_version':5}
+            saved.payload={'game':{**saved.payload['game'],'artworks':artwork}}
+            work=await db.get(CatalogueEntity,self.base)
+            work.attributes={**work.attributes,'artwork_policy_version':5}
+            await db.commit()
+            _,state=await request(db,work);await db.commit()
+            self.assertFalse(state['pending'])
+            self.assertEqual(work.attributes['scene_artwork'][:3],[artwork[2]['url'],artwork[1]['url'],artwork[0]['url']])
+            self.assertEqual((await header(db,'119133')).artwork_policy_version,GAME_ARTWORK_VERSION)
+        self.assertEqual(self.provider.called,0)
+
     async def test_legacy_artwork_refreshes_missing_types_without_replacing_selected_background(self):
         for version in (1,2):
             with self.subTest(version=version):
