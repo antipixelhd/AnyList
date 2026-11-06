@@ -161,13 +161,9 @@ button.gallery-primary-action { background:var(--blue); color:#08131e; font-weig
 .profile-crop-status { position:absolute; inset:0; display:grid; place-items:center; margin:0; padding:16px; color:var(--text); pointer-events:none; text-align:center; }
 .profile-crop-status[hidden] { display:none; }
 .profile-artwork-buttons { margin:0; }
-.profile-mobile-guide { position:absolute; top:0; bottom:0; z-index:2; width:0; border-left:3px dotted #46dcff; filter:drop-shadow(0 0 2px #000); pointer-events:none; }
-.profile-mobile-guide-end { border-color:#ffca63; }
-.profile-mobile-guide[hidden] { display:none; }
 @media(max-width:650px) {
   .profile-artwork-editor { width:calc(100vw - 16px); height:calc(100dvh - 16px); padding:16px; }
   .profile-artwork-editor[open] { gap:12px; }
-  .profile-mobile-guide { display:none; }
 }
 @media(max-height:500px) and (orientation:landscape) {
   .profile-artwork-editor { width:calc(100vw - 16px); height:calc(100dvh - 16px); padding:12px max(12px,env(safe-area-inset-right)) 12px max(12px,env(safe-area-inset-left)); }
@@ -176,6 +172,5 @@ button.gallery-primary-action { background:var(--blue); color:#08131e; font-weig
   .profile-artwork-stage { grid-column:1/-1; grid-row:2; }
   .profile-artwork-buttons { grid-column:2; grid-row:1; }
   .profile-artwork-buttons button { padding:8px 14px; }
-  .profile-mobile-guide { display:none; }
 }
 @media(max-width:650px) { .image-lightbox .gallery-artwork-actions { top:8px; left:8px; gap:6px; } .media-detail .gallery-artwork-actions button { padding:8px; } }

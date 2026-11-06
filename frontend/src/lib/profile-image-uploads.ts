@@ -1,5 +1,5 @@
 import {editProfileImage} from './profile-image-editor';
-import {PROFILE_MOBILE_BACKGROUND_ASPECT} from './profile-crop-geometry';
+import {PROFILE_BACKGROUND_ASPECT} from './profile-crop-geometry';
 
 export function mountProfileImageUploads(root:HTMLElement) {
   const controller=new AbortController(),{signal}=controller;
@@ -15,13 +15,13 @@ export function mountProfileImageUploads(root:HTMLElement) {
       if(!['image/jpeg','image/png','image/webp'].includes(file.type)){report('Choose a JPEG, PNG or WebP image.');return;}
       if(file.size>(avatar?3:6)*1024*1024){report(`Maximum upload size is ${avatar?3:6} MB.`);return;}
       zone.disabled=true;const url=URL.createObjectURL(file);
-      try{await editProfileImage(url,avatar?'Avatar':'Profile banner',avatar?1:1700/330,signal,async(crop,editorSignal)=>{
+      try{await editProfileImage(url,avatar?'Avatar':'Profile banner',avatar?1:PROFILE_BACKGROUND_ASPECT,signal,async(crop,editorSignal)=>{
         const body=new FormData();body.append('file',file);body.append('crop',JSON.stringify(crop));
         const response=await fetch(`/api/proxy/profile/me/${kind}`,{method:'POST',signal:editorSignal,body});
         const data=await response.json();if(!response.ok)throw new Error(typeof data.detail==='string'?data.detail:'Upload failed.');
         const stored=avatar?`/api/proxy${data.avatar_url}`:data.background_url;
         paint(`${stored}${stored.includes('?')?'&':'?'}v=${Date.now()}`);
-      },avatar?{}:{mobileAspect:PROFILE_MOBILE_BACKGROUND_ASPECT,cropOutput:true});}catch(cause){if(!signal.aborted)report((cause as Error).message);}
+      });}catch(cause){if(!signal.aborted)report((cause as Error).message);}
       finally{URL.revokeObjectURL(url);zone.disabled=false;input.value='';}
     };
     zone.addEventListener('click',()=>input.click(),{signal});

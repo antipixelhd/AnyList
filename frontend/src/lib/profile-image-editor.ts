@@ -4,7 +4,7 @@ import {showToast} from './toasts';
 export type ProfileFraming={x:number;y:number;zoom:number};
 
 export function editProfileImage(url:string,title:string,aspect:number,signal:AbortSignal,
-  saveImage:(crop:ProfileFraming,signal:AbortSignal)=>Promise<void>,options:{mobileAspect?:number;cropOutput?:boolean}={}):Promise<boolean> {
+  saveImage:(crop:ProfileFraming,signal:AbortSignal)=>Promise<void>):Promise<boolean> {
   return new Promise(resolve=>{
     const editor=document.createElement('dialog');editor.className='profile-artwork-editor';editor.setAttribute('aria-label',title);
     const heading=document.createElement('h2');heading.textContent=title;
@@ -32,7 +32,7 @@ export function editProfileImage(url:string,title:string,aspect:number,signal:Ab
     editor.showModal();
     void import('./profile-artwork-cropper').then(async({mountProfileCropper})=>{
       if(lifetime.signal.aborted)return;
-      await mountProfileCropper(frame,image,aspect,lifetime.signal,value=>{values=value;},options);
+      await mountProfileCropper(frame,image,aspect,lifetime.signal,value=>{values=value;});
       if(!lifetime.signal.aborted){status.hidden=true;save.disabled=false;}
     }).catch(()=>{if(!lifetime.signal.aborted)status.textContent='Couldn’t load this image. Close and try again.';});
   });

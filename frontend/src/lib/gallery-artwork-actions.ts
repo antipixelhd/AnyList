@@ -1,7 +1,7 @@
 import {editProfileImage} from './profile-image-editor';
 import {showToast} from './toasts';
 import {responsiveArtwork} from './responsive-artwork';
-import {PROFILE_MOBILE_BACKGROUND_ASPECT} from './profile-crop-geometry';
+import {PROFILE_BACKGROUND_ASPECT} from './profile-crop-geometry';
 
 export function mountGalleryArtworkActions(viewer:HTMLDialogElement,info:any,signal:AbortSignal,
   selected:()=>{url?:string;artwork:boolean},pinned:(url:string|undefined)=>void) {
@@ -31,13 +31,13 @@ export function mountGalleryArtworkActions(viewer:HTMLDialogElement,info:any,sig
     const {url}=selected();if(!url)return;
     // Reuse the full image already displayed by the viewer, never its metadata thumbnail.
     const image=responsiveArtwork(url,{size:'original',route:'direct'})?.src||url;
-    await editProfileImage(image,'Profile background',window.innerWidth/(window.innerWidth<=650?220:330),signal,
+    await editProfileImage(image,'Profile background',PROFILE_BACKGROUND_ASPECT,signal,
       async(crop,editorSignal)=>{
         const response=await fetch('/api/proxy/profile/me/background',{method:'PUT',signal:editorSignal,
           headers:{'Content-Type':'application/json'},body:JSON.stringify({image,crop})});
         if(!response.ok)throw new Error('Unable to save background. Please try again.');
         showToast('Profile background saved.','success');
-      },{mobileAspect:PROFILE_MOBILE_BACKGROUND_ASPECT});
+      });
   },{signal});
   signal.addEventListener('abort',()=>actions.remove(),{once:true});
   return (url?:string)=>{if(url!==undefined)saved=url||undefined;paint();};

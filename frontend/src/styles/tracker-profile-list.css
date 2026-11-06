@@ -690,3 +690,8 @@
 .profile-shadow { background:linear-gradient(rgba(6,13,34,0) 40%,rgba(6,13,34,.6)); pointer-events:none; }
 
 .profile-background-frame { position:absolute; inset:0; overflow:hidden; }
+
+/* Mobile shows the center of the same desktop-framed background. */
+@media(max-width:650px) {
+  .profile-background { width:calc(220px * var(--profile-background-aspect)); left:50%; right:auto; translate:-50% 0; max-width:none; }
+}

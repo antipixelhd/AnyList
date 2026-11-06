@@ -1,25 +1,10 @@
 export type CropRect={x:number;y:number;width:number;height:number};
-export const PROFILE_MOBILE_BACKGROUND_ASPECT=390/220;
+export const PROFILE_BACKGROUND_ASPECT=1700/330;
 
 /** Fit the entire source inside the editor's available space, in either orientation. */
 export function profileImageFit(width:number,height:number,availableWidth:number,availableHeight:number) {
   const scale=Math.min(availableWidth/width,availableHeight/height);
   return {width:width*scale,height:height*scale};
-}
-
-/** Horizontal bounds of the narrower mobile crop, using the same saved focal framing. */
-export function profileMobileRegion(rect:CropRect,width:number,height:number,aspect:number,mobileAspect:number,cropped=false) {
-  // Uploads are physically cropped before storage; provider backgrounds retain
-  // the full source and apply focal framing in the profile's CSS instead.
-  if(cropped){
-    const fraction=Math.min(1,mobileAspect/aspect);
-    return fraction<1?{left:(1-fraction)*50,right:(1+fraction)*50}:null;
-  }
-  const framing=profileCrop(rect,width,height,aspect);
-  const mobileWidth=Math.min(width,height*mobileAspect)/framing.zoom;
-  if(mobileWidth>=rect.width)return null;
-  const left=(rect.width-mobileWidth)*framing.x/100;
-  return {left:left/rect.width*100,right:(left+mobileWidth)/rect.width*100};
 }
 
 /** Resize from the last pointer sample, not the beginning of an overshot gesture. */
