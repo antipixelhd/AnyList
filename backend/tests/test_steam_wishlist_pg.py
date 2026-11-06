@@ -145,6 +145,31 @@ class WishlistDatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((row.status,row.notes),('completed','keep'))
         self.assertIsNone(await self.entry('50'));self.assertIsNone(await self.entry('60'))
 
+    async def test_manual_deletion_stays_deleted_until_observed_steam_remove_and_readd(self):
+        await self.import_wishlist()
+        original=await self.entry()
+        async with self.Session() as db:
+            await game_tracking.remove_entry(db,self.user.id,original.work_id,original.revision)
+        for _ in range(2):
+            self.assertEqual((await self.sync())['wishlist_added'],0)
+            self.assertIsNone(await self.entry())
+        async with self.Session() as db:
+            state=await db.get(SteamConnection,self.id)
+            self.assertEqual(state.wishlist_state['apps'],['40'])
+            self.assertEqual(state.wishlist_state['pending'],[])
+        self.source.wishlist.return_value=[]
+        self.assertEqual((await self.sync())['wishlist_removed'],0)
+        self.assertIsNone(await self.entry())
+        async with self.Session() as db:
+            state=await db.get(SteamConnection,self.id)
+            self.assertEqual(state.wishlist_state['apps'],[])
+        self.source.wishlist.return_value=[fixture.game('40',0)]
+        self.assertEqual((await self.sync())['wishlist_added'],1)
+        restored=await self.entry()
+        self.assertEqual((restored.work_id,restored.status),(original.work_id,'planning'))
+        self.assertNotEqual(restored.id,original.id)
+        self.assertEqual((await self.sync())['wishlist_added'],0)
+
     async def test_purchase_via_other_app_same_canonical_game_is_not_a_removal(self):
         await self.import_wishlist()
         before=await self.entry()
