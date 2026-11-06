@@ -253,6 +253,7 @@
 .steam-settings .steam-import-bar .steam-secondary { background:transparent; color:var(--steam-accent); }
 .steam-header-actions { display:flex; align-items:center; gap:16px; }
 .steam-layout-toggle { display:none; }
+.steam-inline-fields { display:none; }
 @media (min-width:801px) and (hover:hover) and (pointer:fine) {
   .steam-layout-toggle { display:flex; gap:4px; }
   .steam-layout-toggle .steam-icon-button[aria-pressed=true] { color:var(--steam-accent); }
@@ -275,4 +276,13 @@
   .steam-workflow[data-layout=list] .steam-review-info { min-width:0; }
   .steam-workflow[data-layout=list] .steam-review-info h3 { overflow-wrap:anywhere; }
   .steam-workflow[data-layout=list] [data-wishlist-app] { grid-column:1/-1; grid-template-columns:minmax(0,1fr); }
+  .steam-workflow[data-layout=list] .steam-game:has([data-app-id]) { grid-template-columns:minmax(0,1fr) 150px minmax(270px,34%); }
+  .steam-workflow[data-layout=list] [data-app-id] {
+    grid-column:1; display:flex; flex-direction:column; justify-content:center; align-items:flex-start;
+    gap:4px; padding:0 28px 0 54px;
+  }
+  .steam-workflow[data-layout=list] [data-app-id] .steam-card-title { padding:0; -webkit-line-clamp:1; }
+  .steam-workflow[data-layout=list] [data-app-id] .steam-card-stats { align-self:start; font-size:12px; line-height:1.5; }
+  .steam-workflow[data-layout=list] .steam-game:has([data-app-id]) .steam-game-controls { grid-column:2; }
+  .steam-workflow[data-layout=list] .steam-inline-fields { display:flex; grid-column:3; }
 }

@@ -41,13 +41,26 @@ function init() {
   let reviewGames: SteamGame[] | null = null;
   let reviewLimit = 40;
   const scroller = get('scroll');
+  const desktopList = matchMedia('(min-width:801px) and (hover:hover) and (pointer:fine)');
+  const inlineEditors = new Map<string, { node: HTMLElement; status: string; controller: AbortController }>();
+  const combinedList = () => desktopList.matches && dialog.dataset.layout === 'list';
+  function clearInlineEditors() {
+    for (const editor of inlineEditors.values()) { editor.controller.abort(); editor.node.remove(); }
+    inlineEditors.clear();
+  }
   function setLayout(layout: 'grid' | 'list') {
+    if (active && step === 0 && combinedList() && !validateInlineDates()) return;
     const region = get(step === 2 ? 'wishlist-grid' : step === 1 ? 'details' : 'grid');
     const top = scroller.getBoundingClientRect().top;
     const anchor = Array.from(region.children).find(node => !node.hasAttribute('hidden') && node.getBoundingClientRect().bottom > top);
     const offset = anchor ? anchor.getBoundingClientRect().top - top : 0;
     dialog.dataset.layout = layout;
     for (const value of ['grid', 'list'] as const) get(`layout-${value}`).setAttribute('aria-pressed', String(value === layout));
+    if (active) {
+      clearInlineEditors();
+      if (step === 1 && combinedList()) { setStep(0); render(false); }
+      else paintSelections();
+    }
     if (anchor) scroller.scrollTop += anchor.getBoundingClientRect().top - top - offset;
     try { localStorage.setItem('steam-import-layout', layout); } catch {}
   }
@@ -56,6 +69,12 @@ function init() {
   setLayout(layout);
   listen(get('layout-grid'), 'click', () => setLayout('grid'));
   listen(get('layout-list'), 'click', () => setLayout('list'));
+  listen(desktopList, 'change', () => {
+    if (!active) return;
+    clearInlineEditors();
+    if (step === 1 && combinedList()) { setStep(0); render(false); }
+    else paintSelections();
+  });
   const finishDate = (game: SteamGame) => Object.hasOwn(draft.completion_dates, game.app_id) ? draft.completion_dates[game.app_id]
     : game.last_played ? new Date(game.last_played * 1000).toLocaleDateString('sv-SE') : null;
   listen(get('resume'), 'click', () => {
@@ -74,7 +93,7 @@ function init() {
   listen(get('keep-editing'),'click',()=>{void closeDialog(exitDialog);});
   async function leave(abort: boolean) {
     if (!active || importing || leaving) return;
-    if (!abort && reviewGames && get('details').querySelector('input:invalid')) {
+    if (!abort && ((reviewGames && get('details').querySelector('input:invalid')) || (combinedList() && invalidInlineDate()))) {
       get('exit-error').textContent='Correct the date before saving. Choose Keep editing to return.';
       get('exit-error').hidden=false; return;
     }
@@ -105,7 +124,7 @@ function init() {
   let reviewEpoch = 0;
   let importing = false;
   const observer = new IntersectionObserver(entries => { if (entries.some(e => e.isIntersecting)) more(); }, { root: scroller, rootMargin: '300px' });
-  cleanup = () => { reviewEpoch++; controller.abort(); detailsController.abort(); clearTimeout(timer); clearTimeout(saveTimer); observer.disconnect(); };
+  cleanup = () => { reviewEpoch++; controller.abort(); detailsController.abort(); clearInlineEditors(); clearTimeout(timer); clearTimeout(saveTimer); observer.disconnect(); };
   async function request<T>(path = '', method = 'GET', body?: unknown): Promise<T> {
     const response = await fetch(`/api/proxy/connections/steam${path}`, { method, signal,
       headers: { 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
@@ -212,6 +231,16 @@ function init() {
         const value = steamStatus(game, draft);
         if (status.value !== value) { status.value = value; status.dispatchEvent(new Event('input', { bubbles: true })); }
         if (status.disabled !== unavailable) status.disabled = unavailable;
+        let editor = inlineEditors.get(id);
+        if (combinedList() && selected && !unavailable) {
+          if (editor && editor.status !== value) { editor.controller.abort(); editor.node.remove(); inlineEditors.delete(id); editor = undefined; }
+          if (!editor) {
+            const editorController = new AbortController();
+            const node = reviewFields(game, editorController, 'inline'); node.classList.add('steam-inline-fields');
+            editor = { node, status: value, controller: editorController }; inlineEditors.set(id, editor); wrapper.append(node);
+          }
+        }
+        if (editor) { editor.node.hidden = !combinedList() || !selected || unavailable; editor.node.inert = editor.node.hidden; }
       }
 
     }
@@ -334,6 +363,7 @@ function init() {
     get('retry').hidden = status !== 'failed' && status !== 'cancelled';
     if (available) {
       const epoch = ++reviewEpoch; importing = false;
+      clearInlineEditors();
       wishlist = data.wishlist || []; get('wishlist-grid').replaceChildren(); wishlistCards.clear(); wishlistLimit = 80;
       get('wishlist-error').textContent = data.wishlist_error || ''; get('wishlist-error').hidden = !data.wishlist_error;
       get('wishlist-retry').hidden = !data.wishlist_error;
@@ -411,7 +441,7 @@ function init() {
     get('next').hidden = next === 2; get('import').hidden = next !== 2; get('back').hidden = next === 0;
     get('details-more').hidden = next !== 1 || reviewLimit >= (reviewGames?.length || 0);
     get('dialog').querySelector('h2')!.textContent = next === 2 ? 'Choose your wishlist' : next === 1 ? 'Dates & ratings' : 'Choose your games';
-    if (next === 0) { reviewGames = null; detailsController.abort(); }
+    if (next === 0) { reviewGames = null; detailsController.abort(); get('details').replaceChildren(); }
     if (next === 2) renderWishlist();
     scroller.scrollTop = 0; paintSelections();
   }
@@ -467,6 +497,48 @@ function init() {
       wishlist = data.wishlist; get('wishlist-error').hidden = true; get('wishlist-retry').hidden = true; renderWishlist();
     }).catch(fail).finally(() => { get<HTMLButtonElement>('wishlist-retry').disabled = false; });
   });
+  function reviewFields(game: SteamGame, editorController: AbortController, prefix: string) {
+    const fields = document.createElement('div'); fields.className = 'steam-review-fields';
+    const status = steamStatus(game,draft);
+    if (status === 'completed' || status === 'playing') {
+      const label = document.createElement('label'); label.className = 'steam-review-field';
+      const caption = document.createElement('span'); caption.textContent = status === 'completed' ? 'Completion date' : 'Start date';
+      const control = get<HTMLTemplateElement>('date-template').content.cloneNode(true) as DocumentFragment;
+      const iso = control.querySelector<HTMLInputElement>('[data-date-iso]')!;
+      const display = control.querySelector<HTMLInputElement>('[data-date-display]')!;
+      display.id = `steam-date-${prefix}-${game.app_id}`; label.htmlFor = display.id;
+      display.setAttribute('aria-label', `${caption.textContent} for ${game.name}`);
+      control.querySelector('[data-date-picker]')?.setAttribute('aria-label', `Choose ${caption.textContent.toLowerCase()} for ${game.name}`);
+      iso.value = status === 'completed' ? finishDate(game) || '' : draft.start_dates[game.app_id] || '';
+      const clear = document.createElement('button'); clear.type = 'button'; clear.textContent = 'Clear'; clear.className = 'steam-text-button'; clear.setAttribute('aria-label', `Clear ${caption.textContent.toLowerCase()} for ${game.name}`);
+      const dateField = document.createElement('div'); dateField.className='steam-date-field';
+      const dateHead = document.createElement('div'); dateHead.className='steam-date-field-head';
+      dateHead.append(caption,clear); label.append(dateHead,control); dateField.append(label); fields.append(dateField);
+      const refresh = setupCalendarDateInputs(label,editorController.signal);
+      const update = () => { (status==='completed'?draft.completion_dates:draft.start_dates)[game.app_id] = iso.value || null; changed(); };
+      iso.addEventListener('change',update,{signal:editorController.signal});
+      display.addEventListener('input',()=>{if(display.validity.valid) update();},{signal:editorController.signal});
+      clear.addEventListener('click',()=>{iso.value='';refresh();update();},{signal:editorController.signal});
+      refresh();
+    }
+    const rating = document.createElement('button'); rating.type='button'; rating.className='steam-quick-rate';
+    const value = document.createElement('span');
+    const paintRating = () => {
+      const score=draft.ratings[game.app_id]; value.textContent=score == null ? '? / 10' : `${score.toFixed(1)} / 10`;
+      rating.setAttribute('aria-label',`Rate ${game.name}${score == null ? '' : `. Current score: ${score}`}`);
+    };
+    rating.append(value); paintRating();
+    const reviewSignal = editorController.signal;
+    rating.addEventListener('click',()=>{
+      const quickRate = (window as any).anyListQuickRate;
+      if (!quickRate) return;
+      quickRate({title:game.name,posterSrc:game.poster,score:draft.ratings[game.app_id] ?? null,onScore:(score:number|null)=>{
+        if (reviewSignal.aborted) return;
+        draft.ratings[game.app_id]=score;paintRating();changed();
+      }});
+    },{signal:reviewSignal});
+    fields.append(rating); return fields;
+  }
   function appendDetails() {
     const container = get('details');
     for (const game of reviewGames!.slice(container.children.length, reviewLimit)) {
@@ -476,48 +548,28 @@ function init() {
       const title = document.createElement('h3'); title.textContent = game.name;
       const last = document.createElement('p'); last.textContent = game.last_played ? `Last played · ${formatDate(new Date(game.last_played*1000).toLocaleDateString('sv-SE'))}` : 'Last played · Unknown';
       info.append(title,last); row.append(image,info);
-      const fields = document.createElement('div'); fields.className = 'steam-review-fields';
-      const status = steamStatus(game,draft);
-      if (status === 'completed' || status === 'playing') {
-        const label = document.createElement('label'); label.className = 'steam-review-field';
-        const caption = document.createElement('span'); caption.textContent = status === 'completed' ? 'Completion date' : 'Start date';
-        const control = get<HTMLTemplateElement>('date-template').content.cloneNode(true) as DocumentFragment;
-        const iso = control.querySelector<HTMLInputElement>('[data-date-iso]')!;
-        const display = control.querySelector<HTMLInputElement>('[data-date-display]')!;
-        display.id = `steam-date-${game.app_id}`; label.htmlFor = display.id;
-        display.setAttribute('aria-label', `${caption.textContent} for ${game.name}`);
-        control.querySelector('[data-date-picker]')?.setAttribute('aria-label', `Choose ${caption.textContent.toLowerCase()} for ${game.name}`);
-        iso.value = status === 'completed' ? finishDate(game) || '' : draft.start_dates[game.app_id] || '';
-        const clear = document.createElement('button'); clear.type = 'button'; clear.textContent = 'Clear'; clear.className = 'steam-text-button'; clear.setAttribute('aria-label', `Clear ${caption.textContent.toLowerCase()} for ${game.name}`);
-        const dateField = document.createElement('div'); dateField.className='steam-date-field';
-        const dateHead = document.createElement('div'); dateHead.className='steam-date-field-head';
-        dateHead.append(caption,clear); label.append(dateHead,control); dateField.append(label); fields.append(dateField);
-        const refresh = setupCalendarDateInputs(label,detailsController.signal);
-        const update = () => { (status==='completed'?draft.completion_dates:draft.start_dates)[game.app_id] = iso.value || null; changed(); };
-        iso.addEventListener('change',update,{signal:detailsController.signal});
-        display.addEventListener('input',()=>{if(display.validity.valid) update();},{signal:detailsController.signal});
-        clear.addEventListener('click',()=>{iso.value='';refresh();update();},{signal:detailsController.signal});
-        refresh();
-      }
-      const rating = document.createElement('button'); rating.type='button'; rating.className='steam-quick-rate';
-      const value = document.createElement('span');
-      const paintRating = () => {
-        const score=draft.ratings[game.app_id]; value.textContent=score == null ? '? / 10' : `${score.toFixed(1)} / 10`;
-        rating.setAttribute('aria-label',`Rate ${game.name}${score == null ? '' : `. Current score: ${score}`}`);
-      };
-      rating.append(value); paintRating();
-      const reviewSignal = detailsController.signal;
-      rating.addEventListener('click',()=>{
-        const quickRate = (window as any).anyListQuickRate;
-        if (!quickRate) return;
-        quickRate({title:game.name,posterSrc:game.poster,score:draft.ratings[game.app_id] ?? null,onScore:(score:number|null)=>{
-          if (reviewSignal.aborted) return;
-          draft.ratings[game.app_id]=score;paintRating();changed();
-        }});
-      },{signal:reviewSignal});
-      fields.append(rating); row.append(fields); container.append(row);
+      row.append(reviewFields(game, detailsController, 'review')); container.append(row);
     }
     get('details-more').hidden = reviewLimit >= reviewGames!.length;
+  }
+  function invalidInlineDate() {
+    for (const [app, editor] of inlineEditors) {
+      const game = byId.get(app);
+      if (!game || !steamSelected(game, draft)) continue;
+      const input = editor.node.querySelector<HTMLInputElement>('input:invalid');
+      if (input) return { app, input };
+    }
+  }
+  function validateInlineDates() {
+    const invalid = invalidInlineDate();
+    if (!invalid) return true;
+    query = ''; selectedOnly = false; get<HTMLInputElement>('search').value = '';
+    limit = Math.max(limit, orderedGames.findIndex(game => game.app_id === invalid.app) + 1);
+    render(false); invalid.input.reportValidity(); return false;
+  }
+  function showDetails() {
+    detailsController.abort(); detailsController = new AbortController(); reviewLimit = 40;
+    get('details').replaceChildren(); appendDetails(); setStep(1);
   }
   listen(get('next'),'click',()=>{
     if (step === 1) {
@@ -525,12 +577,13 @@ function init() {
       if (invalid) { invalid.reportValidity(); return; }
       setStep(2); changed(); get('dialog').querySelector<HTMLElement>('h2')!.focus({preventScroll:true}); return;
     }
+    if (combinedList() && !validateInlineDates()) return;
     reviewGames = sortSteamGames(games.filter(game=>steamSelected(game,draft)),draft.sort);
-    detailsController.abort(); detailsController = new AbortController(); reviewLimit = 40;
-    get('details').replaceChildren(); appendDetails(); setStep(1); changed();
+    if (combinedList()) setStep(2); else showDetails();
+    changed();
     get('dialog').querySelector<HTMLElement>('h2')!.focus({preventScroll:true});
   });
-  listen(get('back'),'click',()=>{if (step === 2) { setStep(1); return; } setStep(0);render(false);get('search').focus();});
+  listen(get('back'),'click',()=>{if (step === 2 && !combinedList()) { showDetails(); return; } setStep(0);render(false);get('search').focus();});
   listen(get('details-more'),'click',()=>{reviewLimit+=40;appendDetails();});
   listen(get('retry'), 'click', () => { if (active) void request(`/${active.id}/retry`, 'POST').then(() => load(active!.id)).catch(fail); });
   listen(get('import'), 'click', () => {
