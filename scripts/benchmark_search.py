@@ -45,6 +45,7 @@ from core.game_release_dates import VERSION as RELEASE_VERSION
 from core.game_credit_roles import CREDIT_POLICY_VERSION
 from dependencies import get_current_user, get_current_user_or_api_key
 from models import GlobalSettings, Media, User, UserProfileData
+from models.show import Show
 from models.base import MediaType
 from models.catalogue import (
     CatalogueCredit,
@@ -96,7 +97,7 @@ async def main(args):
         # Execute trusted repository source in this process only; never switch
         # branches or overwrite the user's checkout to compare revisions.
         for name in ('game_candidate_queries','game_browse_sources','game_title_candidates','game_imdb_discovery_source','game_imdb_discovery','game_credit_projection','media_details','game_statistics_facts','game_statistics','tmdb', 'discovery_policy', 'catalog_search', 'release_browse', 'browse',
-                     'person_identities', 'game_imdb_person', 'game_contributor_works', 'game_person_images', 'contributor_evidence', 'studio_discovery', 'contributor_details', 'contributor_search'):
+                     'tracking_metadata', 'person_identities', 'game_imdb_person', 'game_contributor_works', 'game_person_images', 'contributor_evidence', 'studio_discovery', 'contributor_details', 'contributor_search'):
             module = importlib.import_module('core.' + name)
             process = await asyncio.to_thread(subprocess.run, ['git', 'show', f'{args.baseline_ref}:backend/core/{name}.py'],
                 cwd=ROOT, check=False, capture_output=True, text=True, encoding='utf-8')
@@ -410,6 +411,16 @@ async def main(args):
                 raise tmdb.TMDBUnavailable('Controlled provider outage')
             await asyncio.sleep(args.provider_delay_ms / 1000)
             path = url.removeprefix(tmdb.TMDB_BASE + '/').split('/')
+            if current_case == 'series_resolve' and path[:2] == ['tv', '9900001']:
+                if len(path) > 2 and path[2] == 'season':
+                    number = int(path[3])
+                    return {'episodes': [{'id': 9910000 + number * 100 + episode,
+                        'episode_number': episode, 'name': f'Episode {number}.{episode}',
+                        'air_date': '2020-01-01', 'runtime': 45} for episode in range(1, 9)]}
+                return {'id': 9900001, 'name': 'Cold twelve-season series', 'overview': 'Complete synopsis',
+                    'status': 'Ended', 'first_air_date': '2020-01-01', 'genres': [],
+                    'number_of_seasons': 12, 'number_of_episodes': 96,
+                    'seasons': [{'season_number': number, 'episode_count': 8} for number in range(1, 13)]}
             if current_case=='game_portraits':
                 identifier=int(path[1].removeprefix('nm'))
                 person={'id':identifier,'profile_path':'/portrait.jpg' if identifier%2==0 else None}
@@ -492,6 +503,10 @@ async def main(args):
                 row['complete_provider_requests'] = counters.get('provider_requests', 0)
             if isinstance(result, dict):
                 items = result.get('results', result.get('items', []))
+                if label == 'series_resolve':
+                    items = [{'season': season['season_number'], **{key: episode[key] for key in
+                        ('episode_number', 'title', 'air_date', 'runtime', 'watched', 'released')}}
+                        for season in result['seasons'] for episode in season['episodes']]
                 if label.startswith('game_contributor') or label in ('game_person_cached','game_company_cached'):items=result['works']
                 if label=='game_credits':items=result['people']+result['game_characters']
                 if label=='game_person_roles':items=result['roles']
@@ -760,6 +775,7 @@ async def main(args):
             ('studio', 'quick-search/contributors', {'q': 'Benchmark', 'kind': 'studio'}),
             ('sparse_viewport', None, {}),
             ('details_then_timeline', None, {}),
+            *([('series_resolve', None, {})] if args.case and 'series_resolve' in args.case else []),
             ('negative_studio', 'quick-search/contributors', {'q': 'Negative', 'kind': 'studio'}),
             ('empty_query', 'catalog', {'q': 'zz-no-match', 'media_type': 'movie'}),
             ('runtime_timeout', 'catalog', {'q': 'Benchmark title', 'media_type': 'movie'}),
@@ -891,6 +907,13 @@ async def main(args):
                             await db.execute(delete(MetadataSnapshot).where(MetadataSnapshot.provider=='igdb',
                                 MetadataSnapshot.kind=='game',MetadataSnapshot.external_id=='9000000'))
                             await db.commit()
+                    if label == 'series_resolve':
+                        async with fixture.Session() as db:
+                            show_ids = select(Show.id).where(Show.tmdb_id == 9900001)
+                            await db.execute(delete(Media).where(or_(Media.tmdb_id == 9900001,
+                                Media.show_id.in_(show_ids))))
+                            await db.execute(delete(Show).where(Show.tmdb_id == 9900001))
+                            await db.commit()
                     if path == 'quick-search/contributors':
                         async with fixture.Session() as db:
                             await db.execute(delete(MetadataSnapshot).where(MetadataSnapshot.kind.in_(('game_company_search','game_people_search'))))
@@ -919,6 +942,16 @@ async def main(args):
                         params['unfiltered'] = 'true'
 
                     async def operation(path=path, params=params, label=label, mode=mode):
+                        if label == 'series_resolve':
+                            response = await fixture.client.post('/tracking/catalog/series/9900001')
+                            if response.status_code != 200:
+                                raise RuntimeError(f'Series resolution failed: {response.status_code}')
+                            result = await request(f'title/{response.json()["id"]}', {})
+                            if len(result['seasons']) != 12 or any(len(season['episodes']) != 8 for season in result['seasons']):
+                                raise RuntimeError('Series resolution lost seasons or episodes')
+                            if result['overview'] != 'Complete synopsis':
+                                raise RuntimeError('Series resolution lost primary metadata')
+                            return result
                         if label=='game_portraits':
                             result=await request(path,params)
                             people=result['people']

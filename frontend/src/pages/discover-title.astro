@@ -4,11 +4,27 @@ const type=Astro.url.searchParams.get('type');
 const id=Number(Astro.url.searchParams.get('id'));
 if(!['movie','series'].includes(type!)||!Number.isSafeInteger(id)||id<=0)return Astro.redirect('/browse');
 ---
-<Tracker title="Loading title"><div class="page-width"><p id="loading-title" role="status">Loading title details…</p><a href="/browse">Back to Browse</a><div id="resolve-title" data-type={type} data-id={id}></div></div></Tracker>
+<Tracker title="Loading title"><div class="page-width" id="resolve-title" data-type={type} data-id={id}><p role="status">Loading title details…</p><a href="/browse">Back to Browse</a><button type="button" class="button-secondary" data-resolve-title-retry hidden>Try again</button></div></Tracker>
 <script>
+import {navigate} from 'astro:transitions/client';
+import {resolveTitleId} from '../lib/title-discovery';
+let controller:AbortController|undefined;
 document.addEventListener('astro:page-load', () => {
-const target=document.querySelector<HTMLElement>('#resolve-title')!;
-if (!target) return;
-fetch(`/api/proxy/tracking/catalog/${target.dataset.type}/${target.dataset.id}`,{method:'POST'}).then(async response=>{if(!response.ok)throw new Error('Could not load the title. Check your metadata key in Settings and try again.');const result=await response.json();location.replace(`/title/${result.id}`);}).catch(e=>{document.querySelector('#loading-title')!.textContent=e.message;});
+  controller?.abort();
+  const host=document.querySelector<HTMLElement>('#resolve-title');
+  if(!host)return;
+  const current=new AbortController();controller=current;
+  const message=host.querySelector<HTMLElement>('[role=status]')!;
+  const retry=host.querySelector<HTMLButtonElement>('[data-resolve-title-retry]')!;
+  const resolve=async()=>{
+    retry.hidden=true;message.textContent='Loading title details…';
+    try{
+      const id=await resolveTitleId(host.dataset.type as 'movie'|'series',Number(host.dataset.id),current.signal);
+      if(!current.signal.aborted)await navigate(`/title/${id}`,{history:'replace'});
+    }catch(cause){if(!current.signal.aborted){message.textContent=(cause as Error).message;retry.hidden=false;}}
+  };
+  retry.addEventListener('click',resolve,{signal:current.signal});
+  document.addEventListener('astro:before-preparation',()=>current.abort(),{once:true,signal:current.signal});
+  void resolve();
 });
 </script>

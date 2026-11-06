@@ -25,7 +25,7 @@ import MediaDetailCredits from './MediaDetailCredits.astro';
 import MediaDetailCastToggle from './MediaDetailCastToggle.astro';
 import {gameCastData} from '../lib/game-cast-data';
 import MediaDetailWork from './MediaDetailWork.astro';
-import {scoreLabel,statuses,tracker} from '../lib/tracker';
+import {scoreLabel,statuses} from '../lib/tracker';
 import {responsiveArtwork} from '../lib/responsive-artwork';
 import {detailSceneArtwork} from '../lib/detail-artwork';
 import {mediaShareDescription} from '../lib/share-preview';
@@ -40,7 +40,7 @@ const {media,library=null,libraryError='',canUseLibrary=false,error=''}=Astro.pr
 const title=media?prepareDetail(media):null;
 const signedIn=!!Astro.locals.user;
 const removeSpecials=signedIn&&title?.type==='series'
-  ? (await tracker('preferences',Astro.locals.token).catch(()=>null))?.remove_specials_seasons!==false : true;
+  ? (await viewerMediaPreferences(Astro.locals)).remove_specials_seasons!==false : true;
 const screenTitle=!!title&&['movie','series'].includes(title.type);
 const gameTitle=title?.type==='game';
 const screenPrimaryPending=screenTitle&&signedIn&&title?.primary_status?.pending===true;

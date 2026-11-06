@@ -1,5 +1,6 @@
 """Load and refresh complete regular-episode catalogues for tracked series."""
 import asyncio
+import weakref
 from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import and_, or_, select
 from core import tmdb, tvdb
@@ -12,6 +13,41 @@ from models.tracking import TrackedEntry
 
 FINAL_SHOW_STATUSES = {"Ended", "Canceled"}
 EPISODE_DETAILS_VERSION = 1
+_season_slots = weakref.WeakKeyDictionary()
+
+
+async def fetch_tmdb_seasons(tmdb_id, seasons, api_key):
+    """Acquire complete seasons in order, with four shared provider reads per loop."""
+    loop = asyncio.get_running_loop()
+    reference = _season_slots.get(loop)
+    slots = reference() if reference else None
+    if slots is None:
+        slots = asyncio.Semaphore(4)
+        # A contended semaphore retains its loop; keep both sides weak so
+        # closing a worker/test loop does not leave it alive through this map.
+        _season_slots[loop] = weakref.ref(slots)
+
+    async def fetch(season):
+        async with slots:
+            number = season['season_number']
+            data = await tmdb.get_season(tmdb_id, number, api_key=api_key)
+            episodes = data.get('episodes')
+            if not isinstance(episodes, list) or len(episodes) != season.get('episode_count'):
+                raise ValueError('Episode metadata is incomplete; try refreshing again later')
+            if any(not e.get('id') or not e.get('episode_number') for e in episodes):
+                raise ValueError('Episode identities are incomplete')
+            return [(number, episode) for episode in episodes]
+
+    tasks = [asyncio.create_task(fetch(season)) for season in seasons
+        if isinstance(season.get('season_number'), int) and season['season_number'] > 0]
+    try:
+        return [episode for batch in await asyncio.gather(*tasks) for episode in batch]
+    finally:
+        # Failed/cancelled catalogues must not leave page-owned acquisitions running.
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def retain_episode_runtime(episode, data):
@@ -147,18 +183,7 @@ async def hydrate_tracking_episodes(db, media, api_key=None, tvdb_api_key=None):
         raise ValueError('The provider did not return a complete season catalogue')
     # Fetch everything before persisting: one failed season must not make a
     # partial catalogue look like a complete show.
-    fetched = []
-    for season in seasons:
-        number = season.get('season_number')
-        if not isinstance(number, int) or number <= 0:
-            continue
-        data = await tmdb.get_season(media.tmdb_id, number, api_key=api_key)
-        episodes = data.get('episodes')
-        if not isinstance(episodes, list) or len(episodes) != season.get('episode_count'):
-            raise ValueError('Episode metadata is incomplete; try refreshing again later')
-        if any(not e.get('id') or not e.get('episode_number') for e in episodes):
-            raise ValueError('Episode identities are incomplete')
-        fetched.extend((number, e) for e in episodes)
+    fetched = await fetch_tmdb_seasons(media.tmdb_id, seasons, api_key)
     if show is None:
         show = Show(tmdb_id=media.tmdb_id, title=media.title, canonical_source='tmdb')
         db.add(show)
