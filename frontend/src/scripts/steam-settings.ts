@@ -64,8 +64,8 @@ function init() {
     if (anchor) scroller.scrollTop += anchor.getBoundingClientRect().top - top - offset;
     try { localStorage.setItem('steam-import-layout', layout); } catch {}
   }
-  let layout: 'grid' | 'list' = 'grid';
-  try { if (localStorage.getItem('steam-import-layout') === 'list') layout = 'list'; } catch {}
+  let layout: 'grid' | 'list' = 'list';
+  try { if (localStorage.getItem('steam-import-layout') === 'grid') layout = 'grid'; } catch {}
   setLayout(layout);
   listen(get('layout-grid'), 'click', () => setLayout('grid'));
   listen(get('layout-list'), 'click', () => setLayout('list'));
@@ -405,7 +405,7 @@ function init() {
       title.textContent = conn.imported ? `${conn.selected_count} games connected` : 'Import in progress'; title.className = 'block text-sm text-zinc-300 hover:text-white';
       row.append(title);
       if (conn.imported) {
-        for (const [field, label] of [['sync_achievements', 'Achievement sync'], ['sync_playtime', 'Playtime sync'], ['auto_add_games', 'Automatically add new games'], ['sync_wishlist', 'Wishlist sync (one way)']] as const) {
+        for (const [field, label] of [['sync_achievements', 'Achievement sync'], ['sync_playtime', 'Playtime sync'], ['auto_add_games', 'Automatically add new games'], ['sync_wishlist', 'Wishlist sync']] as const) {
           const wrapper = document.createElement('label'); wrapper.className = 'inline-flex items-center mr-6 text-sm text-zinc-300';
           const input = document.createElement('input'); input.type = 'checkbox'; input.checked = conn[field];
           listen(input, 'change', () => {
@@ -442,6 +442,8 @@ function init() {
   });
   function setStep(next: 0 | 1 | 2) {
     step = next;
+    get(next === 0 ? 'rule-row' : 'layout-bar').append(get('layout-toggle'));
+    get('layout-bar').hidden = next === 0;
     get('controls').hidden = next !== 0; get('grid').hidden = next !== 0;
     get('details').hidden = next !== 1; get('wishlist').hidden = next !== 2;
     get('empty').hidden = next !== 0 || visibleGames.length > 0;

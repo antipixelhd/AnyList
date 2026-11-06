@@ -77,17 +77,17 @@ html:has(.steam-workflow[open]) { scrollbar-gutter:stable; }
 .steam-card :is(.steam-cover,.steam-card-title,.steam-card-stats,.steam-card-last-played) { transition:opacity .18s; }
 .steam-card[aria-pressed=false] :is(.steam-cover,.steam-card-title,.steam-card-stats,.steam-card-last-played) { opacity:.45; }
 .steam-card[aria-pressed=false] .steam-cover img { filter:grayscale(.65); }
-.steam-card[aria-pressed=false]:is(:hover,:focus-visible) :is(.steam-cover,.steam-card-title,.steam-card-stats,.steam-card-last-played) { opacity:.7; }
+.steam-card[aria-pressed=false]:focus-visible :is(.steam-cover,.steam-card-title,.steam-card-stats,.steam-card-last-played) { opacity:.7; }
 .steam-card-last-played { display:none; transition:opacity .18s; }
 .steam-game:has(.steam-card[aria-pressed=false]) .steam-card-last-played { opacity:.45; }
 .steam-settings .steam-card { position:relative; display:flex; flex-direction:column; gap:6px; width:calc(100% - 86px); min-height:78px; margin-left:86px; padding:0 20px 0 0; text-align:left; background:transparent; color:var(--steam-text); }
-.steam-settings .steam-card:is(:hover,:focus-visible) { color:var(--steam-accent); background:transparent; }
+.steam-settings .steam-card:is(:hover:not([aria-pressed=false]),:focus-visible) { color:var(--steam-accent); background:transparent; }
 .steam-card[aria-disabled=true] { cursor:not-allowed; }
 .steam-cover { position:absolute; left:-86px; top:0; display:grid; place-items:center; width:72px; height:108px; overflow:hidden; border-radius:6px; background:var(--steam-field); font-size:24px; color:var(--steam-muted); }
 .steam-cover img { width:100%; height:100%; object-fit:cover; transition:transform .22s; }
-.steam-card:hover:not([aria-disabled=true]) .steam-cover img { transform:scale(1.035); }
+.steam-card:hover:not([aria-pressed=false]):not([aria-disabled=true]) .steam-cover img { transform:scale(1.035); }
 .steam-card-title { display:-webkit-box; overflow:hidden; -webkit-line-clamp:2; -webkit-box-orient:vertical; padding-top:2px; color:var(--white,#e6edf6); font-size:16px; font-weight:600; line-height:1.4; overflow-wrap:anywhere; }
-.steam-card:is(:hover,:focus-visible) .steam-card-title { color:var(--steam-accent); }
+.steam-card:is(:hover:not([aria-pressed=false]),:focus-visible) .steam-card-title { color:var(--steam-accent); }
 .steam-card-stats { display:block; align-self:start; color:var(--steam-muted); font-size:13px; line-height:1.6; }
 .steam-card-achievements { display:block; min-height:20px; }
 .steam-card-achievements[data-loading] { display:flex; align-items:center; height:1lh; }
@@ -262,9 +262,12 @@ html:has(.steam-workflow[open]) { scrollbar-gutter:stable; }
 .steam-settings .steam-import-bar .steam-secondary { background:transparent; color:var(--steam-accent); }
 .steam-header-actions { display:flex; align-items:center; gap:16px; }
 .steam-layout-toggle { display:none; }
+.steam-layout-bar { display:none; }
 .steam-inline-fields { display:none; }
 @media (min-width:801px) and (hover:hover) and (pointer:fine) {
-  .steam-layout-toggle { display:flex; gap:4px; }
+  .steam-settings .steam-workflow[data-layout=list] { width:min(1020px,calc(100vw - 64px)); }
+  .steam-layout-toggle { display:flex; gap:4px; margin-left:auto; }
+  .steam-layout-bar { display:flex; justify-content:flex-end; padding:0 32px 12px; }
   .steam-layout-toggle .steam-icon-button[aria-pressed=true] { color:var(--steam-accent); }
   .steam-workflow[data-layout=list] :is(.steam-grid,.steam-details) { grid-template-columns:minmax(0,1fr); gap:10px; }
   .steam-workflow[data-layout=list] :is(.steam-game,.steam-review-game) {
@@ -290,14 +293,15 @@ html:has(.steam-workflow[open]) { scrollbar-gutter:stable; }
     grid-column:1; display:flex; flex-direction:column; justify-content:center; align-items:flex-start;
     gap:4px; padding:0 0 0 86px;
   }
-  .steam-workflow[data-layout=list] [data-app-id] .steam-card-title { padding:0; -webkit-line-clamp:1; }
+  .steam-workflow[data-layout=list] [data-app-id] .steam-card-title { width:calc(100% + 164px); padding:0; -webkit-line-clamp:1; }
   .steam-workflow[data-layout=list] [data-app-id] .steam-card-stats { align-self:start; font-size:12px; line-height:1.5; }
   .steam-workflow[data-layout=list] .steam-game:has([data-app-id]) .steam-game-controls { grid-column:2; }
   .steam-workflow[data-layout=list] .steam-inline-fields { display:flex; grid-column:3; }
   .steam-workflow[data-layout=list] .steam-game-controls :is(.tracker-select-trigger,.steam-game-status) { min-height:44px; }
   .steam-workflow[data-layout=list] .steam-game:has(.steam-date-field) .steam-game-controls { transform:translateY(15px); }
   @media (min-width:1200px) {
-    .steam-workflow[data-layout=list] .steam-game:has([data-app-id]) { grid-template-columns:minmax(0,1fr) 150px 124px minmax(270px,34%); }
+    .steam-workflow[data-layout=list] .steam-game:has([data-app-id]) { grid-template-columns:minmax(0,1fr) 140px 108px 302px; }
+    .steam-workflow[data-layout=list] [data-app-id] .steam-card-title { width:calc(100% + 154px); }
     .steam-workflow[data-layout=list] .steam-card-last-played { grid-column:3; display:grid; grid-template-rows:24px 44px; align-items:center; gap:6px; height:74px; color:var(--steam-muted); font-size:12px; }
     .steam-workflow[data-layout=list] .steam-card-last-played > :last-child { color:var(--steam-text); font-size:14px; }
     .steam-workflow[data-layout=list] .steam-inline-fields { grid-column:4; }

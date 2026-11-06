@@ -16,21 +16,18 @@ import '../../styles/steam-import.css';
         <label><input type="checkbox" name="achievements" checked /> Achievement sync</label>
         <label><input type="checkbox" name="playtime" checked /> Playtime sync</label>
         <label><input type="checkbox" name="auto-add" /> Automatically add new games</label>
-        <label><input type="checkbox" name="wishlist" /> Wishlist sync (one way)</label>
+        <label><input type="checkbox" name="wishlist" /> Wishlist sync</label>
       </div>
       <button type="submit" class="steam-primary">Connect Steam</button>
     </form>
     <p data-steam-message role="status" class="steam-message" hidden></p>
   </div>
   <button data-steam-resume type="button" class="steam-primary" hidden>Continue Steam import</button>
-  <dialog data-steam-dialog class="steam-workflow" aria-labelledby="steam-import-heading">
+  <dialog data-steam-dialog class="steam-workflow" data-layout="list" aria-labelledby="steam-import-heading">
     <header class="steam-workflow-header">
       <div><p class="steam-eyebrow">Steam import</p><h2 id="steam-import-heading" tabindex="-1" autofocus>Choose your games</h2></div>
       <div class="steam-header-actions">
-        <div class="steam-layout-toggle" role="group" aria-label="Import layout">
-          <button data-steam-layout-grid type="button" class="steam-icon-button" aria-label="Grid view" title="Grid view" aria-pressed="true"><Icon name="grid" /></button>
-          <button data-steam-layout-list type="button" class="steam-icon-button" aria-label="List view" title="List view" aria-pressed="false"><Icon name="list" /></button>
-        </div>
+
         <button data-steam-later type="button" class="steam-icon-button" aria-label="Close Steam import"><Icon name="close" /></button>
       </div>
     </header>
@@ -52,7 +49,7 @@ import '../../styles/steam-import.css';
           </div>
           <label class="steam-sort"><span class="sr-only">Sort Steam games</span><select data-steam-sort aria-label="Sort Steam games"><option value="playtime">Most played</option><option value="alphabetical">Name A–Z</option><option value="completion">Achievement completion</option></select></label>
           </div>
-          <div class="steam-rule-row"><details class="steam-selection-rules">
+          <div data-steam-rule-row class="steam-rule-row"><details class="steam-selection-rules">
             <summary><Icon name="sliders" /><span>Auto-select games</span><Icon name="chevron-down" class="steam-disclosure-arrow" /></summary>
             <div class="steam-rule-content">
               <p>Match either minimum. Your individual choices take priority.</p>
@@ -63,11 +60,16 @@ import '../../styles/steam-import.css';
               <button type="button" data-steam-reset class="steam-text-button">Reset choices</button>
             </div>
           </details>
-          <div data-steam-progress-region class="steam-progress" role="status"><span class="steam-spinner" aria-hidden="true"></span><span>Updating achievements</span><span data-steam-progress-label></span><progress data-steam-progress max="1" value="0" aria-label="Loading achievement details"></progress></div></div>
+          <div data-steam-progress-region class="steam-progress" role="status"><span class="steam-spinner" aria-hidden="true"></span><span>Updating achievements</span><span data-steam-progress-label></span><progress data-steam-progress max="1" value="0" aria-label="Loading achievement details"></progress></div>        <div data-steam-layout-toggle class="steam-layout-toggle" role="group" aria-label="Import layout">
+          <button data-steam-layout-grid type="button" class="steam-icon-button" aria-label="Grid view" title="Grid view" aria-pressed="false"><Icon name="grid" /></button>
+          <button data-steam-layout-list type="button" class="steam-icon-button" aria-label="List view" title="List view" aria-pressed="true"><Icon name="list" /></button>
+        </div></div>
           <p data-steam-results class="sr-only" role="status" aria-live="polite"></p>
         </div>
+        <div data-steam-layout-bar class="steam-layout-bar" hidden></div>
         <div data-steam-scroll class="steam-library">
           <div data-steam-wishlist hidden>
+            <p class="steam-message">Selected wishlist games are added to Planning.</p>
             <div class="steam-toolbar"><label class="steam-search"><Icon name="search" /><input data-steam-wishlist-search type="search" aria-label="Search Steam wishlist" placeholder="Search your wishlist…" autocomplete="off" /></label></div>
             <div class="steam-utility"><button type="button" data-steam-wishlist-all class="steam-text-button">Select all</button><button type="button" data-steam-wishlist-none class="steam-text-button">Deselect all</button></div>
             <p data-steam-wishlist-error role="status" class="steam-message" hidden></p>
