@@ -1,5 +1,6 @@
 """Hydrate requested canonical game stubs through the existing IGDB snapshot."""
 import asyncio
+import logging
 from dataclasses import dataclass,field
 from time import monotonic
 from datetime import timedelta
@@ -27,6 +28,7 @@ class Flight:
     primary:asyncio.Event=field(default_factory=asyncio.Event)
     task:asyncio.Task|None=None
     entity_id:int|None=None
+    prepare_cast:bool=False
 
 
 async def native_id(db,work,identities=None):
@@ -148,19 +150,23 @@ class GameMetadata:
         if identity:
             from models.catalogue import CatalogueEntity
             work=await db.get(CatalogueEntity,identity.entity_id)
+            from core.game_imdb_enrichment import request as request_credits
+            await request_credits(db,work.id)
             await self.ensure(db,work,wait_seconds=0)
             return
         from core.game_work import demand,job_key
         await demand(db,job_key('igdb','game',native))
         await db.commit()
-        self.start(native,None)
+        self.start(native,None,prepare_cast=True)
 
-    def start(self,native,expected):
+    def start(self,native,expected,*,prepare_cast=False):
         key=(id(self.scope),native)
         flight=_flights.get(key)
-        if flight:return flight
+        if flight:
+            flight.prepare_cast |= prepare_cast
+            return flight
         if len(_flights)>=64:return None
-        flight=Flight();_flights[key]=flight
+        flight=Flight(prepare_cast=prepare_cast);_flights[key]=flight
         flight.task=asyncio.create_task(self.refresh(flight,native,expected))
         def done(task):
             if _flights.get(key) is flight:_flights.pop(key,None)
@@ -182,6 +188,17 @@ class GameMetadata:
             from core.game_work import current, Work, Priority
             current.set(Work(Priority.FINISH,current.get().owner))
             if primary_held:_slots.release();primary_held=False
+            if flight.prepare_cast:
+                # The canonical root has committed. Queue its public cast now,
+                # independently of optional IGDB characters or browser arrival.
+                # This subscriber must not poison already-published primary data.
+                try:
+                    from core.game_imdb_enrichment import request as request_credits
+                    async with self.factory() as cast_db:
+                        await request_credits(cast_db,entity_id)
+                        await cast_db.commit()
+                except Exception:
+                    logging.getLogger(__name__).warning('Game cast admission deferred to details')
             await _character_slots.acquire();characters_held=True
         try:
             await _slots.acquire();primary_held=True
@@ -226,13 +243,15 @@ class GameMetadata:
         if identity:
             from models.catalogue import CatalogueEntity
             work=await db.get(CatalogueEntity,identity.entity_id)
-            state,changed=await self.ensure(db,work)
+            from core.game_imdb_enrichment import request as request_credits
+            await request_credits(db,work.id)
+            state,changed=await self.ensure(db,work,wait_seconds=wait_seconds)
             if changed:await db.refresh(work)
             return work.id if state['primary_ready'] else None
         from core.game_work import demand, job_key
         await demand(db,job_key('igdb','game',native))
         await db.commit()
-        flight=self.start(native,None)
+        flight=self.start(native,None,prepare_cast=True)
         if not flight:return None
         deadline=monotonic()+wait_seconds
         while monotonic()<deadline:

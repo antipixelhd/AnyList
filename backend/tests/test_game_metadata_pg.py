@@ -61,6 +61,81 @@ class Provider:
 class GameMetadataTests(unittest.IsolatedAsyncioTestCase):
     cleanup=fixture.GamesDatabaseTests.cleanup
 
+    async def test_idle_credit_worker_wakes_after_admission_commit(self):
+        from core import game_imdb_enrichment as enrichment
+        first=asyncio.Event();second=asyncio.Event();scans=0
+        async def tick():
+            nonlocal scans
+            scans+=1
+            (first if scans==1 else second).set()
+            return False
+        with patch('core.game_imdb_enrichment.GameIMDbEnrichment',return_value=SimpleNamespace(tick=tick)), \
+                patch('db.AsyncSessionLocal',self.Session):
+            worker=asyncio.create_task(enrichment.scheduler())
+            try:
+                await asyncio.wait_for(first.wait(),1)
+                async with self.Session() as db:
+                    await enrichment.request(db,self.base)
+                    await asyncio.sleep(.05)
+                    self.assertFalse(second.is_set(),'An uncommitted job must not wake the worker')
+                    await db.commit()
+                await asyncio.wait_for(second.wait(),.75)
+            finally:
+                worker.cancel()
+                await asyncio.gather(worker,return_exceptions=True)
+        self.assertNotIn(asyncio.get_running_loop(),enrichment._wakeups)
+
+    async def test_mapped_cast_can_publish_while_primary_is_still_blocked(self):
+        from core.game_imdb_enrichment import GameIMDbEnrichment,JOB
+        gate=asyncio.Event();entered=asyncio.Event();detail=self.provider.detail
+        async def held(*args,**kwargs):
+            entered.set();await gate.wait()
+            return await detail(*args,**kwargs)
+        self.provider.detail=held
+        async with self.Session() as db:
+            db.add(CatalogueIdentity(entity_id=self.base,namespace='imdb.title',external_id='tt707',source='reviewed',
+                evidence={'title_type':'videoGame','igdb_id':'119133','mapping_state':'active'}))
+            await db.commit()
+        opening=asyncio.create_task(self.detail())
+        try:
+            await asyncio.wait_for(entered.wait(),5)
+            async with self.Session() as db:
+                job=await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.kind==JOB,MetadataSnapshot.external_id==str(self.base)))
+                self.assertIsNotNone(job,'Cast admission must commit before waiting for primary')
+            worker=GameIMDbEnrichment(self.Session)
+            worker.source=SimpleNamespace(credits=AsyncMock(return_value={
+                'header':{'id':'tt707','titleText':{'text':'Mapped game'},'titleType':{'id':'videoGame'}},
+                'rows':[{'name':{'id':'nm707','nameText':{'text':'An actor'}},'category':{'id':'actor','text':'Cast'},
+                    'characters':[{'name':'Hero'}],'attributes':[{'text':'voice'}]}],
+                'total':1,'has_next':False,'cursor':None}))
+            self.assertEqual(await asyncio.wait_for(worker.run(self.base),8),'ready')
+            self.assertFalse(gate.is_set())
+            self.assertFalse(self.provider.characters.is_set())
+            response=await asyncio.wait_for(opening,5)
+            self.assertEqual(response.status_code,200,response.text)
+            self.assertFalse(response.json()['game_metadata_status']['primary_ready'])
+        finally:
+            gate.set();self.provider.release.set()
+            await asyncio.gather(opening,return_exceptions=True)
+            await self.finish()
+
+    async def test_new_intent_admits_cast_after_root_publish_without_click_or_optional_characters(self):
+        from core.game_imdb_enrichment import JOB
+        response=await self.client.post('/tracking/games/warm/igdb/401')
+        self.assertEqual(response.status_code,204,response.text)
+        await asyncio.wait_for(self.provider.characters.wait(),5)
+        self.assertFalse(self.provider.release.is_set())
+        async with self.Session() as db:
+            identity=await catalogue_identity(db,'401')
+            self.assertIsNotNone(identity)
+            job=await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.kind==JOB,
+                MetadataSnapshot.external_id==str(identity.entity_id)))
+            self.assertIsNotNone(job)
+            self.assertIsNotNone(job.next_attempt_at)
+            self.assertIsNone(await db.scalar(select(GameEntry).where(GameEntry.work_id==identity.entity_id)))
+        self.provider.release.set()
+        await _flights[(id(self.engine),'401')].task
+
     async def test_intent_shares_canonical_work_with_click_and_never_returns_private_state(self):
         gate=asyncio.Event()
         detail=self.provider.detail

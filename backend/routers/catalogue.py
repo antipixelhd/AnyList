@@ -317,6 +317,8 @@ async def media_detail(entity_id: Annotated[int, Path(gt=0)], db: DB, current_us
     response.headers['Cache-Control']='private, no-store'
     identities=None;metadata_status=None
     if work.kind=='game':
+        from core.game_imdb_enrichment import request as request_credits
+        credit_state=await request_credits(db,work.id)
         from core.game_background import observe_work
         background.add_task(observe_work,work.id,db.bind,current_user.id if current_user else None)
         from core.game_metadata import GameMetadata
@@ -328,11 +330,8 @@ async def media_detail(entity_id: Annotated[int, Path(gt=0)], db: DB, current_us
     try:data=await catalogue_title(db, work, current_user.id if current_user else None,store_country=country,enqueue_offers=True,enqueue_ratings=True,enqueue_info=True,identities=identities)
     except ProviderError as error:raise safe_error(error) from None
     if work.kind=='game':
-        from core.game_imdb_enrichment import request as request_credits
         data['game_metadata_status']=metadata_status
-        state=await request_credits(db,work.id)
-        await db.commit()
-        data['game_credit_status']=state
+        data['game_credit_status']=credit_state
         from core.game_time_to_beat import view as time_estimates
         times=await time_estimates(db,work,enqueue=True)
         await db.commit()

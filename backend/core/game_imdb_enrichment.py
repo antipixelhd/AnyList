@@ -2,10 +2,11 @@
 import asyncio
 import uuid
 import logging
+from weakref import WeakKeyDictionary
 from datetime import datetime, timedelta, timezone
 from time import monotonic
 
-from sqlalchemy import Integer, cast, delete, func, or_, select, update
+from sqlalchemy import Integer, cast, delete, event, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from core import catalogue
@@ -21,7 +22,13 @@ COMPONENT='game_credits'
 PAGE='game_credit_page'
 _flights={}
 _slots=asyncio.Semaphore(2)
+_wakeups=WeakKeyDictionary()
 log=logging.getLogger(__name__)
+
+
+def _wake_committed(_session):
+    wake=_wakeups.get(asyncio.get_running_loop())
+    if wake is not None:wake.set()
 
 
 def now():
@@ -65,6 +72,10 @@ async def request(db,work_id,*,kind=JOB,entity_id=None,provider='imdb'):
             MetadataSnapshot.next_attempt_at.is_(None)
             & or_(MetadataSnapshot.expires_at.is_(None),MetadataSnapshot.expires_at<=stamp)
             & or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=stamp))))
+    # Wake only after publication: a scan before commit can miss the new job
+    # and otherwise put the idle worker straight back into its two-second sleep.
+    if kind==JOB and provider=='imdb':
+        event.listen(db.sync_session,'after_commit',_wake_committed,once=True)
     return {**view,'state':'pending','pending':True,'complete':False,'error':None,'retry_after':2}
 
 
@@ -366,8 +377,10 @@ class GameIMDbEnrichment:
 async def scheduler():
     from db import AsyncSessionLocal
     service=GameIMDbEnrichment(AsyncSessionLocal,page_budget=1)
+    loop=asyncio.get_running_loop();wake=asyncio.Event();_wakeups[loop]=wake
     try:
         while True:
+            wake.clear()
             delay=2
             try:
                 if await service.tick():delay=0
@@ -375,8 +388,13 @@ async def scheduler():
             except Exception:
                 log.warning('Game credit queue is temporarily unavailable')
                 delay=30
-            await asyncio.sleep(delay)
+            if delay==30:
+                await asyncio.sleep(delay)
+            elif delay:
+                try:await asyncio.wait_for(wake.wait(),delay)
+                except TimeoutError:pass
     finally:
+        if _wakeups.get(loop) is wake:_wakeups.pop(loop,None)
         tasks=[task for (scope,_),task in list(_flights.items()) if scope==id(AsyncSessionLocal)]
         for task in tasks:task.cancel()
         if tasks:await asyncio.gather(*tasks,return_exceptions=True)
