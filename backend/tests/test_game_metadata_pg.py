@@ -61,6 +61,32 @@ class Provider:
 class GameMetadataTests(unittest.IsolatedAsyncioTestCase):
     cleanup=fixture.GamesDatabaseTests.cleanup
 
+    async def test_intent_shares_canonical_work_with_click_and_never_returns_private_state(self):
+        gate=asyncio.Event()
+        detail=self.provider.detail
+        async def held(*args,**kwargs):
+            await gate.wait()
+            return await detail(*args,**kwargs)
+        self.provider.detail=held
+        warm=await self.client.post(f'/tracking/games/warm/work/{self.base}')
+        self.assertEqual(warm.status_code,204,warm.text)
+        self.assertEqual(warm.content,b'')
+        self.assertIn('no-store',warm.headers['cache-control'])
+        flight=_flights[(id(self.engine),'119133')]
+        await self.client.post('/tracking/games/warm/igdb/119133')
+        opening=asyncio.create_task(self.primary_detail())
+        await asyncio.sleep(.1)
+        self.assertIs(_flights[(id(self.engine),'119133')],flight)
+        gate.set()
+        response=await asyncio.wait_for(opening,5)
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertEqual(self.provider.called,1)
+        await self.finish()
+        self.viewer.games_access=False;self.viewer.is_admin=False
+        denied=await self.client.post('/tracking/games/warm/igdb/87654')
+        self.assertEqual(denied.status_code,403)
+        self.assertNotIn((id(self.engine),'87654'),_flights)
+
     async def test_scheduler_retires_verified_alias_and_pauses_unused_failure_without_provider_work(self):
         async with self.Session() as db:
             work=await db.get(CatalogueEntity,self.base)

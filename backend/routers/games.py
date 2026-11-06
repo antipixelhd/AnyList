@@ -1,7 +1,7 @@
 """Catalogue-keyed game tracking. Visibility preferences are presentation only."""
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query,Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query,Response,Request
 from pydantic import BaseModel, Field
 from sqlalchemy import func, literal, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +20,7 @@ from models.games import GameAchievement, GameAchievementUnlock, GameChildState,
 from schemas_games import (AchievementOut, AchievementPage, ChildPatch, FavoritePatch,
                            GameEntryOut, GameListOut, GameListProfile, GamePlayingOut, GamePatch, GameStateBatch, GameStatus, GameFavoriteOrder)
 from schemas_game_statistics import GameStatsResponse,GameStatsSection
+from core.limiter import limiter
 
 router = APIRouter(prefix='/tracking/games', tags=['games'], dependencies=[Depends(approved_games_viewer)])
 DB = Annotated[AsyncSession, Depends(get_db)]
@@ -358,6 +359,27 @@ async def search_games(db: DB, viewer: Viewer, q: Annotated[str, Query(min_lengt
         return await game_discovery.search(db, q.strip(),hide_erotic_games=hide_erotic)
     except ProviderError:
         raise HTTPException(503, 'Game search is temporarily unavailable') from None
+
+
+@router.post('/warm/{namespace}/{identifier}',status_code=204)
+@limiter.limit('12/minute')
+async def warm_game(request:Request,namespace:Literal['work','igdb'],
+        identifier:Annotated[int,Path(gt=0,le=2147483647)],db:DB,viewer:Reader,response:Response):
+    from core.game_metadata import GameMetadata,native_id
+    from core.game_work import work_context,Priority
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    await catalog_access(db,viewer)
+    native=str(identifier)
+    if namespace=='work':
+        work=await tracking.work(db,await canonical_game_id(identifier,db))
+        native=await native_id(db,work)
+    if native:
+        # Speculation yields to clicks; demand promotes the existing job later.
+        with work_context(Priority.FINISH):
+            await GameMetadata(async_sessionmaker(db.bind,expire_on_commit=False),scope=db.bind).warm(db,native)
+    response.headers['Cache-Control']='private, no-store'
+    response.status_code=204
+    return response
 
 
 @router.post('/resolve/{igdb_id}')

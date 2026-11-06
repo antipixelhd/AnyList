@@ -142,6 +142,19 @@ class GameMetadata:
         self.factory=factory;self.scope=scope if scope is not None else factory
         self.providers=providers or CatalogueProviders(ProviderHTTP(session_factory=factory))
 
+    async def warm(self,db,native):
+        """Admit public intent work; clicks join/promote this same canonical job."""
+        identity=await catalogue.resolve_identity(db,'igdb.game',native)
+        if identity:
+            from models.catalogue import CatalogueEntity
+            work=await db.get(CatalogueEntity,identity.entity_id)
+            await self.ensure(db,work,wait_seconds=0)
+            return
+        from core.game_work import demand,job_key
+        await demand(db,job_key('igdb','game',native))
+        await db.commit()
+        self.start(native,None)
+
     def start(self,native,expected):
         key=(id(self.scope),native)
         flight=_flights.get(key)

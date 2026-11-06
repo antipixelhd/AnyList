@@ -12,6 +12,7 @@
   import {isFailureHandled} from '../lib/handled-failures';
   import {responsiveArtwork} from '../lib/responsive-artwork';
   import {clearStoredBrowseCache} from '../lib/browse-cache';
+  import {createGameIntent,gameIntentTarget} from '../lib/game-intent';
   wirePasswordToggles();
 
   type CachedPage = { html: string; bytes: number; storedAt: number; predicted?:boolean; requiresGamesAccess?:boolean };
@@ -30,6 +31,7 @@
     predictionNavigation?: {key:string;signal:AbortSignal;generation:number};
     predictionBudget?: number;
     previewPrediction?:ReturnType<typeof createPrediction<EditorTitle>>;
+    gameIntent?:ReturnType<typeof createGameIntent>;
     artwork?: Map<string,HTMLImageElement>;
   };
   declare global {
@@ -52,6 +54,7 @@
 
   function clearPages() {
     state.prediction?.cancel();state.previewPrediction?.cancel();state.predictionNavigation=undefined;
+    state.gameIntent?.reset();
     state.pages.clear();
     document.dispatchEvent(new Event('anylist:cache-invalidated'));
     state.usedCached.clear();
@@ -246,8 +249,13 @@
         responsiveArtwork(title.backdrop,{size:'w1280',sizes:'100vw',route:'auto'})].filter(Boolean) as PredictionArtwork[]);
       return title;
     },lifetime.signal);
+    state.gameIntent=createGameIntent(state.originalFetch!);
     bindPredictionIntent(document,lifetime.signal,link=>{
       const url=new URL(link.href);
+      if(!link.target&&!link.hasAttribute('download')&&!link.hasAttribute('data-astro-reload')){
+        const game=gameIntentTarget(url,location.origin);
+        if(game){state.gameIntent!.warm(game);return;}
+      }
       if(url.origin!==location.origin||approvedGamesPage(url)&&!reusableGamesPage(url)||link.target||link.hasAttribute('download')||link.hasAttribute('data-astro-reload'))return;
       if(link.closest('[data-profile-shell]')&&profilePanelKey(url))return;
       if(link.hasAttribute('data-browse-type')&&link.closest('[data-browse-shell]'))return;
@@ -342,6 +350,7 @@
     document.addEventListener('astro:page-load', () => {
       finishProgress();
       state.predictionBudget=0;state.predictionNavigation=undefined;
+      state.gameIntent?.reset();
       resetForIdentity();
       const url = new URL(location.href);
       const key = keyFor(url);
