@@ -440,6 +440,21 @@ async def editor_state(work_id: WorkId, db: DB, viewer: Reader) -> GameEntryOut:
     return state
 
 
+@router.get('/works/{work_id}/steam-progress')
+async def steam_progress(work_id: WorkId, db: DB, viewer: Writer, response: Response) -> dict:
+    from core.game_steam_progress import context
+    await tracking.work(db, work_id)
+    response.headers['Cache-Control'] = 'private, no-store'
+    return await context(db, viewer.id, work_id)
+
+
+@router.post('/steam-progress/warnings/{field}')
+async def acknowledge_steam_warning(field: Literal['playtime', 'achievements'], db: DB, viewer: Writer) -> dict:
+    from core.game_steam_progress import acknowledge
+    await acknowledge(db, viewer.id, field)
+    return {'acknowledged': field}
+
+
 @router.get('/works/{work_id}/children')
 async def game_children(work_id:WorkId,db:DB,viewer:Reader,
         offset:Annotated[int,Query(ge=0)]=0,limit:Annotated[int,Query(ge=1,le=50)]=24) -> dict:

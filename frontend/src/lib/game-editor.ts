@@ -3,6 +3,7 @@ import {gameTimePatch,hoursInput,achievementCountInput,firstTimeCanFillTotal} fr
 import {localToday} from './date-time';
 import {setupEditorSelect} from './editor-select';
 import {watchAchievementCatalogue,type AchievementCatalogue} from './game-achievement-catalogue';
+import {gameSteamSync} from './game-steam-sync';
 
 /** Game progress controls mounted inside the existing shared tracking form. */
 export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,signal:AbortSignal,confirm:(message:string)=>Promise<boolean>) {
@@ -32,6 +33,9 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
   const exactCount=()=>Number(current.achievements?.exact_count||0)+[...updates].reduce((sum,[id,value])=>sum+(value?1:0)-(originals.get(id)?1:0),0);
   const summary=()=>current.achievements||{};
   const progress=()=>mode.value==='percentage'?Number(percentage.value||0):mode.value==='targeted'?exactCount():Number(count.value||0);
+  const steamSync=gameSteamSync(dialog,form,signal,confirm,value=>{
+    confirmed=true;mode.value='count';count.value=String(value);updates.clear();renderMode();
+  },()=>({mode:mode.value,count:progress()}));
   function renderProgress(value=progress()) {
     const percent=mode.value==='percentage',max=percent?100:summary().total;
     if(max==null)number.removeAttribute('max');else number.max=String(max);
@@ -216,6 +220,7 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
   },{signal});
   signal.addEventListener('abort',()=>{controller?.abort();catalogueController?.abort();},{once:true});
   return {
+    confirmSyncChanges:(patch:Record<string,any>)=>steamSync.confirmChanges(patch),
     datesTouched,
     snapshot() {
       const values=[total,first,replays,count,percentage].map(field=>field.value),selected=mode.value;
@@ -228,7 +233,7 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
         totalTouched=touchedTotal;firstTouched=touchedFirst;confirmed=simplifiedConfirmed;renderMode();renderFirst();
       };
     },
-    reset(){modeControl.close();generation++;controller?.abort();catalogueController?.abort();pendingCatalogue=undefined;title=null;list.replaceChildren();updates.clear();originals.clear();datesTouched.clear();loaded=loadedTotal=0;busy=false;progressPending=false;},
+    reset(){steamSync.reset();modeControl.close();generation++;controller?.abort();catalogueController?.abort();pendingCatalogue=undefined;title=null;list.replaceChildren();updates.clear();originals.clear();datesTouched.clear();loaded=loadedTotal=0;busy=false;progressPending=false;},
     populate(next:EditorTitle) {
       this.reset();title=next;current=next.game_state||next.entry||{};
       child=['expansion','dlc'].includes(next.game_class||'');totalTouched=false;firstTouched=false;confirmed=false;
@@ -237,6 +242,7 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
         node.hidden=!game||child;node.querySelectorAll<HTMLInputElement|HTMLSelectElement>('input,select').forEach(control=>control.disabled=!game||child);
       });
       if(!game)return;
+      if(!child&&next.id)steamSync.load(next.id);
       total.value=hoursInput(current.total_seconds);first.value=hoursInput(current.completion_seconds);replays.value=current.replay_count==null?'':String(current.replay_count);
       firstInput.hidden=true;firstEdit.hidden=false;renderFirst();
       initialMode=shownMode=summary().mode||'';

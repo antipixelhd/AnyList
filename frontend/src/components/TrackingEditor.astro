@@ -23,12 +23,12 @@ import EditorSelect from './EditorSelect.astro';
       <div class="editor-status-field"><label id="editor-status-label" for="editor-status-trigger">Status</label><EditorSelect id="editor-status" name="status" label="Status" labelledBy="editor-status-label" options={statuses} value="watching"/></div>
       <div class="editor-score-field"><label for="editor-manual-score">Score</label><NumberStepper id="editor-manual-score" name="manual_score" label="Score" min={0} max={10} step={0.1} value={0} score/></div>
       <div id="progress-field" class="editor-number-field"><label for="editor-progress">Episode progress</label><NumberStepper id="editor-progress" name="progress" label="Episode progress"/></div>
-      <div class="editor-number-field" data-game-only data-game-main hidden><label for="game-total-hours">Total time (hours)</label><NumberStepper id="game-total-hours" name="game_total_hours" label="Total time in hours" step="any"/>
+      <div class="editor-number-field" data-game-only data-game-main hidden><div class="game-field-heading"><label for="game-total-hours">Total time (hours)</label><button type="button" class="game-steam-sync" data-game-steam-playtime hidden><Icon name="arrows-rotate" /></button></div><NumberStepper id="game-total-hours" name="game_total_hours" label="Total time in hours" step="any"/>
         <div class="game-first-completion" data-game-first hidden><div class="game-field-heading"><label for="game-first-hours">First completion</label><button type="button" class="game-value-button" data-game-first-edit>Add</button></div><div class="editor-number-field" data-game-first-input hidden><NumberStepper id="game-first-hours" name="game_first_hours" label="First completion time in hours" step="any"/></div></div>
       </div>
       <div class="editor-number-field" data-game-only data-game-main hidden><label for="game-replays">Replay count</label><NumberStepper id="game-replays" name="game_replays" label="Replay count" max={2147483647}/></div>
       <section class="wide game-achievement-editor" data-game-only data-game-main hidden aria-label="Achievement progress">
-        <div class="game-field-heading"><span>Achievements</span><button type="button" class="game-value-button" data-game-achievement-add>Add</button><button type="button" class="game-value-button" data-game-achievement-remove hidden aria-label="Remove achievement progress">Remove</button></div>
+        <div class="game-field-heading"><span>Achievements</span><button type="button" class="game-steam-sync" data-game-steam-achievements hidden><Icon name="arrows-rotate" /></button><button type="button" class="game-value-button" data-game-achievement-add>Add</button><button type="button" class="game-value-button" data-game-achievement-remove hidden aria-label="Remove achievement progress">Remove</button></div>
         <div class="game-achievement-controls" data-game-achievement-controls hidden>
           <div data-game-achievement-mode-field hidden><EditorSelect id="game-achievement-mode" name="game_achievement_mode" label="Achievement tracking"/></div>
           <input name="game_achievement_count" type="hidden"/><input name="game_achievement_percentage" type="hidden"/>
@@ -377,6 +377,7 @@ document.addEventListener('astro:page-load', () => {
           ...gameDatePatch(current,status,{start_date:field('start_date').value,finish_date:field('finish_date').value},gameFields.datesTouched,localToday()),
           ...(!child?{notes:field('notes').value,favorite:field('favorite').checked}:{}),...gameFields.patch()};
         saveButton.disabled=true;
+        if(!await gameFields.confirmSyncChanges(body))return;
         if(!next){closed=new Promise<void>(resolve=>dialog.addEventListener('close',()=>resolve(),{once:true}));finishEditing();}
         const saved=await editorStore.write(editing,body);
         if(sessionSignal.aborted)return;
