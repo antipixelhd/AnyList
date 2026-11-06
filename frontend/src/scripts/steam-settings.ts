@@ -277,6 +277,12 @@ function init() {
     const count = document.createElement('span'); count.className = 'steam-card-achievements'; stats.append(count);
     const check = document.createElement('span'); check.className = 'steam-card-check'; check.textContent = '✓'; check.setAttribute('aria-hidden', 'true');
     node.append(cover, title, stats, check);
+    if (game.last_played) {
+      const last = document.createElement('span'); last.className = 'steam-card-last-played'; last.id = `steam-last-played-${game.app_id}`;
+      const label = document.createElement('span'); label.textContent = 'Last played';
+      const date = document.createElement('span'); date.textContent = formatDate(new Date(game.last_played * 1000).toLocaleDateString('sv-SE'));
+      last.append(label, date); node.append(last); node.setAttribute('aria-describedby', `${stats.id} ${last.id}`);
+    }
     listen(node, 'click', () => { if (game.mapping_state === 'unavailable' || game.mapping_state === 'software') return; draft.overrides[game.app_id] = !steamSelected(game, draft); changed(); });
     cards.set(game.app_id, node);
     const wrapper = document.createElement('article'); wrapper.className = 'steam-game'; wrapper.append(node);
@@ -292,6 +298,8 @@ function init() {
     });
     choicesInner.append(status);
     wrapper.append(choices);
+    const lastPlayed = node.querySelector<HTMLElement>('.steam-card-last-played');
+    if (lastPlayed) wrapper.append(lastPlayed);
     paintCount(game);
     return wrapper;
   }
