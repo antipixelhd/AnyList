@@ -131,6 +131,7 @@ async def main(args):
     counters = Counter()
     sql_patterns = {}
     current_case = ''
+    series_stages = {}
     game_statistics_enabled=not args.case or any(name.startswith('game_statistics') for name in args.case)
     try:
         async with fixture.Session() as db:
@@ -495,6 +496,8 @@ async def main(args):
             result = await operation()
             row = {'case': label, 'mode': mode, 'state': state,
                    'ms': round((time.perf_counter() - start) * 1000, 2), **dict(counters)}
+            if label == 'series_resolve':
+                row.update(series_stages)
             if label.endswith('_sections_stream'):
                 # Foreground readiness is not eliminated work. Drain the public
                 # continuation before the next sample resets caches/counters.
@@ -943,10 +946,21 @@ async def main(args):
 
                     async def operation(path=path, params=params, label=label, mode=mode):
                         if label == 'series_resolve':
+                            stage_started = time.perf_counter()
                             response = await fixture.client.post('/tracking/catalog/series/9900001')
                             if response.status_code != 200:
                                 raise RuntimeError(f'Series resolution failed: {response.status_code}')
-                            result = await request(f'title/{response.json()["id"]}', {})
+                            identifier = response.json()['id']
+                            primary = await request(f'title/{identifier}', {'episodes': 'false'})
+                            if any(season.get('episodes') for season in primary['seasons']):
+                                raise RuntimeError('Initial detail transferred hidden episode rows')
+                            series_stages.update(primary_ready_ms=round((time.perf_counter()-stage_started)*1000, 2),
+                                primary_provider_requests=counters['provider_requests'], primary_db_reads=counters['db_reads'],
+                                primary_db_writes=counters['db_writes'], primary_payload_bytes=len(json.dumps(primary).encode()))
+                            catalogue = await request(f'title/{identifier}/seasons', {})
+                            if not catalogue['season_status']['ready'] or catalogue['season_status']['pending']:
+                                raise RuntimeError('Successful series acquisition did not settle')
+                            result = {**primary, 'seasons': catalogue['seasons'], 'episodes_loaded': True}
                             if len(result['seasons']) != 12 or any(len(season['episodes']) != 8 for season in result['seasons']):
                                 raise RuntimeError('Series resolution lost seasons or episodes')
                             if result['overview'] != 'Complete synopsis':

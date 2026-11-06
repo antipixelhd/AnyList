@@ -1512,9 +1512,6 @@ async def import_catalog_title(media_type: Literal['movie','series'], tmdb_id: A
             await enrich_media(media, api_key=key)
             if not media.title:
                 raise ValueError('No title returned')
-            if media.media_type == MediaType.series:
-                from core.tracking_metadata import hydrate_tracking_episodes
-                await hydrate_tracking_episodes(db, media, key)
             await db.commit()
         except Exception:
             await db.rollback()
@@ -1534,11 +1531,61 @@ async def editor_context(media_id: int, db: Annotated[AsyncSession, Depends(get_
     from core.tracking_editor import attach_editor_context
     rows = [tracking_projection.media_data(media)]
     await attach_editor_context(db, viewer, rows, media_rows=[media])
+    from core.tracking_editor import progress_context
+    rows[0].update(await progress_context(db, media, rows[0]['entry']))
     return rows[0]
 
 
+async def detail_seasons(db, media, viewer, *, include_episodes=True):
+    seasons = [dict(s) for s in (media.tmdb_data or {}).get('seasons', [])]
+    if not include_episodes:
+        return [{**season, 'episodes': [], 'released_count': None, 'watched_count': 0} for season in seasons]
+    episodes = await released_episodes(db, media)
+    from core.tracking_metadata import released_episodes as catalogue_episodes
+    all_episodes = await catalogue_episodes(db, media, include_unreleased=True) if media.media_type == MediaType.series else []
+    released_ids = {episode.id for episode in episodes}
+    watched = set()
+    if viewer and all_episodes:
+        watched = set((await db.execute(select(WatchEvent.media_id).where(
+            WatchEvent.user_id == viewer.id, WatchEvent.media_id.in_([e.id for e in all_episodes]),
+            WatchEvent.completed.is_(True)))).scalars())
+    for season in seasons:
+        released = [e for e in episodes if e.season_number == season.get('season_number')]
+        season['released_count'] = len(released) if (media.tmdb_data or {}).get('tracking_catalogue_refreshed_at') else None
+        season['watched_count'] = sum(e.id in watched for e in released)
+        season['episodes'] = [{'id':episode.id, 'episode_number':episode.episode_number,
+            'title':episode.title, 'air_date':episode.release_date, 'runtime':episode.runtime,
+            'image':episode.poster_path or (episode.tmdb_data or {}).get('still_path'),
+            'watched':episode.id in watched, 'released':episode.id in released_ids}
+            for episode in all_episodes if episode.season_number == season.get('season_number')]
+    return seasons
+
+
+@router.get('/title/{media_id}/seasons')
+async def title_seasons(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db)],
+        viewer: Annotated[User, Depends(get_current_user_or_api_key)], response: Response):
+    await catalog_access(db, viewer)
+    media = await db.get(Media, media_id)
+    if not media or media.media_type != MediaType.series:
+        raise HTTPException(404, 'Series not found')
+    if tracking_projection.is_anime(media) and not await anime_is_visible(db):
+        raise HTTPException(404, 'Series not found')
+    response.headers['Cache-Control'] = 'private, no-store'
+    from core.tracking_episode_loading import ensure
+    status = await ensure(db, media, viewer.id if viewer else None)
+    await db.refresh(media)
+    entry = await db.scalar(select(TrackedEntry).where(TrackedEntry.user_id == viewer.id,
+        TrackedEntry.media_id == media.id)) if viewer else None
+    return {**tracking_projection.media_data(media), 'season_status': status,
+        'catalogue_revision': (media.tmdb_data or {}).get('tracking_catalogue_refreshed_at'),
+        'episodes_loaded': status['ready'], 'seasons': await detail_seasons(db, media, viewer,
+            include_episodes=status['ready']),
+        'entry': tracking_projection.entry_data(entry, media, True) if entry else None}
+
+
 @router.get("/title/{media_id}")
-async def title(media_id: int, db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user_or_api_key)):
+async def title(media_id: int, db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user_or_api_key),
+        episodes: Annotated[bool, Query()] = True):
     await catalog_access(db, viewer)
     media = await db.get(Media, media_id)
     if not media or media.media_type not in (MediaType.movie, MediaType.series):
@@ -1561,25 +1608,7 @@ async def title(media_id: int, db: AsyncSession = Depends(get_db), viewer: User 
                 friends.append({"id": user.id, "username": user.username, "display_name": profile.display_name,
                     "has_avatar": bool(profile.avatar_path), "score": score, "status": e.status})
         friends.sort(key=lambda person: (-person['score'], (person['display_name'] or person['username']).casefold()))
-    seasons = [dict(s) for s in (media.tmdb_data or {}).get("seasons", [])]
-    episodes = await released_episodes(db, media)
-    from core.tracking_metadata import released_episodes as catalogue_episodes
-    all_episodes = await catalogue_episodes(db, media, include_unreleased=True) if media.media_type == MediaType.series else []
-    released_ids = {episode.id for episode in episodes}
-    watched = set()
-    if viewer and all_episodes:
-        watched = set((await db.execute(select(WatchEvent.media_id).where(
-            WatchEvent.user_id == viewer.id, WatchEvent.media_id.in_([e.id for e in all_episodes]),
-            WatchEvent.completed.is_(True)))).scalars())
-    for season in seasons:
-        released = [e for e in episodes if e.season_number == season.get('season_number')]
-        season['released_count'] = len(released) if (media.tmdb_data or {}).get('tracking_catalogue_refreshed_at') else None
-        season['watched_count'] = sum(e.id in watched for e in released)
-        season['episodes'] = [{'id':episode.id, 'episode_number':episode.episode_number,
-            'title':episode.title, 'air_date':episode.release_date, 'runtime':episode.runtime,
-            'image':episode.poster_path or (episode.tmdb_data or {}).get('still_path'),
-            'watched':episode.id in watched, 'released':episode.id in released_ids}
-            for episode in all_episodes if episode.season_number == season.get('season_number')]
+    seasons = await detail_seasons(db, media, viewer, include_episodes=episodes)
     from core.media_details import screen_work, work_details
     from core.countries import screen_countries
     work = await screen_work(db, media)
@@ -1596,8 +1625,11 @@ async def title(media_id: int, db: AsyncSession = Depends(get_db), viewer: User 
     from core.external_scores import effective_mdblist_key
     details['scores_pending'] = bool(viewer and await effective_mdblist_key(db, viewer.id))
     favorite = bool(entry and entry.favorite) or bool(viewer and await db.get(MediaFavorite, (viewer.id, media_id)) is not None)
-    return {**tracking_projection.media_data(media), **details, **primary, 'primary': primary, 'primary_status': primary_status, "favorite": favorite, "entry": tracking_projection.entry_data(entry, media, True, favorite=favorite) if entry else None,
-            "seasons": seasons, "friends": friends,
+    editor_entry = tracking_projection.entry_data(entry, media, True, favorite=favorite) if entry else None
+    from core.tracking_editor import progress_context
+    progress = await progress_context(db, media, editor_entry) if not episodes else {}
+    return {**tracking_projection.media_data(media), **details, **primary, **progress, 'primary': primary, 'primary_status': primary_status, "favorite": favorite, "entry": editor_entry,
+            "seasons": seasons, 'episodes_loaded': episodes, "friends": friends,
             "friends_average": sum(f["score"] for f in friends) / len(friends) if friends else None}
 
 
@@ -1903,6 +1935,27 @@ async def save_season_progress(media_id: int, season_number: int, body: SeasonPr
 @router.patch("/entry/{media_id}")
 async def save_entry(media_id: int, body: EntryPatch, background_tasks: BackgroundTasks,
                      db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
+    media = await db.get(Media, media_id)
+    needs_episodes = body.progress is not None or body.mark_released_watched or body.status == 'completed'
+    if (media and media.media_type == MediaType.series and needs_episodes
+            and (media.tmdb_id or media.tvdb_id) and not (media.tmdb_data or {}).get('tracking_catalogue_refreshed_at')):
+        # A genuinely uncached title may be edited before its background read
+        # finishes. Join that public acquisition before taking any account lock.
+        from asyncio import get_running_loop, sleep, wait_for
+        from core.tracking_episode_loading import ensure
+        deadline = get_running_loop().time() + 30
+        while True:
+            try:
+                status = await wait_for(ensure(db, media, viewer.id), max(.001, deadline - get_running_loop().time()))
+            except TimeoutError:
+                raise HTTPException(409, 'Episode metadata is still loading. Try again shortly.') from None
+            await db.refresh(media)
+            if (media.tmdb_data or {}).get('tracking_catalogue_refreshed_at'):
+                break
+            if status.get('error') or not status['pending'] or get_running_loop().time() >= deadline:
+                raise HTTPException(409, 'Episode metadata is still loading. Try again shortly.')
+            await db.commit()
+            await sleep(1)
     return await _save_entry(media_id, body, background_tasks, db, viewer)
 
 

@@ -57,7 +57,7 @@ def retain_episode_runtime(episode, data):
         episode.runtime = value
 
 
-async def released_episodes(db, media, *, include_unreleased=False):
+async def released_episodes(db, media, *, include_unreleased=False, positions_only=False):
     """Read the same regular-episode catalogue for edits and reconciliation."""
     if media.media_type == MediaType.movie:
         return [media] if not media.release_date or media.release_date[:10] <= date.today().isoformat() else []
@@ -68,12 +68,12 @@ async def released_episodes(db, media, *, include_unreleased=False):
         terms.append(Show.tvdb_id == media.tvdb_id)
     if not terms:
         return []
-    show = (await db.execute(select(Show).where(or_(*terms)))).scalars().first()
-    if not show:
+    show_id = await db.scalar(select(Show.id).where(or_(*terms)).limit(1))
+    if not show_id:
         return []
     imported_release = Media.tmdb_data["tracking_import_released"].as_boolean().is_(True)
     query = select(Media).where(
-        Media.show_id == show.id,
+        Media.show_id == show_id,
         Media.media_type == MediaType.episode,
         Media.season_number > 0,
     )
@@ -88,7 +88,10 @@ async def released_episodes(db, media, *, include_unreleased=False):
         provider = (media.tmdb_data or {}).get('tracking_catalogue_provider', 'tmdb')
         identity = Media.tvdb_id if provider == 'tvdb' else Media.tmdb_id
         query = query.where(or_(identity.in_(catalogue_ids), Media.id.in_(imported_ids), imported_release))
-    return (await db.execute(query.order_by(Media.season_number, Media.episode_number))).scalars().all()
+    query = query.order_by(Media.season_number, Media.episode_number)
+    if positions_only:
+        return (await db.execute(query.with_only_columns(Media.season_number, Media.episode_number))).all()
+    return (await db.execute(query)).scalars().all()
 
 
 def tracking_catalogue_is_fresh(media, show_status: str | None, now: datetime | None = None) -> bool:

@@ -15,6 +15,7 @@ export type EditorTitle = {
   editor_library?: { available: boolean; desired: boolean };
   overview?:string|null; runtime?:number|null; release_date?:string|null; year?:string;
   genres?:string[]; tmdb_score?:number|null; progress_positions?:string[];
+  seasons?:import('./season-detail-data').DetailSeason[];episodes_loaded?:boolean;
 };
 type RecordState = {
   title: EditorTitle; committed: EditorTitle['entry'];
@@ -63,6 +64,15 @@ export class EditorStore {
     if (existing) {
       if(existing.title===title)return existing.title;
       if (!existing.pending.length && !existing.libraryPending.length && !existing.importing) {
+        if(title.entry&&existing.title.entry){
+          // A lightweight detail response may omit list-editor projections.
+          // Missing metadata is not an instruction to discard known totals.
+          const incoming={...title.entry};
+          if(!('released_episodes' in incoming))incoming.released_episodes=existing.title.entry.released_episodes;
+          if(incoming.progress===existing.title.entry.progress&&!('season_position' in incoming))
+            incoming.season_position=existing.title.entry.season_position;
+          title={...title,entry:incoming};
+        }
         Object.assign(existing.title, title);
         existing.committed = title.entry;
         existing.favoriteCommitted = title.favorite ?? !!title.entry?.favorite;
@@ -77,7 +87,10 @@ export class EditorStore {
     return record.title;
   }
   get(title: EditorTitle) { return this.record(title)?.title || this.seed(title); }
-  hasPendingWrites() { return [...this.records.values()].some(record => record.pending.length || record.libraryPending.length || record.importing); }
+  hasPendingWrites(title?:EditorTitle) {
+    const records=title?[this.record(title)]:[...this.records.values()];
+    return records.some(record=>record&&(record.pending.length||record.libraryPending.length||record.importing));
+  }
   hasPendingEntryWrites(title: EditorTitle) { return !!this.record(title)?.pending.length; }
   // Bare ids are the legacy Media adapter. Games always use a typed subject.
   find(id: number) { return [...this.records.values()].find(r => r.title.id === id && r.title.type!=='game' && !r.stale)?.title; }

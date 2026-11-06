@@ -1,0 +1,15 @@
+---
+import MediaDetailSeasons from '../../../components/MediaDetailSeasons.astro';
+import {localMediaId,prepareDetail} from '../../../lib/media-detail-data';
+import {tracker} from '../../../lib/tracker';
+import {viewerMediaPreferences} from '../../../lib/viewer-media-preferences';
+const id=localMediaId(Astro.params.id);
+Astro.response.headers.set('Cache-Control','private, no-store');
+let data=null;
+if(!id)Astro.response.status=404;
+else try{data=await tracker(`title/${id}/seasons`,Astro.locals.token);}
+catch{Astro.response.status=503;}
+const removeSpecials=(await viewerMediaPreferences(Astro.locals)).remove_specials_seasons!==false;
+const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
+---
+{data&&<><MediaDetailSeasons title={prepareDetail(data)} signedIn={!!Astro.locals.user} {removeSpecials}/><script type="application/json" data-season-payload set:html={encode(data)}/></>}

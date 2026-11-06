@@ -39,7 +39,7 @@ export type DetailMedia = EditorTitle & {
   original_title?: string; tagline?: string; release_status?: string; original_language?: string;
   runtime?: number; episode_runtime?: number; season_count?: number; episode_count?: number;
   budget?: number | null; revenue?: number | null;
-  genres: string[]; seasons: any[]; friends: any[]; friends_average?: number | null;
+  genres: string[]; seasons: any[]; episodes_loaded?:boolean; friends: any[]; friends_average?: number | null;
   people: DetailPerson[]; organizations: DetailPerson[]; posters: string[]; artwork: string[]; relations: any[]; similar: any[]; related_pending?: boolean;
   character_status?: {state:string;pending?:boolean;error?:string|null;retry_after?:number};
   game_characters?:import('./game-cast-data').GameCharacter[];

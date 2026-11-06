@@ -9,6 +9,20 @@ from models.streaming_library import StreamingLibraryIntent
 from models.tracking import MediaFavorite, TrackedEntry
 
 
+async def progress_context(db, media, entry):
+    """Read cached progress positions without episode descriptions/artwork payloads."""
+    if media.media_type.value != 'series' or not (media.tmdb_data or {}).get('tracking_catalogue_refreshed_at'):
+        return {}
+    from core.tracking_metadata import released_episodes
+    positions = [f'S{season}E{episode}' for season, episode in
+        await released_episodes(db, media, positions_only=True)]
+    if entry is not None:
+        entry['released_episodes'] = len(positions)
+        progress = entry.get('progress') or 0
+        entry['season_position'] = positions[progress - 1] if 0 < progress <= len(positions) else None
+    return {'released_episodes': len(positions), 'progress_positions': positions}
+
+
 async def attach_editor_context(db, viewer, results, *, media_rows=None):
     if not viewer or not results:
         return

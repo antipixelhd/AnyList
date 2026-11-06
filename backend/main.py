@@ -53,7 +53,8 @@ async def lifespan(app: FastAPI):
         async with scheduler.background_jobs():
             yield
     finally:
-        from core import chronological_discovery, tmdb
+        from core import chronological_discovery, tmdb, tracking_episode_loading
+        await tracking_episode_loading.close()
         await chronological_discovery.close()
         await tmdb.close()
 

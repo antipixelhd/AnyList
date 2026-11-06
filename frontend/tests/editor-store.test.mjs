@@ -20,6 +20,22 @@ const gameTitle = state => ({id:state.subject.catalogue_id,subject:state.subject
   poster:state.image_url,game_class:state.game_class,base_work_id:state.base_work_id,game_state:state,
   entry:state.listed?state:null,favorite:state.favorite});
 
+test('lightweight details retain cached list-editor progress without waiting for episode rows',()=>{
+  const store=new EditorStore(async()=>{});
+  const title=store.seed({id:42,tmdb_id:99,type:'series',title:'Series',progress_positions:['S1E1','S1E2','S1E3'],
+    entry:{status:'watching',progress:2,released_episodes:3,season_position:'S1E2'}});
+  store.seed({id:42,tmdb_id:99,type:'series',title:'Series',episodes_loaded:false,seasons:[],
+    entry:{status:'watching',progress:2}});
+  assert.equal(title.entry.released_episodes,3);
+  assert.equal(title.entry.season_position,'S1E2');
+  assert.deepEqual(title.progress_positions,['S1E1','S1E2','S1E3']);
+  store.seed({id:42,tmdb_id:99,type:'series',title:'Series',entry:{status:'watching',progress:1}});
+  assert.equal(title.entry.released_episodes,3);
+  assert.equal(title.entry.season_position,undefined,'a changed progress must not retain its older position');
+  store.seed({id:42,tmdb_id:99,type:'series',title:'Series',entry:null});
+  assert.equal(title.entry,null,'removed membership must still clear private state');
+});
+
 test('detail artwork publishing keeps colliding game/movie identities and pending tracking separate',async()=>{
   const pending=deferred(),calls=[];
   const store=new EditorStore(path=>{calls.push(path);return pending.promise;});

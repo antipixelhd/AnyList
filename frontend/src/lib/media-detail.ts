@@ -24,6 +24,7 @@ import {mountGameInfo} from './game-info';
 import {mountGameMetadata} from './game-metadata';
 import {localizeDateTimes} from './date-time-dom';
 import {confirmEntryAction,episodeRollbackWarning} from './entry-confirmation';
+import {mountSeriesSeasons} from './series-seasons';
 
 let pageListeners: AbortController | undefined;
 let mountedRoot: HTMLElement | null = null;
@@ -134,6 +135,7 @@ export function mountMediaDetail() {
   }));
 
   let loadDetailImages=()=>Promise.resolve();
+  let loadSeasonDetails=(_refresh=false)=>Promise.resolve();
   let episodeImagesPending:Promise<void>|undefined;
   let episodeImagesLoaded=false;
   const loadEpisodeImages=()=>{
@@ -226,7 +228,7 @@ export function mountMediaDetail() {
     if (id === 'overview') url.searchParams.delete('tab'); else url.searchParams.set('tab',id);
     history.replaceState(history.state,'',url);
     if(id==='artwork')void loadDetailImages();
-    if(id==='seasons')loadEpisodeImages();
+    if(id==='seasons')void loadSeasonDetails();
     if(id==='social')loadSocial();
     if(id==='dlc')loadDlc();
   };
@@ -252,6 +254,7 @@ export function mountMediaDetail() {
   note?.addEventListener('input',()=>{noteDirty=true;},{signal});
   let displayedProgress = title?.entry?.progress ?? null;
   let projectedSeasons:DetailSeason[] | null = null;
+  let seasonRevision=0;
   let requestSeasonRefresh = () => {};
   const paint = (state: EditorTitle) => {
     title = state;
@@ -314,7 +317,7 @@ export function mountMediaDetail() {
   };
   document.addEventListener('anylist:editor-state', event => {
     const state = (event as CustomEvent<EditorTitle>).detail;
-    if (state.type===info.type&&state.id===info.id) { paint(state); requestSeasonRefresh(); }
+    if (state.type===info.type&&state.id===info.id) { seasonRevision++;paint(state); requestSeasonRefresh(); }
   }, {signal});
   if (title) paint(title);
   root.querySelector<HTMLButtonElement>('[data-quick-rate-game]')?.addEventListener('click',event=>{
@@ -354,125 +357,182 @@ export function mountMediaDetail() {
 
   loadDetailImages=mountDetailImages(root,info,signal);
 
-  const seasons=root.querySelector<HTMLElement>('.seasons-section');
-  seasons?.querySelectorAll<HTMLDetailsElement>('[data-season-disclosure]').forEach(details=>{
-    const trigger=details.closest('[data-season-card]')?.querySelector<HTMLButtonElement>('[data-season-toggle]');
-    mountDetailsMotion(details,signal,trigger?[trigger]:[]);
-  });
-  const paintEpisodeTitles=()=>{
-    root.querySelectorAll<HTMLElement>('[data-episode-row]').forEach(row=>{
-      const heading=row.querySelector<HTMLElement>('[data-episode-title]')!;
-      heading.textContent=root.dataset.spoilers==='true'||row.dataset.watched==='true'?heading.dataset.episodeTitle!:`Episode ${heading.dataset.episodeNumber}`;
+  let seasonControls:AbortController|undefined;
+  const pageSignal=signal;
+  const bindSeasonControls=()=>{
+    seasonControls?.abort();
+    const controller=seasonControls=new AbortController();
+    const abort=()=>controller.abort();
+    pageSignal.addEventListener('abort',abort,{once:true});
+    controller.signal.addEventListener('abort',()=>pageSignal.removeEventListener('abort',abort),{once:true});
+    const {signal}=controller;
+    const seasons=root.querySelector<HTMLElement>('.seasons-section');
+    seasons?.querySelectorAll<HTMLDetailsElement>('[data-season-disclosure]').forEach(details=>{
+      const trigger=details.closest('[data-season-card]')?.querySelector<HTMLButtonElement>('[data-season-toggle]');
+      mountDetailsMotion(details,signal,trigger?[trigger]:[]);
     });
-  };
-  root.querySelector<HTMLButtonElement>('[data-episode-spoilers]')?.addEventListener('click',event=>{
-    const button=event.currentTarget as HTMLButtonElement;
-    const showing=root.dataset.spoilers!=='true';root.dataset.spoilers=String(showing);
-    button.setAttribute('aria-pressed',String(showing));button.querySelector('[data-episode-spoilers-label]')!.textContent=showing?'Titles shown':'Titles hidden';
+    const paintEpisodeTitles=()=>{
+      root.querySelectorAll<HTMLElement>('[data-episode-row]').forEach(row=>{
+        const heading=row.querySelector<HTMLElement>('[data-episode-title]')!;
+        heading.textContent=root.dataset.spoilers==='true'||row.dataset.watched==='true'?heading.dataset.episodeTitle!:`Episode ${heading.dataset.episodeNumber}`;
+      });
+    };
     paintEpisodeTitles();
-  },{signal});
-  root.querySelector<HTMLInputElement>('[data-season-average]')?.addEventListener('change',async event=>{
-    const input=event.currentTarget as HTMLInputElement;if(!title)return;
-    input.disabled=true;
-    try{await editorStore.write(title,{rating_mode:input.checked?'average':'manual'});}
-    catch(error){if(!signal.aborted)showActionFailure('rating',title?.title,error);}
-    finally{input.disabled=false;}
-  },{signal});
-  let seasonReadVersion=0;
-  const refreshSeasonState=async()=>{
-    const version=++seasonReadVersion;
-    const response=await fetch(`/api/proxy/tracking/title/${info.id}`,{signal});
-    if(!response.ok)throw new Error('Unable to refresh episode state. Reload to see your saved change.');
-    const data=await response.json();if(signal.aborted||version!==seasonReadVersion)return;
-    if (title && editorStore.hasPendingEntryWrites(title)) { seasonRefreshNeeded = true; return; }
-    projectedSeasons = null;
-    paint(editorStore.seed({...data,editor_library:title?.editor_library}));
-    for(const season of data.seasons||[]){
-      const number=season.season_number;
-      for(const episode of season.episodes||[]){
-        const row=root.querySelector<HTMLElement>(`[data-episode-row="${episode.id}"]`);if(!row)continue;
-        row.dataset.watched=String(episode.watched);
-        const button=row.querySelector<HTMLButtonElement>('[data-watch-episode]');
-        if(button){button.setAttribute('aria-pressed',String(episode.watched));button.setAttribute('aria-label',`Mark season ${number} episode ${episode.episode_number} ${episode.watched?'unwatched':'watched'}`);button.disabled=!episode.released||season.released_count==null;}
-      }
+    const spoilerControl=root.querySelector<HTMLButtonElement>('[data-episode-spoilers]');
+    if(spoilerControl){
+      const showing=root.dataset.spoilers==='true';
+      spoilerControl.setAttribute('aria-pressed',String(showing));
+      spoilerControl.querySelector('[data-episode-spoilers-label]')!.textContent=showing?'Titles shown':'Titles hidden';
     }
-    paintEpisodeTitles();
-  };
-  let seasonRefreshNeeded = false;
-  requestSeasonRefresh = () => {
-    if (!seasonRefreshNeeded || signal.aborted || !title || editorStore.hasPendingEntryWrites(title)) return;
-    seasonRefreshNeeded = false;
-    void refreshSeasonState().catch(()=>{if(!signal.aborted)location.reload();});
-  };
-  document.addEventListener('anylist:editor-committed',event=>{
-    const {title:saved,patch}=(event as CustomEvent<{title:EditorTitle;patch:Record<string,unknown>|null}>).detail;
-    if(saved.type!==info.type||saved.id!==info.id||info.type!=='series'||(patch&&!['status','progress','rewatch_count'].some(key=>key in patch)))return;
-    seasonRefreshNeeded = true;
-    requestSeasonRefresh();
-  },{signal});
-  root.querySelectorAll<HTMLButtonElement>('[data-watch-episode]').forEach(button=>button.addEventListener('click',async()=>{
-    const watched=button.getAttribute('aria-pressed')!=='true';button.disabled=true;button.setAttribute('aria-busy','true');
-    try{
-      const id=Number(button.dataset.watchEpisode);
-      const save=(confirmed=false)=>fetch(`/api/proxy/tracking/entry/${info.id}/episode/${id}`,{signal,method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({watched,confirm_rollback:confirmed})});
-      let response=await save();
-      if(response.status===409&&!watched){
-        const error=await response.clone().json().catch(()=>({}));
-        if(error.detail?.code==='watch_rollback_required'){
-          if(!await confirmEntryAction(episodeRollbackWarning,signal)||signal.aborted)return;
-          response=await save(true);
+    root.querySelector<HTMLButtonElement>('[data-episode-spoilers]')?.addEventListener('click',event=>{
+      const button=event.currentTarget as HTMLButtonElement;
+      const showing=root.dataset.spoilers!=='true';root.dataset.spoilers=String(showing);
+      button.setAttribute('aria-pressed',String(showing));button.querySelector('[data-episode-spoilers-label]')!.textContent=showing?'Titles shown':'Titles hidden';
+      paintEpisodeTitles();
+    },{signal});
+    root.querySelector<HTMLInputElement>('[data-season-average]')?.addEventListener('change',async event=>{
+      const input=event.currentTarget as HTMLInputElement;if(!title)return;
+      input.disabled=true;
+      try{await editorStore.write(title,{rating_mode:input.checked?'average':'manual'});}
+      catch(error){if(!signal.aborted)showActionFailure('rating',title?.title,error);}
+      finally{input.disabled=false;}
+    },{signal});
+    let seasonReadVersion=0;
+    const refreshSeasonState=async()=>{
+      const version=++seasonReadVersion;
+      const response=await fetch(`/api/proxy/tracking/title/${info.id}`,{signal});
+      if(!response.ok)throw new Error('Unable to refresh episode state. Reload to see your saved change.');
+      const data=await response.json();if(signal.aborted||version!==seasonReadVersion)return;
+      if (title && editorStore.hasPendingEntryWrites(title)) { seasonRefreshNeeded = true; return; }
+      projectedSeasons = null;
+      paint(editorStore.seed({...data,editor_library:title?.editor_library}));
+      for(const season of data.seasons||[]){
+        const number=season.season_number;
+        for(const episode of season.episodes||[]){
+          const row=root.querySelector<HTMLElement>(`[data-episode-row="${episode.id}"]`);if(!row)continue;
+          row.dataset.watched=String(episode.watched);
+          const button=row.querySelector<HTMLButtonElement>('[data-watch-episode]');
+          if(button){button.setAttribute('aria-pressed',String(episode.watched));button.setAttribute('aria-label',`Mark season ${number} episode ${episode.episode_number} ${episode.watched?'unwatched':'watched'}`);button.disabled=!episode.released||season.released_count==null;}
         }
       }
-      const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(typeof result.detail==='string'?result.detail:'Unable to update this episode.');
-      await refreshSeasonState().catch(()=>{if(!signal.aborted)location.reload();});
-    }catch(error){if(!signal.aborted)showActionFailure('progress',title?.title,error);}
-    finally{button.disabled=false;button.removeAttribute('aria-busy');}
-  },{signal}));
-  const request=async(path:string)=>{
-    const response=await fetch(`/api/proxy/tracking/${path}`,{signal,method:'POST'});
-    const data=await response.json().catch(()=>({}));
-    if(!response.ok)throw new Error(typeof data.detail==='string'?data.detail:'Unable to refresh episode metadata.');
-    return data;
-  };
-  root.querySelector<HTMLButtonElement>('#refresh-episodes')?.addEventListener('click',async event=>{
-    const button=event.currentTarget as HTMLButtonElement;button.disabled=true;button.setAttribute('aria-busy','true');
-    try{await request(`title/${info.id}/refresh-episodes`);location.reload();}
-    catch(error){showActionFailure('progress',title?.title,error);button.disabled=false;button.removeAttribute('aria-busy');}
-  },{signal});
-  const mode=root.querySelector<HTMLDialogElement>('#season-mode');
-  mode?.addEventListener('click',event=>{if(event.target===mode)void closeDialog(mode,'cancel');},{signal});
-  root.querySelectorAll<HTMLButtonElement>('[data-open-season-score]').forEach(button=>button.addEventListener('click',()=>{
-    if(!title)return;
-    const open=(window as Window & {anyListQuickRate?:(detail:{title:string;poster?:string;score:number|null;ratingMode:'manual';onScore:(score:number|null)=>Promise<void>})=>void}).anyListQuickRate;
-    if(!open){showToast('The rating picker is loading. Try again.','error');return;}
-    const number=button.dataset.openSeasonScore!;
-    open({title:`${title.title} · Season ${number}`,poster:title.poster||undefined,
-      score:title.entry?.season_scores?.[number]||null,ratingMode:'manual',onScore:async score=>{
-        if(!title||signal.aborted)return;
-        button.disabled=true;
-        try {
-          const patch:Record<string,unknown>={season_scores:{[number]:score??0}};
-          const hasSeasons=Object.values(title.entry?.season_scores||{}).some(Boolean);
-          if(!hasSeasons&&title.entry?.rating_mode==='average')patch.rating_mode='average';
-          if(!hasSeasons&&title.entry?.rating_mode!=='average'&&score&&mode){
-            const picker=document.querySelector<HTMLDialogElement>('#quick-rating');
-            if(picker?.open)await new Promise<void>(resolve=>{
-              const done=()=>{picker.removeEventListener('close',done);signal.removeEventListener('abort',done);resolve();};
-              picker.addEventListener('close',done,{once:true});signal.addEventListener('abort',done,{once:true});
-            });
-            if(signal.aborted)return;
-            mode.returnValue='cancel';showDialog(mode);
-            const result=await new Promise<string>(resolve=>{
-              const done=()=>{mode.removeEventListener('close',done);signal.removeEventListener('abort',done);resolve(signal.aborted?'cancel':mode.returnValue);};
-              mode.addEventListener('close',done,{once:true});signal.addEventListener('abort',done,{once:true});
-            });
-            if(!['manual','average'].includes(result)||signal.aborted)return;
-            patch.rating_mode=result;
+      paintEpisodeTitles();
+    };
+    let seasonRefreshNeeded = false;
+    requestSeasonRefresh = () => {
+      if (!seasonRefreshNeeded || signal.aborted || !title || editorStore.hasPendingEntryWrites(title)) return;
+      seasonRefreshNeeded = false;
+      void refreshSeasonState().catch(()=>{if(!signal.aborted)location.reload();});
+    };
+    document.addEventListener('anylist:editor-committed',event=>{
+      const {title:saved,patch}=(event as CustomEvent<{title:EditorTitle;patch:Record<string,unknown>|null}>).detail;
+      if(saved.type!==info.type||saved.id!==info.id||info.type!=='series'||(patch&&!['status','progress','rewatch_count'].some(key=>key in patch)))return;
+      seasonRefreshNeeded = true;
+      requestSeasonRefresh();
+    },{signal});
+    root.querySelectorAll<HTMLButtonElement>('[data-watch-episode]').forEach(button=>button.addEventListener('click',async()=>{
+      const watched=button.getAttribute('aria-pressed')!=='true';button.disabled=true;button.setAttribute('aria-busy','true');
+      try{
+        const id=Number(button.dataset.watchEpisode);
+        const save=(confirmed=false)=>fetch(`/api/proxy/tracking/entry/${info.id}/episode/${id}`,{signal,method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({watched,confirm_rollback:confirmed})});
+        let response=await save();
+        if(response.status===409&&!watched){
+          const error=await response.clone().json().catch(()=>({}));
+          if(error.detail?.code==='watch_rollback_required'){
+            if(!await confirmEntryAction(episodeRollbackWarning,signal)||signal.aborted)return;
+            response=await save(true);
           }
-          await editorStore.write(title,patch);
-          if(!signal.aborted)showToast(score==null?'Season score removed.':'Season score saved.','success');
-        }finally{button.disabled=false;}
-      }});
-  },{signal}));
+        }
+        const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(typeof result.detail==='string'?result.detail:'Unable to update this episode.');
+        await refreshSeasonState().catch(()=>{if(!signal.aborted)location.reload();});
+      }catch(error){if(!signal.aborted)showActionFailure('progress',title?.title,error);}
+      finally{button.disabled=false;button.removeAttribute('aria-busy');}
+    },{signal}));
+    const request=async(path:string)=>{
+      const response=await fetch(`/api/proxy/tracking/${path}`,{signal,method:'POST'});
+      const data=await response.json().catch(()=>({}));
+      if(!response.ok)throw new Error(typeof data.detail==='string'?data.detail:'Unable to refresh episode metadata.');
+      return data;
+    };
+    root.querySelector<HTMLButtonElement>('#refresh-episodes')?.addEventListener('click',async event=>{
+      const button=event.currentTarget as HTMLButtonElement;button.disabled=true;button.setAttribute('aria-busy','true');
+      try{await request(`title/${info.id}/refresh-episodes`);await loadSeasonDetails(true);}
+      catch(error){if(!signal.aborted)showActionFailure('progress',title?.title,error);}
+      finally{button.disabled=false;button.removeAttribute('aria-busy');}
+    },{signal});
+    const mode=root.querySelector<HTMLDialogElement>('#season-mode');
+    mode?.addEventListener('click',event=>{if(event.target===mode)void closeDialog(mode,'cancel');},{signal});
+    root.querySelectorAll<HTMLButtonElement>('[data-open-season-score]').forEach(button=>button.addEventListener('click',()=>{
+      if(!title)return;
+      const open=(window as Window & {anyListQuickRate?:(detail:{title:string;poster?:string;score:number|null;ratingMode:'manual';onScore:(score:number|null)=>Promise<void>})=>void}).anyListQuickRate;
+      if(!open){showToast('The rating picker is loading. Try again.','error');return;}
+      const number=button.dataset.openSeasonScore!;
+      open({title:`${title.title} · Season ${number}`,poster:title.poster||undefined,
+        score:title.entry?.season_scores?.[number]||null,ratingMode:'manual',onScore:async score=>{
+          if(!title||signal.aborted)return;
+          button.disabled=true;
+          try {
+            const patch:Record<string,unknown>={season_scores:{[number]:score??0}};
+            const hasSeasons=Object.values(title.entry?.season_scores||{}).some(Boolean);
+            if(!hasSeasons&&title.entry?.rating_mode==='average')patch.rating_mode='average';
+            if(!hasSeasons&&title.entry?.rating_mode!=='average'&&score&&mode){
+              const picker=document.querySelector<HTMLDialogElement>('#quick-rating');
+              if(picker?.open)await new Promise<void>(resolve=>{
+                const done=()=>{picker.removeEventListener('close',done);signal.removeEventListener('abort',done);resolve();};
+                picker.addEventListener('close',done,{once:true});signal.addEventListener('abort',done,{once:true});
+              });
+              if(signal.aborted)return;
+              mode.returnValue='cancel';showDialog(mode);
+              const result=await new Promise<string>(resolve=>{
+                const done=()=>{mode.removeEventListener('close',done);signal.removeEventListener('abort',done);resolve(signal.aborted?'cancel':mode.returnValue);};
+                mode.addEventListener('close',done,{once:true});signal.addEventListener('abort',done,{once:true});
+              });
+              if(!['manual','average'].includes(result)||signal.aborted)return;
+              patch.rating_mode=result;
+            }
+            await editorStore.write(title,patch);
+            if(!signal.aborted)showToast(score==null?'Season score removed.':'Season score saved.','success');
+          }finally{button.disabled=false;}
+        }});
+    },{signal}));
+  };
+  bindSeasonControls();
+  if(info.type==='series'&&title){
+    const host=root.querySelector<HTMLElement>('[data-detail-panel="seasons"]')!;
+    const loader=mountSeriesSeasons(root,info.id,signal,(data,source)=>{
+      if(!title||editorStore.hasPendingWrites(title)||document.querySelector('#quick-rating[open],#season-mode[open]'))return false;
+      const content=source.querySelector('[data-season-details]');
+      const mode=source.querySelector('#season-mode');
+      if(!content||!mode)return false;
+      const open=new Map([...host.querySelectorAll<HTMLDetailsElement>('[data-season-disclosure]')]
+        .filter(details=>details.dataset.userToggled==='true').map(details=>[details.id,details.open]));
+      const active=document.activeElement as HTMLElement|null;
+      const focus=active&&host.contains(active)?['data-season-toggle','data-open-season-score','data-watch-episode']
+        .flatMap(name=>active.hasAttribute(name)?[[name,active.getAttribute(name)!]]:[])[0]:undefined;
+      host.replaceChildren(document.importNode(content,true),document.importNode(mode,true));
+      host.querySelectorAll<HTMLDetailsElement>('[data-season-disclosure]').forEach(details=>{
+        if(open.has(details.id)){details.open=open.get(details.id)!;details.dataset.userToggled='true';}
+      });
+      projectedSeasons=null;
+      const positions=data.seasons.flatMap(season=>(season.episodes||[]).filter((episode:any)=>episode.released)
+        .map((episode:any)=>`S${season.season_number}E${episode.episode_number}`));
+      paint(editorStore.seed({...title,seasons:data.seasons,episodes_loaded:true,progress_positions:positions,
+        entry:title.entry?{...title.entry,released_episodes:positions.length}:null}));
+      bindSeasonControls();
+      host.querySelectorAll<HTMLImageElement>('img[data-deferred-src]').forEach(image=>deferArtwork(image));
+      episodeImagesLoaded=false;
+      if(!host.hidden)loadEpisodeImages();
+      if(focus)host.querySelector<HTMLElement>(`[${focus[0]}="${focus[1]}"]`)?.focus({preventScroll:true});
+      return true;
+    },()=>seasonRevision);
+    loadSeasonDetails=async(refresh=false)=>{
+      if(refresh)await loader.retry();else await loader.load();
+      if(!host.hidden&&host.querySelector('[data-episode-row]'))loadEpisodeImages();
+    };
+    root.addEventListener('click',event=>{
+      const trigger=(event.target as Element).closest<HTMLElement>('[data-season-toggle],.lab-season-toolbar');
+      if(trigger){const details=trigger.closest('[data-season-card]')?.querySelector<HTMLElement>('[data-season-disclosure]');if(details)details.dataset.userToggled='true';}
+    },{signal});
+    if(!host.hidden)void loadSeasonDetails();
+  }
   if(new URLSearchParams(location.search).get('rate')==='1')requestAnimationFrame(()=>{if(!signal.aborted)root.querySelector<HTMLButtonElement>('[data-quick-rate-id]')?.click();});
 }

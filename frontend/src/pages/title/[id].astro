@@ -11,7 +11,7 @@ if (!id) { Astro.response.status = 404; error = 'Media not found.'; }
 else {
   const connection = Astro.locals.user
     ? hasStreamingLibraryConnection(Astro.locals.token) : Promise.resolve(false);
-  try { media = await tracker(`title/${id}`,Astro.locals.token); }
+  try { media = await tracker(`title/${id}?episodes=false`,Astro.locals.token); }
   catch (cause) { error = (cause as Error).message; Astro.response.status = error === 'Not found.' ? 404 : 503; }
   if (media && Astro.locals.user) {
     canUseLibrary = await connection;
