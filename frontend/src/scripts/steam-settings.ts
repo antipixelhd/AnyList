@@ -41,6 +41,21 @@ function init() {
   let reviewGames: SteamGame[] | null = null;
   let reviewLimit = 40;
   const scroller = get('scroll');
+  function setLayout(layout: 'grid' | 'list') {
+    const region = get(step === 2 ? 'wishlist-grid' : step === 1 ? 'details' : 'grid');
+    const top = scroller.getBoundingClientRect().top;
+    const anchor = Array.from(region.children).find(node => !node.hasAttribute('hidden') && node.getBoundingClientRect().bottom > top);
+    const offset = anchor ? anchor.getBoundingClientRect().top - top : 0;
+    dialog.dataset.layout = layout;
+    for (const value of ['grid', 'list'] as const) get(`layout-${value}`).setAttribute('aria-pressed', String(value === layout));
+    if (anchor) scroller.scrollTop += anchor.getBoundingClientRect().top - top - offset;
+    try { localStorage.setItem('steam-import-layout', layout); } catch {}
+  }
+  let layout: 'grid' | 'list' = 'grid';
+  try { if (localStorage.getItem('steam-import-layout') === 'list') layout = 'list'; } catch {}
+  setLayout(layout);
+  listen(get('layout-grid'), 'click', () => setLayout('grid'));
+  listen(get('layout-list'), 'click', () => setLayout('list'));
   const finishDate = (game: SteamGame) => Object.hasOwn(draft.completion_dates, game.app_id) ? draft.completion_dates[game.app_id]
     : game.last_played ? new Date(game.last_played * 1000).toLocaleDateString('sv-SE') : null;
   listen(get('resume'), 'click', () => {
