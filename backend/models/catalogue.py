@@ -348,6 +348,7 @@ class MetadataSnapshot(Base):
             "provider", "kind", "external_id", name="uq_catalogue_snapshot"
         ),
         Index("ix_catalogue_snapshot_due", "next_attempt_at"),
+        Index("ix_catalogue_snapshot_entity", "entity_id"),
     )
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     provider: Mapped[str] = mapped_column(String(32), nullable=False)

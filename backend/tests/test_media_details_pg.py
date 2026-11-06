@@ -22,6 +22,46 @@ from routers.catalogue import router
 
 @unittest.skipUnless(fixture.URL, 'Requires explicit disposable statistics PostgreSQL')
 class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_snapshot_entity_index_migration_round_trip(self):
+        migration=importlib.import_module('migrations.versions.mt083_snapshot_entity')
+        async with self.engine.begin() as conn:
+            def exercise(sync):
+                with Operations.context(MigrationContext.configure(sync)):
+                    migration.downgrade()
+                    migration.upgrade()
+                definition=sync.scalar(text("SELECT indexdef FROM pg_indexes WHERE schemaname=current_schema() AND indexname='ix_catalogue_snapshot_entity'"))
+                self.assertIn('(entity_id)',definition)
+            await conn.run_sync(exercise)
+
+    async def test_shared_snapshot_scope_preserves_sources_behind_newer_jobs(self):
+        from datetime import datetime, timedelta
+        from core.media_details import detail_snapshots
+        async with self.Session() as db:
+            for kind in ('movie','series','game','book'):
+                work=CatalogueEntity(kind=kind,name='Snapshot scope '+kind)
+                other=CatalogueEntity(kind=kind,name='Unrelated '+kind)
+                db.add_all([work,other]);await db.flush()
+                stamp=datetime(2026,1,1)
+                for n in range(8):
+                    db.add(MetadataSnapshot(provider='test',kind='source',external_id=f'{work.id}:{n}',
+                        entity_id=work.id,fetched_at=stamp+timedelta(seconds=n),
+                        payload={'homepage':f'https://example.test/{kind}/{n}','images':{},'budget':0,'revenue':100+n}))
+                for n in range(12):
+                    db.add(MetadataSnapshot(provider='test',kind='auxiliary',external_id=f'{work.id}:job:{n}',
+                        entity_id=work.id,fetched_at=stamp+timedelta(days=1),payload={'raw':'large evidence '*1000}))
+                for excluded in ('game_credit_page','game_binding_review'):
+                    db.add(MetadataSnapshot(provider='test',kind=excluded,external_id=str(work.id),entity_id=work.id,
+                        fetched_at=stamp+timedelta(days=2),payload={'homepage':'https://example.test/excluded'}))
+                db.add(MetadataSnapshot(provider='test',kind='source',external_id=str(other.id),entity_id=other.id,
+                    fetched_at=stamp+timedelta(days=3),payload={'homepage':'https://example.test/unrelated'}))
+                await db.flush()
+                fields=('images','homepage','budget','revenue','url')
+                rows=await detail_snapshots(db,work.id,fields)
+                self.assertEqual([r.homepage for r in rows],[f'https://example.test/{kind}/{n}' for n in range(7,1,-1)])
+                self.assertTrue(all(r.budget==0 and r.images=={} and r.url is None for r in rows))
+                compact=await detail_snapshots(db,work.id,('homepage','url'))
+                self.assertEqual([r.homepage for r in rows],[r.homepage for r in compact])
+
     async def test_title_social_separates_self_and_latest_public_following_milestones(self):
         from datetime import datetime, timedelta
         async with self.Session() as db:

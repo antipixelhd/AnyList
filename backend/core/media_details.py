@@ -46,6 +46,22 @@ async def screen_work(db, media):
         CatalogueEntity.kind == media.media_type.value, or_(*namespaces)).order_by(CatalogueEntity.id).limit(1))
 
 
+async def detail_snapshots(db, entity_id, fields):
+    # Fence the entity lookup before JSON predicates: PostgreSQL otherwise may
+    # detoast unrelated provider documents during a sequential scan. Keep the
+    # source eligibility filter before LIMIT so auxiliary jobs cannot hide art.
+    scoped = select(MetadataSnapshot.provider, MetadataSnapshot.payload,
+        MetadataSnapshot.fetched_at).where(MetadataSnapshot.entity_id == entity_id,
+            MetadataSnapshot.kind.not_like('game_credit%'),
+            MetadataSnapshot.kind != 'game_binding_review').cte('detail_snapshots').prefix_with('MATERIALIZED')
+    text_fields = {'homepage', 'url'}
+    columns = [(scoped.c.payload[field].astext if field in text_fields else scoped.c.payload[field]).label(field)
+        for field in fields]
+    return (await db.execute(select(scoped.c.provider, *columns).where(
+        or_(*(scoped.c.payload[field].is_not(None) for field in fields)))
+        .order_by(scoped.c.fetched_at.desc().nullslast()).limit(6))).all()
+
+
 async def work_details(db, work, *, extras=True):
     if work is None:
         return {'people': [], 'organizations': [], 'posters': [], 'artwork': [], 'relations': [], 'similar': [], 'sources': []}
@@ -185,17 +201,7 @@ async def work_details(db, work, *, extras=True):
         artwork, posters = [], []
     # Details need image variants and public source links, not the provider's
     # complete credits/episode response. Keep large snapshot payloads in SQL.
-    snapshots = (await db.execute(select(MetadataSnapshot.provider,
-        MetadataSnapshot.payload['images'].label('images'),
-        MetadataSnapshot.payload['homepage'].astext.label('homepage'),
-        MetadataSnapshot.payload['budget'].label('budget'),
-        MetadataSnapshot.payload['revenue'].label('revenue'),
-        MetadataSnapshot.payload['url'].astext.label('url')).where(MetadataSnapshot.entity_id == work.id,
-            MetadataSnapshot.kind.not_like('game_credit%'),MetadataSnapshot.kind!='game_binding_review',
-            # Auxiliary metadata/job components must not consume the six
-            # image/source slots and evict usable provider artwork or links.
-            or_(*(MetadataSnapshot.payload[field].is_not(None) for field in ('images','homepage','url','budget','revenue'))))
-        .order_by(MetadataSnapshot.fetched_at.desc().nullslast()).limit(6))).all()
+    snapshots = await detail_snapshots(db, work.id, ('images','homepage','budget','revenue','url'))
     sources = []
     for snapshot in snapshots:
         images = snapshot.images or {}
@@ -291,13 +297,7 @@ def game_source_links(work, sources, identities):
 
 async def game_primary_details(db, work):
     """Public sections updated by primary hydration, without optional enrichment."""
-    snapshots = (await db.execute(select(MetadataSnapshot.provider,
-        MetadataSnapshot.payload['homepage'].astext.label('homepage'),
-        MetadataSnapshot.payload['url'].astext.label('url')).where(
-            MetadataSnapshot.entity_id == work.id,
-            MetadataSnapshot.kind.not_like('game_credit%'),MetadataSnapshot.kind!='game_binding_review',
-            or_(MetadataSnapshot.payload['homepage'].is_not(None),MetadataSnapshot.payload['url'].is_not(None)))
-        .order_by(MetadataSnapshot.fetched_at.desc().nullslast()).limit(6))).all()
+    snapshots = await detail_snapshots(db, work.id, ('homepage','url'))
     sources = []
     for row in snapshots:
         homepage = public_url(row.homepage)
