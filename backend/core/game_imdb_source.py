@@ -91,7 +91,15 @@ class IMDbGameSource:
         # request, its headers or its body to another host or challenge solver.
         body=await self.http.request('imdb','POST',ENDPOINT,cache=False,
             headers=HEADERS,json={'query':query,'variables':variables})
-        if not isinstance(body,dict) or body.get('errors') or not isinstance(body.get('data'),dict):
+        if isinstance(body,dict) and body.get('errors'):
+            errors=body['errors']
+            if ('query GameCredits(' in query and 'first: 100' not in query and isinstance(errors,list)
+                    and all(isinstance(error,dict) and re.search(
+                        r'\b(first|page size)\b.*\b(maximum|max|at most|exceed|greater than)\b.*\b(100|200)\b',
+                        str(error.get('message','')),re.I) for error in errors)):
+                raise ProviderError('unsupported_page_size')
+            raise ProviderError('graphql_error')
+        if not isinstance(body,dict) or not isinstance(body.get('data'),dict):
             raise ProviderError('graphql_error')
         fields=((body.get('extensions') or {}).get('entitlements') or {}).get('fields') or {}
         denied=[key for key,value in fields.items() if value=='DENY'] if isinstance(fields,dict) else []
@@ -138,8 +146,10 @@ class IMDbGameSource:
             result[native]={'image':url,'width':raw['width'],'height':raw['height']}
         return result
 
-    async def credits(self,native,after=None,*,person=False):
+    async def credits(self,native,after=None,*,person=False,page_size=100):
         identifier(native,person)
+        if type(page_size) is not int or page_size not in (100,200,250) or person and page_size!=100:
+            raise ProviderError('invalid_request')
         if after is not None and (not isinstance(after,str) or not 1<=len(after)<=4096):
             raise ProviderError('invalid_request')
         sessions=getattr(self.http,'session_factory',None)
@@ -154,14 +164,20 @@ class IMDbGameSource:
                 ttl=timedelta(minutes=5),max_stale=timedelta(minutes=5))
             if cached['stale']:raise ProviderError('retry_pending')
             return cached['data']
-        return await self._credits(native,after,person=person)
+        return await self._credits(native,after,person=person,page_size=page_size)
 
-    async def _credits(self,native,after=None,*,person=False):
+    async def _credits(self,native,after=None,*,person=False,page_size=100):
         identifier(native,person)
         if after is not None and (not isinstance(after,str) or not 1<=len(after)<=4096):
             raise ProviderError('invalid_request')
-        body=await self.query(PERSON_CREDITS if person else TITLE_CREDITS,
-            {'id':native,'after':after,**({'profile':after is None} if person else {})})
+        query=PERSON_CREDITS if person else TITLE_CREDITS.replace('first: 100',f'first: {page_size}')
+        try:
+            body=await self.query(query,
+                {'id':native,'after':after,**({'profile':after is None} if person else {})})
+        except ProviderError as error:
+            if person or page_size==100 or error.code!='unsupported_page_size':raise
+            result=await self._credits(native,after,page_size=100)
+            return {**result,'page_size_fallback':True}
         raw=body.get('name' if person else 'title')
         if person:
             if not isinstance(raw,dict) or raw.get('id')!=native or not isinstance((raw.get('nameText') or {}).get('text'),str):
@@ -171,7 +187,7 @@ class IMDbGameSource:
             header=game_header(raw,native)
         if body.get('_denied_fields'):
             header['unavailable_fields']=body['_denied_fields']
-        return {'header':header, **page(raw.get('credits'),250 if person else 100)}
+        return {'header':header, **page(raw.get('credits'),250 if person else page_size)}
 
     async def candidates(self,term):
         if not isinstance(term,str) or not 2<=len(term.strip())<=100:raise ProviderError('invalid_request')

@@ -21,6 +21,30 @@ def connection(rows,total=None,more=False,cursor=None):
 
 
 class IMDbSourceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_title_page_sizes_preserve_cursor_and_validate_requested_bound(self):
+        for size in (100,200,250):
+            self.http.request.return_value={'data':{'title':{**title(),'credits':connection([{}]*size,501,True,'next')}}}
+            result=await self.source.credits('tt123','existing-100-cursor',page_size=size)
+            self.assertEqual(len(result['rows']),size)
+            sent=self.http.request.call_args.kwargs['json']
+            self.assertIn(f'credits(first: {size}',sent['query'])
+            self.assertEqual(sent['variables']['after'],'existing-100-cursor')
+        for size in (True,0,99,251,'250'):
+            with self.assertRaises(ProviderError):await self.source.credits('tt123',page_size=size)
+        with self.assertRaises(ProviderError):await self.source.credits('nm123',person=True,page_size=250)
+
+    async def test_explicit_size_rejection_falls_back_once_without_hiding_outages(self):
+        self.http.request.side_effect=[{'errors':[{'message':'first cannot exceed 100'}]},
+            {'data':{'title':{**title(),'credits':connection([{}]*100,501,True,'next')}}}]
+        result=await self.source.credits('tt123','old-cursor',page_size=250)
+        self.assertTrue(result['page_size_fallback']);self.assertEqual(len(result['rows']),100)
+        self.assertEqual(self.http.request.call_args.kwargs['json']['variables']['after'],'old-cursor')
+        self.assertIn('credits(first: 100',self.http.request.call_args.kwargs['json']['query'])
+        self.http.request.reset_mock();self.http.request.side_effect=None
+        self.http.request.return_value={'errors':[{'message':'Internal server error'}]}
+        with self.assertRaises(ProviderError):await self.source.credits('tt123',page_size=250)
+        self.assertEqual(self.http.request.await_count,1)
+
     async def test_optional_denied_release_date_never_becomes_identity_evidence(self):
         raw={**title(),'releaseDate':{'year':2020,'month':1,'day':1}}
         self.http.request.return_value={'data':{'title':raw},'extensions':{'entitlements':{'fields':{'Title.releaseDate':'DENY'}}}}

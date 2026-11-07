@@ -124,6 +124,24 @@ class GameIMDbEnrichment:
         self.source=self.bindings.source
         self.page_budget=page_budget
 
+    async def page_size(self,work_id,state):
+        # Origin priority is not enough: a click can promote an already-running
+        # mapper job, and that foreground demand can expire between turns.
+        from core.game_work import Priority,job_key
+        from models.game_runner import GameWorkDemand
+        if state.get('page_size_fallback'):return 100
+        async with self.sessions() as db:
+            demand=(await db.execute(select(GameWorkDemand.priority,GameWorkDemand.active_until).where(
+                GameWorkDemand.key==job_key('imdb',JOB,work_id)))).one_or_none()
+            foreground=bool(demand and demand.priority==Priority.DIRECT and demand.active_until>now())
+            if not foreground:return 100
+            if state.get('cursor') or state.get('staging'):return 250
+            previous=(await db.execute(snapshot(COMPONENT,state['title_id']).with_only_columns(
+                MetadataSnapshot.entity_id,MetadataSnapshot.payload['complete'].as_boolean()))).one_or_none()
+            # A sizing hint only. Publication still rechecks staging under the
+            # write lock so a concurrent complete projection stays protected.
+            return 250 if previous and previous[0]==work_id and previous[1] else 100
+
     async def run(self,work_id):
         key=(id(self.sessions),work_id)
         task=_flights.get(key)
@@ -186,7 +204,9 @@ class GameIMDbEnrichment:
             deadline=monotonic()+55
             for _ in range(self.page_budget):
                 async with asyncio.timeout(max(1,deadline-monotonic())):
-                    page=await self.source.credits(title_id,state['cursor'])
+                    size=await self.page_size(work_id,state)
+                    page=await self.source.credits(title_id,state['cursor'],**({'page_size':size} if size!=100 else {}))
+                    if page.get('page_size_fallback'):state['page_size_fallback']=True
                 if state['total'] is not None and page['total']!=state['total']:
                     # A changing connection cannot be certified from mixed pages.
                     await self.fail(work_id,token,'changed_connection',restart=True)

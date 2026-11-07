@@ -30,6 +30,70 @@ def page(rows,total,more=False,cursor=None):
 
 @unittest.skipUnless(fixture.URL,'Requires explicit disposable catalogue PostgreSQL')
 class IMDbEnrichmentTests(unittest.IsolatedAsyncioTestCase):
+    async def test_adaptive_pages_resume_promote_expire_and_preserve_refresh_identities(self):
+        from core.game_work import demand,job_key,work_context,Priority
+        from models.game_runner import GameWorkDemand
+        rows=[actor(f'nm{i+1}') for i in range(501)];rows[100]=rows[0]
+        calls=[]
+        async def credits(native,cursor,*,page_size=100):
+            offset=int(cursor or 0);end=min(len(rows),offset+page_size);calls.append(page_size)
+            return page(rows[offset:end],len(rows),end<len(rows),str(end) if end<len(rows) else None)
+        self.source.credits=credits;self.service.page_budget=1
+        async def promote():
+            async with self.Session() as db:
+                with work_context(Priority.DIRECT):await demand(db,job_key('imdb',JOB,self.work_id))
+                await db.commit()
+        await promote()
+        self.assertEqual(await self.service.run(self.work_id),'partial');self.assertEqual(calls,[100])
+        async with self.Session() as db:
+            record=await db.get(GameWorkDemand,job_key('imdb',JOB,self.work_id))
+            record.active_until=now()-timedelta(seconds=1);await db.commit()
+        self.assertEqual(await self.service.run(self.work_id),'partial');self.assertEqual(calls,[100,100])
+        await promote()
+        self.service=GameIMDbEnrichment(self.Session,bindings=self.bindings,page_budget=1)
+        self.assertEqual(await self.service.run(self.work_id),'partial')
+        async with self.Session() as db:
+            record=await db.get(GameWorkDemand,job_key('imdb',JOB,self.work_id))
+            record.active_until=now()-timedelta(seconds=1);await db.commit()
+        self.service=GameIMDbEnrichment(self.Session,bindings=self.bindings,page_budget=1)
+        self.assertEqual(await self.service.run(self.work_id),'ready')
+        self.assertEqual(calls,[100,100,250,100])
+        original=[(r.id,r.source_key,r.position) for r in await self.active()]
+        self.assertEqual(len(original),501);self.assertEqual(len({r[1] for r in original}),501)
+        await self.due();await promote();calls.clear()
+        self.assertEqual(await self.service.run(self.work_id),'partial')
+        self.assertEqual(calls,[250],'A usable complete projection permits a larger first refresh page')
+        self.assertEqual([(r.id,r.source_key,r.position) for r in await self.active()],original)
+        for _ in range(4):
+            result=await self.service.run(self.work_id)
+            if result=='ready':break
+            self.assertEqual(result,'partial')
+        self.assertEqual(result,'ready')
+        self.assertEqual([(r.id,r.source_key,r.position) for r in await self.active()],original)
+
+    async def test_background_and_size_fallback_keep_small_pages(self):
+        from core.game_work import demand,job_key,work_context,Priority
+        state={'title_id':'tt123','cursor':'old-100-cursor'}
+        self.assertEqual(await self.service.page_size(self.work_id,state),100)
+        async with self.Session() as db:
+            with work_context(Priority.DIRECT):await demand(db,job_key('imdb',JOB,self.work_id))
+            await db.commit()
+        self.assertEqual(await self.service.page_size(self.work_id,state),250)
+        self.assertEqual(await self.service.page_size(self.work_id,{**state,'page_size_fallback':True}),100)
+        calls=[];rows=[actor('nm1')]*401
+        async def credits(native,cursor,*,page_size=100):
+            calls.append(page_size);offset=int(cursor or 0);end=min(offset+100,len(rows))
+            result=page(rows[offset:end],len(rows),end<len(rows),str(end) if end<len(rows) else None)
+            if page_size>100:result['page_size_fallback']=True
+            return result
+        self.source.credits=credits;self.service.page_budget=1
+        for _ in range(6):
+            result=await self.service.run(self.work_id)
+            if result=='ready':break
+            self.assertEqual(result,'partial')
+        self.assertEqual(result,'ready');self.assertEqual(calls,[100,250,100,100,100])
+        self.assertEqual(len(await self.active()),401)
+
     async def test_changed_dependency_wakes_parked_stale_binding_without_restarting_active_retry(self):
         from core.game_mapping_lifecycle import invalidate
         async with self.Session() as db:
