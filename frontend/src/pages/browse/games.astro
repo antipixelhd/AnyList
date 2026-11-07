@@ -18,7 +18,12 @@ import '../../styles/browse.css';
 const domains=await viewerMediaPreferences(Astro.locals);
 const values=gameBrowseValues(Astro.url.searchParams);
 const categories=gameBrowseIsCategories(values),timeline=values.get('view')==='timeline';
+const pending=Astro.url.searchParams.get('static')!=='1';
 let facets:any={genres:[],platform_groups:[]},payload:any={results:[],has_more:false},error='';
+let facetsPending=pending;
+// Match screen Browse: ordinary visits publish controls/skeletons before any
+// cold provider work. The no-JS link retains server-rendered acquisition.
+if(!pending){
 const results=await Promise.allSettled([
   tracker(gameBrowseRequest(values,categories?6:24),Astro.locals.token),
   tracker('games/browse/facets',Astro.locals.token),
@@ -26,7 +31,9 @@ const results=await Promise.allSettled([
 if(results[0].status==='fulfilled')payload=results[0].value;else error='Unable to load games. Try again.';
 if(payload.verification_error)error='Unable to verify game scores. Try again.';
 if(results[1].status==='fulfilled')facets=results[1].value;
-const sections=gameBrowseCategories.map(([key,title])=>({key,title,payload:categories&&key==='trending'&&!error?payload:null}));
+else facetsPending=true;
+}
+const sections=gameBrowseCategories.map(([key,title])=>({key,title,payload:categories&&!pending&&key==='trending'&&!error?payload:null}));
 const signedIn=!!Astro.locals.user;
 const sort=values.get('sort')||'all';
 const sortOptions=[['all','All categories'],...gameBrowseCategories];
@@ -34,6 +41,7 @@ const effectiveSort=!categories&&sort==='all'?'trending':sort;
 const selectedSort=values.get('q')?'Relevance':sortOptions.find(([key])=>key===effectiveSort)?.[1];
 const minScore=Number(values.get('min_metacritic')||0);
 const firstYear=1900,lastYear=Math.max(new Date().getFullYear()+3,Number(values.get('end')?.slice(0,4))||0,Number(values.get('start')?.slice(0,4))||0);
+const staticValues=new URLSearchParams(values);staticValues.set('static','1');
 ---
 <Tracker title="Browse Games">
   <div class="page-width browse-page" data-browse-page data-game-browse data-browse-view={timeline?'timeline':'grid'} data-browse-sorted={!categories?'':undefined}>
@@ -69,7 +77,9 @@ const firstYear=1900,lastYear=Math.max(new Date().getFullYear()+3,Number(values.
       </div>
       <p class="browse-notice" data-browse-notice role="status" aria-live="polite">{!categories&&!error&&!payload.verification_pending?values.get('q')&&!payload.coverage_limited?values.has('min_metacritic')&&payload.partial?'Some games have no verified critic score.':'':gameSourceContext(payload):''}</p>
       <div class="browse-error" data-browse-error role="alert" hidden={!error}><span>{error}</span><button type="button" class="button-secondary" data-browse-retry>Try again</button></div>
-      <section aria-label="Browse results" data-browse-region aria-busy={payload.verification_pending?'true':'false'}>
+      <div class="browse-error" data-game-facets-error role="alert" hidden><span>Unable to load game filters.</span><button type="button" class="button-secondary" data-game-facets-retry>Try again</button></div>
+      {pending&&<noscript><p><a href={`/browse/games?${staticValues}`}>Load games</a></p></noscript>}
+      <section aria-label="Browse results" data-browse-region aria-busy={pending&&!categories||payload.verification_pending?'true':'false'}>
         <div class="browse-sections" data-browse-sections hidden={!categories}>
           {sections.map(section=><section class="browse-category" data-game-shelf={section.key} aria-label={section.title} aria-busy={!section.payload}>
             <header><h2><a href={gameBrowseHref(new URLSearchParams(),{sort:section.key})} data-game-view-all={section.key} title={section.payload?gameSourceContext(section.payload):undefined}>{section.title}</a></h2><a href={gameBrowseHref(new URLSearchParams(),{sort:section.key})} data-game-view-all={section.key}>View all</a></header>
@@ -80,14 +90,14 @@ const firstYear=1900,lastYear=Math.max(new Date().getFullYear()+3,Number(values.
         <div class={timeline?'browse-timeline':'browse-grid'} data-browse-results hidden={categories}>
           {timeline?timelineGroups<any>(payload.results).map(year=><section class="browse-timeline-year" data-timeline-year={year.year}><h2 class="browse-timeline-year-label">{year.year||'Undated'}</h2><div class="browse-timeline-months">{year.months.map(month=><section class="browse-timeline-month" data-timeline-month={month.key}><h3>{month.label}</h3><div class="browse-grid">{month.items.map(item=><BrowseCard {item} {signedIn}/>)}</div></section>)}</div></section>):payload.results.map((item:any)=><BrowseCard {item} {signedIn}/>)}
         </div>
-        <BrowseLoadingSkeletons sectionTitles={gameBrowseCategories.map(([,title])=>title)} active={!!payload.verification_pending&&!payload.results.length}/>
-        <div class="empty-state" data-browse-empty hidden={categories||payload.verification_pending||payload.results.length>0||payload.has_more||!!error}><h2>{payload.coverage_limited?'No verified games in this search window':'No matching games'}</h2><button type="button" class="button-secondary" data-browse-clear>Clear filters</button></div>
+        <BrowseLoadingSkeletons sectionTitles={gameBrowseCategories.map(([,title])=>title)} active={!categories&&(pending||!!payload.verification_pending)&&!payload.results.length}/>
+        <div class="empty-state" data-browse-empty hidden={pending||categories||payload.verification_pending||payload.results.length>0||payload.has_more||!!error}><h2>{payload.coverage_limited?'No verified games in this search window':'No matching games'}</h2><button type="button" class="button-secondary" data-browse-clear>Clear filters</button></div>
         <div class="browse-load" data-browse-sentinel hidden={categories}><button type="button" class="button-quiet" data-browse-more hidden={!payload.has_more}>Load more</button><span data-browse-end hidden={!!error||payload.verification_pending||payload.has_more||!payload.results.length}>{payload.partial?'End of verified results':"You're all caught up"}</span></div>
       </section>
     </div>
     <template data-browse-close-icon><Icon name="close"/></template>
     <template data-browse-template><BrowseCard item={{type:'game',title:''}} {signedIn} template/></template>
-    <script id="game-browse-data" type="application/json" set:html={JSON.stringify({payload,facets,sections,categories,error,values:values.toString()}).replaceAll('<','\\u003c')}/>
+    <script id="game-browse-data" type="application/json" set:html={JSON.stringify({payload,facets,sections,categories,error,pending,facets_pending:facetsPending,values:values.toString()}).replaceAll('<','\\u003c')}/>
   </div>
 </Tracker>
 <script>import "../../lib/browse-shell";</script>

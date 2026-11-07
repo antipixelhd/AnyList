@@ -16,6 +16,7 @@ import {appendBrowseTimeline} from './browse-timeline';
 import {genreSelectionLabel} from './browse-view';
 import {formatDate} from './date-time';
 import {gameBrowseValues,gameBrowseIsCategories,gameBrowseHasFilters,gameBrowseSnapshot,gameBrowseRequest,gameBrowseHref,gamePlatformSelection,gameSourceContext,type GamePlatformGroup} from './game-browse-data';
+import {createBrowseFacetLoader} from './browse-facet-loading';
 
 type Payload=GameVerificationPage&{results:BrowseItem[];has_more:boolean;cursor?:string|null;source?:string;source_at?:number|null;fetched_at?:string|null;partial?:boolean;stale?:boolean;coverage_limited?:boolean};
 type Shelf={key:string;title:string;payload:Payload|null};
@@ -144,7 +145,7 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
     reconcile(shelf.payload,-1);if(gameBrowseCacheable(shelf.payload))cache.set(gameBrowseRequest(new URLSearchParams({sort:shelf.key}),6),shelf.payload);
     register(find(`[data-game-shelf="${shelf.key}"]`),shelf.payload.results);paintSource(shelf);
   }
-  if(!initial.categories){reconcile(payload,-1);register(grid,payload.results);if(!initial.error&&gameBrowseCacheable(payload))cache.set(gameBrowseRequest(initialValues),payload);}
+  if(!initial.categories){reconcile(payload,-1);register(grid,payload.results);if(!initial.pending&&!initial.error&&gameBrowseCacheable(payload))cache.set(gameBrowseRequest(initialValues),payload);}
   requestAnimationFrame(()=>requestAnimationFrame(()=>{if(!signal.aborted)initializeScrollMotion(root,signal,'.browse-card-body, .browse-skeleton-body','browse-scroll-reveal',{animateInitial:false,downwardOnly:true,scaleEntrance:true,once:true,appearedAttribute:'data-browse-appeared'});}));
   bindBrowseCardActions(region,items,signal,syncItem,message=>{notice.textContent=message;notice.hidden=false;});bindBrowseCardTouch(region,signal);
   function updateControls(){
@@ -180,7 +181,7 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
   };
   const picker=find<HTMLDetailsElement>('[data-game-device-picker]'),deviceSearch=find<HTMLInputElement>('[data-game-device-search]');
   const deviceList=find('[data-game-device-list]'),deviceMore=find<HTMLButtonElement>('[data-game-devices-more]');
-  const devices=groups.flatMap(group=>group.devices.map(device=>({...device,group:group.id})));
+  let devices=groups.flatMap(group=>group.devices.map(device=>({...device,group:group.id})));
   let deviceLimit=40;
   const renderDevices=()=>{
     const query=deviceSearch.value.trim().toLocaleLowerCase(),matches=devices.filter(device=>device.name.toLocaleLowerCase().includes(query));
@@ -192,6 +193,36 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
     deviceList.replaceChildren(fragment);deviceMore.hidden=matches.length<=deviceLimit;
     if(!matches.length){const message=document.createElement('p');message.textContent='No matching devices';deviceList.append(message);}
   };
+  let facetsReady=!initial.facets_pending;
+  const facetMenus=[find('[data-genre-options]'),find('[data-game-platform-options]')].map(node=>node.closest('details')!);
+  const setFacetBusy=(pending:boolean)=>facetMenus.forEach(menu=>{
+    menu.inert=pending||!facetsReady;menu.setAttribute('aria-busy',String(pending));
+  });
+  const facetLoader=createBrowseFacetLoader(async(requestSignal)=>{
+    const response=await fetch('/api/proxy/tracking/games/browse/facets',{signal:requestSignal});
+    if(!response.ok||response.redirected)throw new Error('Filters unavailable');
+    const data=await response.json();
+    if(!Array.isArray(data.genres)||!Array.isArray(data.platform_groups)||data.platform_groups.some((group:any)=>!Array.isArray(group.devices)))throw new Error('Invalid filters');
+    return data;
+  },data=>{
+    initial.facets=data;groups.splice(0,groups.length,...data.platform_groups);
+    devices=groups.flatMap(group=>group.devices.map(device=>({...device,group:group.id})));
+    const option=(name:string,id:string,title:string,checked:boolean)=>{
+      const label=document.createElement('label'),input=document.createElement('input'),text=document.createElement('span');
+      input.type='checkbox';input.name=name;input.value=id;input.checked=checked;text.textContent=title;label.append(input,text);return label;
+    };
+    const selectedGenres=field('genres').value.split(',');
+    find('[data-genre-options]').replaceChildren(...data.genres.map((genre:any)=>option('genre',String(genre.id),genre.name,selectedGenres.includes(String(genre.id)))));
+    const platformOptions=find('[data-game-platform-options]');
+    platformOptions.querySelectorAll('[data-game-platform-family]').forEach(node=>node.remove());
+    const fragment=document.createDocumentFragment();
+    for(const group of groups){const label=option('platform',group.id,group.name,selectedPlatforms.has(group.id));label.dataset.gamePlatformFamily='';fragment.append(label);}
+    platformOptions.insertBefore(fragment,picker);
+    facetsReady=true;find('#browse-genres-value').textContent=genreSelectionLabel(field('genres').value,data.genres);
+    syncPlatforms();updateControls();if(picker.open)renderDevices();
+  },setFacetBusy,failed=>{find('[data-game-facets-error]').hidden=!failed;},signal);
+  find('[data-game-facets-retry]').addEventListener('click',()=>void facetLoader.load(),{signal});
+  setFacetBusy(!facetsReady);
   picker.addEventListener('toggle',()=>{
     form.querySelectorAll<HTMLElement>('[data-game-platform-family]').forEach(label=>label.hidden=picker.open);
     find('[data-game-device-label]').textContent=picker.open?'Platform groups':'Choose devices';
@@ -319,10 +350,11 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
       if(['checkbox','radio'].includes(input.type))input.toggleAttribute('checked',input.checked);
     });
     form.querySelectorAll('select').forEach(select=>[...select.options].forEach(option=>option.toggleAttribute('selected',option.selected)));
-    find('#game-browse-data').textContent=JSON.stringify({...initial,...snapshot}).replaceAll('<','\\u003c');
+    find('#game-browse-data').textContent=JSON.stringify({...initial,...snapshot,pending:false,facets_pending:!facetsReady}).replaceAll('<','\\u003c');
   },{signal});
   signal.addEventListener('abort',()=>{request?.abort();clearTimeout(timer);observer.disconnect();cancelAnimationFrame(frame);},{once:true});
-  syncGenres();syncPlatforms();updateControls();footer();
+  if(facetsReady)syncGenres();syncPlatforms();updateControls();footer();
+  if(!facetsReady)void facetLoader.load();
   if(initial.categories){request=new AbortController();void loadShelves(generation,request.signal);}
-  else if(payload.verification_pending)void load(false);
+  else if(initial.pending||payload.verification_pending)void load(false);
 }
