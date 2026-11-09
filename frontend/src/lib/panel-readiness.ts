@@ -2,6 +2,8 @@
 export async function preparePanelStyles(source:Document,base:string,signal:AbortSignal,document:Document=globalThis.document){
   if(signal.aborted)throw new DOMException('Aborted','AbortError');
   for(const style of source.querySelectorAll<HTMLStyleElement>('style')){
+    // DOMParser exposes fallback markup that a scripted navigation skips.
+    if(style.closest('noscript'))continue;
     const identity=style.getAttribute('data-vite-dev-id');
     const existing=[...document.head.querySelectorAll<HTMLStyleElement>('style')].find(item=>identity?item.getAttribute('data-vite-dev-id')===identity:item.textContent===style.textContent);
     // The active runtime (including Vite HMR) owns installed style identities.
@@ -9,6 +11,7 @@ export async function preparePanelStyles(source:Document,base:string,signal:Abor
     if(!existing)document.head.append(document.importNode(style,true));
   }
   await Promise.all([...source.querySelectorAll<HTMLLinkElement>('link[rel=stylesheet][href]')].map(async link=>{
+    if(link.closest('noscript'))return;
     const href=new URL(link.getAttribute('href')!,base).href;
     let css=[...document.head.querySelectorAll<HTMLLinkElement>('link[rel=stylesheet]')].find(item=>item.href===href);
     if(css?.sheet)return;

@@ -5,10 +5,12 @@ import {preparePanelStyles} from '../src/lib/panel-readiness.ts';
 class Style{
   constructor(text,id){this.textContent=text;this.id=id;}
   getAttribute(name){return name==='data-vite-dev-id'?this.id:null;}
+  closest(){return this.noscript?{}:null;}
 }
 class Link extends EventTarget{
   constructor(href,sheet=null){super();this.href=href;this.sheet=sheet;}
   getAttribute(name){return name==='href'?this.href:null;}
+  closest(){return this.noscript?{}:null;}
   remove(){this.removed=true;}
 }
 function fixture(styles=[],links=[],existing=[]){
@@ -24,6 +26,14 @@ test('development inline route styles are applied before the panel can be reveal
   assert.equal(f.nodes[0].textContent,'.game-entry-groups{display:block}');
   await preparePanelStyles(f.source,'https://example.test/user/alex/games',signal,f.document);
   assert.equal(f.nodes.length,1);
+});
+
+test('styles inside parsed no-script fallbacks never enter the active document',async()=>{
+  const fallback = Object.assign(new Style('.browse-loading-view {display:none!important}'),{noscript:true});
+  const link = Object.assign(new Link('/fallback.css'),{noscript:true});
+  const f = fixture([fallback,new Style('.browse-page{display:block}')],[link]);
+  await preparePanelStyles(f.source,'https://example.test/browse',new AbortController().signal,f.document);
+  assert.deepEqual(f.nodes.map(node=>node.textContent),['.browse-page{display:block}']);
 });
 
 test('an existing stylesheet link is not readiness evidence while it is still loading',async()=>{

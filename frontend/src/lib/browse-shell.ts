@@ -81,6 +81,7 @@ function setup(){
     if(tab==='game'&&doc.body.dataset.gamesApproved!=='true')throw new Error('Games access requires approval.');
     await preparePanelStyles(doc,new URL(url,location.origin).href,requestSignal);
     const root=doc.querySelector<HTMLElement>('[data-browse-page]');if(!root)throw new Error('Unable to load this tab.');
+    root.querySelectorAll('noscript').forEach(node=>node.remove());
     const lifetime=new AbortController();
     signal.addEventListener('abort',()=>lifetime.abort(),{once:true});
     root.hidden=true;root.inert=true;host.append(root);
