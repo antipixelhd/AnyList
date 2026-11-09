@@ -199,24 +199,29 @@ def merge_fields(row, values, source):
                 setattr(row, field, value)
             sources[field] = source
     attrs = dict(row.attributes or {})
+    incoming_attrs = values.get("attributes") or {}
     from core.game_release_dates import KEYS as RELEASE_KEYS, merge_release
     release_source=sources.get('attributes.release_date')
     release_handled = row.kind in ('game','release') and merge_release(
-        attrs,sources,protected,values.get('attributes') or {},source,
+        attrs,sources,protected,incoming_attrs,source,
         rank_allowed=not release_source or source_rank(row.kind,source)>=source_rank(row.kind,release_source))
-    for key, value in (values.get("attributes") or {}).items():
+    for key, value in incoming_attrs.items():
         if release_handled and key in RELEASE_KEYS:
             continue
         field = "attributes." + key
+        old_source = sources.get(field)
+        # IGDB only emits this projection when it has source images to filter.
+        clear_igdb_artwork = (value == [] and row.kind == 'game' and source == old_source == 'igdb'
+                              and key in ('artwork', 'scene_artwork')
+                              and 'artwork_policy_version' in incoming_attrs)
         if (
             value is None
-            or value == []
+            or (value == [] and not clear_igdb_artwork)
             or value == {}
             or value == ""
             or field in protected
         ):
             continue
-        old_source = sources.get(field)
         if attrs.get(key) is None or (
             old_source
             and source_rank(row.kind, source) >= source_rank(row.kind, old_source)

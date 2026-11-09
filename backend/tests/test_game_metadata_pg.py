@@ -371,7 +371,7 @@ class GameMetadataTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.provider.called,0)
 
     async def test_legacy_artwork_refreshes_missing_types_without_replacing_selected_background(self):
-        for version in (1,2):
+        for version in (1,2,6):
             with self.subTest(version=version):
                 stamp,expires,gallery,large=await self.seed_cached_artwork()
                 async with self.Session() as db:
@@ -389,6 +389,25 @@ class GameMetadataTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(work.attributes['backdrop_path'],large)
                     self.assertEqual(work.attributes['artwork'],gallery)
                     await db.delete(saved);await db.commit()
+
+    async def test_refresh_clears_an_existing_gallery_when_igdb_only_returns_a_logo(self):
+        logo='https://images.igdb.com/igdb/image/upload/t_thumb/ar627t.jpg'
+        await self.seed_cached_artwork()
+        async with self.Session() as db:
+            saved=await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.external_id=='119133',MetadataSnapshot.kind=='game'))
+            saved.coverage={**saved.coverage,'artwork_policy_version':6}
+            saved.payload={'game':{'id':119133,'artworks':[{'url':logo,'width':1195,'height':887}]}}
+            work=await db.get(CatalogueEntity,self.base)
+            work.attributes={**work.attributes,'artwork':[logo],'scene_artwork':[logo],'artwork_policy_version':6}
+            work.field_sources={**work.field_sources,'attributes.artwork':'igdb','attributes.scene_artwork':'igdb'}
+            await db.commit()
+        self.provider.dates={'artworks':[{'url':logo,'artwork_type':7,'width':1195,'height':887}]}
+        await self.detail()
+        await self.finish()
+        result=(await self.detail()).json()
+        self.assertEqual(result['artwork'],[])
+        self.assertIsNone(result['backdrop'])
+        self.assertEqual(self.provider.called,1)
 
     async def asyncSetUp(self):
         await fixture.GamesDatabaseTests.asyncSetUp(self)

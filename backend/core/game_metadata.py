@@ -80,8 +80,9 @@ async def upgrade_cached_artwork(db,work,native):
             MetadataSnapshot.coverage['artwork_policy_version'].as_integer().in_(range(1,GAME_ARTWORK_VERSION))).with_for_update())).one_or_none()
     if not source or source.native!=native or any(value is not None and not isinstance(value,list)
         for value in (source.screenshots,source.artworks)):return False
-    # Legacy artwork lacks image types: refresh it before declaring logo policy current.
-    if source.artworks and any(not isinstance(row,dict) or 'image_type' not in row for row in source.artworks):return False
+    # Refresh artwork without type evidence before declaring the logo policy current.
+    if source.artworks and any(not isinstance(row,dict) or
+        row.get('image_type') is None and row.get('artwork_type') is None for row in source.artworks):return False
     raw={'screenshots':source.screenshots or [],'artworks':source.artworks or []}
     images=[value for rows in raw.values() for value in rows]
     if images and not any(isinstance(value,dict) and all(type(value.get(key)) is int and value[key]>0

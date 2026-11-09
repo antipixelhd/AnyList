@@ -25,16 +25,21 @@ def fixture(name):
 class NormalizationTests(unittest.TestCase):
     def test_game_gallery_excludes_typed_logos_but_keeps_artwork_and_screenshots(self):
         screenshots=[{'url':f'https://cdn.test/scene-{i}.jpg','width':1920,'height':1080} for i in range(10)]
+        key_art='https://cdn.test/ar6knj.jpg'
+        logo='https://cdn.test/ar627t.jpg'
         raw={'screenshots':screenshots,'artworks':[
             {'url':'https://cdn.test/black.png','image_type':6,'width':5981,'height':920},
             {'url':'https://cdn.test/white.png','image_type':5,'width':1920,'height':1080},
             {'url':'https://cdn.test/art.jpg','image_type':1,'width':1920,'height':620},
             {'url':'https://cdn.test/color.png','image_type':7,'width':5981,'height':920},
+            {'url':logo,'artwork_type':7,'width':1195,'height':887},
+            {'url':key_art,'image_type':3,'artwork_type':3,'width':1920,'height':1080},
             {'url':'https://cdn.test/unknown.jpg','width':256,'height':256}]}
         result=normalize.game_artwork(raw)
-        self.assertEqual(result['artwork'],['https://cdn.test/art.jpg','https://cdn.test/unknown.jpg']+[r['url'] for r in screenshots])
-        self.assertEqual(result['scene_artwork'],['https://cdn.test/art.jpg']+[r['url'] for r in screenshots])
+        self.assertEqual(result['artwork'],[key_art,'https://cdn.test/art.jpg','https://cdn.test/unknown.jpg']+[r['url'] for r in screenshots])
+        self.assertEqual(result['scene_artwork'],[key_art,'https://cdn.test/art.jpg']+[r['url'] for r in screenshots])
         self.assertIn('artworks.image_type',providers.IGDB_FIELDS.split(','))
+        self.assertIn('artworks.artwork_type',providers.IGDB_FIELDS.split(','))
 
     def test_game_scenes_use_typed_dimensions_and_keep_every_gallery_asset(self):
         raw={'id':1,'name':'Scene fixture','game_type':{'id':0},

@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 from core.countries import country_codes, game_countries, numeric_country, screen_countries
 from core.studio_names import studio_name, studio_attributes
 from core.movie_financials import movie_financials
-GAME_ARTWORK_VERSION = 6
+GAME_ARTWORK_VERSION = 7
 
 
 PRIMARY = {"movie": "tmdb", "series": "tmdb", "game": "igdb", "book": "hardcover"}
@@ -375,7 +375,7 @@ def normalize_tvdb(raw, kind="series"):
 
 def game_artwork(raw):
     gallery, scenes = [], []
-    # IGDB image_types: Artwork, Concept art, Key art without/with logo.
+    # IGDB still reports some standalone logos only in the legacy type field.
     # Screenshots have no promotional/gameplay classification in the API.
     priorities={2:0,3:1,1:2,4:3,16:4}
     for field in ('artworks','screenshots'):
@@ -383,6 +383,7 @@ def game_artwork(raw):
             if not isinstance(row,dict) or row.get('animated'):continue
             kind=row.get('image_type')
             if kind in (5,6,7,8,9,10,11,12,13,14,15):continue
+            if kind is None and row.get('artwork_type') in (5,6,7,14):continue
             width,height=(row.get(key) for key in ('width','height'))
             if all(type(value) is int and value>0 for value in (width,height)) and max(width,height)<256:continue
             url=image(row)
@@ -428,7 +429,7 @@ def normalize_igdb(raw):
                 "genres": [g['name'] for g in raw.get('genres') or [] if isinstance(g,dict) and isinstance(g.get('name'),str)],
                 "genre_filters": {g['name'].casefold():f"igdb.genre:{g['id']}" for g in raw.get('genres') or []
                     if isinstance(g,dict) and isinstance(g.get('name'),str) and type(g.get('id')) is int and g['id']>0},
-                **game_artwork(raw),
+                **(game_artwork(raw) if raw.get('artworks') or raw.get('screenshots') else {}),
                 **game_countries(raw),
             },
         )
