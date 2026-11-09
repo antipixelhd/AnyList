@@ -447,6 +447,8 @@ async def browse_games(db: DB, viewer: Viewer, background:BackgroundTasks,
         start: str | None = None, end: str | None = None,
         q: Annotated[str, Query(max_length=100)] = '',
         timeline: bool = False,
+        status: Literal['released','upcoming'] | None = None,
+        today: Annotated[str | None, Query(max_length=10)] = None,
         min_metacritic: Annotated[int, Query(ge=0,le=100)] = 0,
         limit: Annotated[int, Query(ge=1,le=48)] = 24,
         cursor: Annotated[str | None, Query(max_length=512)] = None) -> dict:
@@ -462,11 +464,12 @@ async def browse_games(db: DB, viewer: Viewer, background:BackgroundTasks,
     service = game_browse.GameBrowse()
     try:
         query = await game_browse.filters(service.sources, category=category,genres=genres,platforms=platforms,
-            start=start,end=end,q=q,min_metacritic=min_metacritic,timeline=timeline,hide_erotic_games=hide_erotic)
+            start=start,end=end,q=q,min_metacritic=min_metacritic,timeline=timeline,
+            hide_erotic_games=hide_erotic,status=status,today=today)
         page = await service.page(query,limit=limit,cursor=cursor,
             wait_seconds=.15 if min_metacritic else None)
         result=await game_browse.project(db,viewer_id,page)
-        if cursor is None and not q and not genres and not platforms and not start and not end and not timeline:
+        if cursor is None and not q and not genres and not platforms and not start and not end and not timeline and not status:
             from core.game_background import observe_browse
             background.add_task(observe_browse,db.bind,viewer_id,category,result['results'])
         return result

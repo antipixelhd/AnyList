@@ -131,3 +131,20 @@ def in_range(row, start=None, end=None, *, released_before=None):
         return not (start or end or released_before)
     first,last = interval
     return not (start and last < start or end and first > end or released_before and last > released_before)
+
+
+def timeline_order(row, *, ascending):
+    interval = bounds(row)
+    if not interval:
+        return (1, 0, 0, row['igdb_id'])
+    first, last = (date.fromisoformat(value) for value in interval)
+    precision = row.get('release_date_precision')
+    if precision == 'quarter':
+        period = 2 * last.month + 1 if ascending else 2 * first.month - 1
+    elif len(row['release_date']) == 4:
+        period = 26 if ascending else 0
+    else:
+        period = 2 * first.month
+    day = first.day if len(row['release_date']) == 10 else 0
+    direction = 1 if ascending else -1
+    return (0, direction * first.year, direction * period, direction * day, row['igdb_id'])

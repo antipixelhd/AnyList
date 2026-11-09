@@ -3,7 +3,7 @@ import { hasBrowseFilters } from './browse-view.ts';
 
 /** One sort value, with a discovery control and a compact results control. */
 export function initializeBrowseSort(root: HTMLElement, signal: AbortSignal, changed: () => void, animate = reveal,
-  options:{defaultFilteredSort?:string;hasFilters?:typeof hasBrowseFilters}={}) {
+  options:{defaultFilteredSort?:string|(()=>string);hasFilters?:typeof hasBrowseFilters}={}) {
   const primary = root.querySelector<HTMLSelectElement>('[data-browse-sort]')!;
   const results = root.querySelector<HTMLSelectElement>('[data-browse-results-sort]')!;
   const primaryControl = root.querySelector<HTMLElement>('[data-browse-primary-sort]')!;
@@ -25,7 +25,8 @@ export function initializeBrowseSort(root: HTMLElement, signal: AbortSignal, cha
     root.toggleAttribute('data-browse-sorted', sorted);
     primaryControl.hidden = sorted;
     resultsControl.hidden = !sorted || timeline;
-    results.value = sorted && primary.value === 'all' ? options.defaultFilteredSort||'popular' : primary.value;
+    const fallback = typeof options.defaultFilteredSort === 'function' ? options.defaultFilteredSort() : options.defaultFilteredSort;
+    results.value = sorted && primary.value === 'all' ? fallback||'popular' : primary.value;
     for (const select of [primary, results]) {
       select.disabled = searching || timeline;
       for (const option of select.options) {

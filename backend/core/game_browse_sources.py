@@ -11,7 +11,7 @@ from core.catalogue_providers import CatalogueProviders, ProviderHTTP, ProviderE
 from core.config import settings
 from core.game_source_cache import GameSourceCache
 from core.game_search import broader_query, matches_partial
-from core.game_release_dates import FIELDS as RELEASE_FIELDS, in_range, game_release, release
+from core.game_release_dates import FIELDS as RELEASE_FIELDS, bounds, in_range, game_release, release, timeline_order
 from core.game_types import INDEPENDENT, platform_group, search_candidate, canonical_game, candidate_fields, game_platforms, mobile_platform
 from db import AsyncSessionLocal
 
@@ -22,6 +22,21 @@ SLUG = re.compile(r'[a-z0-9][a-z0-9_-]{0,199}\Z')
 
 def positive(value):
     return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def release_event_floor(first, *, ascending):
+    year_start = int(datetime(first.year,1,1,tzinfo=timezone.utc).timestamp())
+    if not ascending:
+        return f'date>={year_start}'
+    day = int(datetime(first.year,first.month,first.day,tzinfo=timezone.utc).timestamp())
+    month = int(datetime(first.year,first.month,1,tzinfo=timezone.utc).timestamp())
+    quarter = (first.month - 1) // 3
+    quarter_start = int(datetime(first.year,quarter * 3 + 1,1,tzinfo=timezone.utc).timestamp())
+    # Keep only periods that can overlap the requested start. IGDB's
+    # placeholder timestamp can precede the start inside such a period.
+    return (f'(date>={day} | (date>={year_start} & date_format.format="YYYY")'
+        f' | (date>={month} & date_format.format="YYYYMM")'
+        f' | (date>={quarter_start} & date_format.format="YYYYQ{quarter+1}"))')
 
 
 def card(raw, *, expansions=False):
@@ -243,7 +258,8 @@ class GameBrowseSources:
             raise ProviderError('invalid_request')
         return await self.igdb('games', f'fields {CARD_FIELDS}; where ({" | ".join(clauses)}); limit 200;')
 
-    async def catalogue_feed(self, sort, *, offset=0, genres=(), platforms=(), start=None, end=None, q='', search_mode=0):
+    async def catalogue_feed(self, sort, *, offset=0, genres=(), platforms=(), start=None, end=None, q='',
+            search_mode=0, ascending=False, released_before=None):
         if sort not in {'newest','popular'} or isinstance(offset, bool) or not isinstance(offset, int) or not 0 <= offset <= 10000:
             raise ProviderError('invalid_request')
         if len(genres)+len(platforms) > 250 or any(not positive(identifier) for identifier in [*genres,*platforms]) or len(q) > 100:
@@ -265,7 +281,7 @@ class GameBrowseSources:
             conditions.append(f'(platforms={choices} | ports.platforms={choices})')
         if sort == 'popular':
             conditions.append('rating_count>0')
-        if sort == 'newest' and not last and (not first or first<=date.today()):
+        if sort == 'newest' and not ascending and not last and (not first or first<=date.today()):
             last = date.today()
         if first:
             exact=int(datetime(first.year,first.month,first.day,tzinfo=timezone.utc).timestamp())
@@ -279,8 +295,10 @@ class GameBrowseSources:
                 conditions.append(f'(first_release_date<{exact} | release_dates.date<{year_end})')
             else:
                 conditions.append(f'first_release_date<{exact}')
-        version='game-content-v1'
-        key = hashlib.sha256(json.dumps([version,sort,offset,sorted(genres),sorted(platforms),start,end]).encode()).hexdigest()
+        key_parts = ['game-content-v1',sort,offset,sorted(genres),sorted(platforms),start,end]
+        if sort == 'newest' or ascending or released_before:
+            key_parts.extend(['release-window-v1',ascending,released_before])
+        key = hashlib.sha256(json.dumps(key_parts).encode()).hexdigest()
         async def load():
             # Search resolves editions first, then filters canonical metadata.
             # Non-search queries push globally supported filters to IGDB.
@@ -292,22 +310,26 @@ class GameBrowseSources:
                     if platforms:
                         choices='('+','.join(map(str,sorted(set(platforms))))+')'
                         filters.append(f'(game.platforms={choices} | game.ports.platforms={choices})')
-                    if first:filters.append(f'date>={int(datetime(first.year,1,1,tzinfo=timezone.utc).timestamp())}')
+                    if first:filters.append(release_event_floor(first,ascending=ascending))
                     if last:
-                        ceiling=datetime(last.year+1,1,1,tzinfo=timezone.utc) if end else datetime(last.year,last.month,last.day,tzinfo=timezone.utc)+timedelta(days=1)
+                        if end and end!=released_before:
+                            ceiling=datetime(last.year+1,1,1,tzinfo=timezone.utc)
+                        else:
+                            ceiling=datetime(last.year,last.month,last.day,tzinfo=timezone.utc)+timedelta(days=1)
                         filters.append(f'date<{int(ceiling.timestamp())}')
                     fields='id,date,date_format.format,y,m,d,status.name,'+','.join('game.'+field for field in CARD_FIELDS.split(','))
-                    events=await self.igdb('release_dates',f'fields {fields}; where '+ ' & '.join(filters)+f'; sort date desc; limit 100; offset {offset};')
+                    direction = 'asc' if ascending else 'desc'
+                    events=await self.igdb('release_dates',f'fields {fields}; where '+ ' & '.join(filters)+f'; sort date {direction}; limit 100; offset {offset};')
                     if not isinstance(events,list) or len(events)>100:raise ProviderError('bad_response')
                     result=[]
                     for event in events:
                         if not isinstance(event,dict) or not isinstance(event.get('game'),dict):raise ProviderError('bad_response')
                         work=canonical_game(event['game'])
-                        primary=game_release(work) if work else {}
-                        point=release(event).get('release_date')
+                        primary=bounds(game_release(work)) if work else None
+                        point=bounds(release(event))
                         # Later platform releases must not reintroduce an old
                         # game. Keep raw event offsets even for discarded rows.
-                        result.append(event['game'] if point and primary.get('release_date') and point.startswith(primary['release_date']) else {})
+                        result.append(event['game'] if point and primary and primary[0]<=point[0]<=point[1]<=primary[1] else {})
                     return result
                 prefix=f'search {json.dumps(query)};' if query else 'where '+' & '.join(conditions)+';'
                 raw=await self.igdb('games',f'{prefix} fields {CARD_FIELDS}; {ordering} limit 100; offset {offset};')
@@ -318,6 +340,7 @@ class GameBrowseSources:
             if q and offset==0 and not mode and (broader:=broader_query(q)) and not any(search_candidate(item) for item in raw):
                 raw=await fetch(broader);mode=1
             rows, seen = [], set()
+            cutoff = released_before or (last.isoformat() if sort=='newest' and last and not end else None)
             for index, item in enumerate(raw, start=offset+1):
                 value = card(item, expansions=bool(q))
                 if not value or value['igdb_id'] in seen:
@@ -327,8 +350,7 @@ class GameBrowseSources:
                 if q and (genres and not {f'igdb.genre:{g}' for g in genres}.intersection(g['id'] for g in value['genres'])
                     or platforms and not {f'igdb.platform:{p}' for p in platforms}.intersection(value['platform_ids'])):
                     continue
-                if not in_range(value,start,end,released_before=date.today().isoformat()
-                        if sort=='newest' and last and not end else None):
+                if not in_range(value,start,end,released_before=cutoff):
                     continue
                 seen.add(value['igdb_id'])
                 rows.append({**value,'source_rank':index})
@@ -350,16 +372,19 @@ class GameBrowseSources:
         self.require_source_time(result['data'].get('source_at'), 86400)
         return result
 
-    async def timeline_search(self, *, snapshot, offset=0, genres=(), platforms=(), start=None, end=None, q=''):
+    async def timeline_search(self, *, snapshot, offset=0, genres=(), platforms=(), start=None, end=None, q='',
+            ascending=False, released_before=None):
         """Finalize a bounded canonical search window before chronological paging."""
         if not q or not isinstance(snapshot,int) or isinstance(snapshot,bool) or snapshot<0 or not 0<=offset<=1000:
             raise ProviderError('invalid_request')
-        key=hashlib.sha256(json.dumps(['game-content-v1',snapshot,q,sorted(genres),sorted(platforms),start,end]).encode()).hexdigest()
+        key=hashlib.sha256(json.dumps(['game-timeline-v2',snapshot,q,sorted(genres),sorted(platforms),
+            start,end,ascending,released_before]).encode()).hexdigest()
         async def load():
             rows,seen,more=[],set(),True
             position=0;search_mode=0
             for _ in range(10):
-                result=await self.catalogue_feed('newest',offset=position,genres=genres,platforms=platforms,start=start,end=end,q=q,search_mode=search_mode)
+                result=await self.catalogue_feed('newest',offset=position,genres=genres,platforms=platforms,
+                    start=start,end=end,q=q,search_mode=search_mode,ascending=ascending,released_before=released_before)
                 data=result['data']
                 search_mode=data.get('search_mode',0)
                 for value in data['rows']:
@@ -371,7 +396,7 @@ class GameBrowseSources:
                 if following<=position:raise ProviderError('bad_response')
                 position=following
                 if position>=1000:break
-            rows.sort(key=lambda row:(row.get('release_date') or '',-row['igdb_id']),reverse=True)
+            rows.sort(key=lambda row:timeline_order(row,ascending=ascending))
             return {'rows':[{**row,'search_rank':row.get('source_rank'),'source_rank':index} for index,row in enumerate(rows,1)],
                 'partial':more,'observed_at':datetime.now(timezone.utc).replace(tzinfo=None).isoformat()}
         if offset:

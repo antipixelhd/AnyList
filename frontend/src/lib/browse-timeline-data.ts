@@ -1,11 +1,13 @@
 import { formatDateTime } from './date-time.ts';
 export type TimelineItem = {
   release_date?: string | null;
-  year?: string;
+  release_date_precision?: string | null;
+  release_quarter?: number | null;
+  year?: string | null;
   title: string;
 };
 
-export function releaseGroup(item: TimelineItem) {
+export function releaseGroup(item: TimelineItem, game = false) {
   const match = /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$/.exec(item.release_date || '');
   const year = match?.[1] || (/^\d{4}$/.test(item.year || '') ? item.year! : '');
   let month = Number(match?.[2] || 0), day = Number(match?.[3] || 0);
@@ -14,18 +16,49 @@ export function releaseGroup(item: TimelineItem) {
     month = 0;
     day = 0;
   }
+  const quarter = game && year && item.release_date_precision === 'quarter' &&
+    Number.isInteger(item.release_quarter) && item.release_quarter! >= 1 && item.release_quarter! <= 4
+    ? item.release_quarter : null;
+  if (quarter) return {year, key: `${year}-Q${quarter}`, label: `Q${quarter}`, order: year};
   return {
     year,
     key: `${year || 'undated'}-${String(month).padStart(2, '0')}`,
-    label: month ? formatDateTime(`${year}-${String(month).padStart(2, '0')}`, 'month-name') : year ? 'Month not listed' : 'Release date not listed',
+    label: month ? formatDateTime(`${year}-${String(month).padStart(2, '0')}`, 'month-name') :
+      year ? (game ? 'Year only' : 'Month not listed') : 'Release date not listed',
     order: year ? `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}` : '',
   };
 }
 
-export function timelineGroups<T extends TimelineItem>(items: T[], ascending = false) {
+export function compareTimelineYears(a: string, b: string, ascending: boolean) {
+  if (!a || !b) return Number(!a) - Number(!b);
+  return ascending ? a.localeCompare(b) : b.localeCompare(a);
+}
+
+export function compareGamePeriods(a: string, b: string, ascending: boolean) {
+  const rank = (key: string) => {
+    const period = key.slice(5);
+    if (period[0] === 'Q') {
+      const quarter = Number(period[1]);
+      return ascending ? quarter * 6 + 1 : -(quarter * 6 - 5);
+    }
+    const month = Number(period);
+    return month ? month * (ascending ? 2 : -2) : Infinity;
+  };
+  const left = rank(a), right = rank(b);
+  return left === right ? 0 : left - right;
+}
+
+export function timelineGroups<T extends TimelineItem>(items: T[], ascending = false, game = false) {
   const years = new Map<string, {year: string; months: {key: string; label: string; items: T[]}[]}>();
-  const dated = items.map(item => ({item, date: releaseGroup(item)}));
-  dated.sort((a, b) => !a.date.order ? (b.date.order ? 1 : 0) : !b.date.order ? -1 : ascending ? a.date.order.localeCompare(b.date.order) : b.date.order.localeCompare(a.date.order));
+  const dated = items.map(item => ({item, date: releaseGroup(item, game)}));
+  dated.sort(({date:a}, {date:b}) => {
+    if (game) {
+      const period = compareTimelineYears(a.year, b.year, ascending) || compareGamePeriods(a.key, b.key, ascending);
+      if (period) return period;
+    }
+    if (!a.order || !b.order) return Number(!a.order) - Number(!b.order);
+    return ascending ? a.order.localeCompare(b.order) : b.order.localeCompare(a.order);
+  });
   for (const {item, date} of dated) {
     if (!years.has(date.year)) years.set(date.year, {year: date.year, months: []});
     const group = years.get(date.year)!;

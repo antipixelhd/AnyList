@@ -10,6 +10,7 @@ export type BrowseItem = {
   igdb_id?:number; game_class?:string;
   base_work_id?:number|null; base_listed?:boolean|null;
   poster?: string | null; backdrop?: string | null; year?: string; release_date?: string | null;
+  release_date_precision?: string | null; release_quarter?: number | null;
   release_event?: string | null; release_season?: number | null; release_country?: string | null;
   list_status?: string | null; score?: number | null; rating_mode?: string;
   favorite?: boolean;

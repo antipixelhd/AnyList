@@ -15,7 +15,7 @@ import {createBrowsePaginationDemand} from './browse-pagination';
 import {appendBrowseTimeline} from './browse-timeline';
 import {genreSelectionLabel} from './browse-view';
 import {formatDate} from './date-time';
-import {gameBrowseValues,gameBrowseIsCategories,gameBrowseHasFilters,gameBrowseSnapshot,gameBrowseRequest,gameBrowseHref,gamePlatformSelection,gameSourceContext,type GamePlatformGroup} from './game-browse-data';
+import {gameBrowseValues,gameBrowseIsCategories,gameBrowseHasFilters,gameBrowseCategory,gameBrowseSnapshot,gameBrowseRequest,gameBrowseHref,gamePlatformSelection,gameSourceContext,type GamePlatformGroup} from './game-browse-data';
 import {createBrowseFacetLoader} from './browse-facet-loading';
 
 type Payload=GameVerificationPage&{results:BrowseItem[];has_more:boolean;cursor?:string|null;source?:string;source_at?:number|null;fetched_at?:string|null;partial?:boolean;stale?:boolean;coverage_limited?:boolean};
@@ -29,6 +29,7 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
   const find=<T extends HTMLElement>(selector:string)=>browseElement<T>(root,selector);
   const form=find<HTMLFormElement>('[data-browse-form]');
   const field=(name:string)=>form.elements.namedItem(name) as HTMLInputElement|HTMLSelectElement;
+  const status=field('status') as HTMLSelectElement;
   initializeMobileBrowseFilters(form,signal);initializeBrowseMenus(form,signal);
   const paintRanges=initializeBrowseRanges(form,signal,'min_metacritic');
   const initial=JSON.parse(find('#game-browse-data').textContent||'{}');
@@ -49,11 +50,13 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
   let payload=initial.payload as Payload,activeValues=initialValues.toString(),retryAppend=false,syncing=false;
   const values=()=>{
     const result=new URLSearchParams();
-    for(const key of ['q','sort','genres','platforms','start','end','min_metacritic','view']){const value=field(key).value.trim();if(value)result.set(key,value);}
+    for(const key of ['q','sort','genres','platforms','start','end','min_metacritic','view','status']){const value=field(key).value.trim();if(value)result.set(key,value);}
     return gameBrowseValues(result);
   };
   const refreshSelect=(select:HTMLInputElement|HTMLSelectElement)=>select.dispatchEvent(new Event('input',{bubbles:true}));
-  const syncSort=initializeBrowseSort(root,signal,()=>changed(),undefined,{defaultFilteredSort:'trending',hasFilters:gameBrowseHasFilters});
+  const syncSort=initializeBrowseSort(root,signal,()=>changed(),undefined,{
+    defaultFilteredSort:()=>status.value?'newest':'trending',hasFilters:gameBrowseHasFilters,
+  });
   const syncItem=(updated:BrowseItem)=>{
     const same=(item:BrowseItem)=>item.type==='game'&&(!!item.id&&item.id===updated.id||!!item.igdb_id&&item.igdb_id===updated.igdb_id);
     const state={id:updated.id,list_status:updated.list_status,score:updated.score};
@@ -124,10 +127,10 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
     });
   };
   const clear=(container:HTMLElement)=>{for(const card of items.keys())if(container.contains(card))items.delete(card);container.replaceChildren();};
-  const render=(rows:BrowseItem[],container:HTMLElement,timeline=false,dedupe=false)=>{
+  const render=(rows:BrowseItem[],container:HTMLElement,timeline=false,dedupe=false,ascending=false)=>{
     const cards:HTMLElement[]=[];
     for(const item of rows){const key=browseCardKey(item);if(dedupe&&seen.has(key))continue;if(dedupe)seen.add(key);const card=createBrowseCard(item,template,signal,readyPosters);items.set(card,item);cards.push(card);}
-    if(timeline)appendBrowseTimeline(container,cards,items);else container.append(...cards);
+    if(timeline)appendBrowseTimeline(container,cards,items,ascending,true);else container.append(...cards);
   };
   const footer=()=>{
     find('[data-browse-sentinel]').hidden=presentedCategories;
@@ -151,10 +154,15 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
   function updateControls(){
     syncing=true;
     const current=values(),category=gameBrowseIsCategories(current),timeline=current.get('view')==='timeline';
-    if(current.get('sort')&&current.get('sort')!=='trending'){field('min_metacritic').value='0';paintRanges();}
+    const showCritic=gameBrowseCategory(current)==='trending';
+    if(!showCritic){field('min_metacritic').value='0';paintRanges();}
+    status.options[0].textContent=timeline?'Released':'Any';
+    status.options[1].hidden=timeline;
+    status.value=current.get('status')||'';
+    refreshSelect(status);
     root.dataset.browseView=timeline?'timeline':'grid';
     syncSort(!!current.get('q'),true,gameBrowseHasFilters(current));
-    find('[data-game-critic-filter]').hidden=!!current.get('sort')&&current.get('sort')!=='trending'||timeline;
+    find('[data-game-critic-filter]').hidden=!showCritic;
     find<HTMLButtonElement>('[data-browse-search-clear]').hidden=!field('q').value;
     root.querySelectorAll<HTMLAnchorElement>('[data-game-layout]').forEach(link=>{
       const selected=link.dataset.gameLayout===(timeline?'timeline':'grid');
@@ -165,6 +173,7 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
     const chip=(name:string,label:string)=>{const button=document.createElement('button');button.type='button';button.textContent=label;button.append(find<HTMLTemplateElement>('[data-browse-close-icon]').content.cloneNode(true));button.setAttribute('aria-label',`Remove ${label} filter`);button.dataset.gameChip=name;chips.append(button);};
     const genres=field('genres').value.split(',');for(const genre of initial.facets.genres)if(genres.includes(String(genre.id)))chip(`genre:${genre.id}`,genre.name);
     for(const platform of gamePlatformSelection(field('platforms').value.split(','),groups))chip(`platform:${platform.id}`,platform.name);
+    if(current.has('status'))chip('status',status.selectedOptions[0].text);
     for(const key of ['start','end'])if(current.has(key))chip(key,`${key==='start'?'After':'Before'} ${formatDate(current.get(key))}`);
     if(current.has('min_metacritic'))chip('min_metacritic',`${current.get('min_metacritic')}+ Metacritic`);
     if(current.get('q'))chip('q',`“${current.get('q')}”`);
@@ -278,7 +287,7 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
           if((!painted&&activeValues!==current.toString())||!samePrefix){clear(grid);seen.clear();}
         }
         grid.className=config.timeline?'browse-timeline':'browse-grid';
-        render(result.results,grid,config.timeline,true);painted=true;
+        render(result.results,grid,config.timeline,true,current.get('status')==='upcoming');painted=true;
         if(!result.verification_pending&&!result.verification_error)payload=result;
         presentedCategories=false;paintedTimeline=config.timeline;activeValues=current.toString();
         if(result.results.length||!result.verification_pending)loadingView.finish();
@@ -298,7 +307,7 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
   function changed(delay=0){void load(false,delay);}
   function reset(){
     deviceSearch.value='';deviceLimit=40;picker.open=false;deviceList.replaceChildren();
-    for(const key of ['q','genres','platforms','start','end'])field(key).value='';field('sort').value='all';field('min_metacritic').value='0';field('view').value='grid';
+    for(const key of ['q','genres','platforms','start','end','status'])field(key).value='';field('sort').value='all';field('min_metacritic').value='0';field('view').value='grid';
     selectedPlatforms.clear();form.querySelectorAll<HTMLInputElement>('[type=checkbox]').forEach(input=>input.checked=false);syncGenres();syncPlatforms();paintRanges();refreshSelect(field('sort'));changed();
   }
   form.addEventListener('submit',event=>{event.preventDefault();changed();},{signal});
@@ -317,7 +326,7 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
       if(group){for(const device of group.devices)selectedPlatforms.delete(device.id);}
       else{const parent=groups.find(group=>group.devices.some(device=>device.id===target.value));if(parent)selectedPlatforms.delete(parent.id);}
       syncPlatforms();
-    }else if(!['sort','start','end','min_metacritic'].includes(target.name))return;
+    }else if(!['sort','start','end','min_metacritic','status'].includes(target.name))return;
     if(target.name==='sort'&&target.value!=='all'&&target.value!=='trending')field('min_metacritic').value='0';
     paintRanges();changed();
   },{signal});

@@ -1,32 +1,36 @@
-import {formatDateTime} from './date-time.ts';
+import {formatDateTime,localToday} from './date-time.ts';
 export const gameBrowseCategories=[['trending','Trending'],['most_played','Most Played'],['sellers','Top sellers'],['newest','Newest'],['popular','All-time popular'],['score','Highest rated']] as const;
-const filters=['q','genres','platforms','start','end','min_metacritic'];
+const filters=['q','genres','platforms','start','end','min_metacritic','status'];
 export function gameBrowseValues(input:URLSearchParams){
   const values=new URLSearchParams();
   for(const key of filters){const value=(input.get(key)||'').trim();if(value&&value!=='0')values.set(key,value);}
+  if (!['released','upcoming'].includes(values.get('status') || '')) values.delete('status');
   const sort=input.get('sort')||input.get('category')||'all';
   if(gameBrowseCategories.some(([key])=>key===sort))values.set('sort',sort);
-  if(input.get('view')==='timeline'){values.set('sort','newest');values.set('view','timeline');}
-  if(values.get('sort')&&values.get('sort')!=='trending'||values.get('view')==='timeline')values.delete('min_metacritic');
+  if(input.get('view')==='timeline'){
+    values.set('sort','newest');values.set('view','timeline');
+    if(values.get('status')==='released')values.delete('status');
+  }
+  if(gameBrowseCategory(values)!=='trending')values.delete('min_metacritic');
   return values;
 }
 export function gameBrowseIsCategories(values:URLSearchParams){
   return !values.has('sort')&&!values.has('view')&&!gameBrowseHasFilters(values);
 }
 export const gameBrowseHasFilters=(values:URLSearchParams)=>filters.some(key=>!!values.get(key)&&values.get(key)!=='0');
+export const gameBrowseCategory=(values:URLSearchParams)=>values.get('sort') || (values.has('status') ? 'newest' : 'trending');
 /** A mounted window needs every card's data plus the latest continuation. */
 export function gameBrowseSnapshot(state:{loading:boolean;failed:boolean;categories:boolean;values:string;activeValues:string;sections:unknown[];payload:Record<string,any>;rows:unknown[]}){
   if(state.loading||state.failed||state.values!==state.activeValues||state.payload.verification_pending||state.payload.verification_error)return null;
   return {values:state.values,categories:state.categories,sections:state.sections,
     payload:{...state.payload,results:state.categories?state.payload.results:state.rows}};
 }
-export function gameBrowseRequest(values:URLSearchParams,limit=24,cursor?:string|null,today=new Date().toISOString().slice(0,10)){
+export function gameBrowseRequest(values:URLSearchParams,limit=24,cursor?:string|null,today=localToday()){
   const params=new URLSearchParams(values);params.delete('view');params.delete('sort');
-  if(values.get('view')==='timeline'){
-    params.set('timeline','true');
-    if(!params.has('end')&&!(params.get('start')!>today))params.set('end',today);
-  }
-  params.set('category',values.get('sort')||'trending');params.set('limit',String(limit));
+  const timeline=values.get('view')==='timeline';
+  if(timeline)params.set('timeline','true');
+  if(timeline||values.has('status'))params.set('today',today);
+  params.set('category',gameBrowseCategory(values));params.set('limit',String(limit));
   if(cursor)params.set('cursor',cursor);
   return `games/browse?${params}`;
 }

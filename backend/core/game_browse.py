@@ -53,13 +53,14 @@ def decode_cursor(value, scope):
         raise ProviderError('invalid_cursor') from None
 
 
-async def filters(sources, *, category, genres='', platforms='', start=None, end=None, q='', min_metacritic=0,timeline=False,hide_erotic_games=True):
+async def filters(sources, *, category, genres='', platforms='', start=None, end=None, q='',
+        min_metacritic=0, timeline=False, hide_erotic_games=True, status=None, today=None):
     if category not in CATEGORIES or not 0<=min_metacritic<=100 or min_metacritic and category!='trending':
         raise ProviderError('invalid_request')
-    if timeline and category!='newest':
+    if timeline and category!='newest' or status not in (None, 'released', 'upcoming'):
         raise ProviderError('invalid_request')
     try:
-        for value in (start,end):
+        for value in (start,end,today):
             if value and (not re.fullmatch(r'\d{4}-\d{2}-\d{2}',value) or not 1900<=date.fromisoformat(value).year<=2200):
                 raise ValueError()
         if start and end and start>end:
@@ -87,8 +88,15 @@ async def filters(sources, *, category, genres='', platforms='', start=None, end
             # Device refinements replace the broad selected console family.
             values = selected_devices or ({device['id'] for device in group['devices']} if group['id'] in chosen else set())
             identifiers.update(int(value.split(':')[1]) for value in values)
-    return {'category':category,'genres':chosen_genres,'platforms':sorted(identifiers),
+    query = {'category':category,'genres':chosen_genres,'platforms':sorted(identifiers),
         'start':start,'end':end,'q':q.strip(),'min_metacritic':min_metacritic,'timeline':timeline,'hide_erotic_games':hide_erotic_games}
+    if status or timeline:
+        today = today or date.today().isoformat()
+        if status == 'upcoming':
+            query.update(start=max(start or today, today), ascending=True)
+        else:
+            query.update(end=min(end or today, today), released_before=today)
+    return query
 
 
 def matches(row, query):
@@ -99,7 +107,7 @@ def matches(row, query):
         return False
     if query['platforms'] and not {f'igdb.platform:{p}' for p in query['platforms']}.intersection(row.get('platform_ids',[])):
         return False
-    return in_range(row,query['start'],query['end'])
+    return in_range(row,query['start'],query['end'],released_before=query.get('released_before'))
 
 
 class GameBrowse:
@@ -109,13 +117,18 @@ class GameBrowse:
     async def frame(self, query, position, snapshot, *, limit=24):
         source = self.sources
         category = query['category']
+        start, end = query['start'], query['end']
+        if start and end and start > end:
+            return {'data': {'rows': [], 'source': 'IGDB release dates'}}
+        release_options = {key: query[key] for key in ('ascending', 'released_before') if key in query}
         if query['timeline'] and query['q']:
             return await source.timeline_search(snapshot=snapshot,offset=position[0],q=query['q'],
-                genres=[int(value.split(':')[1]) for value in query['genres']],platforms=query['platforms'],start=query['start'],end=query['end'])
+                genres=[int(value.split(':')[1]) for value in query['genres']],platforms=query['platforms'],
+                start=start,end=end,**release_options)
         if query['q'] or category in {'newest','popular'}:
             return await source.catalogue_feed(category if category in {'newest','popular'} else 'popular',
                 offset=position[0],genres=[int(value.split(':')[1]) for value in query['genres']],
-                platforms=query['platforms'],start=query['start'],end=query['end'],q=query['q'],
+                platforms=query['platforms'],start=start,end=end,q=query['q'],**release_options,
                 **({'search_mode':position[1]} if query['q'] else {}))
         if category=='most_played':
             return await source.most_played(offset=position[0], snapshot=position[1] or None, preview=limit<=6)

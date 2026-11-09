@@ -144,6 +144,26 @@ class RankingTests(unittest.IsolatedAsyncioTestCase):
         await self.api.catalogue_feed('newest',end=last.isoformat())
         self.assertIn(f'date<{stamp(date(last.year+1,1,1))}',self.api.igdb.await_args.args[1])
 
+    async def test_upcoming_event_feed_includes_overlapping_periods_without_scanning_old_exact_dates(self):
+        def event(identifier, value, form):
+            stamp = int(datetime.fromisoformat(value).replace(tzinfo=timezone.utc).timestamp())
+            release = {'date': stamp, 'date_format': {'format': form}}
+            game = {'id': identifier, 'name': f'Game {identifier}', 'game_type': {'id': 0},
+                'first_release_date': stamp, 'release_dates': [release]}
+            return {**release, 'id': identifier, 'game': game}
+
+        self.api.igdb = AsyncMock(return_value=[
+            event(1, '2027-01-01', 'YYYY'), event(2, '2027-04-01', 'YYYYQ2'),
+            event(3, '2027-04-16', 'YYYYMMDD'), event(4, '2027-04-18', 'YYYYMMDD'),
+        ])
+        page = await self.api.catalogue_feed('newest', start='2027-04-17', ascending=True)
+        self.assertEqual([row['igdb_id'] for row in page['data']['rows']], [1, 2, 4])
+        endpoint, query = self.api.igdb.await_args.args
+        self.assertEqual(endpoint, 'release_dates')
+        self.assertIn('sort date asc;', query)
+        self.assertIn('date_format.format="YYYYQ2"', query)
+        self.assertIn('date_format.format="YYYY"', query)
+
     async def test_normal_release_event_feed_finds_early_access_games_in_correct_year_and_keeps_raw_offsets(self):
         stamp=lambda value:int(datetime.fromisoformat(value).replace(tzinfo=timezone.utc).timestamp())
         early={'date':stamp('2018-02-21'),'date_format':{'format':'YYYYMMDD'},'status':{'name':'Early Access'}}

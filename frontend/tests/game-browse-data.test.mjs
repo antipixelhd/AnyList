@@ -52,3 +52,16 @@ test('Selected console devices refine their family while PC stays one logical pl
   const groups=[{id:'pc',name:'PC',devices:[]},{id:'playstation',name:'PlayStation',devices:[{id:'igdb.platform:167',name:'PlayStation 5'},{id:'igdb.platform:48',name:'PlayStation 4'}]}];
   assert.deepEqual(gamePlatformSelection(['pc','playstation','igdb.platform:167'],groups).map(x=>x.name),['PC','PlayStation 5']);
 });
+
+test('Game release status and local day reach the timeline API without overwriting the year filter',()=>{
+  const timeline=gameBrowseValues(new URLSearchParams('view=timeline&status=upcoming&platforms=pc&end=2028-12-31'));
+  const request=new URL(gameBrowseRequest(timeline,24,'next','2027-03-07'),'https://example.test').searchParams;
+  assert.equal(request.get('status'),'upcoming');
+  assert.equal(request.get('today'),'2027-03-07');
+  assert.equal(request.get('end'),'2028-12-31');
+  assert.equal(request.get('platforms'),'pc');
+  assert.equal(request.get('cursor'),'next');
+  const grid=gameBrowseValues(new URLSearchParams('status=released'));
+  assert.equal(gameBrowseIsCategories(grid),false);
+  assert.equal(new URL(gameBrowseRequest(grid),'https://example.test').searchParams.get('category'),'newest');
+});

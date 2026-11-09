@@ -12,12 +12,14 @@ import BrowseLoadingSkeletons from '../../components/BrowseLoadingSkeletons.astr
 import Icon from '../../components/Icon.astro';
 import {tracker} from '../../lib/tracker';
 import {viewerMediaPreferences} from '../../lib/viewer-media-preferences';
-import {gameBrowseValues,gameBrowseIsCategories,gameBrowseCategories,gameBrowseRequest,gameBrowseHref,gameSourceContext} from '../../lib/game-browse-data';
+import {gameBrowseValues,gameBrowseIsCategories,gameBrowseCategories,gameBrowseCategory,gameBrowseRequest,gameBrowseHref,gameSourceContext} from '../../lib/game-browse-data';
 import {timelineGroups} from '../../lib/browse-timeline-data';
 import '../../styles/browse.css';
 const domains=await viewerMediaPreferences(Astro.locals);
 const values=gameBrowseValues(Astro.url.searchParams);
 const categories=gameBrowseIsCategories(values),timeline=values.get('view')==='timeline';
+const status=values.get('status')||'';
+const defaultStatus=timeline?'Released':'Any';
 const pending=Astro.url.searchParams.get('static')!=='1';
 let facets:any={genres:[],platform_groups:[]},payload:any={results:[],has_more:false},error='';
 let facetsPending=pending;
@@ -37,7 +39,7 @@ const sections=gameBrowseCategories.map(([key,title])=>({key,title,payload:categ
 const signedIn=!!Astro.locals.user;
 const sort=values.get('sort')||'all';
 const sortOptions=[['all','All categories'],...gameBrowseCategories];
-const effectiveSort=!categories&&sort==='all'?'trending':sort;
+const effectiveSort=categories?sort:gameBrowseCategory(values);
 const selectedSort=values.get('q')?'Relevance':sortOptions.find(([key])=>key===effectiveSort)?.[1];
 const minScore=Number(values.get('min_metacritic')||0);
 const firstYear=1900,lastYear=Math.max(new Date().getFullYear()+3,Number(values.get('end')?.slice(0,4))||0,Number(values.get('start')?.slice(0,4))||0);
@@ -56,12 +58,20 @@ const staticValues=new URLSearchParams(values);staticValues.set('static','1');
       <div class="browse-controls" id="browse-controls">
         <label class="browse-sort" data-browse-primary-sort hidden={!categories}><span>Sort</span><BrowseSelect name="sort" data-browse-sort valueLabel={selectedSort}>{sortOptions.map(([key,label])=><option value={key} selected={sort===key}>{label}</option>)}</BrowseSelect></label>
         <BrowseGenreFilter genres={facets.genres} value={values.get('genres')||''}/>
-        <BrowseGamePlatforms groups={facets.platform_groups} value={values.get('platforms')||''}/>
-        <details class="browse-more" data-motion-details open={!!(values.get('start')||values.get('end')||minScore)}>
+        <label class="browse-filter">
+          <span>Release status</span>
+          <BrowseSelect name="status" valueLabel={status==='upcoming'?'Upcoming':status==='released'?'Released':defaultStatus}>
+            <option value="">{defaultStatus}</option>
+            <option value="released" selected={status==='released'} hidden={timeline}>Released</option>
+            <option value="upcoming" selected={status==='upcoming'}>Upcoming</option>
+          </BrowseSelect>
+        </label>
+        <details class="browse-more" data-motion-details open={!!(values.get('platforms')||values.get('start')||values.get('end')||minScore)}>
           <summary aria-label="More filters" aria-controls="browse-secondary-filters" title="More filters"><Icon name="sliders"/></summary>
           <div class="browse-secondary-filters" id="browse-secondary-filters" data-motion-fade>
+            <BrowseGamePlatforms groups={facets.platform_groups} value={values.get('platforms')||''}/>
             <BrowseYearRange start={values.get('start')||''} end={values.get('end')||''} {firstYear} {lastYear}/>
-            <div class="browse-range" data-score-range data-game-critic-filter hidden={!['all','trending'].includes(sort)||timeline} style={`--range-start:0%;--range-end:${minScore}%`}>
+            <div class="browse-range" data-score-range data-game-critic-filter hidden={gameBrowseCategory(values)!=='trending'} style={`--range-start:0%;--range-end:${minScore}%`}>
               <div class="browse-range-heading"><label for="browse-min-score">Minimum Metacritic score</label><output for="browse-min-score">{minScore}</output></div>
               <div class="browse-range-track"><input id="browse-min-score" type="range" name="min_metacritic" min="0" max="100" step="1" value={minScore}/></div>
               <button type="button" class="button-quiet" data-game-high-rated>80+</button>
@@ -88,7 +98,7 @@ const staticValues=new URLSearchParams(values);staticValues.set('static','1');
           </section>)}
         </div>
         <div class={timeline?'browse-timeline':'browse-grid'} data-browse-results hidden={categories}>
-          {timeline?timelineGroups<any>(payload.results).map(year=><section class="browse-timeline-year" data-timeline-year={year.year}><h2 class="browse-timeline-year-label">{year.year||'Undated'}</h2><div class="browse-timeline-months">{year.months.map(month=><section class="browse-timeline-month" data-timeline-month={month.key}><h3>{month.label}</h3><div class="browse-grid">{month.items.map(item=><BrowseCard {item} {signedIn}/>)}</div></section>)}</div></section>):payload.results.map((item:any)=><BrowseCard {item} {signedIn}/>)}
+          {timeline?timelineGroups<any>(payload.results,status==='upcoming',true).map(year=><section class="browse-timeline-year" data-timeline-year={year.year}><h2 class="browse-timeline-year-label">{year.year||'Undated'}</h2><div class="browse-timeline-months">{year.months.map(month=><section class="browse-timeline-month" data-timeline-month={month.key}><h3>{month.label}</h3><div class="browse-grid">{month.items.map(item=><BrowseCard {item} {signedIn}/>)}</div></section>)}</div></section>):payload.results.map((item:any)=><BrowseCard {item} {signedIn}/>)}
         </div>
         <BrowseLoadingSkeletons sectionTitles={gameBrowseCategories.map(([,title])=>title)} active={!categories&&(pending||!!payload.verification_pending)&&!payload.results.length}/>
         <div class="empty-state" data-browse-empty hidden={pending||categories||payload.verification_pending||payload.results.length>0||payload.has_more||!!error}><h2>{payload.coverage_limited?'No verified games in this search window':'No matching games'}</h2><button type="button" class="button-secondary" data-browse-clear>Clear filters</button></div>

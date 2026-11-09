@@ -187,6 +187,35 @@ class BrowseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.sources.timeline_search.await_count,1)
         with self.assertRaises(ProviderError):await self.service.page({**query,'timeline':False},limit=1,cursor=first['cursor'])
 
+    async def test_timeline_status_uses_release_windows_and_scopes_continuations(self):
+        params = dict(category='newest', timeline=True, today='2027-04-02')
+        released = await browse.filters(self.sources, **params)
+        upcoming = await browse.filters(self.sources, **params, status='upcoming')
+        rows = [
+            dict(row(1), release_date='2027-04-02'),
+            dict(row(2), release_date='2027-04-03'),
+            dict(row(3), release_date='2027', release_date_precision='quarter', release_quarter=1),
+            dict(row(4), release_date='2027', release_date_precision='quarter', release_quarter=2),
+            dict(row(5), release_date='2027', release_date_precision='year'),
+            dict(row(6), release_date=None),
+        ]
+        self.sources.catalogue_feed.return_value = {
+            'data': {'rows': rows, 'has_more': False, 'source': 'IGDB release dates'}, 'stale': False,
+        }
+        first = await self.service.page(released, limit=1)
+        self.assertEqual([row['igdb_id'] for row in first['rows']], [1])
+        second = await self.service.page(released, limit=1, cursor=first['cursor'])
+        self.assertEqual([row['igdb_id'] for row in second['rows']], [3])
+        with self.assertRaises(ProviderError):
+            await self.service.page(upcoming, limit=1, cursor=first['cursor'])
+        future = await self.service.page(upcoming)
+        self.assertEqual([row['igdb_id'] for row in future['rows']], [1, 2, 4, 5])
+        self.assertEqual(self.sources.catalogue_feed.await_args.kwargs['start'], '2027-04-02')
+        self.assertTrue(self.sources.catalogue_feed.await_args.kwargs['ascending'])
+        impossible = await browse.filters(self.sources, **params, status='upcoming', end='2026-12-31')
+        self.assertEqual((await self.service.page(impossible))['rows'], [])
+        self.assertEqual(self.sources.catalogue_feed.await_count, 2)
+
     async def test_partial_query_mode_stays_in_continuations_after_buffered_rows_are_consumed(self):
         async def feed(*args,offset=0,search_mode=0,**kwargs):
             if offset:

@@ -1026,6 +1026,12 @@
 
 .tracker .browse-page .browse-filters .browse-secondary-filters :is(select, .tracker-select-trigger, .browse-filter-menu > summary) { background: var(--bg); }
 .browse-secondary-filters .browse-filter-menu summary .ui-icon { font-size: 12px; }
+[data-game-browse] .browse-filters .browse-secondary-filters [data-game-platform-options] {
+  position: relative;
+  inset: auto;
+  width: 100%;
+  margin-top: 8px;
+}
 .browse-filters:has(.browse-cinema-toggle:not([hidden])) { padding-right:108px; }
 .browse-cinema-toggle { position:absolute; top:calc(2.25rem + 9px); right:54px; display:grid; place-items:center; width:42px; height:42px; border:1px solid transparent; border-radius:5px; background:var(--panel); color:var(--muted); cursor:pointer; transition:background-color .18s ease,border-color .18s ease,color .18s ease; }
 .browse-cinema-toggle:has(input:checked) { color:#fff; border-color:var(--blue); background:var(--blue); }
