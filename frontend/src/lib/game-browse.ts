@@ -136,9 +136,11 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
   const footer=()=>{
     const current=values(),overridden=current.has('unfiltered');
     root.toggleAttribute('data-browse-override',overridden);
+    root.toggleAttribute('data-browse-relevance',!current.has('q')&&!presentedCategories);
     curated.hidden=!overridden;
     curated.disabled=loading;
-    showAll.hidden=overridden||current.has('q')||presentedCategories||loading||!!payload.verification_pending||payload.has_more||!error.hidden;
+    showAll.hidden=overridden||current.has('q')||presentedCategories;
+    showAll.disabled=loading;
     find('[data-browse-sentinel]').hidden=presentedCategories;
     more.hidden=!payload.has_more;more.disabled=loading;
     end.hidden=loading||!error.hidden||!!payload.verification_pending||payload.has_more||!grid.querySelector('[data-browse-card]');
