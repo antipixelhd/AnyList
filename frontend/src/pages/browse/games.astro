@@ -14,9 +14,12 @@ import {tracker} from '../../lib/tracker';
 import {viewerMediaPreferences} from '../../lib/viewer-media-preferences';
 import {gameBrowseValues,gameBrowseIsCategories,gameBrowseCategories,gameBrowseCategory,gameBrowseRequest,gameBrowseHref,gameSourceContext} from '../../lib/game-browse-data';
 import {timelineGroups} from '../../lib/browse-timeline-data';
+import {browseTabHref,createBrowseTabContext} from '../../lib/browse-tabs';
 import '../../styles/browse.css';
 const domains=await viewerMediaPreferences(Astro.locals);
 const values=gameBrowseValues(Astro.url.searchParams);
+const tabContext=createBrowseTabContext();
+tabContext.capture('game',values);
 const categories=gameBrowseIsCategories(values),timeline=values.get('view')==='timeline';
 const status=values.get('status')||'';
 const defaultStatus=timeline?'Released':'Any';
@@ -49,7 +52,7 @@ const staticValues=new URLSearchParams(values);staticValues.set('static','1');
   <div class="page-width browse-page" data-browse-page data-game-browse data-browse-view={timeline?'timeline':'grid'} data-browse-sorted={!categories?'':undefined}>
     <script is:inline data-astro-rerun>document.currentScript.parentElement.dataset.browseScripted='';</script>
     <header class="browse-header"><h1>Browse</h1><div class="browse-header-controls">
-      <BrowseMediaTypes active="game" showMovies={domains.show_movies_series} showGames={domains.show_games}/>
+      <BrowseMediaTypes active="game" movieHref={browseTabHref('movie',tabContext.forTab('movie').values)} seriesHref={browseTabHref('series',tabContext.forTab('series').values)} showMovies={domains.show_movies_series} showGames={domains.show_games}/>
       <nav class="browse-view-switch" aria-label="Browse layout"><a href={gameBrowseHref(values,{view:null})} data-game-layout="grid" aria-current={!timeline?'page':undefined}><Icon name="grid"/><span>Grid</span></a><a href={gameBrowseHref(values,{view:'timeline'})} data-game-layout="timeline" aria-current={timeline?'page':undefined}><Icon name="calendar"/><span>Timeline</span></a></nav>
     </div></header>
     <form id="browse-filters" class="browse-filters" data-motion-static role="search" data-browse-form>
@@ -85,7 +88,6 @@ const staticValues=new URLSearchParams(values);staticValues.set('static','1');
       <div class="browse-results-toolbar">
         <div class="browse-active-filters" data-active-filters></div>
         <label class="browse-results-sort" hidden={categories||timeline}><Icon name="sort"/><BrowseSelect aria-label="Sort results" data-browse-results-sort valueLabel={selectedSort}>{sortOptions.map(([key,label])=><option value={key} selected={effectiveSort===key}>{label}</option>)}</BrowseSelect></label>
-        <button type="button" class="button-quiet" data-browse-show-all hidden>Show all</button>
         <button type="button" class="button-quiet" data-browse-curated hidden>Return to curated results</button>
       </div>
       <p class="browse-notice" data-browse-notice role="status" aria-live="polite">{!error&&!payload.verification_pending&&values.has('min_metacritic')&&payload.partial?'Some games have no verified critic score.':''}</p>
@@ -103,7 +105,7 @@ const staticValues=new URLSearchParams(values);staticValues.set('static','1');
         <div class={timeline?'browse-timeline':'browse-grid'} data-browse-results hidden={categories}>
           {timeline?timelineGroups<any>(payload.results,status==='upcoming',true).map(year=><section class="browse-timeline-year" data-timeline-year={year.year}><h2 class="browse-timeline-year-label">{year.year||'Undated'}</h2><div class="browse-timeline-months">{year.months.map(month=><section class="browse-timeline-month" data-timeline-month={month.key}><h3>{month.label}</h3><div class="browse-grid">{month.items.map(item=><BrowseCard {item} {signedIn}/>)}</div></section>)}</div></section>):payload.results.map((item:any)=><BrowseCard {item} {signedIn}/>)}
         </div>
-        <BrowseLoadingSkeletons sectionTitles={gameBrowseCategories.map(([,title])=>title)} active={!categories&&(pending||!!payload.verification_pending)&&!payload.results.length}/>
+        <BrowseLoadingSkeletons {timeline} sectionTitles={gameBrowseCategories.map(([,title])=>title)} active={!categories&&(pending||!!payload.verification_pending)&&!payload.results.length}/>
         <div class="empty-state" data-browse-empty hidden={pending||categories||payload.verification_pending||payload.results.length>0||payload.has_more||!!error}><h2>{payload.coverage_limited?'No verified games in this search window':'No matching games'}</h2><button type="button" class="button-secondary" data-browse-clear>Clear filters</button></div>
         <div class="browse-load" data-browse-sentinel hidden={categories}><button type="button" class="button-quiet" data-browse-more hidden={!payload.has_more}>Load more</button><span data-browse-end hidden={!!error||payload.verification_pending||payload.has_more||!payload.results.length}>{payload.partial?'End of verified results':"You're all caught up"}</span></div>
       </section>

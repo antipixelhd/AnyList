@@ -16,6 +16,7 @@ import {shouldBroadenSearch, broadSearchParams} from '../lib/search-fallback';
 import "../styles/browse.css";
 import BrowseGenreFilter from "../components/BrowseGenreFilter.astro";
 import BrowseYearRange from "../components/BrowseYearRange.astro";
+import {browseTabHref,createBrowseTabContext,type BrowseTab} from '../lib/browse-tabs';
 import {
   isCategoryView,
   browseRequestParams,
@@ -136,15 +137,9 @@ const viewHref = (view: string) => {
   else values.delete('view');
   return `/browse${values.size ? '?' + values : ''}`;
 };
-const typeHref = (type: string) => {
-  const values = new URLSearchParams(viewHref(view).split('?')[1] || '');
-  values.delete('genres');
-  values.delete('status');
-  values.delete('cinema');
-  if (type === 'series') values.set('type', type);
-  else values.delete('type');
-  return `/browse${values.size ? '?' + values : ''}`;
-};
+const tabContext = createBrowseTabContext();
+tabContext.capture(type, params);
+const typeHref = (tab: BrowseTab) => browseTabHref(tab, tabContext.forTab(tab).values, tab===type?Astro.url.pathname+Astro.url.search:undefined);
 const scoreLimit = 10;
 const initialChips: string[] = facets.genres
   .filter((genre: any) => selectedGenres.includes(String(genre.id)))
@@ -171,7 +166,7 @@ if(params.has('cinema'))initialChips.push(cinemaLabel);
     <header class="browse-header">
       <h1>Browse</h1>
       <div class="browse-header-controls">
-      <BrowseMediaTypes active={type} movieHref={typeHref('movie')} seriesHref={typeHref('series')} showMovies={domains.show_movies_series} showGames={domains.show_games}/>
+      <BrowseMediaTypes active={type} movieHref={typeHref('movie')} seriesHref={typeHref('series')} gameHref={typeHref('game')} showMovies={domains.show_movies_series} showGames={domains.show_games}/>
       <nav class="browse-view-switch" aria-label="Browse layout">
         <a href={viewHref('grid')} data-browse-layout="grid" aria-current={view==='grid'?'page':undefined}><Icon name="grid"/><span>Grid</span></a>
         <a href={viewHref('timeline')} data-browse-layout="timeline" aria-current={view==='timeline'?'page':undefined}><Icon name="calendar"/><span>Timeline</span></a>

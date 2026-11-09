@@ -14,7 +14,7 @@ test('a failed cold Browse switch restores the source selection and a direct ret
   const context={signal:new AbortController().signal,wanted:'movie',active:'movie',shown,positions:new Map(),scrollY:20,
     document:{dispatchEvent(){},createElement:()=>({append(){},addEventListener(){},remove(){}})},Event,
     tabs:{peek:tab=>tab==='movie'?shown:undefined,get:()=>{reads++;return Promise.reject(new Error('network failed'));}},
-    updateNav:tab=>nav.push(tab),loading:undefined,
+    updateNav:tab=>nav.push(tab),capture(){},loading:undefined,
   };
   runInNewContext(stripTypeScriptTypes(snippet)+';this.select=select;',context);
   context.select('game');assert.equal(browsePanelActive(shown),false);assert.equal(controls[0].inert,true);

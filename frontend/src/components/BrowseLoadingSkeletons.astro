@@ -1,6 +1,6 @@
 ---
 import BrowseSkeleton from './BrowseSkeleton.astro';
-const {sectionTitles=['Trending now','Newest','All-time popular','Highest rated'],active=false}=Astro.props as {sectionTitles?:string[];active?:boolean};
+const {sectionTitles=['Trending now','Newest','All-time popular','Highest rated'],active=false,timeline=false}=Astro.props as {sectionTitles?:string[];active?:boolean;timeline?:boolean};
 ---
       <div
         class="browse-loading-view"
@@ -8,10 +8,10 @@ const {sectionTitles=['Trending now','Newest','All-time popular','Highest rated'
         hidden={!active}
         aria-hidden="true"
       >
-        <div class="browse-grid browse-skeletons" data-skeleton-grid>
+        <div class="browse-grid browse-skeletons" data-skeleton-grid hidden={timeline}>
           {Array.from({ length: 12 }, () => <BrowseSkeleton />)}
         </div>
-        <div class="browse-timeline" data-skeleton-timeline hidden>
+        <div class="browse-timeline" data-skeleton-timeline hidden={!timeline}>
           <section class="browse-timeline-year">
             <h2 class="browse-timeline-year-label"><span class="skeleton-block" style="width:2.4ch;height:1lh"></span></h2>
             <div class="browse-timeline-months">

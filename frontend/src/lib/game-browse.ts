@@ -41,7 +41,7 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
   const skeleton=find('[data-browse-skeleton]'),loadingView=createBrowseLoading(region,skeleton);
   const error=find('[data-browse-error]'),notice=find('[data-browse-notice]'),empty=find('[data-browse-empty]');
   const more=find<HTMLButtonElement>('[data-browse-more]'),end=find('[data-browse-end]');
-  const showAll=find<HTMLButtonElement>('[data-browse-show-all]'),curated=find<HTMLButtonElement>('[data-browse-curated]');
+  const curated=find<HTMLButtonElement>('[data-browse-curated]');
   const shelves=new Map<string,Shelf>((initial.sections as Shelf[]).map(s=>[s.key,s]));
   const cache=createBrowseCache<Payload>(),items=new Map<HTMLElement,BrowseItem>(),readyPosters=new Set<string>();
   const seen=new Set<string>();
@@ -136,11 +136,8 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
   const footer=()=>{
     const current=values(),overridden=current.has('unfiltered');
     root.toggleAttribute('data-browse-override',overridden);
-    root.toggleAttribute('data-browse-relevance',!current.has('q')&&!presentedCategories);
     curated.hidden=!overridden;
     curated.disabled=loading;
-    showAll.hidden=overridden||current.has('q')||presentedCategories;
-    showAll.disabled=loading;
     find('[data-browse-sentinel]').hidden=presentedCategories;
     more.hidden=!payload.has_more;more.disabled=loading;
     end.hidden=loading||!error.hidden||!!payload.verification_pending||payload.has_more||!grid.querySelector('[data-browse-card]');
@@ -157,7 +154,7 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
     register(find(`[data-game-shelf="${shelf.key}"]`),shelf.payload.results);paintSource(shelf);
   }
   if(!initial.categories){reconcile(payload,-1);register(grid,payload.results);if(!initial.pending&&!initial.error&&gameBrowseCacheable(payload))cache.set(gameBrowseRequest(initialValues),payload);}
-  requestAnimationFrame(()=>requestAnimationFrame(()=>{if(!signal.aborted)initializeScrollMotion(root,signal,'.browse-card-body, .browse-skeleton-body','browse-scroll-reveal',{animateInitial:false,downwardOnly:true,scaleEntrance:true,once:true,appearedAttribute:'data-browse-appeared'});}));
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{if(!signal.aborted)initializeScrollMotion(root,signal,'.browse-card-body','browse-scroll-reveal',{animateInitial:false,downwardOnly:true,scaleEntrance:true,once:true,appearedAttribute:'data-browse-appeared'});}));
   bindBrowseCardActions(region,items,signal,syncItem,message=>{notice.textContent=message;notice.hidden=false;});bindBrowseCardTouch(region,signal);
   function updateControls(){
     syncing=true;
@@ -271,6 +268,7 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
     loading=true;retryAppend=append;error.hidden=true;empty.hidden=true;demand.reset(scrollY);
     clearTimeout(timer);
     if(!append){
+      setBrowsePanelUrl(root,gameBrowseHref(current));
       grid.hidden=!(payload.verification_pending&&activeValues===current.toString());sections.hidden=true;
       if(config.category){sections.hidden=false;loadingView.finish();}
       else loadingView.show(false,false,config.timeline);
@@ -281,7 +279,6 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
     try{
       if(config.category){
         presentedCategories=true;activeValues=current.toString();notice.textContent='';
-        setBrowsePanelUrl(root,gameBrowseHref(current));
         loading=false;region.setAttribute('aria-busy','false');footer();
         await loadShelves(epoch,currentRequest.signal);return;
       }
@@ -301,7 +298,6 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
         if(result.results.length||!result.verification_pending)loadingView.finish();
         sections.hidden=true;grid.hidden=false;
         notice.textContent=!result.verification_pending&&current.has('min_metacritic')&&result.partial?'Some games have no verified critic score.':'';
-        setBrowsePanelUrl(root,gameBrowseHref(current));
       },currentRequest.signal);
     }catch(cause){
       if(signal.aborted||currentRequest.signal.aborted||epoch!==generation)return;
@@ -319,7 +315,6 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
     selectedPlatforms.clear();form.querySelectorAll<HTMLInputElement>('[type=checkbox]').forEach(input=>input.checked=false);syncGenres();syncPlatforms();paintRanges();refreshSelect(field('sort'));changed();
   }
   form.addEventListener('submit',event=>{event.preventDefault();changed();},{signal});
-  showAll.addEventListener('click',()=>{field('unfiltered').value='true';changed();},{signal});
   curated.addEventListener('click',()=>{field('unfiltered').value='';changed();},{signal});
   form.addEventListener('input',event=>{
     if(syncing)return;const target=event.target as HTMLInputElement;
@@ -377,4 +372,12 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
   if(!facetsReady)void facetLoader.load();
   if(initial.categories){request=new AbortController();void loadShelves(generation,request.signal);}
   else if(initial.pending||payload.verification_pending)void load(false);
+  return (values: URLSearchParams) => {
+    const q = values.get('q') || '', view = values.get('view')==='timeline' ? 'timeline' : 'grid';
+    if (field('q').value===q && field('view').value===view) return;
+    field('q').value=q;
+    field('view').value=view;
+    if (q) field('unfiltered').value='';
+    changed();
+  };
 }

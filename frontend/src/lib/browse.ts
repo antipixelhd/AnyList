@@ -53,7 +53,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   // and later scroll entries need an entrance.
   requestAnimationFrame(() => requestAnimationFrame(() => {
     if (signal.aborted || !root.isConnected) return;
-    initializeScrollMotion(root, signal, '.browse-card-body, .browse-skeleton-body', 'browse-scroll-reveal', {
+    initializeScrollMotion(root, signal, '.browse-card-body', 'browse-scroll-reveal', {
       animateInitial: false, downwardOnly: true, scaleEntrance: true, once: true,
       appearedAttribute: 'data-browse-appeared',
     });
@@ -637,10 +637,10 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
         new Option("Any service", ""),
         ...facets.providers.map((p) => new Option(p.name, String(p.id))),
       );
+      if (selected && !facets.providers.some(p=>String(p.id)===selected))
+        provider.add(new Option('Selected service', selected));
       provider.value = selected;
-      if (!provider.value) provider.value = "";
       refreshSelect(provider);
-      if (selected !== provider.value) changed();
       notice.textContent = result.notice || "";
       paintChips();
     } catch (cause) {
@@ -806,4 +806,29 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     },
     { once: true },
   );
+  return (values: URLSearchParams, moreOpen?: boolean) => {
+    if (moreOpen !== undefined) find<HTMLDetailsElement>('.browse-more').open = moreOpen;
+    let changedValues = false;
+    const facetSelection = () => [field('region').value,...field('genres').value.split(',').filter(value=>value.startsWith('name:'))].join(',');
+    const oldFacets = facetSelection();
+    for (const [name, value] of values) {
+      const control = field(name);
+      if (!control) continue;
+      const next = value || (name==='view' ? 'grid' : name==='min_score' ? '0' : '');
+      if (control.value === next) continue;
+      if (control instanceof HTMLSelectElement && next && ![...control.options].some(option=>option.value===next)) {
+        control.add(new Option(name==='provider' ? 'Selected service' : next, next));
+      }
+      control.value = next;
+      if (control instanceof HTMLSelectElement) refreshSelect(control);
+      changedValues = true;
+    }
+    if (!changedValues) return;
+    const genres = field('genres').value.split(',');
+    form.querySelectorAll<HTMLInputElement>('[name=genre]').forEach(input=>input.checked=genres.includes(input.value));
+    find('#browse-genres-value').textContent = genreSelectionLabel(field('genres').value, facets.genres);
+    searchClear.hidden = !field('q').value;
+    if (oldFacets !== facetSelection()) void loadFacets();
+    void load();
+  };
 }

@@ -62,16 +62,7 @@ export function createBrowseLoading(region: HTMLElement, skeleton: HTMLElement, 
       grid.hidden = active !== grid;
       sections.hidden = active !== sections;
       timeline.hidden = active !== timeline;
-      if (shownAt === undefined) {
-        // Fresh slots receive their own entrance each time the loading view opens.
-        active.querySelectorAll<HTMLElement>('.browse-skeleton').forEach(slot => {
-          const fresh = slot.cloneNode(true) as HTMLElement;
-          fresh.querySelectorAll('[data-browse-appeared]').forEach(element => element.removeAttribute('data-browse-appeared'));
-          fresh.querySelectorAll('.browse-scroll-reveal').forEach(element => element.classList.remove('browse-scroll-reveal'));
-          slot.replaceWith(fresh);
-        });
-        shownAt = now();
-      }
+      shownAt ??= now();
       region.dataset.browseLoading = append ? "append" : "empty";
       skeleton.hidden = false;
     },
@@ -82,7 +73,8 @@ export function createBrowseLoading(region: HTMLElement, skeleton: HTMLElement, 
       if (shownAt === undefined) return;
       const slots = [...active.querySelectorAll<HTMLElement>('.browse-skeleton-body')];
       covers.forEach((cover, index) => {
-        if (slots[index]?.hasAttribute('data-browse-appeared')) {
+        const bounds = slots[index]?.getBoundingClientRect();
+        if (bounds && bounds.height > 0 && bounds.top < innerHeight && bounds.bottom > 0) {
           cover.setAttribute('data-browse-appeared', '');
         }
       });

@@ -2,7 +2,7 @@ import {preparePanelStyles} from './panel-readiness';
 import {initializeBrowse} from './browse';
 import {initializeGameBrowse} from './game-browse';
 import {bindPredictionIntent,predictionAllowed,predictionManifest} from './predictive-loading';
-import {browseTab,createBrowseTabs,scopeBrowseIds,type BrowseTab} from './browse-tabs';
+import {browseTab,browseTabHref,createBrowseTabContext,createBrowseTabs,scopeBrowseIds,type ApplyBrowseTabContext,type BrowseTab} from './browse-tabs';
 
 let session:AbortController|undefined;
 let mounted:HTMLElement|undefined;
@@ -17,24 +17,36 @@ function setup(){
   const host=mounted=document.createElement('div');host.dataset.browseShell='';first.before(host);host.append(first);
   const nav=first.querySelector<HTMLElement>('.browse-types')!;
   const region=(first.querySelector('[name=region]') as HTMLInputElement)?.value||new URL(location.href).searchParams.get('region');
-  const targets:Record<BrowseTab,string>={movie:`/browse${region?`?region=${encodeURIComponent(region)}`:''}`,
-    series:`/browse?type=series${region?`&region=${encodeURIComponent(region)}`:''}`,game:'/browse/games'};
+  const context=createBrowseTabContext(region||'');
+  const applyContext=new WeakMap<HTMLElement,ApplyBrowseTabContext>();
   const positions=new Map<BrowseTab,number>();
   let active=initial,wanted=initial,shown=first,loading:HTMLElement|undefined;
 
+  function capture(){
+    const form=shown.querySelector<HTMLFormElement>('[data-browse-form]')!;
+    const values=new URLSearchParams();
+    // Disabled sort controls are outside the shared context. Read the other
+    // live values even during a debounced search or a pending tab switch.
+    for(const control of form.elements)if(control instanceof HTMLInputElement||control instanceof HTMLSelectElement){
+      if(control.name)values.set(control.name,control.value);
+    }
+    context.capture(active,values,form.querySelector<HTMLDetailsElement>('.browse-more')?.open);
+  }
+  const target=(tab:BrowseTab)=>browseTabHref(tab,context.forTab(tab).values,tabs.peek(tab)?.dataset.browseUrl);
+
   function prepare(root:HTMLElement,tab:BrowseTab,url:string,panelSignal=signal){
     root.dataset.browseTab=tab;root.dataset.browseUrl=url;
-    root.addEventListener('anylist:browse-url',()=>updateNav(wanted),{signal:panelSignal});
+    root.addEventListener('anylist:browse-url',()=>{if(root===shown)capture();updateNav(wanted);},{signal:panelSignal});
     scopeBrowseIds(root,tab);
     const oldNav=root.querySelector('.browse-types')!;
     const slot=document.createElement('span');slot.dataset.browseTabSlot='';oldNav.replaceWith(slot);
-    if(tab==='game')initializeGameBrowse(root,panelSignal);else initializeBrowse(root,panelSignal);
+    applyContext.set(root,tab==='game'?initializeGameBrowse(root,panelSignal):initializeBrowse(root,panelSignal));
     return root;
   }
   function updateNav(tab:BrowseTab){
     nav.querySelectorAll<HTMLAnchorElement>('[data-browse-type]').forEach(link=>{
       const type=link.dataset.browseType as BrowseTab;
-      link.href=tabs.peek(type)?.dataset.browseUrl||targets[type];
+      link.href=target(type);
       if(type===tab)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');
     });
   }
@@ -59,34 +71,38 @@ function setup(){
     panelSignal.addEventListener('abort',()=>observer.disconnect(),{once:true});
   }
   const tabs=createBrowseTabs<HTMLElement>(async(tab,requestSignal)=>{
-    const response=await fetch(targets[tab],{signal:requestSignal,credentials:'same-origin',headers:{Accept:'text/html'}});
+    const url=target(tab);
+    const response=await fetch(url,{signal:requestSignal,credentials:'same-origin',headers:{Accept:'text/html'}});
     if(!response.ok||response.redirected)throw new Error('Unable to load this tab.');
     const html=await response.text();
     if(requestSignal.aborted||!predictionManifest(html,viewer||'anonymous',tab==='game'))throw new Error('Account changed.');
     const doc=new DOMParser().parseFromString(html,'text/html');
     if(requestSignal.aborted||doc.body.dataset.cacheUser!==viewer)throw new Error('Account changed.');
     if(tab==='game'&&doc.body.dataset.gamesApproved!=='true')throw new Error('Games access requires approval.');
-    await preparePanelStyles(doc,new URL(targets[tab],location.origin).href,requestSignal);
+    await preparePanelStyles(doc,new URL(url,location.origin).href,requestSignal);
     const root=doc.querySelector<HTMLElement>('[data-browse-page]');if(!root)throw new Error('Unable to load this tab.');
     const lifetime=new AbortController();
     signal.addEventListener('abort',()=>lifetime.abort(),{once:true});
     root.hidden=true;root.inert=true;host.append(root);
-    try{prepare(root,tab,targets[tab],lifetime.signal);warmImages(root,lifetime.signal);return root;}
+    try{prepare(root,tab,url,lifetime.signal);warmImages(root,lifetime.signal);return root;}
     catch(error){lifetime.abort();root.remove();throw error;}
   },signal);
   // The first panel already passed middleware and owns the current document.
   prepare(first,initial,location.pathname+location.search);tabs.set(initial,first);
-  first.querySelector('[data-browse-tab-slot]')!.append(nav);updateNav(initial);
+  first.querySelector('[data-browse-tab-slot]')!.append(nav);capture();updateNav(initial);
 
   function select(tab:BrowseTab){
     if(tab===wanted)return;
+    capture();
     if(shown===tabs.peek(active))positions.set(active,scrollY);wanted=tab;
     document.dispatchEvent(new Event('anylist:browse-tab-changed'));
     const activate=(root:HTMLElement)=>{
       if(signal.aborted||wanted!==tab)return;
       shown.removeAttribute('data-browse-waiting');shown.removeAttribute('aria-busy');shown.querySelectorAll<HTMLElement>('[data-browse-form],[data-browse-region]').forEach(node=>node.inert=false);
-      display(root,tab);active=tab;
-      history.replaceState(history.state,'',root.dataset.browseUrl||targets[tab]);
+      const shared=context.forTab(tab);
+      applyContext.get(root)?.(shared.values,shared.moreOpen);
+      active=tab;display(root,tab);
+      history.replaceState(history.state,'',root.dataset.browseUrl||target(tab));
       loading?.remove();loading=undefined;
       window.scrollTo(0,positions.get(tab)||0);
       root.dispatchEvent(new Event('anylist:browse-active'));
@@ -111,6 +127,7 @@ function setup(){
   },{signal,capture:true});
   bindPredictionIntent(nav,signal,link=>{
     const tab=link.dataset.browseType as BrowseTab;
+    capture();
     if(tab&&tab!==wanted&&!tabs.peek(tab))void tabs.get(tab).catch(()=>{});
   });
 }
