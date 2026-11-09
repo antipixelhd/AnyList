@@ -12,10 +12,11 @@ export function gameBrowseValues(input:URLSearchParams){
     if(values.get('status')==='released')values.delete('status');
   }
   if(gameBrowseCategory(values)!=='trending')values.delete('min_metacritic');
+  if(!values.has('q')&&input.get('unfiltered')==='true')values.set('unfiltered','true');
   return values;
 }
 export function gameBrowseIsCategories(values:URLSearchParams){
-  return !values.has('sort')&&!values.has('view')&&!gameBrowseHasFilters(values);
+  return !values.has('sort')&&!values.has('view')&&!values.has('unfiltered')&&!gameBrowseHasFilters(values);
 }
 export const gameBrowseHasFilters=(values:URLSearchParams)=>filters.some(key=>!!values.get(key)&&values.get(key)!=='0');
 export const gameBrowseCategory=(values:URLSearchParams)=>values.get('sort') || (values.has('status') ? 'newest' : 'trending');

@@ -15,6 +15,17 @@ const RESULT_CATEGORIES = [
   [99, 'Documentary'], [10764, 'Reality'], [10767, 'Talk shows'],
   [10763, 'News'], [10766, 'Soap operas'], [10770, 'TV movies'], [10402, 'Music'],
 ] as const;
+const GAME_THRESHOLDS = [
+  ['game_min_ratings', 'Released · Minimum IGDB ratings', 5, 10000000],
+  ['game_min_follows', 'Released · Minimum prerelease follows', 2, 10000000],
+  ['game_upcoming_min_follows', 'Upcoming · Minimum prerelease follows', 5, 10000000],
+  ['game_released_min_score', 'Released · Minimum IGDB score (out of 100)', 0, 100],
+] as const;
+const GAME_AI_FILTERS = [
+  ['hide_ai_artwork', 'Hide AI-generated artwork'],
+  ['hide_ai_voices', 'Hide AI-generated voices'],
+  ['hide_ai_music', 'Hide AI-generated music'],
+] as const;
 const { token } = Astro.locals;
 const settings = Astro.locals.settings;
 const [profileData, me, trackingPrefs] = await Promise.all([
@@ -264,6 +275,19 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
         </fieldset>
 
       </section>
+      <section>
+        <h2 class="section-headline mb-4 border-b border-zinc-800 pb-2">Games Browse</h2>
+        <p class="text-sm text-zinc-400">Released games qualify by ratings or follows. Set a minimum to 0 to turn it off.</p>
+        {GAME_THRESHOLDS.map(([key,label,fallback,max])=><div class="space-y-2 max-w-xs mt-5">
+          <label for={key} class="block text-sm font-medium text-zinc-400">{label}</label>
+          <input id={key} data-game-browse-preference type="number" min="0" max={max} step="1" required
+            value={trackingPrefs[key] ?? fallback} class="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:bg-zinc-800 transition-colors" />
+        </div>)}
+        {GAME_AI_FILTERS.map(([key,label])=><label class="setting-switch-row" for={key}>
+          <span><strong>{label}</strong></span>
+          <input id={key} data-game-browse-preference type="checkbox" checked={trackingPrefs[key] === true}/>
+        </label>)}
+      </section>
       <!-- Localization -->
       <section>
         <div class="mb-4 border-b border-zinc-800 pb-2">
@@ -384,6 +408,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
       const names: Record<string, string> = {
         'profile-appearance': 'Profile appearance', background: 'Profile background', bio: 'Bio',
         'remove-specials-seasons': 'Seasons',
+        'game-browse': 'Games Browse preferences',
         minimum_movie_runtime: 'Minimum movie runtime', excluded_categories: 'Excluded categories',
         minimum_votes: 'Minimum votes',
         country: 'Country', metadata_language: 'Metadata language',
@@ -585,6 +610,13 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
     });
     const trackingChains = new Map<string, Promise<void>>();
     const trackingRevisions = new Map<string, number>();
+    for (const control of document.querySelectorAll<HTMLInputElement>('[data-game-browse-preference]')) {
+      const checkbox = control.type === 'checkbox';
+      control.dataset.savedValue = checkbox ? String(control.checked) : control.value;
+      control.addEventListener('change', () => {
+        if (control.reportValidity()) saveTrackingPreferences({[control.id]: checkbox ? control.checked : control.valueAsNumber}, control, control.id);
+      });
+    }
     for(const [id,field] of [['show-movies-series','show_movies_series'],['show-games','show_games'],['show-game-achievements','show_game_achievements'],['hide-erotic-games','hide_erotic_games']]){
       const control=document.getElementById(id) as HTMLInputElement|null;if(!control)continue;
       control.dataset.savedValue=String(control.checked);
@@ -597,7 +629,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
       const revision = (trackingRevisions.get(field) || 0) + 1;
       trackingRevisions.set(field, revision);
       const requestedValue = control instanceof HTMLInputElement && control.type === 'checkbox' ? String(control.checked) : control.value;
-      const statusKey = field === 'watch_state_sync' ? 'watch-state-sync' : field === 'minimum_popularity' ? 'minimum-popularity' : field === 'include_rereleases' ? 'include-rereleases' : field === 'remove_specials_seasons' ? 'remove-specials-seasons' : 'combine-lists';
+      const statusKey = control.hasAttribute('data-game-browse-preference') ? 'game-browse' : field === 'watch_state_sync' ? 'watch-state-sync' : field === 'minimum_popularity' ? 'minimum-popularity' : field === 'include_rereleases' ? 'include-rereleases' : field === 'remove_specials_seasons' ? 'remove-specials-seasons' : 'combine-lists';
       if (field === 'combine_lists') publishCombinePreference(requestedValue === 'true');
       if(field.startsWith('show_'))document.dispatchEvent(new CustomEvent('anylist:media-domains-changed',{detail:{[field]:requestedValue==='true'}}));
       setStatus(statusKey, 'Saving…', 'saving');

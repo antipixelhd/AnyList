@@ -41,6 +41,7 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
   const skeleton=find('[data-browse-skeleton]'),loadingView=createBrowseLoading(region,skeleton);
   const error=find('[data-browse-error]'),notice=find('[data-browse-notice]'),empty=find('[data-browse-empty]');
   const more=find<HTMLButtonElement>('[data-browse-more]'),end=find('[data-browse-end]');
+  const showAll=find<HTMLButtonElement>('[data-browse-show-all]'),curated=find<HTMLButtonElement>('[data-browse-curated]');
   const shelves=new Map<string,Shelf>((initial.sections as Shelf[]).map(s=>[s.key,s]));
   const cache=createBrowseCache<Payload>(),items=new Map<HTMLElement,BrowseItem>(),readyPosters=new Set<string>();
   const seen=new Set<string>();
@@ -50,7 +51,7 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
   let payload=initial.payload as Payload,activeValues=initialValues.toString(),retryAppend=false,syncing=false;
   const values=()=>{
     const result=new URLSearchParams();
-    for(const key of ['q','sort','genres','platforms','start','end','min_metacritic','view','status']){const value=field(key).value.trim();if(value)result.set(key,value);}
+    for(const key of ['q','sort','genres','platforms','start','end','min_metacritic','view','status','unfiltered']){const value=field(key).value.trim();if(value)result.set(key,value);}
     return gameBrowseValues(result);
   };
   const refreshSelect=(select:HTMLInputElement|HTMLSelectElement)=>select.dispatchEvent(new Event('input',{bubbles:true}));
@@ -133,6 +134,11 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
     if(timeline)appendBrowseTimeline(container,cards,items,ascending,true);else container.append(...cards);
   };
   const footer=()=>{
+    const current=values(),overridden=current.has('unfiltered');
+    root.toggleAttribute('data-browse-override',overridden);
+    curated.hidden=!overridden;
+    curated.disabled=loading;
+    showAll.hidden=overridden||current.has('q')||presentedCategories||loading||!!payload.verification_pending||payload.has_more||!error.hidden;
     find('[data-browse-sentinel]').hidden=presentedCategories;
     more.hidden=!payload.has_more;more.disabled=loading;
     end.hidden=loading||!error.hidden||!!payload.verification_pending||payload.has_more||!grid.querySelector('[data-browse-card]');
@@ -292,7 +298,7 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
         presentedCategories=false;paintedTimeline=config.timeline;activeValues=current.toString();
         if(result.results.length||!result.verification_pending)loadingView.finish();
         sections.hidden=true;grid.hidden=false;
-        notice.textContent=result.verification_pending?'':current.get('q')&&!result.coverage_limited?current.has('min_metacritic')&&result.partial?'Some games have no verified critic score.':'':gameSourceContext(result);
+        notice.textContent=!result.verification_pending&&current.has('min_metacritic')&&result.partial?'Some games have no verified critic score.':'';
         setBrowsePanelUrl(root,gameBrowseHref(current));
       },currentRequest.signal);
     }catch(cause){
@@ -307,13 +313,16 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
   function changed(delay=0){void load(false,delay);}
   function reset(){
     deviceSearch.value='';deviceLimit=40;picker.open=false;deviceList.replaceChildren();
-    for(const key of ['q','genres','platforms','start','end','status'])field(key).value='';field('sort').value='all';field('min_metacritic').value='0';field('view').value='grid';
+    for(const key of ['q','genres','platforms','start','end','status','unfiltered'])field(key).value='';field('sort').value='all';field('min_metacritic').value='0';field('view').value='grid';
     selectedPlatforms.clear();form.querySelectorAll<HTMLInputElement>('[type=checkbox]').forEach(input=>input.checked=false);syncGenres();syncPlatforms();paintRanges();refreshSelect(field('sort'));changed();
   }
   form.addEventListener('submit',event=>{event.preventDefault();changed();},{signal});
+  showAll.addEventListener('click',()=>{field('unfiltered').value='true';changed();},{signal});
+  curated.addEventListener('click',()=>{field('unfiltered').value='';changed();},{signal});
   form.addEventListener('input',event=>{
     if(syncing)return;const target=event.target as HTMLInputElement;
     if(target.hasAttribute('data-game-device-search')){deviceLimit=40;renderDevices();return;}
+    if(target.name==='q'&&target.value.trim())field('unfiltered').value='';
     if(target.name==='q'||target.name==='min_metacritic'||target.name==='start'||target.name==='end')changed(target.name==='q'?300:200);
   },{signal});
   form.addEventListener('change',event=>{

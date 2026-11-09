@@ -1,5 +1,7 @@
 /** Viewer presentation policy. This never grants or revokes route access. */
-export type MediaDomains={show_movies_series:boolean;show_games:boolean;show_game_achievements:boolean;hide_erotic_games:boolean;combine_lists:boolean;default_sort:string;watch_state_sync?:'conservative'|'immediate';remove_specials_seasons?:boolean;minimum_popularity?:number;include_rereleases?:boolean;can_access_games?:boolean};
+export type MediaDomains={show_movies_series:boolean;show_games:boolean;show_game_achievements:boolean;hide_erotic_games:boolean;combine_lists:boolean;default_sort:string;watch_state_sync?:'conservative'|'immediate';remove_specials_seasons?:boolean;minimum_popularity?:number;include_rereleases?:boolean;can_access_games?:boolean;
+  game_min_ratings?:number;game_min_follows?:number;game_upcoming_min_follows?:number;game_released_min_score?:number;
+  hide_ai_artwork?:boolean;hide_ai_voices?:boolean;hide_ai_music?:boolean};
 export const defaultMediaDomains:MediaDomains={show_movies_series:true,show_games:true,show_game_achievements:true,hide_erotic_games:true,combine_lists:true,default_sort:'title'};
 export function mediaDomains(value:Partial<MediaDomains>|null|undefined):MediaDomains {
   return {...defaultMediaDomains,...value,show_movies_series:value?.show_movies_series!==false,show_games:value?.show_games!==false,show_game_achievements:value?.show_game_achievements!==false,hide_erotic_games:value?.hide_erotic_games!==false,combine_lists:value?.combine_lists!==false};

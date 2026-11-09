@@ -112,14 +112,23 @@ class PreferencePatch(BaseModel):
     remove_specials_seasons: bool | None = None
     include_rereleases: bool | None = None
     minimum_popularity: float | None = Field(None, ge=0, le=1000000, allow_inf_nan=False)
+    game_min_ratings: int | None = Field(None, ge=0, le=10_000_000, strict=True)
+    game_min_follows: int | None = Field(None, ge=0, le=10_000_000, strict=True)
+    game_upcoming_min_follows: int | None = Field(None, ge=0, le=10_000_000, strict=True)
+    game_released_min_score: int | None = Field(None, ge=0, le=100, strict=True)
+    hide_ai_artwork: bool | None = None
+    hide_ai_voices: bool | None = None
+    hide_ai_music: bool | None = None
 
 
 @router.get('/preferences')
 async def preferences(db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
+    from core.game_browse_policy import preferences as game_preferences
     row=await db.get(TrackingPreferences,viewer.id)
     from models.users import UserSettings
     settings=await db.scalar(select(UserSettings).where(UserSettings.user_id == viewer.id))
     return {
+        **game_preferences(settings.preferences if settings else None),
         'minimum_popularity': (settings.preferences or {}).get('minimum_popularity', 25) if settings else 25,
         'include_rereleases': bool(settings and (settings.preferences or {}).get('include_rereleases', False)),
         'auto_confirm': bool(row and row.auto_confirm),
@@ -141,19 +150,31 @@ async def preferences(db: AsyncSession = Depends(get_db), viewer: User = Depends
 
 @router.patch('/preferences')
 async def set_preferences(body: PreferencePatch, db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
-    row=await db.get(TrackingPreferences,viewer.id)
-    if not row: row=TrackingPreferences(user_id=viewer.id);db.add(row)
-    for name in body.model_fields_set:
-        value=getattr(body,name)
-        if value is None:raise HTTPException(422,f'{name} cannot be null')
-        if name in ('include_rereleases', 'minimum_popularity', 'hide_erotic_games', 'watch_state_sync'):
-            from models.users import UserSettings
-            settings=await db.scalar(select(UserSettings).where(UserSettings.user_id == viewer.id))
-            if settings is None:
-                settings=UserSettings(user_id=viewer.id)
-                db.add(settings)
-            settings.preferences={**(settings.preferences or {}), name: value}
-        else:
+    from sqlalchemy.dialects.postgresql import JSONB, insert
+    from core.game_browse_policy import AI_KEYWORDS, DEFAULTS
+    from models.users import UserSettings
+
+    json_fields = {'include_rereleases','minimum_popularity','hide_erotic_games','watch_state_sync',*DEFAULTS,*AI_KEYWORDS}
+    changes = body.model_dump(exclude_unset=True)
+    for name, value in changes.items():
+        if value is None:
+            raise HTTPException(422, f'{name} cannot be null')
+    json_changes = {name:value for name,value in changes.items() if name in json_fields}
+    if json_changes:
+        from sqlalchemy import case, cast, func
+        statement = insert(UserSettings).values(user_id=viewer.id, preferences=json_changes)
+        current = case((func.jsonb_typeof(UserSettings.preferences)=='object', UserSettings.preferences),
+            else_=cast({}, JSONB))
+        await db.execute(statement.on_conflict_do_update(index_elements=[UserSettings.user_id], set_={
+            'preferences': current.op('||')(statement.excluded.preferences),
+        }))
+    tracking_changes = {name:value for name,value in changes.items() if name not in json_fields}
+    if tracking_changes:
+        row = await db.get(TrackingPreferences,viewer.id)
+        if row is None:
+            row = TrackingPreferences(user_id=viewer.id)
+            db.add(row)
+        for name,value in tracking_changes.items():
             setattr(row,name,value)
     await db.commit()
     return await preferences(db,viewer)

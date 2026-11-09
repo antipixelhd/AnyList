@@ -144,6 +144,16 @@ class RankingTests(unittest.IsolatedAsyncioTestCase):
         await self.api.catalogue_feed('newest',end=last.isoformat())
         self.assertIn(f'date<{stamp(date(last.year+1,1,1))}',self.api.igdb.await_args.args[1])
 
+    async def test_release_feed_pushes_relevance_and_keyword_filters_without_rejecting_canonical_ports(self):
+        self.api.igdb = AsyncMock(return_value=[])
+        policy = {'ratings': 5, 'follows': 2, 'exclude': [38148]}
+        await self.api.catalogue_feed('newest', policy=policy)
+        endpoint, query = self.api.igdb.await_args.args
+        self.assertEqual(endpoint, 'release_dates')
+        self.assertIn('game.game_type=11 |', query)
+        self.assertIn('game.rating_count>=5 | game.hypes>=2', query)
+        self.assertIn('game.keywords=null | game.keywords!=(38148)', query)
+
     async def test_upcoming_event_feed_includes_overlapping_periods_without_scanning_old_exact_dates(self):
         def event(identifier, value, form):
             stamp = int(datetime.fromisoformat(value).replace(tzinfo=timezone.utc).timestamp())

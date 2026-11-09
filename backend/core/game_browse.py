@@ -13,6 +13,7 @@ from sqlalchemy import and_, literal, select
 from core.config import settings
 from core.catalogue_providers import ProviderError
 from core.game_browse_sources import GameBrowseSources
+from core.game_browse_policy import accepts
 from core.game_release_dates import in_range
 from models.catalogue import CatalogueEntity, CatalogueIdentity
 from models.games import GameChildState, GameEntry
@@ -54,7 +55,7 @@ def decode_cursor(value, scope):
 
 
 async def filters(sources, *, category, genres='', platforms='', start=None, end=None, q='',
-        min_metacritic=0, timeline=False, hide_erotic_games=True, status=None, today=None):
+        min_metacritic=0, timeline=False, hide_erotic_games=True, status=None, today=None, policy=None):
     if category not in CATEGORIES or not 0<=min_metacritic<=100 or min_metacritic and category!='trending':
         raise ProviderError('invalid_request')
     if timeline and category!='newest' or status not in (None, 'released', 'upcoming'):
@@ -96,6 +97,8 @@ async def filters(sources, *, category, genres='', platforms='', start=None, end
             query.update(start=max(start or today, today), ascending=True)
         else:
             query.update(end=min(end or today, today), released_before=today)
+    if policy and not query['q']:
+        query['policy'] = policy
     return query
 
 
@@ -107,7 +110,8 @@ def matches(row, query):
         return False
     if query['platforms'] and not {f'igdb.platform:{p}' for p in query['platforms']}.intersection(row.get('platform_ids',[])):
         return False
-    return in_range(row,query['start'],query['end'],released_before=query.get('released_before'))
+    return (accepts(row, query.get('policy', {}))
+        and in_range(row,query['start'],query['end'],released_before=query.get('released_before')))
 
 
 class GameBrowse:
@@ -129,6 +133,7 @@ class GameBrowse:
             return await source.catalogue_feed(category if category in {'newest','popular'} else 'popular',
                 offset=position[0],genres=[int(value.split(':')[1]) for value in query['genres']],
                 platforms=query['platforms'],start=start,end=end,q=query['q'],**release_options,
+                **({'policy':query['policy']} if 'policy' in query else {}),
                 **({'search_mode':position[1]} if query['q'] else {}))
         if category=='most_played':
             return await source.most_played(offset=position[0], snapshot=position[1] or None, preview=limit<=6)
@@ -274,7 +279,8 @@ async def project(db, viewer_id, page):
     cards = []
     for row in rows:
         identity = known.get(str(row['igdb_id']))
-        cards.append({key:value for key,value in row.items() if key not in {'identity_evidence','platform_ids','is_erotic'}} | {
+        cards.append({key:value for key,value in row.items() if key not in {
+            'identity_evidence','platform_ids','is_erotic','rating_count','hypes','total_rating','ai_keywords'}} | {
             'id':identity[1] if identity else None,'list_status':(identity[2] or identity[4]) if identity else None,
             'score':(identity[3] if identity[2] else identity[5]) if identity else None})
     return {key:value for key,value in page.items() if key!='rows'} | {'results':cards}

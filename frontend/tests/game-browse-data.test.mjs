@@ -65,3 +65,13 @@ test('Game release status and local day reach the timeline API without overwriti
   assert.equal(gameBrowseIsCategories(grid),false);
   assert.equal(new URL(gameBrowseRequest(grid),'https://example.test').searchParams.get('category'),'newest');
 });
+
+test('Show all retains explicit game filters and stays out of title search',()=>{
+  const values=gameBrowseValues(new URLSearchParams('view=timeline&status=upcoming&platforms=pc&unfiltered=true'));
+  const request=new URL(gameBrowseRequest(values),'https://example.test').searchParams;
+  assert.equal(request.get('unfiltered'),'true');
+  assert.equal(request.get('status'),'upcoming');
+  assert.equal(request.get('platforms'),'pc');
+  assert.equal(gameBrowseIsCategories(gameBrowseValues(new URLSearchParams('unfiltered=true'))),false);
+  assert.equal(gameBrowseValues(new URLSearchParams('q=Dark&unfiltered=true')).has('unfiltered'),false);
+});

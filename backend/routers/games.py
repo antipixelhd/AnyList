@@ -449,15 +449,20 @@ async def browse_games(db: DB, viewer: Viewer, background:BackgroundTasks,
         timeline: bool = False,
         status: Literal['released','upcoming'] | None = None,
         today: Annotated[str | None, Query(max_length=10)] = None,
+        unfiltered: bool = False,
         min_metacritic: Annotated[int, Query(ge=0,le=100)] = 0,
         limit: Annotated[int, Query(ge=1,le=48)] = 24,
         cursor: Annotated[str | None, Query(max_length=512)] = None) -> dict:
     from core import game_browse
+    from core import game_browse_policy
     from core.catalogue_providers import ProviderError
     await catalog_access(db, viewer)
     viewer_id = viewer.id if viewer else None
-    from core.game_content import hide_erotic_games
-    hide_erotic=await hide_erotic_games(db,viewer_id)
+    saved = await game_browse_policy.viewer_preferences(db, viewer_id)
+    hide_erotic = saved.get('hide_erotic_games') is not False
+    policy = game_browse_policy.policy(saved, upcoming=status=='upcoming',
+        released=status=='released' or status is None and (timeline or category=='newest'),
+        unfiltered=unfiltered)
     # Authentication/catalog policy reads must not occupy a pooled connection
     # while a cold public ranking is waiting on providers.
     await db.close()
@@ -465,7 +470,7 @@ async def browse_games(db: DB, viewer: Viewer, background:BackgroundTasks,
     try:
         query = await game_browse.filters(service.sources, category=category,genres=genres,platforms=platforms,
             start=start,end=end,q=q,min_metacritic=min_metacritic,timeline=timeline,
-            hide_erotic_games=hide_erotic,status=status,today=today)
+            hide_erotic_games=hide_erotic,status=status,today=today,policy=policy)
         page = await service.page(query,limit=limit,cursor=cursor,
             wait_seconds=.15 if min_metacritic else None)
         result=await game_browse.project(db,viewer_id,page)

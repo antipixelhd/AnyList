@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 from core.catalogue_providers import CatalogueProviders, ProviderHTTP, ProviderError
 from core.config import settings
 from core.game_source_cache import GameSourceCache
+from core.game_browse_policy import evidence, provider_predicate
 from core.game_search import broader_query, matches_partial
 from core.game_release_dates import FIELDS as RELEASE_FIELDS, bounds, in_range, game_release, release, timeline_order
 from core.game_types import INDEPENDENT, platform_group, search_candidate, canonical_game, candidate_fields, game_platforms, mobile_platform
@@ -17,6 +18,7 @@ from db import AsyncSessionLocal
 
 BASE_FIELDS = 'id,slug,name,cover.url,first_release_date,game_type.type,genres.name,platforms.name,platforms.platform_family.name,rating_count,ports.game_type.type,ports.platforms.name,ports.platforms.platform_family.name,'+RELEASE_FIELDS
 CARD_FIELDS = candidate_fields(BASE_FIELDS)
+DISCOVERY_CARD_FIELDS = candidate_fields(BASE_FIELDS+',hypes,total_rating,keywords')
 SLUG = re.compile(r'[a-z0-9][a-z0-9_-]{0,199}\Z')
 
 
@@ -59,7 +61,7 @@ def card(raw, *, expansions=False):
         year=(candidate['release_date'] or '')[:4] or None, game_class=candidate['game_class'],is_erotic=candidate['is_erotic'],mobile_only=False,
         genres=[{'id': f'igdb.genre:{g["id"]}', 'name': g['name']} for g in work.get('genres') or []
                 if positive(g.get('id')) and isinstance(g.get('name'), str)],
-        platforms=platforms, platform_ids=[f'igdb.platform:{p["id"]}' for p in available])
+        platforms=platforms, platform_ids=[f'igdb.platform:{p["id"]}' for p in available], **evidence(work))
 
 
 def metacritic_id(url):
@@ -256,10 +258,10 @@ class GameBrowseSources:
             return []
         if len(identifiers)+len(slugs) > 100:
             raise ProviderError('invalid_request')
-        return await self.igdb('games', f'fields {CARD_FIELDS}; where ({" | ".join(clauses)}); limit 200;')
+        return await self.igdb('games', f'fields {DISCOVERY_CARD_FIELDS}; where ({" | ".join(clauses)}); limit 200;')
 
     async def catalogue_feed(self, sort, *, offset=0, genres=(), platforms=(), start=None, end=None, q='',
-            search_mode=0, ascending=False, released_before=None):
+            search_mode=0, ascending=False, released_before=None, policy=None):
         if sort not in {'newest','popular'} or isinstance(offset, bool) or not isinstance(offset, int) or not 0 <= offset <= 10000:
             raise ProviderError('invalid_request')
         if len(genres)+len(platforms) > 250 or any(not positive(identifier) for identifier in [*genres,*platforms]) or len(q) > 100:
@@ -281,6 +283,8 @@ class GameBrowseSources:
             conditions.append(f'(platforms={choices} | ports.platforms={choices})')
         if sort == 'popular':
             conditions.append('rating_count>0')
+        if predicate := provider_predicate(policy or {}, ''):
+            conditions.append(predicate)
         if sort == 'newest' and not ascending and not last and (not first or first<=date.today()):
             last = date.today()
         if first:
@@ -295,7 +299,7 @@ class GameBrowseSources:
                 conditions.append(f'(first_release_date<{exact} | release_dates.date<{year_end})')
             else:
                 conditions.append(f'first_release_date<{exact}')
-        key_parts = ['game-content-v1',sort,offset,sorted(genres),sorted(platforms),start,end]
+        key_parts = ['game-content-v2',sort,offset,sorted(genres),sorted(platforms),start,end,policy]
         if sort == 'newest' or ascending or released_before:
             key_parts.extend(['release-window-v1',ascending,released_before])
         key = hashlib.sha256(json.dumps(key_parts).encode()).hexdigest()
@@ -306,6 +310,8 @@ class GameBrowseSources:
             async def fetch(query):
                 if not query and sort=='newest':
                     filters=['game.version_parent=null','game.game_type=(0,4,8,9,10,11)','(status=null | status.name="Full Release")']
+                    if predicate := provider_predicate(policy or {}, 'game.'):
+                        filters.append(predicate)
                     if genres:filters.append('game.genres=('+','.join(map(str,sorted(set(genres))))+')')
                     if platforms:
                         choices='('+','.join(map(str,sorted(set(platforms))))+')'
@@ -317,7 +323,7 @@ class GameBrowseSources:
                         else:
                             ceiling=datetime(last.year,last.month,last.day,tzinfo=timezone.utc)+timedelta(days=1)
                         filters.append(f'date<{int(ceiling.timestamp())}')
-                    fields='id,date,date_format.format,y,m,d,status.name,'+','.join('game.'+field for field in CARD_FIELDS.split(','))
+                    fields='id,date,date_format.format,y,m,d,status.name,'+','.join('game.'+field for field in DISCOVERY_CARD_FIELDS.split(','))
                     direction = 'asc' if ascending else 'desc'
                     events=await self.igdb('release_dates',f'fields {fields}; where '+ ' & '.join(filters)+f'; sort date {direction}; limit 100; offset {offset};')
                     if not isinstance(events,list) or len(events)>100:raise ProviderError('bad_response')
@@ -332,7 +338,8 @@ class GameBrowseSources:
                         result.append(event['game'] if point and primary and primary[0]<=point[0]<=point[1]<=primary[1] else {})
                     return result
                 prefix=f'search {json.dumps(query)};' if query else 'where '+' & '.join(conditions)+';'
-                raw=await self.igdb('games',f'{prefix} fields {CARD_FIELDS}; {ordering} limit 100; offset {offset};')
+                fields = CARD_FIELDS if query else DISCOVERY_CARD_FIELDS
+                raw=await self.igdb('games',f'{prefix} fields {fields}; {ordering} limit 100; offset {offset};')
                 if not isinstance(raw,list) or len(raw)>100:raise ProviderError('bad_response')
                 return raw
             mode=search_mode
@@ -418,7 +425,7 @@ class GameBrowseSources:
             raise ProviderError('invalid_request')
         if not appids:
             return []
-        fields = 'uid,game.'+',game.'.join(CARD_FIELDS.split(','))
+        fields = 'uid,game.'+',game.'.join(DISCOVERY_CARD_FIELDS.split(','))
         values = ','.join(json.dumps(str(appid)) for appid in appids)
         return await self.igdb('external_games', f'fields {fields}; where external_game_source={ids[0]} & uid=({values}); limit 500;')
 
@@ -555,7 +562,7 @@ class GameBrowseSources:
         if offset:
             # Continue the exact chart that supplied the prefix, even if the
             # current Steam chart has refreshed since that page was rendered.
-            data = await self.cache.peek('steam', 'game_browse_cards', f'content-v2:{snapshot}:0', max_age=timedelta(hours=24))
+            data = await self.cache.peek('steam', 'game_browse_cards', f'content-v3:{snapshot}:0', max_age=timedelta(hours=24))
             ranking = {'data':data['ranking'], 'stale':False}
         else:
             ranking = await self.steam()
@@ -566,7 +573,7 @@ class GameBrowseSources:
         async def load():
             if not offset and not preview:
                 try:
-                    prefix = await self.cache.peek('steam', 'game_browse_cards', f'content-v2:{observed}:0', max_age=timedelta(hours=24))
+                    prefix = await self.cache.peek('steam', 'game_browse_cards', f'content-v3:{observed}:0', max_age=timedelta(hours=24))
                 except ProviderError as error:
                     if error.code != 'cursor_expired':raise
                 else:
@@ -599,7 +606,7 @@ class GameBrowseSources:
                 'universe':'Steam top 100', 'partial':unresolved > 0 or len(native) >= 500,
                 'has_more':offset == 0 and preview and len(ranking['data']['rows']) > 6, 'next_offset':6 if offset == 0 and preview else 100,
                 'snapshot':observed, **({'ranking':ranking['data']} if offset == 0 and preview else {})}
-        key = f'content-v2:{observed}:{offset}' + (':all' if not offset and not preview else '')
+        key = f'content-v3:{observed}:{offset}' + (':all' if not offset and not preview else '')
         result = await self.cache.get('steam', 'game_browse_cards', key, load,
             ttl=timedelta(hours=4), max_stale=timedelta(hours=24))
         result['stale'] = result['stale'] or ranking['stale']
@@ -622,7 +629,7 @@ class GameBrowseSources:
                 rows.append({**value, 'source_rank':index})
             return {'rows':rows, 'source':ranking['data']['source'], 'source_at':observed,
                 'has_more':ranking['data']['has_more'], 'next_offset':offset+len(positions)}
-        result = await self.cache.get('igdb', 'game_browse_cards', f'content-v1:{"sellers" if sellers else "attention"}:{observed}:{offset}', load)
+        result = await self.cache.get('igdb', 'game_browse_cards', f'content-v2:{"sellers" if sellers else "attention"}:{observed}:{offset}', load)
         result['stale'] = result['stale'] or ranking['stale']
         self.require_source_time(observed, 3*86400, empty=not ranking['data']['rows'])
         return result
@@ -672,7 +679,7 @@ class GameBrowseSources:
                 'has_more':next_start < len(ranking['data']['rows']) or ranking['data']['has_more'],
                 'next_page':page if next_start < len(ranking['data']['rows']) else page+1,
                 'next_start':next_start if next_start < len(ranking['data']['rows']) else 0}
-        result = await self.cache.get('rawg', 'game_browse_cards', f'content-v1:{page}:{start}:{digest}', load,
+        result = await self.cache.get('rawg', 'game_browse_cards', f'content-v2:{page}:{start}:{digest}', load,
             ttl=timedelta(days=1), max_stale=timedelta(days=7))
         result['stale'] = result['stale'] or ranking['stale']
         return result

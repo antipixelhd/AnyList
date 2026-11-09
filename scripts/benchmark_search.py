@@ -596,6 +596,12 @@ async def main(args):
 
         from core import game_browse
         from core.game_browse_sources import GameBrowseSources
+        def game_relevance_fixture(index):
+            if current_case in {'game_browse_pages', 'game_browse_newest', 'game_browse_genre_platform'}:
+                # Exercise rating-only, follow-only, and ineligible evidence
+                # without starving the existing two-page workload.
+                return {'rating_count': 5 if index % 3 == 0 else 0, 'hypes': 2 if index % 3 == 1 else 0}
+            return {'rating_count': 5}
         game_sources = GameBrowseSources(fixture.Session)
         game_sources.api.validate = lambda *args: None
         async def game_provider(endpoint, query):
@@ -619,6 +625,7 @@ async def main(args):
                     point={'date':stamp,'date_format':{'format':'YYYYMMDD'},'status':{'name':'Full Release'}}
                     early={'date':1519257600,'date_format':{'format':'YYYYMMDD'},'status':{'name':'Early Access'}}
                     game={'id':8000000+index,'name':f'Benchmark release {index}','game_type':{'id':0},
+                        **game_relevance_fixture(index),
                         'first_release_date':early['date'] if index%3==0 else stamp,
                         'release_dates':[early,point] if index%3==0 else [point]}
                     rows.append({'id':index+1,'game':game,**point})
@@ -640,6 +647,7 @@ async def main(args):
                         point={'date':stamp,'date_format':{'format':'YYYYMMDD'},'status':{'name':'Full Release'}}
                         early={'date':1519257600,'date_format':{'format':'YYYYMMDD'},'status':{'name':'Early Access'}}
                         rows.append({'id':8000000+index,'name':f'Benchmark release {index}','game_type':{'id':0},
+                            **game_relevance_fixture(index),
                             'first_release_date':early['date'] if index%3==0 else stamp,
                             'release_dates':[early,point] if index%3==0 else [point]})
                     return sorted(rows,key=lambda row:row['first_release_date'],reverse=True)[offset:offset+100]
@@ -649,6 +657,7 @@ async def main(args):
                     offset=int(re.search(r'offset (\d+)',query).group(1));ids=range(8000000+offset,8000000+min(offset+100,160 if broader else 300))
                 else:ids=map(int,re.search(r'id=\(([\d,]+)\)',query).group(1).split(','))
                 return [{'id':identifier,'slug':f'benchmark-game-{identifier-8000000}',
+                    **game_relevance_fixture(identifier-8000000),
                     'name':(f'Elden Ring benchmark {identifier-8000000:05}' if identifier%2==0 else f'Unrelated benchmark {identifier-8000000:05}') if broader else f'Benchmark game {identifier-8000000:05}',
                     'game_type':{'id':0},'first_release_date':1704067200+((identifier%20)*86400 if searching else 0),
                     'release_dates':[{'date':1704067200+((identifier%20)*86400 if searching else 0),
@@ -886,7 +895,8 @@ async def main(args):
             for mode in ('curated', 'floor_disabled', 'show_all'):
                 async with fixture.Session() as db:
                     saved = await db.scalar(select(UserSettings).where(UserSettings.user_id == viewer.id))
-                    saved.preferences = {'minimum_popularity': 25 if mode == 'curated' else 0}
+                    saved.preferences = {'minimum_popularity': 25 if mode == 'curated' else 0,
+                        **({'game_min_ratings': 0, 'game_min_follows': 0, 'game_upcoming_min_follows': 0} if mode == 'floor_disabled' else {})}
                     profile = await db.scalar(select(UserProfileData).where(UserProfileData.user_id == viewer.id))
                     profile.minimum_votes = 0 if mode == 'show_all' else 250
                     profile.minimum_movie_runtime = 0 if mode == 'show_all' else 30
@@ -941,7 +951,7 @@ async def main(args):
                             await db.merge(ContributorEvidence(**availability_evidence))
                             await db.commit()
                     params = {'region': 'DE', **values}
-                    if mode == 'show_all' and path and path.startswith('browse'):
+                    if mode == 'show_all' and path and (path.startswith('browse') or path=='games/browse'):
                         params['unfiltered'] = 'true'
 
                     async def operation(path=path, params=params, label=label, mode=mode):

@@ -54,6 +54,7 @@ const staticValues=new URLSearchParams(values);staticValues.set('static','1');
     </div></header>
     <form id="browse-filters" class="browse-filters" data-motion-static role="search" data-browse-form>
       <input type="hidden" name="view" value={timeline?'timeline':'grid'}/>
+      <input type="hidden" name="unfiltered" value={values.get('unfiltered')||''}/>
       <BrowseSearchField query={values.get('q')||''}/>
       <div class="browse-controls" id="browse-controls">
         <label class="browse-sort" data-browse-primary-sort hidden={!categories}><span>Sort</span><BrowseSelect name="sort" data-browse-sort valueLabel={selectedSort}>{sortOptions.map(([key,label])=><option value={key} selected={sort===key}>{label}</option>)}</BrowseSelect></label>
@@ -84,8 +85,9 @@ const staticValues=new URLSearchParams(values);staticValues.set('static','1');
       <div class="browse-results-toolbar">
         <div class="browse-active-filters" data-active-filters></div>
         <label class="browse-results-sort" hidden={categories||timeline}><Icon name="sort"/><BrowseSelect aria-label="Sort results" data-browse-results-sort valueLabel={selectedSort}>{sortOptions.map(([key,label])=><option value={key} selected={effectiveSort===key}>{label}</option>)}</BrowseSelect></label>
+        <button type="button" class="button-quiet" data-browse-curated hidden>Return to curated results</button>
       </div>
-      <p class="browse-notice" data-browse-notice role="status" aria-live="polite">{!categories&&!error&&!payload.verification_pending?values.get('q')&&!payload.coverage_limited?values.has('min_metacritic')&&payload.partial?'Some games have no verified critic score.':'':gameSourceContext(payload):''}</p>
+      <p class="browse-notice" data-browse-notice role="status" aria-live="polite">{!error&&!payload.verification_pending&&values.has('min_metacritic')&&payload.partial?'Some games have no verified critic score.':''}</p>
       <div class="browse-error" data-browse-error role="alert" hidden={!error}><span>{error}</span><button type="button" class="button-secondary" data-browse-retry>Try again</button></div>
       <div class="browse-error" data-game-facets-error role="alert" hidden><span>Unable to load game filters.</span><button type="button" class="button-secondary" data-game-facets-retry>Try again</button></div>
       {pending&&<noscript><p><a href={`/browse/games?${staticValues}`}>Load games</a></p></noscript>}
@@ -102,7 +104,7 @@ const staticValues=new URLSearchParams(values);staticValues.set('static','1');
         </div>
         <BrowseLoadingSkeletons sectionTitles={gameBrowseCategories.map(([,title])=>title)} active={!categories&&(pending||!!payload.verification_pending)&&!payload.results.length}/>
         <div class="empty-state" data-browse-empty hidden={pending||categories||payload.verification_pending||payload.results.length>0||payload.has_more||!!error}><h2>{payload.coverage_limited?'No verified games in this search window':'No matching games'}</h2><button type="button" class="button-secondary" data-browse-clear>Clear filters</button></div>
-        <div class="browse-load" data-browse-sentinel hidden={categories}><button type="button" class="button-quiet" data-browse-more hidden={!payload.has_more}>Load more</button><span data-browse-end hidden={!!error||payload.verification_pending||payload.has_more||!payload.results.length}>{payload.partial?'End of verified results':"You're all caught up"}</span></div>
+        <div class="browse-load" data-browse-sentinel hidden={categories}><button type="button" class="button-quiet" data-browse-more hidden={!payload.has_more}>Load more</button><span data-browse-end hidden={!!error||payload.verification_pending||payload.has_more||!payload.results.length}>{payload.partial?'End of verified results':"You're all caught up"}</span><button type="button" class="button-secondary" data-browse-show-all hidden>Show all</button></div>
       </section>
     </div>
     <template data-browse-close-icon><Icon name="close"/></template>
