@@ -1,0 +1,211 @@
+{
+  "date": "2026-11-10",
+  "revision": "075ec989",
+  "environment": "Authenticated beta; local isolated Chrome 157; live IGDB CDN",
+  "mobileSimulation": {
+    "viewport": "390x844",
+    "cpuSlowdown": 4,
+    "downloadBytesPerSecond": 500000,
+    "uploadBytesPerSecond": 500000,
+    "latencyMs": 100
+  },
+  "catalogue": {
+    "games": 3038,
+    "maximum": 40,
+    "median": 6,
+    "p95": 18
+  },
+  "samples": [
+    {
+      "case": "84903-desktop-cold",
+      "grid": {
+        "count": 32,
+        "assigned": 4,
+        "title": "Shenmue · AnyList"
+      },
+      "fullSizeRequests": 32,
+      "retainedImages": 18,
+      "selectedReadyMs": 164,
+      "galleryReadyMs": 447,
+      "fullSizeTransferBytes": 3938575,
+      "openAndNavigationTransferBytes": 4207173,
+      "discardedImages": 14,
+      "discardedTransferBytes": 1560081,
+      "maxOpeningInteractionMs": 184,
+      "maxNavigationInteractionMs": 32,
+      "maxOpeningFrameIntervalMs": 133.4,
+      "maxNavigationFrameIntervalMs": 16.9,
+      "openingLongTaskMs": [],
+      "navigationLoadingStates": 0,
+      "networkFailures": 0,
+      "retainedDecodedPixelBytesEstimate": 108259200
+    },
+    {
+      "case": "84903-desktop-warm",
+      "grid": {
+        "count": 32,
+        "assigned": 4,
+        "title": "Shenmue · AnyList"
+      },
+      "fullSizeRequests": 32,
+      "retainedImages": 18,
+      "selectedReadyMs": 14,
+      "galleryReadyMs": 131,
+      "fullSizeTransferBytes": 0,
+      "openAndNavigationTransferBytes": 0,
+      "discardedImages": 14,
+      "discardedTransferBytes": 0,
+      "maxOpeningInteractionMs": 48,
+      "maxNavigationInteractionMs": 32,
+      "maxOpeningFrameIntervalMs": 16.8,
+      "maxNavigationFrameIntervalMs": 16.9,
+      "openingLongTaskMs": [],
+      "navigationLoadingStates": 0,
+      "networkFailures": 0,
+      "retainedDecodedPixelBytesEstimate": 108259200
+    },
+    {
+      "case": "85112-mobile-4x-4Mbps-cold-valid",
+      "grid": {
+        "count": 36,
+        "assigned": 2,
+        "title": "WarioWare: Get It Together! · AnyList"
+      },
+      "fullSizeRequests": 36,
+      "retainedImages": 21,
+      "selectedReadyMs": 11193,
+      "galleryReadyMs": 11977,
+      "fullSizeTransferBytes": 5232415,
+      "openAndNavigationTransferBytes": 5961229,
+      "discardedImages": 15,
+      "discardedTransferBytes": 2167665,
+      "maxOpeningInteractionMs": 160,
+      "maxNavigationInteractionMs": 48,
+      "maxOpeningFrameIntervalMs": 133.4,
+      "maxNavigationFrameIntervalMs": 16.9,
+      "openingLongTaskMs": [
+        128
+      ],
+      "navigationLoadingStates": 0,
+      "networkFailures": 0,
+      "retainedDecodedPixelBytesEstimate": 166631040
+    },
+    {
+      "case": "85112-mobile-4x-4Mbps-cold",
+      "grid": {
+        "count": 36,
+        "assigned": 4,
+        "title": "WarioWare: Get It Together! · AnyList"
+      },
+      "fullSizeRequests": 36,
+      "retainedImages": 21,
+      "selectedReadyMs": 10347,
+      "galleryReadyMs": 11014,
+      "fullSizeTransferBytes": 5232917,
+      "openAndNavigationTransferBytes": 5423153,
+      "discardedImages": 15,
+      "discardedTransferBytes": 2167758,
+      "maxOpeningInteractionMs": 200,
+      "maxNavigationInteractionMs": 56,
+      "maxOpeningFrameIntervalMs": 133.5,
+      "maxNavigationFrameIntervalMs": 16.9,
+      "openingLongTaskMs": [
+        141
+      ],
+      "navigationLoadingStates": 0,
+      "networkFailures": 0,
+      "retainedDecodedPixelBytesEstimate": 166631040
+    },
+    {
+      "case": "85112-mobile-4x-4Mbps-warm-valid",
+      "grid": {
+        "count": 36,
+        "assigned": 5,
+        "title": "WarioWare: Get It Together! · AnyList"
+      },
+      "fullSizeRequests": 36,
+      "retainedImages": 21,
+      "selectedReadyMs": 208,
+      "galleryReadyMs": 691,
+      "fullSizeTransferBytes": 0,
+      "openAndNavigationTransferBytes": 11029,
+      "discardedImages": 15,
+      "discardedTransferBytes": 0,
+      "maxOpeningInteractionMs": 160,
+      "maxNavigationInteractionMs": 48,
+      "maxOpeningFrameIntervalMs": 266.9,
+      "maxNavigationFrameIntervalMs": 16.9,
+      "openingLongTaskMs": [
+        123
+      ],
+      "navigationLoadingStates": 0,
+      "networkFailures": 0,
+      "retainedDecodedPixelBytesEstimate": 166631040
+    },
+    {
+      "case": "85112-mobile-4x-4Mbps-warm",
+      "grid": {
+        "count": 36,
+        "assigned": 2,
+        "title": "WarioWare: Get It Together! · AnyList"
+      },
+      "fullSizeRequests": 36,
+      "retainedImages": 21,
+      "selectedReadyMs": 341,
+      "galleryReadyMs": 341,
+      "fullSizeTransferBytes": 0,
+      "openAndNavigationTransferBytes": 0,
+      "discardedImages": 15,
+      "discardedTransferBytes": 0,
+      "maxOpeningInteractionMs": 200,
+      "maxNavigationInteractionMs": 48,
+      "maxOpeningFrameIntervalMs": 333.7,
+      "maxNavigationFrameIntervalMs": 33.4,
+      "openingLongTaskMs": [
+        137,
+        55
+      ],
+      "navigationLoadingStates": 0,
+      "networkFailures": 0,
+      "retainedDecodedPixelBytesEstimate": 166631040
+    }
+  ],
+  "singleImageControl": [
+    {
+      "navigation": [
+        {
+          "responseStart": 223.59999999776483,
+          "responseEnd": 550.8999999985099,
+          "duration": 556.1999999992549,
+          "transfer": 159498,
+          "body": 159198
+        }
+      ],
+      "image": [
+        {
+          "w": 1333,
+          "h": 1080,
+          "complete": true
+        }
+      ]
+    },
+    {
+      "navigation": [
+        {
+          "responseStart": 101.30000000074506,
+          "responseEnd": 439.80000000074506,
+          "duration": 444,
+          "transfer": 159498,
+          "body": 159198
+        }
+      ],
+      "image": [
+        {
+          "w": 1333,
+          "h": 1080,
+          "complete": true
+        }
+      ]
+    }
+  ]
+}
