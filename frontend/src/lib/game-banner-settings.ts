@@ -1,10 +1,12 @@
 export function mountGameBannerSettings(root:HTMLElement,id:number,viewer:string,signal:AbortSignal,
   apply:(data:any)=>void,mobile=false) {
   const key=`game-banner:${viewer}:${id}`;
-  let settings={animated:false,cycle:false},revision=0,cycleChoice:string|undefined;
+  let settings={animated:false,cycle:false},revision=0,cyclePosition:number|undefined;
+  let cycleChoice:string|undefined;
   let timer:ReturnType<typeof setTimeout>|undefined;
   signal.addEventListener('abort',()=>clearTimeout(timer),{once:true});
   try{settings={...settings,...JSON.parse(localStorage.getItem(key)||'{}')};}catch{}
+  const cycleOnEntry=settings.cycle;
   const controls=[...root.querySelectorAll<HTMLInputElement>('[data-banner-setting]')];
   controls.forEach(input=>{
     input.checked=!!settings[input.dataset.bannerSetting as keyof typeof settings];
@@ -20,13 +22,16 @@ export function mountGameBannerSettings(root:HTMLElement,id:number,viewer:string
       if(signal.aborted||current!==revision)return;
       const list:string[]=settings.cycle&&data.cycle_banners?.length?data.cycle_banners.slice(0,6):[];
       if(list.length&&!data.pinned_banner){
-        const positionKey=`${key}:position:${settings.animated}`;
-        if(!cycleChoice||!list.includes(cycleChoice)){
-          let position=0;
-          try{const saved=Number(localStorage.getItem(positionKey)||0);position=Number.isInteger(saved)&&saved>=0?saved%list.length:0;
-            localStorage.setItem(positionKey,String((position+1)%list.length));}catch{}
-          cycleChoice=list[position];
+        if(cyclePosition===undefined){
+          const positionKey=`${key}:position:${mobile?'mobile':settings.animated}`;
+          cyclePosition=0;
+          try{
+            const saved=Number(localStorage.getItem(positionKey)||0);
+            if(Number.isSafeInteger(saved)&&saved>=0)cyclePosition=saved%list.length;
+            if(cycleOnEntry)localStorage.setItem(positionKey,String((cyclePosition+1)%list.length));
+          }catch{}
         }
+        if(!cycleChoice||!list.includes(cycleChoice))cycleChoice=list[cyclePosition%list.length];
         data.backdrop=cycleChoice;
       }
       apply(data);
@@ -37,7 +42,6 @@ export function mountGameBannerSettings(root:HTMLElement,id:number,viewer:string
   };
   controls.forEach(input=>input.addEventListener('change',()=>{
     settings={...settings,[input.dataset.bannerSetting!]:input.checked};
-    cycleChoice=undefined;
     try{localStorage.setItem(key,JSON.stringify(settings));}catch{}
     void read();
   },{signal}));

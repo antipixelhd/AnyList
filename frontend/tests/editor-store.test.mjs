@@ -6,6 +6,7 @@ import {commitDetailHero,nextDetailHero,publishDetailArtwork} from '../src/lib/d
 import {artworkIdentity} from '../src/lib/responsive-artwork.ts';
 
 const source = readFileSync(new URL('../src/lib/editor-store.ts', import.meta.url), 'utf8')
+  .replace("'./game-hero-choice.ts'", JSON.stringify(new URL('../src/lib/game-hero-choice.ts', import.meta.url).href))
   .replace("'./decoded-artwork.ts'", JSON.stringify(new URL('../src/lib/decoded-artwork.ts', import.meta.url).href))
   .replace("'./responsive-artwork'", JSON.stringify(new URL('../src/lib/responsive-artwork.ts', import.meta.url).href))
   .replace("'./date-time'", JSON.stringify(new URL('../src/lib/date-time.ts', import.meta.url).href));
@@ -216,7 +217,7 @@ test('seeded editor snapshots open without reads, preserve all fields and share 
   store.warmArtwork(title,'https://image.tmdb.org/t/p/w185/poster.jpg');
   assert.equal((await store.load(1)).entry.notes,'Keep me');
   assert.equal(store.artwork(title).poster,'https://image.tmdb.org/t/p/w185/poster.jpg');
-  assert.equal(store.artwork(title).backdrop,store.artwork(title).poster);
+  assert.equal(store.artwork(title).backdrop,undefined);
   assert.deepEqual(calls,[]);
 });
 
@@ -228,7 +229,7 @@ test('unrelated details artwork cannot overwrite a quick-search poster or its co
   // Quick search restores focus to the global search trigger on a different details page.
   store.warmArtwork(title,'https://image.tmdb.org/t/p/w500/other-poster.jpg','https://image.tmdb.org/t/p/original/other-backdrop.jpg');
   assert.equal(store.artwork(title).poster,searchPoster);
-  assert.equal(store.artwork(title).backdrop,searchPoster);
+  assert.equal(store.artwork(title).backdrop,undefined);
   const cold=store.seed({...draft(),tmdb_id:456,poster:'/cold.jpg',backdrop:null});
   store.warmArtwork(cold,'https://image.tmdb.org/t/p/w500/other-poster.jpg');
   assert.equal(store.artwork(cold).poster,'https://image.tmdb.org/t/p/w342/cold.jpg');
@@ -352,11 +353,78 @@ test('cold backdrop decoding never changes the artwork chosen for an open editor
     const store=new EditorStore(()=>{}), title=store.seed(draft());
     store.warmArtwork(title,'https://image.tmdb.org/t/p/w185/poster.jpg');
     const opened=store.artwork(title);
-    assert.equal(opened.backdrop,'https://image.tmdb.org/t/p/w185/poster.jpg');
+    assert.equal(opened.backdrop,undefined);
     ready.resolve();await turn();
-    assert.equal(opened.backdrop,'https://image.tmdb.org/t/p/w185/poster.jpg');
+    assert.equal(opened.backdrop,undefined);
     assert.equal(store.artwork(title).backdrop,'https://image.tmdb.org/t/p/w1280/backdrop.jpg');
   } finally {globalThis.Image=previous;}
+});
+
+test('preparation waits for decoded landscape artwork and ready reopening starts no image request',async()=>{
+  const ready=deferred(),previous=globalThis.Image;let images=0;
+  globalThis.Image=class {constructor(){images++;}decode(){return ready.promise;}};
+  try{
+    const store=new EditorStore(()=>{throw Error('Unexpected metadata read');}),title=store.seed({...draft(),id:7});
+    let prepared=false;const waiting=store.prepareArtwork(title).then(()=>{prepared=true;});
+    await turn();assert.equal(prepared,false);assert.equal(store.artwork(title).backdrop,undefined);
+    ready.resolve();await waiting;
+    assert.equal(store.artwork(title).backdrop,'https://image.tmdb.org/t/p/w1280/backdrop.jpg');
+    await store.prepareArtwork(title);assert.equal(images,1);
+  }finally{globalThis.Image=previous;}
+});
+
+test('reseed invalidates a previous decoded source and pending projections preserve resolved artwork',async()=>{
+  const previous=globalThis.Image;
+  globalThis.Image=class {decode(){return Promise.resolve();}};
+  try{
+    const store=new EditorStore(()=>{}),title=store.seed({...draft(),id:7});
+    await store.prepareArtwork(title);
+    store.seed({...title,backdrop:'/replacement.jpg',background_status:{state:'ready'}});
+    assert.equal(store.artwork(title).backdrop,undefined);await store.prepareArtwork(title);
+    store.seed({...title,backdrop:'/stale.jpg',background_status:{state:'pending'}});
+    assert.equal(title.backdrop,'/replacement.jpg');
+    assert.equal(store.artwork(title).backdrop,'https://image.tmdb.org/t/p/w1280/replacement.jpg');
+  }finally{globalThis.Image=previous;}
+});
+
+test('visible rows only warm projected images and missing metadata is shared on intent',async()=>{
+  const previous=globalThis.Image,requests=[],read=deferred();let reads=0;
+  globalThis.Image=class {set src(value){requests.push(value);}decode(){return Promise.resolve();}};
+  try{
+    const store=new EditorStore(async()=>{reads++;return read.promise;}),title=store.seed({...draft(),id:7,backdrop:null,background_status:{state:'pending'}});
+    await store.warmListArtwork(title,new AbortController().signal);assert.equal(reads,0);
+    const first=store.prepareArtwork(title),second=store.prepareArtwork(title);
+    assert.equal(reads,1);assert.deepEqual(requests,[]);
+    read.resolve({backdrop:'/canonical.jpg',background_status:{state:'ready'}});await Promise.all([first,second]);
+    assert.deepEqual(requests,['https://image.tmdb.org/t/p/w1280/canonical.jpg']);
+  }finally{globalThis.Image=previous;}
+});
+
+test('detail fallback and exact source survive a subsequent list seed',async()=>{
+  const previous=globalThis.Image,requests=[];
+  globalThis.Image=class {set src(value){requests.push(value);}decode(){return Promise.resolve();}};
+  try{
+    const store=new EditorStore(()=>{throw Error('Unexpected metadata read');});
+    const row={...draft(),id:7,background_status:{state:'ready'}};
+    const title=store.seed(row),src='https://image.tmdb.org/t/p/original/detail-fallback.jpg';
+    publishDetailArtwork(store,{id:7,type:'movie'},{backdrop:'/detail-fallback.jpg',backdropSrc:src,primaryBackdrop:row.backdrop});
+    await store.warmListArtwork(row,new AbortController().signal);
+    store.seed(row);await store.prepareArtwork(title);
+    assert.deepEqual(requests,[src]);assert.equal(store.artwork(title).backdrop,src);
+  }finally{globalThis.Image=previous;}
+});
+
+test('a new displayed game banner wins over older tracking state on the same detail page',async()=>{
+  const previous=globalThis.Image,requests=[];
+  globalThis.Image=class {set src(value){requests.push(value);}decode(){return Promise.resolve();}};
+  try{
+    const store=new EditorStore(()=>{throw Error('Unexpected metadata read');});
+    const title=store.seed(gameTitle(gameState(7,{pinned_banner:'/old.jpg'})));
+    assert.equal(title.backdrop,'/old.jpg');
+    publishDetailArtwork(store,{id:7,type:'game'},{backdrop:'/next.jpg',backdropSrc:'/next.jpg',pinnedBanner:null});
+    await store.prepareArtwork(title);
+    assert.equal(title.pinned_banner,null);assert.deepEqual(requests,['/next.jpg']);
+  }finally{globalThis.Image=previous;}
 });
 
 test('background enrichment does not download editor artwork until intent, and reuses the detail source',async()=>{
@@ -406,7 +474,7 @@ test('curated artwork updates preserve optimistic intent and ignore an old decod
     store.warmArtwork(title);
     assert.equal(title.favorite,true);assert.equal(title.entry,null);
     old.resolve();await turn();
-    assert.equal(store.artwork(title).backdrop,'https://image.tmdb.org/t/p/w342/new-poster.jpg');
+    assert.equal(store.artwork(title).backdrop,undefined);
     curated.resolve();await turn();
     assert.equal(store.artwork(title).backdrop,'https://image.tmdb.org/t/p/w1280/new-background.jpg');
     save.resolve({id:7,status:null,favorite:true});await pending;

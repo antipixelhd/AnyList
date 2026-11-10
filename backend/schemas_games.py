@@ -60,6 +60,10 @@ class GameEntryOut(BaseModel):
     year: str | None = None
     genres: list[str] = Field(default_factory=list)
     image_url: str | None = None
+    backdrop: str | None = None
+    backdrop_mobile: str | None = None
+    pinned_banner: str | None = None
+    background_status: dict = Field(default_factory=dict)
     game_class: str
     base_work_id: int | None = None
     listed: bool = False

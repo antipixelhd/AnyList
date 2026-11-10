@@ -701,12 +701,17 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_game_list_row_batches_gate_membership_notes_and_profile_privacy(self):
         await self.save(notes='Owner only',status='playing')
+        pin='https://cdn2.steamgriddb.com/hero/pinned.png'
+        await self.client.put(f'/tracking/games/works/{self.base}/banner',json={'image':pin})
         path='/tracking/games/users/player/rows'
         params=[('ids',self.unknown),('ids',self.base),('ids',self.base),('ids',self.child)]
         response=await self.client.get(path,params=params)
         self.assertEqual(response.status_code,200,response.text)
         self.assertEqual([row['subject']['catalogue_id'] for row in response.json()],[self.base])
         self.assertEqual(response.json()[0]['notes'],'Owner only')
+        self.assertEqual(response.json()[0]['backdrop'],pin)
+        self.assertEqual(response.json()[0]['backdrop_mobile'],pin)
+        self.assertEqual(response.json()[0]['pinned_banner'],pin)
         await self.client.patch(f'/tracking/games/children/{self.child}',json={'status':'paused'})
         ordered=await self.client.get(path,params=[('ids',self.child),('ids',self.base),('ids',self.child)])
         self.assertEqual([row['subject']['catalogue_id'] for row in ordered.json()],[self.child,self.base])
@@ -717,6 +722,8 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
         public=(await self.client.get(path,params=params)).json()
         self.assertIsNone(public[0]['notes'])
         self.assertIsNone(public[0]['revision'])
+        self.assertIsNone(public[0]['pinned_banner'])
+        self.assertNotEqual(public[0]['backdrop'],pin)
         async with self.Session() as db:
             profile=await db.scalar(select(UserProfileData).where(UserProfileData.user_id==self.user.id))
             profile.privacy_level=PrivacyLevel.private

@@ -18,6 +18,7 @@ import {detailHeroArtwork,detailSceneArtwork} from './detail-artwork';
 import {commitDetailHero,nextDetailHero,publishDetailArtwork} from './detail-hero';
 import {createGalleryPreviewTimer,galleryPreviewImagesSettled} from './gallery-preview-timer';
 import {createGallerySelection} from './gallery-selection';
+import {rememberGameHero} from './game-hero-choice';
 
 type Galleries = {posters:string[]; artwork:string[]};
 const imageKey=artworkIdentity;
@@ -335,6 +336,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
   const failedHeroes=new Set<string>();
   let fallback=info.backdropFallback as string|undefined;
   let heroRevision=0;
+  let gameBannerKnown=false,gamePinnedBanner:string|null=null;
   const paintHero=(url:string|undefined)=>{
     if(!url)return;
     if(failedHeroes.has(imageKey(url)))return;
@@ -348,8 +350,13 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
       if(signal.aborted||revision!==heroRevision)return;
       commitDetailHero(hero,candidate,url,button,backdrop=>{
         galleries.hero=uniqueDetailImages([backdrop,...galleries.hero],15);
-        if(gameBannerSelected===backdrop)delete root.dataset.gameBannerPending;
-        publishDetailArtwork(editorStore,info,{backdrop});
+        if(gameBannerKnown)delete root.dataset.gameBannerPending;
+        if(info.type==='game'&&root.dataset.gameBannerPending)return;
+        const backdropSrc=candidate.currentSrc||candidate.src;
+        publishDetailArtwork(editorStore,info,{backdrop,backdropSrc,primaryBackdrop:initialHero,
+          ...(info.type==='game'&&gameBannerKnown?{pinnedBanner:gamePinnedBanner}:{})});
+        if(info.type==='game'&&gameBannerKnown)
+          rememberGameHero(String(info.bannerViewer||''),info.id,mobileGameHero,backdropSrc,gamePinnedBanner);
       });
     };
     const failed=()=>{
@@ -485,10 +492,12 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
   // The hero is critical: start its small metadata read immediately. Full
   // gallery curation and extra image downloads wait for a gallery interaction.
   if(info.type==='game'&&info.heroAvailable)mountGameBannerSettings(root,info.id,String(info.bannerViewer||''),signal,data=>{
+    gameBannerKnown=true;gamePinnedBanner=data.pinned_banner||null;
     gameBannerSelected=data.backdrop;
     artworkActions(data.pinned_banner||'');
     galleries.hero=uniqueDetailImages(data.banners||[],15);
-    if(data.backdrop)paintHero(data.backdrop);
+    if(data.backdrop||initialHero)paintHero(data.backdrop||initialHero);
+    else delete root.dataset.gameBannerPending;
   },mobileGameHero);
   if(info.heroAvailable&&info.type!=='game'){
     const background=detailBackground<Partial<Galleries>&{artwork_preview?:{image?:string;thumbnail?:string};backdrop?:string;backdrop_fallback?:string;background_status?:DetailLoadState}>(

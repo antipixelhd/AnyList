@@ -115,3 +115,21 @@ def background_status(work):
     try:fresh=cache.get('version')==VERSION and datetime.fromisoformat(cache.get('expires_at',''))>now()
     except (ValueError,TypeError):fresh=False
     return {'state':'ready' if fresh and not cache.get('retry') else 'pending'}
+
+
+def primary_background(work):
+    """The detail hero policy, without constructing galleries or doing I/O."""
+    from core.catalogue_normalize import image, GAME_ARTWORK_VERSION
+
+    def first_image(values):
+        return next((url for value in values or [] if (url := image(value))), None)
+
+    attrs = work.attributes or {}
+    selected = image(attrs.get('backdrop_path'))
+    if not selected and 'attributes.artwork' in (work.protected_fields or []):
+        selected = first_image(attrs.get('artwork'))
+    scenes = 'scene_artwork' if attrs.get('artwork_policy_version') in range(1, GAME_ARTWORK_VERSION + 1) else 'artwork'
+    scene = first_image(attrs.get(scenes))
+    hero = asset_url((attrs.get('steamgriddb_hero') or {}).get('image'))
+    return {'backdrop': selected or hero or scene, 'backdrop_mobile': selected or scene or hero,
+            'background_status': background_status(work)}

@@ -44,3 +44,19 @@ test('navigation suppresses a late banner response',async t=>{
   await new Promise(resolve=>setImmediate(resolve));
   assert.deepEqual(output,[]);
 });
+
+test('reloading settings and pin changes do not consume another cycle slot on the same page',async t=>{
+  const key='game-banner:viewer:3',stored=new Map([[key,JSON.stringify({cycle:true})]]),handlers={},output=[];
+  let banners=['a','b'];
+  const controller=new AbortController(),input={dataset:{bannerSetting:'animated'},addEventListener:(name,fn)=>{handlers[name]=fn;}};
+  t.mock.method(globalThis,'fetch',async()=>({ok:true,json:async()=>({cycle_banners:banners,background_status:{state:'ready'}})}));
+  const previous=Object.getOwnPropertyDescriptor(globalThis,'localStorage');
+  Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{getItem:key=>stored.get(key),setItem:(key,value)=>stored.set(key,value)}});
+  t.after(()=>{controller.abort();if(previous)Object.defineProperty(globalThis,'localStorage',previous);else delete globalThis.localStorage;});
+  const root={addEventListener:(name,fn)=>{handlers[name]=fn;},querySelectorAll:()=>[input],querySelector:()=>null};
+  const turn=()=>new Promise(resolve=>setImmediate(resolve));
+  mountGameBannerSettings(root,3,'viewer',controller.signal,data=>output.push(data.backdrop));
+  await turn();banners=['b','a'];input.checked=true;handlers.change();await turn();handlers['anylist:banner-pinned']();await turn();
+  assert.deepEqual(output,['a','a','a']);
+  assert.equal(stored.get(key+':position:false'),'1');assert.equal(stored.has(key+':position:true'),false);
+});

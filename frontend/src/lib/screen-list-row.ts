@@ -12,12 +12,12 @@ export function canIncrementScreenList(entry:ListState){
 }
 
 export function screenListEditorTitle(state:ListState):EditorTitle{
-  const {id,type,title,poster,backdrop,year,genres,release_date,progress_positions,editor_library,favorite}=state;
+  const {id,type,title,poster,backdrop,backdrop_fallbacks,background_status,year,genres,release_date,progress_positions,editor_library,favorite}=state;
   const entry=state.listed===false?null:{...state.entry, status:state.status,progress:state.progress,
     released_episodes:state.released_episodes,season_position:state.season_position,score:state.score,
     rating_mode:state.rating_mode,updated_at:state.updated_at,availability_dot:state.availability_dot,
     availability_reason:state.availability_reason,new_seasons:state.new_seasons,new_episodes:state.new_episodes};
-  return {id,type,title,poster,backdrop,year,genres,release_date,progress_positions,editor_library,favorite,entry};
+  return {id,type,title,poster,backdrop,backdrop_fallbacks,background_status,year,genres,release_date,progress_positions,editor_library,favorite,entry};
 }
 
 export function paintScreenListRow(row:HTMLElement,state:ListState,template:HTMLTemplateElement){

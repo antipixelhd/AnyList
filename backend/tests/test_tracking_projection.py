@@ -1,11 +1,30 @@
 import copy
 import unittest
+from unittest.mock import AsyncMock, Mock
 from datetime import datetime
 from types import SimpleNamespace
 
 from core import tracking_projection
 from models.base import MediaType
 from models.media import Media
+
+
+class EditorArtworkTests(unittest.IsolatedAsyncioTestCase):
+    async def test_owner_context_preserves_the_canonical_movie_and_series_hero(self):
+        from core.tracking_editor import attach_editor_context
+        from core.media_images import BACKGROUND_POLICY_VERSION
+        result=Mock()
+        result.scalars.return_value.all.return_value=[]
+        result.first.return_value=None
+        db=SimpleNamespace(execute=AsyncMock(return_value=result),scalars=AsyncMock(return_value=[]))
+        for media in (_media(media_type=MediaType.movie,imdb_id='tt1663202',backdrop_path='/legacy.jpg'),
+                      _media(backdrop_path='/legacy.jpg',tmdb_data={'_anylist_backdrop':{
+                          'version':BACKGROUND_POLICY_VERSION,'image':'https://image.tmdb.org/t/p/original/selected.jpg'}})):
+            row=tracking_projection.media_data(media)
+            expected=row['backdrop']
+            await attach_editor_context(db,SimpleNamespace(id=1),[row],media_rows=[media])
+            self.assertEqual(row['backdrop'],expected)
+            self.assertEqual(row['background_status']['state'],'ready')
 
 
 def _media(**overrides):

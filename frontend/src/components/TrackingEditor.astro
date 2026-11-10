@@ -74,7 +74,6 @@ import {createGameEditor} from '../lib/game-editor';
 import {setupEditorSelect} from '../lib/editor-select';
 import {gameDatePatch,gameStatuses} from '../lib/game-editor-data';
 import {localToday} from '../lib/date-time';
-import {artworkIdentity} from '../lib/responsive-artwork';
 import {dismissPosterControls} from '../lib/poster-controls';
 import {confirmEntryAction as confirmAction,watchRollbackWarning} from '../lib/entry-confirmation';
 let pageListeners: AbortController;
@@ -156,15 +155,17 @@ document.addEventListener('astro:page-load', () => {
     dialog.querySelector<HTMLElement>('.editor-notes')!.hidden=child;
     dialog.querySelector<HTMLElement>('.editor-favorite')!.hidden=child;
     const poster = document.querySelector<HTMLImageElement>('#editor-poster')!;
-    let backdrop = document.querySelector<HTMLImageElement>('#editor-backdrop')!;
+    const backdrop = document.querySelector<HTMLImageElement>('#editor-backdrop')!;
     const artwork = editorStore.artwork(title);
     // Move the prepared node itself. Reassigning src can expose the previous entry while loading.
     const prepared=artwork.backdropImage;
-    if(prepared&&prepared!==backdrop){
-      prepared.id='editor-backdrop';prepared.className='editor-backdrop';prepared.alt='';
-      backdrop.replaceWith(prepared);backdrop=prepared;
+    const nextBackdrop=prepared||document.createElement('img');
+    if(nextBackdrop!==backdrop){
+      nextBackdrop.id='editor-backdrop';nextBackdrop.className='editor-backdrop';nextBackdrop.alt='';
+      backdrop.replaceWith(nextBackdrop);
     }
-    [poster, backdrop].forEach(image => { image.removeAttribute('srcset'); image.removeAttribute('sizes'); });
+    nextBackdrop.hidden=!prepared;
+    poster.removeAttribute('srcset');poster.removeAttribute('sizes');
     if (artwork.poster) {
       poster.src = artwork.poster;
       poster.alt = `${title.title} poster`;
@@ -172,14 +173,6 @@ document.addEventListener('astro:page-load', () => {
       poster.removeAttribute('src'); poster.removeAttribute('srcset'); poster.removeAttribute('sizes'); poster.alt = '';
     }
     poster.hidden = !title.poster;
-    const backdropPath = artwork.backdrop;
-    if (backdropPath && !prepared) {
-      // Never overwrite a retained entry's background with another entry's poster fallback.
-      const fallback=new Image();fallback.id='editor-backdrop';fallback.className='editor-backdrop';fallback.alt='';
-      fallback.src=backdropPath;backdrop.replaceWith(fallback);backdrop=fallback;
-    }
-    else if(!backdropPath) { backdrop.removeAttribute('src'); backdrop.removeAttribute('srcset'); backdrop.removeAttribute('sizes'); }
-    backdrop.hidden = !backdropPath;
     for (const name of ['status','progress','start_date','finish_date','rewatch_count','notes']) field(name).value = current[name] ?? '';
     gameFields.populate(title);
     refreshDateInputs();
@@ -272,19 +265,19 @@ document.addEventListener('astro:page-load', () => {
     const controller = new AbortController();
     loadController = controller;
     const cached = supplied ? editorStore.get(supplied) : editorStore.find(mediaId!);
-    if (cached) {
+    try {
+      const title = cached || await editorStore.load(mediaId!);
+      if(loadController!==controller||opener!==button||sessionSignal.aborted)return;
       const image = button.closest('.browse-card, .entry-row, .quick-search-result, .game-progress-card')?.querySelector<HTMLImageElement>('img') || document.querySelector<HTMLImageElement>('.media-cover img');
       const posterSource=image?.currentSrc||image?.src;
       const heroSource=document.querySelector<HTMLImageElement>('.lab-hero-image')?.currentSrc;
-      editorStore.warmArtwork(cached,
-        cached.type!=='game'||artworkIdentity(cached.poster||'')===artworkIdentity(posterSource||'')?posterSource:undefined,
-        cached.type!=='game'||artworkIdentity(cached.backdrop||'')===artworkIdentity(heroSource||'')?heroSource:undefined);
-      populateEditor(cached);
-      showDialog(dialog);
-      return;
-    }
-    try {
-      const title = await editorStore.load(mediaId!);
+      const preparation=editorStore.prepareArtwork(title,posterSource,heroSource,sessionSignal);
+      if(!editorStore.artwork(title).backdropImage){
+        // Give a cold image one short chance to decode without holding the editor on provider I/O.
+        let timer:ReturnType<typeof setTimeout>|undefined;
+        try{await Promise.race([preparation,new Promise<void>(resolve=>{timer=setTimeout(resolve,200);})]);}
+        finally{clearTimeout(timer);}
+      }
       if (loadController !== controller || opener !== button || sessionSignal.aborted) return;
       populateEditor(title);
       showDialog(dialog);
@@ -459,8 +452,7 @@ document.addEventListener('astro:page-load', () => {
     const title = game?editorStore.findSubject({kind:'game',catalogue_id:id}):editorStore.find(id);
     const warm=(title:EditorTitle)=>{
       const poster=image?.currentSrc||image?.src,hero=document.querySelector<HTMLImageElement>('.lab-hero-image')?.currentSrc;
-      editorStore.warmArtwork(title,!game||artworkIdentity(title.poster||'')===artworkIdentity(poster||'')?poster:undefined,
-        !game||artworkIdentity(title.backdrop||'')===artworkIdentity(hero||'')?hero:undefined);
+      if(!sessionSignal.aborted)void editorStore.warmArtwork(title,poster,hero,true);
     };
     if (title) warm(title);
     else void (game?editorStore.loadSubject({kind:'game',catalogue_id:id}):editorStore.load(id)).then(warm).catch(() => {});

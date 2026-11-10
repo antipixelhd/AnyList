@@ -6,6 +6,7 @@ import {mountListFilterControls} from './list-filter-controls';
 import {profileListQuery} from './profile-list-query';
 import {profileListPageSize,profileListPages,ProfileListGeometry} from './profile-list-window';
 import {panelActive,panelUrl,setPanelUrl} from './profile-panel';
+import {listEditorArtwork} from './list-editor-artwork';
 
 type Page={offset:number;total:number;results:Record<string,any>[];group_counts:Record<string,number>;status_counts:Record<string,number>;genres:string[];years:string[]};
 const stateLimit=10_000;
@@ -68,6 +69,11 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
     if(changed)schedule();
   });
   const preview=mountListCoverPreview(signal,panel);
+  const prepareRow=(row:HTMLElement)=>{
+    const state=states.get(Number(row.dataset.listEntry));
+    return owner&&state?adapter.editorTitle(state):undefined;
+  };
+  const artwork=owner?listEditorArtwork(signal,prepareRow,()=>panelActive(panel)):undefined;
   const error=document.createElement('p');error.className='error-message virtual-list-error';error.hidden=true;error.setAttribute('role','alert');
   const retry=document.createElement('button');retry.type='button';retry.className='lab-text-button';retry.textContent='Retry';
   error.append('Unable to load this part of the list. ',retry);root.querySelector('.list-content')!.append(error);
@@ -180,6 +186,7 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
           (local?local.ids.includes(activeId):active.dataset.listRowKey?.startsWith(`${epoch}:`)))desired.push(active);
       const keep=new Set(desired);
       for(const child of [...group.children])if(!keep.has(child as HTMLElement)){
+        artwork?.remove(child as HTMLElement);
         rowSizes.unobserve(child);delete (child as HTMLElement).dataset.listRowKey;child.remove();
       }
       desired.sort((a,b)=>Number(a.style.getPropertyValue('--list-row'))-Number(b.style.getPropertyValue('--list-row')));
@@ -187,9 +194,11 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
       desired.forEach(row=>{
         if(row!==cursor)group.insertBefore(row,cursor);
         cursor=row.nextSibling;
+        artwork?.observe(row);
       });
       base+=count;
     }
+    artwork?.resume();
     if(anchor){
       if(anchor.row.isConnected){const shift=anchor.row.getBoundingClientRect().top-anchor.top;if(Math.abs(shift)>.5)window.scrollBy(0,shift);}
       anchor=undefined;

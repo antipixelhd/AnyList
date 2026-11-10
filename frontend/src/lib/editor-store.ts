@@ -1,6 +1,7 @@
 import { localToday } from './date-time';
 import { responsiveArtwork,artworkIdentity } from './responsive-artwork';
 import { DecodedArtwork } from './decoded-artwork.ts';
+import {gameHeroChoice} from './game-hero-choice.ts';
 
 export type WorkSubject = {kind:'game'; catalogue_id:number}
   | {kind:'movie'|'series'; media_id:number; tmdb_id?:number|null};
@@ -10,6 +11,8 @@ export type EditorTitle = {
   subject?: WorkSubject; game_class?:string; base_work_id?:number|null;
   game_state?:Record<string,any>;
   poster?: string | null; backdrop?: string | null;
+  backdrop_mobile?:string|null;pinned_banner?:string|null;
+  backdrop_fallbacks?:string[];background_status?:{state?:string;retry_after?:number};
   entry: Record<string, any> | null;
   favorite?: boolean;
   editor_library?: { available: boolean; desired: boolean };
@@ -22,10 +25,14 @@ type RecordState = {
   pending: { patch: Record<string, any> | null }[]; tail: Promise<unknown>;
   importing?: Promise<number>; stale?: boolean;
   posterSrc?: string; backdropSrc?: string;
+  displayedHero?:{primary:string|null|undefined;path:string;src:string};
+  artworkRead?:Promise<void>;artworkRetry?:number;
   libraryCommitted?: EditorTitle['editor_library']; libraryPending: {desired: boolean}[];
   favoriteCommitted: boolean;
 };
 type Transport = (path: string, options?: RequestInit) => Promise<any>;
+export type ArtworkUpdate = {poster?:string;backdrop?:string;backdropSrc?:string;
+  primaryBackdrop?:string|null;pinnedBanner?:string|null};
 
 /** One viewer-scoped source for editor reads and ordered optimistic writes. */
 export class EditorStore {
@@ -61,9 +68,22 @@ export class EditorStore {
   }
   seed(title: EditorTitle) {
     const existing = this.record(title);
+    if(existing?.title===title)return title;
+    if(title.type==='game'){
+      const pinned_banner=title.pinned_banner===undefined?title.game_state?.pinned_banner:title.pinned_banner;
+      title={...title,pinned_banner,backdrop:gameHeroChoice({...title,pinned_banner},this.viewer,this.mobileArtwork())};
+    }
     if (existing) {
-      if(existing.title===title)return existing.title;
       if (!existing.pending.length && !existing.libraryPending.length && !existing.importing) {
+        const displayed=existing.displayedHero;
+        if(title.type!=='game'&&displayed&&title.backdrop===displayed.primary){
+          title={...title,backdrop:displayed.path};
+        }else if(title.backdrop&&title.backdrop!==displayed?.path){
+          existing.displayedHero=undefined;
+        }
+        if(existing.title.background_status?.state==='ready'&&title.background_status?.state==='pending')
+          title={...title,backdrop:existing.title.backdrop,background_status:existing.title.background_status,
+            backdrop_fallbacks:existing.title.backdrop_fallbacks};
         if(title.entry&&existing.title.entry){
           // A lightweight detail response may omit list-editor projections.
           // Missing metadata is not an instruction to discard known totals.
@@ -73,6 +93,8 @@ export class EditorStore {
             incoming.season_position=existing.title.entry.season_position;
           title={...title,entry:incoming};
         }
+        this.applyArtwork(existing,{poster:title.poster||undefined,backdrop:title.backdrop||undefined});
+        if('backdrop' in title&&!title.backdrop){existing.title.backdrop=null;existing.backdropSrc=undefined;}
         Object.assign(existing.title, title);
         existing.committed = title.entry;
         existing.favoriteCommitted = title.favorite ?? !!title.entry?.favorite;
@@ -121,6 +143,7 @@ export class EditorStore {
     const pending=this.request(`games/works/${subject.catalogue_id}`).then(state=>{
       if(viewer!==this.viewer)throw new Error('Your account changed. Please try again.');
       return this.seed({id:subject.catalogue_id,subject,type:'game',title:state.title,poster:state.image_url,
+        backdrop:state.backdrop,backdrop_mobile:state.backdrop_mobile,pinned_banner:state.pinned_banner,background_status:state.background_status,
         game_class:state.game_class,base_work_id:state.base_work_id,game_state:state,
         favorite:state.favorite,entry:state.listed?state:null});
     });
@@ -332,17 +355,76 @@ export class EditorStore {
     record.tail = task;
     return task;
   }
-  warmArtwork(title: EditorTitle, posterSrc?: string, backdropSrc?:string) {
+  private mobileArtwork(){return typeof matchMedia!=='undefined'&&matchMedia('(max-width:650px)').matches;}
+  private backdropURL(title:EditorTitle,path=title.backdrop) {
+    return responsiveArtwork(path,{size:title.type==='game'?'original':'w1280',route:'auto'})?.src;
+  }
+  private fallbackURLs(title:EditorTitle,path=title.backdrop) {
+    return (title.backdrop_fallbacks||[])
+      .filter(url=>artworkIdentity(url)!==artworkIdentity(path||''))
+      .map(url=>this.backdropURL(title,url)).filter((src):src is string=>!!src);
+  }
+  async warmListArtwork(title:EditorTitle,signal:AbortSignal) {
+    const displayed=this.record(title)?.displayedHero;
+    const path=title.type==='game'?gameHeroChoice(title,this.viewer,this.mobileArtwork()):title.backdrop;
+    const src=displayed&&(displayed.path===path||title.type!=='game'&&displayed.primary===path)
+      ?displayed.src:this.backdropURL(title,path);
+    for(const candidate of [src,...this.fallbackURLs(title,path)]){
+      if(signal.aborted)return;
+      if(!candidate)continue;
+      await this.decodedArtwork.warm(candidate);
+      if(this.decodedArtwork.get(candidate))return;
+    }
+  }
+  async prepareArtwork(title:EditorTitle,posterSrc?:string,backdropSrc?:string,signal?:AbortSignal){
+    if(signal?.aborted)return;
+    const record=this.record(title)!;
+    const original=record.title.backdrop;
+    const warm=this.warmArtwork(record.title,posterSrc,backdropSrc,true);
+    const state=record.title.background_status?.state;
+    const mobileGame=title.type==='game'&&this.mobileArtwork();
+    const needsRead=!record.displayedHero&&state!=='unavailable'&&state!=='ready'
+      &&(!original||!mobileGame&&(state==='pending'||state==='deferred'));
+    if(needsRead&&title.id&&!record.artworkRead&&Date.now()>=(record.artworkRetry||0)){
+      const path=title.type==='game'?`games/works/${title.id}/background${mobileGame?'?provider=igdb':''}`:`title/${title.id}/background`;
+      record.artworkRetry=Date.now()+30_000;
+      const requestSignal=signal?AbortSignal.any([signal,AbortSignal.timeout(8000)]):AbortSignal.timeout(8000);
+      record.artworkRead=this.request(path,{signal:requestSignal}).then(data=>{
+        if(requestSignal.aborted||this.record(title)!==record||record.displayedHero)return;
+        record.title.background_status=data.background_status;
+        record.title.backdrop_fallbacks=data.backdrop_fallbacks;
+        record.artworkRetry=Date.now()+Math.max(30,data.background_status?.retry_after||0)*1000;
+        if(title.type==='game')record.title.pinned_banner=data.pinned_banner;
+        const chosen=title.type==='game'?gameHeroChoice({...record.title,backdrop:data.backdrop,backdrop_mobile:data.backdrop},this.viewer,mobileGame):data.backdrop;
+        this.applyArtwork(record,{backdrop:chosen});
+        if(chosen&&chosen!==original)void this.warmArtwork(record.title,posterSrc,backdropSrc,true);
+      }).catch(()=>{if(signal?.aborted)record.artworkRetry=undefined;}).finally(()=>{record.artworkRead=undefined;});
+    }
+    await warm;
+    if(signal?.aborted||this.record(title)!==record)return;
+    if(this.artwork(record.title).backdropImage)return;
+    await record.artworkRead;
+    if(signal?.aborted||this.record(title)!==record)return;
+    if(record.title.backdrop!==original)await this.warmArtwork(record.title,posterSrc,backdropSrc,true);
+    if(this.artwork(record.title).backdropImage)return;
+    for(const src of this.fallbackURLs(record.title)){
+      if(signal?.aborted)return;
+      await this.decodedArtwork.warm(src,true);
+      if(this.decodedArtwork.get(src))return;
+    }
+  }
+  warmArtwork(title: EditorTitle, posterSrc?: string, backdropSrc?:string,priority=false) {
     const record = this.record(title)!;
     // A global search opener may sit above a different title's details page.
     // Reuse decoded/displayed sources only when they belong to this title.
     if (posterSrc && title.poster && artworkIdentity(posterSrc) === artworkIdentity(title.poster)) record.posterSrc = posterSrc;
-    if (!title.backdrop) return;
+    if (!title.backdrop) return Promise.resolve();
     // A details-page editor reuses the hero's selected source instead of warming another bucket.
     if(backdropSrc&&artworkIdentity(backdropSrc)===artworkIdentity(title.backdrop))record.backdropSrc=backdropSrc;
-    record.backdropSrc ||= responsiveArtwork(title.backdrop, {size:'w1280', route:'auto'})?.src;
-    if (!record.backdropSrc) return;
-    void this.decodedArtwork.warm(record.backdropSrc);
+    const displayed=record.displayedHero;
+    record.backdropSrc ||= displayed?.path===title.backdrop?displayed.src:this.backdropURL(title);
+    if (!record.backdropSrc) return Promise.resolve();
+    return this.decodedArtwork.warm(record.backdropSrc,priority);
   }
   warmMetadata(title:EditorTitle) {
     const record=this.record(title);
@@ -354,15 +436,15 @@ export class EditorStore {
     record.title.backdrop ||= title.backdrop;
     return record.title;
   }
-  updateArtwork(id:number,artwork:{poster?:string;backdrop?:string}) {
+  updateArtwork(id:number,artwork:ArtworkUpdate) {
     const record=[...this.records.values()].find(record=>record.title.id===id&&record.title.type!=='game');
     this.applyArtwork(record,artwork);
   }
-  updateSubjectArtwork(subject:WorkSubject,artwork:{poster?:string;backdrop?:string}) {
+  updateSubjectArtwork(subject:WorkSubject,artwork:ArtworkUpdate) {
     const title=this.findSubject(subject);
     this.applyArtwork(title?this.record(title):undefined,artwork);
   }
-  private applyArtwork(record:RecordState|undefined,artwork:{poster?:string;backdrop?:string}) {
+  private applyArtwork(record:RecordState|undefined,artwork:ArtworkUpdate) {
     if(!record)return;
     if(artwork.poster){
       if(artworkIdentity(record.title.poster||'')!==artworkIdentity(artwork.poster))record.posterSrc=undefined;
@@ -373,14 +455,22 @@ export class EditorStore {
         record.backdropSrc=undefined;
       }
       record.title.backdrop=artwork.backdrop;
+      if(artwork.backdropSrc){
+        record.displayedHero={path:artwork.backdrop,src:artwork.backdropSrc,primary:artwork.primaryBackdrop};
+        record.backdropSrc=artwork.backdropSrc;
+      }
     }
+    if('pinnedBanner' in artwork)record.title.pinned_banner=artwork.pinnedBanner;
   }
   artwork(title: EditorTitle, posterSrc?: string) {
     const record = this.record(title)!;
     const poster = posterSrc || record.posterSrc || responsiveArtwork(title.poster, {size:'w342', route:'auto'})?.src;
     // Choose once before opening. Never swap artwork under an active editor.
-    const backdropImage=this.decodedArtwork.get(record.backdropSrc);
-    return {poster, backdrop: backdropImage ? record.backdropSrc : poster, backdropImage};
+    for(const src of [record.backdropSrc||this.backdropURL(record.title),...this.fallbackURLs(record.title)]){
+      const backdropImage=this.decodedArtwork.get(src);
+      if(backdropImage)return {poster,backdrop:src,backdropImage};
+    }
+    return {poster,backdrop:undefined,backdropImage:undefined};
   }
 }
 

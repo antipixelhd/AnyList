@@ -7,7 +7,7 @@ from urllib.parse import urlsplit
 from sqlalchemy import or_, select
 from sqlalchemy.orm import load_only
 
-from core.catalogue_normalize import image,GAME_ARTWORK_VERSION
+from core.catalogue_normalize import image
 from core.media_images import provider_images, unique_images, image_key
 from core.screen_characters import character_images, role_image_candidates
 from core.studio_names import studio_name
@@ -228,10 +228,9 @@ def primary_details(work,artwork=None):
         [url for value in attrs.get('artwork') or [] if (url:=image(value))],limit=None if work.kind=='game' else 10)
     scenes=[url for value in attrs.get('scene_artwork') or [] if (url:=image(value))]
     selected=image(attrs.get('backdrop_path')) or (next(iter(gallery),None) if 'attributes.artwork' in (work.protected_fields or []) else None)
-    from core.game_artwork import asset_url,background_status
-    grid_hero=asset_url((attrs.get('steamgriddb_hero') or {}).get('image')) if work.kind=='game' else None
-    scene=next(iter(scenes if work.kind=='game' and attrs.get('artwork_policy_version') in range(1,GAME_ARTWORK_VERSION+1) else gallery),None)
-    backdrop=selected or grid_hero or scene
+    from core.game_artwork import primary_background
+    background=primary_background(work) if work.kind=='game' else {}
+    backdrop=background.get('backdrop') if work.kind=='game' else selected or next(iter(gallery),None)
     preview=next((url for url in scenes if image_key(url)!=image_key(backdrop or '')),None) if work.kind=='game' else None
     if work.kind=='game':gallery=[url for url in gallery if image_key(url) not in {image_key(backdrop or ''),image_key(preview or '')}]
     released=attrs.get('release_date')
@@ -242,8 +241,8 @@ def primary_details(work,artwork=None):
     poster=image(work.image_url)
     return {'id':work.id,'type':work.kind,'title':work.name,'overview':work.description,
         'poster':poster,'posters':[poster] if poster else [],'artwork':gallery,'backdrop':backdrop,
-        **({'backdrop_mobile':selected or scene or grid_hero,'artwork_preview':{'image':preview},'backdrop_fallbacks':scenes,
-            'background_status':background_status(work),'preview_status':{'state':'ready'}} if work.kind=='game' else {}),
+        **({**background,'artwork_preview':{'image':preview},'backdrop_fallbacks':scenes,
+            'preview_status':{'state':'ready'}} if work.kind=='game' else {}),
         'release_date':released,'year':str(released or '')[:4],
         **({'release_date_precision':attrs.get('release_date_precision'),'release_quarter':attrs.get('release_quarter')} if work.kind=='game' else {}),
         'genres':[value if isinstance(value,str) else value.get('name') for value in attrs.get('genres') or []

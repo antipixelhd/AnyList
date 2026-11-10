@@ -2,6 +2,7 @@
 
 from sqlalchemy import or_, select, tuple_
 
+from core.media_images import screen_backdrop
 from core.tracking_rules import effective_score
 from models import Collection, CollectionFile, Media, MediaServerConnection
 from models.base import CollectionSource
@@ -58,7 +59,13 @@ async def attach_editor_context(db, viewer, results, *, media_rows=None):
         cached = by_id.get(row.get("id")) or by_external.get((row["type"], row.get("tmdb_id")))
         if cached:
             row["id"] = cached.id
-            row["backdrop"] = cached.backdrop_path
+            background = screen_backdrop(cached)
+            row["backdrop"] = background["backdrop"]
+            if media_rows is not None:
+                if background["backdrop_fallbacks"]:
+                    row["backdrop_fallbacks"] = background["backdrop_fallbacks"]
+                status = background["background_status"]
+                row["background_status"] = {key: value for key, value in status.items() if value}
             row["poster"] = row.get("poster") or cached.poster_path
         entry = entries.get(row.get("id"))
         row['favorite'] = row.get('id') in favorites or bool(entry and entry.favorite)

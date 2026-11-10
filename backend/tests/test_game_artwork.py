@@ -18,6 +18,22 @@ def asset(id=1,**values):
 
 
 class ArtworkTests(unittest.IsolatedAsyncioTestCase):
+    def test_compact_tracking_background_matches_detail_policy_without_gallery_projection(self):
+        from core.game_tracking import present
+        from models.catalogue import CatalogueEntity
+        work=CatalogueEntity(id=7,kind='game',name='Game',protected_fields=[],attributes={
+            'game_class':'game','steamgriddb_hero':{'image':asset()['url']},
+            'scene_artwork':['https://images.igdb.com/igdb/image/upload/t_original/scene.jpg'],
+            'artwork_policy_version':1})
+        state=present(work)
+        detail=primary_details(work)
+        self.assertEqual(state.backdrop,detail['backdrop'])
+        self.assertEqual(state.backdrop_mobile,detail['backdrop_mobile'])
+        self.assertNotIn('artwork',state.model_dump())
+        pinned=present(work,pinned_banner=asset(2)['url'])
+        self.assertEqual(pinned.backdrop,asset(2)['url'])
+        self.assertEqual(pinned.backdrop_mobile,asset(2)['url'])
+
     def test_cycle_threshold_and_ranked_fallback_for_redacted_votes(self):
         rows=artwork.candidates([asset(index) for index in range(10)],'heroes')
         self.assertEqual(artwork.cycling(rows),[row['url'] for row in rows[:6]])

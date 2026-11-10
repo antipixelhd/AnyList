@@ -6,11 +6,11 @@ while holding a tracking lock; reads and writes never infer missing progress.
 from datetime import date, datetime, timezone
 
 from fastapi import HTTPException
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import String, cast, delete, func, literal, select, text
 from sqlalchemy.orm import defer
 
 from core.game_types import capabilities,playable_child
-from models import User
+from models import User, UserProfileData
 from models.catalogue import CatalogueEntity, CatalogueRelationship
 from models.games import (GameAchievement, GameAchievementUnlock, GameActivity,
                           GameChildState, GameEntry, GameFavorite)
@@ -109,7 +109,7 @@ def achievement_summary(entity, row=None, exact_count=0):
         percentage=percentage, exact_count=exact_count)
 
 
-def present(entity, row=None, *, owner=True, favorite=False, exact_count=0):
+def present(entity, row=None, *, owner=True, favorite=False, exact_count=0, pinned_banner=None):
     attrs = entity.attributes or {}
     year = str(attrs.get('release_date') or '')[:4]
     independent = isinstance(row, GameEntry)
@@ -120,7 +120,12 @@ def present(entity, row=None, *, owner=True, favorite=False, exact_count=0):
     eligible = bool(independent and row.status == 'completed' and row.finish_date is not None
         and row.completion_seconds is not None
         and (row.total_seconds is None or row.total_seconds >= row.completion_seconds))
+    from core.game_artwork import primary_background
+    background=primary_background(entity)
+    if pinned_banner:
+        background.update(backdrop=pinned_banner,backdrop_mobile=pinned_banner,background_status={'state':'ready'})
     return GameEntryOut(subject=GameSubject(catalogue_id=entity.id), title=entity.name,
+        **background,pinned_banner=pinned_banner,
         year=year if len(year) == 4 and year.isdigit() else None,
         genres=[genre for genre in attrs.get('genres') or [] if isinstance(genre, str)],
         image_url=entity.image_url, game_class=capabilities(entity.attributes).game_class,
@@ -143,8 +148,11 @@ async def states(db, user_id, work_ids, *, owner=True):
     ids = set(work_ids)
     if not ids:
         return []
-    entities = (await db.scalars(select(CatalogueEntity).where(
-        CatalogueEntity.id.in_(ids), CatalogueEntity.kind == 'game'))).all()
+    pin=UserProfileData.game_banners[cast(CatalogueEntity.id,String)].astext if owner else literal(None)
+    query=select(CatalogueEntity,pin).where(CatalogueEntity.id.in_(ids),CatalogueEntity.kind=='game')
+    if owner:
+        query=query.outerjoin(UserProfileData,UserProfileData.user_id==user_id)
+    entities=(await db.execute(query)).all()
     entry_query = select(GameEntry).where(GameEntry.user_id == user_id, GameEntry.work_id.in_(ids))
     if not owner:
         entry_query = entry_query.options(defer(GameEntry.notes, raiseload=True))
@@ -157,8 +165,8 @@ async def states(db, user_id, work_ids, *, owner=True):
         GameAchievement,GameAchievement.id==GameAchievementUnlock.achievement_id).where(GameAchievement.active.is_(True),
         GameAchievementUnlock.user_id == user_id, GameAchievementUnlock.work_id.in_(ids)
     ).group_by(GameAchievementUnlock.work_id))).all())
-    return [present(e, entries.get(e.id) or children.get(e.id), owner=owner,
-        favorite=e.id in favorites, exact_count=exact.get(e.id, 0)) for e in entities]
+    return [present(e, entries.get(e.id) or children.get(e.id), owner=owner,pinned_banner=pin,
+        favorite=e.id in favorites, exact_count=exact.get(e.id, 0)) for e,pin in entities]
 
 
 def require_revision(row, revision):

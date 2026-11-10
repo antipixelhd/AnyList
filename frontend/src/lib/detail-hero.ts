@@ -1,8 +1,8 @@
 import {artworkIdentity} from './responsive-artwork.ts';
-import type {editorStore} from './editor-store.ts';
+import type {ArtworkUpdate,editorStore} from './editor-store.ts';
 
 export function publishDetailArtwork(store:Pick<typeof editorStore,'updateArtwork'|'updateSubjectArtwork'>,
-  info:{id:number;type?:string},artwork:{poster?:string;backdrop?:string}) {
+  info:{id:number;type?:string},artwork:ArtworkUpdate) {
   if(info.type==='game')store.updateSubjectArtwork({kind:'game',catalogue_id:info.id},artwork);
   else if(info.type==='movie'||info.type==='series')store.updateArtwork(info.id,artwork);
 }
