@@ -245,7 +245,9 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
     }
     // Reuse a grid/strip image already requested for this exact artwork. A
     // pending full-size slide can show it without a new preview download.
-    const preview=urgent?[...root.querySelectorAll<HTMLImageElement>('.lab-gallery img,.lab-art-image img,[data-image-viewer-slots] img')]
+    // Dialogs are portaled outside root when opened. Take the strip image
+    // directly from its slot instead of relying on a detail-root query.
+    const preview=urgent?[...(thumbnail?[thumbnail]:[]),...root.querySelectorAll<HTMLImageElement>('.lab-gallery img,.lab-art-image img')]
       .filter(candidate=>imageKey(candidate.currentSrc||candidate.src||candidate.dataset.gallerySrc||'')===imageKey(original)):thumbnail?[thumbnail]:undefined;
     const existing=preparedImages.get(image);
     if(existing?.url===url){

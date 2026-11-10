@@ -50,13 +50,13 @@ test('decoded game artwork retains square and portrait entries instead of droppi
   }
 });
 
-test('a pending preview keeps its canonical identity before currentSrc becomes available',async()=>{
+test('a portaled viewer uses its pending strip preview before currentSrc becomes available',async()=>{
   const url='https://images.igdb.com/igdb/image/upload/t_1080p/art.jpg';
   const thumbnail={currentSrc:'',src:url.replace('t_1080p','t_cover_small_2x'),dataset:{},getAttribute:()=> 'thumbnail'};
   const image={naturalWidth:0,naturalHeight:0,complete:false,fetchPriority:'low'};
   const skeleton={classList:{add(){}},textContent:''};let previews;
   const scope={info:{type:'game'},galleries:{artwork:[url]},active:'artwork',current:0,name:'Entry',standalone:undefined,
-    lightbox:{open:true},signal:{aborted:false},root:{querySelectorAll:()=>[thumbnail]},
+    lightbox:{open:true},signal:{aborted:false},root:{querySelectorAll:()=>[]},
     slots:{querySelector:()=>({querySelector:()=>thumbnail})},loadThumbnail:()=>{},carousel:{slide:()=>({image,skeleton})},
     preparedImages:new WeakMap(),imageKey:artworkIdentity,responsiveArtwork:src=>({src}),
     loadViewerImage:(_image,_skeleton,_url,_alt,_priority,preview)=>{previews=preview;return Promise.resolve(false);}};
