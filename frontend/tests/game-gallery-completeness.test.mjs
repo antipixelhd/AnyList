@@ -38,7 +38,7 @@ test('decoded game artwork retains square and portrait entries instead of droppi
     const image={naturalWidth:width,naturalHeight:800,complete:true,fetchPriority:'low'};
     const skeleton={classList:{add(){}},textContent:''};
     const scope={info:{type},galleries:{artwork:rows},active:'artwork',current:0,name:'Entry',standalone:undefined,
-      lightbox:{open:true},signal:{aborted:false},root:{querySelectorAll:()=>[]},carousel:{slide:()=>({image,skeleton})},
+      lightbox:{open:true},signal:{aborted:false},root:{querySelectorAll:()=>[]},slots:{querySelector:()=>null},carousel:{slide:()=>({image,skeleton})},
       preparedImages:new WeakMap(),imageKey:value=>value,responsiveArtwork:src=>({src}),
       loadViewerImage:()=>Promise.resolve(true),fitViewer:()=>{},viewerGroup:()=> 'artwork',
       refreshPreviewLoading:()=>{},showImage:()=>{},reveal:()=>{},showToast:()=>{}};

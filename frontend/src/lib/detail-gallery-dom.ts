@@ -10,19 +10,24 @@ export function reconcileGalleryChildren(parent: HTMLElement, children: HTMLElem
 /** Browser lazy loading may fetch far beyond the viewport. Gallery variants
  * get a source only when their preview actually intersects the visible area. */
 export function createGalleryImageLoader(signal:AbortSignal,start:(button:HTMLElement)=>void) {
+  const load=(button:HTMLElement)=>{
+    const image=button.querySelector<HTMLImageElement>('img');
+    observer.unobserve(button);
+    if(signal.aborted||!image?.dataset.gallerySrc)return;
+    image.src=image.dataset.gallerySrc;delete image.dataset.gallerySrc;start(button);
+  };
   const observer=new IntersectionObserver(entries=>{
     for(const entry of entries){
       if(!entry.isIntersecting)continue;
-      const button=entry.target as HTMLElement,image=button.querySelector<HTMLImageElement>('img');
-      observer.unobserve(button);
-      if(signal.aborted||!image?.dataset.gallerySrc)continue;
-      image.src=image.dataset.gallerySrc;delete image.dataset.gallerySrc;start(button);
+      load(entry.target as HTMLElement);
     }
   },{rootMargin:'0px'});
   signal.addEventListener('abort',()=>observer.disconnect(),{once:true});
-  return (button:HTMLElement)=>{
+  return (button:HTMLElement,eager=false)=>{
     if(signal.aborted)return;
-    if(button.querySelector<HTMLImageElement>('img')?.dataset.gallerySrc)observer.observe(button);
+    if(button.querySelector<HTMLImageElement>('img')?.dataset.gallerySrc){
+      if(eager)load(button);else observer.observe(button);
+    }
     else start(button);
   };
 }

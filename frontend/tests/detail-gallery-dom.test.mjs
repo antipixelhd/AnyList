@@ -72,3 +72,18 @@ test('offscreen gallery thumbnails stay source-free until viewed and stop loadin
     load(other);controller.abort();callback([{target:other,isIntersecting:true}]);assert.equal(later.src,undefined);assert.equal(disconnected,true);
   }finally{if(previous===undefined)delete globalThis.IntersectionObserver;else globalThis.IntersectionObserver=previous;}
 });
+
+test('explicit viewer intent preloads strip previews once without exposing offscreen grid images',()=>{
+  const previous=globalThis.IntersectionObserver;let callback;
+  globalThis.IntersectionObserver=class {constructor(cb){callback=cb;} observe(){} unobserve(){} disconnect(){}};
+  try {
+    const controller=new AbortController(),started=[];
+    const strip={dataset:{gallerySrc:'strip'}},grid={dataset:{gallerySrc:'grid'}};
+    const stripButton={querySelector:()=>strip},gridButton={querySelector:()=>grid};
+    const load=createGalleryImageLoader(controller.signal,button=>started.push(button));
+    load(gridButton);load(stripButton,true);
+    assert.equal(strip.src,'strip');assert.equal(grid.src,undefined);
+    callback([{target:stripButton,isIntersecting:true}]);assert.equal(started.length,1);
+    controller.abort();load(gridButton,true);assert.equal(grid.src,undefined);
+  }finally{if(previous===undefined)delete globalThis.IntersectionObserver;else globalThis.IntersectionObserver=previous;}
+});

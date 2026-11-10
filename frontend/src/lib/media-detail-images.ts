@@ -235,6 +235,14 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
     const urgent=index===current||exposed;
     if(urgent)slide.image.fetchPriority='high';
     const {image,skeleton}=slide;
+    // Full-viewer intent also admits its tiny strip previews. Keep them ahead
+    // of a fast swipe, including slides whose grid previews remain offscreen.
+    const button=slots.querySelector<HTMLButtonElement>(`button[data-image-index="${index}"]`);
+    if(button){
+      const thumbnail=button.querySelector<HTMLImageElement>('img');
+      if(thumbnail&&!thumbnail.getAttribute('src'))thumbnail.fetchPriority=urgent?'high':'low';
+      loadThumbnail(button,true);
+    }
     // Reuse a grid/strip image already requested for this exact artwork. A
     // pending full-size slide can show it without a new preview download.
     const preview=urgent?[...root.querySelectorAll<HTMLImageElement>('.lab-gallery img,.lab-art-image img,[data-image-viewer-slots] img')]
@@ -287,7 +295,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
     };
     if(thumbnail.complete)inspect();else thumbnail.addEventListener('load',inspect,{signal,once:true});
   };
-  root.querySelectorAll<HTMLButtonElement>('.lab-gallery [data-detail-image],.lab-art-image').forEach(loadThumbnail);
+  root.querySelectorAll<HTMLButtonElement>('.lab-gallery [data-detail-image],.lab-art-image').forEach(button=>loadThumbnail(button));
   const galleryStatus=root.querySelector<HTMLElement>('[data-detail-artwork-status]');
   let previewInfo=info.artworkPreview as {image?:string;thumbnail?:string}|undefined;
   let thumbnails:Record<string,string>=info.artworkThumbnails||{};
