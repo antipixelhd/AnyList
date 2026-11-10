@@ -192,11 +192,23 @@ async def push_connection(
     )
     if target_ids is not None:
         removed_library_ids &= target_ids
+        if not target_ids:
+            return 0
+    if watch_only and not watched_records:
+        return 0
 
     lock = stremio.connection_lock(conn.id)
     async with lock:
         await refresh_stream_connection(db, conn)
-        remote_items = await stremio.datastore_get(conn.token, all_items=True)
+        if target_ids is None:
+            remote_items = await stremio.datastore_get(conn.token, all_items=True)
+        else:
+            ids = sorted(target_ids)
+            remote_items = []
+            for start in range(0, len(ids), BATCH_SIZE):
+                remote_items.extend(await stremio.datastore_get(
+                    conn.token, ids=ids[start : start + BATCH_SIZE], allow_missing=True,
+                ))
         remote_by_id = {
             str(item.get("_id")): item
             for item in remote_items
@@ -297,9 +309,9 @@ async def push_connection(
                     now,
                     in_library=False,
                 )
-            candidates[content_id] = stremio_payloads.with_watch_state(
-                base_item, record, series_meta.get(content_id, {}),
-            )
+            updated = stremio_payloads.with_watch_state(base_item, record, series_meta.get(content_id, {}))
+            if updated is not base_item:
+                candidates[content_id] = updated
 
         for record in progress_records:
             content_id = str(record["content_id"])
@@ -324,9 +336,14 @@ async def push_connection(
                 conn.token,
                 changes[start : start + BATCH_SIZE],
             )
-        if progress_records:
-            progress_ids = sorted({str(record["content_id"]) for record in progress_records})
-            confirmed = await stremio.datastore_get(conn.token, ids=progress_ids)
+        written_ids = {str(item["_id"]) for item in changes}
+        progress_ids = {str(record["content_id"]) for record in progress_records} & written_ids
+        clear_progress_ids &= written_ids
+        verify_ids = sorted(progress_ids | clear_progress_ids)
+        if verify_ids:
+            confirmed = []
+            for start in range(0, len(verify_ids), BATCH_SIZE):
+                confirmed.extend(await stremio.datastore_get(conn.token, ids=verify_ids[start : start + BATCH_SIZE]))
             confirmed_by_id = {str(item.get("_id")): item for item in confirmed}
             for content_id in progress_ids:
                 expected_state = (candidates.get(content_id) or {}).get("state") or {}
@@ -338,9 +355,6 @@ async def push_connection(
                     raise stremio.StremioAPIError(
                         "Stremio did not confirm the pushed Continue Watching progress"
                     )
-        if clear_progress_ids:
-            confirmed = await stremio.datastore_get(conn.token, ids=sorted(clear_progress_ids))
-            confirmed_by_id = {str(item.get("_id")): item for item in confirmed if isinstance(item, dict)}
             if any(
                 content_id not in confirmed_by_id
                 or (confirmed_by_id[content_id].get("state") or {}).get("timeOffset") not in (0, "0", None)

@@ -210,7 +210,7 @@ async def previous_source_playback(db, entry, media):
     return max(rows, key=playback_rank) if rows else None
 
 
-async def require_stream_reconciliation(db, conn):
+async def require_stream_reconciliation(db, conn, *, full_playback_push=False):
     """Shared by HTTP and background entry points; no first-write bypass."""
     if conn.type not in ('stremio', 'nuvio', 'jellyfin', 'emby', 'plex'):
         return
@@ -239,9 +239,12 @@ async def require_stream_reconciliation(db, conn):
     if not baseline or not baseline.approved:
         from fastapi import HTTPException
         raise HTTPException(409, 'Run a full import and confirm its summary in Notifications before pushing to this connection')
+    blocking_kinds = ['conflict', 'uncertain_removal', 'deletion_conflict', 'rating_conflict']
+    if full_playback_push:
+        blocking_kinds.append('resume_conflict')
     unresolved = (await db.execute(select(SyncReview.id).where(SyncReview.user_id == conn.user_id,
         SyncReview.connection_id == conn.id, SyncReview.state == 'pending',
-        SyncReview.kind.in_(['conflict','uncertain_removal','deletion_conflict','rating_conflict'])))).first()
+        SyncReview.kind.in_(blocking_kinds)))).first()
     if unresolved:
         from fastapi import HTTPException
         raise HTTPException(409, 'Resolve this connection’s conflicts in Notifications before pushing')
@@ -811,6 +814,15 @@ async def observe_stream_snapshot(
     watched=[row for row in watched if str(row.get('content_id')) not in deleted_keys]
     progress=[row for row in progress if str(row.get('content_id')) not in deleted_keys]
     completed=[row for row in completed if str(row.get('content_id')) not in deleted_keys]
+    verified_resumes = (baseline.snapshot or {}).get('verified_nuvio_resumes')
+    if conn.type == 'nuvio' and sync_playback and complete and verified_resumes:
+        from core.stream_actions import nuvio_resume_signature
+        matched = {str(row.get('content_id')) for row in progress
+            if str(row.get('content_id')) in verified_resumes
+            and nuvio_resume_signature(row) == verified_resumes[str(row['content_id'])].get('remote')}
+        baseline.snapshot = {**baseline.snapshot, 'verified_nuvio_resumes': {
+            key: value for key, value in verified_resumes.items() if key in matched
+        }}
     baseline.snapshot={**(baseline.snapshot or {}), 'library':sorted(library_ids),'progress':active,'mappings':mappings,'resume':resume,
         'outbound':outbound if not first else {},
         'nuvio_visibility':nuvio_visibility,

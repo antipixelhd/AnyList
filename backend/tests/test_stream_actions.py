@@ -6,7 +6,8 @@ from types import SimpleNamespace
 os.environ.setdefault('SECRET_KEY', 'local-tests-only')
 os.environ.setdefault('DATABASE_URL', 'postgresql+asyncpg://test:test@localhost/test')
 from core.stream_actions import (dismiss_stremio, dismiss_nuvio, push_stremio_progress,
-    push_nuvio_progress, queue_restorations, RemotePlaybackChanged)
+    push_nuvio_progress, queue_restorations, RemotePlaybackChanged, NuvioResumeConflict,
+    NewerNuvioResume, check_nuvio_resume, nuvio_resume_signature)
 from core import stremio
 from models import MediaServerConnection, Media, MediaType
 from models.tracking import StreamAction, StreamBaseline, TrackedEntry
@@ -257,6 +258,24 @@ class StreamActionAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(write.await_args.args[-1]['p_entries'],[{key:value for key,value in record.items()
             if key in ('content_id','content_type','video_id','season','episode','position','duration','last_watched','progress_key')}])
         self.assertEqual(read.await_count,2)
+
+    def test_nuvio_resume_uses_verified_row_or_playback_timestamp(self):
+        remote = {'content_id': 'tt1', 'progress_key': 'tt1_s6e8', 'season': 6, 'episode': 8,
+                  'position': 1000, 'duration': 100_000, 'last_watched': 1760000000000}
+        incoming = {**remote, 'position': 30_000, 'observed_at': '2026-11-09T00:14:32Z'}
+        verified = {'remote': nuvio_resume_signature(remote), 'observed_at': '2026-11-09T00:06:29Z'}
+        check_nuvio_resume(incoming, remote, verified, False)
+        check_nuvio_resume({**incoming, 'last_watched': 1760000001000}, remote, None, False)
+        independently_changed = {**remote, 'position': 2000}
+        with self.assertRaises(NuvioResumeConflict):
+            check_nuvio_resume(incoming, independently_changed, verified, False)
+        check_nuvio_resume(incoming, independently_changed, verified, True)
+        with self.assertRaises(NewerNuvioResume):
+            check_nuvio_resume(incoming, {**remote, 'last_watched': 1760000001000}, verified, True)
+        approved = {**incoming, 'approved_nuvio_resume': nuvio_resume_signature(independently_changed)}
+        check_nuvio_resume(approved, independently_changed, verified, False)
+        with self.assertRaises(NuvioResumeConflict):
+            check_nuvio_resume(approved, {**remote, 'position': 3000}, verified, False)
 
     async def test_nuvio_restore_and_reset_use_separate_progress_history_rpcs(self):
         conn=MediaServerConnection(id=987,user_id=1,type='nuvio',name='Fixture',url='https://example.test',token='old',server_user_id='1')

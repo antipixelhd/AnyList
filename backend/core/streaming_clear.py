@@ -7,7 +7,7 @@ import hashlib
 import logging
 from datetime import datetime, timezone
 
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.orm.attributes import set_committed_value
 
 from db import AsyncSessionLocal
@@ -126,6 +126,7 @@ def _project_cleared_snapshot(snapshot: dict, scope: dict[str, bool]) -> dict:
         projected["progress"] = {}
         projected["resume"] = {}
         projected["outbound"] = {}
+        projected.pop("verified_nuvio_resumes", None)
         projected["progress_completed"] = []
         records["progress"] = []
     if records or "records" in projected:
@@ -147,14 +148,20 @@ async def _freeze_outbound_work(db, user_id: int, connection_id: int, scope: dic
         for intent in intents:
             intent.state = "cleared"
     if scope.get("watched") or scope.get("playback"):
+        from core.stream_actions import NUVIO_RESUME_REVIEW_ERROR, retire_nuvio_resume_review
         actions = (await db.execute(select(StreamAction).where(
             StreamAction.user_id == user_id,
             StreamAction.connection_id == connection_id,
-            StreamAction.state == "pending",
+            or_(StreamAction.state == "pending", StreamAction.last_error == NUVIO_RESUME_REVIEW_ERROR)
+                if scope.get("playback") else StreamAction.state == "pending",
             StreamAction.action.in_(("dismiss", "restore", "reset", "upsert")),
         ).with_for_update())).scalars().all()
         for action in actions:
             if scope.get("playback") or action.action == "reset":
+                if action.last_error == NUVIO_RESUME_REVIEW_ERROR:
+                    await retire_nuvio_resume_review(db, action)
+                    action.last_error = None
+                    action.payload = {}
                 action.state = "cleared"
 
 

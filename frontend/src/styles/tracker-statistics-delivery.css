@@ -25,12 +25,20 @@
 .delivery-list span {
   color:var(--muted)
 }
+.resume-choices time {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 480px) {
+  .resume-choices li { grid-template-columns: minmax(0, 1fr); }
+}
 .delivery-list small {
   grid-column:1/-1;
   color:#efb4c6;
   font-size:var(--type-caption-size);
   overflow-wrap:anywhere
 }
+.resume-choices small { color:var(--muted); }
 /* Outbound delivery cards keep the shared notification shape while using a compact, full-height poster and service rows. */
 .review-dashboard .notice-list.compact .notice-card[data-notification-kind="outbound"] {
   grid-template-columns:58px minmax(0,1fr)

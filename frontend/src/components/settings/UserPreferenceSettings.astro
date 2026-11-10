@@ -229,6 +229,13 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
 
       </div>}
       {category === "notifications" && <div class="settings-stack">
+      <section>
+        <h2 class="section-headline">Sync reviews</h2>
+        <label class="setting-switch-row" for="auto-approve-uncertain-resume">
+          <span><strong>Auto-approve uncertain resume positions</strong></span>
+          <input id="auto-approve-uncertain-resume" type="checkbox" checked={trackingPrefs.auto_approve_uncertain_resume} />
+        </label>
+      </section>
       <!-- Device notifications -->
       <section>
         <div class="mb-4 border-b border-zinc-800 pb-2">
@@ -404,6 +411,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
         minimum_movie_runtime: 'Minimum movie runtime', excluded_categories: 'Excluded categories',
         minimum_votes: 'Minimum votes',
         country: 'Country', metadata_language: 'Metadata language',
+        'auto-approve-uncertain-resume': 'Resume reviews',
         'combine-lists': 'List preferences', streaming_services: 'Streaming services',
       };
       showMessage(state === 'error' ? message : `${names[group] || 'Setting'} saved.`, state === 'error' ? 'error' : 'success');
@@ -682,6 +690,9 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
     });
 
     // Save
+    const approveResume = document.getElementById('auto-approve-uncertain-resume') as HTMLInputElement | null;
+    if (approveResume) approveResume.dataset.savedValue = String(approveResume.checked);
+    approveResume?.addEventListener('change', () => saveTrackingPreferences({ auto_approve_uncertain_resume: approveResume.checked }, approveResume, 'auto_approve_uncertain_resume'));
     const combineLists = document.getElementById('combine-lists') as HTMLInputElement | null;
     const defaultSort = document.getElementById('default-list-sort') as HTMLSelectElement | null;
     const removeSpecials = document.getElementById('remove-specials-seasons') as HTMLInputElement | null;
@@ -705,7 +716,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
       const revision = (trackingRevisions.get(field) || 0) + 1;
       trackingRevisions.set(field, revision);
       const requestedValue = control instanceof HTMLInputElement && control.type === 'checkbox' ? String(control.checked) : control.value;
-      const statusKey = field === 'minimum_popularity' ? 'minimum-popularity' : field === 'include_rereleases' ? 'include-rereleases' : field === 'remove_specials_seasons' ? 'remove-specials-seasons' : 'combine-lists';
+      const statusKey = field === 'auto_approve_uncertain_resume' ? 'auto-approve-uncertain-resume' : field === 'minimum_popularity' ? 'minimum-popularity' : field === 'include_rereleases' ? 'include-rereleases' : field === 'remove_specials_seasons' ? 'remove-specials-seasons' : 'combine-lists';
       if (field === 'combine_lists') publishCombinePreference(requestedValue === 'true');
       setStatus(statusKey, 'Saving…', 'saving');
       const pending = (trackingChains.get(field) || Promise.resolve()).catch(() => {}).then(async () => {

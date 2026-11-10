@@ -180,7 +180,7 @@ async def next_up_visibility(db, user_id, connection_id, records, *, seed_record
     return hidden, visible, seeds
 
 
-async def sync_next_up_visibility(db, conn, records):
+async def sync_next_up_visibility(db, conn, records, *, client=None, access_token=None, watched=None):
     from core import nuvio
     from core.connection_identity import refresh_stream_connection
     from db import AsyncSessionLocal
@@ -188,6 +188,18 @@ async def sync_next_up_visibility(db, conn, records):
     from sqlalchemy.orm.attributes import set_committed_value
     from models.connections import MediaServerConnection
     if not records:
+        return
+    profile = nuvio.parse_profile_id(conn.server_user_id)
+
+    async def apply(client, token, history):
+        hidden, visible, seeds = await next_up_visibility(db, conn.user_id, conn.id,
+            records, seed_records=history)
+        await nuvio.update_next_up_dismissals(client, conn.url, token,
+            profile, hide=hidden, show=visible, seeds=seeds,
+            on_written=lambda delta: record_visibility_echo(db, conn, delta))
+
+    if client is not None:
+        await apply(client, access_token, watched)
         return
     async with nuvio.connection_lock(conn.id):
         await refresh_stream_connection(db, conn)
@@ -198,10 +210,5 @@ async def sync_next_up_visibility(db, conn, records):
                     MediaServerConnection.id == conn.id).values(token=session.refresh_token))
                 await token_db.commit()
             set_committed_value(conn, 'token', session.refresh_token)
-            profile = nuvio.parse_profile_id(conn.server_user_id)
             watched = await nuvio._pull_watched_items(client, conn.url, session.access_token, profile)
-            hidden, visible, seeds = await next_up_visibility(db, conn.user_id, conn.id,
-                records, seed_records=watched)
-            await nuvio.update_next_up_dismissals(client, conn.url, session.access_token,
-                profile, hide=hidden, show=visible, seeds=seeds,
-                on_written=lambda delta: record_visibility_echo(db, conn, delta))
+            await apply(client, session.access_token, watched)

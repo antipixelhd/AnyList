@@ -1,7 +1,7 @@
 import { browserDateRegion, dateRegion, deviceDateRegion } from './date-region.ts';
 
 /** Shared display/input conversion: API values and native picker values remain ISO. */
-export type DateTimeStyle = 'date' | 'timestamp-date' | 'time' | 'datetime' | 'month' | 'month-short' | 'month-name' | 'month-name-short' | 'month-day';
+export type DateTimeStyle = 'date' | 'timestamp-date' | 'time' | 'datetime' | 'datetime-precise' | 'month' | 'month-short' | 'month-name' | 'month-name-short' | 'month-day';
 export type DateTimeContext = { locale?: string | string[]; timeZone?: string };
 const formatters = new Map<string, Intl.DateTimeFormat>();
 const styles: Record<DateTimeStyle, Intl.DateTimeFormatOptions> = {
@@ -9,6 +9,7 @@ const styles: Record<DateTimeStyle, Intl.DateTimeFormatOptions> = {
   'timestamp-date': { day: '2-digit', month: '2-digit', year: 'numeric' },
   time: { hour: 'numeric', minute: '2-digit' },
   datetime: { day: '2-digit', month: '2-digit', year: 'numeric', hour: 'numeric', minute: '2-digit' },
+  'datetime-precise': { day: '2-digit', month: '2-digit', year: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3 },
   month: { month: 'long', year: 'numeric' },
   'month-short': { month: 'short', year: '2-digit' },
   'month-name': { month: 'long' },
