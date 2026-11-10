@@ -1,7 +1,7 @@
 import {applyResponsiveArtwork} from './responsive-artwork';
 import {gameProgress} from './game-progress';
 import {scoreLabel} from './tracker';
-import type {GameListState} from './game-list-progressive';
+import type {GameListState} from './game-list-index';
 
 /** Share the SSR row template, icons and table styling with appended rows. */
 export function paintGameListRow(row:HTMLElement,state:GameListState,template:HTMLTemplateElement){

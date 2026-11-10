@@ -18,7 +18,7 @@ from models import User
 from models.catalogue import CatalogueEntity
 from models.games import GameAchievement, GameAchievementUnlock, GameChildState, GameEntry, GameFavorite
 from schemas_games import (AchievementOut, AchievementPage, ChildPatch, FavoritePatch,
-                           GameEntryOut, GameListOut, GameListProfile, GamePlayingOut, GamePatch, GameStateBatch, GameStatus, GameFavoriteOrder)
+                           GameEntryOut, GameListOut, GameListProfile, GameListIndexOut, GamePlayingOut, GamePatch, GameStateBatch, GameStatus, GameFavoriteOrder)
 from schemas_game_statistics import GameStatsResponse,GameStatsSection
 from core.limiter import limiter
 
@@ -614,6 +614,50 @@ async def achievement_catalogue(work_id:WorkId,db:DB,viewer:Reader) -> dict:
     return result
 
 
+def game_list_memberships(user_id):
+    entries = select(GameEntry.work_id, GameEntry.status, GameEntry.score,
+        GameEntry.total_seconds, GameEntry.updated_at, literal(None).label('base_work_id')).where(GameEntry.user_id == user_id)
+    children = select(GameChildState.work_id, GameChildState.status, GameChildState.score,
+        literal(None).label('total_seconds'), GameChildState.updated_at, GameChildState.base_work_id).where(
+        GameChildState.user_id == user_id, GameChildState.base_entry_id.is_not(None))
+    return union_all(entries, children).subquery()
+
+
+@router.get('/users/{username}/index')
+async def game_list_index(username: str, db: DB, viewer: Viewer, response: Response,
+    limit: Annotated[int, Query(ge=1, le=10000)] = 10000) -> GameListIndexOut:
+    user, _ = await profile_access(db, username, viewer)
+    response.headers['Cache-Control'] = 'private, no-store'
+    members = game_list_memberships(user.id)
+    title_order = func.row_number().over(order_by=(func.lower(CatalogueEntity.name), members.c.work_id))
+    favorite = select(GameFavorite.work_id).where(GameFavorite.user_id == user.id,
+        GameFavorite.work_id == members.c.work_id).exists()
+    rows = (await db.execute(select(members.c.work_id, func.lower(CatalogueEntity.name), members.c.status,
+        members.c.score, members.c.total_seconds, members.c.updated_at,
+        func.substr(CatalogueEntity.attributes['release_date'].astext, 1, 4),
+        CatalogueEntity.attributes['genres'], favorite, members.c.base_work_id, title_order)
+        .join(CatalogueEntity, CatalogueEntity.id == members.c.work_id).order_by(members.c.work_id).limit(limit + 1))).all()
+    if len(rows) > limit:
+        return GameListIndexOut(complete=False)
+    results=[]
+    for id, title, status, score, seconds, updated, year, genres, fav, base, rank in rows:
+        results.append((id, title, status, score, seconds, updated.isoformat() if updated else None,
+            year if year and len(year)==4 and year.isdigit() else None,
+            [genre for genre in genres if isinstance(genre,str)] if isinstance(genres,list) else [], bool(fav), base, rank))
+    return GameListIndexOut(complete=True, results=results)
+
+
+@router.get('/users/{username}/rows')
+async def game_list_rows(username: str, db: DB, viewer: Viewer, response: Response,
+    ids: Annotated[list[Annotated[int, Field(gt=0, le=2147483647)]], Query(min_length=1, max_length=100)]) -> list[GameEntryOut]:
+    user, owner = await profile_access(db, username, viewer)
+    response.headers['Cache-Control'] = 'private, no-store'
+    members = game_list_memberships(user.id)
+    allowed = set(await db.scalars(select(members.c.work_id).where(members.c.work_id.in_(ids))))
+    rows = {row.subject.catalogue_id:row for row in await tracking.states(db,user.id,allowed,owner=owner)}
+    return [rows[id] for id in dict.fromkeys(ids) if id in rows]
+
+
 @router.get('/users/{username}/list')
 async def user_list(username: str, db: DB, viewer: Viewer,
                     status: GameStatus | None = None,
@@ -629,12 +673,7 @@ async def user_list(username: str, db: DB, viewer: Viewer,
     user, owner = await profile_access(db, username, viewer)
     # Membership is unioned, never added into main-game statistics. Both kinds
     # use their own status, title and score for list filters and sorting.
-    entries = select(GameEntry.work_id, GameEntry.status, GameEntry.score,
-        GameEntry.total_seconds, GameEntry.updated_at).where(GameEntry.user_id == user.id)
-    children = select(GameChildState.work_id, GameChildState.status, GameChildState.score,
-        literal(None).label('total_seconds'), GameChildState.updated_at).where(
-        GameChildState.user_id == user.id, GameChildState.base_entry_id.is_not(None))
-    memberships = union_all(entries, children).subquery()
+    memberships = game_list_memberships(user.id)
     status_counts = dict((await db.execute(select(memberships.c.status, func.count())
         .group_by(memberships.c.status))).all())
     # Transfer only distinct descriptive facet combinations, never the whole

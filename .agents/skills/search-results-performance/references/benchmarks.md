@@ -379,15 +379,32 @@ Authenticated beta browser verification deliberately held every Games browse res
 
 A direct filtered startup with genre igdb.genre:12, platform pc and Witcher preserved all three values while a synthetic facet503 was shown. Retry restored the checked genre/platform controls, and releasing result acquisition rendered17 filtered cards without error.390px mobile layout had no horizontal overflow. static=1 returned six actual results and23 genres. The earlier warm-backend tab sample showed the Games panel at295ms while the movie panel waited; a roughly one-second two-RAF observation was not established as a separate CPU bottleneck and is not used as an INP or main-thread claim. Normal result completion remains provider-dependent; repeated tabs reuse their initialized panels.
 
-Games profiles read the complete collection once (`game_list_complete`) and
-render 30 rows per status section, expanding by 30 within 600px of the section
-bottom. Scrolling, filtering, sorting and ordinary committed edits perform no
-additional list reads. Public covers retain separate native lazy CDN requests.
-`game_list_window` remains a grouped API compatibility case, not the current
-profile loading path. Compare complete-read SQL, provider requests and payloads;
-backend timings exclude progressive DOM creation, images and scrolling. Verify
-30-to-60 expansion, full-library filtering, keyed optimistic updates, native row
-geometry, mobile/desktop fast scrolling, and nonzero reload/back restoration.
-Render-count cookies contain only viewer/profile/query-scoped section limits,
-allowing SSR to restore the prior document height on reload without storing entry
-content or changing native scroll restoration.
+Games profiles start with a grouped 100-row page (`game_list_window`) and
+virtualize natural-height rows using measured offsets (56px desktop / 68px mobile
+estimates). Nearby reads batch up to 100 rows, with two concurrent requests and a
+bounded row/page cache. A complete compact membership/filter/order projection
+(`game_list_index`) warms after the first usable screen, separately from detailed
+rows (`game_list_rows`). Only complete snapshots enable local queries. Failed,
+capped (>10,000), data-saving/slow-network or non-ASCII search paths use complete
+server-filtered paging; they must never filter only the acquired row pages.
+
+Compare `game_list_window`, `game_list_index`, `game_list_rows` and the prior
+`game_list_complete` on the same fixture. The 2,000-game controlled PostgreSQL
+run retained all six original window/complete fingerprints and payload sizes.
+Warm curated samples: complete 1,429,775 bytes / 12 SQL reads / 188.54ms;
+window 72,094 / 13 / 46.28ms; compact index 265,984 / 3 / 34.37ms;
+100 detailed rows 71,190 / 8 / 23.58ms. All performed zero provider calls and
+writes. These are single ASGI samples, not production or browser paint timings.
+The optional index excludes notes, artwork, achievement/editor data and full
+catalogue attributes. Its cap returns complete=false with no partial results.
+
+Verify exact server title collation, literal search characters, microsecond
+updated ordering, child/base membership, row-batch privacy, delayed/stale index
+publication, pending writes and rollback, local filtering beyond cached rows,
+request-free cached sorts/edits, server fallback, bounded DOM/cache, desktop/mobile
+fast scrolling, and first/repeated nonzero reload/back restoration. Keep native
+image caching and original table styling. Preserve measured geometry when an
+index replaces the equivalent server selection; cached local rows should render
+without a page-zero network dependency. Do not call separate lazy CDN cover
+requests per-entry API loading. Complete data and full scroll extent remain
+available independently of the mounted viewport.

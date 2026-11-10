@@ -660,6 +660,72 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(after['total'], 66)
         self.assertNotIn('paused', after['status_counts'])
 
+    async def test_game_list_index_is_complete_compact_and_matches_server_membership(self):
+        await self.save(status='completed', score=9, notes='Never in compact index')
+        await self.client.patch(f'/tracking/games/children/{self.child}', json={'status':'paused','score':8})
+        await self.client.put(f'/tracking/games/favorites/{self.base}', json={'favorite':True})
+        response=await self.client.get('/tracking/games/users/player/index')
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertEqual(response.headers['cache-control'],'private, no-store')
+        data=response.json()
+        self.assertTrue(data['complete'])
+        self.assertNotIn('Never in compact index',response.text)
+        self.assertNotIn('image_url',response.text)
+        self.assertEqual({row[0] for row in data['results']},{self.base,self.child})
+        self.assertTrue(all(len(row)==11 for row in data['results']))
+        base=next(row for row in data['results'] if row[0]==self.base)
+        child=next(row for row in data['results'] if row[0]==self.child)
+        self.assertEqual(base[2:4],['completed',9])
+        self.assertTrue(base[8])
+        self.assertEqual(child[9],self.base)
+        server=(await self.client.get('/tracking/games/users/player/list?complete=true&sort=title')).json()
+        self.assertEqual([row[0] for row in sorted(data['results'],key=lambda row:row[10])],
+            [row['subject']['catalogue_id'] for row in server['results']])
+        capped=(await self.client.get('/tracking/games/users/player/index?limit=1')).json()
+        self.assertEqual(capped,{'complete':False,'results':[]})
+        self.viewer=self.other
+        public=(await self.client.get('/tracking/games/users/player/index')).json()
+        self.assertEqual(public,data)
+        self.viewer=self.user
+        async with self.Session() as db:
+            games=[CatalogueEntity(kind='game',name=name,attributes={'game_class':'game'})
+                for name in ('! Odd','I game','İ game','Éclair','alpha','Zulu')]
+            db.add_all(games)
+            await db.flush()
+            db.add_all([GameEntry(user_id=self.user.id,work_id=game.id,status='playing') for game in games])
+            await db.commit()
+        ranked=(await self.client.get('/tracking/games/users/player/index')).json()['results']
+        ordered=(await self.client.get('/tracking/games/users/player/list?complete=true&sort=title')).json()['results']
+        self.assertEqual([row[0] for row in sorted(ranked,key=lambda row:row[10])],
+            [row['subject']['catalogue_id'] for row in ordered])
+
+    async def test_game_list_row_batches_gate_membership_notes_and_profile_privacy(self):
+        await self.save(notes='Owner only',status='playing')
+        path='/tracking/games/users/player/rows'
+        params=[('ids',self.unknown),('ids',self.base),('ids',self.base),('ids',self.child)]
+        response=await self.client.get(path,params=params)
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertEqual([row['subject']['catalogue_id'] for row in response.json()],[self.base])
+        self.assertEqual(response.json()[0]['notes'],'Owner only')
+        await self.client.patch(f'/tracking/games/children/{self.child}',json={'status':'paused'})
+        ordered=await self.client.get(path,params=[('ids',self.child),('ids',self.base),('ids',self.child)])
+        self.assertEqual([row['subject']['catalogue_id'] for row in ordered.json()],[self.child,self.base])
+        self.assertEqual((await self.client.get(path)).status_code,422)
+        self.assertEqual((await self.client.get(path,params=[('ids',self.base)]*101)).status_code,422)
+        self.assertEqual((await self.client.get(path,params={'ids':0})).status_code,422)
+        self.viewer=self.other
+        public=(await self.client.get(path,params=params)).json()
+        self.assertIsNone(public[0]['notes'])
+        self.assertIsNone(public[0]['revision'])
+        async with self.Session() as db:
+            profile=await db.scalar(select(UserProfileData).where(UserProfileData.user_id==self.user.id))
+            profile.privacy_level=PrivacyLevel.private
+            await db.commit()
+        for route in ('rows?ids='+str(self.base),'index'):
+            self.assertEqual((await self.client.get('/tracking/games/users/player/'+route)).status_code,403)
+        self.viewer=None
+        self.assertEqual((await self.client.get(path,params=params)).status_code,401)
+
     async def test_currently_playing_shelf_is_bounded_and_owner_scoped(self):
         await self.save(status='playing', total_seconds=3600)
         child = await self.client.patch(f'/tracking/games/children/{self.child}', json={'status': 'playing'})

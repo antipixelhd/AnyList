@@ -152,3 +152,14 @@ class AchievementPage(BaseModel):
     total: int
     offset: int
     limit: int
+
+
+# id, server-normalized title, status, score, seconds, updated, year, genres,
+# favorite, base work, canonical title order. No editor state or artwork.
+GameListIndexRow = tuple[int, str, GameStatus, float | None, int | None,
+    str | None, str | None, list[str], bool, int | None, int]
+
+
+class GameListIndexOut(BaseModel):
+    complete: bool
+    results: list[GameListIndexRow] = Field(default_factory=list)

@@ -504,6 +504,9 @@ async def main(args):
                 await asyncio.gather(*(entry[0] for entry in list(chronological_discovery._pending.values())))
                 row['complete_ms'] = round((time.perf_counter() - start) * 1000, 2)
                 row['complete_provider_requests'] = counters.get('provider_requests', 0)
+            payload = result
+            if label == 'game_list_rows':
+                result = {'results': result}
             if isinstance(result, dict):
                 items = result.get('results', result.get('items', []))
                 if label == 'series_resolve':
@@ -522,7 +525,11 @@ async def main(args):
                 row['rows'] = len(items)
                 # Fixture insertion timestamps are intentionally fresh each run;
                 # compare game membership/order/progress without those clocks.
-                identities = [{key: value for key, value in item.items() if key not in ('updated_at', 'year', 'genres')} for item in items] if label.startswith(('game_list', 'game_favorites')) else items
+                if label == 'game_list_index':
+                    identities = [item[:5] + item[6:] for item in items]
+                    row['complete'] = result['complete']
+                else:
+                    identities = [{key: value for key, value in item.items() if key not in ('updated_at', 'year', 'genres')} for item in items] if label.startswith(('game_list', 'game_favorites')) else items
                 row['result_identity'] = hashlib.sha256(json.dumps(identities, sort_keys=True).encode()).hexdigest()
                 if label in ('game_browse_pages','game_browse_timeline'):
                     # Retain the full fingerprint above. This additional hash
@@ -531,7 +538,7 @@ async def main(args):
                     prior=[{key:value for key,value in item.items() if key not in (
                         'release_date_precision','release_quarter')} for item in items]
                     row['release_compatible_identity']=hashlib.sha256(json.dumps(prior,sort_keys=True).encode()).hexdigest()
-                row['payload_bytes'] = len(json.dumps(result).encode())
+                row['payload_bytes'] = len(json.dumps(payload).encode())
                 row['total'] = result.get('total')
                 row['has_more'] = result.get('has_more')
                 row['pending'] = result.get('verification_pending')
@@ -756,6 +763,8 @@ async def main(args):
                 if args.case and 'game_browse_critic' in args.case else []),
             ('game_list', f'games/users/{viewer.username}/list', {'limit': 50}),
             ('game_list_complete', f'games/users/{viewer.username}/list', {'complete': 'true'}),
+            *([('game_list_index', f'games/users/{viewer.username}/index', {})] if args.case and 'game_list_index' in args.case else []),
+            *([('game_list_rows', f'games/users/{viewer.username}/rows', {'ids':role_work_ids})] if args.case and 'game_list_rows' in args.case else []),
             *([('game_list_window', f'games/users/{viewer.username}/list', {'grouped':'true','limit':100})] if args.case and 'game_list_window' in args.case else []),
             *([('game_statistics_overview',f'games/users/{viewer.username}/statistics',{}),
                 ('game_statistics_rebuild',f'games/users/{viewer.username}/statistics',{}),
