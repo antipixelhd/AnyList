@@ -796,7 +796,7 @@ class MultipleStreamConnectionsTests(unittest.IsolatedAsyncioTestCase):
             "refresh": AsyncMock(),
         })()
         library_push = AsyncMock(return_value=True)
-        watched_push = AsyncMock()
+        watched_push = AsyncMock(side_effect=lambda _url, _token, _profile, additions, _removals, **kwargs: additions)
         with (
             patch("core.outbound_sync._select_in_chunks", AsyncMock(return_value=[movie])),
             patch("core.settings_store.get_effective_tmdb_key", AsyncMock(return_value="tmdb-key")),
@@ -804,7 +804,7 @@ class MultipleStreamConnectionsTests(unittest.IsolatedAsyncioTestCase):
             patch("core.nuvio_projection.build_library_items", AsyncMock(return_value=[{"content_id": "tt0133093"}])),
             patch("core.nuvio_projection.build_watched_items", AsyncMock(return_value=[{"content_id": "tt0133093"}])),
             patch("core.outbound_sync.push_nuvio_library_delta", library_push),
-            patch.object(nuvio, "push_watched_items", watched_push),
+            patch.object(nuvio, "sync_watched_delta", watched_push),
             patch("core.server_sync.refresh_stream_connection", AsyncMock()),
             patch("core.pull_cycle.defer_fan_out", return_value=False),
             patch("core.tracking_snapshot.require_stream_reconciliation", AsyncMock()),
