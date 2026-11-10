@@ -11,10 +11,12 @@ import {
   eventBadge,
   eventCanChooseStatus,
   eventCanKeepPrevious,
+  eventConfirmLabel,
   eventHref,
   eventIcon,
   eventImage,
   eventKey,
+  eventKeepLabel,
   eventMessage,
   eventSource,
   eventTitle,
@@ -26,6 +28,7 @@ import {
   isSeasonReleaseNotification,
   notificationVersion,
   outboundKey,
+  resumeChoices,
   seasonArtworkFallback,
   seasonArtworkRetry,
   shouldAutoSee,
@@ -240,6 +243,23 @@ function mountInbox(
     );
     if (!detail) return;
     detail.replaceChildren();
+    const choices = resumeChoices(event);
+    if (choices.length) {
+      const list = document.createElement('ul');
+      list.className = 'delivery-list resume-choices';
+      for (const choice of choices) {
+        const item = document.createElement('li');
+        const name = document.createElement('strong');
+        name.textContent = choice.name;
+        const time = document.createElement('time');
+        setLocalDateTime(time, choice.time, 'datetime-precise', 'Time unavailable');
+        const position = document.createElement('small');
+        position.textContent = choice.position;
+        item.append(name, time, position);
+        list.append(item);
+      }
+      detail.append(list);
+    }
     if (
       event.previous_status &&
       event.proposed_status &&
@@ -313,15 +333,8 @@ function mountInbox(
       element.dataset.proposedStatus = event.proposed_status || "";
       element.dataset.statusChoice = String(eventCanChooseStatus(event));
     }
-    if (action === "confirm")
-      element.textContent =
-        event.kind === "deletion_conflict"
-          ? "Retry deletion"
-          : event.kind?.startsWith("initial_")
-            ? "Approve import"
-            : event.kind === "rating_conflict"
-              ? "Use provider score"
-              : "Confirm";
+    if (action === "confirm") element.textContent = eventConfirmLabel(event);
+    if (element.dataset.notificationAction === 'keep') element.textContent = eventKeepLabel(event);
   }
   function updateEventActions(card: HTMLElement, event: any) {
     const action = (name: string) =>

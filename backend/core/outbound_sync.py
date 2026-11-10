@@ -424,14 +424,16 @@ async def fan_out_changes(
                 # have been loaded before another request already rotated
                 # this single-use refresh token while this one waited.
                 await refresh_stream_connection(db, conn)
-                await nuvio.push_watched_items(
+                remote = await nuvio.sync_watched_delta(
                     conn.url,
                     conn.token,
                     nuvio_payloads.profile_id(conn),
                     items,
+                    [],
                     on_refresh=_persist_refresh,
                 )
-            return True
+            return {nuvio._watched_history_key(item) for item in items}.issubset(
+                {nuvio._watched_history_key(row) for row in remote})
 
         watched_at_by_media = (
             await _latest_watched_at(db, user_id, list(new_watched_ids))
@@ -487,17 +489,20 @@ async def fan_out_changes(
                         )
                     )
                 continue
-            if conn.push_watched:
+            if conn.push_watched and conn.type == 'jellyfin':
+                from core.watch_delivery import push_jellyfin_watches
+                targets = {}
+                for mid in new_watched_ids:
+                    for sid in source_ids_map.get((conn.id, mid), []):
+                        targets.setdefault(sid, set()).add(mid)
+                if targets:
+                    push_tasks.append(_guarded(push_jellyfin_watches(conn, user_id, targets,
+                        watched=True, watched_at=watched_at_by_media)))
+            elif conn.push_watched:
                 for mid in new_watched_ids:
                     for sid in source_ids_map.get((conn.id, mid), []):
                         if conn.type == "plex":
                             push_tasks.append(_guarded(push_plex_watched_and_record(conn, sid, user_id, mid)))
-                        elif conn.type == "jellyfin":
-                            # Registered before the call, not inside it - Jellyfin/Emby's
-                            # UserDataSaved webhook can echo this back fast enough that a
-                            # post-await registration would already be too late (#247/#251).
-                            watch_echo.mark_pushed_watched(user_id, mid)
-                            push_tasks.append(_guarded(jellyfin.mark_watched(conn.url, conn.token, conn.server_user_id, sid, played_at=watched_at_by_media.get(mid))))
                         elif conn.type == "emby":
                             watch_echo.mark_pushed_watched(user_id, mid)
                             push_tasks.append(_guarded(emby.mark_watched(conn.url, conn.token, conn.server_user_id, sid, played_at=watched_at_by_media.get(mid))))

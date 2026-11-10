@@ -34,6 +34,11 @@ class PushWatchStateExcludeConnectionTests(unittest.IsolatedAsyncioTestCase):
         approval = patch('core.tracking_snapshot.require_stream_reconciliation', AsyncMock())
         approval.start()
         self.addCleanup(approval.stop)
+        watched_state = patch('core.jellyfin.get_items_watched_state', AsyncMock(return_value={
+            'item-1': True, 'item-2': True,
+        }))
+        watched_state.start()
+        self.addCleanup(watched_state.stop)
 
     def _connections(self):
         conn_origin = SimpleNamespace(
@@ -61,7 +66,7 @@ class PushWatchStateExcludeConnectionTests(unittest.IsolatedAsyncioTestCase):
 
         calls: list[str] = []
 
-        async def fake_mark_unwatched(url, token, user_id, source_id):
+        async def fake_mark_unwatched(url, token, user_id, source_id, *, client=None):
             calls.append(url)
             return True
 
@@ -97,7 +102,7 @@ class PushWatchStateExcludeConnectionTests(unittest.IsolatedAsyncioTestCase):
 
         calls: list[str] = []
 
-        async def fake_mark_unwatched(url, token, user_id, source_id):
+        async def fake_mark_unwatched(url, token, user_id, source_id, *, client=None):
             calls.append(url)
             return True
 
@@ -138,11 +143,12 @@ class PushWatchStateEchoSuppressionTests(unittest.IsolatedAsyncioTestCase):
     async def test_jellyfin_watched_push_registers_for_echo_suppression(self):
         registered: list[tuple[int, int]] = []
 
-        async def fake_mark_watched(url, token, user_id, source_id, *, played_at=None):
+        async def fake_mark_watched(url, token, user_id, source_id, *, played_at=None, client=None):
             self.assertEqual(played_at, datetime(2020, 1, 1))
             return True
 
-        with patch("core.watch_delivery.jellyfin_client.mark_watched", fake_mark_watched), \
+        with patch("core.jellyfin.get_items_watched_state", AsyncMock(return_value={'item-1': False})), \
+             patch("core.watch_delivery.jellyfin_client.mark_watched", fake_mark_watched), \
              patch("core.watch_echo.mark_pushed_watched",
                    side_effect=lambda uid, mid: registered.append((uid, mid))):
             await watch_delivery.push_watch_state(
@@ -170,10 +176,11 @@ class PushWatchStateEchoSuppressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(registered, [(7, 42)])
 
     async def test_unwatch_push_does_not_register(self):
-        async def fake_mark_unwatched(url, token, user_id, source_id):
+        async def fake_mark_unwatched(url, token, user_id, source_id, *, client=None):
             return True
 
-        with patch("core.watch_delivery.jellyfin_client.mark_unwatched", fake_mark_unwatched), \
+        with patch("core.jellyfin.get_items_watched_state", AsyncMock(return_value={'item-1': True})), \
+             patch("core.watch_delivery.jellyfin_client.mark_unwatched", fake_mark_unwatched), \
              patch("core.watch_echo.mark_pushed_watched") as reg:
             await watch_delivery.push_watch_state(
                 self._fixture("jellyfin"), user_id=7, media_ids=[42], watched=False,

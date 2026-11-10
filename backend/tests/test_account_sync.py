@@ -237,7 +237,7 @@ class ProviderChangeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await check([["two", 125]], previous)).state, provider_changes.ChangeState.changed)
 
     async def test_nuvio_settings_change_is_not_hidden_by_identical_data_cursors(self):
-        session = SimpleNamespace(access_token="access", refresh_token="refresh")
+        session = SimpleNamespace(access_token="access", refresh_token="refresh", expires_in=3600)
         settings = {"version": 1, "features": {}}
         with patch.object(nuvio, "refresh_session", AsyncMock(return_value=session)), \
              patch.object(nuvio, "get_profiles", AsyncMock(return_value=[{"profile_index": 1}])), \
@@ -249,6 +249,29 @@ class ProviderChangeTests(unittest.IsolatedAsyncioTestCase):
                 second = await nuvio.pull_change_marker("url", "refresh", 1)
         self.assertEqual(first["library"], second["library"])
         self.assertNotEqual(first, second)
+
+    async def test_probe_reuses_authentication_and_settings_for_enabled_categories(self):
+        session = SimpleNamespace(access_token="access", refresh_token="rotated", expires_in=3600)
+        row = {"content_id": "tt42", "content_type": "movie", "watched_at": 120}
+
+        async def response(_client, _url, _token, method, _payload):
+            if method.endswith('_delta_cursor'):
+                return 120
+            return [row] if method == 'sync_pull_watched_items' else []
+
+        for categories, expected_calls in ((frozenset({'watched_items'}), 4), (nuvio._PULL_CATEGORIES, 10)):
+            with (
+                self.subTest(categories=categories),
+                patch.object(nuvio, "refresh_session", AsyncMock(return_value=session)) as refresh,
+                patch.object(nuvio, "get_profiles", AsyncMock(return_value=[{"profile_index": 2}])) as profiles,
+                patch.object(nuvio, "_rpc", AsyncMock(side_effect=response)) as rpc,
+            ):
+                probe = await nuvio.prepare_pull("url", "original", 2, categories=categories)
+                _, data = await nuvio.pull_sync_data("url", "rotated", 2, categories=categories, probe=probe)
+            self.assertEqual(data['watched'], [row])
+            refresh.assert_awaited_once()
+            profiles.assert_awaited_once()
+            self.assertEqual(refresh.await_count + profiles.await_count + rpc.await_count, expected_calls)
 
 
 @unittest.skipUnless(os.getenv("TRACKING_TEST_DATABASE_URL"), "Requires disposable PostgreSQL")

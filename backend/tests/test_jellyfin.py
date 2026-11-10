@@ -330,6 +330,38 @@ class JellyfinFindByIdsProviderFilterMismatchTests(unittest.IsolatedAsyncioTestC
 
 
 class JellyfinItemsBatchTests(unittest.IsolatedAsyncioTestCase):
+    async def test_verified_history_replay_only_writes_mismatches(self):
+        for missing, expected_calls in ((0, 1), (1, 2), (100, 101)):
+            with self.subTest(missing=missing):
+                calls = []
+
+                def handler(request):
+                    calls.append(request)
+                    if request.method == 'GET':
+                        return httpx.Response(200, json={'Items': [
+                            {'Id': str(index), 'UserData': {'Played': index >= missing}}
+                            for index in range(100)
+                        ]})
+                    return httpx.Response(200, json={})
+
+                transport = httpx.MockTransport(handler)
+                with patch.object(jellyfin.httpx, 'AsyncClient', side_effect=lambda **kwargs:
+                        _REAL_ASYNC_CLIENT(transport=transport, **kwargs)):
+                    result = await jellyfin.apply_watched_delta('http://jellyfin.local', 'token', 'user',
+                        {str(index): None for index in range(100)}, watched=True)
+                self.assertTrue(all(result.values()))
+                self.assertEqual(len(calls), expected_calls)
+
+    async def test_unknown_played_state_remains_pending(self):
+        with (
+            patch.object(jellyfin, 'get_items_watched_state', AsyncMock(return_value={})),
+            patch.object(jellyfin, 'mark_watched', AsyncMock()) as write,
+        ):
+            result = await jellyfin.apply_watched_delta('http://jellyfin.local', 'token', 'user',
+                {'missing': None}, watched=True)
+        self.assertEqual(result, {'missing': False})
+        write.assert_not_awaited()
+
     """#362: the already-watched check in a full push used to be one
     get_item call per item. get_items_batch/get_items_watched_state replace
     that with Items?Ids= chunks - these confirm the request shape and that a

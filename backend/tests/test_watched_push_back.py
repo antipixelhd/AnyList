@@ -62,6 +62,33 @@ class WatchedPushBackTests(unittest.IsolatedAsyncioTestCase):
         push.assert_awaited_once_with("http://local", "token", "remote-user", "file-1", played_at=later)
         self.assertEqual(mark_echo.call_count, 2)
 
+    async def test_deferred_retry_skips_already_played_combined_file(self):
+        with (
+            patch.object(db_queries, 'latest_watched_at', AsyncMock(return_value={2: None, 3: None})),
+            patch.object(server_sync.jellyfin, 'get_items_watched_state', AsyncMock(return_value={'file-1': True})) as read,
+            patch.object(server_sync.jellyfin, 'mark_watched', AsyncMock()) as write,
+            patch.object(watch_echo, 'mark_pushed_watched') as echo,
+        ):
+            count = await server_sync._push_watched_back_to_source(self.db, 1, self.conn,
+                {2: 'file-1', 3: 'file-1'}, require_success=True)
+        self.assertEqual(count, 1)
+        read.assert_awaited_once()
+        self.assertEqual(read.await_args.args[2], ['file-1'])
+        self.assertEqual(read.await_args.kwargs['user_id'], 'remote-user')
+        write.assert_not_awaited()
+        echo.assert_not_called()
+
+    async def test_deferred_retry_keeps_unknown_provider_state_pending(self):
+        with (
+            patch.object(db_queries, 'latest_watched_at', AsyncMock(return_value={2: None, 3: None})),
+            patch.object(server_sync.jellyfin, 'get_items_watched_state', AsyncMock(return_value={})),
+            patch.object(server_sync.jellyfin, 'mark_watched', AsyncMock()) as write,
+        ):
+            with self.assertRaisesRegex(RuntimeError, 'pending retry'):
+                await server_sync._push_watched_back_to_source(self.db, 1, self.conn,
+                    {2: 'file-1', 3: 'file-1'}, require_success=True)
+        write.assert_not_awaited()
+
     async def test_webhook_waits_for_approved_initial_import(self):
         self.db.get.return_value = SimpleNamespace(approved=False)
         with patch.object(db_queries, 'latest_watched_at', new_callable=AsyncMock) as watches:

@@ -7,7 +7,7 @@ are not accidentally acknowledged. Never advance them from an outbound write.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 import hashlib
 import json
@@ -35,6 +35,13 @@ class ChangeState(str, Enum):
 class ChangeCheck:
     state: ChangeState
     checkpoint: dict | None = None
+    probe: StremioPullProbe | nuvio.PullProbe | None = None
+
+
+@dataclass(frozen=True)
+class StremioPullProbe:
+    metadata: list
+    started_at: datetime
 
 
 def activity_marker(payload: object) -> str | None:
@@ -76,6 +83,7 @@ async def check_provider_changes(db, *, user_id: int, provider: str, settings, c
         return ChangeCheck(ChangeState.unknown)
     if provider == "stremio" and not conn.stremio_full_sync_done:
         return ChangeCheck(ChangeState.unknown)
+    probe = None
     try:
         if provider == "trakt":
             token = await trakt_auth.ensure_valid_trakt_token(db, settings)
@@ -109,9 +117,11 @@ async def check_provider_changes(db, *, user_id: int, provider: str, settings, c
 
             async with nuvio.connection_lock(conn.id):
                 await refresh_stream_connection(db, conn)
-                marker = await nuvio.pull_change_marker(conn.url, conn.token, int(conn.server_user_id or 1),
-                                                       on_refresh=persist_refresh)
+                probe = await nuvio.prepare_pull(conn.url, conn.token, int(conn.server_user_id or 1),
+                    on_refresh=persist_refresh, categories=nuvio.pull_categories(conn))
+                marker = probe.marker
         else:
+            started_at = datetime.now(timezone.utc).replace(tzinfo=None)
             meta = await stremio.datastore_meta(conn.token)
             # Comparing the full ID/clock vector also detects removed records;
             # max(timestamp) alone would miss some deletions.
@@ -119,6 +129,7 @@ async def check_provider_changes(db, *, user_id: int, provider: str, settings, c
                    or not math.isfinite(row[1]) or row[1] < 0 for row in meta):
                 return ChangeCheck(ChangeState.unknown)
             marker = sorted([[str(row[0]), row[1]] for row in meta])
+            probe = StremioPullProbe(meta, started_at)
         if marker is None:
             return ChangeCheck(ChangeState.unknown)
         # Settings blobs/metadata lists can be large. Persist an equality digest.
@@ -133,7 +144,7 @@ async def check_provider_changes(db, *, user_id: int, provider: str, settings, c
         ).order_by(SyncJob.id.desc()).limit(1))).scalar_one_or_none()
         saved = (previous.stats or {}).get("provider_checkpoint") if previous else None
         state = ChangeState.unchanged if saved == checkpoint else ChangeState.changed
-        return ChangeCheck(state, checkpoint)
+        return ChangeCheck(state, checkpoint, probe)
     except Exception as error:
         # Avoid logging response bodies or credentials from authentication errors.
         logger.info("Change check unavailable for %s (%s); pulling normally", provider, type(error).__name__)

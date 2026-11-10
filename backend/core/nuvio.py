@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import inspect
 import logging
 import os
@@ -6,7 +7,10 @@ import secrets
 import string
 import threading
 from contextlib import contextmanager
-from dataclasses import dataclass
+from collections import OrderedDict
+from dataclasses import dataclass, field as dataclass_field
+from datetime import datetime, timezone
+from time import monotonic
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Iterator
 
@@ -241,6 +245,42 @@ class NuvioSession:
     account_id: str | None = None
 
 
+@dataclass
+class _CachedSession:
+    lock: asyncio.Lock = dataclass_field(default_factory=asyncio.Lock, repr=False)
+    session: NuvioSession | None = dataclass_field(default=None, repr=False)
+    expires_at: float = 0
+
+
+_session_cache: OrderedDict[str, _CachedSession] = OrderedDict()
+_SESSION_CACHE_SIZE = 512
+_SESSION_EXPIRY_MARGIN = 30
+
+
+def _session_key(url, refresh_token):
+    credentials = '\0'.join((_base_url(url), _public_headers()['apikey'], refresh_token))
+    return hashlib.sha256(credentials.encode()).hexdigest()
+
+
+def _remember_session(key, cached):
+    _session_cache[key] = cached
+    _session_cache.move_to_end(key)
+    # Keep active refreshes coordinated even when the cache is full.
+    for oldest in list(_session_cache):
+        if len(_session_cache) <= _SESSION_CACHE_SIZE:
+            break
+        if not _session_cache[oldest].lock.locked():
+            del _session_cache[oldest]
+
+
+def _reject_cached_session(access_token):
+    rejected = [(key, cached) for key, cached in _session_cache.items()
+        if cached.session and cached.session.access_token == access_token]
+    for key, cached in rejected:
+        cached.session = None
+        del _session_cache[key]
+
+
 def _base_url(url: str) -> str:
     return url.rstrip("/")
 
@@ -310,6 +350,33 @@ async def refresh_session(
     refresh_token: str,
     client: httpx.AsyncClient | None = None,
 ) -> NuvioSession:
+    """Reuse a credential's access token until expiry, coordinating refreshes."""
+    key = _session_key(url, refresh_token)
+    cached = _session_cache.get(key)
+    if cached is None:
+        cached = _CachedSession()
+    _session_cache[key] = cached
+    async with cached.lock:
+        _remember_session(key, cached)
+        remaining = int(cached.expires_at - monotonic())
+        if cached.session and remaining > _SESSION_EXPIRY_MARGIN:
+            session = cached.session
+        else:
+            # A previous caller may not have persisted a rotation yet. Retain
+            # the newest refresh credential even after access-token expiry.
+            token = cached.session.refresh_token if cached.session else refresh_token
+            started_at = monotonic()
+            session = await _refresh_session(url, token, client)
+            cached.session = session
+            cached.expires_at = started_at + session.expires_in
+            _remember_session(_session_key(url, session.refresh_token), cached)
+        remaining = max(0, int(cached.expires_at - monotonic()))
+    # Prune after unlocking too, including old aliases of this session.
+    _remember_session(_session_key(url, session.refresh_token), cached)
+    return NuvioSession(session.access_token, session.refresh_token, remaining, session.account_id)
+
+
+async def _refresh_session(url, refresh_token, client=None):
     owns_client = client is None
     if client is None:
         client = httpx.AsyncClient(timeout=20.0, follow_redirects=False)
@@ -365,6 +432,8 @@ async def _rpc(
                 raise
             print(f"  Nuvio RPC {function_name} failed ({exc.__class__.__name__}), retrying ({attempt + 1}/{_RPC_MAX_RETRIES})...")
             await asyncio.sleep(_RPC_RETRY_DELAYS[attempt])
+    if response.status_code == 401:
+        _reject_cached_session(access_token)
     await _raise_api_error(response, function_name)
     if response.status_code == 204 or not response.content:
         return None
@@ -541,33 +610,56 @@ async def _pull_watch_progress(
     return [_canonical_content_type(row) for row in rows]
 
 
-async def pull_change_marker(
-    url: str, refresh_token: str, profile_id: int, *, on_refresh: OnRefresh = None,
-) -> dict[str, Any]:
-    """Read complete profile change coverage without downloading its library/history.
+_PULL_CATEGORIES = frozenset(("library", "watched_items", "watch_progress"))
 
-    Data cursors alone omit visibility settings. Include the small settings
-    blobs too; an unavailable cursor/settings endpoint means coverage is unknown.
-    The caller holds the same connection lock as normal pulls and token writes.
-    """
-    async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
+
+def pull_categories(conn):
+    return frozenset(category for category, enabled in (
+        ("library", conn.sync_collection),
+        ("watched_items", conn.sync_watched),
+        ("watch_progress", conn.sync_playback),
+    ) if enabled)
+
+
+@dataclass(frozen=True)
+class PullProbe:
+    session: NuvioSession = dataclass_field(repr=False)
+    marker: dict = dataclass_field(repr=False)
+    started_at: datetime
+    expires_at: float
+
+    def usable(self, refresh_token):
+        return self.session.refresh_token == refresh_token and monotonic() < self.expires_at
+
+
+async def prepare_pull(url, refresh_token, profile_id, *, on_refresh=None, categories=_PULL_CATEGORIES):
+    """Read change markers and retain the authenticated context for a follow-up pull."""
+    started_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    async with httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
         session = await refresh_session(url, refresh_token, client=client)
+        expires_at = monotonic() + session.expires_in - 5
         if on_refresh:
             await on_refresh(session)
         profiles = await get_profiles(url, session.access_token, client=client)
         if not any(int(profile.get("profile_index") or 0) == profile_id for profile in profiles):
             raise NuvioAPIError("Nuvio profile was not found")
         marker = {}
-        for category in ("library", "watched_items", "watch_progress"):
+        for category in sorted(categories):
             cursor = await _rpc(client, url, session.access_token,
                                 f"sync_get_{category}_delta_cursor", {"p_profile_id": profile_id})
             if not isinstance(cursor, int) or isinstance(cursor, bool) or cursor < 0:
                 raise NuvioAPIError("Nuvio returned an invalid change cursor")
             marker[category] = cursor
-        for adapter in SETTINGS_ADAPTERS:
-            marker[adapter.platform] = await _pull_profile_settings(
-                client, url, session.access_token, profile_id, adapter)
-        return marker
+        if "watch_progress" in categories:
+            for adapter in SETTINGS_ADAPTERS:
+                marker[adapter.platform] = await _pull_profile_settings(
+                    client, url, session.access_token, profile_id, adapter)
+    return PullProbe(session, marker, started_at, expires_at)
+
+
+async def pull_change_marker(url, refresh_token, profile_id, *, on_refresh=None):
+    probe = await prepare_pull(url, refresh_token, profile_id, on_refresh=on_refresh)
+    return probe.marker
 
 
 async def pull_sync_data(
@@ -576,32 +668,39 @@ async def pull_sync_data(
     profile_id: int,
     *,
     on_refresh: OnRefresh = None,
+    categories=_PULL_CATEGORIES,
+    probe: PullProbe | None = None,
 ) -> tuple[NuvioSession, dict[str, Any]]:
     async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
-        session = await refresh_session(url, refresh_token, client=client)
-        if on_refresh:
-            await on_refresh(session)
-        profiles = await get_profiles(url, session.access_token, client=client)
-        if not any(int(profile.get("profile_index") or 0) == profile_id for profile in profiles):
-            raise NuvioAPIError(f"Nuvio profile {profile_id} was not found")
-        library, watched, progress = await asyncio.gather(
-            _pull_library(client, url, session.access_token, profile_id),
-            _pull_watched_items(client, url, session.access_token, profile_id),
-            _pull_watch_progress(client, url, session.access_token, profile_id),
-        )
-        cw_visibility = {}
-        for adapter in SETTINGS_ADAPTERS:
-            try:
-                blob = await _pull_profile_settings(client, url, session.access_token,
-                    profile_id, adapter)
-                cw_visibility[adapter.platform] = sorted(adapter.dismissals(blob))
-            except (NuvioAPIError, ValueError, TypeError, httpx.HTTPError) as exc:
-                # Settings are an independent observation. Omitting an unreadable
-                # platform lets snapshot reconciliation retain its last known state.
-                logger.warning("Nuvio %s visibility pull unavailable (%s)",
-                    adapter.platform, type(exc).__name__)
-    return session, {"library": library, "watched": watched, "progress": progress,
-        "cw_visibility": cw_visibility}
+        if probe and probe.usable(refresh_token):
+            session = probe.session
+        else:
+            probe = None
+            session = await refresh_session(url, refresh_token, client=client)
+            if on_refresh:
+                await on_refresh(session)
+            profiles = await get_profiles(url, session.access_token, client=client)
+            if not any(int(profile.get("profile_index") or 0) == profile_id for profile in profiles):
+                raise NuvioAPIError(f"Nuvio profile {profile_id} was not found")
+        endpoints = {
+            "library": ("library", _pull_library),
+            "watched_items": ("watched", _pull_watched_items),
+            "watch_progress": ("progress", _pull_watch_progress),
+        }
+        requested = [endpoints[category] for category in sorted(categories)]
+        results = await asyncio.gather(*(pull(client, url, session.access_token, profile_id) for _, pull in requested))
+        data = {"library": [], "watched": [], "progress": [], "cw_visibility": {}}
+        data.update({key: rows for (key, _), rows in zip(requested, results)})
+        if "watch_progress" in categories:
+            for adapter in SETTINGS_ADAPTERS:
+                try:
+                    blob = probe.marker[adapter.platform] if probe else await _pull_profile_settings(
+                        client, url, session.access_token, profile_id, adapter)
+                    data["cw_visibility"][adapter.platform] = sorted(adapter.dismissals(blob))
+                except (NuvioAPIError, ValueError, TypeError, httpx.HTTPError) as exc:
+                    # A failed visibility read leaves that platform's baseline intact.
+                    logger.warning("Nuvio %s visibility pull unavailable (%s)", adapter.platform, type(exc).__name__)
+    return session, data
 
 
 _LIBRARY_PUSH_FIELDS = (
@@ -831,6 +930,30 @@ async def delete_watched_items(
                 expected_absent=keys,
             )
     return session
+
+
+async def sync_watched_delta(url, refresh_token, profile_id, additions, removals, *, on_refresh=None, on_snapshot=None):
+    """Write only missing watch states and share the verified snapshot with Next Up."""
+    async with httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
+        session = await refresh_session(url, refresh_token, client=client)
+        if on_refresh:
+            await on_refresh(session)
+        remote = await _pull_watched_items(client, url, session.access_token, profile_id)
+        present = {_watched_history_key(row) for row in remote}
+        additions = [row for row in additions if _watched_history_key(row) not in present and _has_numeric_watched_at(row)]
+        removals = [row for row in removals if _watched_history_key(row) in present]
+        for method, field, rows in (
+            ('sync_push_watched_items', 'p_items', additions),
+            ('sync_delete_watched_items', 'p_keys', removals),
+        ):
+            for offset in range(0, len(rows), _PAGE_SIZE):
+                await _rpc(client, url, session.access_token, method,
+                    {'p_profile_id': profile_id, field: rows[offset:offset + _PAGE_SIZE]})
+        if additions or removals:
+            remote = await _pull_watched_items(client, url, session.access_token, profile_id)
+        if on_snapshot:
+            await on_snapshot(client, session.access_token, remote)
+        return remote
 
 
 async def clear_sync_data(
