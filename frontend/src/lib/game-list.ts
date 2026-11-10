@@ -57,7 +57,7 @@ export function initializeGameList(panel:HTMLElement,lifetime:AbortSignal){
     }
     if(changed)schedule();
   });
-  const preview=mountListCoverPreview(signal,panel,{cachePreviews:true});
+  const preview=mountListCoverPreview(signal,panel,{reuseThumbnail:true});
   const error=document.createElement('p');error.className='error-message game-list-error';error.hidden=true;error.setAttribute('role','alert');
   const retry=document.createElement('button');retry.type='button';retry.className='lab-text-button';retry.textContent='Retry';
   error.append('Unable to load this part of the list. ',retry);root.querySelector('.list-content')!.append(error);

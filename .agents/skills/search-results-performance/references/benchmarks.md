@@ -417,8 +417,9 @@ positions went from 40 row reads and 2,911,810 transferred bytes to zero.
 With the optional index unavailable, retain the current query's page positions
 and reuse the corresponding row records while scrolling.
 
-Games cover previews wait 150ms before fetching a new image and reuse a small
-cache of decoded images. In the browser fixture, a brief pass plus five hovers
-alternating between two posters produced six image timing entries before the
-change and two after it, one per intentionally hovered poster. The screen list
-uses its existing preview behavior.
+Games cover previews reuse the row's loaded poster pixels and keep the same
+image for the whole hover. The browser fixture showed the preview on the first
+frame with zero image requests on sustained or repeated hovers over loaded
+posters. When the row image was still loading, the preview showed it on load
+only if the row was still hovered or focused. The screen list uses its
+existing preview behavior.
