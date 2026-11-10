@@ -79,7 +79,7 @@ export function mountDetailAchievements(root:HTMLElement,id:number,signal:AbortS
     }
     paintStatus();
     paint();if(visible()&&!loaded)void load();
-  });
+  },root);
   more.addEventListener('click',()=>void load(),{signal});
   document.addEventListener('anylist:editor-state',event=>{
     const next=(event as CustomEvent<EditorTitle>).detail;if(next.type!=='game'||next.id!==id)return;
