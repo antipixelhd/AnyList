@@ -1132,7 +1132,7 @@ class NuvioWatchedStateFanoutTests(unittest.IsolatedAsyncioTestCase):
 
         db = _FanoutDB()
         selected = AsyncMock(side_effect=[[episode], [show], [episode], [show]])
-        pushed = AsyncMock()
+        pushed = AsyncMock(side_effect=lambda _url, _token, _profile, additions, _removals, **kwargs: additions)
         with (
             patch("core.pull_cycle.defer_fan_out", return_value=False),
             patch("core.outbound_sync._select_in_chunks", selected),
@@ -1140,7 +1140,7 @@ class NuvioWatchedStateFanoutTests(unittest.IsolatedAsyncioTestCase):
             patch("core.nuvio_projection.ensure_imdb_ids", AsyncMock()),
             patch("core.settings_store.get_effective_tmdb_key", AsyncMock(return_value="tmdb-key")),
             patch("core.tracking_snapshot.require_stream_reconciliation", AsyncMock()),
-            patch.object(nuvio, "push_watched_items", pushed),
+            patch.object(nuvio, "sync_watched_delta", pushed),
         ):
             await outbound_sync.fan_out_changes(
                 db,
@@ -1292,7 +1292,7 @@ class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
         newly_watched = {
             "content_id": "tt0000002", "content_type": "movie", "watched_at": 1800000000000,
         }
-        remote_rows = [already_watched]
+        remote_rows = [{**already_watched, 'watched_at': None}]
         pushed_items: list[dict] = []
         rpc_paths: list[str] = []
 

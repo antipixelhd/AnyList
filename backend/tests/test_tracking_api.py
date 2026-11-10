@@ -17,7 +17,7 @@ from core import server_sync
 from core import scheduler
 from core import outbound_sync
 from core import settings_store
-from core import nuvio_payloads, nuvio_projection
+from core import nuvio_projection
 
 import httpx
 from fastapi import FastAPI
@@ -5166,7 +5166,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         canonical = Show(title='Alias fixture', tmdb_id=self.show.tmdb_id,
             tmdb_data={'external_ids': {'imdb_id': self.show.imdb_id}})
         conn = MediaServerConnection(user_id=self.owner.id, type='nuvio', name='Fixture',
-            url='https://example.test', token='fixture', push_watched=True, push_playback=True)
+            url='https://example.test', token='fixture', server_user_id='1', push_watched=True, push_playback=True)
         self.db.add_all([canonical, conn]);await self.db.flush()
         episode = Media(title='Episode', media_type=MediaType.episode, show_id=canonical.id,
             season_number=1, episode_number=1)
@@ -5177,8 +5177,12 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         await self.db.commit()
         await queue_watch_intents(self.db, self.owner.id, {episode.id});await self.db.commit()
         visibility = AsyncMock(side_effect=[NuvioAPIError('mobile settings unavailable'), None])
+        async def confirm(_url, _token, _profile, additions, removals, *, on_snapshot, **kwargs):
+            await on_snapshot(object(), 'access', additions)
+            return additions
         with patch('core.tracking_snapshot.require_stream_reconciliation', AsyncMock()), \
-             patch('core.watch_intents._write_nuvio_watch_batch', AsyncMock(return_value={})), \
+             patch('core.nuvio.sync_watched_delta', AsyncMock(side_effect=confirm)), \
+             patch.object(nuvio_projection, 'ensure_imdb_ids', AsyncMock()), \
              patch('core.nuvio_visibility.sync_next_up_visibility', visibility):
             await dispatch_watch_intents(self.db, self.owner.id)
             intent = (await self.db.execute(select(WatchIntent).where(
@@ -5605,11 +5609,13 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(watch_intent.state, 'pending')
         self.assertEqual(baseline.snapshot['playback_clear_watch_visibility_suppressed'], [self.movie.id])
 
+        async def confirm(_url, _token, _profile, additions, removals, *, on_snapshot, **kwargs):
+            await on_snapshot(object(), 'access', additions)
+            return additions
+
         with (
             patch.object(nuvio_projection, "ensure_imdb_ids", AsyncMock()),
-            patch.object(nuvio, 'sync_watched_delta', AsyncMock(return_value=[
-                {'content_id': 'tt0912347', 'content_type': 'movie', 'watched_at': 1767225600000},
-            ])) as watched_write,
+            patch.object(nuvio, 'sync_watched_delta', AsyncMock(side_effect=confirm)) as watched_write,
             patch('core.nuvio_visibility.sync_next_up_visibility', AsyncMock()) as next_up_write,
         ):
             await dispatch_watch_intents(self.db, self.owner.id)

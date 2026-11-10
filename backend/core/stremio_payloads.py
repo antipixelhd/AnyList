@@ -99,18 +99,12 @@ def with_watch_state(item: dict, record: dict, series_metadata: dict) -> dict:
     is_watched = bool(record.get("watched", True))
     candidate = dict(item)
     state = {**default_state(), **(candidate.get("state") or {})}
-    watched_at_ms = record.get("watched_at")
-    watched_at = (
-        datetime.fromtimestamp(
-            int(watched_at_ms) / 1000,
-            tz=timezone.utc,
-        ).isoformat().replace("+00:00", "Z")
-        if watched_at_ms is not None
-        else None
-    )
     season = record.get("season")
     episode = record.get("episode")
     if record.get("content_type") == "movie" or season is None or episode is None:
+        was_watched = int(state.get("timesWatched") or 0) > 0
+        if was_watched == is_watched and (is_watched or not state.get("flaggedWatched")):
+            return item
         state["timesWatched"] = (
             max(1, int(state.get("timesWatched") or 0))
             if is_watched
@@ -118,8 +112,11 @@ def with_watch_state(item: dict, record: dict, series_metadata: dict) -> dict:
         )
         if not is_watched:
             state["flaggedWatched"] = 0
-        if is_watched and watched_at is not None:
-            state["lastWatched"] = watched_at
+        watched_at_ms = record.get("watched_at")
+        if is_watched and watched_at_ms is not None:
+            state["lastWatched"] = datetime.fromtimestamp(
+                int(watched_at_ms) / 1000, tz=timezone.utc,
+            ).isoformat().replace("+00:00", "Z")
     else:
         videos = sorted_videos(series_metadata)
         video_ids = [str(video["id"]) for video in videos]
@@ -138,6 +135,8 @@ def with_watch_state(item: dict, record: dict, series_metadata: dict) -> dict:
         )
         if matching_video:
             video_id = str(matching_video["id"])
+            if (video_id in watched_ids) == is_watched:
+                return item
             if is_watched:
                 watched_ids.add(video_id)
             else:
@@ -146,8 +145,10 @@ def with_watch_state(item: dict, record: dict, series_metadata: dict) -> dict:
                 watched_ids,
                 video_ids,
             )
-            if is_watched and watched_at is not None:
-                state["lastWatched"] = watched_at
+            # A series has one clock for its current video. Backfilling another
+            # episode's bit must not replace that clock with its watch date.
+        else:
+            return item
     candidate["state"] = state
     return candidate
 

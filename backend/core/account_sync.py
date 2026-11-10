@@ -164,7 +164,8 @@ async def _run_provider(user_id: int, job_id: int) -> None:
     source_token = _source.set(source_key(provider, connection_id))
     try:
         if connection_id:
-            await SERVER_RUNNERS[provider](user_id, job_id, 0, 0, connection_id)
+            probe_args = {'probe': check.probe, 'probe_signature': check.checkpoint['signature']} if check.probe else {}
+            await SERVER_RUNNERS[provider](user_id, job_id, 0, 0, connection_id, **probe_args)
         else:
             await CLOUD_RUNNERS[provider](user_id, job_id)
     except Exception:

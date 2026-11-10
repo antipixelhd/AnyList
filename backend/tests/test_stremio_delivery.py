@@ -14,6 +14,24 @@ from models.base import MediaType
 
 
 class StremioDeliveryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_watched_replay_reads_only_target_and_skips_write(self):
+        connection = SimpleNamespace(id=50, token='auth', push_collection=False,
+            push_watched=True, push_playback=False, stremio_pushed_library_ids=None)
+        record = {'content_id': 'tt42', 'content_type': 'movie', 'watched_at': 1760000000000}
+        remote = {'_id': 'tt42', 'type': 'movie', 'state': {'timesWatched': 2, 'lastWatched': 'old'}}
+        with (
+            patch('core.nuvio_projection.build_watched_items', AsyncMock(return_value=[record])),
+            patch.object(stremio_delivery, 'changed_content_ids', AsyncMock(return_value={'tt42'})),
+            patch.object(stremio, 'datastore_get', AsyncMock(return_value=[remote])) as get,
+            patch.object(stremio, 'datastore_put', AsyncMock()) as put,
+        ):
+            changed = await stremio_delivery.push_connection(SimpleNamespace(refresh=AsyncMock()),
+                connection, 7, api_key=None, changed_media_ids={10}, watch_only=True)
+        self.assertEqual(changed, 0)
+        get.assert_awaited_once_with('auth', ids=['tt42'], allow_missing=True)
+        put.assert_not_awaited()
+        self.assertEqual(remote['state']['lastWatched'], 'old')
+
     async def test_full_push_clears_stale_resume_for_paused_item_and_preserves_other_state(self) -> None:
         connection = SimpleNamespace(id=49, token="auth-key", push_collection=True,
             push_watched=False, push_playback=True, stremio_pushed_library_ids=None)

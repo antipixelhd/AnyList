@@ -1803,6 +1803,21 @@ async def _push_watched_back_to_source(
             by_source_id.setdefault(source_id, set()).add(media_id)
     all_media_ids = {media_id for media_ids in by_source_id.values() for media_id in media_ids}
     watched_at_by_media = await db_queries.latest_watched_at(db, user_id, list(all_media_ids))
+    if conn.type == 'jellyfin' and require_success:
+        # Deferred delivery can be retried after some writes succeeded. The
+        # original pull is fresh enough for direct delivery, not for retries.
+        candidates = {sid: max((watched_at_by_media[mid] for mid in mids if watched_at_by_media[mid]), default=None)
+            for sid, mids in by_source_id.items() if mids and mids.issubset(watched_at_by_media)}
+
+        def expect_echo(sid):
+            for mid in by_source_id[sid]:
+                watch_echo.mark_pushed_watched(user_id, mid)
+
+        result = await jellyfin.apply_watched_delta(conn.url, conn.token, conn.server_user_id,
+            candidates, watched=True, before_write=expect_echo)
+        if not all(result.values()):
+            raise RuntimeError('Watched-state delivery is pending retry')
+        return len(result)
     sem = asyncio.Semaphore(20)
     failures = []
 
@@ -2869,9 +2884,11 @@ async def run_nuvio_sync(
     show_limit: int,
     connection_id: int | None = None,
     full_resync: bool = False,
+    *, probe=None, probe_signature=None,
 ):
     async with _sync_semaphore:
-        await _run_nuvio_sync(user_id, job_id, movie_limit, show_limit, connection_id, full_resync)
+        await _run_nuvio_sync(user_id, job_id, movie_limit, show_limit, connection_id, full_resync,
+            probe=probe, probe_signature=probe_signature)
 
 
 async def _run_nuvio_sync(
@@ -2881,6 +2898,7 @@ async def _run_nuvio_sync(
     show_limit: int,
     connection_id: int | None = None,
     full_resync: bool = False,
+    *, probe=None, probe_signature=None,
 ):
     logger.info("Starting Nuvio sync for user %s, job %s", user_id, job_id)
     async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
@@ -2959,8 +2977,14 @@ async def _run_nuvio_sync(
                 # have been loaded before another request already rotated
                 # this single-use refresh token while this one waited.
                 await refresh_stream_connection(db, conn)
+                from core.provider_changes import signature
+                if probe is None or probe_signature != signature('nuvio', settings, conn) or not probe.usable(conn.token):
+                    probe = None
+                else:
+                    pull_started_at = probe.started_at
                 _, data = await nuvio.pull_sync_data(
-                    conn.url, conn.token, profile_id, on_refresh=_persist_refresh
+                    conn.url, conn.token, profile_id, on_refresh=_persist_refresh,
+                    categories=nuvio.pull_categories(conn), probe=probe,
                 )
 
             library_records = data["library"] if conn.sync_collection else []
@@ -3234,9 +3258,9 @@ async def _run_nuvio_sync(
             # allow export. Verified streaming-library deltas are mirrored separately.
             stats["succeeded"] = len(changed_media_ids)
             stats["failed"] = stats["errors"]
-            stats["provider_snapshot_complete"] = complete_snapshot and all(
+            stats["provider_snapshot_complete"] = complete_snapshot and (not conn.sync_playback or all(
                 adapter.platform in data.get("cw_visibility", {}) for adapter in nuvio.SETTINGS_ADAPTERS
-            )
+            ))
             warnings = await _stamp_matched_show_warnings(db, user_id, warnings)
             await db.execute(
                 update(SyncJob)
@@ -3504,6 +3528,7 @@ async def _pull_stremio_items(
     conn: MediaServerConnection,
     *,
     full_resync: bool,
+    probe=None,
 ) -> tuple[list[dict], bool, datetime]:
     started_at = datetime.now(timezone.utc).replace(tzinfo=None)
     complete_snapshot = full_resync or not conn.stremio_full_sync_done or conn.stremio_pull_cursor_at is None
@@ -3511,7 +3536,7 @@ async def _pull_stremio_items(
         return await stremio.datastore_get(conn.token, all_items=True), True, started_at
 
     cutoff = conn.stremio_pull_cursor_at - timedelta(minutes=5)
-    meta = await stremio.datastore_meta(conn.token)
+    meta = probe.metadata if probe else await stremio.datastore_meta(conn.token)
     changed_ids = []
     for row in meta:
         if not isinstance(row, (list, tuple)) or len(row) < 2:
@@ -3520,7 +3545,8 @@ async def _pull_stremio_items(
         modified_at = _nuvio_datetime(stremio_payloads.epoch_ms(row[1]))
         if item_id and modified_at is not None and modified_at >= cutoff:
             changed_ids.append(item_id)
-    return await stremio.datastore_get(conn.token, ids=changed_ids), False, started_at
+    items = await stremio.datastore_get(conn.token, ids=changed_ids) if changed_ids else []
+    return items, False, probe.started_at if probe else started_at
 
 
 async def run_stremio_sync(
@@ -3530,6 +3556,7 @@ async def run_stremio_sync(
     show_limit: int,
     connection_id: int | None = None,
     full_resync: bool = False,
+    *, probe=None, probe_signature=None,
 ) -> None:
     async with _sync_semaphore:
         await _run_stremio_sync(
@@ -3539,6 +3566,7 @@ async def run_stremio_sync(
             show_limit,
             connection_id,
             full_resync,
+            probe=probe, probe_signature=probe_signature,
         )
 
 
@@ -3549,6 +3577,7 @@ async def _run_stremio_sync(
     show_limit: int,
     connection_id: int | None = None,
     full_resync: bool = False,
+    *, probe=None, probe_signature=None,
 ) -> None:
     logger.info("Starting Stremio sync for user %s, job %s", user_id, job_id)
     async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
@@ -3591,9 +3620,13 @@ async def _run_stremio_sync(
 
             async with stremio.connection_lock(conn.id):
                 await refresh_stream_connection(db, conn)
+                from core.provider_changes import signature
+                if probe is not None and probe_signature != signature('stremio', settings, conn):
+                    probe = None
                 items, complete_snapshot, pull_started_at = await _pull_stremio_items(
                     conn,
                     full_resync=full_resync,
+                    probe=probe,
                 )
             library_records, watched_records, progress_records, removed_ids = await _stremio_records(items)
             if full_resync:
@@ -4473,8 +4506,7 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                                         db, conn, written))
                             remote_watch_by_key = {watch_identity(row): row for row in remote_watches}
                             watched_to_push = [item for item in watched_items
-                                if watch_identity(item) not in remote_watch_by_key
-                                or not isinstance(remote_watch_by_key[watch_identity(item)].get("watched_at"), int)]
+                                if watch_identity(item) not in remote_watch_by_key]
                             if any(not isinstance(item.get("watched_at"), int) for item in watched_to_push):
                                 raise nuvio.NuvioAPIError("Cannot push a watched item without a numeric watch date")
                             remote_progress = (
@@ -4497,11 +4529,11 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                                 await nuvio._rpc(client, conn.url, session.access_token,
                                     "sync_push_watched_items", {"p_profile_id": profile,
                                         "p_items": watched_to_push[offset:offset + nuvio._PAGE_SIZE]})
-                            if watched_items:
+                            if watched_to_push:
                                 confirmed_watches = await nuvio._pull_watched_items(
                                     client, conn.url, session.access_token, profile,
                                 )
-                                desired_watch_keys = {watch_identity(item) for item in watched_items}
+                                desired_watch_keys = {watch_identity(item) for item in watched_to_push}
                                 confirmed_keys = {watch_identity(row) for row in confirmed_watches}
                                 if not desired_watch_keys.issubset(confirmed_keys):
                                     raise nuvio.NuvioAPIError(

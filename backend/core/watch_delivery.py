@@ -29,6 +29,20 @@ from models.users import UserSettings
 logger = logging.getLogger(__name__)
 
 
+async def push_jellyfin_watches(conn, user_id, targets, *, watched, watched_at):
+    dates = {sid: max((watched_at[mid] for mid in mids if watched_at.get(mid) is not None), default=None)
+        for sid, mids in targets.items()}
+
+    def expect_echo(sid):
+        if watched:
+            for mid in targets[sid]:
+                watch_echo.mark_pushed_watched(user_id, mid)
+
+    result = await jellyfin_client.apply_watched_delta(conn.url, conn.token, conn.server_user_id, dates,
+        watched=watched, before_write=expect_echo)
+    return all(result.values())
+
+
 async def push_watch_state(
     db: AsyncSession,
     user_id: int,
@@ -117,6 +131,7 @@ async def push_watch_state(
         for conn in connections:
             conn_by_type.setdefault(conn.type, []).append(conn)
 
+        jellyfin_targets = {}
         for coll_file, coll_media_id in coll_files:
             if not coll_file.source_id:
                 continue
@@ -132,12 +147,7 @@ async def push_watch_state(
                     else:
                         tasks.append((label, plex_client.mark_unwatched(conn.url, conn.token, coll_file.source_id)))
                 elif coll_file.source == CollectionSource.jellyfin:
-                    label = f"jellyfin connection {conn.id}"
-                    if watched:
-                        watch_echo.mark_pushed_watched(user_id, coll_media_id)
-                        tasks.append((label, jellyfin_client.mark_watched(conn.url, conn.token, conn.server_user_id, coll_file.source_id, played_at=resolved_watched_at.get(coll_media_id))))
-                    else:
-                        tasks.append((label, jellyfin_client.mark_unwatched(conn.url, conn.token, conn.server_user_id, coll_file.source_id)))
+                    jellyfin_targets.setdefault(conn.id, {}).setdefault(coll_file.source_id, set()).add(coll_media_id)
                 elif coll_file.source == CollectionSource.emby:
                     label = f"emby connection {conn.id}"
                     if watched:
@@ -145,6 +155,10 @@ async def push_watch_state(
                         tasks.append((label, emby_client.mark_watched(conn.url, conn.token, conn.server_user_id, coll_file.source_id, played_at=resolved_watched_at.get(coll_media_id))))
                     else:
                         tasks.append((label, emby_client.mark_unwatched(conn.url, conn.token, conn.server_user_id, coll_file.source_id)))
+        for conn in conn_by_type.get('jellyfin', []):
+            if targets := jellyfin_targets.get(conn.id):
+                tasks.append((f'jellyfin connection {conn.id}', push_jellyfin_watches(conn, user_id, targets,
+                    watched=watched, watched_at=resolved_watched_at)))
 
     if push_simkl and settings.simkl_client_id:
         from core import simkl as simkl_client

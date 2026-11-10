@@ -107,6 +107,23 @@ class StremioBitfieldTests(unittest.TestCase):
 
 
 class StremioSyncTests(unittest.IsolatedAsyncioTestCase):
+    async def test_incremental_pull_reuses_probe_and_skips_empty_get(self):
+        from core.provider_changes import StremioPullProbe
+        cursor = datetime.now(timezone.utc).replace(tzinfo=None)
+        conn = SimpleNamespace(token='auth', stremio_full_sync_done=True, stremio_pull_cursor_at=cursor)
+        modified = int(cursor.replace(tzinfo=timezone.utc).timestamp() * 1000)
+        for metadata, expected in (([], []), ([['tt42', modified]], [{'_id': 'tt42'}])):
+            with (
+                self.subTest(metadata=metadata),
+                patch.object(stremio, 'datastore_meta', AsyncMock()) as meta,
+                patch.object(stremio, 'datastore_get', AsyncMock(return_value=expected)) as get,
+            ):
+                items, complete, started = await server_sync._pull_stremio_items(conn,
+                    full_resync=False, probe=StremioPullProbe(metadata, cursor))
+                self.assertEqual((items, complete, started), (expected, False, cursor))
+                meta.assert_not_awaited()
+                self.assertEqual(get.await_count, int(bool(expected)))
+
     async def test_incremental_pull_consumes_datastore_meta_tuples(self) -> None:
         cursor = datetime.now(timezone.utc).replace(tzinfo=None)
         recent_ms = int((cursor - timedelta(minutes=1)).replace(tzinfo=timezone.utc).timestamp() * 1000)

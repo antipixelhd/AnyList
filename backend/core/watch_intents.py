@@ -117,6 +117,7 @@ async def _current_watch_event(db, user_id: int, media_id: int) -> WatchEvent | 
 
 async def _write_nuvio_watch_batch(db, conn, entries):
     from core import nuvio
+    from core.nuvio_visibility import sync_next_up_visibility
     from db import AsyncSessionLocal
     from models.users import UserSettings
     from sqlalchemy import update
@@ -142,13 +143,10 @@ async def _write_nuvio_watch_batch(db, conn, entries):
         if mapped_id := nuvio_payloads.content_id_for_baseline(baseline, media, show):
             payload['content_id'] = mapped_id
         if intent.desired_watched:
-            if not nuvio._has_numeric_watched_at(payload):
-                errors[intent.id] = 'NuvioAPIError'
-                continue
             additions.append(payload)
         else:
             removals.append({field: payload[field] for field in ('content_id', 'season', 'episode') if field in payload})
-        prepared.append((intent, payload, getattr(show or media, 'tmdb_id', None)))
+        prepared.append((intent, payload, show or media))
 
     if not prepared:
         return errors
@@ -161,24 +159,43 @@ async def _write_nuvio_watch_batch(db, conn, entries):
             await token_db.commit()
         set_committed_value(conn, 'token', session.refresh_token)
 
+    async def finish(client, access_token, remote):
+        remote_keys = {nuvio._watched_history_key(row) for row in remote}
+        snapshot = dict(baseline.snapshot or {}) if baseline else {}
+        mappings = dict(snapshot.get('mappings', {}))
+        suppressed = {str(value) for value in snapshot.get('playback_clear_watch_visibility_suppressed', [])}
+        visible_intents = []
+        for intent, payload, entity in prepared:
+            key = nuvio._watched_history_key(payload)
+            if (key in remote_keys) != intent.desired_watched:
+                errors[intent.id] = 'NuvioAPIError'
+                continue
+            if entity.tmdb_id is not None:
+                mappings[str(payload['content_id'])] = entity.tmdb_id
+            if str(intent.media_id) not in suppressed:
+                visible_intents.append((intent.id, payload, entity))
+        if baseline:
+            baseline.snapshot = {**snapshot, 'mappings': mappings}
+        records = {}
+        for _, payload, entity in visible_intents:
+            keys = {str(key) for key, value in mappings.items()
+                if entity.tmdb_id is not None and str(value) == str(entity.tmdb_id)}
+            keys.add(str(payload['content_id']))
+            if imdb_id := nuvio_payloads.imdb_id(entity):
+                keys.add(imdb_id)
+            for key in keys:
+                records[key] = {'content_id': key, 'content_type': payload['content_type']}
+        if records:
+            try:
+                await sync_next_up_visibility(db, conn, list(records.values()),
+                    client=client, access_token=access_token, watched=remote)
+            except Exception as error:
+                errors.update({intent_id: type(error).__name__ for intent_id, _, _ in visible_intents})
+
     async with nuvio.connection_lock(conn.id):
         await refresh_stream_connection(db, conn)
-        remote = await nuvio.sync_watched_delta(conn.url, conn.token, nuvio.parse_profile_id(conn.server_user_id),
-            additions, removals, on_refresh=persist_refresh)
-
-    remote_keys = {nuvio._watched_history_key(row) for row in remote}
-    dated_keys = {nuvio._watched_history_key(row) for row in remote if nuvio._has_numeric_watched_at(row)}
-    snapshot = dict(baseline.snapshot or {}) if baseline else {}
-    mappings = dict(snapshot.get('mappings', {}))
-    for intent, payload, tmdb_id in prepared:
-        key = nuvio._watched_history_key(payload)
-        confirmed = key in dated_keys if intent.desired_watched else key not in remote_keys
-        if not confirmed:
-            errors[intent.id] = 'NuvioAPIError'
-        elif tmdb_id is not None:
-            mappings[str(payload['content_id'])] = tmdb_id
-    if baseline:
-        baseline.snapshot = {**snapshot, 'mappings': mappings}
+        await nuvio.sync_watched_delta(conn.url, conn.token, nuvio.parse_profile_id(conn.server_user_id),
+            additions, removals, on_refresh=persist_refresh, on_snapshot=finish)
     return errors
 
 
@@ -214,7 +231,6 @@ async def dispatch_watch_intents(db, user_id: int, *, writer: WatchWriter | None
         WatchIntent.id.desc(),
     ).limit(100).with_for_update(skip_locked=True))).scalars().all()
     processed = set()
-    nuvio_visibility_batches = {}
     for intent in intents:
         if intent.id in processed:
             continue
@@ -295,38 +311,10 @@ async def dispatch_watch_intents(db, user_id: int, *, writer: WatchWriter | None
             errors = await _write_nuvio_watch_batch(db, conn, batch)
         except Exception as error:
             errors = {row.id: type(error).__name__ for row, _, _ in batch}
-        baseline = await db.get(StreamBaseline, conn.id)
-        suppressed = set((baseline.snapshot or {}).get('playback_clear_watch_visibility_suppressed', [])) if baseline else set()
         for row, _, _ in batch:
             row.last_error = errors.get(row.id)
             if row.last_error:
                 logger.info("Watch intent remains pending for connection %s media %s after %s", conn.id, row.media_id, row.last_error)
-                continue
-            row.state = 'applied'
-            if row.media_id not in suppressed and str(row.media_id) not in suppressed:
-                nuvio_visibility_batches.setdefault(conn.id, []).append(row)
-    for connection_id, batch in nuvio_visibility_batches.items():
-        conn = await db.get(MediaServerConnection, connection_id)
-        records = []
-        from core.nuvio_visibility import sync_next_up_visibility
-        baseline = await db.get(StreamBaseline, conn.id)
-        mappings = (baseline.snapshot or {}).get('mappings', {}) if baseline else {}
-        for intent in batch:
-            media = await db.get(Media, intent.media_id)
-            show = await db.get(Show, media.show_id) if media.show_id else None
-            entity = show or media
-            keys = {str(key) for key, value in mappings.items()
-                if entity.tmdb_id is not None and str(value) == str(entity.tmdb_id)}
-            for key in (nuvio_payloads.content_id_for_baseline(baseline, media, show), nuvio_payloads.imdb_id(entity)):
-                if key:
-                    keys.add(key)
-            for key in keys:
-                records.append({'content_id': key,
-                    'content_type': 'series' if show else media.media_type.value})
-        try:
-            await sync_next_up_visibility(db, conn, records)
-        except Exception as error:
-            for intent in batch:
-                intent.state = 'pending'
-                intent.last_error = type(error).__name__
+            else:
+                row.state = 'applied'
     await db.commit()

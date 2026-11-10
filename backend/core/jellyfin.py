@@ -131,8 +131,36 @@ async def get_items_watched_state(
     batches = await asyncio.gather(*(_fetch(chunk) for chunk in chunks))
     for items in batches:
         for item_id, item in items.items():
-            result[item_id] = bool((item.get("UserData") or {}).get("Played"))
+            played = (item.get("UserData") or {}).get("Played")
+            if isinstance(played, bool):
+                result[item_id] = played
     return result
+
+
+async def apply_watched_delta(url, token, user_id, items, *, watched, before_write=None):
+    """Confirm current state in batches and write only the mismatched server items."""
+    if not items:
+        return {}
+    async with httpx.AsyncClient(timeout=PUSH_TIMEOUT, follow_redirects=False) as client:
+        remote = await get_items_watched_state(url, token, list(items), user_id=user_id, client=client)
+        limit = asyncio.Semaphore(10)
+
+        async def apply(item_id, date):
+            current = remote.get(item_id)
+            if current is None:
+                return item_id, False
+            if current == watched:
+                return item_id, True
+            async with limit:
+                if before_write:
+                    before_write(item_id)
+                if watched:
+                    result = await mark_watched(url, token, user_id, item_id, client=client, played_at=date)
+                else:
+                    result = await mark_unwatched(url, token, user_id, item_id, client=client)
+            return item_id, result
+
+        return dict(await asyncio.gather(*(apply(item_id, date) for item_id, date in items.items())))
 
 
 async def validate_connection(url: str, token: str, user_id: Optional[str] = None) -> bool:

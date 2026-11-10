@@ -10,6 +10,21 @@ from core import stremio, stremio_payloads
 
 
 class StremioPayloadTests(unittest.TestCase):
+    def test_completed_movie_keeps_existing_timestamp_and_play_count(self):
+        item = {'_id': 'tt42', 'state': {'timesWatched': 3, 'lastWatched': 'old'}}
+        result = stremio_payloads.with_watch_state(item,
+            {'content_type': 'movie', 'watched': True, 'watched_at': 'unknown'}, {})
+        self.assertIs(result, item)
+
+    def test_episode_backfill_preserves_current_video_clock(self):
+        item = {'_id': 'tt42', 'state': {'lastWatched': 'current', 'video_id': 'tt42:2:1'}}
+        result = stremio_payloads.with_watch_state(item,
+            {'content_type': 'series', 'season': 1, 'episode': 1, 'watched_at': 1760000000000},
+            {'videos': [{'id': 'tt42:1:1', 'season': 1, 'episode': 1}]})
+        self.assertEqual(result['state']['lastWatched'], 'current')
+        self.assertEqual(result['state']['video_id'], 'tt42:2:1')
+        self.assertEqual(stremio.decode_watched_bitfield(result['state']['watched'], ['tt42:1:1']), {'tt42:1:1'})
+
     def test_noop_comparison_ignores_only_mtime(self) -> None:
         left = {"_id": "tt0133093", "_mtime": "old", "state": {"timeOffset": 42}, "custom": True}
         same = {**left, "_mtime": "new"}
