@@ -18,6 +18,8 @@ export interface ResponsiveArtworkOptions {
   size?: string;
   /** CSS image width expression, passed through as the `sizes` attribute. */
   sizes?: string;
+  /** Allow the browser to reuse a compact IGDB cover for a list preview. */
+  compactIgdbCover?: boolean;
   /** Public provider images use their CDN; proxy is an explicit opt-in. */
   route?: ArtworkRoute;
 }
@@ -174,7 +176,9 @@ export function responsiveArtwork(
   if(parsed.kind==='igdb'){
     const width=widthFromSize(options.size||'w500');
     const bucket=options.size==='original'?'1080p':width!=null&&width<=185?'cover_small_2x':width!=null&&width<=500?'cover_big_2x':'720p';
-    return {src:`https://images.igdb.com/igdb/image/upload/t_${bucket}${parsed.suffix}`};
+    const url=(size:string)=>`https://images.igdb.com/igdb/image/upload/t_${size}${parsed.suffix}`;
+    return {src:url(bucket),...(options.compactIgdbCover&&options.sizes?{sizes:options.sizes,
+      srcset:`${url('cover_small_2x')} 180w, ${url('cover_big_2x')} 528w`}:{})};
   }
   if (parsed.kind === "tvdb") {
     return {src:route==='proxy'?`${PROXY_PREFIX}tvdb${parsed.suffix??''}`:`https://${TVDB_HOST}${parsed.suffix??''}`};

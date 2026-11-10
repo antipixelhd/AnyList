@@ -1,12 +1,12 @@
 import {applyResponsiveArtwork} from './responsive-artwork';
 import {gameProgress} from './game-progress';
 import {scoreLabel} from './tracker';
-import type {GameListState} from './game-list-index';
+import type {ListState} from './profile-list-index';
 
 /** Share the SSR row template, icons and table styling with appended rows. */
-export function paintGameListRow(row:HTMLElement,state:GameListState,template:HTMLTemplateElement){
+export function paintGameListRow(row:HTMLElement,state:ListState,template:HTMLTemplateElement){
   const id=state.subject.catalogue_id;
-  Object.assign(row.dataset,{gameEntry:String(id),entryStatus:state.status||'',title:state.title,
+  Object.assign(row.dataset,{listEntry:String(id),entryStatus:state.status||'',title:state.title,
     score:String(state.score??-1),hours:String(state.total_seconds??-1),updated:state.updated_at||'',
     year:state.year||'',genres:JSON.stringify(state.genres||[]),favorite:String(!!state.favorite)});
   if(state.base_work_id)row.dataset.gameBase=String(state.base_work_id);else delete row.dataset.gameBase;
@@ -50,9 +50,4 @@ export function paintGameListRow(row:HTMLElement,state:GameListState,template:HT
     const replay=annotations.querySelector<HTMLElement>('.entry-rewatch'),label=`${state.replay_count} ${state.replay_count===1?'replay':'replays'}`;
     if(replay){replay.dataset.rewatchLabel=label;replay.setAttribute('aria-label',label);}
   }
-}
-
-export function createGameListRow(template:HTMLTemplateElement,state:GameListState){
-  const row=template.content.querySelector<HTMLElement>('[data-game-entry]')!.cloneNode(true) as HTMLElement;
-  paintGameListRow(row,state,template);return row;
 }

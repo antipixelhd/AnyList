@@ -59,6 +59,7 @@ from models.catalogue import (
     SteamPriceSnapshot,
 )
 from models.games import GameActivity, GameEntry, GameFavorite
+from models.tracking import TrackedEntry
 from models.users import UserSettings
 from routers.games import router as games_router
 from sqlalchemy import delete, event, or_, select
@@ -147,6 +148,18 @@ async def main(args):
                 db.add(Media(title=f'Benchmark title {900000 + index}', media_type=MediaType.movie,
                     tmdb_id=900000 + index, runtime=100, release_date='2026-10-01',
                     tmdb_data=title(900000 + index)))
+            screen_ids=[]
+            if args.case and any(name.startswith('screen_list_') for name in args.case):
+                screen=[Media(title=f'Library {i:05}',media_type=MediaType.series if i%2 else MediaType.movie,
+                    tmdb_id=500000+i,poster_path='/fixture.jpg',release_date=f'{2000+i%26}-01-01',
+                    tmdb_data={'genres':[{'name':'Adventure' if i%2 else 'Comedy'}]}) for i in range(args.local_titles)]
+                db.add_all(screen)
+                await db.flush()
+                screen_ids=[row.id for row in screen]
+                db.add_all([TrackedEntry(user_id=viewer.id,media_id=identifier,
+                    status=('watching','completed','paused','dropped','planning')[i%5],
+                    manual_score=8 if i%3 else None,progress=i%20 if i%2 else 0)
+                    for i,identifier in enumerate(screen_ids)])
             first_game=None
             role_work_ids=[]
             children_base=None
@@ -505,10 +518,10 @@ async def main(args):
                 row['complete_ms'] = round((time.perf_counter() - start) * 1000, 2)
                 row['complete_provider_requests'] = counters.get('provider_requests', 0)
             payload = result
-            if label == 'game_list_rows':
+            if label in ('game_list_rows','screen_list_rows'):
                 result = {'results': result}
             if isinstance(result, dict):
-                items = result.get('results', result.get('items', []))
+                items = result.get('results', result.get('items', result.get('entries', [])))
                 if label == 'series_resolve':
                     items = [{'season': season['season_number'], **{key: episode[key] for key in
                         ('episode_number', 'title', 'air_date', 'runtime', 'watched', 'released')}}
@@ -525,11 +538,11 @@ async def main(args):
                 row['rows'] = len(items)
                 # Fixture insertion timestamps are intentionally fresh each run;
                 # compare game membership/order/progress without those clocks.
-                if label == 'game_list_index':
+                if label in ('game_list_index','screen_list_index'):
                     identities = [item[:5] + item[6:] for item in items]
                     row['complete'] = result['complete']
                 else:
-                    identities = [{key: value for key, value in item.items() if key not in ('updated_at', 'year', 'genres')} for item in items] if label.startswith(('game_list', 'game_favorites')) else items
+                    identities = [{key: value for key, value in item.items() if key not in ('updated_at', 'year', 'genres')} for item in items] if label.startswith(('game_list', 'game_favorites','screen_list')) else items
                 row['result_identity'] = hashlib.sha256(json.dumps(identities, sort_keys=True).encode()).hexdigest()
                 if label in ('game_browse_pages','game_browse_timeline'):
                     # Retain the full fingerprint above. This additional hash
@@ -763,6 +776,15 @@ async def main(args):
                 if args.case and 'game_browse_critic' in args.case else []),
             ('game_list', f'games/users/{viewer.username}/list', {'limit': 50}),
             ('game_list_complete', f'games/users/{viewer.username}/list', {'complete': 'true'}),
+            *([(f'screen_list_complete{suffix}',f'profile/{viewer.username}/{scope}',{})
+                for suffix,scope in (('','all'),('_movie','movie'),('_series','series'))
+                if args.case and f'screen_list_complete{suffix}' in args.case]),
+            *([(f'screen_list_window{suffix}',f'profile/{viewer.username}/{scope}/list',{'limit':100})
+                for suffix,scope in (('','all'),('_movie','movie'),('_series','series'))
+                if args.case and f'screen_list_window{suffix}' in args.case]),
+            *([('screen_list_index',f'profile/{viewer.username}/all/index',{})] if args.case and 'screen_list_index' in args.case else []),
+            *([('screen_list_rows',f'profile/{viewer.username}/all/rows',{'ids':screen_ids[:100]})]
+                if args.case and 'screen_list_rows' in args.case else []),
             *([('game_list_index', f'games/users/{viewer.username}/index', {})] if args.case and 'game_list_index' in args.case else []),
             *([('game_list_rows', f'games/users/{viewer.username}/rows', {'ids':role_work_ids})] if args.case and 'game_list_rows' in args.case else []),
             *([('game_list_window', f'games/users/{viewer.username}/list', {'grouped':'true','limit':100})] if args.case and 'game_list_window' in args.case else []),

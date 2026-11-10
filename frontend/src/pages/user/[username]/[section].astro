@@ -2,71 +2,47 @@
 import Tracker from '../../../layouts/Tracker.astro';
 import ProfileHeader from '../../../components/ProfileHeader.astro';
 import ProfileListFilters from '../../../components/ProfileListFilters.astro';
-import Icon from '../../../components/Icon.astro';
-import EntryAnnotations from '../../../components/EntryAnnotations.astro';
-import {tracker, trackerFailure, statuses, scoreLabel, compactListProgress} from '../../../lib/tracker';
-import {responsiveArtwork} from '../../../lib/responsive-artwork';
-const {username, section} = Astro.params;
-if (!['movies','series','list'].includes(section!)) return Astro.redirect('/404');
-const isCombined=section==='list';
-const mediaType = isCombined ? 'all' : section === 'movies' ? 'movie' : 'series';
-let data: any = null, error = '';
-try {data = await tracker(`profile/${encodeURIComponent(username!)}/${mediaType}`, Astro.locals.token);} catch(e) {const failure=trackerFailure(e);error=failure.message;Astro.response.status=failure.status;}
-const viewerPrefs = Astro.locals.token ? await tracker('preferences', Astro.locals.token).catch(() => ({default_sort:'title'})) : {default_sort:'title'};
-const defaultSort = ['title','score','progress','updated'].includes(viewerPrefs.default_sort) ? viewerPrefs.default_sort : 'title';
-const entries = [...(data?.entries || [])].sort((a:any,b:any) => defaultSort === 'title'
-  ? a.title.toLowerCase().localeCompare(b.title.toLowerCase())
-  : defaultSort === 'updated'
-    ? String(b.updated_at || '').localeCompare(String(a.updated_at || ''))
-    : Number(b[defaultSort] ?? -1) - Number(a[defaultSort] ?? -1));
-const genres = [...new Set(entries.flatMap((e: any) => e.genres))].sort();
-const years = [...new Set(entries.map((e:any)=>e.year).filter(Boolean).map(String))].sort();
-const requestedStatus=Astro.url.searchParams.get('status')||'all';
-const initialStatus=['all',...statuses.map(([value])=>value)].includes(requestedStatus)?requestedStatus:'all';
-const today = new Date().toISOString().slice(0, 10);
-const canIncrement = (entry: any) => entry.type === 'movie'
-  ? entry.progress < 1 && (!entry.release_date || entry.release_date.slice(0, 10) <= today)
-  : entry.released_episodes !== undefined && entry.progress < entry.released_episodes;
-const compactImageSizes='(max-width:650px) 32px, 42px';
-const imageRoute='direct';
-const quickRatePoster=(path:any)=>responsiveArtwork(path,{size:'w185',sizes:'42px',route:imageRoute})?.src || '';
-const availabilityLabel=(reason:string|undefined)=>reason==='airing'?'Currently airing':'New season available';
+import ScreenListRows from '../../../components/ScreenListRows.astro';
+import {tracker,trackerFailure,statuses} from '../../../lib/tracker';
+import {profileListQuery} from '../../../lib/profile-list-query';
+import {viewerMediaPreferences} from '../../../lib/viewer-media-preferences';
+import {profileListPageSize} from '../../../lib/profile-list-window';
+import '../../../styles/virtual-profile-list.css';
+const {username,section}=Astro.params;
+if(!['movies','series','list'].includes(section!))return Astro.redirect('/404');
+const isCombined=section==='list',mediaType=isCombined?'all':section==='movies'?'movie':'series';
+const endpoint=`profile/${encodeURIComponent(username!)}/${mediaType}`;
+const {default_sort:defaultSort}=await viewerMediaPreferences(Astro.locals);
+const query=profileListQuery(Astro.url.searchParams,statuses,defaultSort);
+const request=new URLSearchParams(query);request.set('limit',String(profileListPageSize));
+let data:any=null,error='';
+try{data=await tracker(`${endpoint}/list?${request}`,Astro.locals.token);}
+catch(cause){const failure=trackerFailure(cause);error=failure.message;Astro.response.status=failure.status;}
+const owner=data?.profile?.owner===true,entries=data?.results||[];
+const count=Object.values(data?.status_counts||{}).reduce((sum:number,value)=>sum+Number(value),0);
 ---
-<Tracker title={`${username}'s ${isCombined ? 'Movie/Series' : section === 'movies' ? 'Movie' : 'Series'} List`} listLanding={!!data} ownerProfileColor={data?.profile?.profile_color} ownerIsViewer={data?.owner === true}>
-  {data ? <>
-    <ProfileHeader profile={{...data.profile,owner:data.owner,following:data.following,follows_you:data.follows_you,combine_lists:data.combine_lists}} active={section}/>
-    <div class="list-shell" data-initial-status={initialStatus}>
-      <ProfileListFilters statuses={statuses} counts={Object.fromEntries(statuses.map(([value])=>[value,entries.filter((entry:any)=>entry.status===value).length]))} genres={genres} years={years} status={initialStatus} sort={defaultSort} {defaultSort}/>
-
+<Tracker title={`${username}'s ${isCombined?'Movie/Series':section==='movies'?'Movie':'Series'} List`} listLanding={!!data} ownerProfileColor={data?.profile?.profile_color} ownerIsViewer={owner}>
+  {data?<>
+    <ProfileHeader profile={data.profile} active={section}/>
+    <div class="list-shell" data-virtual-list data-list-domain="screen" data-screen-scope={mediaType} data-list-endpoint={endpoint} data-list-total={data.total} data-list-counts={JSON.stringify(data.group_counts)} data-owner={String(owner)} data-status-counts={JSON.stringify(data.status_counts)}>
+      <ProfileListFilters {statuses} counts={data.status_counts} genres={data.genres} years={data.years} status={query.get('status')||'all'} sort={query.get('sort')||'title'} {defaultSort} query={query.get('q')||''} genre={query.get('genre')||''} year={query.get('year')||''} favorites={query.has('favorites')}/>
       <div class="list-content">
-      <div class="list-toolbar"><span id="result-count" class="sr-only" aria-live="polite">{entries.length} entries</span><span id="progress-feedback" class="sr-only" aria-live="assertive"></span></div>
-      <div id="entry-groups">
-      {statuses.map(([status,label]) => {const group = entries.filter((e:any)=>e.status===status); return <section class="status-section" data-group={status} hidden={group.length===0 || initialStatus !== 'all' && initialStatus !== status}><h2>{label}</h2><div class="entry-table">
-        <div class:list={['entry-head',{'combined-row':isCombined}]}><span class="entry-cover-column" aria-hidden="true"></span><span class="entry-title-column">Title</span><span class="entry-score-column">Score</span><span class="entry-progress-column">Progress</span>{isCombined&&<span class="entry-type-column">Type</span>}</div>
-        {group.map((entry:any)=><article class:list={['entry-row',{'combined-row':isCombined}]} data-title={entry.title.toLowerCase()} data-score={entry.score ?? -1} data-progress={entry.progress} data-media-type={entry.type} data-year={entry.year} data-genres={JSON.stringify(entry.genres)} data-favorite={entry.favorite?'yes':'no'} data-updated={entry.updated_at}>
-          <div class="entry-thumbnail" data-preview-src={entry.poster||undefined} data-artwork-path={entry.poster||undefined}><span class="entry-availability" role="img" aria-label={availabilityLabel(entry.availability_reason)} title={availabilityLabel(entry.availability_reason)} hidden={!entry.availability_dot}></span>{(() => {const image=responsiveArtwork(entry.poster,{size:'w342',sizes:compactImageSizes,route:imageRoute}); return image?.src ? <img class="entry-cover" src={image.src} srcset={image.srcset} sizes={image.sizes} alt="" loading="lazy"/> : <span class="entry-cover"/>})()}{data.owner&&<button class="row-menu" data-motion-static data-edit-entry={entry.id} aria-label={`Edit ${entry.title}`}><Icon name="ellipsis"/></button>}</div><div class="entry-title"><a class="entry-title-link" href={`/title/${entry.id}`}>{entry.title}{entry.favorite&&<span class="row-favorite" aria-label="Favorite"><Icon name="heart"/></span>}</a><EntryAnnotations rewatchCount={entry.rewatch_count} notes={entry.notes} newSeasons={entry.status==='completed'?entry.new_seasons:0} newEpisodes={entry.status==='completed'?entry.new_episodes:0}/></div>
-          <span class="entry-score">{data.owner?<button class="entry-score-button" data-quick-rate-id={entry.id} data-quick-rate-title={entry.title} data-quick-rate-poster={quickRatePoster(entry.poster)} data-quick-rate-score={entry.score??''} data-quick-rate-mode={entry.rating_mode??'manual'} aria-label={`Rate ${entry.title}`}><span data-score-label>{scoreLabel(entry.score)}</span></button>:scoreLabel(entry.score)}</span>
-          <span class="entry-progress">
-            <span data-progress-label>{entry.type==='movie' ? entry.progress : entry.released_episodes===undefined?entry.progress:(entry.season_position||'—')}</span>
-            <span class="entry-mobile-progress" data-mobile-progress-label>{compactListProgress(entry)}</span>
-            {data.owner && <button type="button" class="progress-increment" data-progress-increment={entry.id} data-next-progress={entry.type==='movie'?1:entry.progress+1} aria-label={entry.type==='movie'?`Mark ${entry.title} watched`:`Mark the next episode of ${entry.title} watched`} title={entry.type==='movie'?'Mark movie watched':'Mark next episode watched'} hidden={!canIncrement(entry)} disabled={!canIncrement(entry)}>+</button>}
-          </span>
-          {isCombined&&<span class="entry-type">{entry.type==='movie'?'Movie':'Series'}</span>}
-        </article>)}
-      </div></section>})}
+        <div class="list-toolbar"><span id="result-count" class="sr-only" aria-live="polite">{data.total} entries</span><span id="progress-feedback" class="sr-only" aria-live="assertive"></span></div>
+        <div id="entry-groups">
+          {statuses.map(([status,label])=><section class="status-section" data-list-group={status} data-group={status} hidden={!data.group_counts[status]}><h2>{label}</h2><div class="entry-table">
+            <div class:list={['entry-head',{'combined-row':isCombined}]}><span class="entry-cover-column" aria-hidden="true"></span><span class="entry-title-column">Title</span><span class="entry-score-column">Score</span><span class="entry-progress-column">Progress</span>{isCombined&&<span class="entry-type-column">Type</span>}</div>
+            <div data-list-window={status} style={`--list-rows:${data.group_counts[status]||0}`}><ScreenListRows entries={entries.filter((entry:any)=>entry.status===status)} {owner} {isCombined}/></div>
+          </div></section>)}
+        </div>
+        <div id="list-empty" class="empty-state" hidden={!!data.total}><h2>{count?'No matching titles':'Every list starts with a story'}</h2><p>{count?'Try a different search or filter.':owner?'Find a movie or series and add it to your list.':'There are no entries in this list yet.'}</p>{owner&&<a class="button-primary" href="/browse">Browse titles</a>}</div>
       </div>
-      <div id="list-empty" class="empty-state" hidden={entries.length>0}><h2>{entries.length ? 'No matching titles' : 'Every list starts with a story'}</h2><p>{entries.length ? 'Try a different search or filter.' : data.owner ? 'Find a movie or series and add it to your list.' : 'There are no entries in this list yet.'}</p>{data.owner&&<a class="button-primary" href="/browse">Browse titles</a>}</div>
-      </div>
-    </div><div id="cover-preview" aria-hidden="true" hidden><img alt=""/></div>{data.owner && <script id="list-editor-entries" type="application/json" set:html={JSON.stringify(entries).replace(/</g, '\\u003c')}></script>}
+    </div>
+    <div id="cover-preview" aria-hidden="true" hidden><img alt=""/></div>
+    <template data-list-row-template><ScreenListRows entries={[{id:1,title:'',type:'series',status:'completed',progress:0,notes:'Note',rewatch_count:1,new_episodes:1}]} {owner} {isCombined} template/></template>
+    <script id="virtual-list-page" type="application/json" set:html={JSON.stringify(data).replaceAll('<','\\u003c')}/>
     <script is:inline data-astro-rerun>
-      (() => {
-        // A reload/back visit belongs to scroll restoration, not the list's
-        // initial landing position. Route swaps align the tabs in NavigationRuntime.
-        if (performance.getEntriesByType('navigation')[0]?.type !== 'navigate' || history.state) return;
-        const tabs = document.querySelector('.profile-tabs');
-        if (tabs) window.scrollTo(0, window.scrollY + tabs.getBoundingClientRect().top);
-      })();
+      (()=>{if(performance.getEntriesByType('navigation')[0]?.type!=='navigate'||history.state)return;const tabs=document.querySelector('.profile-tabs');if(tabs)window.scrollTo(0,window.scrollY+tabs.getBoundingClientRect().top);})();
     </script>
-  </> : <div class="page-width"><p class="error-message" role="alert">{error}</p></div>}
+  </>:<div class="page-width"><p class="error-message" role="alert">{error}</p></div>}
 </Tracker>
 <script>import '../../../lib/profile-shell';</script>

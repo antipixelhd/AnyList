@@ -1,14 +1,14 @@
 /** Request batches are independent of the viewport's rendered row count. */
-export const gameListPageSize=100;
-export function gameListPages(start:number,end:number,total:number){
+export const profileListPageSize=100;
+export function profileListPages(start:number,end:number,total:number){
   const pages:number[]=[];
   if(end<=start)return pages;
-  for(let offset=Math.floor(start/gameListPageSize)*gameListPageSize;offset<Math.min(total,end);offset+=gameListPageSize)pages.push(offset);
+  for(let offset=Math.floor(start/profileListPageSize)*profileListPageSize;offset<Math.min(total,end);offset+=profileListPageSize)pages.push(offset);
   return pages;
 }
 
 /** Position natural-height rows without imposing dimensions on the table. */
-export class GameListGeometry {
+export class ProfileListGeometry {
   private heights=new Map<number,number>();
   private indices:number[]=[];
   private corrections:number[]=[];

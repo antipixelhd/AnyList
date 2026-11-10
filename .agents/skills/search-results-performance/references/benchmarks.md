@@ -417,9 +417,22 @@ positions went from 40 row reads and 2,911,810 transferred bytes to zero.
 With the optional index unavailable, retain the current query's page positions
 and reuse the corresponding row records while scrolling.
 
-Games cover previews reuse the row's loaded poster pixels and keep the same
-image for the whole hover. The browser fixture showed the preview on the first
-frame with zero image requests on sustained or repeated hovers over loaded
-posters. When the row image was still loading, the preview showed it on load
-only if the row was still hovered or focused. The screen list uses its
-existing preview behavior.
+Movies, Series and the combined view share the Games virtual list controller,
+including its background index, page fallback and row cache. Screen page and
+row reads project release and editor context for the requested IDs. The index
+uses batched episode/watch evidence for exact progress sorting. Existing complete
+profile API callers keep their original response. Run `screen_list_complete`,
+`screen_list_window`, `screen_list_index` and `screen_list_rows` with the same
+fixture. The complete/window cases also accept the `_movie` and `_series`
+suffixes. On 2,001 mixed entries, the warm combined response went from
+2,671,777 bytes for the full list to 69,244 for the first 100 rows. The separate
+index was 230,399 bytes. All 36 existing screen and Games benchmark fingerprints
+and payload sizes matched. Desktop browser checks across the four views showed
+no repeat row reads on return sweeps over the same positions.
+
+All four lists use one responsive hover renderer and the browser's HTTP image
+cache. At 1× on the browser fixture, IGDB reused the list cover with no new
+request. At 2× it selected the sharper cover directly, without a timed switch.
+Repeat hovers at either density showed no new image timing entries. A new,
+uncached variant can still take time to load. Public CDN images bypass the
+service worker's app-shell cache.

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {GameListIndex} from '../src/lib/game-list-index.ts';
+import {ProfileListIndex} from '../src/lib/profile-list-index.ts';
+import {gameStatuses} from '../src/lib/game-editor-data.ts';
 
 const row=(id,title,status='playing',extra={})=>{
   const v={score:null,seconds:null,updated:null,year:'2024',genres:['Adventure'],favorite:false,base:null,rank:id,...extra};
@@ -11,7 +12,7 @@ const snapshot=()=>[row(1,'zulu','playing',{rank:3,score:8}),row(2,'alpha','play
   row(3,'alpha expansion','paused',{base:2,rank:2,score:9}),row(4,'100% game','planning',{favorite:true,rank:4})];
 
 test('incomplete and invalidated indexes always use server queries',()=>{
-  const index=new GameListIndex();
+  const index=new ProfileListIndex(gameStatuses);
   assert.equal(index.select(query('')),null);
   assert.equal(index.publish({complete:false,results:snapshot()}),false);
   assert.equal(index.select(query('q=zulu')),null);
@@ -20,7 +21,7 @@ test('incomplete and invalidated indexes always use server queries',()=>{
 });
 
 test('complete index filters the entire library, grouping with canonical database title ranks',()=>{
-  const index=new GameListIndex();index.publish({complete:true,results:snapshot()});
+  const index=new ProfileListIndex(gameStatuses);index.publish({complete:true,results:snapshot()});
   assert.deepEqual(index.select(query('')).ids,[2,1,3,4]);
   assert.deepEqual(index.select(query('sort=score')).ids,[1,2,3,4]);
   assert.deepEqual(index.select(query('q=%')).ids,[4]);
@@ -33,7 +34,7 @@ test('complete index filters the entire library, grouping with canonical databas
 });
 
 test('pending edits, base removal and rollback update membership without partial results',()=>{
-  const index=new GameListIndex();index.publish({complete:true,results:snapshot()});
+  const index=new ProfileListIndex(gameStatuses);index.publish({complete:true,results:snapshot()});
   const edit=(id,patch)=>index.update({subject:{catalogue_id:id},listed:true,status:'playing',score:null,...patch});
   edit(2,{status:'completed',favorite:true,score:10});
   assert.deepEqual(index.select(query('favorites=true')).ids,[2,4]);
@@ -46,13 +47,13 @@ test('pending edits, base removal and rollback update membership without partial
 });
 
 test('score/time nulls and equal values match server id tie breakers',()=>{
-  const index=new GameListIndex();index.publish({complete:true,results:[row(9,'a','playing',{seconds:0,score:0}),row(2,'b'),row(3,'c','playing',{seconds:0,score:0})]});
+  const index=new ProfileListIndex(gameStatuses);index.publish({complete:true,results:[row(9,'a','playing',{seconds:0,score:0}),row(2,'b'),row(3,'c','playing',{seconds:0,score:0})]});
   assert.deepEqual(index.select(query('sort=progress')).ids,[3,9,2]);
   assert.deepEqual(index.select(query('sort=score')).ids,[3,9,2]);
 });
 
 test('updated ordering preserves PostgreSQL microseconds and equivalent UTC encodings',()=>{
-  const index=new GameListIndex();index.publish({complete:true,results:[
+  const index=new ProfileListIndex(gameStatuses);index.publish({complete:true,results:[
     row(1,'a','playing',{updated:'2026-11-10T10:00:00.123001+00:00'}),
     row(9,'b','playing',{updated:'2026-11-10T10:00:00.123002+00:00'}),
     row(3,'c','playing',{updated:'2026-11-10T10:00:00Z'}),

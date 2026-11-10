@@ -1067,126 +1067,13 @@ def decode_activity_cursor(cursor: str) -> tuple[datetime, int]:
 @router.get("/profile/{username}/{media_type}")
 async def profile_list(username: str, media_type: Literal["movie", "series", "all"], db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user_or_api_key)):
     user, owner = await profile_access(db, username, viewer)
-    query=select(TrackedEntry,Media,MediaFavorite.media_id).join(Media,Media.id==TrackedEntry.media_id).outerjoin(
-        MediaFavorite,(MediaFavorite.user_id==TrackedEntry.user_id)&(MediaFavorite.media_id==TrackedEntry.media_id)
-    ).where(TrackedEntry.user_id==user.id)
-    if media_type=='all':query=query.where(Media.media_type.in_([MediaType.movie,MediaType.series]))
-    else:query=query.where(Media.media_type==MediaType(media_type))
-    loaded=(await db.execute(query.order_by(Media.title))).all()
-    favorite_ids={identifier for _,_,identifier in loaded if identifier is not None}
-    rows=[(entry,media) for entry,media,_ in loaded]
-    if not await anime_is_visible(db):rows=[row for row in rows if not tracking_projection.is_anime(row[1])]
+    from core.screen_list import rows_for_profile
+    entries = await rows_for_profile(db, user.id, viewer, owner, media_type)
     following = False
     follows_you = False
     if viewer and not owner:
         following = (await db.execute(select(Follow.id).where(Follow.follower_id == viewer.id, Follow.following_id == user.id))).scalar_one_or_none() is not None
         follows_you = (await db.execute(select(Follow.id).where(Follow.follower_id == user.id, Follow.following_id == viewer.id))).scalar_one_or_none() is not None
-    entries = [tracking_projection.entry_data(e, m, owner, favorite=bool(e.favorite or m.id in favorite_ids)) for e, m in rows]
-    movie_ids = [m.id for _, m in rows if m.media_type == MediaType.movie]
-    watched_movies = set((await db.execute(select(WatchEvent.media_id).where(
-        WatchEvent.user_id == user.id, WatchEvent.media_id.in_(movie_ids),
-        WatchEvent.completed.is_(True)))).scalars()) if movie_ids else set()
-    for result, (_, media) in zip(entries, rows):
-        result['availability_dot'], result['availability_reason'] = False, None
-        if media.media_type == MediaType.movie:
-            result['progress'] = int(bool(result['progress'] or result['status'] == 'completed'
-                                          or media.id in watched_movies))
-    if media_type in ('series','all'):
-        # One batched query for all catalogue episode IDs; don't confuse status
-        # Completed with history covering newly released episodes.
-        tmdb_ids = {episode_id for _, m in rows if (m.tmdb_data or {}).get('tracking_catalogue_provider') != 'tvdb'
-                    for episode_id in (m.tmdb_data or {}).get('tracking_episode_ids', [])}
-        tvdb_ids = {episode_id for _, m in rows if (m.tmdb_data or {}).get('tracking_catalogue_provider') == 'tvdb'
-                    for episode_id in (m.tmdb_data or {}).get('tracking_episode_ids', [])}
-        imported_media_ids = {episode_id for _, m in rows
-                              for episode_id in (m.tmdb_data or {}).get('tracking_import_episode_media_ids', [])}
-        identity_filters = []
-        if tmdb_ids:
-            identity_filters.append(Media.tmdb_id.in_(tmdb_ids))
-        if tvdb_ids:
-            identity_filters.append(Media.tvdb_id.in_(tvdb_ids))
-        if imported_media_ids:
-            identity_filters.append(Media.id.in_(imported_media_ids))
-        import_confirmed_release = Media.tmdb_data["tracking_import_released"].as_boolean().is_(True)
-        catalogue = (
-            (await db.execute(select(
-                Media.id, Media.tmdb_id, Media.tvdb_id, Media.season_number,
-                Media.episode_number, Media.release_date, Media.tmdb_data,
-            ).where(
-                Media.media_type == MediaType.episode,
-                or_(*identity_filters),
-                Media.season_number > 0,
-                or_(Media.release_date.is_not(None), import_confirmed_release),
-            ))).all()
-            if identity_filters else []
-        )
-        released = [row for row in catalogue if (
-            (row.tmdb_data or {}).get('tracking_import_released')
-            or row.release_date and row.release_date[:10] <= date.today().isoformat()
-        )]
-        watched = set((await db.execute(select(WatchEvent.media_id).where(WatchEvent.user_id == user.id,
-            WatchEvent.media_id.in_([r.id for r in released]), WatchEvent.completed.is_(True)))).scalars()) if released else set()
-        for result, (_, media) in zip(entries, rows):
-            if media.media_type != MediaType.series:
-                continue
-            show_metadata = media.tmdb_data or {}
-            latest_pointer = show_metadata.get('last_episode_to_air') or {}
-            result['latest_released_position'] = (
-                f"S{latest_pointer['season_number']}E{latest_pointer['episode_number']}"
-                if latest_pointer.get('season_number') is not None and latest_pointer.get('episode_number') is not None
-                else None
-            )
-            next_episode = show_metadata.get('next_episode_to_air') or {}
-            result['next_episode_to_air'] = {
-                'season_number': next_episode.get('season_number'),
-                'episode_number': next_episode.get('episode_number'),
-                'air_date': next_episode.get('air_date'),
-            } if next_episode else None
-            ids = set((media.tmdb_data or {}).get('tracking_episode_ids', []))
-            imported_ids = set((media.tmdb_data or {}).get('tracking_import_episode_media_ids', []))
-            provider = (media.tmdb_data or {}).get('tracking_catalogue_provider', 'tmdb')
-            title_catalogue = [r for r in catalogue if (
-                (r.tvdb_id if provider == 'tvdb' else r.tmdb_id) in ids or r.id in imported_ids
-            )]
-            result['currently_airing'], result['next_release_date'] = season_releases.current_airing_details(
-                {**show_metadata, 'status': show_metadata.get('status') or media.status},
-                [(r.season_number, r.release_date, r.id,
-                  bool((r.tmdb_data or {}).get('tracking_import_released'))) for r in title_catalogue],
-            )
-            dot, reason = season_releases.availability_dot(
-                media.tmdb_data,
-                [(r.season_number, r.release_date, r.id,
-                  bool((r.tmdb_data or {}).get('tracking_import_released'))) for r in title_catalogue],
-                watched,
-                result['status'],
-            )
-            result['availability_dot'], result['availability_reason'] = dot, reason
-            if (media.tmdb_data or {}).get('tracking_catalogue_refreshed_at'):
-                title_episodes = [r for r in released if (
-                    (r.tvdb_id if provider == 'tvdb' else r.tmdb_id) in ids or r.id in imported_ids
-                )]
-                title_episodes.sort(key=lambda episode: (episode.season_number or 0, episode.episode_number or 0))
-                result['released_episodes'] = len(title_episodes)
-                if owner:
-                    result['progress_positions'] = [f'S{episode.season_number}E{episode.episode_number}' for episode in title_episodes]
-                latest_released = max(
-                    title_episodes,
-                    key=lambda episode: (episode.season_number or 0, episode.episode_number or 0),
-                    default=None,
-                )
-                result['latest_released_position'] = (
-                    f'S{latest_released.season_number}E{latest_released.episode_number}'
-                    if latest_released else result['latest_released_position']
-                )
-                unwatched = [r for r in title_episodes if r.id not in watched]
-                result['progress'] = len(title_episodes) - len(unwatched)
-                watched_episodes = [r for r in title_episodes if r.id in watched]
-                latest = max(watched_episodes, key=lambda r: (r.season_number or 0, r.episode_number or 0), default=None)
-                result['season_position'] = f'S{latest.season_number}E{latest.episode_number}' if latest else None
-                result.update(tracking_projection.release_annotations(title_episodes, watched, result['status']))
-    if owner:
-        from core.tracking_editor import attach_editor_context
-        await attach_editor_context(db, viewer, entries, media_rows=[media for _, media in rows])
     prefs=await db.get(TrackingPreferences,user.id)
     return {
         "profile": {"id": user.id, "username": user.username, "display_name": user.display_name,
@@ -1196,6 +1083,49 @@ async def profile_list(username: str, media_type: Literal["movie", "series", "al
         "combine_lists":True if prefs is None else prefs.combine_lists,
         "entries": entries,
     }
+
+
+ScreenListDB = Annotated[AsyncSession, Depends(get_db)]
+ScreenListViewer = Annotated[User, Depends(get_current_user_or_api_key)]
+ScreenListScope = Literal['movie', 'series', 'all']
+
+
+@router.get('/profile/{username}/{media_type}/list')
+async def profile_list_page(username: str, media_type: ScreenListScope, db: ScreenListDB,
+        viewer: ScreenListViewer, response: Response, status: TrackingStatus | None = None,
+        sort: Literal['title', 'score', 'progress', 'updated'] = 'title',
+        q: Annotated[str, Query(max_length=200)] = '', genre: Annotated[str, Query(max_length=200)] = '',
+        year: Annotated[str | None, Query(pattern=r'^\d{4}$')] = None, favorites: bool = False,
+        offset: Annotated[int, Query(ge=0)] = 0, limit: Annotated[int, Query(ge=1, le=100)] = 100):
+    from core import screen_list
+    from core.tracking_access import profile_header
+    user, owner = await profile_access(db, username, viewer)
+    response.headers['Cache-Control'] = 'private, no-store'
+    members = await screen_list.members(db, user.id, media_type, progress=sort == 'progress')
+    ids, page = screen_list.select_page(members, status=status, sort=sort, q=q, genre=genre, year=year,
+        favorites=favorites, offset=offset, limit=limit)
+    results = await screen_list.rows_for_profile(db, user.id, viewer, owner, media_type, ids)
+    return {**page, 'results': results, 'profile': await profile_header(db, user, owner, viewer)}
+
+
+@router.get('/profile/{username}/{media_type}/index')
+async def profile_list_index(username: str, media_type: ScreenListScope, db: ScreenListDB,
+        viewer: ScreenListViewer, response: Response):
+    from core.screen_list import members
+    user, _ = await profile_access(db, username, viewer)
+    response.headers['Cache-Control'] = 'private, no-store'
+    result = await members(db, user.id, media_type, progress=True, cap=10000)
+    return {'complete': result is not None, 'results': [row.index_row() for row in result or []]}
+
+
+@router.get('/profile/{username}/{media_type}/rows')
+async def profile_list_rows(username: str, media_type: ScreenListScope, db: ScreenListDB,
+        viewer: ScreenListViewer, response: Response,
+        ids: Annotated[list[Annotated[int, Field(gt=0, le=2147483647)]], Query(min_length=1, max_length=100)]):
+    from core.screen_list import rows_for_profile
+    user, owner = await profile_access(db, username, viewer)
+    response.headers['Cache-Control'] = 'private, no-store'
+    return await rows_for_profile(db, user.id, viewer, owner, media_type, ids)
 
 
 @router.post("/stats/refresh")

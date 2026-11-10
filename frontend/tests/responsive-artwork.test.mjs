@@ -25,6 +25,10 @@ test('IGDB artwork uses public fit buckets and shares one identity across detail
   assert.equal(artworkIdentity(hero),artworkIdentity(path));
   assert.equal(responsiveArtwork('//images.igdb.com/igdb/image/upload/t_thumb/co7sly.jpg',{size:'w185'}).src,
     'https://images.igdb.com/igdb/image/upload/t_cover_small_2x/co7sly.jpg');
+  const preview=responsiveArtwork(path,{size:'w500',sizes:'174px',compactIgdbCover:true});
+  assert.equal(preview.src,cover);
+  assert.match(preview.srcset,/t_cover_small_2x\/co7sly\.jpg 180w, .*t_cover_big_2x\/co7sly\.jpg 528w$/);
+  assert.equal(responsiveArtwork(path,{size:'w500',sizes:'210px'}).srcset,undefined);
 });
 
 test('automatic routing keeps public images on their CDN even when disk caching is enabled',()=>{
