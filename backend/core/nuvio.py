@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import inspect
 import logging
 import os
@@ -6,6 +7,7 @@ import secrets
 import string
 import threading
 from contextlib import contextmanager
+from collections import OrderedDict
 from dataclasses import dataclass, field as dataclass_field
 from datetime import datetime, timezone
 from time import monotonic
@@ -243,6 +245,42 @@ class NuvioSession:
     account_id: str | None = None
 
 
+@dataclass
+class _CachedSession:
+    lock: asyncio.Lock = dataclass_field(default_factory=asyncio.Lock, repr=False)
+    session: NuvioSession | None = dataclass_field(default=None, repr=False)
+    expires_at: float = 0
+
+
+_session_cache: OrderedDict[str, _CachedSession] = OrderedDict()
+_SESSION_CACHE_SIZE = 512
+_SESSION_EXPIRY_MARGIN = 30
+
+
+def _session_key(url, refresh_token):
+    credentials = '\0'.join((_base_url(url), _public_headers()['apikey'], refresh_token))
+    return hashlib.sha256(credentials.encode()).hexdigest()
+
+
+def _remember_session(key, cached):
+    _session_cache[key] = cached
+    _session_cache.move_to_end(key)
+    # Keep active refreshes coordinated even when the cache is full.
+    for oldest in list(_session_cache):
+        if len(_session_cache) <= _SESSION_CACHE_SIZE:
+            break
+        if not _session_cache[oldest].lock.locked():
+            del _session_cache[oldest]
+
+
+def _reject_cached_session(access_token):
+    rejected = [(key, cached) for key, cached in _session_cache.items()
+        if cached.session and cached.session.access_token == access_token]
+    for key, cached in rejected:
+        cached.session = None
+        del _session_cache[key]
+
+
 def _base_url(url: str) -> str:
     return url.rstrip("/")
 
@@ -312,6 +350,33 @@ async def refresh_session(
     refresh_token: str,
     client: httpx.AsyncClient | None = None,
 ) -> NuvioSession:
+    """Reuse a credential's access token until expiry, coordinating refreshes."""
+    key = _session_key(url, refresh_token)
+    cached = _session_cache.get(key)
+    if cached is None:
+        cached = _CachedSession()
+    _session_cache[key] = cached
+    async with cached.lock:
+        _remember_session(key, cached)
+        remaining = int(cached.expires_at - monotonic())
+        if cached.session and remaining > _SESSION_EXPIRY_MARGIN:
+            session = cached.session
+        else:
+            # A previous caller may not have persisted a rotation yet. Retain
+            # the newest refresh credential even after access-token expiry.
+            token = cached.session.refresh_token if cached.session else refresh_token
+            started_at = monotonic()
+            session = await _refresh_session(url, token, client)
+            cached.session = session
+            cached.expires_at = started_at + session.expires_in
+            _remember_session(_session_key(url, session.refresh_token), cached)
+        remaining = max(0, int(cached.expires_at - monotonic()))
+    # Prune after unlocking too, including old aliases of this session.
+    _remember_session(_session_key(url, session.refresh_token), cached)
+    return NuvioSession(session.access_token, session.refresh_token, remaining, session.account_id)
+
+
+async def _refresh_session(url, refresh_token, client=None):
     owns_client = client is None
     if client is None:
         client = httpx.AsyncClient(timeout=20.0, follow_redirects=False)
@@ -367,6 +432,8 @@ async def _rpc(
                 raise
             print(f"  Nuvio RPC {function_name} failed ({exc.__class__.__name__}), retrying ({attempt + 1}/{_RPC_MAX_RETRIES})...")
             await asyncio.sleep(_RPC_RETRY_DELAYS[attempt])
+    if response.status_code == 401:
+        _reject_cached_session(access_token)
     await _raise_api_error(response, function_name)
     if response.status_code == 204 or not response.content:
         return None

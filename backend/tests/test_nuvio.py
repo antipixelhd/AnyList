@@ -74,6 +74,12 @@ class _SessionCM:
 
 
 class NuvioClientTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        from collections import OrderedDict
+        cache = patch.object(nuvio, '_session_cache', OrderedDict())
+        cache.start()
+        self.addCleanup(cache.stop)
+
     async def test_origin_client_id_is_persisted_for_the_installation(self):
         with tempfile.TemporaryDirectory() as data_dir, \
                 patch.object(nuvio.settings, "data_dir", Path(data_dir)), \
@@ -574,7 +580,8 @@ class NuvioClientTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(pushed.refresh_token, "rotated-1")
-        self.assertEqual(deleted.refresh_token, "rotated-2")
+        self.assertEqual(deleted.refresh_token, "rotated-1")
+        self.assertEqual(refreshes, 1)
         self.assertEqual(stored, {})
 
     async def test_verified_watched_history_rejects_missing_rows_and_nonnumeric_dates(self) -> None:
@@ -626,7 +633,7 @@ class NuvioClientTests(unittest.IsolatedAsyncioTestCase):
                     [{**item, "watched_at": None}], verify=True,
                 )
 
-        self.assertEqual(refresh_requests, 2)
+        self.assertEqual(refresh_requests, 1)
 
     async def test_push_sync_items_uses_watched_and_progress_endpoints(self) -> None:
         calls: list[tuple[str, int]] = []
@@ -1200,6 +1207,12 @@ class LocalTrackingRollbackDispatchTests(unittest.IsolatedAsyncioTestCase):
 
 
 class NuvioFullPushTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        from collections import OrderedDict
+        cache = patch.object(nuvio, '_session_cache', OrderedDict())
+        cache.start()
+        self.addCleanup(cache.stop)
+
     async def test_full_push_uses_creation_time_for_unknown_date_episode_watches(self) -> None:
         conn = SimpleNamespace(
             id=4,
