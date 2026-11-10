@@ -5,7 +5,7 @@ import {scoreLabel} from './tracker';
 import {mountListCoverPreview} from './list-cover-preview';
 import {mountListFilterControls} from './list-filter-controls';
 import {gameListQuery,gameListEditorTitle} from './game-list-data';
-import {gameListPageSize,gameListWindow,gameListPages} from './game-list-window';
+import {gameListPageSize,gameListPages,GameListGeometry} from './game-list-window';
 import {panelActive,panelUrl,setPanelUrl} from './profile-panel';
 
 type Page={offset:number;total:number;results:Record<string,any>[];group_counts:Record<string,number>;status_counts:Record<string,number>;genres:string[];years:string[]};
@@ -30,6 +30,24 @@ export function initializeGameList(panel:HTMLElement,lifetime:AbortSignal){
   let previousY=scrollY,previousTime=performance.now(),ahead=3200,dirty=false,refreshing=false;
   let requests=new AbortController(),preview=new AbortController();
   const cache=new Map<number,Cached>(),flights=new Set<number>(),wanted=new Set<number>(),blocked=new Set<number>(),retained=new Map<number,HTMLElement>();
+  const layouts=new Map<string,GameListGeometry>();
+  let anchor:{row:HTMLElement;top:number}|undefined;
+  const rowSizes=new ResizeObserver(entries=>{
+    if(!panelActive(panel))return;
+    let changed=false;
+    for(const entry of entries){
+      const row=entry.target as HTMLElement,group=row.parentElement;
+      if(!row.isConnected||!group?.dataset.gameWindow)continue;
+      const layout=layouts.get(group.dataset.gameWindow);if(!layout)continue;
+      const measured=layout.measure(Number(row.style.getPropertyValue('--game-row')),row.getBoundingClientRect().height);
+      if(measured&&!anchor){
+        const visible=[...root.querySelectorAll<HTMLElement>('[data-game-entry]')].find(node=>{const rect=node.getBoundingClientRect();return rect.bottom>0&&rect.top<innerHeight;});
+        if(visible)anchor={row:visible,top:visible.getBoundingClientRect().top};
+      }
+      changed=measured||changed;
+    }
+    if(changed)schedule();
+  });
   mountListCoverPreview(preview.signal,panel);
   const error=document.createElement('p');error.className='error-message game-list-error';error.hidden=true;error.setAttribute('role','alert');
   const retry=document.createElement('button');retry.type='button';retry.className='lab-text-button';retry.textContent='Retry';
@@ -98,22 +116,32 @@ export function initializeGameList(panel:HTMLElement,lifetime:AbortSignal){
   }
   function render(){
     frame=0;if(signal.aborted||!panelActive(panel)||refreshing)return;
-    const rowHeight=parseFloat(getComputedStyle(root!).getPropertyValue('--game-row-height'))||80;
+    const rowHeight=parseFloat(getComputedStyle(root!).getPropertyValue('--game-row-height'))||56;
     wanted.clear();let base=0;
     const active=document.activeElement?.closest<HTMLElement>('[data-game-entry]');
     for(const group of groups){
-      const count=counts[group.dataset.gameWindow!]||0,top=group.getBoundingClientRect().top;
-      const range=gameListWindow(top,innerHeight,count,rowHeight,ahead);
+      const key=group.dataset.gameWindow!,count=counts[key]||0,top=group.getBoundingClientRect().top;
+      let layout=layouts.get(key);
+      if(!layout||layout.estimate!==rowHeight){layout=new GameListGeometry(rowHeight);layouts.set(key,layout);}
+      group.style.height=`${layout.offset(count)}px`;
+      const range=layout.window(top,innerHeight,count,ahead);
       const desired:HTMLElement[]=[];
       gameListPages(base+range.start,base+range.end,total).forEach(offset=>wanted.add(offset));
       for(let index=range.start;index<range.end;index++){
         const position=base+index,offset=Math.floor(position/gameListPageSize)*gameListPageSize;
         const page=cache.get(offset),state=page?.data.results[position-offset],row=state&&page?.rows.get(state.subject.catalogue_id);
-        if(row){row.style.setProperty('--game-row',String(index));desired.push(row);}
+        if(row){
+          row.style.setProperty('--game-row',String(index));row.style.setProperty('--game-offset',`${layout.offset(index)}px`);
+          const rowKey=`${epoch}:${rowHeight}:${key}:${index}`;
+          if(row.dataset.gameRowKey!==rowKey){row.dataset.gameRowKey=rowKey;rowSizes.unobserve(row);rowSizes.observe(row);}
+          desired.push(row);
+        }
       }
       if(active&&active.parentElement===group&&!desired.includes(active))desired.push(active);
       const keep=new Set(desired);
-      for(const child of [...group.children])if(!keep.has(child as HTMLElement))child.remove();
+      for(const child of [...group.children])if(!keep.has(child as HTMLElement)){
+        rowSizes.unobserve(child);delete (child as HTMLElement).dataset.gameRowKey;child.remove();
+      }
       desired.sort((a,b)=>Number(a.style.getPropertyValue('--game-row'))-Number(b.style.getPropertyValue('--game-row')));
       let cursor=group.firstChild;
       desired.forEach(row=>{
@@ -121,6 +149,10 @@ export function initializeGameList(panel:HTMLElement,lifetime:AbortSignal){
         cursor=row.nextSibling;retained.set(Number(row.dataset.gameEntry),row);
       });
       base+=count;
+    }
+    if(anchor){
+      if(anchor.row.isConnected){const shift=anchor.row.getBoundingClientRect().top-anchor.top;if(Math.abs(shift)>.5)window.scrollBy(0,shift);}
+      anchor=undefined;
     }
     // Prefetch adjacent ranges, but put visible demand first after large jumps.
     const primary=[...wanted];primary.forEach(offset=>{if(offset+gameListPageSize<total)wanted.add(offset+gameListPageSize);if(offset>0)wanted.add(offset-gameListPageSize);});
@@ -131,7 +163,7 @@ export function initializeGameList(panel:HTMLElement,lifetime:AbortSignal){
 
   }
   function reset(){
-    epoch++;requests.abort();requests=new AbortController();flights.clear();blocked.clear();cache.clear();clearTimeout(retryTimer);retryTimer=undefined;
+    epoch++;requests.abort();requests=new AbortController();flights.clear();blocked.clear();cache.clear();layouts.clear();anchor=undefined;clearTimeout(retryTimer);retryTimer=undefined;
     error.hidden=true;wanted.clear();refreshing=true;void acquire(0);
   }
   function submit(){
@@ -170,6 +202,6 @@ export function initializeGameList(panel:HTMLElement,lifetime:AbortSignal){
     if(title.game_class==='expansion'){document.dispatchEvent(new CustomEvent('anylist:open-editor',{detail:{subject:title.subject,opener:button,title}}));return;}
     (window as any).anyListQuickRate?.({title:title.title,poster:title.poster,score:title.entry?.score,ratingMode:'manual',onScore:async(score:number|null)=>{await editorStore.write(title,{score});}});
   },{signal});
-  signal.addEventListener('abort',()=>{requests.abort();preview.abort();clearTimeout(searchTimer);clearTimeout(retryTimer);cancelAnimationFrame(frame);cache.clear();retained.clear();},{once:true});
+  signal.addEventListener('abort',()=>{requests.abort();preview.abort();rowSizes.disconnect();clearTimeout(searchTimer);clearTimeout(retryTimer);cancelAnimationFrame(frame);cache.clear();retained.clear();layouts.clear();},{once:true});
   controls.sync(query.get('status')||'all',defaultSort);schedule();
 }
