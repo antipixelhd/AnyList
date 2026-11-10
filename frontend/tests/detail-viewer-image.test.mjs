@@ -62,7 +62,10 @@ test('a stale failed decode cannot remove or hide a replacement image',async()=>
   const decoders=[];
   const image={complete:false,naturalWidth:1280,style:{},decode:()=>new Promise((resolve,reject)=>decoders.push({resolve,reject}))};
   const skeleton={hidden:false,style:{},dataset:{},setAttribute(name,value){this[name]=value;}},load=createDetailViewerImageLoader(new AbortController().signal);
-  const old=load(image,skeleton,'old','Old'),replacement=load(image,skeleton,'replacement','Replacement');
+  const old=load(image,skeleton,'old','Old','high',{complete:true,naturalWidth:180,currentSrc:'old-preview'});
+  assert.equal(skeleton.dataset.viewerPreview,'');
+  const replacement=load(image,skeleton,'replacement','Replacement');
+  assert.equal(skeleton.dataset.viewerPreview,undefined);assert.equal(skeleton.style.backgroundImage,'');
   decoders[1].resolve();assert.equal(await replacement,true);
   decoders[0].reject(new Error('Stale image failed'));assert.equal(await old,false);
   assert.equal(skeleton.hidden,true);assert.equal(image.style.visibility,'');
@@ -102,7 +105,7 @@ test('a thumbnail already loading can supply the preview, without starting a sec
   a.finish();await pending;
 });
 
-test('late previews cannot replace a newer slide or reveal content after teardown',async()=>{
+test('late previews cannot reveal content after teardown',async()=>{
   const controller=new AbortController(),load=createDetailViewerImageLoader(controller.signal),a=slide();
   let onload;
   const preview={complete:false,naturalWidth:0,src:'old-preview',addEventListener(_name,callback){onload=callback;}};
@@ -110,4 +113,15 @@ test('late previews cannot replace a newer slide or reveal content after teardow
   controller.abort();preview.complete=true;preview.naturalWidth=180;onload();
   assert.equal(a.skeleton.dataset.viewerPreview,undefined);
   a.finish();assert.equal(await pending,false);
+});
+
+test('a strip preview can arrive before an unrequested grid preview without later shrinking its quality',async()=>{
+  const load=createDetailViewerImageLoader(new AbortController().signal),a=slide();
+  const thumbnail=width=>({complete:false,naturalWidth:0,src:`preview-${width}`,addEventListener(_name,callback){this.onload=callback;},finish(){this.complete=true;this.naturalWidth=width;this.onload();}});
+  const grid=thumbnail(780),strip=thumbnail(180),tiny=thumbnail(90);
+  const pending=load(a.image,a.skeleton,'full','Artwork','high',[grid,strip,tiny]);
+  strip.finish();assert.equal(a.skeleton.style.backgroundImage,'url("preview-180")');
+  grid.finish();assert.equal(a.skeleton.style.backgroundImage,'url("preview-780")');
+  tiny.finish();assert.equal(a.skeleton.style.backgroundImage,'url("preview-780")');
+  a.finish();await pending;
 });

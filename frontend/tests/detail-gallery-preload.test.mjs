@@ -12,13 +12,19 @@ test('bulk downloads wait for selection, then preload every image nearest-first 
   assert.equal(started.length,36);assert.equal(new Set(started).size,36);
 });
 
-test('a new selection bypasses the pending head start and only the latest selection releases the bulk',async()=>{
-  const finish=[],started=[];let current=0;
-  const prepare=index=>{started.push(index);return new Promise(resolve=>{finish[index]=resolve;});};
-  const first=preloadDetailGallery(0,4,prepare,()=>current===0);
-  current=2;const next=preloadDetailGallery(2,4,prepare,()=>current===2);
-  assert.deepEqual(started,[0,2]);finish[0]();await first;assert.deepEqual(started,[0,2]);
-  finish[2]();await next;assert.deepEqual(started,[0,2,3,1,0]);
+test('new selections bypass the head start while the first ready image releases the complete gallery',async()=>{
+  const finish=[],started=[],pending=new Map();
+  const prepare=index=>{
+    if(!pending.has(index)){
+      started.push(index);pending.set(index,new Promise(resolve=>{finish[index]=resolve;}));
+    }
+    return pending.get(index);
+  };
+  const first=preloadDetailGallery(0,4,prepare,()=>true);
+  const next=preloadDetailGallery(2,4,prepare,()=>true);
+  assert.deepEqual(started,[0,2]);finish[0]();await first;
+  assert.deepEqual(started,[0,2,1,3]);
+  finish[2]();await next;assert.deepEqual(started,[0,2,1,3]);
 });
 
 test('closed viewers, changed groups and aborted pages do not admit delayed gallery downloads',async()=>{

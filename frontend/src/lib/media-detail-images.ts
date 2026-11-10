@@ -221,10 +221,9 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
     }
     // Keep every decoded slide. Only bulk admission waits for the selected
     // image; selecting/swiping to another slide always prepares it immediately.
-    const selected=rows[current];
     if(active==='hero')prepareImage(current);
     else void preloadDetailGallery(current,rows.length,prepareImage,()=>
-      !signal.aborted&&lightbox.open&&active===group&&galleries[group][current]===selected);
+      !signal.aborted&&lightbox.open&&active===group&&galleries[group]===rows);
   };
   const prepareImage=(index:number,exposed=false):Promise<boolean>|undefined=>{
     if(!lightbox.open||signal.aborted)return;
@@ -239,8 +238,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
     // Reuse a grid/strip image already requested for this exact artwork. A
     // pending full-size slide can show it without a new preview download.
     const preview=urgent?[...root.querySelectorAll<HTMLImageElement>('.lab-gallery img,.lab-art-image img,[data-image-viewer-slots] img')]
-      .filter(candidate=>imageKey(candidate.currentSrc||candidate.dataset.gallerySrc||'')===imageKey(original))
-      .sort((a,b)=>b.naturalWidth-a.naturalWidth)[0]:undefined;
+      .filter(candidate=>imageKey(candidate.currentSrc||candidate.dataset.gallerySrc||'')===imageKey(original)):undefined;
     const existing=preparedImages.get(image);
     if(existing?.url===url){
       if(urgent)void loadViewerImage(image,skeleton,url,image.alt,'high',preview);
