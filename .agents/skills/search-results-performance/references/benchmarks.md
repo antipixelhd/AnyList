@@ -379,13 +379,15 @@ Authenticated beta browser verification deliberately held every Games browse res
 
 A direct filtered startup with genre igdb.genre:12, platform pc and Witcher preserved all three values while a synthetic facet503 was shown. Retry restored the checked genre/platform controls, and releasing result acquisition rendered17 filtered cards without error.390px mobile layout had no horizontal overflow. static=1 returned six actual results and23 genres. The earlier warm-backend tab sample showed the Games panel at295ms while the movie panel waited; a roughly one-second two-RAF observation was not established as a separate CPU bottleneck and is not used as an INP or main-thread claim. Normal result completion remains provider-dependent; repeated tabs reuse their initialized panels.
 
-Games list virtualization uses `game_list_window` for the grouped 100-row read,
-with filtered per-status counts reserving stable full-library scroll space.
-Compare `game_list_complete` for total-read cost and keep `game_list`,
-`game_list_page_two` and `game_list_status` as compatibility controls. Window
-pages deliberately add one grouped count read; pagination never truncates stored
-membership. This benchmark excludes HTML rendering, cover decode and scrolling.
-Verify direct bottom jumps, fast continuous scrolling, full-library filters,
-optimistic edits, cancellation and nonzero reload/back restoration on the actual
-Games profile page. The browser keeps at most eight 100-row pages per mounted
-viewer panel, with two reads in flight and viewport-directed adjacent prefetch.
+Games profiles read the complete collection once (`game_list_complete`) and
+render 30 rows per status section, expanding by 30 within 600px of the section
+bottom. Scrolling, filtering, sorting and ordinary committed edits perform no
+additional list reads. Public covers retain separate native lazy CDN requests.
+`game_list_window` remains a grouped API compatibility case, not the current
+profile loading path. Compare complete-read SQL, provider requests and payloads;
+backend timings exclude progressive DOM creation, images and scrolling. Verify
+30-to-60 expansion, full-library filtering, keyed optimistic updates, native row
+geometry, mobile/desktop fast scrolling, and nonzero reload/back restoration.
+Render-count cookies contain only viewer/profile/query-scoped section limits,
+allowing SSR to restore the prior document height on reload without storing entry
+content or changing native scroll restoration.

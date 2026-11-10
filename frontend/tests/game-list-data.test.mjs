@@ -1,9 +1,6 @@
 import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
-import {stripTypeScriptTypes} from 'node:module';
 import test from 'node:test';
-const source=readFileSync(new URL('../src/lib/game-list-data.ts',import.meta.url),'utf8').replace("'./game-editor-data'",JSON.stringify(new URL('../src/lib/game-editor-data.ts',import.meta.url).href));
-const {gameListQuery,gameListEditorTitle,compareGameListEntries}=await import(`data:text/javascript;base64,${Buffer.from(stripTypeScriptTypes(source)).toString('base64')}`);
+import {gameListQuery,gameListEditorTitle,compareGameListEntries} from '../src/lib/game-list-data.ts';
 
 test('game list filters validate URL state and ignore old pagination links',()=>{
   const {query}=gameListQuery(new URLSearchParams('q=Elden&status=completed&genre=RPG&year=2024&page=2&favorites=true'),'score');

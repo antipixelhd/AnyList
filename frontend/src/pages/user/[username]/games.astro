@@ -5,36 +5,43 @@ import ProfileHeader from '../../../components/ProfileHeader.astro';
 import ProfileListFilters from '../../../components/ProfileListFilters.astro';
 import {tracker,trackerFailure} from '../../../lib/tracker';
 import {gameStatuses} from '../../../lib/game-editor-data';
+import {gameListCollection,gameListSavedLimits,gameListRenderBatch,gameListViewCookie} from '../../../lib/game-list-progressive';
 import {gameListQuery} from '../../../lib/game-list-data';
 import {viewerMediaPreferences} from '../../../lib/viewer-media-preferences';
 import '../../../styles/game-list.css';
 const preferences=await viewerMediaPreferences(Astro.locals);
 const {query}=gameListQuery(Astro.url.searchParams,preferences.default_sort);
-const request=new URLSearchParams(query);request.set('grouped','true');request.set('limit','100');
+const request=new URLSearchParams({complete:'true',sort:'title'});
 let data:any=null,error='';
 try{data=await tracker(`games/users/${encodeURIComponent(Astro.params.username!)}/list?${request}`,Astro.locals.token);}
 catch(cause){const failure=trackerFailure(cause);error=failure.message;Astro.response.status=failure.status;}
 const entries=data?.results||[],owner=data?.profile?.owner===true;
 const showAchievements=preferences.show_game_achievements;
+const collection=gameListCollection(entries,query);
+const viewKey=`${Astro.locals.user?.id??'anonymous'}:${Astro.params.username}:${query}`;
+const saved=gameListSavedLimits(Astro.cookies.get(gameListViewCookie)?.value,viewKey);
+const limits=Object.fromEntries([...collection.groups].map(([status,rows])=>[status,Math.min(rows.length,saved[status]||gameListRenderBatch)]));
+const rowTemplate={subject:{kind:'game',catalogue_id:1},title:'',listed:true,status:'planning',notes:'Note',replay_count:1};
 ---
 <Tracker title={`${data?.profile?.display_name||Astro.params.username}'s Games List`} listLanding={!!data} ownerProfileColor={data?.profile?.profile_color} ownerIsViewer={owner}>
   {data?<>
     <ProfileHeader profile={data.profile} active="games"/>
-    <div class="list-shell game-list-shell" data-game-list data-list-domain="game" data-game-username={Astro.params.username} data-game-total={data.total} data-game-counts={JSON.stringify(data.group_counts)} data-owner={String(owner)} data-show-achievements={String(showAchievements)} data-status={query.get('status')||''} data-favorites={String(query.has('favorites'))} data-sort={query.get('sort')} data-status-counts={JSON.stringify(data.status_counts)}>
-      <ProfileListFilters statuses={gameStatuses} counts={data.status_counts} genres={data.genres} years={data.years} status={query.get('status')||'all'} sort={query.get('sort')||'title'} defaultSort={preferences.default_sort} query={query.get('q')||''} genre={query.get('genre')||''} year={query.get('year')||''} favorites={query.has('favorites')} progressLabel="Hours"/>
+    <div class="list-shell game-list-shell" data-game-list data-list-domain="game" data-game-username={Astro.params.username} data-game-total={collection.total} data-game-limits={JSON.stringify(limits)} data-game-view-key={viewKey} data-owner={String(owner)} data-show-achievements={String(showAchievements)} data-status={query.get('status')||''} data-favorites={String(query.has('favorites'))} data-sort={query.get('sort')} data-status-counts={JSON.stringify(collection.counts)}>
+      <ProfileListFilters statuses={gameStatuses} counts={collection.counts} genres={data.genres} years={data.years} status={query.get('status')||'all'} sort={query.get('sort')||'title'} defaultSort={preferences.default_sort} query={query.get('q')||''} genre={query.get('genre')||''} year={query.get('year')||''} favorites={query.has('favorites')} progressLabel="Hours"/>
 
       <div class="list-content">
-        <div class="list-toolbar"><span class="sr-only" aria-live="polite">{`${data.total} entries`}</span></div>
+        <div class="list-toolbar"><span class="sr-only" aria-live="polite">{`${collection.total} entries`}</span></div>
         <div id="entry-groups" class="game-entry-groups" data-game-groups>
-          {gameStatuses.map(([status,label])=>{const rows=entries.filter((entry:any)=>entry.status===status);return <section class="status-section" data-game-group={status} hidden={!data.group_counts[status]}><h2>{label}</h2><div class="entry-table">
+          {gameStatuses.map(([status,label])=>{const rows=collection.groups.get(status)||[];return <section class="status-section" data-game-group={status} hidden={!rows.length}><h2>{label}</h2><div class="entry-table">
             <div class="entry-head"><span class="entry-cover-column" aria-hidden="true"></span><span class="entry-title-column">Title</span><span>Score</span><span class="game-hours-column">Hours</span>{showAchievements&&<span class="game-achievements-column">Achievements</span>}</div>
-            <div data-game-window={status} style={`--game-rows:${data.group_counts[status]||0}`}><GameListRows entries={rows} {owner} {showAchievements}/></div>
+            <div data-game-section={status}><GameListRows entries={rows.slice(0,limits[status])} {owner} {showAchievements}/></div>
           </div></section>})}
         </div>
-        <div id="list-empty" class="empty-state" hidden={!!entries.length}><h2>No matching games</h2>{owner&&<a class="button-primary" href="/browse?media_type=game">Browse games</a>}</div>
+        <div id="list-empty" class="empty-state" hidden={!!collection.total}><h2>No matching games</h2>{owner&&<a class="button-primary" href="/browse?media_type=game">Browse games</a>}</div>
       </div>
     </div>
     <div id="cover-preview" aria-hidden="true" hidden><img alt=""/></div>
+    <template data-game-row-template><GameListRows entries={[rowTemplate]} {owner} {showAchievements} template/></template>
     <script id="game-list-page" type="application/json" set:html={JSON.stringify(data).replaceAll('<','\\u003c')}/>
     <script is:inline data-astro-rerun>
       (()=>{if(performance.getEntriesByType('navigation')[0]?.type!=='navigate'||history.state)return;const tabs=document.querySelector('.profile-tabs');if(tabs)window.scrollTo(0,window.scrollY+tabs.getBoundingClientRect().top);})();
