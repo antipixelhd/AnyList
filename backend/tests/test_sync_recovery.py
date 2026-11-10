@@ -122,11 +122,13 @@ class SyncRecoveryDatabaseTests(unittest.IsolatedAsyncioTestCase):
             await db.commit()
         attempts = []
         offline = True
-        async def push(url, token, server_user_id, item_id):
+        async def push(url, token, server_user_id, item_id, *, client=None):
             attempts.append((url, item_id))
             return not (offline and url == second.url)
         with patch("db.async_sessionmaker", return_value=self.factory), \
              patch("core.tracking_snapshot.require_stream_reconciliation", AsyncMock()), \
+             patch.object(watch_delivery.jellyfin_client, "get_items_watched_state", AsyncMock(
+                 return_value={'first-item': True, 'second-item': True})), \
              patch.object(watch_delivery.jellyfin_client, "mark_unwatched", push), \
              patch("core.outbound_sync.fan_out_changes", AsyncMock()), \
              patch("core.watch_intents.dispatch_watch_intents", AsyncMock()), \
