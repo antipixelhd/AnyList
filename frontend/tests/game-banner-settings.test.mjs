@@ -2,6 +2,37 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mountGameBannerSettings} from '../src/lib/game-banner-settings.ts';
 
+test('a ready primary renders without a redundant settings fetch, while changes still load choices',async t=>{
+  const requests=[],handlers={};
+  t.mock.method(globalThis,'fetch',async url=>{requests.push(url);return {ok:true,json:async()=>({backdrop:'selected',background_status:{state:'ready'}})};});
+  const controller=new AbortController(),root={addEventListener:(name,fn)=>handlers[name]=fn,querySelectorAll:()=>[],querySelector:()=>null};
+  mountGameBannerSettings(root,7,'viewer',controller.signal,()=>{},false,{backdrop:'primary',background_status:{state:'ready'}});
+  assert.deepEqual(requests,[]);
+  handlers['anylist:banner-pinned']();await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(requests.length,1);controller.abort();
+});
+
+test('a pending primary continues acquisition even when a fallback is already visible',async t=>{
+  let requests=0;
+  t.mock.method(globalThis,'fetch',async()=>{requests++;return {ok:true,json:async()=>({backdrop:'preferred',background_status:{state:'ready'}})};});
+  const controller=new AbortController(),root={addEventListener(){},querySelectorAll:()=>[],querySelector:()=>null};
+  mountGameBannerSettings(root,7,'viewer',controller.signal,()=>{},false,{backdrop:'fallback',background_status:{state:'pending'}});
+  await new Promise(resolve=>setImmediate(resolve));assert.equal(requests,1);controller.abort();
+});
+
+test('ready heroes load alternatives only on intent and share concurrent gallery reads',async t=>{
+  let finish,requests=0;const output=[];
+  t.mock.method(globalThis,'fetch',()=>{requests++;return new Promise(resolve=>finish=resolve);});
+  const controller=new AbortController(),root={addEventListener(){},querySelectorAll:()=>[],querySelector:()=>null};
+  const settings=mountGameBannerSettings(root,7,'viewer',controller.signal,data=>output.push(data),false,
+    {backdrop:'primary',pinned_banner:'primary',background_status:{state:'ready'}});
+  assert.equal(requests,0);
+  const first=settings.load();assert.strictEqual(settings.load(),first);assert.equal(requests,1);
+  finish({ok:true,json:async()=>({backdrop:'primary',pinned_banner:'primary',banners:['primary','other'],background_status:{state:'ready'}})});
+  await first;assert.deepEqual(output[0].banners,['primary','other']);
+  await settings.load();assert.equal(requests,1);controller.abort();
+});
+
 test('mobile requests IGDB even with a saved desktop animation preference',async t=>{
   const requests=[],output=[];
   t.mock.method(globalThis,'fetch',async url=>{requests.push(url);return {ok:true,json:async()=>({backdrop:'igdb',banners:['igdb'],background_status:{state:'ready'}})};});

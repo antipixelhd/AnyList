@@ -6,6 +6,7 @@ import {commitDetailHero,nextDetailHero,publishDetailArtwork} from '../src/lib/d
 import {artworkIdentity} from '../src/lib/responsive-artwork.ts';
 
 const source = readFileSync(new URL('../src/lib/editor-store.ts', import.meta.url), 'utf8')
+  .replace("'./detail-artwork.ts'", JSON.stringify(new URL('../src/lib/detail-artwork.ts', import.meta.url).href))
   .replace("'./game-hero-choice.ts'", JSON.stringify(new URL('../src/lib/game-hero-choice.ts', import.meta.url).href))
   .replace("'./decoded-artwork.ts'", JSON.stringify(new URL('../src/lib/decoded-artwork.ts', import.meta.url).href))
   .replace("'./responsive-artwork'", JSON.stringify(new URL('../src/lib/responsive-artwork.ts', import.meta.url).href))
@@ -346,17 +347,20 @@ test('saved ratings and deletions update every retained reference without losing
   assert.equal(title.entry,null);
 });
 
-test('cold backdrop decoding never changes the artwork chosen for an open editor', async () => {
+test('cold artwork notifies the open editor when decoded, and navigation unsubscribes', async () => {
   const ready=deferred();const previous=globalThis.Image;
   globalThis.Image=class {decode(){return ready.promise;}};
   try {
     const store=new EditorStore(()=>{}), title=store.seed(draft());
-    store.warmArtwork(title,'https://image.tmdb.org/t/p/w185/poster.jpg');
-    const opened=store.artwork(title);
-    assert.equal(opened.backdrop,undefined);
+    const controller=new AbortController();let shown,updates=0;
+    store.onArtworkReady(()=>{shown=store.artwork(title).backdrop;updates++;},controller.signal);
+    const warming=store.warmArtwork(title,'https://image.tmdb.org/t/p/w185/poster.jpg');
+    assert.equal(shown,undefined);
     ready.resolve();await turn();
-    assert.equal(opened.backdrop,undefined);
-    assert.equal(store.artwork(title).backdrop,'https://image.tmdb.org/t/p/w1280/backdrop.jpg');
+    await warming;
+    assert.equal(shown,'https://image.tmdb.org/t/p/w1280/backdrop.jpg');
+    controller.abort();const before=updates;
+    await store.warmArtwork(title);assert.equal(updates,before);
   } finally {globalThis.Image=previous;}
 });
 
@@ -387,15 +391,15 @@ test('reseed invalidates a previous decoded source and pending projections prese
   }finally{globalThis.Image=previous;}
 });
 
-test('visible rows only warm projected images and missing metadata is shared on intent',async()=>{
+test('nearby rows resolve missing artwork and share the pending metadata read with editor intent',async()=>{
   const previous=globalThis.Image,requests=[],read=deferred();let reads=0;
   globalThis.Image=class {set src(value){requests.push(value);}decode(){return Promise.resolve();}};
   try{
     const store=new EditorStore(async()=>{reads++;return read.promise;}),title=store.seed({...draft(),id:7,backdrop:null,background_status:{state:'pending'}});
-    await store.warmListArtwork(title,new AbortController().signal);assert.equal(reads,0);
+    const nearby=store.warmListArtwork(title,new AbortController().signal);await turn();assert.equal(reads,1);
     const first=store.prepareArtwork(title),second=store.prepareArtwork(title);
     assert.equal(reads,1);assert.deepEqual(requests,[]);
-    read.resolve({backdrop:'/canonical.jpg',background_status:{state:'ready'}});await Promise.all([first,second]);
+    read.resolve({backdrop:'/canonical.jpg',background_status:{state:'ready'}});await Promise.all([nearby,first,second]);
     assert.deepEqual(requests,['https://image.tmdb.org/t/p/w1280/canonical.jpg']);
   }finally{globalThis.Image=previous;}
 });

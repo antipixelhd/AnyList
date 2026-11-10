@@ -8,7 +8,8 @@ export class DecodedArtwork {
   private generation=0;
   private limit:number;
   private pixelLimit:number;
-  constructor(limit=32,pixelLimit=12_000_000) {this.limit=limit;this.pixelLimit=pixelLimit;}
+  private ready:()=>void;
+  constructor(limit=32,pixelLimit=12_000_000,ready=()=>{}) {this.limit=limit;this.pixelLimit=pixelLimit;this.ready=ready;}
   clear() {
     this.generation++;this.images.clear();
     this.queue.splice(0).forEach(item=>item.resolve());this.pending.clear();
@@ -50,6 +51,7 @@ export class DecodedArtwork {
           if(this.images.size<=this.limit&&(pixels<=this.pixelLimit||this.images.size===1))break;
           pixels-=(entry.naturalWidth||0)*(entry.naturalHeight||0);this.images.delete(key);
         }
+        this.ready();
       }).catch(()=>{}).finally(()=>{
         clearTimeout(timer);
         if(this.pending.get(item.src)===item)this.pending.delete(item.src);

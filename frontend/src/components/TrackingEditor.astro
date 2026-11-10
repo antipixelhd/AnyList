@@ -93,6 +93,8 @@ document.addEventListener('astro:page-load', () => {
   let currentTitle: EditorTitle | null = null;
   let opener: HTMLElement | null = null;
   let loadController: AbortController | null = null;
+  let artworkTimer:ReturnType<typeof setTimeout>|undefined;
+  sessionSignal.addEventListener('abort',()=>clearTimeout(artworkTimer),{once:true});
   let displayedScore = '';
   let resumeExpansion:{subject:WorkSubject;button:HTMLElement}|null=null;
   const libraryButton = dialog.querySelector<HTMLButtonElement>('[data-editor-library]')!;
@@ -155,16 +157,8 @@ document.addEventListener('astro:page-load', () => {
     dialog.querySelector<HTMLElement>('.editor-notes')!.hidden=child;
     dialog.querySelector<HTMLElement>('.editor-favorite')!.hidden=child;
     const poster = document.querySelector<HTMLImageElement>('#editor-poster')!;
-    const backdrop = document.querySelector<HTMLImageElement>('#editor-backdrop')!;
     const artwork = editorStore.artwork(title);
-    // Move the prepared node itself. Reassigning src can expose the previous entry while loading.
-    const prepared=artwork.backdropImage;
-    const nextBackdrop=prepared||document.createElement('img');
-    if(nextBackdrop!==backdrop){
-      nextBackdrop.id='editor-backdrop';nextBackdrop.className='editor-backdrop';nextBackdrop.alt='';
-      backdrop.replaceWith(nextBackdrop);
-    }
-    nextBackdrop.hidden=!prepared;
+    paintBackdrop(title);
     poster.removeAttribute('srcset');poster.removeAttribute('sizes');
     if (artwork.poster) {
       poster.src = artwork.poster;
@@ -187,6 +181,21 @@ document.addEventListener('astro:page-load', () => {
     document.querySelector<HTMLElement>('#progress-field')!.hidden = title.type !== 'series';
     saveButton.disabled = false;
   }
+  function paintBackdrop(title:EditorTitle){
+    const backdrop=document.querySelector<HTMLImageElement>('#editor-backdrop')!;
+    const artwork=editorStore.artwork(title);
+    // Move the prepared node itself. Reassigning src can expose the previous entry while loading.
+    const prepared=artwork.backdropImage;
+    const nextBackdrop=prepared||document.createElement('img');
+    if(nextBackdrop!==backdrop){
+      nextBackdrop.id='editor-backdrop';nextBackdrop.className='editor-backdrop';nextBackdrop.alt='';
+      backdrop.replaceWith(nextBackdrop);
+    }
+    nextBackdrop.hidden=!prepared;
+  }
+  editorStore.onArtworkReady(()=>{
+    if(dialog.open&&currentTitle&&!dialog.hasAttribute('data-motion-closing'))paintBackdrop(currentTitle);
+  },sessionSignal);
   function loadLibraryState(title: EditorTitle) {
     libraryButton.hidden = true;
     libraryButton.disabled = false;
@@ -262,6 +271,7 @@ document.addEventListener('astro:page-load', () => {
       if (preview) preview.hidden = true;
     }
     loadController?.abort();
+    clearTimeout(artworkTimer);
     const controller = new AbortController();
     loadController = controller;
     const cached = supplied ? editorStore.get(supplied) : editorStore.find(mediaId!);
@@ -271,13 +281,14 @@ document.addEventListener('astro:page-load', () => {
       const image = button.closest('.browse-card, .entry-row, .quick-search-result, .game-progress-card')?.querySelector<HTMLImageElement>('img') || document.querySelector<HTMLImageElement>('.media-cover img');
       const posterSource=image?.currentSrc||image?.src;
       const heroSource=document.querySelector<HTMLImageElement>('.lab-hero-image')?.currentSrc;
-      const preparation=editorStore.prepareArtwork(title,posterSource,heroSource,sessionSignal);
-      if(!editorStore.artwork(title).backdropImage){
-        // Give a cold image one short chance to decode without holding the editor on provider I/O.
-        let timer:ReturnType<typeof setTimeout>|undefined;
-        try{await Promise.race([preparation,new Promise<void>(resolve=>{timer=setTimeout(resolve,200);})]);}
-        finally{clearTimeout(timer);}
-      }
+      const prepareArtwork=async()=>{
+        await editorStore.prepareArtwork(title,posterSource,heroSource,sessionSignal).catch(()=>{});
+        if(controller.signal.aborted||sessionSignal.aborted||!dialog.open||currentTitle!==title)return;
+        const state=title.background_status?.state;
+        if(!editorStore.artwork(title).backdropImage||state==='pending'||state==='deferred')
+          artworkTimer=setTimeout(()=>void prepareArtwork(),Math.max(30,title.background_status?.retry_after||0)*1000);
+      };
+      void prepareArtwork();
       if (loadController !== controller || opener !== button || sessionSignal.aborted) return;
       populateEditor(title);
       showDialog(dialog);
@@ -310,6 +321,7 @@ document.addEventListener('astro:page-load', () => {
   dialog.addEventListener('close', () => {
     // The native close event is queued; a failed save may already have reopened the editor.
     if (dialog.open) return;
+    clearTimeout(artworkTimer);
     dismissPosterControls(opener, pageListeners.signal);
     resumeExpansion=null;gameFields.reset();
     loadController?.abort(); loadController = null; libraryButton.hidden = true; current = null; currentTitle = null; displayedScore = ''; form.reset();

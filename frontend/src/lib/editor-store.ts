@@ -2,6 +2,7 @@ import { localToday } from './date-time';
 import { responsiveArtwork,artworkIdentity } from './responsive-artwork';
 import { DecodedArtwork } from './decoded-artwork.ts';
 import {gameHeroChoice} from './game-hero-choice.ts';
+import {detailHeroArtwork} from './detail-artwork.ts';
 
 export type WorkSubject = {kind:'game'; catalogue_id:number}
   | {kind:'movie'|'series'; media_id:number; tmdb_id?:number|null};
@@ -39,7 +40,8 @@ export class EditorStore {
   private records = new Map<string, RecordState>();
   private viewer = '';
   private reads = new Map<string, Promise<EditorTitle>>();
-  private decodedArtwork=new DecodedArtwork();
+  private artworkListeners=new Set<()=>void>();
+  private decodedArtwork=new DecodedArtwork(32,12_000_000,()=>this.artworkListeners.forEach(listener=>listener()));
   private request: Transport;
   private changed: (title: EditorTitle) => void;
   private committed: (title:EditorTitle,patch:Record<string,any>|null) => void;
@@ -356,8 +358,13 @@ export class EditorStore {
     return task;
   }
   private mobileArtwork(){return typeof matchMedia!=='undefined'&&matchMedia('(max-width:650px)').matches;}
+  onArtworkReady(listener:()=>void,signal:AbortSignal){
+    if(signal.aborted)return;
+    this.artworkListeners.add(listener);
+    signal.addEventListener('abort',()=>this.artworkListeners.delete(listener),{once:true});
+  }
   private backdropURL(title:EditorTitle,path=title.backdrop) {
-    return responsiveArtwork(path,{size:title.type==='game'?'original':'w1280',route:'auto'})?.src;
+    return detailHeroArtwork(path)?.src;
   }
   private fallbackURLs(title:EditorTitle,path=title.backdrop) {
     return (title.backdrop_fallbacks||[])
@@ -365,6 +372,8 @@ export class EditorStore {
       .map(url=>this.backdropURL(title,url)).filter((src):src is string=>!!src);
   }
   async warmListArtwork(title:EditorTitle,signal:AbortSignal) {
+    if(signal.aborted)return;
+    title=this.get(title);
     const displayed=this.record(title)?.displayedHero;
     const path=title.type==='game'?gameHeroChoice(title,this.viewer,this.mobileArtwork()):title.backdrop;
     const src=displayed&&(displayed.path===path||title.type!=='game'&&displayed.primary===path)
@@ -373,8 +382,11 @@ export class EditorStore {
       if(signal.aborted)return;
       if(!candidate)continue;
       await this.decodedArtwork.warm(candidate);
-      if(this.decodedArtwork.get(candidate))return;
+      if(this.decodedArtwork.get(candidate))break;
     }
+    // Nearby rows resolve missing/preferred artwork through the same coalesced
+    // read as editor intent. The row scheduler bounds this work to two entries.
+    if(!signal.aborted)await this.prepareArtwork(title,undefined,undefined,signal);
   }
   async prepareArtwork(title:EditorTitle,posterSrc?:string,backdropSrc?:string,signal?:AbortSignal){
     if(signal?.aborted)return;
@@ -388,7 +400,10 @@ export class EditorStore {
     if(needsRead&&title.id&&!record.artworkRead&&Date.now()>=(record.artworkRetry||0)){
       const path=title.type==='game'?`games/works/${title.id}/background${mobileGame?'?provider=igdb':''}`:`title/${title.id}/background`;
       record.artworkRetry=Date.now()+30_000;
-      const requestSignal=signal?AbortSignal.any([signal,AbortSignal.timeout(8000)]):AbortSignal.timeout(8000);
+      // Game acquisition already has a 20s provider budget. Do not abandon its
+      // shared lookup at 8s while an open editor is waiting for its first hero.
+      const timeout=AbortSignal.timeout(title.type==='game'?25000:8000);
+      const requestSignal=signal?AbortSignal.any([signal,timeout]):timeout;
       record.artworkRead=this.request(path,{signal:requestSignal}).then(data=>{
         if(requestSignal.aborted||this.record(title)!==record||record.displayedHero)return;
         record.title.background_status=data.background_status;
@@ -424,7 +439,9 @@ export class EditorStore {
     const displayed=record.displayedHero;
     record.backdropSrc ||= displayed?.path===title.backdrop?displayed.src:this.backdropURL(title);
     if (!record.backdropSrc) return Promise.resolve();
-    return this.decodedArtwork.warm(record.backdropSrc,priority);
+    return this.decodedArtwork.warm(record.backdropSrc,priority).then(()=>{
+      if(this.record(title)===record)this.artworkListeners.forEach(listener=>listener());
+    });
   }
   warmMetadata(title:EditorTitle) {
     const record=this.record(title);
@@ -465,7 +482,7 @@ export class EditorStore {
   artwork(title: EditorTitle, posterSrc?: string) {
     const record = this.record(title)!;
     const poster = posterSrc || record.posterSrc || responsiveArtwork(title.poster, {size:'w342', route:'auto'})?.src;
-    // Choose once before opening. Never swap artwork under an active editor.
+    // Only decoded images are exposed to either the initial paint or a live update.
     for(const src of [record.backdropSrc||this.backdropURL(record.title),...this.fallbackURLs(record.title)]){
       const backdropImage=this.decodedArtwork.get(src);
       if(backdropImage)return {poster,backdrop:src,backdropImage};
