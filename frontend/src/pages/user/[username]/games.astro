@@ -1,19 +1,16 @@
 ---
+import GameListRows from '../../../components/GameListRows.astro';
 import Tracker from '../../../layouts/Tracker.astro';
 import ProfileHeader from '../../../components/ProfileHeader.astro';
 import ProfileListFilters from '../../../components/ProfileListFilters.astro';
-import EntryAnnotations from '../../../components/EntryAnnotations.astro';
-import Icon from '../../../components/Icon.astro';
-import {tracker,trackerFailure,scoreLabel} from '../../../lib/tracker';
+import {tracker,trackerFailure} from '../../../lib/tracker';
 import {gameStatuses} from '../../../lib/game-editor-data';
-import {gameProgress} from '../../../lib/game-progress';
-import {gameListQuery,gameListEditorTitle} from '../../../lib/game-list-data';
+import {gameListQuery} from '../../../lib/game-list-data';
 import {viewerMediaPreferences} from '../../../lib/viewer-media-preferences';
-import {responsiveArtwork} from '../../../lib/responsive-artwork';
 import '../../../styles/game-list.css';
 const preferences=await viewerMediaPreferences(Astro.locals);
 const {query}=gameListQuery(Astro.url.searchParams,preferences.default_sort);
-const request=new URLSearchParams({complete:'true',sort:query.get('sort')!});
+const request=new URLSearchParams(query);request.set('grouped','true');request.set('limit','100');
 let data:any=null,error='';
 try{data=await tracker(`games/users/${encodeURIComponent(Astro.params.username!)}/list?${request}`,Astro.locals.token);}
 catch(cause){const failure=trackerFailure(cause);error=failure.message;Astro.response.status=failure.status;}
@@ -23,28 +20,22 @@ const showAchievements=preferences.show_game_achievements;
 <Tracker title={`${data?.profile?.display_name||Astro.params.username}'s Games List`} listLanding={!!data} ownerProfileColor={data?.profile?.profile_color} ownerIsViewer={owner}>
   {data?<>
     <ProfileHeader profile={data.profile} active="games"/>
-    <div class="list-shell game-list-shell" data-game-list data-list-domain="game" data-owner={String(owner)} data-show-achievements={String(showAchievements)} data-status={query.get('status')||''} data-favorites={String(query.has('favorites'))} data-sort={query.get('sort')} data-status-counts={JSON.stringify(data.status_counts)}>
+    <div class="list-shell game-list-shell" data-game-list data-list-domain="game" data-game-username={Astro.params.username} data-game-total={data.total} data-game-counts={JSON.stringify(data.group_counts)} data-owner={String(owner)} data-show-achievements={String(showAchievements)} data-status={query.get('status')||''} data-favorites={String(query.has('favorites'))} data-sort={query.get('sort')} data-status-counts={JSON.stringify(data.status_counts)}>
       <ProfileListFilters statuses={gameStatuses} counts={data.status_counts} genres={data.genres} years={data.years} status={query.get('status')||'all'} sort={query.get('sort')||'title'} defaultSort={preferences.default_sort} query={query.get('q')||''} genre={query.get('genre')||''} year={query.get('year')||''} favorites={query.has('favorites')} progressLabel="Hours"/>
 
       <div class="list-content">
         <div class="list-toolbar"><span class="sr-only" aria-live="polite">{`${data.total} entries`}</span></div>
         <div id="entry-groups" class="game-entry-groups" data-game-groups>
-          {gameStatuses.map(([status,label])=>{const rows=entries.filter((entry:any)=>entry.status===status);return <section class="status-section" data-game-group={status} hidden={!rows.length}><h2>{label}</h2><div class="entry-table">
+          {gameStatuses.map(([status,label])=>{const rows=entries.filter((entry:any)=>entry.status===status);return <section class="status-section" data-game-group={status} hidden={!data.group_counts[status]}><h2>{label}</h2><div class="entry-table">
             <div class="entry-head"><span class="entry-cover-column" aria-hidden="true"></span><span class="entry-title-column">Title</span><span>Score</span><span class="game-hours-column">Hours</span>{showAchievements&&<span class="game-achievements-column">Achievements</span>}</div>
-            {rows.map((entry:any)=>{const image=responsiveArtwork(entry.image_url,{size:'w185',sizes:'44px',route:'direct'}),progress=gameProgress(entry),id=entry.subject.catalogue_id;return <article class="entry-row" data-game-entry={id} data-game-base={entry.base_work_id||undefined} data-entry-status={entry.status} data-title={entry.title} data-score={entry.score??-1} data-hours={entry.total_seconds??-1} data-updated={entry.updated_at} data-year={entry.year||''} data-genres={JSON.stringify(entry.genres||[])} data-favorite={String(!!entry.favorite)}>
-              <div class="entry-thumbnail" data-artwork-path={entry.image_url||undefined} data-preview-src={entry.image_url||undefined}>{image?<img class="entry-cover" {...image} alt="" loading="lazy"/>:<span class="entry-cover"/>}{owner&&<button type="button" class="row-menu" data-motion-static data-edit-game={id} aria-label={`Edit ${entry.title}`}><Icon name="ellipsis"/></button>}</div>
-              <div class="entry-title"><a class="entry-title-link" href={`/games/${id}`}>{entry.title}<span class="row-favorite" aria-label="Favorite" data-game-list-favorite hidden={!entry.favorite}><Icon name="heart"/></span></a><EntryAnnotations notes={entry.notes} replayCount={entry.replay_count}/></div>
-              <span class="entry-score">{owner?<button type="button" class="entry-score-button" data-game-list-rate={id} aria-label={`Rate ${entry.title}`}><span data-score-label>{scoreLabel(entry.score)}</span></button>:scoreLabel(entry.score)}</span>
-              <span class="entry-progress game-hours"><span data-game-list-hours>{progress.hours||'—'}</span>{showAchievements&&<span class="game-inline-achievements" data-game-list-achievements data-known={String(progress.achievement!=null)} aria-label={`Achievements ${progress.achievement||'unknown'}`}>{progress.achievement||'—'}</span>}</span>
-              {showAchievements&&<span class="game-list-achievements" data-game-list-achievements data-known={String(progress.achievement!=null)}>{progress.achievement||'—'}</span>}
-            </article>})}
+            <div data-game-window={status} style={`--game-rows:${data.group_counts[status]||0}`}><GameListRows entries={rows} {owner} {showAchievements}/></div>
           </div></section>})}
         </div>
         <div id="list-empty" class="empty-state" hidden={!!entries.length}><h2>No matching games</h2>{owner&&<a class="button-primary" href="/browse?media_type=game">Browse games</a>}</div>
       </div>
     </div>
     <div id="cover-preview" aria-hidden="true" hidden><img alt=""/></div>
-    {owner&&<script id="list-editor-entries" type="application/json" set:html={JSON.stringify(entries.map(gameListEditorTitle)).replaceAll('<','\\u003c')}/>}
+    <script id="game-list-page" type="application/json" set:html={JSON.stringify(data).replaceAll('<','\\u003c')}/>
     <script is:inline data-astro-rerun>
       (()=>{if(performance.getEntriesByType('navigation')[0]?.type!=='navigate'||history.state)return;const tabs=document.querySelector('.profile-tabs');if(tabs)window.scrollTo(0,window.scrollY+tabs.getBoundingClientRect().top);})();
     </script>

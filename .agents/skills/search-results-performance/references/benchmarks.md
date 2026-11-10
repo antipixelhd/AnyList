@@ -378,3 +378,14 @@ Sixteen focused facet/tab/Games Browse tests, Astro checks and build pass. Full 
 Authenticated beta browser verification deliberately held every Games browse result and facet request: the first Games panel appeared254ms after click with an enabled search/form and no result cards yet. Typing Witcher issued the proper filtered request while metadata remained held. Releasing only facets populated23 genres/five platform groups without resetting the query. Switching to Movies before result release preserved its visible URL; returning to the retained Games panel took1.4ms synchronously and restored19 search cards/query. These are controlled client observations with warm shell infrastructure, not cold-provider completion timings or field INP percentiles.
 
 A direct filtered startup with genre igdb.genre:12, platform pc and Witcher preserved all three values while a synthetic facet503 was shown. Retry restored the checked genre/platform controls, and releasing result acquisition rendered17 filtered cards without error.390px mobile layout had no horizontal overflow. static=1 returned six actual results and23 genres. The earlier warm-backend tab sample showed the Games panel at295ms while the movie panel waited; a roughly one-second two-RAF observation was not established as a separate CPU bottleneck and is not used as an INP or main-thread claim. Normal result completion remains provider-dependent; repeated tabs reuse their initialized panels.
+
+Games list virtualization uses `game_list_window` for the grouped 100-row read,
+with filtered per-status counts reserving stable full-library scroll space.
+Compare `game_list_complete` for total-read cost and keep `game_list`,
+`game_list_page_two` and `game_list_status` as compatibility controls. Window
+pages deliberately add one grouped count read; pagination never truncates stored
+membership. This benchmark excludes HTML rendering, cover decode and scrolling.
+Verify direct bottom jumps, fast continuous scrolling, full-library filters,
+optimistic edits, cancellation and nonzero reload/back restoration on the actual
+Games profile page. The browser keeps at most eight 100-row pages per mounted
+viewer panel, with two reads in flight and viewport-directed adjacent prefetch.

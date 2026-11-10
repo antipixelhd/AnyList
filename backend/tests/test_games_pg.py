@@ -631,6 +631,16 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([r['subject']['catalogue_id'] for r in complete['results']],
             [r['subject']['catalogue_id'] for r in first['results'] + second['results']])
         self.assertFalse({r['subject']['catalogue_id'] for r in first['results']} & {r['subject']['catalogue_id'] for r in second['results']})
+        grouped = (await self.client.get('/tracking/games/users/player/list?grouped=true&limit=50')).json()
+        tail = (await self.client.get('/tracking/games/users/player/list?grouped=true&offset=50&limit=50')).json()
+        self.assertEqual(grouped['group_counts'], {'playing': 65, 'completed': 1, 'paused': 1, 'planning': 1})
+        self.assertEqual([r['status'] for r in grouped['results'] + tail['results']],
+            ['playing'] * 65 + ['completed', 'paused', 'planning'])
+        self.assertEqual({r['subject']['catalogue_id'] for r in grouped['results'] + tail['results']},
+            {r['subject']['catalogue_id'] for r in complete['results']})
+        filtered_groups = (await self.client.get('/tracking/games/users/player/list?grouped=true&year=2024')).json()
+        self.assertEqual(filtered_groups['group_counts'], {'planning': 1})
+        self.assertEqual(filtered_groups['status_counts']['playing'], 65)
         self.assertEqual(first['status_counts']['paused'], 1)
         self.assertEqual(first['status_counts']['playing'], 65)
         self.assertEqual(first['years'], ['2024', '2020'])

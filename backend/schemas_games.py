@@ -106,6 +106,7 @@ class GameListOut(BaseModel):
     limit: int
     profile: GameListProfile
     status_counts: dict[GameStatus, int] = Field(default_factory=dict)
+    group_counts: dict[GameStatus, int] = Field(default_factory=dict)
     genres: list[str] = Field(default_factory=list)
     years: list[str] = Field(default_factory=list)
 

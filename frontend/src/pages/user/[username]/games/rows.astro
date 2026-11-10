@@ -1,0 +1,17 @@
+---
+import GameListRows from '../../../../components/GameListRows.astro';
+import {tracker,trackerFailure} from '../../../../lib/tracker';
+import {gameListQuery} from '../../../../lib/game-list-data';
+import {viewerMediaPreferences} from '../../../../lib/viewer-media-preferences';
+const preferences=await viewerMediaPreferences(Astro.locals);
+const {query}=gameListQuery(Astro.url.searchParams,preferences.default_sort);
+query.set('grouped','true');query.set('limit','100');
+const offset=Number(Astro.url.searchParams.get('offset')||0);
+query.set('offset',String(Number.isSafeInteger(offset)&&offset>=0?offset:0));
+let data;
+try{data=await tracker(`games/users/${encodeURIComponent(Astro.params.username!)}/list?${query}`,Astro.locals.token);}
+catch(cause){const failure=trackerFailure(cause);return new Response(failure.message,{status:failure.status});}
+Astro.response.headers.set('Cache-Control','private, no-store');
+---
+<GameListRows entries={data.results} owner={data.profile.owner} showAchievements={preferences.show_game_achievements}/>
+<script type="application/json" data-game-page set:html={JSON.stringify(data).replaceAll('<','\\u003c')}/>

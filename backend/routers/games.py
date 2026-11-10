@@ -3,7 +3,7 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query,Response,Request
 from pydantic import BaseModel, Field
-from sqlalchemy import func, literal, select, union_all
+from sqlalchemy import case, func, literal, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core import game_tracking as tracking
@@ -623,6 +623,7 @@ async def user_list(username: str, db: DB, viewer: Viewer,
                     year: Annotated[str | None, Query(pattern=r'^\d{4}$')] = None,
                     favorites: bool = False,
                     complete: bool = False,
+                    grouped: bool = False,
                     offset: Annotated[int, Query(ge=0)] = 0,
                     limit: Annotated[int, Query(ge=1, le=200)] = 50) -> GameListOut:
     user, owner = await profile_access(db, username, viewer)
@@ -659,12 +660,17 @@ async def user_list(username: str, db: DB, viewer: Viewer,
                 'score': memberships.c.score.desc().nullslast(),
                 'progress': memberships.c.total_seconds.desc().nullslast(),
                 'updated': memberships.c.updated_at.desc()}[sort]
-    ordered = query.order_by(ordering, memberships.c.work_id)
+    group_counts = {}
+    if grouped:
+        filtered = query.with_only_columns(memberships.c.status).subquery()
+        group_counts = dict((await db.execute(select(filtered.c.status, func.count()).group_by(filtered.c.status))).all())
+    group_order = case({name: index for index, name in enumerate(('playing','completed','paused','dropped','planning'))}, value=memberships.c.status, else_=5)
+    ordered = query.order_by(*([group_order] if grouped else []), ordering, memberships.c.work_id)
     ids = list((await db.scalars(ordered if complete else ordered.offset(offset).limit(limit))).all())
     rows = {r.subject.catalogue_id: r for r in await tracking.states(db, user.id, ids, owner=owner)}
     return GameListOut(results=[rows[i] for i in ids], total=total, offset=0 if complete else offset, limit=total if complete else limit,
         profile=GameListProfile.model_validate(await profile_header(db, user, owner, viewer)),
-        status_counts=status_counts, genres=genres, years=years)
+        status_counts=status_counts, group_counts=group_counts, genres=genres, years=years)
 
 
 @router.get('/users/{username}/favorites')

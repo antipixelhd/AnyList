@@ -9,9 +9,9 @@ test('holding or cancelling the edit button keeps the cover preview until a conf
     .replace(/^import .*\r?\n/gm,'').replace('export function','function');
   for(const attribute of ['[data-edit-entry]','[data-edit-game]']){
     const handlers=new Map(),preview={hidden:false,querySelector:()=>({})};
-    const row={dataset:{},addEventListener:(name,callback)=>handlers.set(name,callback)};
-    const button={closest:selector=>selector.includes(attribute)?button:null};
-    const context={document:{querySelectorAll:()=>[row],querySelector:selector=>selector==='#cover-preview'?preview:{open:false},addEventListener(){}},window:{addEventListener(){}}};
+    const row={dataset:{}};
+    const button={closest:selector=>selector==='.entry-row'?row:selector.includes(attribute)?button:null};
+    const context={document:{querySelector:selector=>selector==='#cover-preview'?preview:{open:false},addEventListener:(name,callback)=>handlers.set(name,callback)},window:{addEventListener(){}}};
     runInNewContext(stripTypeScriptTypes(source),context);
     context.mountListCoverPreview(new AbortController().signal);
     const fire=name=>handlers.get(name)?.({target:button});

@@ -16,7 +16,7 @@ test('only Browse and profile Games tabs permit snapshots behind fresh authoriza
 });
 
 test('Games documents always require a fresh authorized navigation',()=>{
-  for(const path of ['/games/1','/games/1/social','/browse/games','/discover-game?id=1',
+  for(const path of ['/games/1','/games/1/social','/user/alex/games/rows','/browse/games','/discover-game?id=1',
     '/user/alex/games','/actors/catalogue:1?media_type=game','/person/tmdb:2?media_type=game','/studio/catalogue:3?media_type=game',
     '/actors/catalogue:1?domain=game','/person/tmdb:2?domain=game']){
     assert.equal(approvedGamesPage(new URL(path,'https://anylist.example')),true,path);
