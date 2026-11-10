@@ -238,15 +238,15 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
     // Full-viewer intent also admits its tiny strip previews. Keep them ahead
     // of a fast swipe, including slides whose grid previews remain offscreen.
     const button=slots.querySelector<HTMLButtonElement>(`button[data-image-index="${index}"]`);
+    const thumbnail=button?.querySelector<HTMLImageElement>('img');
     if(button){
-      const thumbnail=button.querySelector<HTMLImageElement>('img');
       if(thumbnail&&!thumbnail.getAttribute('src'))thumbnail.fetchPriority=urgent?'high':'low';
       loadThumbnail(button,true);
     }
     // Reuse a grid/strip image already requested for this exact artwork. A
     // pending full-size slide can show it without a new preview download.
     const preview=urgent?[...root.querySelectorAll<HTMLImageElement>('.lab-gallery img,.lab-art-image img,[data-image-viewer-slots] img')]
-      .filter(candidate=>imageKey(candidate.currentSrc||candidate.dataset.gallerySrc||'')===imageKey(original)):undefined;
+      .filter(candidate=>imageKey(candidate.currentSrc||candidate.src||candidate.dataset.gallerySrc||'')===imageKey(original)):thumbnail?[thumbnail]:undefined;
     const existing=preparedImages.get(image);
     if(existing?.url===url){
       if(urgent)void loadViewerImage(image,skeleton,url,image.alt,'high',preview);
