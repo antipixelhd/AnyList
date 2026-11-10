@@ -4,6 +4,7 @@ import {readFileSync} from 'node:fs';
 import {stripTypeScriptTypes} from 'node:module';
 import {runInNewContext} from 'node:vm';
 import {artworkIdentity} from '../src/lib/responsive-artwork.ts';
+import {preloadDetailGallery} from '../src/lib/detail-gallery-preload.ts';
 const source=readFileSync(new URL('../src/lib/media-detail-images.ts',import.meta.url),'utf8');
 const context={imageKey:artworkIdentity};
 runInNewContext(stripTypeScriptTypes(source.slice(source.indexOf('export function uniqueDetailImages'),source.indexOf('export function mountDetailImages')).replace('export ',''))+';globalThis.unique=uniqueDetailImages;',context);
@@ -13,19 +14,40 @@ test('Games retain complete canonical galleries while other consumers retain the
   assert.deepEqual(Array.from(context.unique([...rows,rows[0].replace('t_thumb','t_1080p'),'javascript:alert(1)'],Infinity)),rows);
 });
 
-test('opening the shared viewer prepares the selected image first and every remaining slide',()=>{
+test('opening the shared viewer prepares the selected image first and every remaining slide',async()=>{
   const prepared=[];
   const rows=Array.from({length:22},(_,index)=>`image-${index}`);
   const scope={galleries:{artwork:rows},active:'artwork',current:0,name:'Game',galleryLimit:10,
     viewerPending:()=>false,resetZoom:()=>{},revealPreviews:()=>{},announcement:null,
     carousel:()=>({image:{},skeleton:{}}),fitViewer:()=>{},viewerGroup:()=> 'artwork',
-    arrows:[],paintSlots:()=>{},imageKey:value=>value,prepareImage:index=>prepared.push(index)};
+    arrows:[],paintSlots:()=>{},artworkActions:()=>{},imageKey:value=>value,prepareImage:index=>{prepared.push(index);},
+    preloadDetailGallery,signal:{aborted:false},lightbox:{open:true}};
   const start=source.indexOf('  const showImage=');
   const end=source.indexOf('  const prepareImage=',start);
   runInNewContext(stripTypeScriptTypes(source.slice(start,end))+';showImage(7);',scope);
+  assert.deepEqual(prepared,[7]);
+  await Promise.resolve();
   assert.equal(prepared[0],7);
   assert.equal(new Set(prepared).size,22);
   assert.equal(prepared.length,22);
+});
+
+test('decoded game artwork retains square and portrait entries instead of dropping them after downloading',async()=>{
+  for(const type of ['game','movie'])for(const width of [600,800]){
+    const rows=['https://images.example/artwork.jpg'];
+    const image={naturalWidth:width,naturalHeight:800,complete:true,fetchPriority:'low'};
+    const skeleton={classList:{add(){}},textContent:''};
+    const scope={info:{type},galleries:{artwork:rows},active:'artwork',current:0,name:'Entry',standalone:undefined,
+      lightbox:{open:true},signal:{aborted:false},root:{querySelectorAll:()=>[]},carousel:{slide:()=>({image,skeleton})},
+      preparedImages:new WeakMap(),imageKey:value=>value,responsiveArtwork:src=>({src}),
+      loadViewerImage:()=>Promise.resolve(true),fitViewer:()=>{},viewerGroup:()=> 'artwork',
+      refreshPreviewLoading:()=>{},showImage:()=>{},reveal:()=>{},showToast:()=>{}};
+    const start=source.indexOf('  const prepareImage=');
+    const end=source.indexOf('  const watchLandscape=',start);
+    runInNewContext(stripTypeScriptTypes(source.slice(start,end))+';globalThis.ready=prepareImage(0);',scope);
+    await scope.ready;
+    assert.equal(scope.galleries.artwork.length,type==='game'?1:0,`${type} ${width}x800`);
+  }
 });
 
 test('a refreshed canonical game gallery removes stale logos instead of merging them back',()=>{

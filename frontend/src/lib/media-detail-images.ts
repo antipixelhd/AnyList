@@ -12,6 +12,7 @@ import {bindDetailImageDragDismiss} from './detail-image-dismiss';
 import {bindDetailImageZoom} from './detail-image-zoom';
 import {editorStore} from './editor-store';
 import {createDetailViewerImageLoader} from './detail-viewer-image';
+import {preloadDetailGallery} from './detail-gallery-preload';
 import {bindDetailViewerFrame} from './detail-viewer-frame';
 import {detailHeroArtwork,detailSceneArtwork} from './detail-artwork';
 import {commitDetailHero,nextDetailHero,publishDetailArtwork} from './detail-hero';
@@ -62,7 +63,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
   const viewerGroup=()=>active==='posters'?'posters':'artwork';
   const viewerPending=()=>pending&&active!=='hero';
   const loadViewerImage=createDetailViewerImageLoader(signal);
-  const preparedImages=new WeakMap<HTMLImageElement,string>();
+  const preparedImages=new WeakMap<HTMLImageElement,{url:string;ready:Promise<boolean>}>();
   const watchThumbnail=createGalleryThumbnailWatcher(signal,thumbnail=>{
     if(thumbnail.getBoundingClientRect().top<innerHeight)reveal(thumbnail);
   });
@@ -151,7 +152,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
   window.addEventListener('pagehide',()=>{previews.reset();previewInteracting=false;previewGesture=undefined;},{signal});
   window.addEventListener('pageshow',()=>{previewInteracting=false;previewGesture=undefined;if(lightbox.open)revealPreviews();},{signal});
   signal.addEventListener('abort',clearPreviewTimer,{once:true});
-  const carousel=createDetailImageCarousel(track,signal,index=>showImage(index,false,false),index=>prepareImage(index));
+  const carousel=createDetailImageCarousel(track,signal,index=>showImage(index,false,false),index=>prepareImage(index,true));
   const resetZoom=bindDetailImageZoom(lightbox,track,signal,()=>carousel.slide(current)?.image,
     (index,preserveScroll=false,preserveZoom=false)=>showImage(index,false,!preserveScroll,preserveZoom),()=>{previewInteracting=false;revealPreviews();},()=>cancelUiMotion(lightbox));
   const fitViewer=bindDetailViewerFrame(lightbox,signal,!!standalone);
@@ -218,23 +219,33 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
       skeleton.textContent=viewerPending()?'':'No images available.';
       return;
     }
-    prepareImage(current);
-    // Opening is explicit gallery intent. Start the remaining full-size
-    // images on their real slides so swiping never waits to assign a source.
-    // Reconciliation retains these decoded elements across selection changes.
-    if(active!=='hero')rows.forEach((_,position)=>{if(position!==current)prepareImage(position);});
+    // Keep every decoded slide. Only bulk admission waits for the selected
+    // image; selecting/swiping to another slide always prepares it immediately.
+    const selected=rows[current];
+    if(active==='hero')prepareImage(current);
+    else void preloadDetailGallery(current,rows.length,prepareImage,()=>
+      !signal.aborted&&lightbox.open&&active===group&&galleries[group][current]===selected);
   };
-  const prepareImage=(index:number)=>{
+  const prepareImage=(index:number,exposed=false):Promise<boolean>|undefined=>{
     if(!lightbox.open||signal.aborted)return;
     const group=active,original=galleries[group][index];
     if(!original)return;
     const url=responsiveArtwork(original,{size:group==='posters'?'w780':'original',route:'auto'})?.src;
     const slide=carousel.slide(index);
     if(!url||!slide)return;
-    if(index===current)slide.image.fetchPriority='high';
-    if(preparedImages.get(slide.image)===url)return;
+    const urgent=index===current||exposed;
+    if(urgent)slide.image.fetchPriority='high';
     const {image,skeleton}=slide;
-    preparedImages.set(image,url);
+    // Reuse a grid/strip image already requested for this exact artwork. A
+    // pending full-size slide can show it without a new preview download.
+    const preview=urgent?[...root.querySelectorAll<HTMLImageElement>('.lab-gallery img,.lab-art-image img,[data-image-viewer-slots] img')]
+      .filter(candidate=>imageKey(candidate.currentSrc||candidate.dataset.gallerySrc||'')===imageKey(original))
+      .sort((a,b)=>b.naturalWidth-a.naturalWidth)[0]:undefined;
+    const existing=preparedImages.get(image);
+    if(existing?.url===url){
+      if(urgent)void loadViewerImage(image,skeleton,url,image.alt,'high',preview);
+      return existing.ready;
+    }
     skeleton.classList.add('detail-image-skeleton');skeleton.textContent='';
     const discard=()=>{
       const selected=galleries[active][current];
@@ -246,19 +257,22 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
       }
       return wasSelected;
     };
-    const ready=loadViewerImage(image,skeleton,url,`${name} · ${group==='posters'?'Poster':'Artwork'} ${index+1}`,index===current?'high':'low');
+    const ready=loadViewerImage(image,skeleton,url,`${name} · ${group==='posters'?'Poster':'Artwork'} ${index+1}`,urgent?'high':'low',preview);
     const cached=image.complete&&image.naturalWidth>0;
-    void ready.then(loaded=>{
-      if(!loaded||signal.aborted)return;
-      if(!standalone&&group!=='posters'&&image.naturalWidth<=image.naturalHeight){discard();return;}
+    const settled=ready.then(loaded=>{
+      if(!loaded||signal.aborted)return false;
+      if(!standalone&&info.type!=='game'&&group!=='posters'&&image.naturalWidth<=image.naturalHeight){discard();return false;}
       if(lightbox.open&&active===group&&galleries[group][current]===original)fitViewer(image,viewerGroup());
       if(!cached&&lightbox.open&&active===group&&galleries[group][current]===original)reveal(image);
       refreshPreviewLoading();
+      return true;
     }).catch(()=>{
-      if(signal.aborted)return;
+      if(signal.aborted)return false;
       if(discard())showToast('Unable to load this image. Retry the gallery.','error');
       refreshPreviewLoading();
+      return false;
     });
+    preparedImages.set(image,{url,ready:settled});return settled;
   };
   const watchLandscape=(button:HTMLButtonElement)=>{
     // Games retain the provider's complete gallery. Scene selection is based
