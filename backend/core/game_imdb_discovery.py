@@ -1,7 +1,7 @@
 """Discover a requested person's games from cached full IMDb source connections."""
 import asyncio
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 from sqlalchemy import select,or_,func
@@ -72,6 +72,7 @@ class GamePersonDiscovery:
     def __init__(self,sessions,*,source=None,bindings=None):
         self.sessions=sessions;self.source=source or GameIMDbDiscoverySource(sessions)
         self.bindings=bindings or GameIMDbBindings(sessions)
+        self._owns_source = source is None
 
     async def run(self,native):
         async with _slots:
@@ -159,7 +160,7 @@ class GamePersonDiscovery:
                 if value['status']=='verified':
                     try:
                         work_id=await self.ingest(value['document'])
-                        title=next(row for row in batch if row['id']==value['id'])
+                        title=titles[value['id']]
                         matched=value.get('binding_source')=='matched'
                         if value.get('credit_parent'):
                             from core.game_credit_parents import save_automatic_parent
@@ -214,14 +215,12 @@ class GamePersonDiscovery:
                 or any(row.get('status') not in ('verified','excluded','unresolved','unmapped','conflict') for row in supplied)):
                 raise ProviderError('bad_response')
             outcomes=[]
-            retry_after=max([state.get('retry_after',0),*[value.get('retry_after',0) for value in cached.values()]],default=0)
             for outcome in supplied:
                 value=await prepare_outcome(outcome)
                 value.pop('document',None);value['matcher_version']=VERSION
                 value=prepare(value,titles[value['id']],previous.get(value['id']))
                 value['dependencies']=list(dict.fromkeys([*value.get('dependencies',[]),f'imdb:{value["id"]}',f'wikidata-imdb:{value["id"]}']))
                 outcomes.append(value)
-                retry_after=max(retry_after,value.get('retry_after',0))
             async with self.sessions() as db:
                 job=await db.scalar(snapshot(JOB,native).with_for_update())
                 if not job or job.lease_token!=token:return 'superseded'
@@ -230,12 +229,24 @@ class GamePersonDiscovery:
                     await db.rollback();await self.release(native,token,restart=generation);return 'changed'
                 from core.game_credit_parents import reject_automatic_parents
                 await reject_automatic_parents(db,[row['id'] for row in outcomes if row['status'] in ('conflict','excluded')])
+                stamp = now()
+                deadlines = [expiry for key, value, expiry in retained
+                    if key in cached and value.get('retry_after')]
+                if retry_at := state.pop('retry_at', None):
+                    deadlines.append(datetime.fromisoformat(retry_at))
+                # Jobs already in progress may carry a legacy relative delay.
+                if legacy_delay := state.pop('retry_after', 0):
+                    deadlines.append(stamp + timedelta(seconds=legacy_delay))
+                deadlines.extend(stamp + lifetime(outcome) for outcome in outcomes if outcome.get('retry_after'))
+                retry_at = max(deadlines, default=None)
                 # Different careers retain different source tie orders. Lock
                 # shared mapping rows consistently without reordering traversal.
-                for outcome in sorted(outcomes,key=lambda value:value['id']):
-                    statement=insert(MetadataSnapshot).values(provider='wikidata',kind=MAP,external_id=outcome['id'],
+                if outcomes:
+                    rows = [dict(provider='wikidata',kind=MAP,external_id=outcome['id'],
                         entity_id=outcome.get('work_id'),payload=outcome,coverage={'verified':outcome['status'] in ('verified','excluded')},
-                        fetched_at=now(),expires_at=now()+lifetime(outcome))
+                        fetched_at=stamp,expires_at=stamp+lifetime(outcome))
+                        for outcome in sorted(outcomes,key=lambda value:value['id'])]
+                    statement=insert(MetadataSnapshot).values(rows)
                     await db.execute(statement.on_conflict_do_update(constraint='uq_catalogue_snapshot',set_={
                         'payload':statement.excluded.payload,'coverage':statement.excluded.coverage,
                         'entity_id':statement.excluded.entity_id,'fetched_at':statement.excluded.fetched_at,'expires_at':statement.excluded.expires_at}))
@@ -250,13 +261,17 @@ class GamePersonDiscovery:
                 offset+=advanced
                 if offset>=len(records):page+=1;offset=0
                 complete=page>=(component.pages or 0)
-                state.update(page=page,offset=offset,processed=state.get('processed',0)+advanced,retry_after=retry_after)
-                repeat=complete and retry_after>0
+                state.update(page=page,offset=offset,processed=state.get('processed',0)+advanced)
+                repeat=complete and retry_at is not None
+                if retry_at and not repeat:
+                    state['retry_at'] = retry_at.isoformat()
                 job.coverage={'complete':complete and not repeat,'state':'complete' if complete and not repeat else 'partial','received':state['processed'],'matcher_version':VERSION}
-                if repeat:state.update(page=0,offset=0,processed=0,retry_after=0)
+                if repeat:state.update(page=0,offset=0,processed=0)
                 job.payload=state
                 job.error_code=None;job.attempts=0;job.lease_token=job.lease_until=None
-                job.next_attempt_at=now()+timedelta(seconds=retry_after) if repeat else None if complete else now()
+                # Keep each title's cooldown measured from the failed attempt.
+                # A long first pass must not restart an already elapsed wait.
+                job.next_attempt_at=max(stamp, retry_at) if repeat else None if complete else stamp
                 job.expires_at=now()+timedelta(days=1) if complete and not repeat else None
                 # Publish each verified batch. A later provider failure must
                 # not hold already discovered participation behind completion.
@@ -314,6 +329,19 @@ class GamePersonDiscovery:
             await asyncio.sleep(2)
 
     async def serve(self):
+        if not self._owns_source:
+            await self._serve_workers()
+            return
+        # Keep provider connections across turns in the long-lived workers.
+        http = self.source.sources.api.http
+        async with http.open_client() as client:
+            http.client = client
+            try:
+                await self._serve_workers()
+            finally:
+                http.client = None
+
+    async def _serve_workers(self):
         tasks=[asyncio.create_task(self.worker()) for _ in range(WORKERS)]
         try:await asyncio.gather(*tasks)
         finally:

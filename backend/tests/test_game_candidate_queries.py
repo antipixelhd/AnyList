@@ -11,6 +11,30 @@ from core.game_candidate_queries import GameCandidateQueries
 
 
 class CandidateQueryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_discovery_workers_share_connections_and_close_them_on_shutdown(self):
+        from core.game_imdb_discovery import GamePersonDiscovery
+        entered=asyncio.Event()
+        clients=[]
+        service=GamePersonDiscovery(None)
+        async def worker():
+            clients.append(service.source.sources.api.http.client)
+            if len(clients)==2:
+                entered.set()
+            await asyncio.Event().wait()
+        service.worker=worker
+        task=asyncio.create_task(service.serve())
+        try:
+            await asyncio.wait_for(entered.wait(),1)
+            self.assertIsNotNone(clients[0])
+            self.assertIs(clients[0],clients[1])
+            self.assertFalse(clients[0].is_closed)
+        finally:
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        self.assertTrue(clients[0].is_closed)
+        self.assertIsNone(service.source.sources.api.http.client)
+
     async def test_search_admission_keeps_only_its_subscribers_publication_order(self):
         from core.game_work import current,work_context
         calls={}

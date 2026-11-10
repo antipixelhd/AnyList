@@ -1,5 +1,63 @@
 # Benchmark selection and interpretation
 
+## Live actor portfolio baseline, 10 November 2026
+
+Pinned baseline `c58cb540` and the retained connection/write/retry changes ran
+sequentially on the VPS using actual IMDb, IGDB, Wikidata, Steam and TMDB
+responses. Each run created its own disposable database and admitted the normal
+contributor route, bulk worker, person projector and discovery workers. Public
+source caches and automatic mappings started empty. Mercer retained the two
+existing reviewed mappings for White Knight Chronicles II and Warframe: Tau.
+These backend observations poll the full contributor route once per second and
+include worker idle turns. Browser rendering and optional game-detail hydration
+are outside this measurement.
+
+| Measurement | Baseline | Retained changes |
+|---|---:|---:|
+| Mercer, first 246 works | 3.878s | 3.977s |
+| Mercer, all verification settled, 258 works | 259.480s | 194.664s |
+| Mercer, observed SQL reads / writes | 14,150 / 5,990 | 12,648 / 5,574 |
+| Mercer, provider HTTP requests | 226 | 229 |
+| Will de Renzy-Martin, first 53 works | 2.956s | 4.013s |
+| Will, all verification settled, 54 works | 47.037s | 42.689s |
+| Will, observed SQL reads / writes | 2,730 / 1,292 | 2,648 / 1,237 |
+| Will, provider HTTP requests | 53 | 53 |
+
+Both complete canonical fingerprints, including titles, release dates, roles and
+character labels, match. Mercer acquired 300 source records covering 296 titles.
+Will acquired 59. A second Will sample with the retained code settled at 82.694s
+after a retry cooldown, with the same 54-work fingerprint. Treat these as small
+live samples with provider variation. Fewer polling reads partly follow the
+shorter observation period. The HTTP count includes OAuth token acquisition,
+whose process cache differed between the Mercer samples. This is no claim of
+universal provider-call reduction or a page-paint percentile.
+
+Retain absolute retry deadlines from the failed attempt through a long source
+pass. Legacy relative delays are converted once. A pass that outlasts its
+cooldown may resume immediately, while a future provider/cache deadline still
+applies. Sorted mapping outcomes use one bounded upsert per turn. Normal
+long-lived discovery workers share and close their HTTP client.
+
+Two extra experiments were rejected. Fixed 20-title reverse-lookup windows
+increased the live Mercer run to 304.230s with identical final membership.
+Splitting compatible filter aggregates into five-query transports improved
+standalone IGDB probes from 6.838–8.160s to 3.593–4.232s with identical candidate
+IDs, but the complete Mercer run took 199.111s and added requests. Keep the
+existing ten-query collector until an end-to-end comparison demonstrates a win.
+Raw JSONL traces and rejected experiments remain in the ignored
+`.local-design/actor-live-*.jsonl` files.
+
+The isolated 60-work `game_person_cold` control retained the complete fingerprint,
+24,124-byte public response and 120 logical IGDB queries. At 50ms, baseline and
+retained runs took 11.306s and 11.210s, with 1,462 reads, 75 provider calls and
+1,053 versus 1,000 write statements. At 750ms they took 26.838s and 28.517s.
+The latter retained run fragmented one filter batch, using 76 rather than 75
+physical requests and 1,001 writes. Both warm checks retained 11 reads with zero
+provider calls or writes. This control demonstrates the batched-write saving,
+while its successful all-title fixture does not exercise retry-deadline recovery
+or the long-lived worker's HTTP connection reuse. Competing and overlapping
+pipeline cases at both provider delays retained their complete fingerprints.
+
 Enrichment retry changes use `game_ratings`, `game_metadata` and `game_offers`
 for cached-read identity, SQL, provider and payload comparisons. These cases do
 not exercise failed workers. Pair them with `test_enrichment_retry`,

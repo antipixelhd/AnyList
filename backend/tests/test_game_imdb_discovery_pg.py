@@ -1,7 +1,7 @@
 """Fresh person portfolios discover canonical games without opening their pages."""
 import asyncio
 import unittest
-from datetime import timedelta
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -73,6 +73,35 @@ class PortfolioDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         source.page.return_value={'outcomes':[outcome()],'stale':False}
         self.assertEqual(await self.service.run('nm1'),'ready')
 
+    async def test_discovery_retry_deadline_does_not_restart_when_the_pass_finishes(self):
+        from unittest.mock import patch
+        from core.game_imdb_discovery_source import GameIMDbDiscoverySource
+
+        source = object.__new__(GameIMDbDiscoverySource)
+        source.page = AsyncMock(return_value={
+            'outcomes': [{'id': 'tt2', 'status': 'unresolved', 'reason': 'timeout', 'retry_after': 60}],
+            'deferred': ['tt3'],
+            'stale': False,
+        })
+        self.service.source = source
+        self.assertEqual(await self.service.run('nm1'), 'partial')
+        async with self.Session() as db:
+            failed = await db.scalar(snapshot(MAP, 'tt2', provider='wikidata'))
+            deadline = failed.expires_at
+            job = await db.scalar(snapshot(JOB, 'nm1'))
+            self.assertLess(abs(datetime.fromisoformat(job.payload['retry_at']) - deadline),
+                timedelta(milliseconds=1))
+
+        source.page.return_value = {'outcomes': [outcome('tt3', 30)], 'stale': False}
+        finished_at = deadline + timedelta(seconds=10)
+        with patch('core.game_imdb_discovery.now', return_value=finished_at):
+            self.assertEqual(await self.service.run('nm1'), 'partial')
+        async with self.Session() as db:
+            job = await db.scalar(snapshot(JOB, 'nm1'))
+            self.assertEqual(job.next_attempt_at, finished_at)
+            self.assertEqual(job.payload['processed'], 0)
+            self.assertNotIn('retry_at', job.payload)
+
     async def test_verified_prefix_survives_slow_failed_sibling_without_advancing_its_cursor(self):
         from core.game_imdb_discovery_source import GameIMDbDiscoverySource
         ready,release=asyncio.Event(),asyncio.Event()
@@ -98,6 +127,14 @@ class PortfolioDiscoveryTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(value.payload['status'],'verified')
 
     async def test_igdb_shared_lane_overlaps_two_requests_with_start_spacing(self):
+        from core.game_work import Priority
+        await self.check_igdb_shared_lane(Priority.FINISH,2)
+
+    async def test_igdb_direct_lane_uses_reserved_capacity_with_start_spacing(self):
+        from core.game_work import Priority
+        await self.check_igdb_shared_lane(Priority.DIRECT,3)
+
+    async def check_igdb_shared_lane(self,priority,capacity):
         import time
         from core.catalogue_providers import ProviderHTTP
         from unittest.mock import patch
@@ -108,16 +145,16 @@ class PortfolioDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         active=0;maximum=0;starts=[];ends=[];paired=asyncio.Event()
         async def load(http):
             nonlocal active,maximum
-            from core.game_work import work_context, Priority
-            with work_context(Priority.DIRECT,'foreground'):
+            from core.game_work import work_context
+            with work_context(priority,'viewer'):
                 async with http.lane('igdb'):
                     starts.append(time.monotonic());active+=1;maximum=max(maximum,active)
-                    if active==2:paired.set()
+                    if active==capacity:paired.set()
                     await asyncio.wait_for(paired.wait(),5)
                     await asyncio.sleep(.1);active-=1;ends.append(time.monotonic())
         with patch.dict(catalogue_providers.INTERVALS,{'igdb':.05}):
             await asyncio.gather(*(load(first if index%2 else second) for index in range(5)))
-        self.assertEqual(maximum,2)
+        self.assertEqual(maximum,capacity)
         self.assertTrue(all(later-earlier>=.045 for earlier,later in zip(starts,starts[1:])))
         # The persisted deadline is the start budget, not finish plus budget.
         from models.catalogue import MetadataProviderBudget
@@ -335,19 +372,14 @@ class PortfolioDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         async def execute(db,statement,*args,**kwargs):
             nonlocal arrived
             params=statement.compile().params if getattr(statement,'is_insert',False) else {}
-            mapping=params.get('kind')==MAP
-            first=mapping and id(db) not in orders
-            if first:
-                orders[id(db)]=[];arrived+=1
+            mapping=params.get('kind_m0')==MAP
+            if mapping:
+                self.assertNotIn(id(db),orders)
+                orders[id(db)]=[value for key,value in params.items() if key.startswith('external_id_m')]
+                arrived+=1
                 if arrived==2:both.set()
                 await asyncio.wait_for(both.wait(),3)
-            result=await original(db,statement,*args,**kwargs)
-            if mapping:
-                orders[id(db)].append(params['external_id'])
-                # Let the peer acquire its first row too. Opposite lock orders
-                # deadlock on the second insert; sorted orders serialize safely.
-                if first:await asyncio.sleep(.05)
-            return result
+            return await original(db,statement,*args,**kwargs)
         with patch.object(AsyncSession,'execute',execute):
             results=await asyncio.wait_for(asyncio.gather(self.service.run('nm1'),self.service.run('nm2')),10)
         self.assertEqual(results,['ready','ready'])

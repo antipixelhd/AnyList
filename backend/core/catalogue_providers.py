@@ -128,6 +128,14 @@ class ProviderHTTP:
         self.client = client
         self.session_factory = session_factory
 
+    @staticmethod
+    def open_client():
+        return httpx.AsyncClient(
+            timeout=httpx.Timeout(15, connect=5),
+            follow_redirects=False,
+            headers={"User-Agent": "AnyList catalogue/1"},
+        )
+
     @asynccontextmanager
     async def lane(self, provider):
         """Share budgets with reserved foreground capacity on database deployments."""
@@ -193,11 +201,7 @@ class ProviderHTTP:
             _cache.move_to_end(key)
             return json.loads(hit[1])
         owned = self.client is None
-        client = self.client or httpx.AsyncClient(
-            timeout=httpx.Timeout(15, connect=5),
-            follow_redirects=False,
-            headers={"User-Agent": "AnyList catalogue/1"},
-        )
+        client = self.client or self.open_client()
         try:
             for attempt in range(attempts):
                 try:
