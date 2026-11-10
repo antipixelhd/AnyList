@@ -408,3 +408,17 @@ index replaces the equivalent server selection; cached local rows should render
 without a page-zero network dependency. Do not call separate lazy CDN cover
 requests per-entry API loading. Complete data and full scroll extent remain
 available independently of the mounted viewport.
+
+Keep fetched row data separate from row elements. The Games panel retains up
+to 10,000 row records with a four-million-character serialized-data budget,
+protecting nearby rows and pending edits, while retaining at most 450 row
+elements. In a 2,000-game browser fixture, two return passes over the same
+positions went from 40 row reads and 2,911,810 transferred bytes to zero.
+With the optional index unavailable, retain the current query's page positions
+and reuse the corresponding row records while scrolling.
+
+Games cover previews wait 150ms before fetching a new image and reuse a small
+cache of decoded images. In the browser fixture, a brief pass plus five hovers
+alternating between two posters produced six image timing entries before the
+change and two after it, one per intentionally hovered poster. The screen list
+uses its existing preview behavior.

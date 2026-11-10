@@ -9,7 +9,9 @@ import {gameListPageSize,gameListPages,GameListGeometry} from './game-list-windo
 import {panelActive,panelUrl,setPanelUrl} from './profile-panel';
 
 type Page={offset:number;total:number;results:Record<string,any>[];group_counts:Record<string,number>;status_counts:Record<string,number>;genres:string[];years:string[]};
-type Cached={data:Page;rows:Map<number,HTMLElement>};
+const stateLimit=10_000;
+const stateTextBudget=4*1024*1024;
+const rowNodeLimit=450;
 export function initializeGameList(panel:HTMLElement,lifetime:AbortSignal){
   initializeEntryAnnotations();
   const candidate=panel.querySelector<HTMLElement>('[data-game-list]');if(!candidate)return;
@@ -28,13 +30,15 @@ export function initializeGameList(panel:HTMLElement,lifetime:AbortSignal){
   let query=gameListQuery(new URL(panelUrl(panel)).searchParams,defaultSort).query;
   let epoch=0,frame=0,searchTimer:ReturnType<typeof setTimeout>|undefined,retryTimer:ReturnType<typeof setTimeout>|undefined;
   let previousY=scrollY,previousTime=performance.now(),ahead=3200,dirty=false,refreshing=false;
-  let requests=new AbortController(),preview=new AbortController();
+  let requests=new AbortController();
   const template=panel.querySelector<HTMLTemplateElement>('[data-game-row-template]')!;
   const index=new GameListIndex(),states=new Map<number,GameListState>(),rowCache=new Map<number,HTMLElement>();
+  const stateSizes=new Map<number,number>();
+  let stateTextSize=0;
   const endpoint=`/api/proxy/tracking/games/users/${encodeURIComponent(root.dataset.gameUsername!)}`;
   let local:ReturnType<GameListIndex['select']>=null,writeVersion=0;
   let warmTimer:ReturnType<typeof setTimeout>|undefined,warming:AbortController|undefined,warmAttempts=0,indexDisabled=false;
-  const cache=new Map<number,Cached>(),flights=new Set<number>(),wanted=new Set<number>(),blocked=new Set<number>();
+  const pages=new Map<number,number[]>(),flights=new Set<number>(),wanted=new Set<number>(),blocked=new Set<number>();
   const layouts=new Map<string,GameListGeometry>();
   let anchor:{row:HTMLElement;top:number}|undefined;
   const rowSizes=new ResizeObserver(entries=>{
@@ -53,7 +57,7 @@ export function initializeGameList(panel:HTMLElement,lifetime:AbortSignal){
     }
     if(changed)schedule();
   });
-  mountListCoverPreview(preview.signal,panel);
+  const preview=mountListCoverPreview(signal,panel,{cachePreviews:true});
   const error=document.createElement('p');error.className='error-message game-list-error';error.hidden=true;error.setAttribute('role','alert');
   const retry=document.createElement('button');retry.type='button';retry.className='lab-text-button';retry.textContent='Retry';
   error.append('Unable to load this part of the list. ',retry);root.querySelector('.list-content')!.append(error);
@@ -63,21 +67,26 @@ export function initializeGameList(panel:HTMLElement,lifetime:AbortSignal){
       title:title.title,image_url:title.poster,year:title.year,genres:title.genres,
       game_class:title.game_class,base_work_id:title.base_work_id,listed:!!title.entry,favorite:!!title.favorite};
   }
-  function remember(data:Page,initialRows:HTMLElement[]=[]){
-    const byId=new Map<number,HTMLElement>();
-    for(const state of data.results){
-      const id=state.subject.catalogue_id;
-      const unchanged=states.get(id)===state;
-      const merged=unchanged?state:owner?fromTitle(editorStore.seed(gameListEditorTitle(state))):state;
-      states.delete(id);states.set(id,merged);
-      let row=rowCache.get(id)||initialRows.find(row=>Number(row.dataset.gameEntry)===id);
-      if(!row)row=createGameListRow(template,merged);else if(!unchanged)paintGameListRow(row,merged,template);
-      rowCache.set(id,row);byId.set(id,row);
-    }
-    cache.set(data.offset,{data,rows:byId});
+  function remember(state:GameListState){
+    const id=state.subject.catalogue_id;
+    if(states.get(id)===state)return;
+    const length=JSON.stringify(state).length;
+    stateTextSize+=length-(stateSizes.get(id)||0);
+    stateSizes.set(id,length);
+    states.delete(id);states.set(id,state);
+    const row=rowCache.get(id);if(row)paintGameListRow(row,state,template);
+  }
+  function rememberRead(state:GameListState){
+    const pending=owner&&editorStore.hasPendingSubject(state.subject)&&editorStore.findSubject(state.subject);
+    remember(pending?fromTitle(pending):state);
+  }
+  function pageIds(offset:number){
+    return local?local.ids.slice(offset,offset+gameListPageSize):pages.get(offset);
   }
   const initial=JSON.parse(panel.querySelector('#game-list-page')!.textContent!) as Page;
-  remember(initial,[...root.querySelectorAll<HTMLElement>('[data-game-entry]')]);
+  for(const row of root.querySelectorAll<HTMLElement>('[data-game-entry]'))rowCache.set(Number(row.dataset.gameEntry),row);
+  initial.results.forEach(rememberRead);
+  pages.set(initial.offset,initial.results.map(state=>state.subject.catalogue_id));
   function geometry(data:Page){
     total=data.total;counts=data.group_counts;
     const facets=document.createElement('div'),genres=document.createElement('select'),years=document.createElement('input');
@@ -97,32 +106,29 @@ export function initializeGameList(panel:HTMLElement,lifetime:AbortSignal){
     const version=epoch;flights.add(offset);let recoverable=true;
     try{
       const readSignal=AbortSignal.any([requests.signal,AbortSignal.timeout(15_000)]);
-      let data:Page;
       if(local){
-        const selection=local,ids=selection.ids.slice(offset,offset+gameListPageSize),missing=ids.filter(id=>!states.has(id));
-        let incoming:GameListState[]=[];
-        if(missing.length){
-          const params=new URLSearchParams();missing.forEach(id=>params.append('ids',String(id)));
-          const response=await fetch(`${endpoint}/rows?${params}`,{signal:readSignal,cache:'no-store'});
-          if(!response.ok){recoverable=![401,403].includes(response.status);throw new Error('List read failed');}
-          incoming=await response.json();
-        }
+        const missing=pageIds(offset)!.filter(id=>!states.has(id));
+        if(!missing.length)return;
+        const params=new URLSearchParams();missing.forEach(id=>params.append('ids',String(id)));
+        const response=await fetch(`${endpoint}/rows?${params}`,{signal:readSignal,cache:'no-store'});
+        if(!response.ok){recoverable=![401,403].includes(response.status);throw new Error('List read failed');}
+        const incoming:GameListState[]=await response.json();
         if(signal.aborted||version!==epoch)return;
-        const loaded=new Map(incoming.map(state=>[state.subject.catalogue_id,state]));
-        const results=ids.map(id=>loaded.get(id)||states.get(id));
+        const loaded=new Set(incoming.map(state=>state.subject.catalogue_id));
         // Another tab may have changed membership since this index was acquired.
-        if(results.some(state=>!state)){index.invalidate();queueWarm();reset();return;}
-        data={...selection,offset,results:results as GameListState[]};
+        if(missing.some(id=>!loaded.has(id))){index.invalidate();queueWarm();reset();return;}
+        incoming.forEach(rememberRead);
       }else{
         const params=new URLSearchParams(query);params.set('offset',String(offset));params.set('limit',String(gameListPageSize));params.set('grouped','true');
         const response=await fetch(`${endpoint}/list?${params}`,{signal:readSignal,cache:'no-store'});
         if(!response.ok){recoverable=![401,403].includes(response.status);throw new Error('List read failed');}
-        data=await response.json();
+        const data:Page=await response.json();
+        if(signal.aborted||version!==epoch)return;
+        if(data.offset!==offset)throw new Error('Unexpected list page');
+        data.results.forEach(rememberRead);
+        pages.set(offset,data.results.map(state=>state.subject.catalogue_id));
+        if(offset===0){geometry(data);refreshing=false;queueWarm();}
       }
-      if(signal.aborted||version!==epoch)return;
-      if(data.offset!==offset)throw new Error('Unexpected list page');
-      remember(data);
-      if(offset===0){geometry(data);refreshing=false;queueWarm();}
       blocked.delete(offset);error.hidden=blocked.size===0;
     }catch{
       if(!signal.aborted&&version===epoch&&!requests.signal.aborted){
@@ -145,9 +151,11 @@ export function initializeGameList(panel:HTMLElement,lifetime:AbortSignal){
       gameListPages(base+range.start,base+range.end,total).forEach(offset=>wanted.add(offset));
       for(let index=range.start;index<range.end;index++){
         const position=base+index,offset=Math.floor(position/gameListPageSize)*gameListPageSize;
-        const page=cache.get(offset),state=local?states.get(local.ids[position]):page?.data.results[position-offset];
-        const row=state&&rowCache.get(state.subject.catalogue_id);
-        if(row){
+        const id=local?local.ids[position]:pages.get(offset)?.[position-offset];
+        const state=id===undefined?undefined:states.get(id);
+        if(id!==undefined&&state){
+          const row=rowCache.get(id)||createGameListRow(template,state);
+          rowCache.delete(id);rowCache.set(id,row);
           row.style.setProperty('--game-row',String(index));row.style.setProperty('--game-offset',`${layout.offset(index)}px`);
           const rowKey=`${epoch}:${rowHeight}:${key}:${index}`;
           if(row.dataset.gameRowKey!==rowKey){row.dataset.gameRowKey=rowKey;rowSizes.unobserve(row);rowSizes.observe(row);}
@@ -173,12 +181,27 @@ export function initializeGameList(panel:HTMLElement,lifetime:AbortSignal){
     }
     // Prefetch adjacent ranges, but put visible demand first after large jumps.
     const primary=[...wanted];primary.forEach(offset=>{if(offset+gameListPageSize<total)wanted.add(offset+gameListPageSize);if(offset>0)wanted.add(offset-gameListPageSize);});
-    for(const offset of wanted)if(flights.size<2&&!cache.has(offset)&&!flights.has(offset)&&!blocked.has(offset)&&retryTimer===undefined)void acquire(offset);
+    const nearbyIds=new Set<number>();
+    for(const offset of wanted){
+      const ids=pageIds(offset);
+      ids?.forEach(id=>nearbyIds.add(id));
+      if(flights.size<2&&!ids?.every(id=>states.has(id))&&!flights.has(offset)&&!blocked.has(offset)&&retryTimer===undefined)void acquire(offset);
+    }
     const mounted=new Set([...root!.querySelectorAll<HTMLElement>('[data-game-entry]')].map(row=>Number(row.dataset.gameEntry)));
-    for(const [offset,page] of cache)if(cache.size>8&&!wanted.has(offset)&&![...page.rows.keys()].some(id=>mounted.has(id)))cache.delete(offset);
-    const protectedIds=new Set([...cache.values()].flatMap(page=>[...page.rows.keys()]));
-    for(const [id] of states)if(states.size>800&&!mounted.has(id)&&!protectedIds.has(id)&&!editorStore.hasPendingSubject({kind:'game',catalogue_id:id})){
-      states.delete(id);rowCache.delete(id);
+    for(const id of rowCache.keys()){
+      if(rowCache.size<=rowNodeLimit)break;
+      if(!mounted.has(id))rowCache.delete(id);
+    }
+    if(states.size>stateLimit||stateTextSize>stateTextBudget){
+      // Keep the active window resident when row data reaches its own budget.
+      for(const id of nearbyIds){const state=states.get(id);if(state){states.delete(id);states.set(id,state);}}
+      for(const id of states.keys()){
+        if(states.size<=stateLimit&&stateTextSize<=stateTextBudget)break;
+        if(mounted.has(id)||nearbyIds.has(id)||(owner&&editorStore.hasPendingSubject({kind:'game',catalogue_id:id})))continue;
+        stateTextSize-=stateSizes.get(id)!;
+        stateSizes.delete(id);states.delete(id);rowCache.delete(id);
+      }
+      for(const [offset,ids] of pages)if(!ids.some(id=>states.has(id)))pages.delete(offset);
     }
 
   }
@@ -203,7 +226,7 @@ export function initializeGameList(panel:HTMLElement,lifetime:AbortSignal){
   }
 
   function reset(preserveGeometry=false){
-    epoch++;requests.abort();requests=new AbortController();flights.clear();blocked.clear();cache.clear();if(!preserveGeometry)layouts.clear();anchor=undefined;clearTimeout(retryTimer);retryTimer=undefined;
+    epoch++;requests.abort();requests=new AbortController();flights.clear();blocked.clear();pages.clear();if(!preserveGeometry)layouts.clear();anchor=undefined;clearTimeout(retryTimer);retryTimer=undefined;
     local=index.select(query);root.dataset.gameIndex=local?'ready':'server';
     error.hidden=true;wanted.clear();refreshing=true;
     if(local){geometry({...local,offset:0,results:[]});refreshing=false;schedule();}
@@ -227,15 +250,14 @@ export function initializeGameList(panel:HTMLElement,lifetime:AbortSignal){
     if(requests.signal.aborted)requests=new AbortController();blocked.clear();if(dirty){dirty=false;submit();}schedule();queueWarm();
   },{signal});
   panel.addEventListener('anylist:panel-inactive',()=>{
-    controls.close();dirty=dirty||refreshing||searchTimer!==undefined;
+    controls.close();preview?.hide();dirty=dirty||refreshing||searchTimer!==undefined;
     clearTimeout(searchTimer);searchTimer=undefined;clearTimeout(retryTimer);retryTimer=undefined;
     requests.abort();epoch++;flights.clear();warming?.abort();clearTimeout(warmTimer);warmTimer=undefined;
   },{signal});
   document.addEventListener('anylist:editor-state',event=>{
     const title=(event as CustomEvent<EditorTitle>).detail;if(!owner||title.type!=='game')return;
     writeVersion++;warming?.abort();warmAttempts=0;
-    const state=fromTitle(title);states.set(title.id!,state);index.update(state);
-    const row=rowCache.get(title.id!);if(row)paintGameListRow(row,state,template);
+    const state=fromTitle(title);remember(state);index.update(state);
     // Reorder complete local membership immediately, preserving shared pending state.
     if(local)reset();
     queueWarm();
@@ -243,18 +265,25 @@ export function initializeGameList(panel:HTMLElement,lifetime:AbortSignal){
   document.addEventListener('anylist:editor-committed',event=>{
     const title=(event as CustomEvent<{title:EditorTitle}>).detail.title;if(!owner||title.type!=='game')return;
     writeVersion++;warming?.abort();warmAttempts=0;
-    const state=fromTitle(title);states.set(title.id!,state);index.update(state);
-    if(!title.entry)for(const [id,child] of states)if(child.base_work_id===title.id){
-      const removed={...child,listed:false};states.set(id,removed);index.update(removed);
+    const state=fromTitle(title);remember(state);index.update(state);
+    if(!title.entry)for(const child of [...states.values()])if(child.base_work_id===title.id){
+      const removed={...child,listed:false};remember(removed);index.update(removed);
     }
     reset();queueWarm();
   },{signal});
+  function seedEditor(event:Event){
+    const button=(event.target as Element).closest<HTMLElement>('[data-edit-game],[data-game-list-rate]');
+    if(!owner||!button)return;
+    const id=Number(button.dataset.editGame||button.dataset.gameListRate),state=states.get(id);
+    if(state)editorStore.seed(gameListEditorTitle(state));
+  }
+  for(const event of ['pointerover','focusin','click'])root.addEventListener(event,seedEditor,{signal});
   root.addEventListener('click',event=>{
     const button=(event.target as Element).closest<HTMLButtonElement>('[data-game-list-rate]');if(!button)return;
     const title=editorStore.findSubject({kind:'game',catalogue_id:Number(button.dataset.gameListRate)});if(!title)return;
     if(title.game_class==='expansion'){document.dispatchEvent(new CustomEvent('anylist:open-editor',{detail:{subject:title.subject,opener:button,title}}));return;}
     (window as any).anyListQuickRate?.({title:title.title,poster:title.poster,score:title.entry?.score,ratingMode:'manual',onScore:async(score:number|null)=>{await editorStore.write(title,{score});}});
   },{signal});
-  signal.addEventListener('abort',()=>{warming?.abort();clearTimeout(warmTimer);states.clear();rowCache.clear();index.invalidate();requests.abort();preview.abort();rowSizes.disconnect();clearTimeout(searchTimer);clearTimeout(retryTimer);cancelAnimationFrame(frame);cache.clear();layouts.clear();},{once:true});
+  signal.addEventListener('abort',()=>{warming?.abort();clearTimeout(warmTimer);states.clear();stateSizes.clear();rowCache.clear();index.invalidate();requests.abort();rowSizes.disconnect();clearTimeout(searchTimer);clearTimeout(retryTimer);cancelAnimationFrame(frame);pages.clear();layouts.clear();},{once:true});
   controls.sync(query.get('status')||'all',defaultSort);schedule();queueWarm();
 }
