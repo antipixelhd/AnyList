@@ -5,6 +5,7 @@ import {DecodedArtwork} from './decoded-artwork';
 export function mountListCoverPreview(signal:AbortSignal,root:ParentNode=document,{cachePreviews=false}={}){
   const preview=root.querySelector<HTMLElement>('#cover-preview'),image=preview?.querySelector<HTMLImageElement>('img');
   const decoded=cachePreviews?new DecodedArtwork():undefined;
+  const thumbnailPreview=decoded?document.createElement('canvas'):undefined;
   let dismissed=false,hovered:HTMLElement|null=null,shown:HTMLElement|null=null;
   let timer:ReturnType<typeof setTimeout>|undefined,request=0;
   const editorOpen=()=>document.querySelector<HTMLDialogElement>('#tracking-editor')?.open;
@@ -15,7 +16,7 @@ export function mountListCoverPreview(signal:AbortSignal,root:ParentNode=documen
   };
   const show=(row:HTMLElement)=>{
     const thumbnail=row.querySelector<HTMLElement>('.entry-thumbnail'),source=thumbnail?.dataset.previewSrc;
-    if(!preview||!image||!source||dismissed||editorOpen()||!matchMedia('(hover:hover) and (min-width:901px)').matches){hide();return;}
+    if(!preview||!source||dismissed||editorOpen()||!matchMedia('(hover:hover) and (min-width:901px)').matches){hide();return;}
     const reveal=()=>{
       const rect=thumbnail!.getBoundingClientRect(),width=174,height=248,gap=18;
       preview.style.left=`${Math.max(8,Math.min(innerWidth-width-8,rect.left-width-gap>=8?rect.left-width-gap:rect.right+gap))}px`;
@@ -23,6 +24,7 @@ export function mountListCoverPreview(signal:AbortSignal,root:ParentNode=documen
       preview.hidden=false;shown=row;
     };
     if(!decoded){
+      if(!image)return;
       applyResponsiveArtwork(image,source,{size:'w500',sizes:'174px',route:'auto'});
       reveal();return;
     }
@@ -38,6 +40,22 @@ export function mountListCoverPreview(signal:AbortSignal,root:ParentNode=documen
     };
     const ready=decoded.get(src);
     if(ready){paint(ready);return;}
+    const cover=thumbnail?.querySelector<HTMLImageElement>('img.entry-cover');
+    if(thumbnailPreview&&cover?.complete&&cover.naturalWidth&&cover.naturalHeight){
+      const context=thumbnailPreview.getContext('2d');
+      if(context){
+        // Paint the already-loaded poster without assigning its URL to another image.
+        const scale=Math.min(1,480/Math.max(cover.naturalWidth,cover.naturalHeight));
+        thumbnailPreview.width=Math.max(1,Math.round(cover.naturalWidth*scale));
+        thumbnailPreview.height=Math.max(1,Math.round(cover.naturalHeight*scale));
+        context.drawImage(cover,0,0,thumbnailPreview.width,thumbnailPreview.height);
+        preview.replaceChildren(thumbnailPreview);
+        reveal();
+        const sameSource=cover.currentSrc===src||
+          (cover.getAttribute('src')===src&&cover.currentSrc===cover.src);
+        if(sameSource)return;
+      }
+    }
     // Virtualized rows can move underneath a stationary pointer during scroll.
     // Wait for intent before fetching a new preview and cancel on scroll or exit.
     timer=setTimeout(()=>{timer=undefined;void decoded.warm(src).then(()=>paint(decoded.get(src)));},150);
