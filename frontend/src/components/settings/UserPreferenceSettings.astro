@@ -28,10 +28,11 @@ const GAME_AI_FILTERS = [
 ] as const;
 const { token } = Astro.locals;
 const settings = Astro.locals.settings;
-const [profileData, me, trackingPrefs] = await Promise.all([
+const [profileData, me, trackingPrefs, notificationPrefs] = await Promise.all([
   viewerProfilePreferences(Astro.locals),
   api.auth.me(token!),
   viewerMediaPreferences(Astro.locals),
+  category === 'notifications' ? tracker('preferences', token) : null,
 ]);
 
 const prefs: UserPreferences = {
@@ -222,6 +223,13 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
 
       </div>}
       {category === "notifications" && <div class="settings-stack">
+      <section>
+        <h2 class="section-headline">Sync reviews</h2>
+        <label class="setting-switch-row" for="auto-approve-uncertain-resume">
+          <span><strong>Auto-approve uncertain resume positions</strong></span>
+          <input id="auto-approve-uncertain-resume" type="checkbox" checked={notificationPrefs?.auto_approve_uncertain_resume} />
+        </label>
+      </section>
       <!-- Device notifications -->
       <section>
         <div class="mb-4 border-b border-zinc-800 pb-2">
@@ -408,6 +416,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
       const names: Record<string, string> = {
         'profile-appearance': 'Profile appearance', background: 'Profile background', bio: 'Bio',
         'remove-specials-seasons': 'Seasons',
+        'auto-approve-uncertain-resume': 'Resume reviews',
         'game-browse': 'Games Browse preferences',
         minimum_movie_runtime: 'Minimum movie runtime', excluded_categories: 'Excluded categories',
         minimum_votes: 'Minimum votes',
@@ -617,7 +626,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
         if (control.reportValidity()) saveTrackingPreferences({[control.id]: checkbox ? control.checked : control.valueAsNumber}, control, control.id);
       });
     }
-    for(const [id,field] of [['show-movies-series','show_movies_series'],['show-games','show_games'],['show-game-achievements','show_game_achievements'],['hide-erotic-games','hide_erotic_games']]){
+    for(const [id,field] of [['show-movies-series','show_movies_series'],['show-games','show_games'],['show-game-achievements','show_game_achievements'],['hide-erotic-games','hide_erotic_games'],['auto-approve-uncertain-resume','auto_approve_uncertain_resume']]){
       const control=document.getElementById(id) as HTMLInputElement|null;if(!control)continue;
       control.dataset.savedValue=String(control.checked);
       control.addEventListener('change',()=>saveTrackingPreferences({[field]:control.checked},control,field));
@@ -629,7 +638,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
       const revision = (trackingRevisions.get(field) || 0) + 1;
       trackingRevisions.set(field, revision);
       const requestedValue = control instanceof HTMLInputElement && control.type === 'checkbox' ? String(control.checked) : control.value;
-      const statusKey = control.hasAttribute('data-game-browse-preference') ? 'game-browse' : field === 'watch_state_sync' ? 'watch-state-sync' : field === 'minimum_popularity' ? 'minimum-popularity' : field === 'include_rereleases' ? 'include-rereleases' : field === 'remove_specials_seasons' ? 'remove-specials-seasons' : 'combine-lists';
+      const statusKey = control.hasAttribute('data-game-browse-preference') ? 'game-browse' : field === 'watch_state_sync' ? 'watch-state-sync' : field === 'auto_approve_uncertain_resume' ? 'auto-approve-uncertain-resume' : field === 'minimum_popularity' ? 'minimum-popularity' : field === 'include_rereleases' ? 'include-rereleases' : field === 'remove_specials_seasons' ? 'remove-specials-seasons' : 'combine-lists';
       if (field === 'combine_lists') publishCombinePreference(requestedValue === 'true');
       if(field.startsWith('show_'))document.dispatchEvent(new CustomEvent('anylist:media-domains-changed',{detail:{[field]:requestedValue==='true'}}));
       setStatus(statusKey, 'Saving…', 'saving');

@@ -106,7 +106,7 @@ class NuvioWatchedOnlyTests(unittest.IsolatedAsyncioTestCase):
         await queue_watch_intents(self.db, 1, {self.media.id})
         await self.db.commit()
         with patch('core.tracking_snapshot.require_stream_reconciliation', AsyncMock()), \
-             patch('core.watch_intents._write_provider_watch_state', AsyncMock()) as writer, \
+             patch('core.watch_intents._write_nuvio_watch_batch', AsyncMock(return_value={})) as writer, \
              patch('core.nuvio_visibility.sync_next_up_visibility', AsyncMock(
                  side_effect=[NuvioAPIError('fixture'), None])) as visibility:
             await dispatch_watch_intents(self.db, 1)

@@ -1978,6 +1978,54 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         await self.db.commit()
         self.assertEqual((await self.client.get('/tracking/recent-events')).json()['outbound'],[])
 
+    async def test_nuvio_resume_reviews_offer_two_choices_and_can_auto_approve(self):
+        from core.stream_actions import dispatch_stream_actions, check_nuvio_resume
+
+        conn = MediaServerConnection(user_id=self.owner.id, type='nuvio', name='Nuvio profile 2',
+            url='https://example.test', token='fixture', server_user_id='2', push_playback=True)
+        self.db.add_all([conn, TrackedEntry(user_id=self.owner.id, media_id=self.movie.id, status='watching')])
+        await self.db.flush()
+        self.db.add(StreamBaseline(user_id=self.owner.id, connection_id=conn.id, approved=True, snapshot={}))
+        remote = {'content_id': 'tt1000', 'progress_key': 'tt1000', 'position': 20_000, 'duration': 100_000,
+                  'last_watched': 1760000000000}
+        incoming = {**remote, 'content_type': 'movie', 'position': 40_000, 'observed_at': '2026-11-08T22:54:59Z'}
+
+        async def push(_db, _conn, record, *, verified, auto_approve):
+            check_nuvio_resume(record, remote, verified, auto_approve)
+
+        with patch('core.stream_actions.push_nuvio_progress', side_effect=push):
+            for choice, state in (('keep', 'cancelled'), ('confirm', 'pending'), ('preference', 'pending')):
+                action = StreamAction(user_id=self.owner.id, media_id=self.movie.id, connection_id=conn.id,
+                    action='upsert', payload=incoming)
+                self.db.add(action)
+                await self.db.commit()
+                await dispatch_stream_actions(self.db, self.owner.id)
+                self.assertEqual(action.state, 'conflict')
+                inbox = (await self.client.get('/tracking/recent-events')).json()
+                self.assertEqual(inbox['outbound'], [])
+                review, = [row for row in inbox['results'] if row['kind'] == 'resume_conflict']
+                self.assertEqual(review['payload']['incoming']['position'], 40_000)
+                self.assertEqual(review['payload']['remote']['position'], 20_000)
+                self.assertTrue(review['payload']['remote']['last_watched'].endswith('Z'))
+                if choice == 'preference':
+                    response = await self.client.patch('/tracking/preferences', json={'auto_approve_uncertain_resume': True})
+                    self.assertTrue(response.json()['auto_approve_uncertain_resume'])
+                else:
+                    response = await self.client.post(f"/tracking/recent-events/{review['id']}", json={'action': choice})
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertEqual(action.state, state)
+                if state == 'pending':
+                    await dispatch_stream_actions(self.db, self.owner.id)
+                    self.assertEqual(action.state, 'applied')
+                self.assertEqual((await self.client.get('/tracking/recent-events')).json()['results'], [])
+
+            future = StreamAction(user_id=self.owner.id, media_id=self.movie.id, connection_id=conn.id,
+                action='upsert', payload=incoming)
+            self.db.add(future)
+            await self.db.commit()
+            await dispatch_stream_actions(self.db, self.owner.id)
+            self.assertEqual(future.state, 'applied')
+
     async def test_favorite_only_patch_does_not_dispatch_provider_work(self):
         response = await self.save(self.movie, favorite=True)
         self.assertEqual(response.status_code, 200, response.text)
@@ -5130,7 +5178,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         await queue_watch_intents(self.db, self.owner.id, {episode.id});await self.db.commit()
         visibility = AsyncMock(side_effect=[NuvioAPIError('mobile settings unavailable'), None])
         with patch('core.tracking_snapshot.require_stream_reconciliation', AsyncMock()), \
-             patch('core.watch_intents._write_provider_watch_state', AsyncMock()), \
+             patch('core.watch_intents._write_nuvio_watch_batch', AsyncMock(return_value={})), \
              patch('core.nuvio_visibility.sync_next_up_visibility', visibility):
             await dispatch_watch_intents(self.db, self.owner.id)
             intent = (await self.db.execute(select(WatchIntent).where(
@@ -5559,10 +5607,9 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(nuvio_projection, "ensure_imdb_ids", AsyncMock()),
-            patch.object(nuvio_payloads, "watched_item", return_value={
-                'content_id': 'tt0912347', 'content_type': 'movie',
-            }),
-            patch.object(nuvio, 'push_watched_items', AsyncMock()) as watched_write,
+            patch.object(nuvio, 'sync_watched_delta', AsyncMock(return_value=[
+                {'content_id': 'tt0912347', 'content_type': 'movie', 'watched_at': 1767225600000},
+            ])) as watched_write,
             patch('core.nuvio_visibility.sync_next_up_visibility', AsyncMock()) as next_up_write,
         ):
             await dispatch_watch_intents(self.db, self.owner.id)

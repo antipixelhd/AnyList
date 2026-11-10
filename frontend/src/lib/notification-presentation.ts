@@ -44,7 +44,26 @@ export const eventBadge = (event: any) => isSeasonReleaseNotification(event) ? u
 export const eventHref = (event: any) => event.media ? `/title/${event.media.id}` : event.payload?.resolve_url;
 export const eventImage = (event: any) => event.payload?.season_poster_path || event.media?.poster || null;
 export const eventCanChooseStatus = (event: any) => Boolean(event.media && event.previous_status && event.proposed_status && event.previous_status !== event.proposed_status && !['rating_conflict', 'deletion_conflict'].includes(event.kind));
-export const eventCanKeepPrevious = (event: any) => Boolean(event.media && !['rating_conflict', 'deletion_conflict'].includes(event.kind));
+export const eventCanKeepPrevious = (event: any) => event.kind === 'resume_conflict' || Boolean(event.media && !['rating_conflict', 'deletion_conflict'].includes(event.kind));
+export const eventConfirmLabel = (event: any) => event.kind === 'resume_conflict' ? 'Use incoming'
+  : event.kind === 'deletion_conflict' ? 'Retry deletion' : event.kind?.startsWith('initial_') ? 'Approve import'
+  : event.kind === 'rating_conflict' ? 'Use provider score' : 'Confirm';
+export const eventKeepLabel = (event: any) => event.kind === 'resume_conflict' ? 'Keep current' : 'Keep previous';
+
+export function resumeChoices(event: any) {
+  if (event.kind !== 'resume_conflict') return [];
+  const { incoming, remote, destination } = event.payload || {};
+  if (!incoming || !remote) return [];
+  return [
+    { name: `${incoming.name || 'AnyList'} · Incoming`, time: incoming.timestamp, row: incoming },
+    { name: `${destination || 'Nuvio'} · Current`, time: remote.updated_at || remote.last_watched, row: remote },
+  ].map(({ name, time, row }) => {
+    const seconds = typeof row.position === 'number' ? Math.floor(row.position / 1000) : null;
+    const position = seconds == null ? '' : `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+    const episode = row.season != null && row.episode != null ? `S${row.season}E${row.episode}` : '';
+    return { name, time, position: [episode, position].filter(Boolean).join(' · ') };
+  });
+}
 export const eventMessage = (event: any) => isNewSeasonReleaseDate(event)
   ? `Release date: ${seasonReleaseDate(event) || 'Date unavailable'}`
   : isNewSeasonRelease(event)

@@ -115,97 +115,71 @@ async def _current_watch_event(db, user_id: int, media_id: int) -> WatchEvent | 
     ).order_by(WatchEvent.watched_at.desc().nulls_last(), WatchEvent.id.desc()).limit(1))).scalar_one_or_none()
 
 
-async def _write_provider_watch_state(
-    db,
-    conn: MediaServerConnection,
-    media: Media,
-    watched: bool,
-    watched_at: datetime | None,
-) -> None:
-    if conn.type == "stremio":
-        from models.users import UserSettings
-
-        settings = (await db.execute(select(UserSettings).where(
-            UserSettings.user_id == conn.user_id,
-        ))).scalar_one_or_none()
-        api_key = await settings_store.get_effective_tmdb_key(db, settings)
-        await stremio_delivery.push_connection(
-            db,
-            conn,
-            conn.user_id,
-            api_key=api_key,
-            watch_overrides={media.id: watched},
-            watch_only=True,
-        )
-        return
-
-    if conn.type != "nuvio":
-        return
+async def _write_nuvio_watch_batch(db, conn, entries):
+    from core import nuvio
+    from db import AsyncSessionLocal
+    from models.users import UserSettings
+    from sqlalchemy import update
+    from sqlalchemy.orm.attributes import set_committed_value
 
     baseline = await db.get(StreamBaseline, conn.id)
-    show = await db.get(Show, media.show_id) if media.show_id is not None else None
-    from models.users import UserSettings
-
-    settings = (await db.execute(select(UserSettings).where(
-        UserSettings.user_id == conn.user_id,
-    ))).scalar_one_or_none()
+    show_ids = {media.show_id for _, media, _ in entries if media.show_id is not None}
+    shows = {show_id: await db.get(Show, show_id) for show_id in show_ids}
+    settings = (await db.execute(select(UserSettings).where(UserSettings.user_id == conn.user_id))).scalar_one_or_none()
     api_key = await settings_store.get_effective_tmdb_key(db, settings)
-    await nuvio_projection.ensure_imdb_ids([media], {show.id: show} if show else {}, api_key)
-    payload = nuvio_payloads.watched_item(
-        media,
-        watched_at,
-        show,
-        include_unknown_date=True,
-    )
-    if payload is None:
-        raise ValueError("content_id_unresolved")
-    mapped_id = nuvio_payloads.content_id_for_baseline(baseline, media, show)
-    if mapped_id:
-        payload["content_id"] = mapped_id
-    if media.media_type.value == "episode" and (
-        media.season_number is None or media.episode_number is None
-    ):
-        raise ValueError("episode_position_unresolved")
-    key = {field: payload[field] for field in ("content_id", "season", "episode") if field in payload}
+    await nuvio_projection.ensure_imdb_ids([media for _, media, _ in entries],
+        {key: show for key, show in shows.items() if show is not None}, api_key)
+    additions, removals, prepared, errors = [], [], [], {}
+    for intent, media, watched_at in entries:
+        show = shows.get(media.show_id)
+        payload = nuvio_payloads.watched_item(media, watched_at, show, include_unknown_date=True)
+        if payload is None:
+            errors[intent.id] = 'content_id_unresolved'
+            continue
+        if media.media_type.value == 'episode' and (media.season_number is None or media.episode_number is None):
+            errors[intent.id] = 'episode_position_unresolved'
+            continue
+        if mapped_id := nuvio_payloads.content_id_for_baseline(baseline, media, show):
+            payload['content_id'] = mapped_id
+        if intent.desired_watched:
+            if not nuvio._has_numeric_watched_at(payload):
+                errors[intent.id] = 'NuvioAPIError'
+                continue
+            additions.append(payload)
+        else:
+            removals.append({field: payload[field] for field in ('content_id', 'season', 'episode') if field in payload})
+        prepared.append((intent, payload, getattr(show or media, 'tmdb_id', None)))
 
-    import core.nuvio as nuvio
-    async def persist_refresh(session) -> None:
-        from db import AsyncSessionLocal
-        from sqlalchemy import update
-        from sqlalchemy.orm.attributes import set_committed_value
+    if not prepared:
+        return errors
+
+    async def persist_refresh(session):
         async with AsyncSessionLocal() as token_db:
             await token_db.execute(update(MediaServerConnection).where(
                 MediaServerConnection.id == conn.id,
             ).values(token=session.refresh_token))
             await token_db.commit()
-        set_committed_value(conn, "token", session.refresh_token)
+        set_committed_value(conn, 'token', session.refresh_token)
 
     async with nuvio.connection_lock(conn.id):
         await refresh_stream_connection(db, conn)
-        if watched:
-            await nuvio.push_watched_items(
-                conn.url, conn.token, nuvio.parse_profile_id(conn.server_user_id),
-                [payload], on_refresh=persist_refresh, verify=True,
-            )
-        else:
-            await nuvio.delete_watched_items(
-                conn.url, conn.token, nuvio.parse_profile_id(conn.server_user_id),
-                [key], on_refresh=persist_refresh, verify=True,
-            )
+        remote = await nuvio.sync_watched_delta(conn.url, conn.token, nuvio.parse_profile_id(conn.server_user_id),
+            additions, removals, on_refresh=persist_refresh)
 
-    # Keep the exact provider identity used by the successful write. A later
-    # pull and the visibility update both resolve provider rows through this
-    # baseline mapping, including when the identity came from Nuvio's payload
-    # builder rather than an existing mapping.
-    target_tmdb_id = getattr(show if media.media_type.value == "episode" else media, "tmdb_id", None)
-    content_id = payload.get("content_id")
-    if target_tmdb_id is not None and content_id:
-        snapshot = dict(baseline.snapshot or {}) if baseline else {}
-        mappings = dict(snapshot.get("mappings") or {})
-        mappings[str(content_id)] = target_tmdb_id
-        snapshot["mappings"] = mappings
-        if baseline:
-            baseline.snapshot = snapshot
+    remote_keys = {nuvio._watched_history_key(row) for row in remote}
+    dated_keys = {nuvio._watched_history_key(row) for row in remote if nuvio._has_numeric_watched_at(row)}
+    snapshot = dict(baseline.snapshot or {}) if baseline else {}
+    mappings = dict(snapshot.get('mappings', {}))
+    for intent, payload, tmdb_id in prepared:
+        key = nuvio._watched_history_key(payload)
+        confirmed = key in dated_keys if intent.desired_watched else key not in remote_keys
+        if not confirmed:
+            errors[intent.id] = 'NuvioAPIError'
+        elif tmdb_id is not None:
+            mappings[str(payload['content_id'])] = tmdb_id
+    if baseline:
+        baseline.snapshot = {**snapshot, 'mappings': mappings}
+    return errors
 
 
 async def _attempt_watch_write(intent: WatchIntent, watched: bool, watched_at: datetime | None, writer: WatchWriter) -> bool:
@@ -241,7 +215,6 @@ async def dispatch_watch_intents(db, user_id: int, *, writer: WatchWriter | None
     ).limit(100).with_for_update(skip_locked=True))).scalars().all()
     processed = set()
     nuvio_visibility_batches = {}
-    visibility_suppressed_by_connection: dict[int, set[int]] = {}
     for intent in intents:
         if intent.id in processed:
             continue
@@ -255,10 +228,6 @@ async def dispatch_watch_intents(db, user_id: int, *, writer: WatchWriter | None
             intent.state = "cancelled"
             intent.last_error = None
             continue
-        event = await _current_watch_event(db, user_id, intent.media_id)
-        watched = event is not None
-        intent.desired_watched = watched
-
         from core.tracking_snapshot import require_stream_reconciliation
         try:
             await require_stream_reconciliation(db, conn)
@@ -300,38 +269,42 @@ async def dispatch_watch_intents(db, user_id: int, *, writer: WatchWriter | None
                         row.last_error = None
             continue
 
-        if writer is None:
-            async def perform_write(row, current_watched, watched_at, *, _db=db, _conn=conn, _media=media):
-                await _write_provider_watch_state(_db, _conn, _media, current_watched, watched_at)
-        else:
-            perform_write = writer
+        if writer is not None:
+            event = await _current_watch_event(db, user_id, intent.media_id)
+            intent.desired_watched = event is not None
+            if await _attempt_watch_write(intent, intent.desired_watched,
+                    (event.watched_at or event.created_at) if event else None, writer):
+                intent.state = 'applied'
+            continue
 
-        succeeded = await _attempt_watch_write(
-            intent,
-            watched,
-            (event.watched_at or event.created_at) if event else None,
-            perform_write,
-        )
-        if succeeded:
-            intent.state = "applied"
-            if writer is None and conn.type == 'nuvio':
-                suppressed = visibility_suppressed_by_connection.get(conn.id)
-                if suppressed is None:
-                    baseline = (await db.execute(select(StreamBaseline).where(
-                        StreamBaseline.connection_id == conn.id,
-                    ).execution_options(populate_existing=True))).scalar_one_or_none()
-                    suppressed = {
-                        int(media_id)
-                        for media_id in ((baseline.snapshot or {}) if baseline else {}).get(
-                            'playback_clear_watch_visibility_suppressed', [],
-                        )
-                        if str(media_id).isdigit()
-                    }
-                    visibility_suppressed_by_connection[conn.id] = suppressed
-                if intent.media_id not in suppressed:
-                    nuvio_visibility_batches.setdefault(conn.id, []).append(intent)
-        else:
-            logger.info("Watch intent remains pending for connection %s media %s after %s", conn.id, media.id, intent.last_error)
+        batch = []
+        for row in intents:
+            if row.connection_id != conn.id:
+                continue
+            processed.add(row.id)
+            target = await db.get(Media, row.media_id)
+            if target is None:
+                row.state = 'cancelled'
+                row.last_error = None
+                continue
+            current = await _current_watch_event(db, user_id, row.media_id)
+            row.desired_watched = current is not None
+            row.attempts += 1
+            batch.append((row, target, (current.watched_at or current.created_at) if current else None))
+        try:
+            errors = await _write_nuvio_watch_batch(db, conn, batch)
+        except Exception as error:
+            errors = {row.id: type(error).__name__ for row, _, _ in batch}
+        baseline = await db.get(StreamBaseline, conn.id)
+        suppressed = set((baseline.snapshot or {}).get('playback_clear_watch_visibility_suppressed', [])) if baseline else set()
+        for row, _, _ in batch:
+            row.last_error = errors.get(row.id)
+            if row.last_error:
+                logger.info("Watch intent remains pending for connection %s media %s after %s", conn.id, row.media_id, row.last_error)
+                continue
+            row.state = 'applied'
+            if row.media_id not in suppressed and str(row.media_id) not in suppressed:
+                nuvio_visibility_batches.setdefault(conn.id, []).append(row)
     for connection_id, batch in nuvio_visibility_batches.items():
         conn = await db.get(MediaServerConnection, connection_id)
         records = []

@@ -27,7 +27,7 @@ export function localizeDateTimes(root: ParentNode) {
 export function setLocalDateTime(element: HTMLElement, value: string | null | undefined, style: DateTimeStyle = 'date', fallback = '') {
   element.dataset.localDateTime = style;
   element.dataset.dateFallback = fallback;
-  const normalized = style === 'time' || style === 'datetime' || style === 'timestamp-date' ? timestamp(value)?.toISOString() || '' : value || '';
+  const normalized = style === 'time' || style === 'datetime' || style === 'datetime-precise' || style === 'timestamp-date' ? timestamp(value)?.toISOString() || '' : value || '';
   if (element instanceof HTMLTimeElement) element.dateTime = normalized;
   else element.dataset.dateValue = normalized;
   localizeDateTimes(element);

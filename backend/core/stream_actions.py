@@ -6,7 +6,7 @@ from core.connection_identity import refresh_stream_connection
 import logging
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from sqlalchemy import select, update
+from sqlalchemy import and_, or_, select, update
 from fastapi import HTTPException
 from models import MediaServerConnection, Media, MediaType, Show
 from models.events import WatchEvent
@@ -18,10 +18,53 @@ from core.timestamps import milliseconds
 from core.deletion_markers import settle_marker_target
 
 logger = logging.getLogger(__name__)
+NUVIO_RESUME_REVIEW_ERROR = 'Resume position needs review'
 
 
 class RemotePlaybackChanged(Exception):
     pass
+
+
+class NuvioResumeConflict(RemotePlaybackChanged):
+    def __init__(self, remote):
+        self.remote = remote
+
+
+class NewerNuvioResume(Exception):
+    pass
+
+
+def nuvio_resume_signature(row):
+    return {
+        **{field: row.get(field) for field in ('content_id', 'progress_key', 'season', 'episode', 'position', 'duration')},
+        'last_watched': _iso_utc(provider_changed_at({'last_watched': row.get('last_watched') or None})),
+        'updated_at': _iso_utc(provider_changed_at({'updated_at': row.get('updated_at'), 'modified_at': row.get('modified_at')})),
+    }
+
+
+def check_nuvio_resume(record, remote, verified, auto_approve):
+    signature = nuvio_resume_signature(remote)
+    incoming_at = provider_changed_at({'updated_at': record.get('observed_at')})
+    remote_at = provider_changed_at({'updated_at': signature['updated_at']})
+    if remote_at and incoming_at and remote_at > incoming_at:
+        raise NewerNuvioResume()
+
+    incoming_watch = provider_changed_at({'last_watched': record.get('last_watched') or None})
+    remote_watch = provider_changed_at({'last_watched': signature['last_watched']})
+    if incoming_watch and remote_watch and remote_watch > incoming_watch:
+        raise NewerNuvioResume()
+    if remote_at and incoming_at and incoming_at > remote_at:
+        return
+    if incoming_watch and remote_watch and incoming_watch > remote_watch:
+        return
+    if verified and signature == verified.get('remote'):
+        previous_at = provider_changed_at({'updated_at': verified.get('observed_at')})
+        if incoming_at and previous_at and incoming_at > previous_at:
+            return
+    approval = record.get('approved_nuvio_resume')
+    if approval == signature or auto_approve:
+        return
+    raise NuvioResumeConflict(signature)
 
 
 def same_progress(left, right):
@@ -150,7 +193,7 @@ async def push_stremio_progress(token, record):
         raise stremio.StremioAPIError('Stremio playback timestamp did not persist')
 
 
-async def push_nuvio_progress(db, conn, record):
+async def push_nuvio_progress(db, conn, record, *, verified=None, auto_approve=False):
     async def refreshed(session):
         from db import AsyncSessionLocal
         from sqlalchemy.orm.attributes import set_committed_value
@@ -172,30 +215,32 @@ async def push_nuvio_progress(db, conn, record):
                 await nuvio.update_next_up_dismissals(client, conn.url, session.access_token,
                     profile, show=_nuvio_action_content_ids(record),
                     on_written=_nuvio_visibility_echo_writer(db, conn))
+                current = nuvio_resume_signature(matches[0])
+                if current['last_watched'] == nuvio_resume_signature(record)['last_watched']:
+                    return current
                 return
             if matches and not (len(matches) == 1 and same_progress(matches[0],record)):
                 if len(matches) != 1:
                     raise RemotePlaybackChanged()
-                # Nuvio last_watched is viewing evidence, not a universal row
-                # modification time. Only an explicit row update time can order
-                # a competing resume value; otherwise require review.
-                observed_at = provider_changed_at({'updated_at': record.get('observed_at')})
-                remote_at = provider_changed_at({'updated_at': matches[0].get('updated_at')})
-                if not observed_at or not remote_at or remote_at > observed_at:
-                    raise RemotePlaybackChanged()
+                check_nuvio_resume(record, matches[0], verified, auto_approve)
             payload = {key: value for key, value in record.items() if key in (
                 'content_id','content_type','video_id','season','episode','position','duration','last_watched','progress_key')}
+            if len(matches) == 1 and not payload.get('last_watched') and matches[0].get('last_watched'):
+                # An approved position without its own playback clock keeps the
+                # destination's clock so Nuvio can accept the position update.
+                payload['last_watched'] = matches[0]['last_watched']
             payload.setdefault('progress_key', f"{record['content_id']}_s{record['season']}e{record['episode']}"
                 if record.get('season') is not None else record['content_id'])
             await nuvio._rpc(client, conn.url, session.access_token, 'sync_push_watch_progress',
                 {'p_profile_id': profile, 'p_entries': [payload]})
             confirmed_rows = await nuvio._pull_watch_progress(client, conn.url, session.access_token, profile)
             confirmed = [row for row in confirmed_rows if row.get('progress_key') == payload['progress_key']]
-            if len(confirmed) != 1 or not same_progress(confirmed[0], record) or not playback_date_confirmed(record,confirmed[0]):
+            if len(confirmed) != 1 or not same_progress(confirmed[0], record) or not playback_date_confirmed(payload,confirmed[0]):
                 raise nuvio.NuvioAPIError('Nuvio progress write was not confirmed by readback')
             await nuvio.update_next_up_dismissals(client, conn.url, session.access_token,
                 profile, show=_nuvio_action_content_ids(record),
                 on_written=_nuvio_visibility_echo_writer(db, conn))
+            return nuvio_resume_signature(confirmed[0])
 
 
 async def valid_forwarded_progress(db, action, entry, deleted):
@@ -1072,6 +1117,7 @@ async def dispatch_stream_actions(db, user_id):
     await cleanup_disabled_stream_actions(db, user_id)
     actions = (await db.execute(select(StreamAction).where(StreamAction.user_id == user_id,
         StreamAction.state == 'pending').order_by(StreamAction.id).limit(100).with_for_update(skip_locked=True))).scalars().all()
+    auto_approve_resume = None
     for action in actions:
         if action.action == 'restore':
             # Legacy queued restores contain the old provider position. A
@@ -1113,6 +1159,7 @@ async def dispatch_stream_actions(db, user_id):
         action.attempts += 1
         try:
             payload = dict(action.payload or {})
+            verified_resume = None
             visibility_only = (conn.type == 'nuvio' and (
                 action.action == 'dismiss' and (
                     payload.get('visibility_only') is True or not conn.push_playback
@@ -1148,19 +1195,29 @@ async def dispatch_stream_actions(db, user_id):
                 elif action.action == 'restore':await dismiss_nuvio(db, conn, payload, restore=True)
                 elif action.action == 'upsert' and visibility_only:
                     await show_nuvio_next_up(db, conn, payload)
-                elif action.action == 'upsert':await push_nuvio_progress(db, conn, payload)
+                elif action.action == 'upsert':
+                    if auto_approve_resume is None:
+                        from models.users import UserSettings
+                        prefs = await db.scalar(select(UserSettings.preferences).where(UserSettings.user_id == user_id))
+                        auto_approve_resume = (prefs or {}).get('auto_approve_uncertain_resume') is True
+                    verified = (baseline_for_aliases.snapshot or {}).get('verified_nuvio_resumes', {}) if baseline_for_aliases else {}
+                    verified_resume = await push_nuvio_progress(db, conn, payload,
+                        verified=verified.get(payload['content_id']), auto_approve=auto_approve_resume)
                 elif action.action == 'dismiss':
                     await dismiss_nuvio(db, conn, payload, visibility_only=visibility_only)
                 else:continue
             else:
                 continue
             action.state = 'applied'; action.last_error = None
+            if conn.type == 'nuvio' and action.action == 'upsert' and not visibility_only:
+                await _retire_superseded_nuvio_resumes(db, action)
             # Visibility-only Watching actions do not represent watch progress.
             # show_nuvio_next_up updates only the exact synthetic row it proves
             # absent; leave every genuine current resume in the baseline.
             if not visibility_only:
                 baseline = await db.get(StreamBaseline, conn.id)
                 snapshot = dict(baseline.snapshot)
+                payload.pop('approved_nuvio_resume', None)
                 if conn.type == 'nuvio' and action.action in ('dismiss', 'reset'):
                     content_ids = _nuvio_action_content_ids(payload)
                 elif action.action == 'dismiss' and payload.get('title_dismissal') is True:
@@ -1168,6 +1225,15 @@ async def dispatch_stream_actions(db, user_id):
                 else:
                     content_ids = [payload['content_id']]
                 key = payload['content_id']
+                if verified_resume:
+                    snapshot['verified_nuvio_resumes'] = {**snapshot.get('verified_nuvio_resumes', {}), key: {
+                        'observed_at': payload.get('observed_at'), 'remote': verified_resume,
+                    }}
+                elif conn.type == 'nuvio' and action.action in ('dismiss', 'reset'):
+                    snapshot['verified_nuvio_resumes'] = {
+                        key: value for key, value in snapshot.get('verified_nuvio_resumes', {}).items()
+                        if key not in content_ids
+                    }
                 snapshot['progress'] = {k:v for k,v in snapshot.get('progress', {}).items()
                     if str(k) not in content_ids and str(v.get('content_id') or '') not in content_ids}
                 snapshot['resume'] = {**snapshot.get('resume',{})}
@@ -1175,7 +1241,8 @@ async def dispatch_stream_actions(db, user_id):
                     for content_id in content_ids:
                         snapshot['resume'].pop(content_id,None)
                 if action.action in ('restore','upsert'):
-                    snapshot['progress'][key]=dict(action.payload)
+                    snapshot['progress'][key]={field: value for field, value in action.payload.items()
+                        if field != 'approved_nuvio_resume'}
                     snapshot['resume'].pop(key,None)
                 snapshot['outbound'] = {**snapshot.get('outbound', {})}
                 if action.action in ('restore', 'upsert'):
@@ -1204,6 +1271,26 @@ async def dispatch_stream_actions(db, user_id):
                 if not deleted.pending_connections:
                     reviews=(await db.execute(select(SyncReview).where(SyncReview.user_id==user_id,SyncReview.media_id==action.media_id,SyncReview.kind=='outbound_pending'))).scalars()
                     for review in reviews:review.state='confirmed'
+        except NewerNuvioResume:
+            await _retire_superseded_nuvio_resumes(db, action)
+            action.state = 'cancelled'
+            action.payload = {}
+            action.last_error = None
+        except NuvioResumeConflict as conflict:
+            await _retire_superseded_nuvio_resumes(db, action)
+            action.state = 'conflict'
+            action.last_error = NUVIO_RESUME_REVIEW_ERROR
+            source = await db.get(MediaServerConnection, payload['source_connection_id']) if payload.get('source_connection_id') else None
+            incoming = nuvio_resume_signature(payload)
+            db.add(SyncReview(user_id=user_id, connection_id=conn.id, media_id=action.media_id,
+                kind='resume_conflict', provider='nuvio', priority='high', message='Choose a resume position.',
+                payload={
+                    'stream_action_id': action.id,
+                    'incoming': {**incoming, 'name': source.name if source and source.user_id == user_id else 'AnyList',
+                        'timestamp': incoming['last_watched'] or payload.get('observed_at')},
+                    'remote': conflict.remote,
+                    'destination': conn.name,
+                }))
         except RemotePlaybackChanged:
             action.state = 'conflict'; action.last_error = 'Playback changed since the last import'
             db.add(SyncReview(user_id=user_id,connection_id=conn.id,media_id=action.media_id,kind='deletion_conflict' if action.action=='reset' else 'conflict',
@@ -1217,6 +1304,47 @@ async def dispatch_stream_actions(db, user_id):
                 conn.id, action.media_id, action.action, action.last_error, action.attempts,
             )
     await db.commit()
+
+
+async def resolve_nuvio_resume_review(db, review, *, approve):
+    payload = review.payload or {}
+    action = await db.get(StreamAction, payload.get('stream_action_id')) if payload.get('stream_action_id') else None
+    if (action and action.state == 'conflict' and action.action == 'upsert'
+            and (action.user_id, action.connection_id, action.media_id) == (review.user_id, review.connection_id, review.media_id)):
+        # A newer pending resume takes precedence over an older review.
+        replacement = await db.scalar(select(StreamAction.id).where(
+            StreamAction.connection_id == action.connection_id, StreamAction.media_id == action.media_id,
+            StreamAction.action == 'upsert', or_(StreamAction.state == 'pending',
+                and_(StreamAction.id > action.id, StreamAction.state.in_(('applied', 'conflict')))),
+        ).limit(1))
+        action.last_error = None
+        if approve and not replacement:
+            action.state = 'pending'
+            action.payload = {**action.payload, 'approved_nuvio_resume': payload['remote']}
+        else:
+            action.state = 'cancelled'
+            action.payload = {}
+    review.state = 'confirmed' if approve else 'corrected'
+    review.dismissed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+async def retire_nuvio_resume_review(db, action):
+    await db.execute(update(SyncReview).where(
+        SyncReview.user_id == action.user_id, SyncReview.connection_id == action.connection_id,
+        SyncReview.media_id == action.media_id, SyncReview.kind == 'resume_conflict',
+        SyncReview.payload['stream_action_id'].as_integer() == action.id, SyncReview.state == 'pending',
+    ).values(state='corrected', dismissed_at=datetime.now(timezone.utc).replace(tzinfo=None)))
+
+
+async def _retire_superseded_nuvio_resumes(db, action):
+    superseded = (await db.execute(select(StreamAction).where(
+        StreamAction.user_id == action.user_id, StreamAction.connection_id == action.connection_id,
+        StreamAction.media_id == action.media_id, StreamAction.id < action.id,
+        StreamAction.state == 'conflict', StreamAction.last_error == NUVIO_RESUME_REVIEW_ERROR,
+    ))).scalars().all()
+    for old in superseded:
+        await retire_nuvio_resume_review(db, old)
+        old.state, old.payload, old.last_error = 'cancelled', {}, None
 
 
 async def cleanup_disabled_stream_actions(db, user_id):
@@ -1244,6 +1372,8 @@ async def cleanup_disabled_stream_actions(db, user_id):
         enabled = _stream_action_enabled(conn, action)
         if enabled:
             continue
+        if action.last_error == NUVIO_RESUME_REVIEW_ERROR:
+            await retire_nuvio_resume_review(db, action)
         action.state = 'cancelled'
         action.payload = {}
         action.last_error = None

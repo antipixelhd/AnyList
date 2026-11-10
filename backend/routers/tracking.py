@@ -98,6 +98,7 @@ async def import_history(db:AsyncSession=Depends(get_db),viewer:User=Depends(get
 class PreferencePatch(BaseModel):
     watch_state_sync: Literal['conservative', 'immediate'] | None = None
     auto_confirm: bool | None = None
+    auto_approve_uncertain_resume: bool | None = None
     combine_lists: bool | None = None
     show_movies_series: bool | None = None
     show_games: bool | None = None
@@ -132,6 +133,7 @@ async def preferences(db: AsyncSession = Depends(get_db), viewer: User = Depends
         'minimum_popularity': (settings.preferences or {}).get('minimum_popularity', 25) if settings else 25,
         'include_rereleases': bool(settings and (settings.preferences or {}).get('include_rereleases', False)),
         'auto_confirm': bool(row and row.auto_confirm),
+        'auto_approve_uncertain_resume': bool(settings and (settings.preferences or {}).get('auto_approve_uncertain_resume') is True),
         'watch_state_sync': (settings.preferences or {}).get('watch_state_sync', 'conservative') if settings else 'conservative',
         'combine_lists': True if row is None else row.combine_lists,
         'show_movies_series': True if row is None else row.show_movies_series,
@@ -149,17 +151,22 @@ async def preferences(db: AsyncSession = Depends(get_db), viewer: User = Depends
 
 
 @router.patch('/preferences')
-async def set_preferences(body: PreferencePatch, db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
+async def set_preferences(body: PreferencePatch, background_tasks: BackgroundTasks,
+                          db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
     from sqlalchemy.dialects.postgresql import JSONB, insert
     from core.game_browse_policy import AI_KEYWORDS, DEFAULTS
     from models.users import UserSettings
 
-    json_fields = {'include_rereleases','minimum_popularity','hide_erotic_games','watch_state_sync',*DEFAULTS,*AI_KEYWORDS}
+    json_fields = {'include_rereleases','minimum_popularity','hide_erotic_games','watch_state_sync',
+        'auto_approve_uncertain_resume',*DEFAULTS,*AI_KEYWORDS}
     changes = body.model_dump(exclude_unset=True)
     for name, value in changes.items():
         if value is None:
             raise HTTPException(422, f'{name} cannot be null')
     json_changes = {name:value for name,value in changes.items() if name in json_fields}
+    approve_resume = changes.get('auto_approve_uncertain_resume') is True
+    if 'auto_approve_uncertain_resume' in changes:
+        await db.execute(select(User.id).where(User.id == viewer.id).with_for_update())
     if json_changes:
         from sqlalchemy import case, cast, func
         statement = insert(UserSettings).values(user_id=viewer.id, preferences=json_changes)
@@ -176,6 +183,15 @@ async def set_preferences(body: PreferencePatch, db: AsyncSession = Depends(get_
             db.add(row)
         for name,value in tracking_changes.items():
             setattr(row,name,value)
+    if approve_resume:
+        from core.stream_actions import resolve_nuvio_resume_review
+        reviews = (await db.execute(select(SyncReview).where(SyncReview.user_id == viewer.id,
+            SyncReview.kind == 'resume_conflict', SyncReview.state == 'pending').order_by(SyncReview.id.desc()))).scalars().all()
+        for review in reviews:
+            await resolve_nuvio_resume_review(db, review, approve=True)
+        if reviews:
+            from core.local_outbound import dispatch_queued_tracking_actions
+            background_tasks.add_task(dispatch_queued_tracking_actions, viewer.id)
     await db.commit()
     return await preferences(db,viewer)
 
@@ -191,7 +207,7 @@ async def upcoming_seasons(db: AsyncSession = Depends(get_db), viewer: User = De
 
 
 def review_priority(review: SyncReview) -> str:
-    if review.kind in {'initial_import','initial_cloud_import','conflict','cloud_conflict','rating_conflict','deletion_conflict','unmatched_import','library_conflict','watch_conflict','progress_conflict'}:
+    if review.kind in {'initial_import','initial_cloud_import','conflict','cloud_conflict','rating_conflict','deletion_conflict','unmatched_import','library_conflict','watch_conflict','progress_conflict','resume_conflict'}:
         return 'high'
     if review.kind == 'outbound_pending':
         return 'medium'
@@ -321,10 +337,11 @@ async def recent_events(db: AsyncSession = Depends(get_db), viewer: User = Depen
     # queue rather than the provider-change review inbox.
     outbound_review_rows=[row for row in rows if row[0].kind=='outbound_pending' and row[0].state=='pending']
     rows=[row for row in rows if row[0].kind!='outbound_pending']
-    from models.tracking import StreamAction
+    from core.stream_actions import NUVIO_RESUME_REVIEW_ERROR
     actions=(await db.execute(select(StreamAction,Media,MediaServerConnection).join(Media,Media.id==StreamAction.media_id)
         .join(MediaServerConnection,MediaServerConnection.id==StreamAction.connection_id)
         .where(StreamAction.user_id==viewer.id,StreamAction.state.in_(['pending','conflict']))
+        .where(or_(StreamAction.last_error.is_(None), StreamAction.last_error != NUVIO_RESUME_REVIEW_ERROR))
         .order_by(StreamAction.id).limit(100))).all()
     from models.watch_intent import WatchIntent
     watch_intents=(await db.execute(select(WatchIntent,Media,MediaServerConnection)
@@ -450,6 +467,15 @@ async def resolve_event(event_id:int,body:ReviewResolution,background_tasks:Back
     event=(await db.execute(select(SyncReview).where(SyncReview.id==event_id,SyncReview.user_id==viewer.id).with_for_update())).scalar_one_or_none()
     if not event:raise HTTPException(404,'Event not found')
     if event.state!='pending':raise HTTPException(409,'This event has already been resolved')
+    if event.kind == 'resume_conflict':
+        if body.action not in {'confirm', 'keep'}:
+            raise HTTPException(422, 'Choose one of the resume positions')
+        from core.stream_actions import resolve_nuvio_resume_review
+        await resolve_nuvio_resume_review(db, event, approve=body.action == 'confirm')
+        await db.commit()
+        from core.local_outbound import dispatch_queued_tracking_actions
+        background_tasks.add_task(dispatch_queued_tracking_actions, viewer.id)
+        return {'state': event.state}
     if event.provider == 'combined':
         from core.sync_reconciliation import resolve_category_review, deliver_category_review
         if await resolve_category_review(db, event, body.action):

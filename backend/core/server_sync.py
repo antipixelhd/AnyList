@@ -4345,7 +4345,7 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                 return
 
             from core.tracking_snapshot import require_stream_reconciliation
-            await require_stream_reconciliation(db, conn)
+            await require_stream_reconciliation(db, conn, full_playback_push=conn.type == 'nuvio' and conn.push_playback)
 
             if conn.type == "stremio":
                 settings_result = await db.execute(
@@ -4550,13 +4550,21 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                                     mappings = dict(snapshot.get("mappings", {}))
                                     mappings.update(managed_mappings)
                                     outbound = dict(snapshot.get("outbound", {}))
+                                    verified = dict(snapshot.get('verified_nuvio_resumes', {}))
                                     clear_content_ids = {
                                         str(row.get("content_id")) for row in remote_progress
                                         if str(row.get("progress_key") or "") in set(clear_keys)
                                     }
                                     for content_id in clear_content_ids:
                                         outbound.pop(content_id, None)
+                                        verified.pop(content_id, None)
+                                    from core.stream_actions import nuvio_resume_signature
                                     for payload in pushed_progress:
+                                        content_id = str(payload['content_id'])
+                                        remote = nuvio_resume_signature(confirmed_by_key[str(payload['progress_key'])][0])
+                                        expected = nuvio_resume_signature(payload)
+                                        if remote['last_watched'] == expected['last_watched']:
+                                            verified[content_id] = {'observed_at': expected['last_watched'], 'remote': remote}
                                         outbound[str(payload["content_id"])] = {
                                             field: payload.get(field)
                                             for field in ("position", "duration", "season", "episode", "observed_at")
@@ -4570,6 +4578,7 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                                             outbound[str(payload["content_id"])]["last_watched"] = payload["last_watched"]
                                     snapshot["mappings"] = mappings
                                     snapshot["outbound"] = outbound
+                                    snapshot['verified_nuvio_resumes'] = verified
                                     baseline.snapshot = snapshot
 
                 await db.execute(

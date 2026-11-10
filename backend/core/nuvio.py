@@ -833,6 +833,24 @@ async def delete_watched_items(
     return session
 
 
+async def sync_watched_delta(url, refresh_token, profile_id, additions, removals, *, on_refresh=None):
+    """Deliver a profile's watch changes under one session and one readback."""
+    if any(not _has_numeric_watched_at(item) for item in additions):
+        raise NuvioAPIError('Nuvio watched item requires a numeric watched_at value')
+    async with httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
+        session = await refresh_session(url, refresh_token, client=client)
+        if on_refresh:
+            await on_refresh(session)
+        for method, field, rows in (
+            ('sync_push_watched_items', 'p_items', additions),
+            ('sync_delete_watched_items', 'p_keys', removals),
+        ):
+            for offset in range(0, len(rows), _PAGE_SIZE):
+                await _rpc(client, url, session.access_token, method,
+                    {'p_profile_id': profile_id, field: rows[offset:offset + _PAGE_SIZE]})
+        return await _pull_watched_items(client, url, session.access_token, profile_id)
+
+
 async def clear_sync_data(
     url: str,
     refresh_token: str,
