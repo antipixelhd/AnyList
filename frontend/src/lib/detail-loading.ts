@@ -1,7 +1,8 @@
 import {responsiveArtwork} from './responsive-artwork.ts';
 import {detailHeroArtwork} from './detail-artwork.ts';
 
-export type DetailHint={kind:'movie'|'series'|'game'|'unknown';title?:string;poster?:string|null;backdrop?:string|null};
+type HeadingHint={year?:string;originalTitle?:string|null;tagline?:string|null;genres?:string[];creators?:string[];primaryPending?:boolean};
+export type DetailHint={kind:'movie'|'series'|'game'|'unknown';title?:string;poster?:string|null;backdrop?:string|null;heading?:HeadingHint;library?:boolean};
 export function detailDestination(url:URL){
   const match=url.pathname.match(/^\/(title|games)\/([1-9]\d*)\/?$/);
   if(match&&Number.isSafeInteger(Number(match[2])))return {key:`${match[1]}:${match[2]}`,kind:match[1]==='games'?'game':'unknown'} as const;
@@ -10,13 +11,15 @@ export function detailDestination(url:URL){
   const kind=url.searchParams.get('type');
   if(url.pathname==='/discover-title'&&(kind==='movie'||kind==='series'))return {key:`tmdb:${kind}:${id}`,kind} as const;
 }
-/** Bounded public presentation hints, never personal state or an editable record. */
+/** Bounded viewer-scoped presentation hints, never an editable record. */
 export class DetailHints {
   private viewer='';private hints=new Map<string,DetailHint>();
   scope(viewer:string){if(this.viewer!==viewer){this.viewer=viewer;this.hints.clear();}}
   get(url:URL){const key=detailDestination(url)?.key;return key?this.hints.get(key):undefined;}
   set(url:URL,hint:DetailHint){const key=detailDestination(url)?.key;if(!key)return;
-    this.hints.delete(key);this.hints.set(key,{kind:hint.kind,title:hint.title?.slice(0,300),poster:hint.poster,backdrop:hint.backdrop});
+    this.hints.delete(key);this.hints.set(key,{kind:hint.kind,title:hint.title?.slice(0,300),poster:hint.poster,backdrop:hint.backdrop,
+      ...(hint.library!==undefined?{library:hint.library}:{}),...(hint.heading?{heading:{year:hint.heading.year,originalTitle:hint.heading.originalTitle,tagline:hint.heading.tagline,
+        genres:hint.heading.genres?.slice(0,6),creators:hint.heading.creators?.slice(0,2),primaryPending:hint.heading.primaryPending}}:{})});
     while(this.hints.size>40)this.hints.delete(this.hints.keys().next().value!);
   }
 }
@@ -24,11 +27,21 @@ export const detailHints=new DetailHints();
 const safeImage=(path:string|null|undefined)=>path&&(path.startsWith('https://')||/^\/(?!\/)/.test(path))?path:undefined;
 export function fillDetailLoading(root:HTMLElement,hint:DetailHint){
   root.dataset.loadingKind=hint.kind;
+  root.dataset.loadingLibrary=String(!!hint.library);
   const title=root.querySelector<HTMLElement>('[data-loading-title]')!;
   if(hint.title)title.textContent=hint.title;
   root.querySelector<HTMLElement>('[data-loading-kind-label]')!.textContent=({movie:'Movie',series:'Series',game:'Game',unknown:''})[hint.kind];
   root.querySelector<HTMLElement>('[data-loading-series]')!.hidden=hint.kind!=='series';
-  root.querySelector<HTMLElement>('[data-loading-secondary-label]')!.textContent=hint.kind==='game'?'Play time':'Cast';
+  root.querySelector<HTMLElement>('[data-loading-secondary-label]')!.textContent=hint.kind==='game'?'Play time':'Cast & crew';
+  const heading=hint.heading;
+  for(const [key,value] of [['year',heading?.year],['creators',heading?.creators?.join(', ')],
+    ['original-title',heading?.originalTitle?.trim().toLocaleLowerCase()!==hint.title?.trim().toLocaleLowerCase()?heading?.originalTitle:null],['tagline',heading?.tagline]]){
+    const node=root.querySelector<HTMLElement>(`[data-loading-${key}]`);if(node){node.textContent=value||'';node.hidden=!value;}
+  }
+  const genres=root.querySelector<HTMLElement>('[data-loading-genres]');
+  if(genres){genres.replaceChildren(...(heading?.genres||[]).slice(0,6).map(name=>{const span=root.ownerDocument.createElement('span');span.textContent=name;return span;}));genres.hidden=!genres.childElementCount&&!heading?.primaryPending;genres.setAttribute('aria-busy',String(!!heading?.primaryPending&&!genres.childElementCount));}
+  const primary=root.querySelector<HTMLElement>('[data-loading-primary]');if(primary)primary.hidden=hint.kind!=='game'||!heading?.primaryPending;
+  const artSpace=root.querySelector<HTMLElement>('.loading-detail-art-space');if(artSpace)artSpace.hidden=hint.kind==='game'||!hint.backdrop;
   const poster=root.querySelector<HTMLImageElement>('[data-loading-poster]')!,backdrop=root.querySelector<HTMLImageElement>('[data-loading-backdrop]')!;
   const posterURL=safeImage(hint.poster),backdropURL=safeImage(hint.backdrop);
   // Reuse an already selected responsive bucket from the source; do not warm a second size.

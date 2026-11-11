@@ -9,7 +9,7 @@ function fixture(t){
   t.after(()=>{for(const [key,value] of originals)if(value)Object.defineProperty(globalThis,key,value);else delete globalThis[key];});
   const retry=new EventTarget(),nodes=new Map(['title','kind-label','series','secondary-label','poster','backdrop','status'].map(key=>[key,{hidden:true}]));
   nodes.set('retry',retry);
-  const frame={dataset:{},classList:{add(){}},remove(){this.removed=true;},querySelector:selector=>nodes.get(selector.match(/data-loading-(.+)\]/)[1])};
+  const frame={dataset:{},classList:{add(){}},remove(){this.removed=true;},querySelector:selector=>nodes.get(selector.match(/data-loading-(.+)\]/)?.[1])};
   let headerHidden=true;
   const header={classList:{contains:()=>headerHidden,remove:()=>headerHidden=false,add:()=>headerHidden=true}};
   const doc=new EventTarget();doc.body={dataset:{cacheUser:'loading-tests'}};doc.documentElement={style:{overflow:'auto'}};

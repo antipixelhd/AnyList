@@ -17,7 +17,7 @@ from models.tracking import MediaFavorite, TrackedEntry
 ScreenScope = Literal['movie', 'series', 'all']
 SCREEN_STATUSES = ('watching', 'completed', 'paused', 'dropped', 'planning')
 STATUS_ORDER = {value: index for index, value in enumerate(SCREEN_STATUSES)}
-ROW_FIELDS = frozenset(('id', 'type', 'title', 'poster', 'backdrop', 'backdrop_fallbacks', 'background_status', 'year', 'genres', 'release_date',
+ROW_FIELDS = frozenset(('id', 'type', 'title', 'original_title', 'tagline', 'poster', 'backdrop', 'backdrop_fallbacks', 'background_status', 'year', 'genres', 'release_date',
     'status', 'rating_mode', 'score', 'progress', 'favorite', 'rewatch_count', 'updated_at', 'notes',
     'released_episodes', 'season_position', 'progress_positions', 'new_seasons', 'new_episodes',
     'availability_dot', 'availability_reason', 'entry', 'editor_library'))

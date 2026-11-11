@@ -94,6 +94,7 @@ export function mountQuickSearch() {
     const row = document.createElement('div');
     row.className = 'quick-search-result';
     row.dataset.detailKind=item.type;
+    row.dataset.detailYear=item.year||'';
     const link = document.createElement('a');
     link.className = 'quick-search-result-link';
     link.href = resultUrl(item);

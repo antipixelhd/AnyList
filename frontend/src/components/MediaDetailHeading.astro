@@ -1,0 +1,18 @@
+---
+import {kindLabel,detailBrowseHref} from '../lib/media-detail-data';
+import type {MediaKind} from '../lib/media-detail-data';
+interface Props {
+  title:{type:string;title:string;year?:string;original_title?:string|null;tagline?:string|null;genres?:string[]};
+  creators?:{name:string;url?:string|null}[];typeHref?:string|null;yearHref?:string|null;placeholder?:boolean;primaryPending?:boolean;
+}
+const {title,creators=[],typeHref,yearHref,placeholder=false,primaryPending=false}=Astro.props;
+const screen=title.type==='movie'||title.type==='series';
+const original=title.original_title&&title.original_title.trim().toLocaleLowerCase()!==title.title.trim().toLocaleLowerCase();
+---
+<div class="lab-heading detail-heading">
+  <p class="lab-kicker"><span data-loading-kind-label={placeholder?true:undefined}>{typeHref?<a href={typeHref}>{kindLabel[title.type as MediaKind]}</a>:kindLabel[title.type as MediaKind]||''}</span>{(title.year||primaryPending||placeholder)&&<span data-game-year={!placeholder?true:undefined} data-screen-year={!placeholder&&screen?true:undefined} data-loading-year={placeholder?true:undefined} hidden={!title.year}>{yearHref?<a href={yearHref}>{title.year}</a>:title.year}</span>}<span data-detail-creators={!placeholder?true:undefined} data-loading-creators={placeholder?true:undefined} hidden={!creators.length}>{creators.map((person,index)=><>{index>0?', ':''}{person.url?<a href={person.url}>{person.name}</a>:person.name}</>)}</span></p>
+  <h1 data-loading-title={placeholder?true:undefined}>{title.title||<span class="loading-surface loading-title-line" aria-hidden="true"></span>}</h1>
+  {(screen||original||placeholder)&&<p class="media-original-title" data-screen-original-title={!placeholder&&screen?true:undefined} data-loading-original-title={placeholder?true:undefined} hidden={!original}>{title.original_title}</p>}
+  {(screen||title.tagline||placeholder)&&<p class="lab-tagline" data-screen-tagline={!placeholder&&screen?true:undefined} data-loading-tagline={placeholder?true:undefined} hidden={!title.tagline}>{title.tagline}</p>}
+  {(title.genres?.length||primaryPending||placeholder)&&<div class="lab-genres" data-game-genres={!placeholder?true:undefined} data-screen-genres={!placeholder&&screen?true:undefined} data-loading-genres={placeholder?true:undefined} aria-busy={primaryPending&&!title.genres?.length?true:undefined} hidden={!title.genres?.length&&!primaryPending}>{title.genres?.slice(0,6).map((genre:string)=>!placeholder&&detailBrowseHref(title.type as MediaKind,{genre})?<a href={detailBrowseHref(title.type as MediaKind,{genre})!}>{genre}</a>:<span>{genre}</span>)}</div>}
+</div>

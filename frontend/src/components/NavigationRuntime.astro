@@ -244,7 +244,10 @@
       const title=known?.title||row?.querySelector('h2,strong,.entry-title-link')?.firstChild?.textContent?.trim()||link.getAttribute('aria-label')||link.textContent?.trim();
       const image=row?.querySelector<HTMLImageElement>('img');
       if(title)detailHints.set(url,{kind:['movie','series','game'].includes(kind)?kind as DetailHint['kind']:'unknown',title,
-        poster:known?.poster||image?.currentSrc||image?.src,backdrop:known?.backdrop});
+        poster:known?.poster||image?.currentSrc||image?.src,backdrop:known?.backdrop,library:known?.editor_library?.available,
+        heading:{year:known?.year||row?.dataset.detailYear||row?.querySelector('[data-year]')?.textContent?.trim(),
+          genres:known?.genres,originalTitle:known?.original_title,tagline:known?.tagline,creators:known?.detail_creators,
+          primaryPending:kind==='game'?known?.game_metadata_status?.primary_ready===false:known?.primary_status?.pending}});
     },true);
     document.addEventListener('anylist:route-progress-start',startProgress);
     document.addEventListener('anylist:route-progress-end',finishProgress);

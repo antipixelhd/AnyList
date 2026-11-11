@@ -37,7 +37,7 @@ URL = os.getenv("STATISTICS_TEST_DATABASE_URL") or os.getenv("TRACKING_TEST_DATA
 class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
     async def test_screen_profile_windows_match_complete_membership_and_project_released_progress(self):
         async with self.Session() as db:
-            series = Media(title='Later % Series', media_type=MediaType.series, release_date='2024-01-01',
+            series = Media(title='Later % Series', original_title='Original series name',tagline='A different beginning.', media_type=MediaType.series, release_date='2024-01-01',
                 tmdb_data={'genres': [{'name': 'Adventure'}], 'tracking_catalogue_refreshed_at': '2026-01-01',
                     'tracking_catalogue_provider': 'tvdb', 'tracking_episode_ids': [91201, 91202]})
             first = Media(title='Episode 1', media_type=MediaType.episode, tvdb_id=91201,
@@ -77,6 +77,7 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
         params=[('ids',identifier) for identifier in (ids[2],ids[0],ids[1],self.media_id,ids[0])]
         rows=(await self.client.get(f'{root}/all/rows',params=params)).json()
         self.assertEqual([entry['id'] for entry in rows],[ids[0],self.media_id])
+        self.assertEqual((rows[0]['original_title'],rows[0]['tagline']),('Original series name','A different beginning.'))
         self.assertEqual((await self.client.get(f'{root}/series/rows',params=params)).json(),[row])
         self.assertEqual((await self.client.get(f'{root}/movie/rows',params=params)).json(),[rows[1]])
         self.assertEqual((await self.client.get(f'{root}/all/rows',params=[('ids',self.media_id)]*101)).status_code,422)

@@ -18,6 +18,8 @@ export type EditorTitle = {
   favorite?: boolean;
   editor_library?: { available: boolean; desired: boolean };
   overview?:string|null; runtime?:number|null; release_date?:string|null; year?:string;
+  original_title?:string|null;tagline?:string|null;detail_creators?:string[];
+  game_metadata_status?:{primary_ready?:boolean};primary_status?:{pending?:boolean};
   genres?:string[]; tmdb_score?:number|null; progress_positions?:string[];
   seasons?:import('./season-detail-data').DetailSeason[];episodes_loaded?:boolean;
 };
