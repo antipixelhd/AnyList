@@ -14,7 +14,8 @@ import '../styles/app-bar.css';
 const {user, token} = Astro.locals;
 const {initiallyHidden = false} = Astro.props;
 const pathname = Astro.url.pathname;
-const fadesAtTop = pathname.startsWith('/user/') || pathname.startsWith('/title/') || pathname.startsWith('/media/') || pathname.startsWith('/games/');
+const detailRoute = pathname.startsWith('/title/') || pathname.startsWith('/media/') || pathname.startsWith('/games/') || pathname === '/discover-title' || pathname === '/discover-game';
+const fadesAtTop = pathname.startsWith('/user/') || detailRoute;
 const profile = user ? `/user/${encodeURIComponent(user.username)}` : '/login';
 const [, notificationResult, profileResult] = await Promise.allSettled([
   viewerMediaPreferences(Astro.locals),
@@ -52,7 +53,7 @@ const primaryItems = [
 const settingsRoute = pathname.startsWith('/settings/') || ['/settings', '/user-settings', '/connections', '/admin'].includes(pathname);
 const mobileNavigation = appMobileNavigation({profile, pathname, signedIn: !!user, combineLists,showGames:domains.show_games,showMoviesSeries:domains.show_movies_series});
 ---
-<header class:list={['topbar', {'appbar-hidden': initiallyHidden, 'appbar-fade-capable': fadesAtTop}]} data-appbar>
+<header class:list={['topbar', {'appbar-hidden': initiallyHidden, 'appbar-fade-capable': fadesAtTop, 'appbar-at-top': detailRoute}]} data-appbar>
   <div class="appbar-inner">
     <a class="brand" href="/home" aria-label="AnyList home">
       <BrandMark size={34}/>

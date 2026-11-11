@@ -38,7 +38,7 @@ export function publishGamePrimary(root:HTMLElement,data:Record<string,any>,id:n
     genres.replaceChildren(...title.genres.slice(0,6).map(genre=>{
       const node=document.createElement('a');node.textContent=genre;
       node.href=detailBrowseHref('game',{genre})||'/browse/games';return node;
-    }));genres.hidden=!title.genres.length;genres.removeAttribute('aria-busy');
+    }));genres.removeAttribute('aria-busy');
   }
   const synopsis=root.querySelector<HTMLElement>('[data-detail-synopsis]');
   if(synopsis){

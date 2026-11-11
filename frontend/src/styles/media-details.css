@@ -7,18 +7,16 @@
 .media-detail :is(.lab-kicker,.lab-genres) a:focus-visible { outline:none; color:var(--bright); background:color-mix(in srgb,var(--blue) 20%,var(--panel)); }
 .media-detail :is(.lab-hero-image,.lab-heading,.lab-panel) { animation:none; }
 .media-detail .lab-hero { overflow:visible; background:none; }
-.media-detail.concept-marquee .lab-hero{height:var(--detail-hero-height)}
+.media-detail.concept-marquee .lab-hero{height:auto}
 .media-detail.concept-marquee .lab-hero-content{gap:var(--detail-identity-gap)}
 .media-detail.concept-marquee .lab-hero-content .lab-hero-poster{width:var(--detail-poster-width);height:auto;aspect-ratio:2/3}
 .media-detail.concept-marquee .lab-heading h1{font-size:var(--detail-title-size)}
 .media-detail .lab-hero-picture { display:contents; }
 .media-detail.concept-marquee .lab-hero-content { padding-bottom:16px; }
 .media-detail.concept-marquee .lab-layout { padding-top:16px; }
-.media-detail.concept-marquee[data-has-backdrop=false] .lab-hero { height:auto; }
 .media-detail.concept-marquee[data-has-backdrop=false] .lab-hero-content { height:auto; padding-top:32px; }
 @media (min-width:651px) {
-  .media-detail.concept-marquee:is([data-media-kind=movie],[data-media-kind=series]) .lab-hero { height:auto; }
-  .media-detail.concept-marquee:is([data-media-kind=movie],[data-media-kind=series])[data-has-backdrop=false] .lab-hero-content { min-height:0; }
+  .media-detail.concept-marquee[data-has-backdrop=false] .lab-hero-content { min-height:0; }
 }
 .media-detail .lab-hero-image,.media-detail .lab-hero-shade { pointer-events:none; }
 /* Carry the artwork's existing fade beneath the first content row without
@@ -315,8 +313,9 @@ body.tracker .media-detail :is(.lab-public-score,.lab-game-offer) h2 { font-size
 @media (max-width:650px) { .media-detail.concept-marquee[data-media-kind=game] .lab-hero-art-button { right:38px; } .media-detail .game-banner-settings-button { top:12px; bottom:auto; right:0; } }
 @media (prefers-reduced-motion:reduce) { .media-detail .game-banner-settings input[role=switch],.media-detail .game-banner-settings input[role=switch]:before { transition:none; } }
 
-.media-detail .game-banner-controls { display:flex; margin-left:auto; gap:4px; align-items:center; align-self:end; }
+.media-detail .game-banner-controls { position:absolute; right:0; display:flex; gap:4px; align-items:center; }
 .media-detail[data-media-kind=game] .game-banner-controls :is(.lab-hero-art-button,.game-banner-settings-button) { position:static; inset:auto; width:34px; height:34px; }
-@media (max-width:650px) { .media-detail .game-banner-controls { position:absolute; top:12px; right:0; } }
+@media (min-width:651px) { .media-detail .game-banner-controls { bottom:16px; } }
+@media (max-width:650px) { .media-detail .game-banner-controls { top:12px; } }
 
 .media-detail .game-banner-settings,.media-detail .game-banner-settings:popover-open { animation:none !important; transition:none !important; transform:none !important; }

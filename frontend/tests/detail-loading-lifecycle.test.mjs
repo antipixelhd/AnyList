@@ -24,7 +24,7 @@ test('pending route frame preserves outgoing geometry and restores navigation, o
   const f=fixture(t),controller=new AbortController();
   const clear=mountRoutePreview(f.host,{kind:'movie',title:'Destination'},new URL('https://local.test/title/2'),controller.signal);
   assert.equal(f.nodes.get('title').textContent,'Destination');assert.equal(f.host.inert,true);assert.equal(f.host.style.visibility,'hidden');
-  assert.equal(f.headerHidden(),false);assert.equal(f.doc.documentElement.style.overflow,'hidden');
+  assert.equal(f.headerHidden(),true);assert.equal(f.doc.documentElement.style.overflow,'hidden');
   controller.abort();assert.equal(f.frame.removed,true);assert.equal(f.host.inert,false);assert.equal(f.host.style.visibility,'visible');
   assert.equal(f.headerHidden(),true);assert.equal(f.doc.documentElement.style.overflow,'auto');clear();
 });

@@ -7,6 +7,7 @@ interface Props {
 }
 const {title,creators=[],typeHref,yearHref,placeholder=false,primaryPending=false}=Astro.props;
 const screen=title.type==='movie'||title.type==='series';
+const game=title.type==='game';
 const original=title.original_title&&title.original_title.trim().toLocaleLowerCase()!==title.title.trim().toLocaleLowerCase();
 ---
 <div class="lab-heading detail-heading">
@@ -14,5 +15,5 @@ const original=title.original_title&&title.original_title.trim().toLocaleLowerCa
   <h1 data-loading-title={placeholder?true:undefined}>{title.title||<span class="loading-surface loading-title-line" aria-hidden="true"></span>}</h1>
   {(screen||original||placeholder)&&<p class="media-original-title" data-screen-original-title={!placeholder&&screen?true:undefined} data-loading-original-title={placeholder?true:undefined} hidden={!original}>{title.original_title}</p>}
   {(screen||title.tagline||placeholder)&&<p class="lab-tagline" data-screen-tagline={!placeholder&&screen?true:undefined} data-loading-tagline={placeholder?true:undefined} hidden={!title.tagline}>{title.tagline}</p>}
-  {(title.genres?.length||primaryPending&&!screen||placeholder)&&<div class="lab-genres" data-game-genres={!placeholder?true:undefined} data-screen-genres={!placeholder&&screen?true:undefined} data-loading-genres={placeholder?true:undefined} aria-busy={primaryPending&&!screen&&!title.genres?.length?true:undefined} hidden={!title.genres?.length&&(!primaryPending||screen)}>{title.genres?.slice(0,6).map((genre:string)=>!placeholder&&detailBrowseHref(title.type as MediaKind,{genre})?<a href={detailBrowseHref(title.type as MediaKind,{genre})!}>{genre}</a>:<span>{genre}</span>)}</div>}
+  {(title.genres?.length||game||placeholder)&&<div class="lab-genres" data-game-genres={!placeholder&&game?true:undefined} data-screen-genres={!placeholder&&screen?true:undefined} data-loading-genres={placeholder?true:undefined} aria-busy={primaryPending&&game&&!title.genres?.length?true:undefined} hidden={!game&&!title.genres?.length}>{title.genres?.slice(0,6).map((genre:string)=>!placeholder&&detailBrowseHref(title.type as MediaKind,{genre})?<a href={detailBrowseHref(title.type as MediaKind,{genre})!}>{genre}</a>:<span>{genre}</span>)}</div>}
 </div>

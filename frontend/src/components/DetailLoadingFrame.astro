@@ -9,7 +9,6 @@ const {kind='unknown'}=Astro.props;
     <div class="loading-detail-identity">
       <div class="loading-detail-poster loading-surface"><img data-loading-poster alt="" hidden /></div>
       <MediaDetailHeading title={{type:kind,title:''}} placeholder/>
-      <span class="loading-detail-art-space" aria-hidden="true" hidden={kind==='game'}></span>
     </div>
   </div>
   <div class="loading-detail-feedback"><p role="status" data-loading-status class="loading-announcement">Loading details…</p><button type="button" class="button-secondary" data-loading-retry hidden>Try again</button><a href="/browse" data-loading-back>Back to Browse</a></div>

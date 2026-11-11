@@ -3,20 +3,14 @@
 .detail-loading-frame [hidden],.profile-loading-frame [hidden]{display:none!important}
 .loading-announcement{position:absolute;width:1px;height:1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 .detail-loading-frame{color:var(--text);min-height:100vh}
-.loading-detail-hero{height:var(--detail-hero-height);position:relative}
-@media(min-width:651px){
-  .detail-loading-frame:is([data-loading-kind=movie],[data-loading-kind=series]) .loading-detail-hero{height:auto}
-  .detail-loading-frame:is([data-loading-kind=movie],[data-loading-kind=series]) .loading-detail-identity{display:grid;height:auto}
-}
+.loading-detail-hero{position:relative}
 .loading-detail-hero>[data-loading-backdrop]{position:absolute;inset:-20px 0 -96px;width:100%;height:calc(100% + 116px);object-fit:cover;object-position:center calc(42% + 20px);clip-path:inset(20px 0 20px);pointer-events:none}
 .detail-loading-frame[data-loading-kind=movie] [data-loading-backdrop]{object-position:center min(20px,calc(42% + 35px))}
 .detail-loading-frame[data-loading-kind=game] [data-loading-backdrop]{object-position:center}
 .loading-detail-shade{position:absolute;inset:0 0 -96px;background:linear-gradient(0deg,var(--bg),transparent 75%),linear-gradient(90deg,#0b162233,transparent 50%,#0b162233);pointer-events:none}
 .loading-detail-identity,.loading-detail-layout{width:min(var(--content-max-width,1320px),calc(100% - 64px));margin:auto;position:relative;display:grid;grid-template-columns:var(--detail-poster-width) minmax(0,1fr);gap:var(--detail-identity-gap)}
-.loading-detail-identity{display:flex;height:100%;align-items:end;padding-bottom:16px}
 .loading-detail-poster{width:var(--detail-poster-width);flex-shrink:0;aspect-ratio:2/3;overflow:hidden;border-radius:var(--lab-radius,6px);box-shadow:0 12px 25px #0004}
 .loading-detail-poster img{display:block;width:100%;height:100%;object-fit:cover}
-.loading-detail-art-space{width:42px;min-width:27px;height:42px;margin-left:auto;visibility:hidden}
 .loading-title-line{width:clamp(180px,35vw,420px);max-width:100%;height:1.12em}
 .loading-detail-layout{padding-top:16px;padding-bottom:48px}
 .loading-control{height:35px;margin-top:-7.5px}.loading-rating{height:35px;margin-top:24.5px}.loading-facts{display:grid;gap:24px;margin-top:32px}.loading-facts>span{height:30px;width:70%}
@@ -53,4 +47,4 @@
   @container(min-width:368px){.detail-loading-frame:not([data-loading-library=true]) .loading-tracking{grid-template-columns:minmax(180px,260px) minmax(132px,180px) 35px;grid-template-areas:'status rating extra'}}
   @container(min-width:430px){.detail-loading-frame[data-loading-library=true] .loading-tracking{grid-template-columns:minmax(180px,260px) minmax(132px,180px) 35px 35px;grid-template-areas:'status rating extra more'}}
 }
-@media(max-width:650px){.loading-detail-hero>[data-loading-backdrop]{height:290px;bottom:auto}.loading-detail-shade{height:270px;bottom:auto}.loading-detail-identity,.loading-detail-layout{width:calc(100% - 36px)}.loading-detail-identity{display:grid;height:auto;align-items:start;padding:145px 0 0}.loading-detail-identity .detail-heading{margin-top:39px}.loading-detail-art-space{display:none}.loading-detail-layout{display:block;padding-top:24px}.loading-detail-layout>aside{display:block;padding-bottom:28px}.loading-control{width:min(100%,197px);margin:0}.loading-rating{width:min(100%,197px);margin-top:15px}.loading-facts{display:none}.loading-detail-tabs{height:30px;gap:16px;margin-bottom:25px;font-size:1.2rem}.loading-detail-grid{display:block}.loading-detail-feedback{width:calc(100% - 36px)}.loading-stat-cards{gap:12px}.loading-stat-cards>div{height:85px}}
+@media(max-width:650px){.loading-detail-hero>[data-loading-backdrop]{height:290px;bottom:auto}.loading-detail-shade{height:270px;bottom:auto}.loading-detail-identity,.loading-detail-layout{width:calc(100% - 36px)}.loading-detail-identity{display:grid;height:auto;align-items:start;padding:145px 0 0}.loading-detail-identity .detail-heading{margin-top:39px}.loading-detail-layout{display:block;padding-top:24px}.loading-detail-layout>aside{display:block;padding-bottom:28px}.loading-control{width:min(100%,197px);margin:0}.loading-rating{width:min(100%,197px);margin-top:15px}.loading-facts{display:none}.loading-detail-tabs{height:30px;gap:16px;margin-bottom:25px;font-size:1.2rem}.loading-detail-grid{display:block}.loading-detail-feedback{width:calc(100% - 36px)}.loading-stat-cards{gap:12px}.loading-stat-cards>div{height:85px}}
