@@ -434,7 +434,8 @@
           const detail=document.querySelector<HTMLElement>('.media-detail .lab-layout');
           const content=detail??document.querySelector<HTMLElement>('#content, #settings-content');
           if(content&&!content.querySelector('#resolve-title, [data-resolve-game]')){
-            const offset=detail&&detailLayoutTop!==undefined?detailLayoutTop-detail.getBoundingClientRect().top:undefined;
+            let offset=detail||listLanding?undefined:0;
+            if(detail&&detailLayoutTop!==undefined)offset=detailLayoutTop-detail.getBoundingClientRect().top;
             settleNavigationContent(content,'page',pageEntrance,offset);
           }
         }

@@ -144,6 +144,7 @@ test('routed profile tabs preserve the shared tab strip position and fade the pa
   const source = { dataset: { profileBase: '/user/alex' }, getBoundingClientRect: () => ({ top: 105 }), scrollLeft: 46 };
   const incoming = { dataset: { profileBase: '/user/alex' }, getBoundingClientRect: () => ({ top: 330 }), scrollLeft: 0 };
   const content = {};
+  const main = { querySelector: () => null };
   const scrolls = [], reveals = [];
   const context = {
     pageEntrance: new AbortController().signal, profileTabPosition: undefined, detailLayoutTop: undefined,
@@ -152,22 +153,29 @@ test('routed profile tabs preserve the shared tab strip position and fade the pa
     document: {
       body: { hasAttribute: () => false },
       addEventListener: (name, callback) => handlers.set(name, callback),
-      querySelector: selector => selector === '.profile-tabs' ? incoming : selector === '#content > [data-profile-tab-content]' ? content : null,
+      querySelector: selector => new Map([
+        ['.profile-tabs', incoming], ['#content > [data-profile-tab-content]', content], ['#content, #settings-content', main],
+      ]).get(selector) ?? null,
     },
     window: { scrollY: 0, scrollTo: (...coordinates) => scrolls.push(coordinates) },
-    settleNavigationContent: (element, kind) => reveals.push([element, kind]),
+    settleNavigationContent: (element, kind, _signal, offset) => reveals.push([element, kind, offset]),
   };
   runInNewContext(stripTypeScriptTypes(before + after), context);
   handlers.get('astro:before-swap')({sourceElement: {closest: () => source}, newDocument: {querySelector: () => incoming}, to: new URL('https://anylist.test/user/alex/favorites')});
   handlers.get('astro:after-swap')();
   assert.deepEqual(scrolls, [[0, 225]]);
   assert.equal(incoming.scrollLeft, 46);
-  assert.deepEqual(reveals, [[content, 'tab']]);
+  assert.deepEqual(reveals, [[content, 'tab', undefined]]);
 
   handlers.get('astro:before-swap')({sourceElement: {closest: () => source}, newDocument: {querySelector: () => incoming}, to: new URL('https://anylist.test/user/alex')});
   handlers.get('astro:after-swap')();
   assert.equal(scrolls.length, 1, 'a history traversal keeps the router position');
   assert.equal(reveals.length, 1, 'a history traversal does not replay the fade');
+
+  context.pageEntrance = new AbortController().signal;
+  handlers.get('astro:before-swap')({newDocument: {}, to: new URL('https://anylist.test/browse')});
+  handlers.get('astro:after-swap')();
+  assert.deepEqual(reveals[1], [main, 'page', 0], 'a main page settles without moving the whole surface');
 });
 
 test('router scrollend saves finish before idle restoration without overriding a pending traversal', () => {
