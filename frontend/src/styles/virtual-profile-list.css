@@ -1,5 +1,5 @@
-[data-virtual-list]{--list-row-height:56px}
+:is([data-virtual-list],[data-pending-list-shell]){--list-row-height:56px}
 [data-virtual-list] [data-list-window]{position:relative;height:calc(var(--list-rows)*var(--list-row-height));overflow-anchor:none}
 [data-virtual-list] [data-list-window]>.entry-row{position:absolute;inset:0 0 auto;transform:translateY(var(--list-offset,calc(var(--list-row)*var(--list-row-height))))}
 .virtual-list-error{position:fixed;bottom:24px;left:50%;translate:-50% 0;z-index:60;background:var(--panel);padding:12px 20px;border-radius:5px;max-width:calc(100vw - 32px)}
-@media(max-width:650px){[data-virtual-list]{--list-row-height:68px}}
+@media(max-width:650px){:is([data-virtual-list],[data-pending-list-shell]){--list-row-height:68px}}

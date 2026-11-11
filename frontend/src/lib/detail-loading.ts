@@ -54,12 +54,6 @@ export function detailLoadingFrame(hint:DetailHint,doc:Document=document){
   const root=doc.querySelector<HTMLTemplateElement>('[data-detail-loading-template]')!.content.firstElementChild!.cloneNode(true) as HTMLElement;
   fillDetailLoading(root,hint);return root;
 }
-export function profileLoadingFrame(kind:string,doc:Document=document){
-  const root=doc.querySelector<HTMLTemplateElement>('[data-profile-loading-template]')!.content.firstElementChild!.cloneNode(true) as HTMLElement;
-  root.querySelector<HTMLElement>('[data-loading-profile-list]')!.hidden=kind.startsWith('stats');
-  root.querySelector<HTMLElement>('[data-loading-profile-stats]')!.hidden=!kind.startsWith('stats');return root;
-}
-
 /** A content-only preview preserves the outgoing document's geometry/history. */
 export function mountRoutePreview(host:HTMLElement,hint:DetailHint,url:URL,signal:AbortSignal){
   if(signal.aborted)return ()=>{};

@@ -1,5 +1,5 @@
 /* One fluid desktop geometry; only the phone layout changes structure. */
-#entry-groups:not(.grid-view) .entry-head,#entry-groups:not(.grid-view) .entry-row {
+:is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-head,:is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-row {
   display:grid;
   grid-template-columns:60px minmax(0,5fr) minmax(56px,1fr) minmax(84px,1fr);
   align-items:center;
@@ -7,81 +7,81 @@
   padding:0;
   min-height:0
 }
-#entry-groups:not(.grid-view) .entry-head.combined-row,
-#entry-groups:not(.grid-view) .entry-row.combined-row {
+:is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-head.combined-row,
+:is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-row.combined-row {
   grid-template-columns:60px minmax(0,5fr) minmax(56px,1fr) minmax(84px,1fr) minmax(68px,1fr)
 }
-#entry-groups:not(.grid-view) .entry-cover-column,#entry-groups:not(.grid-view) .entry-thumbnail {
+:is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-cover-column,:is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-thumbnail {
   flex:1 1 0%;
   min-width:60px;
   max-width:60px
 }
-#entry-groups:not(.grid-view) .entry-cover-column {
+:is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-cover-column {
   height:0;
   padding:0
 }
-#entry-groups:not(.grid-view) .entry-thumbnail {
+:is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-thumbnail {
   height:40px
 }
-#entry-groups:not(.grid-view) .entry-thumbnail .entry-cover {
+:is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-thumbnail .entry-cover {
   display:block;
   width:40px;
   height:40px;
   margin-left:auto
 }
-#entry-groups:not(.grid-view) .entry-thumbnail .row-menu {
+:is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-thumbnail .row-menu {
   inset:0 0 0 auto;
   width:40px;
   height:40px
 }
-#entry-groups:not(.grid-view) .entry-title,#entry-groups:not(.grid-view) .entry-title-column {
+:is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-title,:is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-title-column {
   flex:5 1 0%;
   min-width:0
 }
-#entry-groups:not(.grid-view) .entry-head>span:not(.entry-cover-column):not(.entry-title-column) {
+:is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-head>span:not(.entry-cover-column):not(.entry-title-column) {
   flex:1 1 0%;
   min-width:0
 }
-#entry-groups:not(.grid-view) .entry-head>span:not(.entry-cover-column):not(.entry-title-column),#entry-groups:not(.grid-view) .entry-score,#entry-groups:not(.grid-view) .entry-progress,#entry-groups:not(.grid-view) .entry-type {
+:is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-head>span:not(.entry-cover-column):not(.entry-title-column),:is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-score,:is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-progress,:is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-type {
   justify-content:center;
   text-align:center
 }
-#entry-groups:not(.grid-view) .entry-progress .progress-increment {
+:is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-progress .progress-increment {
   position:absolute;
   min-height:17.25px;
   height:17.25px
 }
-#entry-groups:not(.grid-view) .entry-row:not([data-editor-deselected]):hover .entry-progress .progress-increment,#entry-groups:not(.grid-view) .entry-row:not([data-editor-deselected]):has(:focus-visible) .entry-progress .progress-increment,#entry-groups:not(.grid-view) .entry-progress .progress-increment:focus-visible {
+:is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-row:not([data-editor-deselected]):hover .entry-progress .progress-increment,:is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-row:not([data-editor-deselected]):has(:focus-visible) .entry-progress .progress-increment,:is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-progress .progress-increment:focus-visible {
   position:static
 }
-#entry-groups:not(.grid-view) .entry-title {
+:is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-title {
   padding:18px 20px 18px 15px;
   color:var(--text-data);
   font-size:var(--type-row-size);
   font-weight:var(--type-row-weight);
   line-height:17.25px
 }
-#entry-groups:not(.grid-view) .entry-title>a {
+:is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-title>a {
   color:var(--text-data);
   font-size:var(--type-row-size);
   font-weight:var(--type-row-weight);
   line-height:20px
 }
-#entry-groups:not(.grid-view) .entry-row {
+:is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-row {
   font-weight:var(--type-row-weight)
 }
-#entry-groups:not(.grid-view) .entry-head>span:not(.entry-cover-column) {
+:is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-head>span:not(.entry-cover-column) {
   padding:18px 6px 20px;
   color:var(--text-data);
   font-size:var(--type-table-heading-size);
   font-weight:var(--type-table-heading-weight);
   line-height:17.25px
 }
-#entry-groups:not(.grid-view) .entry-head>span.entry-title-column {
+:is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-head>span.entry-title-column {
   padding-left:15px;
   padding-right:20px
 }
-#entry-groups:not(.grid-view) .entry-score,#entry-groups:not(.grid-view) .entry-progress,#entry-groups:not(.grid-view) .entry-type {
+:is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-score,:is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-progress,:is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-type {
   flex:1 1 0%;
   min-width:0;
   padding:18px 6px;
@@ -90,23 +90,23 @@
   font-weight:var(--type-row-weight);
   line-height:17.25px
 }
-#entry-groups:not(.grid-view) .entry-score {
+:is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-score {
   padding-block:6px;
   color:var(--blue)
 }
-#entry-groups:not(.grid-view) .entry-head.combined-row>span:last-child,#entry-groups:not(.grid-view) .entry-row.combined-row>.entry-type {
+:is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-head.combined-row>span:last-child,:is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-row.combined-row>.entry-type {
   max-width:none
 }
 .entry-mobile-progress {
   display:none
 }
-#entry-groups:not(.grid-view) .entry-score-button {
+:is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-score-button {
   min-height:44px;
   padding:0;
   border-radius:3px;
   line-height:17.25px
 }
-#entry-groups:not(.grid-view) .entry-thumbnail .entry-availability {
+:is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-thumbnail .entry-availability {
   left:5px;
   top:50%
 }
@@ -226,67 +226,67 @@
   }
 }
 @media(max-width:650px) {
-  #entry-groups:not(.grid-view) .entry-head,
-  #entry-groups:not(.grid-view) .entry-row {
+  :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-head,
+  :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-row {
     display:grid;
     /* Compact the desktop proportions while preserving a full score hit area. */
     grid-template-columns:44px minmax(0,3fr) minmax(44px,1fr);
     column-gap:12px;
     padding:12px
   }
-  #entry-groups:not(.grid-view) .entry-row {
+  :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-row {
     grid-template-areas:"cover title score" "cover progress score";
     grid-template-rows:minmax(22px,auto) minmax(22px,auto);
     align-items:start
   }
-  #entry-groups:not(.grid-view) .entry-row:has(.unwatched-indicator) {
+  :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-row:has(.unwatched-indicator) {
     grid-template-areas:"cover title score" "cover progress score" "cover tag score";
     grid-template-rows:minmax(22px,auto) minmax(22px,auto) minmax(18px,auto)
   }
-  #entry-groups:not(.grid-view) .entry-head.combined-row,
-  #entry-groups:not(.grid-view) .entry-row.combined-row {
+  :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-head.combined-row,
+  :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-row.combined-row {
     grid-template-columns:44px minmax(0,3fr) minmax(44px,1fr) minmax(48px,1fr);
     column-gap:8px
   }
-  #entry-groups:not(.grid-view) .entry-row.combined-row {
+  :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-row.combined-row {
     grid-template-areas:"cover title score type" "cover progress score type"
   }
-  #entry-groups:not(.grid-view) .entry-row.combined-row:has(.unwatched-indicator) {
+  :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-row.combined-row:has(.unwatched-indicator) {
     grid-template-areas:"cover title score type" "cover progress score type" "cover tag score type"
   }
-  #entry-groups:not(.grid-view) .entry-type {
+  :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-type {
     grid-area:type;
     align-self:center
   }
-  #entry-groups:not(.grid-view) .entry-head .entry-progress-column,
-  #entry-groups:not(.grid-view) [data-progress-label] {
+  :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-head .entry-progress-column,
+  :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) [data-progress-label] {
     display:none
   }
-  #entry-groups:not(.grid-view) .entry-mobile-progress {
+  :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-mobile-progress {
     display:inline
   }
-  #entry-groups:not(.grid-view) .entry-cover-column,#entry-groups:not(.grid-view) .entry-thumbnail {
+  :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-cover-column,:is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-thumbnail {
     min-width:44px;
     max-width:44px
   }
-  #entry-groups:not(.grid-view) .entry-thumbnail {
+  :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-thumbnail {
     grid-area:cover;
     height:44px
   }
-  #entry-groups:not(.grid-view) .entry-row:has(.unwatched-indicator) .entry-thumbnail {
+  :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-row:has(.unwatched-indicator) .entry-thumbnail {
     align-self:center
   }
-  #entry-groups:not(.grid-view) .entry-thumbnail .entry-availability {
+  :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-thumbnail .entry-availability {
     left:-9px;
     width:6px;
     height:6px;
     box-shadow:0 0 5px rgba(114,216,79,.72)
   }
-  #entry-groups:not(.grid-view) .entry-thumbnail .entry-cover,#entry-groups:not(.grid-view) .entry-thumbnail .row-menu {
+  :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-thumbnail .entry-cover,:is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-thumbnail .row-menu {
     width:44px;
     height:44px
   }
-  #entry-groups:not(.grid-view) .entry-title {
+  :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-title {
     grid-area:title;
     align-items:start;
     gap:8px;
@@ -296,59 +296,59 @@
     line-height:18px
   }
   /* Keep annotations centered on the whole row, beside both title and progress. */
-  #entry-groups:not(.grid-view) .entry-title:has(.entry-annotations) {
+  :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-title:has(.entry-annotations) {
     grid-row:1 / -1;
     align-self:stretch
   }
-  #entry-groups:not(.grid-view) .entry-title .entry-annotations {
+  :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-title .entry-annotations {
     align-self:center;
     gap:8px
   }
-  #entry-groups:not(.grid-view) .entry-title:has(.unwatched-indicator) .entry-annotations {
+  :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-title:has(.unwatched-indicator) .entry-annotations {
     grid-area:tag;
     align-self:center;
     justify-self:start;
     margin-left:0
   }
-  #entry-groups:not(.grid-view) .entry-title:has(.unwatched-indicator) {
+  :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-title:has(.unwatched-indicator) {
     display:contents
   }
-  #entry-groups:not(.grid-view) .entry-title:has(.unwatched-indicator) > .entry-title-link {
+  :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-title:has(.unwatched-indicator) > .entry-title-link {
     grid-area:title
   }
-  #entry-groups:not(.grid-view) .entry-row:has(.entry-annotations) .entry-progress {
+  :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-row:has(.entry-annotations) .entry-progress {
     padding-right:44px
   }
-  #entry-groups:not(.grid-view) .entry-row:has(.unwatched-indicator) .entry-progress {
+  :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-row:has(.unwatched-indicator) .entry-progress {
     padding-right:0
   }
-  #entry-groups:not(.grid-view) .entry-head>span:not(.entry-cover-column) {
+  :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-head>span:not(.entry-cover-column) {
     padding:0;
     font-size:var(--type-compact-heading-size);
     font-weight:var(--type-compact-heading-weight);
     line-height:16px
   }
-  #entry-groups:not(.grid-view) .entry-title>a {
+  :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-title>a {
     display:block;
     flex:1;
     min-height:0;
     font-size:var(--type-compact-row-size);
     font-weight:600
   }
-  #entry-groups:not(.grid-view) .entry-head>span.entry-title-column {
+  :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-head>span.entry-title-column {
     padding-left:0
   }
-  #entry-groups:not(.grid-view) .entry-score,#entry-groups:not(.grid-view) .entry-progress,#entry-groups:not(.grid-view) .entry-type {
+  :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-score,:is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-progress,:is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-type {
     padding:0;
     font-size:var(--type-compact-row-size);
     font-weight:var(--type-compact-row-weight);
     line-height:18px
   }
-  #entry-groups:not(.grid-view) .entry-score {
+  :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-score {
     grid-area:score;
     align-self:center
   }
-  #entry-groups:not(.grid-view) .entry-progress {
+  :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-progress {
     grid-area:progress;
     display:flex;
     flex-wrap:wrap;
@@ -358,12 +358,12 @@
     text-align:left;
     color:var(--muted)
   }
-  #entry-groups:not(.grid-view) .entry-progress .progress-increment {
+  :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-progress .progress-increment {
     position:static;
     opacity:1;
     pointer-events:auto
   }
-  #entry-groups:not(.grid-view) .entry-score-button {
+  :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-score-button {
     min-height:44px;
     line-height:18px
   }
@@ -381,10 +381,10 @@
   }
 }
 @media(max-width:650px) {
-  #entry-groups .entry-title-link {
+  :is(#entry-groups,[data-loading-entry-groups]) .entry-title-link {
     font-weight:600
   }
-  #entry-groups:not(.grid-view) .entry-title>a *:not(.ui-icon),#entry-groups:not(.grid-view) .entry-title-link *:not(.ui-icon) {
+  :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-title>a *:not(.ui-icon),:is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-title-link *:not(.ui-icon) {
     font-size:var(--type-compact-row-size);
     font-weight:600
   }

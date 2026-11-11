@@ -517,7 +517,7 @@
 /* The view selector floats above the first section; filters retain the shared profile gap. */
 
 @media(max-width:650px) {
-  #entry-groups:not(.grid-view) .entry-title>a {
+  :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-title>a {
     display:flex;
     align-items:center
   }

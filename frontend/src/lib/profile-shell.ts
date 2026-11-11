@@ -2,7 +2,7 @@ import {statisticsDomainUrl} from './statistics-domains';
 import {preparePanelStyles,panelLayoutFrame} from './panel-readiness';
 import {profilePanelKey,setPanelWaiting} from './profile-panel';
 import {bindPredictionIntent,predictionManifest} from './predictive-loading';
-import {profileLoadingFrame} from './detail-loading';
+import {profileLoadingFrame} from './profile-loading';
 import {createLoadingReveal,cancelLoadingReveals} from './loading-reveal';
 
 type Panel={root:HTMLElement;url:string;title:string;ready:boolean;kind:string;styles?:Document;initializing?:Promise<void>;preparing?:Promise<void>};
@@ -91,7 +91,14 @@ function setup(){
     nav.setAttribute('aria-busy','true');setPanelWaiting(source,true);
     const cached=panels.get(key);
     const reveal=createLoadingReveal();let loading:HTMLElement|undefined;
-    if(!cached?.ready){loading=profileLoadingFrame(key);loading.dataset.profileUrl=url;reveal.begin();show(loading);}
+    if (!cached?.ready) {
+      loading = profileLoadingFrame(key, new URL(url, location.href), nav);
+      if (loading) {
+        loading.dataset.profileUrl = url;
+        reveal.begin();
+        show(loading);
+      }
+    }
     if(!cached?.ready){progressRunning=true;document.dispatchEvent(new Event('anylist:route-progress-start'));}
     const activate=async(panel:Panel)=>{
       if(signal.aborted||wanted!==key||document.body.dataset.cacheUser!==viewer)return;
@@ -127,7 +134,10 @@ function setup(){
         if(statistics&&panel.root.dataset.profileUrl!==url)statistics.dispatchEvent(new CustomEvent('anylist:statistics-open',{detail:{url}}));
         nav.removeAttribute('aria-busy');update();
         window.scrollTo(0,positions.get(key)??scrollY);
-        if(fromSkeleton)reveal.finish(panel.root,signal);
+        if (fromSkeleton) {
+          const rows = Array.from(panel.root.querySelectorAll<HTMLElement>('.entry-table [data-list-window]'));
+          reveal.finish(rows.length ? rows : panel.root, signal);
+        }
       };
       commit();
       if(!signal.aborted&&wanted===key&&shown===panel.root)panel.root.dispatchEvent(new Event('anylist:panel-active'));

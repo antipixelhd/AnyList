@@ -1,0 +1,42 @@
+---
+import ProfileListFilters from './ProfileListFilters.astro';
+import ProfileListTableHead from './ProfileListTableHead.astro';
+import { statuses } from '../lib/tracking-statuses';
+import { gameStatuses } from '../lib/game-editor-data';
+import '../styles/game-list.css';
+import '../styles/virtual-profile-list.css';
+const { showGames=false } = Astro.props;
+---
+{[false,...(showGames?[true]:[])].map(game=><template data-profile-list-loading={game?'game':'screen'}>
+  <section class="profile-loading-frame" data-profile-loading aria-busy="true" aria-label="Loading list">
+    <div class:list={['list-shell',{'game-list-shell':game}]} data-pending-list-shell inert>
+      <ProfileListFilters statuses={game?gameStatuses:statuses} genres={[]} years={[]} progressLabel={game?'Hours':'Progress'} pending/>
+      <div class="list-content">
+        <div data-loading-entry-groups>
+          <section class="status-section">
+            <h2 data-pending-group-heading><span class="loading-surface pending-group-title" aria-hidden="true"></span></h2>
+            <div class="entry-table">
+              <ProfileListTableHead {game} pending/>
+              {Array.from({length:7},()=><article class="entry-row pending-entry-row">
+                <div class="entry-thumbnail"><span class="entry-cover loading-surface"></span></div>
+                <div class="entry-title"><span class="loading-surface pending-entry-title"></span></div>
+                <span class="entry-score"><span class="loading-surface pending-entry-value"></span></span>
+                <span class:list={['entry-progress',{'game-hours':game}]}><span class="loading-surface pending-entry-value"></span></span>
+                {game
+                  ? <span class="game-list-achievements"><span class="loading-surface pending-entry-value"></span></span>
+                  : <span class="entry-type" hidden><span class="loading-surface pending-entry-value"></span></span>}
+              </article>)}
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+    <span role="status" class="loading-announcement">Loading list…</span>
+  </section>
+</template>)}
+<template data-profile-stats-loading>
+  <section class="profile-loading-frame page-width" data-profile-loading data-loading-profile-stats aria-busy="true" aria-label="Loading statistics">
+    <div aria-hidden="true"><div class="loading-surface loading-list-heading"></div><div class="loading-stat-cards">{Array.from({length:3},()=> <div class="loading-surface"></div>)}</div><div class="loading-surface loading-chart"></div></div>
+    <span role="status" class="loading-announcement">Loading statistics…</span>
+  </section>
+</template>

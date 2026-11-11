@@ -702,7 +702,7 @@
 .filters .filter-control select {
   margin:0
 }
-#reset-filters:disabled {
+:is(#reset-filters,#pending-reset-filters):disabled {
   cursor:default;
   opacity:.45
 }

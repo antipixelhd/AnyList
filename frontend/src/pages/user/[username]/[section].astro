@@ -3,6 +3,7 @@ import Tracker from '../../../layouts/Tracker.astro';
 import ProfileHeader from '../../../components/ProfileHeader.astro';
 import ProfileListFilters from '../../../components/ProfileListFilters.astro';
 import ScreenListRows from '../../../components/ScreenListRows.astro';
+import ProfileListTableHead from '../../../components/ProfileListTableHead.astro';
 import {tracker,trackerFailure,statuses} from '../../../lib/tracker';
 import {profileListQuery} from '../../../lib/profile-list-query';
 import {viewerMediaPreferences} from '../../../lib/viewer-media-preferences';
@@ -30,7 +31,7 @@ const count=Object.values(data?.status_counts||{}).reduce((sum:number,value)=>su
         <div class="list-toolbar"><span id="result-count" class="sr-only" aria-live="polite">{data.total} entries</span><span id="progress-feedback" class="sr-only" aria-live="assertive"></span></div>
         <div id="entry-groups">
           {statuses.map(([status,label])=><section class="status-section" data-list-group={status} data-group={status} hidden={!data.group_counts[status]}><h2>{label}</h2><div class="entry-table">
-            <div class:list={['entry-head',{'combined-row':isCombined}]}><span class="entry-cover-column" aria-hidden="true"></span><span class="entry-title-column">Title</span><span class="entry-score-column">Score</span><span class="entry-progress-column">Progress</span>{isCombined&&<span class="entry-type-column">Type</span>}</div>
+            <ProfileListTableHead combined={isCombined}/>
             <div data-list-window={status} style={`--list-rows:${data.group_counts[status]||0}`}><ScreenListRows entries={entries.filter((entry:any)=>entry.status===status)} {owner} {isCombined}/></div>
           </div></section>)}
         </div>
