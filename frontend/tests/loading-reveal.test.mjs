@@ -112,3 +112,15 @@ test('reduced motion, offscreen content and cancelled lifetimes do not animate',
   transition.finish(shown.element, controller.signal);
   assert.equal(shown.calls.length, 1);
 });
+
+test('a newly known header settles the ready layout from the visible placeholder position', () => {
+  let now = 0;
+  const transition = createLoadingReveal(() => now);
+  const { element, calls } = fixture();
+  transition.begin();
+  now = 200;
+  transition.finish(element, undefined, -25);
+  assert.deepEqual(calls[0].frames, { opacity: [.92, 1], translate: ['0 -25px', '0 0'] });
+  assert.equal(calls[0].timing.duration, 120);
+  cancelLoadingReveals(element);
+});

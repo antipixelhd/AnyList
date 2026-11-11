@@ -6,7 +6,7 @@ const active = new Map<HTMLElement, () => void>();
 const artworkPulses = new WeakMap<HTMLElement, () => void>();
 
 /** Visual polish only: content is already usable and its normal styles stay intact. */
-export function revealReadyContent(element: HTMLElement, signal?: AbortSignal) {
+export function revealReadyContent(element: HTMLElement, signal?: AbortSignal, offsetY = 0) {
   const view = element.ownerDocument?.defaultView;
   if (signal?.aborted || !element.isConnected || !view || typeof element.animate !== 'function' ||
     view.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
@@ -15,7 +15,10 @@ export function revealReadyContent(element: HTMLElement, signal?: AbortSignal) {
   const bounds = element.getBoundingClientRect();
   if (!bounds.width || !bounds.height || bounds.bottom <= 0 || bounds.top >= view.innerHeight) return;
   active.get(element)?.();
-  const animation = element.animate({ opacity: [.92, 1] }, {
+  const animation = element.animate({
+    opacity: [.92, 1],
+    ...(offsetY ? { translate: [`0 ${offsetY}px`, '0 0'] } : {}),
+  }, {
     duration: LOADING_REVEAL_DURATION_MS,
     easing: 'cubic-bezier(.16,1,.3,1)',
   });
@@ -39,11 +42,11 @@ export function createLoadingReveal(now = () => performance.now()) {
     begin(since = now()) {
       started ??= since;
     },
-    finish(target: HTMLElement | HTMLElement[], signal?: AbortSignal) {
+    finish(target: HTMLElement | HTMLElement[], signal?: AbortSignal, offsetY = 0) {
       const elapsed = started === undefined ? 0 : now() - started;
       started = undefined;
       if (elapsed < LOADING_REVEAL_WAIT_MS) return;
-      for (const element of Array.isArray(target) ? target : [target]) revealReadyContent(element, signal);
+      for (const element of Array.isArray(target) ? target : [target]) revealReadyContent(element, signal, offsetY);
     },
     cancel() {
       started = undefined;

@@ -234,7 +234,9 @@
     let clearPreview:(()=>void)|undefined;
     let clearNavigationFeedback:(()=>void)|undefined;
     let detailReveal:ReturnType<typeof createLoadingReveal>|undefined;
+    let detailLayoutTop:number|undefined;
     document.addEventListener('astro:before-swap',()=>{
+      detailLayoutTop=document.querySelector('.route-detail-preview .loading-detail-layout')?.getBoundingClientRect().top;
       clearPreview?.();clearPreview=undefined;
       clearNavigationFeedback?.();
     });
@@ -352,6 +354,7 @@
       clearNavigationFeedback?.();
       cancelLoadingReveals();
       detailReveal=undefined;
+      detailLayoutTop=undefined;
       clearPreview?.();clearPreview=undefined;
       if(!document.querySelector('[data-browse-shell]')&&document.querySelector('[data-game-browse]')){
         document.dispatchEvent(new Event('anylist:before-snapshot'));
@@ -406,9 +409,10 @@
     });
     document.addEventListener('astro:after-preparation', finishProgress);
     document.addEventListener('astro:after-swap', () => {
-      const content=document.querySelector<HTMLElement>('[data-detail-panels]');
-      if(content)detailReveal?.finish(content);
+      const content=document.querySelector<HTMLElement>('.media-detail .lab-layout');
+      if(content)detailReveal?.finish(content,undefined,detailLayoutTop===undefined?0:detailLayoutTop-content.getBoundingClientRect().top);
       detailReveal=undefined;
+      detailLayoutTop=undefined;
       if (!state.alignListLanding || !document.body.hasAttribute('data-list-landing')) return;
       const tabs = document.querySelector<HTMLElement>('.profile-tabs');
       if (tabs) window.scrollTo(0, window.scrollY + tabs.getBoundingClientRect().top);
