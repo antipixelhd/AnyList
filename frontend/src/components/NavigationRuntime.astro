@@ -14,7 +14,7 @@
   import {clearStoredBrowseCache} from '../lib/browse-cache';
   import {createGameIntent,gameIntentTarget} from '../lib/game-intent';
   import {instantPageTransitions} from '../lib/instant-page-transitions';
-  import {detailDestination,detailHints,mountRoutePreview,type DetailHint} from '../lib/detail-loading';
+  import {detailDestination,detailHints,detailLinkTitle,mountRoutePreview,prepareDetailResolution,type DetailHint} from '../lib/detail-loading';
   import {revealReadyContent,cancelLoadingReveals} from '../lib/loading-reveal';
   wirePasswordToggles();
 
@@ -235,8 +235,9 @@
     let clearNavigationFeedback:(()=>void)|undefined;
     let detailEntrance=false;
     let detailLayoutTop:number|undefined;
-    document.addEventListener('astro:before-swap',()=>{
+    document.addEventListener('astro:before-swap',event=>{
       detailLayoutTop=document.querySelector('.route-detail-preview .loading-detail-layout')?.getBoundingClientRect().top;
+      prepareDetailResolution(event.newDocument,event.to,currentUser());
       clearPreview?.();clearPreview=undefined;
       clearNavigationFeedback?.();
     });
@@ -250,9 +251,7 @@
       const known=destination.kind==='game'&&url.pathname.startsWith('/games/')?editorStore.findSubject({kind:'game',catalogue_id:id})
         :url.pathname.startsWith('/title/')?editorStore.find(id):undefined;
       const kind=known?.type||link.dataset.detailKind||row?.dataset.detailKind||row?.dataset.mediaType||destination.kind;
-      const title=known?.title||link.dataset.detailTitle||row?.dataset.detailTitle||row?.querySelector('.event-action a,.progress-card-title,.entry-title-link')?.firstChild?.textContent?.trim()
-        ||row?.querySelector('h2,strong')?.firstChild?.textContent?.trim()
-        ||link.textContent?.trim()||link.title||link.getAttribute('aria-label')?.trim();
+      const title=known?.title||detailLinkTitle(link,row??undefined);
       const image=(row??link).querySelector<HTMLImageElement>(row?.matches('.visual-event')?'.event-cover img':'img');
       const ownGamesList=row?.closest('[data-list-domain="game"][data-owner="true"]');
       const child=row?.dataset.gameBase||['expansion','dlc'].includes(known?.game_class||'');
@@ -380,7 +379,8 @@
       if(predicted?.predicted&&Date.now()-predicted.storedAt>=30_000){state.pages.delete(key);state.bytes-=predicted.bytes;predicted=undefined;}
       const destination=detailDestination(event.to),host=document.querySelector<HTMLElement>('#content');
       detailEntrance=Boolean(destination&&!event.formData&&event.navigationType!=='traverse');
-      if(destination&&host&&!event.formData&&event.navigationType!=='traverse'&&!predicted&&!state.prediction?.peek(event.to.href)
+      const resolving=host?.querySelector<HTMLElement>('[data-loading-destination]')?.dataset.loadingDestination===event.to.href;
+      if(destination&&host&&!resolving&&!event.formData&&event.navigationType!=='traverse'&&!predicted&&!state.prediction?.peek(event.to.href)
         &&document.querySelector('[data-detail-loading-template]')){
         clearPreview=mountRoutePreview(host,detailHints.get(event.to)||{kind:destination.kind},event.to,event.signal);
       }

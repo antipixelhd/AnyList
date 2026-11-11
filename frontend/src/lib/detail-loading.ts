@@ -25,6 +25,25 @@ export class DetailHints {
   }
 }
 export const detailHints=new DetailHints();
+
+export function detailLinkTitle(link:HTMLAnchorElement,row?:HTMLElement){
+  const rowTitle=row?.querySelector('.event-action a,.progress-card-title,.entry-title-link');
+  const heading=(row??link).querySelector('h2,h3,strong');
+  const directText=Array.from(link.childNodes).filter(node=>node.nodeType===3).map(node=>node.textContent).join('').trim();
+  return link.dataset.detailTitle||row?.dataset.detailTitle||rowTitle?.firstChild?.textContent?.trim()
+    ||heading?.textContent?.trim()||directText||link.title||link.getAttribute('aria-label')?.trim();
+}
+
+/** Seed the incoming discovery frame before it can paint without its identity. */
+export function prepareDetailResolution(doc:Document,url:URL,viewer:string){
+  if((doc.body.dataset.cacheUser||'anonymous')!==viewer)return;
+  const frame=doc.querySelector<HTMLElement>('#resolve-title [data-detail-loading], [data-resolve-game] [data-detail-loading]');
+  const hint=frame&&detailHints.get(url);
+  if(!frame||!hint?.title)return;
+  fillDetailLoading(frame,hint);
+  doc.title=`${hint.title} · AnyList`;
+}
+
 const safeImage=(path:string|null|undefined)=>path&&(path.startsWith('https://')||/^\/(?!\/)/.test(path))?path:undefined;
 export function fillDetailLoading(root:HTMLElement,hint:DetailHint){
   root.dataset.loadingSince??=String(performance.now());

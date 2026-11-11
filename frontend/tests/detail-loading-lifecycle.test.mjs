@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mountRoutePreview,detailHints} from '../src/lib/detail-loading.ts';
+import {mountRoutePreview,detailHints,detailLinkTitle,prepareDetailResolution} from '../src/lib/detail-loading.ts';
 import {mountDetailResolution} from '../src/lib/detail-resolution.ts';
 
 const tick=()=>new Promise(setImmediate);
@@ -35,14 +35,36 @@ test('an already cancelled route cannot hide the current page',t=>{
   assert.equal(f.host.preview,undefined);assert.equal(f.host.inert,false);assert.equal(f.doc.documentElement.style.overflow,'auto');
 });
 
+test('a related card preview uses its heading without its genre and year',()=>{
+  const title='The SpongeBob Movie: Search for SquarePants';
+  const link={dataset:{},textContent:title+'Adventure · 2025',childNodes:[],
+    querySelector:()=>({textContent:title})};
+  assert.equal(detailLinkTitle(link),title);
+});
+
+test('discovery renders the known title in the incoming frame before the resolver mounts',t=>{
+  const f=fixture(t),url=new URL(location.href);
+  detailHints.scope('loading-tests');
+  detailHints.set(url,{kind:'game',title:'Known game'});
+  const incoming={body:f.doc.body,querySelector:()=>f.frame};
+  prepareDetailResolution(incoming,url,'different-viewer');
+  assert.equal(f.nodes.get('title').textContent,undefined);
+  prepareDetailResolution(incoming,url,'loading-tests');
+  assert.equal(f.nodes.get('title').textContent,'Known game');
+  assert.equal(incoming.title,'Known game · AnyList');
+});
+
 test('resolver shares public identity with its canonical destination and hands progress to navigation',async t=>{
   const f=fixture(t),events=[],controller=new AbortController();
   f.doc.addEventListener('anylist:route-progress-start',event=>events.push(event.type));f.doc.addEventListener('anylist:route-progress-end',event=>events.push(event.type));
   detailHints.scope('loading-tests');detailHints.set(new URL(location.href),{kind:'game',title:'Known game'});
-  let requestSignal,navigated;
-  mountDetailResolution(f.host,async signal=>{requestSignal=signal;return '/games/88';},async url=>navigated=url,controller.signal);
+  let requestSignal,navigated,handoff;
+  mountDetailResolution(f.host,async signal=>{requestSignal=signal;return '/games/88';},async url=>{
+    navigated=url;handoff=f.frame.dataset.loadingDestination;
+  },controller.signal);
   await tick();assert.equal(requestSignal,controller.signal);assert.equal(navigated,'/games/88');
   assert.equal(f.nodes.get('title').textContent,'Known game');assert.equal(detailHints.get(new URL('/games/88',location.origin)).title,'Known game');
+  assert.equal(handoff,'https://local.test/games/88');assert.equal(f.frame.dataset.loadingDestination,undefined);
   assert.deepEqual(events,['anylist:route-progress-start']);controller.abort();
 });
 
