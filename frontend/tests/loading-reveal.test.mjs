@@ -35,8 +35,8 @@ test('only a visible skeleton wait reveals ready content, once and without an ex
   transition.finish(element);
   transition.finish(element);
   assert.equal(calls.length, 1);
-  assert.deepEqual(calls[0].frames, { opacity: [.92, 1] });
-  assert.equal(calls[0].timing.duration, 120);
+  assert.deepEqual(calls[0].frames, { opacity: [0, 1], translate: ['0 6px', '0 0'] });
+  assert.equal(calls[0].timing.duration, 225);
   cancelLoadingReveals(element);
   assert.equal(calls[0].cancelled, true);
 });
@@ -120,7 +120,7 @@ test('a newly known header settles the ready layout from the visible placeholder
   transition.begin();
   now = 200;
   transition.finish(element, undefined, -25);
-  assert.deepEqual(calls[0].frames, { opacity: [.92, 1], translate: ['0 -25px', '0 0'] });
-  assert.equal(calls[0].timing.duration, 120);
+  assert.deepEqual(calls[0].frames, { opacity: [0, 1], translate: ['0 -25px', '0 0'] });
+  assert.equal(calls[0].timing.duration, 225);
   cancelLoadingReveals(element);
 });

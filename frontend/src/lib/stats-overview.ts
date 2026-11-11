@@ -19,6 +19,7 @@ import { mountStatisticsNavigation } from './stats-navigation';
 import { createMetricTooltip } from './stats-metric-tooltip';
 import { chartMinimumWidth, mountChartViewport } from './stats-chart-density';
 import { cancelUiMotion, reveal } from './ui-motion';
+import { createContentTransition } from './content-motion';
 
 const mounted = new WeakSet<HTMLElement>();
 const chartKeys = ['scores', 'episode_counts', 'release_years', 'watch_years'] as const;
@@ -36,6 +37,7 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
   let stopped = false;
   let refreshing = false;
   const events = new AbortController();
+  const switchPanel = createContentTransition(node('.overview-results'), events.signal);
   events.signal.addEventListener('abort', () => cancelUiMotion(root), {once:true});
   root.addEventListener('load', event => {
     const image = event.target;
@@ -206,7 +208,12 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
     return domain==='game'?Boolean(game&&game.section===section&&game.page===page&&(next as UnifiedStatistics).selectionSort===currentSelection().sort):!game&&(!next.overview||next.overview.media_type===media);
   }
   function render(next:OverviewResponse,initial=false){
-    if(matchesSelection(next))renderNow(next,initial);
+    if(!matchesSelection(next))return;
+    const changedSection=paintedView!==`${domain}:${section}`;
+    const changedScope=next.overview&&next.overview.media_type!==response.overview?.media_type;
+    if(!initial&&next.status==='ready'&&panelActive(root)&&(changedSection||(changedScope&&section!=='overview'))){
+      void switchPanel(()=>renderNow(next,true));
+    }else renderNow(next,initial);
   }
   function renderNow(next: OverviewResponse, initial = false) {
     if(!matchesSelection(next))return;
@@ -260,6 +267,7 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
   }
   let progressRunning=false;
   function statisticsBusy(busy:boolean,quiet=false){
+    if(busy)switchPanel.cancel();
     root.setAttribute('aria-busy',String(busy));
     setResultsWaiting(busy||response.status!=='ready'||!matchesSelection(response));
     const progress=busy&&!quiet&&panelActive(root);
@@ -302,6 +310,7 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
     });
   }
   function selectSection(next: string, push: boolean,nextDomain:StatisticsDomain=domain) {
+    switchPanel.cancel();
     const domainChanged=domain!==nextDomain;
     domain=nextDomain;
 
@@ -314,13 +323,14 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
     // A section is committed with its data in one task. Keep the outgoing
     // panel painted during cold reads; never expose an unpopulated grid.
     if(domain==='game'||domainChanged)void loader.load(media);
-    else render(response,true);
+    else render(response);
     scheduleSibling();
   }
   root.addEventListener('anylist:statistics-domain-section',event=>{const next=(event as CustomEvent<{section:string}>).detail.section;if(next!==section)selectSection(next,false);},{signal:events.signal});
   root.addEventListener('profile-section-change', event => selectSection((event as CustomEvent).detail.value,true,(event.target as HTMLElement).closest<HTMLElement>('[data-statistics-domain]')?.dataset.statisticsDomain as StatisticsDomain||domain), { signal: events.signal });
   root.addEventListener('statistics-url-change', syncLinks, { signal: events.signal });
   function navigate(next: MediaScope, push: boolean) {
+    switchPanel.cancel();
     tooltips.forEach(tooltip => tooltip.dismiss());
     pies.forEach(chart => { chart.tooltip?.setActiveElements([], {x:0,y:0}); chart.setActiveElements([]); chart.draw(); });
     media=next;
@@ -411,6 +421,7 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
     if(domain==='game'&&sortButton){event.preventDefault();event.stopImmediatePropagation();for(const prefix of ['genre','actor','studio','staff'])if(sortButton.dataset[prefix+'Sort'])root.dataset[prefix+'Sort']=sortButton.dataset[prefix+'Sort'];page=1;syncUrl(true);void loader.load(media);}
   },{capture:true,signal:events.signal});
   function openUrl(url:URL){
+    switchPanel.cancel();
     domain=url.pathname.endsWith('/games')?'game':'screen';
     section=statisticsSection(domain,url.searchParams.get('section')||'overview');
     page=1;
@@ -458,7 +469,7 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
   // saved choices restored during client-side navigation. Repaint canvases too.
   observer.observe(document.body, { attributes: true, attributeFilter: ['style'] });
   let dirty=false;
-  root.closest('[data-profile-url]')?.addEventListener('anylist:panel-inactive',()=>clearTimeout(timer),{signal:events.signal});
+  root.closest('[data-profile-url]')?.addEventListener('anylist:panel-inactive',()=>{clearTimeout(timer);switchPanel.cancel();},{signal:events.signal});
   const refresh=()=>{page=1;loader.clear();if(panelActive(root)){dirty=false;void loader.load(media);}else dirty=true;};
   root.closest('[data-profile-url]')?.addEventListener('anylist:panel-active',()=>{if(dirty||response.status!=='ready')refresh();else if(response.overview)render(response,true);},{signal:events.signal});
   document.addEventListener('anylist:editor-committed', () => { if (response.owner) refresh(); }, {signal:events.signal});

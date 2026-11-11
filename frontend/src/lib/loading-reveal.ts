@@ -1,12 +1,14 @@
 export const LOADING_REVEAL_WAIT_MS=100;
-export const LOADING_REVEAL_DURATION_MS=120;
+// MUI entering-screen timing; deceleration makes the response immediate at
+// the start, with enough settling time to connect the two states visually.
+export const LOADING_REVEAL_DURATION_MS=225;
 export const ARTWORK_PULSE_DELAY_MS=120;
 export const ARTWORK_PULSE_DURATION_MS=180;
 const active = new Map<HTMLElement, () => void>();
 const artworkPulses = new WeakMap<HTMLElement, () => void>();
 
 /** Visual polish only: content is already usable and its normal styles stay intact. */
-export function revealReadyContent(element: HTMLElement, signal?: AbortSignal, offsetY = 0) {
+export function revealReadyContent(element: HTMLElement, signal?: AbortSignal, offsetY = 6) {
   const view = element.ownerDocument?.defaultView;
   if (signal?.aborted || !element.isConnected || !view || typeof element.animate !== 'function' ||
     view.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
@@ -16,11 +18,11 @@ export function revealReadyContent(element: HTMLElement, signal?: AbortSignal, o
   if (!bounds.width || !bounds.height || bounds.bottom <= 0 || bounds.top >= view.innerHeight) return;
   active.get(element)?.();
   const animation = element.animate({
-    opacity: [.92, 1],
+    opacity: [0, 1],
     ...(offsetY ? { translate: [`0 ${offsetY}px`, '0 0'] } : {}),
   }, {
     duration: LOADING_REVEAL_DURATION_MS,
-    easing: 'cubic-bezier(.16,1,.3,1)',
+    easing: 'cubic-bezier(0,0,.2,1)',
   });
   const cleanup = () => {
     signal?.removeEventListener('abort', cancel);
@@ -42,7 +44,7 @@ export function createLoadingReveal(now = () => performance.now()) {
     begin(since = now()) {
       started ??= since;
     },
-    finish(target: HTMLElement | HTMLElement[], signal?: AbortSignal, offsetY = 0) {
+    finish(target: HTMLElement | HTMLElement[], signal?: AbortSignal, offsetY = 6) {
       const elapsed = started === undefined ? 0 : now() - started;
       started = undefined;
       if (elapsed < LOADING_REVEAL_WAIT_MS) return;

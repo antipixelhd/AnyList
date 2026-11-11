@@ -1,7 +1,6 @@
 import {preparePanelStyles} from './panel-readiness';
 import { editorStore, seedEditorPage, type EditorTitle } from './editor-store';
-import { mountDetailsMotion } from './content-motion';
-import { revealReadyContent, cancelLoadingReveals } from './loading-reveal';
+import { createContentTransition, mountDetailsMotion } from './content-motion';
 import { mountContributorBiography } from './contributor-biography';
 import { showDialog, closeDialog, reveal } from './ui-motion';
 import { mountDetailImages } from './media-detail-images';
@@ -216,18 +215,15 @@ export function mountMediaDetail() {
   }, {signal});
   const tabs = [...root.querySelectorAll<HTMLButtonElement>('[data-detail-tab]')];
   const panels = [...root.querySelectorAll<HTMLElement>('[data-detail-panel]')];
-  const panelHost = root.querySelector<HTMLElement>('[data-detail-panels]')!;
+  const switchPanel = createContentTransition(root.querySelector<HTMLElement>('[data-detail-panels]')!, signal);
   const selectTab = (id: string, animate = true) => {
     if (!tabs.some(tab => tab.dataset.detailTab === id&&!tab.disabled)) return;
-    const next = panels.find(panel => panel.dataset.detailPanel === id);
-    const changed = next?.hidden;
-    tabs.forEach(tab => { const active = tab.dataset.detailTab === id; tab.setAttribute('aria-selected',String(active)); tab.tabIndex = active ? 0 : -1; });
-    panels.forEach(panel => panel.hidden = panel !== next);
-    if (changed) {
-      cancelLoadingReveals(panelHost);
-      if (animate && next) revealReadyContent(next,signal);
-    }
-    if(id==='achievements')loadAchievements();
+    const change = () => {
+      tabs.forEach(tab => { const active = tab.dataset.detailTab === id; tab.setAttribute('aria-selected',String(active)); tab.tabIndex = active ? 0 : -1; });
+      panels.forEach(panel => panel.hidden = panel.dataset.detailPanel !== id);
+      if(id==='achievements')loadAchievements();
+    };
+    if (animate) void switchPanel(change); else change();
     const url = new URL(location.href);
     if (id === 'overview') url.searchParams.delete('tab'); else url.searchParams.set('tab',id);
     history.replaceState(history.state,'',url);

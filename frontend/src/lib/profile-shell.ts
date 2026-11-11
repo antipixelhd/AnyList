@@ -3,7 +3,7 @@ import {preparePanelStyles,panelLayoutFrame} from './panel-readiness';
 import {profilePanelKey,setPanelWaiting} from './profile-panel';
 import {bindPredictionIntent,predictionManifest} from './predictive-loading';
 import {profileLoadingFrame} from './profile-loading';
-import {createLoadingReveal,cancelLoadingReveals} from './loading-reveal';
+import {revealReadyContent,cancelLoadingReveals} from './loading-reveal';
 
 type Panel={root:HTMLElement;url:string;title:string;ready:boolean;kind:string;styles?:Document;initializing?:Promise<void>;preparing?:Promise<void>};
 let session:AbortController|undefined;
@@ -91,12 +91,11 @@ function setup(){
     const source=panels.get(active)!.root;
     nav.setAttribute('aria-busy','true');setPanelWaiting(source,true);
     const cached=panels.get(key);
-    const reveal=createLoadingReveal();let loading:HTMLElement|undefined;
+    let loading:HTMLElement|undefined;
     if (!cached?.ready) {
       loading = profileLoadingFrame(key, new URL(url, location.href), nav);
       if (loading) {
         loading.dataset.profileUrl = url;
-        reveal.begin();
         show(loading);
       }
     }
@@ -136,16 +135,16 @@ function setup(){
       if(signal.aborted||wanted!==key)return;
       const commit=()=>{
         if(signal.aborted||wanted!==key)return;
-        const fromSkeleton=shown===loading;
+        const changedPanel=shown!==panel.root;
         stopProgress();setPanelWaiting(source,false);show(panel.root);active=key;document.body.toggleAttribute('data-list-landing',!key.startsWith('stats'));
         history.replaceState(history.state,'',panel.root.dataset.profileUrl||panel.url);document.title=panel.title;
         const statistics=panel.root.querySelector<HTMLElement>('[data-integrated-statistics]');
         if(statistics&&panel.root.dataset.profileUrl!==url)statistics.dispatchEvent(new CustomEvent('anylist:statistics-open',{detail:{url}}));
         nav.removeAttribute('aria-busy');update();
         window.scrollTo(0,positions.get(key)??scrollY);
-        if (fromSkeleton) {
+        if (changedPanel) {
           const rows = Array.from(panel.root.querySelectorAll<HTMLElement>('.entry-table [data-list-window]'));
-          reveal.finish(rows.length ? rows : panel.root, signal);
+          for(const target of rows.length ? rows : [panel.root])revealReadyContent(target,signal);
         }
       };
       commit();

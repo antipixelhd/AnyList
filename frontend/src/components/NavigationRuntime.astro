@@ -15,7 +15,7 @@
   import {createGameIntent,gameIntentTarget} from '../lib/game-intent';
   import {instantPageTransitions} from '../lib/instant-page-transitions';
   import {detailDestination,detailHints,mountRoutePreview,type DetailHint} from '../lib/detail-loading';
-  import {createLoadingReveal,cancelLoadingReveals} from '../lib/loading-reveal';
+  import {revealReadyContent,cancelLoadingReveals} from '../lib/loading-reveal';
   wirePasswordToggles();
 
   type CachedPage = { html: string; bytes: number; storedAt: number; predicted?:boolean; requiresGamesAccess?:boolean };
@@ -233,7 +233,7 @@
     instantPageTransitions(document);
     let clearPreview:(()=>void)|undefined;
     let clearNavigationFeedback:(()=>void)|undefined;
-    let detailReveal:ReturnType<typeof createLoadingReveal>|undefined;
+    let detailEntrance=false;
     let detailLayoutTop:number|undefined;
     document.addEventListener('astro:before-swap',()=>{
       detailLayoutTop=document.querySelector('.route-detail-preview .loading-detail-layout')?.getBoundingClientRect().top;
@@ -353,7 +353,7 @@
     document.addEventListener('astro:before-preparation', rawEvent => {
       clearNavigationFeedback?.();
       cancelLoadingReveals();
-      detailReveal=undefined;
+      detailEntrance=false;
       detailLayoutTop=undefined;
       clearPreview?.();clearPreview=undefined;
       if(!document.querySelector('[data-browse-shell]')&&document.querySelector('[data-game-browse]')){
@@ -379,10 +379,10 @@
       let predicted=state.pages.get(key);
       if(predicted?.predicted&&Date.now()-predicted.storedAt>=30_000){state.pages.delete(key);state.bytes-=predicted.bytes;predicted=undefined;}
       const destination=detailDestination(event.to),host=document.querySelector<HTMLElement>('#content');
+      detailEntrance=Boolean(destination&&!event.formData&&event.navigationType!=='traverse');
       if(destination&&host&&!event.formData&&event.navigationType!=='traverse'&&!predicted&&!state.prediction?.peek(event.to.href)
         &&document.querySelector('[data-detail-loading-template]')){
         clearPreview=mountRoutePreview(host,detailHints.get(event.to)||{kind:destination.kind},event.to,event.signal);
-        detailReveal=createLoadingReveal();detailReveal.begin(Number(host.querySelector<HTMLElement>('[data-detail-loading]')?.dataset.loadingSince)||undefined);
       }
       if(!event.formData&&(!approvedGamesPage(event.to)||reusableGamesPage(event.to))&&(predicted?.predicted||state.prediction?.has(event.to.href))){
         state.predictionNavigation={key,signal:event.signal,generation:state.generation||0};startProgress(clearPreview?220:90);return;
@@ -410,8 +410,8 @@
     document.addEventListener('astro:after-preparation', finishProgress);
     document.addEventListener('astro:after-swap', () => {
       const content=document.querySelector<HTMLElement>('.media-detail .lab-layout');
-      if(content)detailReveal?.finish(content,undefined,detailLayoutTop===undefined?0:detailLayoutTop-content.getBoundingClientRect().top);
-      detailReveal=undefined;
+      if(content&&detailEntrance)revealReadyContent(content,undefined,detailLayoutTop===undefined?6:detailLayoutTop-content.getBoundingClientRect().top);
+      detailEntrance=false;
       detailLayoutTop=undefined;
       if (!state.alignListLanding || !document.body.hasAttribute('data-list-landing')) return;
       const tabs = document.querySelector<HTMLElement>('.profile-tabs');
