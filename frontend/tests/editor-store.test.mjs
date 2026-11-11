@@ -404,6 +404,62 @@ test('nearby rows resolve missing artwork and share the pending metadata read wi
   }finally{globalThis.Image=previous;}
 });
 
+test('nearby row admission stays occupied while preferred metadata is pending behind a ready fallback',async()=>{
+  const previous=globalThis.Image;globalThis.Image=class {decode(){return Promise.resolve();}};
+  try{
+    const read=deferred(),store=new EditorStore(()=>read.promise);
+    const title=store.seed({...gameTitle(gameState()),backdrop:'/fallback.jpg',background_status:{state:'pending'}});
+    let complete=false;const warm=store.warmListArtwork(title,new AbortController().signal).then(()=>complete=true);
+    await turn();assert(store.artwork(title).backdropImage);assert.equal(complete,false);
+    read.resolve({backdrop:'/fallback.jpg',background_status:{state:'ready'}});await warm;assert.equal(complete,true);
+  }finally{globalThis.Image=previous;}
+});
+
+test('an empty game projection rechecks on intent and reveals a newly published background without reload',async()=>{
+  const previous=globalThis.Image;globalThis.Image=class {decode(){return Promise.resolve();}};
+  try{
+    for(const state of ['ready','unavailable']){
+      let reads=0;const store=new EditorStore(async()=>{reads++;return {backdrop:'/published.jpg',background_status:{state:'ready'}};});
+      const title=store.seed({...gameTitle(gameState()),backdrop:null,background_status:{state}});
+      await store.warmListArtwork(title,new AbortController().signal);assert.equal(reads,0);
+      await store.prepareArtwork(title);assert.equal(reads,1);
+      assert.equal(store.artwork(title).backdrop,'https://image.tmdb.org/t/p/w1280/published.jpg');
+    }
+  }finally{globalThis.Image=previous;}
+});
+
+test('a game without SteamGridDB heroes joins primary publication and survives a stale empty row',async()=>{
+  const previous=globalThis.Image;globalThis.Image=class {decode(){return Promise.resolve();}};
+  try{
+    const paths=[],store=new EditorStore(async path=>{
+      paths.push(path);return path.includes('/metadata?')?{primary_ready:true,primary:{backdrop:'/igdb-published.jpg',background_status:{state:'ready'}}}
+        :{backdrop:null,background_status:{state:'unavailable'}};
+    });
+    const row={...gameTitle(gameState()),backdrop:null,pinned_banner:null,background_status:{state:'unavailable'}};
+    const title=store.seed(row);await store.prepareArtwork(title);
+    assert.deepEqual(paths,['games/works/7/background','games/works/7/metadata?primary=true']);
+    store.seed(row);assert.equal(title.backdrop,'/igdb-published.jpg');
+    assert.equal(store.artwork(title).backdrop,'https://image.tmdb.org/t/p/w1280/igdb-published.jpg');
+  }finally{globalThis.Image=previous;}
+});
+
+test('opening an empty game bypasses a completed speculative cooldown once and joins primary publication',async()=>{
+  const previous=globalThis.Image;globalThis.Image=class {decode(){return Promise.resolve();}};
+  try{
+    const paths=[],store=new EditorStore(async path=>{
+      paths.push(path);return path.includes('/metadata?')?{primary_ready:true,primary:{backdrop:'/published.jpg',background_status:{state:'ready'}}}
+        :{backdrop:null,background_status:{state:'ready'}};
+    });
+    const title=store.seed({...gameTitle(gameState()),backdrop:null,background_status:{state:'pending'}});
+    await store.warmListArtwork(title,new AbortController().signal);
+    assert.equal(paths.length,1);
+    await store.prepareArtwork(title);
+    assert.deepEqual(paths,['games/works/7/background','games/works/7/background','games/works/7/metadata?primary=true']);
+    assert.equal(store.artwork(title).backdrop,'https://image.tmdb.org/t/p/w1280/published.jpg');
+    await store.prepareArtwork(title);assert.equal(paths.length,3);
+  }finally{globalThis.Image=previous;}
+});
+
 test('detail fallback and exact source survive a subsequent list seed',async()=>{
   const previous=globalThis.Image,requests=[];
   globalThis.Image=class {set src(value){requests.push(value);}decode(){return Promise.resolve();}};

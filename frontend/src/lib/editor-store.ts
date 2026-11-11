@@ -27,7 +27,7 @@ type RecordState = {
   importing?: Promise<number>; stale?: boolean;
   posterSrc?: string; backdropSrc?: string;
   displayedHero?:{primary:string|null|undefined;path:string;src:string};
-  artworkRead?:Promise<void>;artworkRetry?:number;
+  artworkRead?:Promise<void>;artworkRetry?:number;artworkReadPriority?:boolean;
   libraryCommitted?: EditorTitle['editor_library']; libraryPending: {desired: boolean}[];
   favoriteCommitted: boolean;
 };
@@ -83,7 +83,8 @@ export class EditorStore {
         }else if(title.backdrop&&title.backdrop!==displayed?.path){
           existing.displayedHero=undefined;
         }
-        if(existing.title.background_status?.state==='ready'&&title.background_status?.state==='pending')
+        if(existing.title.backdrop&&(existing.title.pinned_banner||null)===(title.pinned_banner||null)
+          &&existing.title.background_status?.state==='ready'&&(!title.backdrop||title.background_status?.state==='pending'))
           title={...title,backdrop:existing.title.backdrop,background_status:existing.title.background_status,
             backdrop_fallbacks:existing.title.backdrop_fallbacks};
         if(title.entry&&existing.title.entry){
@@ -374,37 +375,41 @@ export class EditorStore {
   async warmListArtwork(title:EditorTitle,signal:AbortSignal) {
     if(signal.aborted)return;
     title=this.get(title);
-    const displayed=this.record(title)?.displayedHero;
-    const path=title.type==='game'?gameHeroChoice(title,this.viewer,this.mobileArtwork()):title.backdrop;
-    const src=displayed&&(displayed.path===path||title.type!=='game'&&displayed.primary===path)
-      ?displayed.src:this.backdropURL(title,path);
-    for(const candidate of [src,...this.fallbackURLs(title,path)]){
-      if(signal.aborted)return;
-      if(!candidate)continue;
-      await this.decodedArtwork.warm(candidate);
-      if(this.decodedArtwork.get(candidate))break;
-    }
-    // Nearby rows resolve missing/preferred artwork through the same coalesced
-    // read as editor intent. The row scheduler bounds this work to two entries.
-    if(!signal.aborted)await this.prepareArtwork(title,undefined,undefined,signal);
+    await this.prepareArtwork(title,undefined,undefined,signal,false);
+    // A usable fallback can finish before enrichment. Retain the row's lane
+    // until that shared read settles, so two rows also bound provider lookups.
+    await this.record(title)?.artworkRead;
   }
-  async prepareArtwork(title:EditorTitle,posterSrc?:string,backdropSrc?:string,signal?:AbortSignal){
+  async prepareArtwork(title:EditorTitle,posterSrc?:string,backdropSrc?:string,signal?:AbortSignal,priority=true){
     if(signal?.aborted)return;
     const record=this.record(title)!;
     const original=record.title.backdrop;
-    const warm=this.warmArtwork(record.title,posterSrc,backdropSrc,true);
+    const warm=this.warmArtwork(record.title,posterSrc,backdropSrc,priority);
     const state=record.title.background_status?.state;
     const mobileGame=title.type==='game'&&this.mobileArtwork();
-    const needsRead=!record.displayedHero&&state!=='unavailable'&&state!=='ready'
-      &&(!original||!mobileGame&&(state==='pending'||state==='deferred'));
-    if(needsRead&&title.id&&!record.artworkRead&&Date.now()>=(record.artworkRetry||0)){
+    // An empty projection can predate primary metadata publication. Direct
+    // intent may recheck it even when optional banner acquisition is unavailable.
+    const needsRead=!record.displayedHero&&(!original&&priority
+      ||state!=='unavailable'&&state!=='ready'&&(!original||!mobileGame&&(state==='pending'||state==='deferred')));
+    if(priority&&record.artworkRead)record.artworkReadPriority=true;
+    const retryAllowed=Date.now()>=(record.artworkRetry||0)||priority&&!original&&record.artworkReadPriority===false;
+    if(needsRead&&title.id&&!record.artworkRead&&retryAllowed){
       const path=title.type==='game'?`games/works/${title.id}/background${mobileGame?'?provider=igdb':''}`:`title/${title.id}/background`;
       record.artworkRetry=Date.now()+30_000;
+      record.artworkReadPriority=priority;
       // Game acquisition already has a 20s provider budget. Do not abandon its
       // shared lookup at 8s while an open editor is waiting for its first hero.
       const timeout=AbortSignal.timeout(title.type==='game'?25000:8000);
       const requestSignal=signal?AbortSignal.any([signal,timeout]):timeout;
-      record.artworkRead=this.request(path,{signal:requestSignal}).then(data=>{
+      record.artworkRead=this.request(path,{signal:requestSignal}).then(async data=>{
+        if(requestSignal.aborted||this.record(title)!==record||record.displayedHero)return;
+        if(title.type==='game'&&!original&&!data.backdrop&&record.artworkReadPriority){
+          // A list may contain a game before its IGDB primary is published.
+          // Join the existing primary acquisition instead of requiring a details visit.
+          const metadata=await this.request(`games/works/${title.id}/metadata?primary=true`,{signal:requestSignal});
+          if(metadata.primary)data={...data,...metadata.primary};
+          else if(!metadata.primary_ready)data={...data,background_status:{state:'pending',retry_after:10}};
+        }
         if(requestSignal.aborted||this.record(title)!==record||record.displayedHero)return;
         record.title.background_status=data.background_status;
         record.title.backdrop_fallbacks=data.backdrop_fallbacks;
@@ -412,7 +417,7 @@ export class EditorStore {
         if(title.type==='game')record.title.pinned_banner=data.pinned_banner;
         const chosen=title.type==='game'?gameHeroChoice({...record.title,backdrop:data.backdrop,backdrop_mobile:data.backdrop},this.viewer,mobileGame):data.backdrop;
         this.applyArtwork(record,{backdrop:chosen});
-        if(chosen&&chosen!==original)void this.warmArtwork(record.title,posterSrc,backdropSrc,true);
+        if(chosen&&chosen!==original)void this.warmArtwork(record.title,posterSrc,backdropSrc,!!record.artworkReadPriority);
       }).catch(()=>{if(signal?.aborted)record.artworkRetry=undefined;}).finally(()=>{record.artworkRead=undefined;});
     }
     await warm;
@@ -420,11 +425,11 @@ export class EditorStore {
     if(this.artwork(record.title).backdropImage)return;
     await record.artworkRead;
     if(signal?.aborted||this.record(title)!==record)return;
-    if(record.title.backdrop!==original)await this.warmArtwork(record.title,posterSrc,backdropSrc,true);
+    if(record.title.backdrop!==original)await this.warmArtwork(record.title,posterSrc,backdropSrc,priority);
     if(this.artwork(record.title).backdropImage)return;
     for(const src of this.fallbackURLs(record.title)){
       if(signal?.aborted)return;
-      await this.decodedArtwork.warm(src,true);
+      await this.decodedArtwork.warm(src,priority);
       if(this.decodedArtwork.get(src))return;
     }
   }

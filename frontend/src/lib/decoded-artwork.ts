@@ -1,4 +1,4 @@
-type Pending={src:string;resolve:()=>void;promise:Promise<void>};
+type Pending={src:string;resolve:()=>void;promise:Promise<void>;priority:boolean;image?:HTMLImageElement;promote?:()=>void};
 /** Browser HTTP caching owns files; this bounded LRU retains decoded elements. */
 export class DecodedArtwork {
   private images=new Map<string,HTMLImageElement>();
@@ -25,23 +25,27 @@ export class DecodedArtwork {
     if(this.get(src)||typeof Image==='undefined')return Promise.resolve();
     const existing=this.pending.get(src);
     if(existing){
-      if(priority){const index=this.queue.indexOf(existing);if(index>=0){this.queue.splice(index,1);this.queue.unshift(existing);}}
+      if(priority){if(!existing.priority)existing.promote?.();existing.priority=true;if(existing.image)existing.image.fetchPriority='high';
+        const index=this.queue.indexOf(existing);if(index>=0){this.queue.splice(index,1);this.queue.unshift(existing);}this.drain();}
       return existing.promise;
     }
     let resolve!:()=>void;
     const promise=new Promise<void>(done=>{resolve=done;});
-    const item={src,promise,resolve};this.pending.set(src,item);
+    const item:Pending={src,promise,resolve,priority};this.pending.set(src,item);
     if(priority)this.queue.unshift(item);else this.queue.push(item);
     this.drain();return promise;
   }
   private drain(){
-    while(this.active<2&&this.queue.length){
+    // Keep the two speculative lanes; reserve one extra lane for direct intent.
+    while(this.queue.length&&this.active<(this.queue[0].priority?3:2)){
       const item=this.queue.shift()!,generation=this.generation;
-      const image=new Image();image.decoding='async';image.fetchPriority='low';
+      const image=new Image();item.image=image;image.decoding='async';image.fetchPriority=item.priority?'high':'low';
       this.active++;image.src=item.src;
       let timer:ReturnType<typeof setTimeout>|undefined;
       const timeout=new Promise<boolean>(resolve=>{
-        timer=setTimeout(()=>{image.removeAttribute('src');resolve(false);},8000);
+        const cancel=()=>{image.removeAttribute('src');resolve(false);};
+        item.promote=()=>{clearTimeout(timer);timer=setTimeout(cancel,30000);};
+        timer=setTimeout(cancel,item.priority?30000:8000);
       });
       void Promise.race([image.decode().then(()=>true),timeout]).then(ready=>{
         if(!ready||generation!==this.generation)return;
