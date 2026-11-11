@@ -52,7 +52,7 @@ const primaryItems = [
 const settingsRoute = pathname.startsWith('/settings/') || ['/settings', '/user-settings', '/connections', '/admin'].includes(pathname);
 const mobileNavigation = appMobileNavigation({profile, pathname, signedIn: !!user, combineLists,showGames:domains.show_games,showMoviesSeries:domains.show_movies_series});
 ---
-<header class:list={['topbar', {'appbar-hidden': initiallyHidden, 'appbar-fade-capable': fadesAtTop}]} data-appbar transition:animate="none">
+<header class:list={['topbar', {'appbar-hidden': initiallyHidden, 'appbar-fade-capable': fadesAtTop}]} data-appbar>
   <div class="appbar-inner">
     <a class="brand" href="/home" aria-label="AnyList home">
       <BrandMark size={34}/>

@@ -64,9 +64,12 @@ export function createPrediction<T>(fetcher:(key:string,signal:AbortSignal)=>Pro
 /** A brief dwell avoids loading links merely passed by the pointer. */
 export function bindPredictionIntent(root:Document|HTMLElement,signal:AbortSignal,predict:(link:HTMLAnchorElement)=>void) {
   let timer:ReturnType<typeof setTimeout>|undefined,target:HTMLAnchorElement|undefined;
+  let navigating=false;
+  const documentRoot=root.ownerDocument||root;
   const clear=()=>{clearTimeout(timer);target=undefined;};
   const linkFor=(event:Event)=>(event.target as Element)?.closest<HTMLAnchorElement>('a[href]')||undefined;
   const schedule=(event:Event)=>{
+    if(navigating)return;
     if(event instanceof PointerEvent&&event.pointerType!=='mouse')return;
     const link=linkFor(event);
     if(!link||target===link)return;
@@ -80,9 +83,11 @@ export function bindPredictionIntent(root:Document|HTMLElement,signal:AbortSigna
   },{signal});
   root.addEventListener('focusout',clear,{signal});
   root.addEventListener('pointerdown',event=>{
-    if((event as PointerEvent).pointerType!=='touch'||!predictionAllowed())return;
+    if(navigating||(event as PointerEvent).pointerType!=='touch'||!predictionAllowed())return;
     const link=linkFor(event);if(link)predict(link);
   },{signal,passive:true});
+  documentRoot.addEventListener('astro:before-preparation',()=>{navigating=true;clear();},{signal});
+  documentRoot.addEventListener('astro:page-load',()=>{navigating=false;},{signal});
   signal.addEventListener('abort',clear,{once:true});
 }
 

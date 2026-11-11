@@ -13,6 +13,7 @@
   import {responsiveArtwork} from '../lib/responsive-artwork';
   import {clearStoredBrowseCache} from '../lib/browse-cache';
   import {createGameIntent,gameIntentTarget} from '../lib/game-intent';
+  import {instantPageTransitions} from '../lib/instant-page-transitions';
   wirePasswordToggles();
 
   type CachedPage = { html: string; bytes: number; storedAt: number; predicted?:boolean; requiresGamesAccess?:boolean };
@@ -225,6 +226,7 @@
 
   if (!state.initialized) {
     state.initialized = true;
+    instantPageTransitions(document);
     document.addEventListener('anylist:route-progress-start',startProgress);
     document.addEventListener('anylist:route-progress-end',finishProgress);
     document.addEventListener('anylist:cache-invalidated', () => {

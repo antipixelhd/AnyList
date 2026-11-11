@@ -1,6 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createPrediction,predictionAllowed,predictionManifest,predictivePage,paginationPosition,bindPredictivePagination} from '../src/lib/predictive-loading.ts';
+import {createPrediction,predictionAllowed,predictionManifest,predictivePage,paginationPosition,bindPredictivePagination,bindPredictionIntent} from '../src/lib/predictive-loading.ts';
+
+test('route preparation cancels pending dwell and suppresses new intent until the next page is ready',t=>{
+  t.mock.timers.enable({apis:['setTimeout']});
+  const previous=globalThis.PointerEvent;globalThis.PointerEvent=class extends Event{};
+  t.after(()=>{if(previous)globalThis.PointerEvent=previous;else delete globalThis.PointerEvent;});
+  const doc=new EventTarget(),root=new EventTarget(),link={isConnected:true};
+  root.ownerDocument=doc;root.closest=()=>link;
+  const controller=new AbortController();let calls=0;
+  bindPredictionIntent(root,controller.signal,()=>calls++);
+  root.dispatchEvent(new Event('focusin'));t.mock.timers.tick(100);
+  doc.dispatchEvent(new Event('astro:before-preparation'));t.mock.timers.tick(200);assert.equal(calls,0);
+  root.dispatchEvent(new Event('focusin'));t.mock.timers.tick(200);assert.equal(calls,0);
+  doc.dispatchEvent(new Event('astro:page-load'));
+  root.dispatchEvent(new Event('focusin'));t.mock.timers.tick(180);assert.equal(calls,1);
+  root.dispatchEvent(new Event('focusout'));root.dispatchEvent(new Event('focusin'));
+  controller.abort();t.mock.timers.tick(200);assert.equal(calls,1);
+});
 
 test('prediction warms only the initial viewport hero without spending its budget on the other provider',()=>{
   const artwork=[{src:'https://cdn.test/poster.jpg'},
