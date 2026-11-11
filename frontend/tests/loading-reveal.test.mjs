@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createLoadingReveal, cancelLoadingReveals, scheduleArtworkPulse } from '../src/lib/loading-reveal.ts';
+import { createLoadingReveal, cancelLoadingReveals, scheduleArtworkPulse, settleNavigationContent } from '../src/lib/loading-reveal.ts';
 
 function fixture({ reduced = false, top = 20 } = {}) {
   const calls = [];
@@ -19,6 +19,24 @@ function fixture({ reduced = false, top = 20 } = {}) {
   };
   return { element, calls };
 }
+
+test('navigation settles ready content from partial opacity and replaces an interrupted entrance', () => {
+  const { element, calls } = fixture();
+  const controller = new AbortController();
+  settleNavigationContent(element, 'page', controller.signal);
+  settleNavigationContent(element, 'tab', controller.signal);
+  assert.deepEqual(calls.map(call => [call.frames, call.timing.duration, call.cancelled]), [
+    [{ opacity: [.78, 1], translate: ['0 6px', '0 0'] }, 285, true],
+    [{ opacity: [.78, 1], translate: ['0 4px', '0 0'] }, 220, false],
+  ]);
+  controller.abort();
+  assert.equal(calls[1].cancelled, true);
+  settleNavigationContent(element, 'page', controller.signal);
+  const reduced = fixture({ reduced: true });
+  settleNavigationContent(reduced.element, 'tab');
+  assert.equal(calls.length, 2);
+  assert.equal(reduced.calls.length, 0);
+});
 
 test('only a visible skeleton wait reveals ready content, once and without an exit delay', () => {
   let now = 0;

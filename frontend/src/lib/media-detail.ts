@@ -1,6 +1,7 @@
 import {preparePanelStyles} from './panel-readiness';
 import { editorStore, seedEditorPage, type EditorTitle } from './editor-store';
-import { createContentTransition, mountDetailsMotion } from './content-motion';
+import { mountDetailsMotion } from './content-motion';
+import { settleNavigationContent } from './loading-reveal';
 import { mountContributorBiography } from './contributor-biography';
 import { showDialog, closeDialog, reveal } from './ui-motion';
 import { mountDetailImages } from './media-detail-images';
@@ -215,22 +216,16 @@ export function mountMediaDetail() {
   }, {signal});
   const tabs = [...root.querySelectorAll<HTMLButtonElement>('[data-detail-tab]')];
   const panels = [...root.querySelectorAll<HTMLElement>('[data-detail-panel]')];
-  const switchPanel = createContentTransition(root.querySelector<HTMLElement>('[data-detail-panels]')!, signal);
-  let requestedTab: string | undefined;
+  const panelGroup = root.querySelector<HTMLElement>('[data-detail-panels]')!;
   const selectTab = (id: string, animate = true) => {
     const tab = tabs.find(tab => tab.dataset.detailTab === id && !tab.disabled);
     if (!tab) return;
-    const change = () => {
+    if (!animate || tab.getAttribute('aria-selected') !== 'true') {
       tabs.forEach(tab => { const active = tab.dataset.detailTab === id; tab.setAttribute('aria-selected',String(active)); tab.tabIndex = active ? 0 : -1; });
       panels.forEach(panel => panel.hidden = panel.dataset.detailPanel !== id);
       if(id==='achievements')loadAchievements();
-    };
-    if (!animate) change();
-    else if (id !== requestedTab) {
-      if (tab.getAttribute('aria-selected') === 'true') switchPanel.cancel();
-      else void switchPanel(change);
+      if (animate) settleNavigationContent(panelGroup, 'tab', signal);
     }
-    requestedTab = id;
     const url = new URL(location.href);
     if (id === 'overview') url.searchParams.delete('tab'); else url.searchParams.set('tab',id);
     history.replaceState(history.state,'',url);

@@ -7,8 +7,7 @@ export const ARTWORK_PULSE_DURATION_MS=180;
 const active = new Map<HTMLElement, () => void>();
 const artworkPulses = new WeakMap<HTMLElement, () => void>();
 
-/** Visual polish only: content is already usable and its normal styles stay intact. */
-export function revealReadyContent(element: HTMLElement, signal?: AbortSignal, offsetY = 6) {
+function revealContent(element: HTMLElement, signal: AbortSignal | undefined, offsetY: number, duration: number, startOpacity: number) {
   const view = element.ownerDocument?.defaultView;
   if (signal?.aborted || !element.isConnected || !view || typeof element.animate !== 'function' ||
     view.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
@@ -18,10 +17,10 @@ export function revealReadyContent(element: HTMLElement, signal?: AbortSignal, o
   if (!bounds.width || !bounds.height || bounds.bottom <= 0 || bounds.top >= view.innerHeight) return;
   active.get(element)?.();
   const animation = element.animate({
-    opacity: [0, 1],
+    opacity: [startOpacity, 1],
     ...(offsetY ? { translate: [`0 ${offsetY}px`, '0 0'] } : {}),
   }, {
-    duration: LOADING_REVEAL_DURATION_MS,
+    duration,
     easing: 'cubic-bezier(0,0,.2,1)',
   });
   const cleanup = () => {
@@ -35,6 +34,14 @@ export function revealReadyContent(element: HTMLElement, signal?: AbortSignal, o
   active.set(element, cancel);
   signal?.addEventListener('abort', cancel, { once: true });
   void animation.finished.then(cleanup, cleanup);
+}
+
+export function revealReadyContent(element: HTMLElement, signal?: AbortSignal, offsetY = 6) {
+  revealContent(element, signal, offsetY, LOADING_REVEAL_DURATION_MS, 0);
+}
+
+export function settleNavigationContent(element: HTMLElement, kind: 'page' | 'tab', signal?: AbortSignal, offsetY = kind === 'page' ? 6 : 4) {
+  revealContent(element, signal, offsetY, kind === 'page' ? 285 : 220, .78);
 }
 
 /** Cached content and waits under 100ms never acquire a loading animation. */

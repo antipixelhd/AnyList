@@ -5,25 +5,26 @@ import {stripTypeScriptTypes} from 'node:module';
 import {runInNewContext} from 'node:vm';
 import {statisticsSection,statisticsPanel,statisticsSections} from '../src/lib/unified-statistics-data.ts';
 const source=readFileSync(new URL('../src/lib/stats-overview.ts',import.meta.url),'utf8');
-test('ready section changes use the shared exit/entrance while ordinary overview updates retain chart motion',()=>{
+test('ready section changes commit before the entrance while ordinary overview updates retain chart motion',()=>{
   const start=source.indexOf('  function render(next:');
   const snippet=source.slice(start,source.indexOf('  function renderNow(',start));
-  const pending=[],painted=[];
+  const actions=[];
   const context={matchesSelection:()=>true,paintedView:'screen:overview',domain:'screen',section:'genres',
     panelActive:()=>true,root:{},response:{overview:{media_type:'all'}},
-    switchPanel:change=>pending.push(change),renderNow:(data,initial)=>painted.push([data,initial])};
+    results:{},events:new AbortController(),
+    settleNavigationContent:(_results,kind)=>actions.push(kind),renderNow:(data,initial)=>actions.push([data,initial])};
   runInNewContext(stripTypeScriptTypes(snippet)+';this.render=render;',context);
   const ready={status:'ready',overview:{media_type:'all'}};
   context.render(ready);
-  assert.equal(painted.length,0,'ready data replaces the outgoing section after its exit');
-  pending.shift()();assert.deepEqual(painted,[[ready,true]]);
+  assert.deepEqual(actions.splice(0),[[ready,true],'tab']);
   context.paintedView='screen:genres';context.render(ready);
-  assert.equal(pending.length,0,'same-section refresh does not replay the tab transition');
+  assert.deepEqual(actions.splice(0),[[ready,false]],'same-section refresh does not replay the tab transition');
   context.section='overview';context.paintedView='screen:overview';
-  context.render({status:'ready',overview:{media_type:'movie'}});
-  assert.equal(pending.length,0,'overview media updates keep their original chart animation');
+  const movie={status:'ready',overview:{media_type:'movie'}};
+  context.render(movie);
+  assert.deepEqual(actions.splice(0),[[movie,false]],'overview media updates keep their original chart animation');
   context.matchesSelection=()=>false;context.render(ready);
-  assert.equal(painted.length,3,'obsolete responses cannot schedule a transition');
+  assert.deepEqual(actions,[],'obsolete responses cannot schedule a transition');
 });
 
 test('optimistic section controls leave the outgoing data panel intact until commit',()=>{
@@ -56,7 +57,7 @@ test('outgoing controls stay inert across cold reads, failures and delayed commi
   const start=source.indexOf('  function statisticsBusy(');
   const snippet=source.slice(start,source.indexOf("  events.signal.addEventListener('abort',()=>statisticsBusy",start));
   let matching=false,cancelled=0;const waiting=[],progress=[];
-  const context={switchPanel:{cancel(){cancelled++;}},appending:false,queueMicrotask:()=>{},checkMore(){},root:{setAttribute(){}},response:{status:'ready'},matchesSelection:()=>matching,setResultsWaiting:value=>waiting.push(value),panelActive:()=>true,progressRunning:false,document:{dispatchEvent:event=>progress.push(event.type)},Event};
+  const context={cancelPanelReveal(){cancelled++;},appending:false,queueMicrotask:()=>{},checkMore(){},root:{setAttribute(){}},response:{status:'ready'},matchesSelection:()=>matching,setResultsWaiting:value=>waiting.push(value),panelActive:()=>true,progressRunning:false,document:{dispatchEvent:event=>progress.push(event.type)},Event};
   runInNewContext(stripTypeScriptTypes(snippet)+';this.busy=statisticsBusy;',context);
   context.busy(true);context.busy(false);assert.deepEqual(waiting,[true,true]);
   matching=true;context.busy(true);context.busy(false);assert.deepEqual(waiting,[true,true,true,false]);
@@ -71,7 +72,7 @@ test('domain switches and restored URLs update selection before reading without 
   const open=source.slice(openStart,source.indexOf("  root.addEventListener('anylist:statistics-open'",openStart));
   const reads=[],urls=[],controls=[];
   const context={domain:'screen',section:'actors',page:1,media:'series',statisticsSection,URL,
-    tooltips:new Map(),pies:new Map(),statisticsPanel,switchPanel:{cancel(){}},render(){},response:{},root:{dataset:{}},genreSort:value=>value||'count',actorArtwork:value=>value||'media',
+    tooltips:new Map(),pies:new Map(),statisticsPanel,cancelPanelReveal(){},render(){},response:{},root:{dataset:{}},genreSort:value=>value||'count',actorArtwork:value=>value||'media',
     node:()=>({textContent:'Actors'}),syncUrl:push=>urls.push([context.domain,context.section,push]),
     updateDomainControls:()=>controls.push(context.domain),syncLinks(){},scheduleSibling(){},loader:{load:()=>reads.push([context.domain,context.section,context.media])}};
   runInNewContext(stripTypeScriptTypes(select+open)+';this.select=selectSection;this.open=openUrl;',context);

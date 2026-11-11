@@ -92,12 +92,12 @@ test('cached mixed navigation waits for approval and falls back on revocation, i
     const context={URL,Date,state,document:{querySelector:()=>null,addEventListener:(_name,callback)=>handler=callback},navigator:{onLine:true},
       closeNavigationDialogs(){},resetForIdentity(){},keyFor:()=>'/home',cacheable:()=>true,approvedGamesPage:()=>false,reusableGamesPage:()=>false,
       currentUser:()=>outcome==='other-viewer'?'8':'7',startProgress(){},finishProgress(){},clearPreview:undefined,clearNavigationFeedback:undefined,detailDestination:()=>undefined,
-      cancelLoadingReveals(){},detailReveal:undefined,
+      cancelLoadingReveals(){},pageEntrance:undefined,detailLayoutTop:undefined,
       authorizeGameSnapshot:()=>new Promise(resolve=>authorize=resolve),
       DOMParser:class{parseFromString(){parsed++;return 'parsed';}},
     };
     runInNewContext(stripTypeScriptTypes(snippet),context);
-    const event={to:new URL('https://example.test/home'),signal:controller.signal,loader:async()=>fallback++};
+    const event={from:new URL('https://example.test/browse'),to:new URL('https://example.test/home'),signal:controller.signal,loader:async()=>fallback++};
     handler(event);const pending=event.loader();
     if(outcome!=='ordinary')assert.equal(parsed,0,'authorization must precede parsing/painting');
     if(outcome==='invalidated')state.generation++;

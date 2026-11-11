@@ -19,7 +19,7 @@ import { mountStatisticsNavigation } from './stats-navigation';
 import { createMetricTooltip } from './stats-metric-tooltip';
 import { chartMinimumWidth, mountChartViewport } from './stats-chart-density';
 import { cancelUiMotion, reveal } from './ui-motion';
-import { createContentTransition } from './content-motion';
+import { cancelLoadingReveals, settleNavigationContent } from './loading-reveal';
 
 const mounted = new WeakSet<HTMLElement>();
 const chartKeys = ['scores', 'episode_counts', 'release_years', 'watch_years'] as const;
@@ -37,7 +37,8 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
   let stopped = false;
   let refreshing = false;
   const events = new AbortController();
-  const switchPanel = createContentTransition(node('.overview-results'), events.signal);
+  const results = node('.overview-results');
+  const cancelPanelReveal = () => cancelLoadingReveals(results);
   events.signal.addEventListener('abort', () => cancelUiMotion(root), {once:true});
   root.addEventListener('load', event => {
     const image = event.target;
@@ -212,7 +213,8 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
     const changedSection=paintedView!==`${domain}:${section}`;
     const changedScope=next.overview&&next.overview.media_type!==response.overview?.media_type;
     if(!initial&&next.status==='ready'&&panelActive(root)&&(changedSection||(changedScope&&section!=='overview'))){
-      void switchPanel(()=>renderNow(next,true));
+      renderNow(next,true);
+      settleNavigationContent(results,'tab',events.signal);
     }else renderNow(next,initial);
   }
   function renderNow(next: OverviewResponse, initial = false) {
@@ -267,7 +269,7 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
   }
   let progressRunning=false;
   function statisticsBusy(busy:boolean,quiet=false){
-    if(busy)switchPanel.cancel();
+    if(busy)cancelPanelReveal();
     root.setAttribute('aria-busy',String(busy));
     setResultsWaiting(busy||response.status!=='ready'||!matchesSelection(response));
     const progress=busy&&!quiet&&panelActive(root);
@@ -310,7 +312,7 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
     });
   }
   function selectSection(next: string, push: boolean,nextDomain:StatisticsDomain=domain) {
-    switchPanel.cancel();
+    cancelPanelReveal();
     const domainChanged=domain!==nextDomain;
     domain=nextDomain;
 
@@ -330,7 +332,7 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
   root.addEventListener('profile-section-change', event => selectSection((event as CustomEvent).detail.value,true,(event.target as HTMLElement).closest<HTMLElement>('[data-statistics-domain]')?.dataset.statisticsDomain as StatisticsDomain||domain), { signal: events.signal });
   root.addEventListener('statistics-url-change', syncLinks, { signal: events.signal });
   function navigate(next: MediaScope, push: boolean) {
-    switchPanel.cancel();
+    cancelPanelReveal();
     tooltips.forEach(tooltip => tooltip.dismiss());
     pies.forEach(chart => { chart.tooltip?.setActiveElements([], {x:0,y:0}); chart.setActiveElements([]); chart.draw(); });
     media=next;
@@ -421,7 +423,7 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
     if(domain==='game'&&sortButton){event.preventDefault();event.stopImmediatePropagation();for(const prefix of ['genre','actor','studio','staff'])if(sortButton.dataset[prefix+'Sort'])root.dataset[prefix+'Sort']=sortButton.dataset[prefix+'Sort'];page=1;syncUrl(true);void loader.load(media);}
   },{capture:true,signal:events.signal});
   function openUrl(url:URL){
-    switchPanel.cancel();
+    cancelPanelReveal();
     domain=url.pathname.endsWith('/games')?'game':'screen';
     section=statisticsSection(domain,url.searchParams.get('section')||'overview');
     page=1;
@@ -469,7 +471,7 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
   // saved choices restored during client-side navigation. Repaint canvases too.
   observer.observe(document.body, { attributes: true, attributeFilter: ['style'] });
   let dirty=false;
-  root.closest('[data-profile-url]')?.addEventListener('anylist:panel-inactive',()=>{clearTimeout(timer);switchPanel.cancel();},{signal:events.signal});
+  root.closest('[data-profile-url]')?.addEventListener('anylist:panel-inactive',()=>{clearTimeout(timer);cancelPanelReveal();},{signal:events.signal});
   const refresh=()=>{page=1;loader.clear();if(panelActive(root)){dirty=false;void loader.load(media);}else dirty=true;};
   root.closest('[data-profile-url]')?.addEventListener('anylist:panel-active',()=>{if(dirty||response.status!=='ready')refresh();else if(response.overview)render(response,true);},{signal:events.signal});
   document.addEventListener('anylist:editor-committed', () => { if (response.owner) refresh(); }, {signal:events.signal});

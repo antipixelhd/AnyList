@@ -3,7 +3,7 @@ import {preparePanelStyles,panelLayoutFrame} from './panel-readiness';
 import {profilePanelKey,setPanelWaiting} from './profile-panel';
 import {bindPredictionIntent,predictionManifest} from './predictive-loading';
 import {profileLoadingFrame} from './profile-loading';
-import {revealReadyContent,cancelLoadingReveals} from './loading-reveal';
+import {settleNavigationContent,cancelLoadingReveals} from './loading-reveal';
 
 type Panel={root:HTMLElement;url:string;title:string;ready:boolean;kind:string;styles?:Document;initializing?:Promise<void>;preparing?:Promise<void>};
 let session:AbortController|undefined;
@@ -144,7 +144,7 @@ function setup(){
         window.scrollTo(0,positions.get(key)??scrollY);
         if (changedPanel) {
           const rows = Array.from(panel.root.querySelectorAll<HTMLElement>('.entry-table [data-list-window]'));
-          for(const target of rows.length ? rows : [panel.root])revealReadyContent(target,signal);
+          for(const target of rows.length ? rows : [panel.root])settleNavigationContent(target,'tab',signal);
         }
       };
       commit();
