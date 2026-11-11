@@ -69,6 +69,7 @@ for(const destination of ['games','stats','stats/games'])test(`a cold ${destinat
   const events=[];
   const context={URL,changeStatistics:{cancel(){}},stopProgress(){},progressRunning:false,signal:new AbortController().signal,wanted:'movies',active:'movies',shown:source,positions,scrollY:780,
     panels:new Map([['movies',{root:source,ready:true}]]),loadingTemplates:new Map(),profileLoadingFrame:()=>preview,
+    createLoadingReveal:()=>({begin(){},finish(){}}),
     read:()=>new Promise((resolve,reject)=>rejectRead=reject),setPanelWaiting:(root,on)=>waiting.push([root,on]),update(){},
     show:root=>context.shown=root,nav:{setAttribute(){},removeAttribute(){},getBoundingClientRect:()=>({top:-600})},
     host:{querySelector:()=>null,append(){}},window:{scrollTo(){}},location:{href:'https://example.test/user/alex/movies'},

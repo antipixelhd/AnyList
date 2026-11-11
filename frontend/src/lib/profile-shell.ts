@@ -3,6 +3,7 @@ import {preparePanelStyles,panelLayoutFrame} from './panel-readiness';
 import {profilePanelKey,setPanelWaiting} from './profile-panel';
 import {bindPredictionIntent,predictionManifest} from './predictive-loading';
 import {profileLoadingFrame} from './detail-loading';
+import {createLoadingReveal,cancelLoadingReveals} from './loading-reveal';
 
 type Panel={root:HTMLElement;url:string;title:string;ready:boolean;kind:string;styles?:Document;initializing?:Promise<void>;preparing?:Promise<void>};
 let session:AbortController|undefined;
@@ -75,7 +76,7 @@ function setup(){
     })().finally(()=>flights.delete(key)).catch(error=>{if(!signal.aborted&&error instanceof DOMException&&error.name==='AbortError')return read(key,url);throw error;});
     flights.set(key,pending);return pending;
   }
-  function show(root:HTMLElement){shown.remove();shown=root;stage.append(root);}
+  function show(root:HTMLElement){cancelLoadingReveals(shown);shown.remove();shown=root;stage.append(root);}
   let progressRunning=false;
   const stopProgress=()=>{if(progressRunning){progressRunning=false;document.dispatchEvent(new Event('anylist:route-progress-end'));}};
   signal.addEventListener('abort',stopProgress,{once:true});
@@ -89,7 +90,8 @@ function setup(){
     const source=panels.get(active)!.root;
     nav.setAttribute('aria-busy','true');setPanelWaiting(source,true);
     const cached=panels.get(key);
-    if(!cached?.ready){const loading=profileLoadingFrame(key);loading.dataset.profileUrl=url;show(loading);}
+    const reveal=createLoadingReveal();let loading:HTMLElement|undefined;
+    if(!cached?.ready){loading=profileLoadingFrame(key);loading.dataset.profileUrl=url;reveal.begin();show(loading);}
     if(!cached?.ready){progressRunning=true;document.dispatchEvent(new Event('anylist:route-progress-start'));}
     const activate=async(panel:Panel)=>{
       if(signal.aborted||wanted!==key||document.body.dataset.cacheUser!==viewer)return;
@@ -118,12 +120,14 @@ function setup(){
       if(signal.aborted||wanted!==key)return;
       const commit=()=>{
         if(signal.aborted||wanted!==key)return;
+        const fromSkeleton=shown===loading;
         stopProgress();setPanelWaiting(source,false);show(panel.root);active=key;document.body.toggleAttribute('data-list-landing',!key.startsWith('stats'));
         history.replaceState(history.state,'',panel.root.dataset.profileUrl||panel.url);document.title=panel.title;
         const statistics=panel.root.querySelector<HTMLElement>('[data-integrated-statistics]');
         if(statistics&&panel.root.dataset.profileUrl!==url)statistics.dispatchEvent(new CustomEvent('anylist:statistics-open',{detail:{url}}));
         nav.removeAttribute('aria-busy');update();
         window.scrollTo(0,positions.get(key)??scrollY);
+        if(fromSkeleton)reveal.finish(panel.root,signal);
       };
       commit();
       if(!signal.aborted&&wanted===key&&shown===panel.root)panel.root.dispatchEvent(new Event('anylist:panel-active'));

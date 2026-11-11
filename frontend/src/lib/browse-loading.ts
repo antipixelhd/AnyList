@@ -1,3 +1,5 @@
+import {createLoadingReveal} from './loading-reveal.ts';
+
 export const MINIMUM_BROWSE_SKELETON_MS = 0;
 
 /** Cached images paint immediately; slow images share the bounded skeleton timing. */
@@ -13,6 +15,7 @@ export function prepareBrowsePoster(image: HTMLImageElement, signal: AbortSignal
   cover.setAttribute("data-poster-pending", "");
   cover.setAttribute("data-poster-loading", "");
   const shownAt = performance.now();
+  const reveal=createLoadingReveal();reveal.begin(shownAt);
   let finished = false;
   let hideTimer: ReturnType<typeof setTimeout> | undefined;
   const cleanup = () => {
@@ -32,6 +35,7 @@ export function prepareBrowsePoster(image: HTMLImageElement, signal: AbortSignal
     const remaining = Math.max(0, MINIMUM_BROWSE_SKELETON_MS - (performance.now() - shownAt));
     if (remaining) hideTimer = setTimeout(cleanup, remaining);
     else cleanup();
+    if(event.type==='load')reveal.finish(image,signal);else reveal.cancel();
   };
   const maxTimer = setTimeout(() => {
     // Stop a stalled shimmer, but keep listening so lazy/late artwork fades

@@ -15,6 +15,7 @@
   import {createGameIntent,gameIntentTarget} from '../lib/game-intent';
   import {instantPageTransitions} from '../lib/instant-page-transitions';
   import {detailDestination,detailHints,mountRoutePreview,type DetailHint} from '../lib/detail-loading';
+  import {createLoadingReveal,cancelLoadingReveals} from '../lib/loading-reveal';
   wirePasswordToggles();
 
   type CachedPage = { html: string; bytes: number; storedAt: number; predicted?:boolean; requiresGamesAccess?:boolean };
@@ -230,6 +231,7 @@
     state.initialized = true;
     instantPageTransitions(document);
     let clearPreview:(()=>void)|undefined;
+    let detailReveal:ReturnType<typeof createLoadingReveal>|undefined;
     document.addEventListener('astro:before-swap',()=>{clearPreview?.();clearPreview=undefined;});
     document.addEventListener('click',event=>{
       const link=(event.target as Element)?.closest<HTMLAnchorElement>('a[href]');if(!link)return;
@@ -334,6 +336,8 @@
     }, true);
 
     document.addEventListener('astro:before-preparation', rawEvent => {
+      cancelLoadingReveals();
+      detailReveal=undefined;
       clearPreview?.();clearPreview=undefined;
       if(!document.querySelector('[data-browse-shell]')&&document.querySelector('[data-game-browse]')){
         document.dispatchEvent(new Event('anylist:before-snapshot'));
@@ -351,6 +355,7 @@
       if(destination&&host&&!event.formData&&event.navigationType!=='traverse'&&!predicted&&!state.prediction?.peek(event.to.href)
         &&document.querySelector('[data-detail-loading-template]')){
         clearPreview=mountRoutePreview(host,detailHints.get(event.to)||{kind:destination.kind},event.to,event.signal);
+        detailReveal=createLoadingReveal();detailReveal.begin(Number(host.querySelector<HTMLElement>('[data-detail-loading]')?.dataset.loadingSince)||undefined);
       }
       if(!event.formData&&(!approvedGamesPage(event.to)||reusableGamesPage(event.to))&&(predicted?.predicted||state.prediction?.has(event.to.href))){
         state.predictionNavigation={key,signal:event.signal,generation:state.generation||0};startProgress();return;
@@ -376,6 +381,9 @@
     });
     document.addEventListener('astro:after-preparation', finishProgress);
     document.addEventListener('astro:after-swap', () => {
+      const content=document.querySelector<HTMLElement>('[data-detail-panels]');
+      if(content)detailReveal?.finish(content);
+      detailReveal=undefined;
       if (!state.alignListLanding || !document.body.hasAttribute('data-list-landing')) return;
       const tabs = document.querySelector<HTMLElement>('.profile-tabs');
       if (tabs) window.scrollTo(0, window.scrollY + tabs.getBoundingClientRect().top);

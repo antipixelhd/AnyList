@@ -5,7 +5,7 @@ import {gameSectionPending,paintGameSection,bindGameSection,gameSectionFailure} 
 function fixture(){
   const skeleton={hidden:false},content={hidden:true},retry=new EventTarget(),message={textContent:''};
   const error={hidden:true,querySelector:()=>message};
-  const section={hidden:false,attrs:{},setAttribute(key,value){this.attrs[key]=value;},
+  const section={hidden:false,attrs:{},setAttribute(key,value){this.attrs[key]=value;},getAttribute(key){return this.attrs[key]??null;},
     querySelectorAll:selector=>selector==='[data-game-section-loading]'?[skeleton]:[content],
     querySelector:selector=>selector==='[data-game-section-retry]'?retry:error};
   const root=new EventTarget();root.dataset={gamePrimaryPending:'false'};

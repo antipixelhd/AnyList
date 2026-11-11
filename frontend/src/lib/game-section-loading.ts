@@ -1,4 +1,15 @@
 import type {DetailLoadState} from './detail-background';
+import {createLoadingReveal} from './loading-reveal.ts';
+const reveals = new WeakMap<HTMLElement, { transition: ReturnType<typeof createLoadingReveal>; signal?: AbortSignal }>();
+
+function revealFor(section: HTMLElement) {
+  let reveal = reveals.get(section);
+  if (!reveal) {
+    reveal = { transition: createLoadingReveal() };
+    reveals.set(section, reveal);
+  }
+  return reveal;
+}
 
 export const gameSectionPending=(state?:DetailLoadState|null,primaryPending=false)=>primaryPending||!state||
   !!state.pending||['pending','loading','partial','deferred'].includes(state.state||'');
@@ -6,15 +17,23 @@ export const gameSectionPending=(state?:DetailLoadState|null,primaryPending=fals
 /** Retain usable SSR content while a provider refreshes; reserve only missing content. */
 export function paintGameSection(section:HTMLElement,hasContent:boolean,state?:DetailLoadState|null,primaryPending=false) {
   const loading=!hasContent&&gameSectionPending(state,primaryPending);
+  const reveal = revealFor(section);
+  if (loading) reveal.transition.begin();
   section.hidden=!hasContent&&!loading;
   section.setAttribute('aria-busy',String(loading));
   section.querySelectorAll<HTMLElement>('[data-game-section-loading]').forEach(node=>node.hidden=!loading);
-  section.querySelectorAll<HTMLElement>('[data-game-section-content]').forEach(node=>node.hidden=!hasContent);
+  const content = Array.from(section.querySelectorAll<HTMLElement>('[data-game-section-content]'));
+  content.forEach(node => node.hidden = !hasContent);
+  if (hasContent) reveal.transition.finish(content, reveal.signal);
+  else if (!loading) reveal.transition.cancel();
   const error=section.querySelector<HTMLElement>('[data-game-section-error]');if(error)error.hidden=true;
 }
 
 export function bindGameSection(root:HTMLElement,section:HTMLElement,signal:AbortSignal,
   resource:{retry:(afterCurrent?:boolean)=>Promise<void>;start:()=>unknown},initial?:DetailLoadState|null) {
+  const reveal = revealFor(section);
+  reveal.signal = signal;
+  if (section.getAttribute('aria-busy') === 'true') reveal.transition.begin();
   section.querySelector('[data-game-section-retry]')?.addEventListener('click',()=>void resource.retry(),{signal});
   // A cold primary can establish Steam/IGDB identities after an earlier optional
   // read returned unavailable. Retry then, rather than stranding the empty slot.

@@ -452,7 +452,6 @@
   margin-top: 8px;
   min-height: calc(var(--browse-title-size) * 2.7 + var(--browse-meta-size) * 1.55 + 3px);
 }
-.browse-card-caption { animation: browse-poster-fade .24s ease-out; }
 .browse-cover {
   position: relative;
   aspect-ratio: 2/3;
@@ -472,13 +471,6 @@
   transition: transform 0.3s cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 .browse-cover[data-poster-pending] .browse-poster-link img { opacity: 0; }
-.browse-cover[data-poster-ready] .browse-poster-link img {
-  animation: browse-poster-fade .24s ease-out;
-}
-@keyframes browse-poster-fade {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
 .browse-card:hover .browse-poster-link img {
   transform: scale(1.035);
 }
@@ -902,8 +894,6 @@
   translate: 0 4px;
 }
 @media (prefers-reduced-motion: reduce) {
-  .browse-card-caption { animation: none; }
-  .browse-cover[data-poster-ready] .browse-poster-link img { animation: none; }
   .browse-scroll-reveal { scale: none; opacity: 1; }
   .browse-page * {
     transition: none !important;
@@ -912,24 +902,7 @@
   }
 }
 
-.browse-skeleton .skeleton-block {
-  background: linear-gradient(
-    100deg,
-    var(--panel) 35%,
-    #243449 50%,
-    var(--panel) 65%
-  );
-  background-size: 400% 100%;
-  animation: browse-shimmer 1.5s linear infinite;
-}
-@keyframes browse-shimmer {
-  from {
-    background-position: 100% 0;
-  }
-  to {
-    background-position: 0% 0;
-  }
-}
+.browse-skeleton .skeleton-block { background:color-mix(in srgb,var(--border) 65%,var(--panel)); }
 
 /* Skeletons belong only to missing artwork, never existing card text. */
  .browse-page[data-browse-scripted] .browse-cover[data-poster-loading]::after {
@@ -937,19 +910,11 @@
   position: absolute;
   inset: 0;
   border-radius: 6px;
-  background: linear-gradient(100deg, var(--panel) 35%, #243449 50%, var(--panel) 65%);
-  background-size: 400% 100%;
-  animation: browse-shimmer 1.5s linear infinite;
+  background:color-mix(in srgb,var(--border) 65%,var(--panel));
   pointer-events: none;
 }
 [data-browse-region][data-browse-loading="empty"] .browse-skeletons {
   margin-top: 0;
-}
-@media (prefers-reduced-motion: reduce) {
-  .browse-page[data-browse-scripted] .browse-cover[data-poster-loading]::after,
-  [data-browse-region][data-browse-loading] .browse-card ::after {
-    animation: none;
-  }
 }
 .browse-grid {
   transition: opacity 0.15s ease;

@@ -1,12 +1,14 @@
 .game-section-skeleton{display:grid;gap:14px;padding:4px 0;min-width:0}
 .game-section-skeleton[hidden]{display:none}
-.game-section-skeleton>span{display:block;height:20px;border-radius:4px;background:linear-gradient(100deg,var(--field) 35%,var(--panel) 50%,var(--field) 65%);background-size:400% 100%;animation:detail-skeleton 1.8s linear infinite}
+.game-section-skeleton span{display:block;height:20px;border-radius:4px;background:color-mix(in srgb,var(--border) 65%,var(--panel))}
 .game-section-skeleton>span:nth-child(2n){width:72%}
 .game-section-skeleton-price{grid-column:1/-1;min-height:166px;align-content:center}
 .game-section-skeleton-price>span:first-child{height:34px;width:55%}
 .game-section-skeleton-price>span:last-child{height:40px}
 .game-section-skeleton-requirements{grid-template-columns:repeat(2,minmax(0,1fr));gap:18px 28px;min-height:260px}
-.game-section-skeleton-times{min-height:94px}
+.game-section-skeleton-times{grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;padding:0}
+.game-section-skeleton-times span:first-child{width:75%;height:1.15em;font-size:13px}
+.game-section-skeleton-times span:last-child{width:45%;height:1.3em;margin-top:5px;font-size:12px}
 .game-section-skeleton-ratings{min-height:108px}
 .media-detail [data-game-section-error]{grid-column:1/-1}
 .media-detail [data-game-primary-facts]{display:grid;gap:15px}
@@ -14,4 +16,3 @@
 .media-detail .lab-genres[aria-busy=true]{min-height:28px}
 .media-detail .lab-genres[aria-busy=true]::before{content:'';width:180px;height:20px;border-radius:4px;background:var(--field)}
 @media(max-width:650px){.game-section-skeleton-requirements{grid-template-columns:minmax(0,1fr)}}
-@media(prefers-reduced-motion:reduce){.game-section-skeleton>span{animation:none}}

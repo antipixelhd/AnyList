@@ -9,6 +9,7 @@ import {visibleArtwork} from './visible-artwork';
 import {gameCastData,gameCharacterCards,keepCachedGameCredits,type GameCastData} from './game-cast-data';
 import {gameCastLanguages,gameCastLanguage,gameCastRows} from './game-credit-language';
 import {mountGamePersonImages} from './game-person-images';
+import {createLoadingReveal} from './loading-reveal';
 
 export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any = {}) {
   const whenVisible=visibleArtwork(signal);
@@ -18,6 +19,16 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
   reduced.addEventListener('change',stop,{signal});
   signal.addEventListener('abort',stop,{once:true});
   const containers = [...root.querySelectorAll<HTMLElement>('[data-cast-content]')];
+  const castReveals = new WeakMap<HTMLElement, ReturnType<typeof createLoadingReveal>>();
+  const markCastLoading = (container: HTMLElement) => {
+    const reveal = castReveals.get(container) ?? createLoadingReveal();
+    reveal.begin();
+    castReveals.set(container, reveal);
+  };
+  for (const container of containers) {
+    const grid = container.querySelector<HTMLElement>('[data-credit-visible]') ?? container;
+    if (grid.querySelector('.detail-person-skeleton')) markCastLoading(grid);
+  }
   const transitions = new Map(containers.map(container=>[container,createContentTransition(container,signal)]));
   const signatures = new WeakMap<HTMLElement,string>();
   const pending = new WeakMap<HTMLElement,()=>void>();
@@ -112,6 +123,7 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
         const skeleton=root.querySelector<HTMLTemplateElement>('[data-detail-person-skeleton]');
         if(skeleton)container.replaceChildren(...Array.from({length:8},()=>skeleton.content.cloneNode(true)));
       }
+      if (container.querySelector('.detail-person-skeleton')) markCastLoading(container);
       return;
     }
     const old=new Map([...container.querySelectorAll<HTMLElement>('[data-person-id]')].map(card=>[card.dataset.cardKey||`${card.dataset.personKind}:${card.dataset.personId}`,card]));
@@ -139,6 +151,9 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
     // Reuse portraits and cards already on screen instead of reloading them.
     cards.forEach((card,index)=>{if(container.children[index]!==card)container.insertBefore(card,container.children[index]||null);});
     [...container.children].filter(card=>!cards.includes(card as HTMLElement)).forEach(card=>card.remove());
+    const reveal = castReveals.get(container);
+    if (cards.length) reveal?.finish(container, signal);
+    castReveals.delete(container);
   };
   const deferred=new WeakMap<HTMLElement,ReturnType<typeof createProgressiveCredits<DetailPerson>>>();
   root.querySelectorAll<HTMLElement>('[data-credit-section]').forEach(section=>{

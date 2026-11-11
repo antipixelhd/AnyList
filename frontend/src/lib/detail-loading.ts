@@ -26,6 +26,7 @@ export class DetailHints {
 export const detailHints=new DetailHints();
 const safeImage=(path:string|null|undefined)=>path&&(path.startsWith('https://')||/^\/(?!\/)/.test(path))?path:undefined;
 export function fillDetailLoading(root:HTMLElement,hint:DetailHint){
+  root.dataset.loadingSince??=String(performance.now());
   root.dataset.loadingKind=hint.kind;
   root.dataset.loadingLibrary=String(!!hint.library);
   const title=root.querySelector<HTMLElement>('[data-loading-title]')!;
