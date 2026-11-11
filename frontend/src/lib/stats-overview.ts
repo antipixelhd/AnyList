@@ -214,8 +214,7 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
   function render(next:OverviewResponse,initial=false){
     if(!matchesSelection(next))return;
     const changedSection=paintedView!==`${domain}:${section}`;
-    const changedScope=next.overview&&next.overview.media_type!==response.overview?.media_type;
-    if(!initial&&next.status==='ready'&&panelActive(root)&&(changedSection||(changedScope&&section!=='overview'))){
+    if(!initial&&next.status==='ready'&&panelActive(root)&&changedSection){
       renderNow(next,true);
       settleNavigationContent(results,'tab',events.signal,4);
     }else renderNow(next,initial);

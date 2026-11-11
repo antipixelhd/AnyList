@@ -19,8 +19,10 @@ test('ready section changes commit before the entrance while ordinary overview u
   assert.deepEqual(actions.splice(0),[[ready,true],['tab',4]]);
   context.paintedView='screen:genres';context.render(ready);
   assert.deepEqual(actions.splice(0),[[ready,false]],'same-section refresh does not replay the tab transition');
-  context.section='overview';context.paintedView='screen:overview';
   const movie={status:'ready',overview:{media_type:'movie'}};
+  context.render(movie);
+  assert.deepEqual(actions.splice(0),[[movie,false]],'same-section media changes use card motion');
+  context.section='overview';context.paintedView='screen:overview';
   context.render(movie);
   assert.deepEqual(actions.splice(0),[[movie,false]],'overview media updates keep their original chart animation');
   context.matchesSelection=()=>false;context.render(ready);

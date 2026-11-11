@@ -40,10 +40,11 @@ test('sorting moves visible matches and reveals replacements in place', t => {
   update([second, offscreen, replacement, extra], true);
   assert.deepEqual(settled, ['second', 'offscreen', 'replacement']);
   assert(animations.every(animation => animation.startTime === 125));
+  assert(animations.every(animation => animation.timing.easing === 'cubic-bezier(.3,.12,.24,1)'));
   assert.deepEqual(animations.map(a => [a.name, a.frames[0], a.timing.duration]), [
-    ['second', { transform: 'translate(0px, 270px)', opacity: 1 }, 280],
-    ['offscreen', { transform: 'translate(0px, 4px)', opacity: .78 }, 220],
-    ['replacement', { transform: 'translate(0px, 4px)', opacity: .78 }, 220],
+    ['second', { transform: 'translate(0px, 270px)', opacity: 1 }, 360],
+    ['offscreen', { transform: 'translate(0px, 4px)', opacity: .78 }, 300],
+    ['replacement', { transform: 'translate(0px, 4px)', opacity: .78 }, 300],
   ]);
   update([second, offscreen, replacement, extra], true);
   assert.equal(animations.length, 3);

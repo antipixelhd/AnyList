@@ -34,7 +34,7 @@ export function createStatsCardMotion(grid: HTMLElement, reduced: MediaQueryList
       const animation = card.animate([
         { transform: `translate(${x}px, ${y}px)`, opacity },
         { transform: 'none', opacity: 1 },
-      ], { duration: old ? 280 : 220, easing: 'cubic-bezier(0,0,.2,1)' });
+      ], { duration: old ? 360 : 300, easing: 'cubic-bezier(.3,.12,.24,1)' });
       if (startTime !== null) animation.startTime = startTime;
       running.set(card, animation);
       const clear = () => { if (running.get(card) === animation) running.delete(card); };
