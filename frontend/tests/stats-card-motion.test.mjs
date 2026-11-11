@@ -5,6 +5,7 @@ import { createStatsCardMotion } from '../src/lib/stats-card-motion.ts';
 test('sorting moves visible matches and reveals replacements in place', t => {
   const grid = {
     isConnected: true,
+    ownerDocument: { timeline: { currentTime: 125 } },
     children: [],
     replaceChildren(...cards) { this.children = cards; },
   };
@@ -38,6 +39,7 @@ test('sorting moves visible matches and reveals replacements in place', t => {
   grid.children = [first, second, third, offscreen];
   update([second, offscreen, replacement, extra], true);
   assert.deepEqual(settled, ['second', 'offscreen', 'replacement']);
+  assert(animations.every(animation => animation.startTime === 125));
   assert.deepEqual(animations.map(a => [a.name, a.frames[0], a.timing.duration]), [
     ['second', { transform: 'translate(0px, 270px)', opacity: 1 }, 280],
     ['offscreen', { transform: 'translate(0px, 4px)', opacity: .78 }, 220],

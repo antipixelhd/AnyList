@@ -24,6 +24,7 @@ export function createStatsCardMotion(grid: HTMLElement, reduced: MediaQueryList
     const visible = cards.filter(card => inView(card.getBoundingClientRect()));
     visible.forEach(settleScroll);
     const positions = visible.map(card => ({ card, box: card.getBoundingClientRect() }));
+    const startTime = grid.ownerDocument.timeline.currentTime;
     for (const { card, box } of positions) {
       const old = previous.get(card);
       const x = old ? old.box.left - box.left : 0;
@@ -34,6 +35,7 @@ export function createStatsCardMotion(grid: HTMLElement, reduced: MediaQueryList
         { transform: `translate(${x}px, ${y}px)`, opacity },
         { transform: 'none', opacity: 1 },
       ], { duration: old ? 280 : 220, easing: 'cubic-bezier(0,0,.2,1)' });
+      if (startTime !== null) animation.startTime = startTime;
       running.set(card, animation);
       const clear = () => { if (running.get(card) === animation) running.delete(card); };
       void animation.finished.then(clear, clear);

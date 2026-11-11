@@ -51,6 +51,10 @@ export function initializeScrollMotion(
       ],
       { ...(options.scaleEntrance ? scaleTiming : { duration: 260, easing: "cubic-bezier(.25,.1,.25,1)" }), fill: "both" },
     );
+    if (options.prepareBeforeEntry === false) {
+      const startTime = element.ownerDocument.timeline.currentTime;
+      if (startTime !== null) animation.startTime = startTime;
+    }
     pending.set(element, animation);
     animation.addEventListener("finish", () => complete(element), {
       once: true,

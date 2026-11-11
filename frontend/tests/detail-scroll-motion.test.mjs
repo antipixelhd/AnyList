@@ -10,6 +10,7 @@ function preview(t, {mobile = false, reduced = false, loading = false, initialY 
   motion.matches = reduced;
   input.matches = mobile;
   const element = {
+    ownerDocument: { timeline: { currentTime: 100 } },
     attributes: new Set(),
     setAttribute(name) { this.attributes.add(name); },
     hasAttribute(name) { return this.attributes.has(name); },
@@ -114,6 +115,7 @@ test('Statistics cards stay painted until scrolling and can hand an active entra
   assert.equal(p.classes.size, 0, 'an approaching card is not held in a dimmed state');
   p.scroll(410);
   assert.equal(p.animations.length, 1);
+  assert.equal(p.animations[0].startTime, 100);
   p.settle();
   assert.equal(p.animations[0].cancelled, true);
   assert.equal(p.classes.size, 0);
