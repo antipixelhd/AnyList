@@ -4,13 +4,14 @@ import { genreSort, genreTime } from './stats-genres-data';
 import { responsiveArtwork } from './responsive-artwork';
 
 import { carousel } from './stats-carousel';
+import { createStatsCardMotion } from './stats-card-motion';
 
 interface GroupOptions<T extends MediaGroup> {
   section: 'genres' | 'studios'; prefix: 'genre' | 'studio'; parameter: string;
   rows: (data: Overview) => T[];
   href: (row: T, data: Overview) => string;
 }
-export function mountMediaGroups<T extends MediaGroup>(root: HTMLElement, options: GroupOptions<T>) {
+export function mountMediaGroups<T extends MediaGroup>(root: HTMLElement, options: GroupOptions<T>, settleScroll: (card: HTMLElement) => void) {
   const { section, prefix, parameter } = options;
   const grid = root.querySelector<HTMLElement>(`[data-${section}-grid]`)!;
   const cardTemplate = root.querySelector<HTMLTemplateElement>(`[data-${prefix}-card-template]`)!;
@@ -18,8 +19,7 @@ export function mountMediaGroups<T extends MediaGroup>(root: HTMLElement, option
   const reduced = matchMedia('(prefers-reduced-motion: reduce)'), events = new AbortController();
   const carousels = new Map<HTMLElement, ReturnType<typeof carousel>>();
   let overview: Overview | null = null;
-  const animations = new Map<HTMLElement, Animation>();
-  reduced.addEventListener('change', () => { animations.forEach(a => a.cancel()); animations.clear(); }, {signal:events.signal});
+  const updateCards = createStatsCardMotion(grid, reduced, events.signal, settleScroll);
   const query = <T extends HTMLElement = HTMLElement>(card: HTMLElement, selector: string) => card.querySelector<T>(selector)!;
   function createCard(row: T) {
     const card = cardTemplate.content.firstElementChild!.cloneNode(true) as HTMLElement;
@@ -46,8 +46,6 @@ export function mountMediaGroups<T extends MediaGroup>(root: HTMLElement, option
   }
   function render(next: Overview | null, animate = false) {
     overview = next;
-    const before = new Map(animate ? [...grid.children].map(card => [card, card.getBoundingClientRect()] as const) : []);
-    animations.forEach(animation => animation.cancel()); animations.clear();
     const existing = new Map([...grid.querySelectorAll<HTMLElement>(`[data-${prefix}-key]`)].map(card => [card.dataset[`${prefix}Key`], card]));
     const rows = next ? options.rows(next) : [];
     const cards = rows.map((row, index) => {
@@ -58,16 +56,10 @@ export function mountMediaGroups<T extends MediaGroup>(root: HTMLElement, option
       return card;
     });
     for (const [card, controller] of carousels) if (!cards.includes(card)) { controller.stop(); carousels.delete(card); }
-    grid.replaceChildren(...cards);
+    updateCards(cards, animate && (root.dataset.statsPanelSection || root.dataset.section) === section);
     cards.forEach(card => {
       if (!carousels.has(card)) carousels.set(card, carousel(query(card, '[data-genre-track]'), reduced));
       else carousels.get(card)!.bounds();
-      if (animate && !reduced.matches && (root.dataset.statsPanelSection||root.dataset.section)===section) {
-        const old = before.get(card), now = card.getBoundingClientRect();
-        const frames = old ? [{ transform: `translate(${old.left - now.left}px,${old.top - now.top}px)` }, { transform: 'translate(0,0)' }] : [{ opacity: 0 }, { opacity: 1 }];
-        const animation = card.animate(frames, { duration: 600, easing: 'cubic-bezier(.22,.61,.36,1)' }); animations.set(card, animation);
-        animation.onfinish = () => animations.delete(card);
-      }
     });
     root.querySelector<HTMLElement>(`[data-${section}-empty]`)!.hidden = rows.length > 0;
     root.querySelectorAll<HTMLButtonElement>(`button[data-${prefix}-sort]`).forEach(button => button.setAttribute('aria-pressed', String(button.dataset[`${prefix}Sort`] === root.dataset[`${prefix}Sort`])));
@@ -85,5 +77,5 @@ export function mountMediaGroups<T extends MediaGroup>(root: HTMLElement, option
       carousels.get(card)?.scroll(Number(button.dataset[`${prefix}Scroll`]));
     }
   }, { signal: events.signal });
-  return { render, stop() { events.abort(); animations.forEach(a => a.cancel()); animations.clear(); carousels.forEach(c => c.stop()); carousels.clear(); } };
+  return { render, stop() { events.abort(); carousels.forEach(c => c.stop()); carousels.clear(); } };
 }

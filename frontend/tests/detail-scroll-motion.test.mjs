@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {initializeScrollMotion} from '../src/components/dev/detail-scroll-motion.ts';
 
-function preview(t, {mobile = false, reduced = false, loading = false, initialY = 380, animateInitial = true, animateVisibleArrivals, downwardOnly = false, scaleEntrance = false, once = false, appearedAttribute} = {}) {
+function preview(t, {mobile = false, reduced = false, loading = false, initialY = 380, animateInitial = true, animateVisibleArrivals, downwardOnly = false, scaleEntrance = false, once = false, appearedAttribute, prepareBeforeEntry} = {}) {
   let now = 0, y = initialY, hidden = false, focused = false, nextFrame = 0;
   const frames = new Map(), classes = new Set(), animations = [];
   const controller = new AbortController();
@@ -54,10 +54,10 @@ function preview(t, {mobile = false, reduced = false, loading = false, initialY 
       else delete globalThis[key];
     }
   });
-  initializeScrollMotion(root, controller.signal, ".lab-module", "lab-scroll-reveal", {animateInitial, animateVisibleArrivals, downwardOnly, scaleEntrance, once, appearedAttribute});
+  const settle = initializeScrollMotion(root, controller.signal, ".lab-module", "lab-scroll-reveal", {animateInitial, animateVisibleArrivals, downwardOnly, scaleEntrance, once, appearedAttribute, prepareBeforeEntry});
   const flush = () => {for (const [id, callback] of frames) {frames.delete(id);callback();}};
   return {
-    classes, animations, observers, controller,
+    classes, animations, observers, controller, settle: () => settle(element),
     append(alreadyAppeared = false) {
       const added={...element, attributes: new Set()};
       if (alreadyAppeared) added.setAttribute(appearedAttribute, '');
@@ -105,6 +105,21 @@ test('visible arrivals stay painted while offscreen modules retain their scroll 
   assert.equal(p.animations.length, 2);
   assert.equal(p.animations[0].keyframes[0].opacity, .2);
   assert.equal(p.animations[0].options.duration, 260);
+});
+
+test('Statistics cards stay painted until scrolling and can hand an active entrance off to a sort', t => {
+  const p = preview(t, {prepareBeforeEntry: false, once: true, downwardOnly: true});
+  assert.equal(p.classes.size, 0);
+  p.scroll(395);
+  assert.equal(p.classes.size, 0, 'an approaching card is not held in a dimmed state');
+  p.scroll(410);
+  assert.equal(p.animations.length, 1);
+  p.settle();
+  assert.equal(p.animations[0].cancelled, true);
+  assert.equal(p.classes.size, 0);
+  p.scroll(0);
+  p.scroll(450);
+  assert.equal(p.animations.length, 1);
 });
 
 test('restored contributor scroll positions stay painted while new cards still arrive once', t => {

@@ -98,9 +98,6 @@ html.light .overview-metrics button[aria-pressed=true] { color:#fff; }
   .overview-pie { margin:0; }
   .overview-plot { height:215px; }
 }
-.stats-scroll-reveal { opacity:.2; translate:0 12px; }
-@media(max-width:650px),(pointer:coarse) { .stats-scroll-reveal { translate:0 8px; } }
-@media(prefers-reduced-motion:reduce) { .stats-scroll-reveal { translate:none; opacity:1; } }
 @media(max-width:450px) {
   .overview-heading { align-items:start; flex-direction:column; gap:12px; margin-bottom:26px; }
   .overview-totals { margin-bottom:32px; }

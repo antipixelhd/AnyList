@@ -48,10 +48,12 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
     }
   }, {capture:true, signal:events.signal});
   mountStatisticsNavigation(root, events.signal);
-  const genres = mountGenres(root);
-  const actors = mountActors(root);
-  const studios = mountStudios(root);
-  const staff = mountStaff(root);
+  let settleScrollEntrance: ReturnType<typeof initializeScrollMotion>;
+  const settleCardScroll = (card: HTMLElement) => settleScrollEntrance?.(card);
+  const genres = mountGenres(root, settleCardScroll);
+  const actors = mountActors(root, settleCardScroll);
+  const studios = mountStudios(root, settleCardScroll);
+  const staff = mountStaff(root, settleCardScroll);
   let section=statisticsSection(domain,root.dataset.section||'overview');
   let paintedView=`${domain}:${section}`;
   const rawGame=()=> (response as UnifiedStatistics).game;
@@ -480,10 +482,12 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
   loader.seed(currentSelection(),response as UnifiedStatistics);
   document.addEventListener('anylist:cache-invalidated',refresh,{signal:events.signal});
   render(response,true);updateDomainControls();scheduleSibling();
-  const mountScrollEntrance = () => initializeScrollMotion(root, events.signal,
-    '.stats-genre-card,.overview-chart,.overview-distribution', 'stats-scroll-reveal', {
-      animateInitial:false, animateVisibleArrivals:false, downwardOnly:true, once:true,
-    });
+  const mountScrollEntrance = () => {
+    settleScrollEntrance = initializeScrollMotion(root, events.signal,
+      '.stats-genre-card,.overview-chart,.overview-distribution', 'stats-scroll-reveal', {
+        animateInitial:false, animateVisibleArrivals:false, downwardOnly:true, once:true, prepareBeforeEntry:false,
+      });
+  };
   if (panelActive(root)) mountScrollEntrance();
   else root.closest('[data-profile-url]')?.addEventListener('anylist:panel-active', mountScrollEntrance, {once:true,signal:events.signal});
 }
