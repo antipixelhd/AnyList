@@ -2,6 +2,7 @@ import {statisticsDomainUrl} from './statistics-domains';
 import {preparePanelStyles,panelLayoutFrame} from './panel-readiness';
 import {profilePanelKey,setPanelWaiting} from './profile-panel';
 import {bindPredictionIntent,predictionManifest} from './predictive-loading';
+import {profileLoadingFrame} from './detail-loading';
 
 type Panel={root:HTMLElement;url:string;title:string;ready:boolean;kind:string;styles?:Document;initializing?:Promise<void>;preparing?:Promise<void>};
 let session:AbortController|undefined;
@@ -78,16 +79,17 @@ function setup(){
   let progressRunning=false;
   const stopProgress=()=>{if(progressRunning){progressRunning=false;document.dispatchEvent(new Event('anylist:route-progress-end'));}};
   signal.addEventListener('abort',stopProgress,{once:true});
-  function select(key:string,url:string){
-    if(key===wanted)return;
+  function select(key:string,url:string,retry=false){
+    if(key===wanted&&!retry)return;
     stopProgress();
     document.dispatchEvent(new Event('anylist:profile-tab-changed'));
     if(shown===panels.get(active)?.root){positions.set(active,scrollY);shown.dataset.profileUrl=location.href;shown.dispatchEvent(new Event('anylist:panel-inactive'));}
     wanted=key;update();
     host!.querySelector('[data-profile-switch-error]')?.remove();
-    const source=shown;
+    const source=panels.get(active)!.root;
     nav.setAttribute('aria-busy','true');setPanelWaiting(source,true);
     const cached=panels.get(key);
+    if(!cached?.ready){const loading=profileLoadingFrame(key);loading.dataset.profileUrl=url;show(loading);}
     if(!cached?.ready){progressRunning=true;document.dispatchEvent(new Event('anylist:route-progress-start'));}
     const activate=async(panel:Panel)=>{
       if(signal.aborted||wanted!==key||document.body.dataset.cacheUser!==viewer)return;
@@ -128,11 +130,10 @@ function setup(){
     };
     const failed=()=>{
       if(signal.aborted||wanted!==key)return;
-      stopProgress();setPanelWaiting(source,false);if(shown!==source)show(source);window.scrollTo(0,positions.get(active)??scrollY);nav.removeAttribute('aria-busy');wanted=active;update();
+      stopProgress();setPanelWaiting(source,false);nav.removeAttribute('aria-busy');update();
       const error=document.createElement('div');error.dataset.profileSwitchError='';error.className='page-width error-message';error.setAttribute('role','alert');
       const retry=document.createElement('button');retry.className='button-secondary';retry.textContent='Try again';
-      retry.addEventListener('click',()=>select(key,url),{signal});error.append('Unable to load this section. ',retry);host!.append(error);
-      shown.dispatchEvent(new Event('anylist:panel-active'));
+      retry.addEventListener('click',()=>select(key,url,true),{signal});error.append('Unable to load this section. ',retry);shown.prepend(error);
     };
     if(cached?.ready){void activate(cached).catch(failed);return;}
     void read(key,url).then(activate).catch(failed);

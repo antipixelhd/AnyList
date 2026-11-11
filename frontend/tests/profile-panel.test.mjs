@@ -47,38 +47,38 @@ test('reclicking a selected or pending profile tab cannot escape into full-page 
 });
 
 
-test('a failed optimistic statistics load restores the source list scroll position',()=>{
+test('a failed statistics load keeps its destination frame and leaves the retained source usable',()=>{
   const sourceText=readFileSync(new URL('../src/lib/profile-shell.ts',import.meta.url),'utf8');
   const start=sourceText.indexOf('    const failed=()=>{');
   const snippet=sourceText.slice(start,sourceText.indexOf('    if(cached?.ready)',start));
-  const source={dispatchEvent(){}},preview={},scrolls=[],states=[];
+  const source={dispatchEvent(){}},preview={prepend(){}},scrolls=[],states=[];
   const context={stopProgress(){},signal:new AbortController().signal,wanted:'stats',key:'stats',active:'movies',source,shown:preview,
     positions:new Map([['movies',1250]]),scrollY:150,window:{scrollTo:(x,y)=>scrolls.push(y)},
     setPanelWaiting:(root,on)=>states.push([root,on]),show:root=>context.shown=root,nav:{removeAttribute(){}},update(){},
     document:{createElement:()=>({dataset:{},setAttribute(){},addEventListener(){},append(){}})},host:{append(){}},Event,select(){},url:'/user/alex/stats',
   };
   runInNewContext(stripTypeScriptTypes(snippet)+';this.failed=failed;',context);context.failed();
-  assert.equal(context.shown,source);assert.equal(context.wanted,'movies');assert.deepEqual(scrolls,[1250]);assert.deepEqual(states,[[source,false]]);
+  assert.equal(context.shown,preview);assert.equal(context.wanted,'stats');assert.deepEqual(scrolls,[]);assert.deepEqual(states,[[source,false]]);
 });
 
-for(const destination of ['games','stats','stats/games'])test(`a cold ${destination} selection retains the source and uses shared page progress`,async()=>{
+for(const destination of ['games','stats','stats/games'])test(`a cold ${destination} selection shows its frame and keeps shared page progress`,async()=>{
   const sourceText=readFileSync(new URL('../src/lib/profile-shell.ts',import.meta.url),'utf8');
-  const start=sourceText.indexOf('  function select(key:string,url:string)');
+  const start=sourceText.indexOf('  function select(');
   const snippet=sourceText.slice(start,sourceText.indexOf('  const target=',start));
-  const source={dataset:{},matches:()=>false,dispatchEvent(){}},preview={kind:'games'},waiting=[],positions=new Map();let rejectRead;
+  const source={dataset:{},matches:()=>false,dispatchEvent(){}},preview={kind:'games',dataset:{},prepend(){}},waiting=[],positions=new Map();let rejectRead;
   const events=[];
   const context={URL,changeStatistics:{cancel(){}},stopProgress(){},progressRunning:false,signal:new AbortController().signal,wanted:'movies',active:'movies',shown:source,positions,scrollY:780,
-    panels:new Map([['movies',{root:source,ready:true}]]),loadingTemplates:new Map(),
+    panels:new Map([['movies',{root:source,ready:true}]]),loadingTemplates:new Map(),profileLoadingFrame:()=>preview,
     read:()=>new Promise((resolve,reject)=>rejectRead=reject),setPanelWaiting:(root,on)=>waiting.push([root,on]),update(){},
     show:root=>context.shown=root,nav:{setAttribute(){},removeAttribute(){},getBoundingClientRect:()=>({top:-600})},
     host:{querySelector:()=>null,append(){}},window:{scrollTo(){}},location:{href:'https://example.test/user/alex/movies'},
     document:{dispatchEvent:event=>events.push(event.type),createElement:()=>({dataset:{},setAttribute(){},addEventListener(){},append(){}})},Event,
   };
   runInNewContext(stripTypeScriptTypes(snippet)+';this.select=select;',context);
-  context.select(destination);assert.equal(context.shown,source);assert(events.includes('anylist:route-progress-start'));assert.equal(context.wanted,destination);assert.equal(positions.get('movies'),780);
+  context.select(destination);assert.equal(context.shown,preview);assert(events.includes('anylist:route-progress-start'));assert.equal(context.wanted,destination);assert.equal(positions.get('movies'),780);
   assert.deepEqual(waiting,[[source,true]]);
   rejectRead(new Error('unavailable'));await new Promise(setImmediate);
-  assert.equal(context.shown,source);assert.equal(context.wanted,'movies');assert.deepEqual(waiting.at(-1),[source,false]);
+  assert.equal(context.shown,preview);assert.equal(context.wanted,destination);assert.deepEqual(waiting.at(-1),[source,false]);
 });
 
 test('the statistics controller owns its media filter even when the shell entered on Games',()=>{

@@ -9,6 +9,7 @@ export function createBrowseCard(item:BrowseItem,template:HTMLTemplateElement,si
     true,
   ) as HTMLElement;
   card.dataset.key = browseCardKey(item);
+  card.dataset.detailKind=item.type;
   const href=browseCardHref(item)||'#';
   card
     .querySelectorAll<HTMLAnchorElement>("a")

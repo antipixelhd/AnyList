@@ -1,0 +1,14 @@
+---
+import DetailLoadingFrame from './DetailLoadingFrame.astro';
+import '../styles/detail-frame-geometry.css';
+import '../styles/detail-background.css';
+import '../styles/loading-frames.css';
+---
+<template data-detail-loading-template><DetailLoadingFrame /></template>
+<template data-profile-loading-template>
+  <section class="profile-loading-frame page-width" data-profile-loading aria-busy="true" aria-label="Loading section">
+    <div data-loading-profile-list class="loading-profile-list" aria-hidden="true"><aside><div class="loading-lines"><span></span><span></span><span></span></div><div class="loading-lines"><span></span><span></span></div></aside><div><div class="loading-surface loading-list-heading"></div>{Array.from({length:7},()=> <div class="loading-list-row"><span class="loading-surface"></span><div class="loading-lines"><span></span><span></span></div></div>)}</div></div>
+    <div data-loading-profile-stats class="loading-profile-stats" aria-hidden="true" hidden><div class="loading-surface loading-list-heading"></div><div class="loading-stat-cards">{Array.from({length:3},()=> <div class="loading-surface"></div>)}</div><div class="loading-surface loading-chart"></div></div>
+    <span role="status" class="loading-announcement">Loading section…</span>
+  </section>
+</template>

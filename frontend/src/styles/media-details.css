@@ -7,6 +7,10 @@
 .media-detail :is(.lab-kicker,.lab-genres) a:focus-visible { outline:none; color:var(--bright); background:color-mix(in srgb,var(--blue) 20%,var(--panel)); }
 .media-detail :is(.lab-hero-image,.lab-heading,.lab-panel) { animation:none; }
 .media-detail .lab-hero { overflow:visible; background:none; }
+.media-detail.concept-marquee .lab-hero{height:var(--detail-hero-height)}
+.media-detail.concept-marquee .lab-hero-content{gap:var(--detail-identity-gap)}
+.media-detail.concept-marquee .lab-hero-content .lab-hero-poster{width:var(--detail-poster-width);height:auto;aspect-ratio:2/3}
+.media-detail.concept-marquee .lab-heading h1{font-size:var(--detail-title-size)}
 .media-detail .lab-hero-picture { display:contents; }
 .media-detail.concept-marquee .lab-hero-content { padding-bottom:16px; }
 .media-detail.concept-marquee .lab-layout { padding-top:16px; }
@@ -239,15 +243,15 @@ body.tracker .media-detail :is(.lab-public-score,.lab-game-offer) h2 { font-size
 @media (max-width:650px) {
   /* Folio opening: the cover overlaps a short backdrop, while the heading
      grows naturally below it instead of fitting inside a fixed hero. */
-  .media-detail.concept-marquee .lab-hero { height:auto; background:none; }
+  .media-detail.concept-marquee .lab-hero { height:var(--detail-hero-height); background:none; }
   .media-detail.concept-marquee .lab-hero-image,.media-detail.concept-marquee .lab-hero-shade { height:270px; bottom:auto; }
   .media-detail.concept-marquee .lab-hero-image { height:290px; }
-  .media-detail.concept-marquee .lab-hero-content { display:grid; grid-template-columns:108px minmax(0,1fr); align-items:start; gap:20px; height:auto; padding:145px 0 0; }
-  .media-detail.concept-marquee .lab-hero-content .lab-hero-poster { width:108px; height:162px; align-self:start; }
+  .media-detail.concept-marquee .lab-hero-content { display:grid; grid-template-columns:var(--detail-poster-width) minmax(0,1fr); align-items:start; gap:var(--detail-identity-gap); height:auto; padding:145px 0 0; }
+  .media-detail.concept-marquee .lab-hero-content .lab-hero-poster { width:var(--detail-poster-width); height:auto; align-self:start; }
   .media-detail.concept-marquee .lab-heading { margin-top:39px; padding:0; }
   .media-detail.concept-marquee[data-has-backdrop=false] .lab-hero-content { padding-top:28px; }
   .media-detail.concept-marquee[data-has-backdrop=false] .lab-heading { margin-top:0; }
-  .media-detail.concept-marquee .lab-heading h1 { font-size:3rem; line-height:1.12; margin:8px 0; }
+  .media-detail.concept-marquee .lab-heading h1 { font-size:var(--detail-title-size); line-height:1.12; margin:8px 0; }
   .media-detail.concept-marquee .lab-heading .lab-kicker { gap:7px; line-height:1.8; }
   .media-detail.concept-marquee .lab-tagline { font-size:1.2rem; }
   .media-detail.concept-marquee .lab-hero-art-button { position:absolute; top:12px; bottom:auto; right:0; }

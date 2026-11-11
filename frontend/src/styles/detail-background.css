@@ -1,5 +1,6 @@
 /* Shared artwork-to-page transition for media and people detail pages. */
 .media-detail.concept-marquee .lab-hero-shade,
+.detail-loading-frame .loading-detail-shade,
 .contributor-page.is-person .contributor-banner-shade {
   /* Sample a smoothstep curve every 2.5% to keep slope changes imperceptible.
      Reach page color early, with a flat tail before the covered bottom strip. */
@@ -39,10 +40,12 @@
   background-size:100% calc(100% - 20px); background-repeat:no-repeat;
 }
 .media-detail .lab-hero-shade::before,
+.detail-loading-frame .loading-detail-shade::before,
 .contributor-page.is-person .contributor-banner-shade::before {
   content:''; position:absolute; inset:auto 0 0; height:20px; background:var(--bg);
 }
 .media-detail .lab-hero-shade::after,
+.detail-loading-frame .loading-detail-shade::after,
 .contributor-page.is-person .contributor-banner-shade::after {
   /* Subtle static dithering breaks up 8-bit gradient bands. Fade it out before
      the solid tail so the artwork boundary still matches page color exactly. */

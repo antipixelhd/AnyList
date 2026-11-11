@@ -1,0 +1,18 @@
+---
+const {kind='unknown'}=Astro.props;
+---
+<section class="detail-loading-frame" data-detail-loading data-loading-kind={kind} aria-busy="true" aria-label="Loading details">
+  <div class="loading-detail-hero">
+    <img data-loading-backdrop alt="" hidden />
+    <div class="loading-detail-shade"></div>
+    <div class="loading-detail-identity">
+      <div class="loading-detail-poster loading-surface"><img data-loading-poster alt="" hidden /></div>
+      <div class="loading-detail-heading"><span data-loading-kind-label>{kind==='game'?'Game':kind==='series'?'Series':kind==='movie'?'Movie':''}</span><h1 data-loading-title><span class="loading-surface loading-title-line" aria-hidden="true"></span></h1><span class="loading-surface loading-meta-line" aria-hidden="true"></span></div>
+    </div>
+  </div>
+  <div class="loading-detail-feedback"><p role="status" data-loading-status class="loading-announcement">Loading details…</p><button type="button" class="button-secondary" data-loading-retry hidden>Try again</button><a href="/browse" data-loading-back>Back to Browse</a></div>
+  <div class="loading-detail-layout" aria-hidden="true">
+    <aside><div class="loading-surface loading-control"></div><div class="loading-facts"><span></span><span></span><span></span><span></span></div></aside>
+    <div><div class="loading-detail-tabs"><span>Overview</span><span data-loading-series hidden={kind!=='series'}>Seasons</span></div><div class="loading-detail-grid"><div><h2>Overview</h2><div class="loading-lines"><span></span><span></span><span></span></div><div class="loading-secondary"><h2 data-loading-secondary-label>{kind==='game'?'Play time':'Cast'}</h2><div class="loading-surface loading-module"></div></div></div><div><h2>Ratings</h2><div class="loading-surface loading-module"></div></div></div></div>
+  </div>
+</section>

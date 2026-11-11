@@ -93,6 +93,7 @@ export function mountQuickSearch() {
   function resultNode(item: SearchResult) {
     const row = document.createElement('div');
     row.className = 'quick-search-result';
+    row.dataset.detailKind=item.type;
     const link = document.createElement('a');
     link.className = 'quick-search-result-link';
     link.href = resultUrl(item);

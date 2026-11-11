@@ -23,6 +23,7 @@ const href=browseCardHref(item);
 <article
   class="browse-card"
   data-browse-card
+  data-detail-kind={item.type}
   data-key={browseCardKey(item)}
   data-state={state || undefined}
   data-work-key={item.key || undefined}
