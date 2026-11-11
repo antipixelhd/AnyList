@@ -5,25 +5,22 @@ import ProfileHeader from '../../../components/ProfileHeader.astro';
 import {tracker,trackerFailure} from '../../../lib/tracker';
 import {profileMediaGroups} from '../../../lib/profile-media-groups';
 import {viewerMediaPreferences} from '../../../lib/viewer-media-preferences';
-import {profileMediaDomains} from '../../../lib/media-domains';
 import '../../../styles/profile-overview.css';
 import '../../../styles/favorites-page.css';
 
-let profile: any = null, error = '',favoriteGames:any=null,screenFavorites:any[]=[];
+type Favorite = {id:number;type:string;title:string;poster:string|null};
+const screenPageSize = 30;
+let profile: any = null, error = '',favoriteGames:{items:Favorite[];total:number}|null=null,screenFavorites:Favorite[]=[];
+Astro.response.headers.set('Cache-Control','private, no-store');
 const preferences=await viewerMediaPreferences(Astro.locals);
 const requestedPage=Number(Astro.url.searchParams.get('page')||1);
 const page=Number.isSafeInteger(requestedPage)&&requestedPage>0&&requestedPage<=100000?requestedPage:1;
 try {
-  profile = await tracker(`people/${encodeURIComponent(Astro.params.username!)}/header`, Astro.locals.token);
-  const domains=profileMediaDomains(profile.owner,preferences);
-  const [screen,games]=await Promise.allSettled([
-    domains.show_movies_series?tracker(`people/${encodeURIComponent(Astro.params.username!)}`,Astro.locals.token):Promise.resolve(null),
-    domains.show_games?tracker(`games/users/${encodeURIComponent(Astro.params.username!)}/favorites?offset=${(page-1)*50}&limit=50`,Astro.locals.token):Promise.resolve(null),
-  ]);
-  if(screen.status==='fulfilled')screenFavorites=screen.value?.favorites||[];
-  else error='Movie/Series favorites are temporarily unavailable.';
-  if(games.status==='fulfilled')favoriteGames=games.value;
-  else error+=(error?' ':'')+'Games favorites are temporarily unavailable.';
+  const query = new URLSearchParams({show_screen:String(preferences.show_movies_series),show_games:String(preferences.show_games),game_offset:String((page-1)*50)});
+  const favorites = await tracker(`people/${encodeURIComponent(Astro.params.username!)}/favorites?${query}`, Astro.locals.token);
+  profile = favorites.profile;
+  screenFavorites = favorites.screen;
+  favoriteGames = favorites.games;
   if(favoriteGames){
     const last=Math.max(1,Math.ceil(favoriteGames.total/50));
     if(page>last)return Astro.redirect(`${Astro.url.pathname}?page=${last}#game-favorites`);
@@ -32,21 +29,29 @@ try {
   const failure=trackerFailure(cause);error=failure.message;
   profile=null;Astro.response.status=failure.status;
 }
-const games=(favoriteGames?.results||[]).map((state:any)=>({id:state.subject.catalogue_id,type:'game',title:state.title,poster:state.image_url}));
-const favorites:any[]=[...screenFavorites,...games];
+const favorites=[...screenFavorites,...(favoriteGames?.items||[])];
+const gamePages = Math.ceil((favoriteGames?.total ?? 0) / 50);
 const favoriteGroups = profileMediaGroups(favorites, profile?.combine_lists !== false);
+const showAll = Astro.url.searchParams.get('all') === '1';
+const allUrl = new URL(Astro.url);allUrl.searchParams.set('all','1');
+const remaining = Object.fromEntries(favoriteGroups.filter(group=>!showAll&&group.type!=='game'&&group.items.length>screenPageSize)
+  .map(group=>[group.type,group.items.slice(screenPageSize)]));
 
 ---
 <Tracker title={`${profile?.display_name ?? 'Profile'} Favorites`} ownerProfileColor={profile?.profile_color} ownerIsViewer={profile?.owner === true}>
   {profile ? <>
     <ProfileHeader profile={profile} active="favorites" />
     <div class="page-width favorites-page" data-profile-tab-content data-profile-owner={String(profile.owner === true)} data-favorite-domain="mixed" data-favorites-owner={String(profile.owner)}>
+      {Object.keys(remaining).length>0&&<>
+        <script type="application/json" data-favorites-remaining set:html={JSON.stringify(remaining).replaceAll('<','\\u003c')} />
+        <template data-favorites-card-template><FavoriteCard item={{id:0,type:'movie',title:'',poster:null}} owner={profile.owner} /></template>
+      </>}
 
       <p class="error-message" role="alert" data-favorites-error hidden={!error}>{error}</p>
       <p class="favorites-instructions" data-favorites-instructions hidden>Drag cards to arrange them. Focus a card and use the arrow keys to move it.</p>
       <span class="sr-only" aria-live="polite" data-favorites-feedback></span>
       <div class="favorites-groups" data-favorites-grid hidden={favorites.length === 0}>
-        {favoriteGroups.map((group, index) => <section class="favorites-group" data-favorites-group id={group.type==='game'?'game-favorites':undefined}>
+        {favoriteGroups.map((group, index) => <section class="favorites-group" data-favorites-group={group.type} id={group.type==='game'?'game-favorites':undefined}>
           <div class="favorites-group-heading">
             <h2 class="favorites-group-title">{group.heading}</h2>
             {profile.owner && index === 0 && <div class="favorites-actions" hidden={favorites.length === 0}>
@@ -55,8 +60,9 @@ const favoriteGroups = profileMediaGroups(favorites, profile?.combine_lists !== 
             </div>}
           </div>
           <div class="favorite-posters favorites-grid">
-        {group.items.map(item => <FavoriteCard item={item} owner={profile.owner}/>)}
+        {(showAll||group.type==='game'?group.items:group.items.slice(0,screenPageSize)).map(item => <FavoriteCard item={item} owner={profile.owner}/>)}
           </div>
+          {remaining[group.type]&&<a href={allUrl.pathname+allUrl.search} class="button-secondary favorites-more" data-favorites-more={screenPageSize} aria-label={`Show more ${group.heading} favorites`}>Show more</a>}
         </section>)}
       </div>
       <div class="empty-state" data-favorites-empty hidden={favorites.length > 0||!!error}>
@@ -64,7 +70,7 @@ const favoriteGroups = profileMediaGroups(favorites, profile?.combine_lists !== 
         <p>{profile.owner ? 'Mark a title as a favorite to see it here.' : `${profile.display_name} has not added any favorites.`}</p>
         {profile.owner && <a class="button-primary" href="/browse">Browse titles</a>}
       </div>
-      {favoriteGames?.total>50&&<nav class="game-list-pagination" aria-label="Favorite games pages">{page>1?<a class="button-secondary" href={`${Astro.url.pathname}?page=${page-1}#game-favorites`} rel="prev">Previous</a>:<span/>}<span>Page {page} of {Math.ceil(favoriteGames.total/50)}</span>{page*50<favoriteGames.total?<a class="button-secondary" href={`${Astro.url.pathname}?page=${page+1}#game-favorites`} rel="next">Next</a>:<span/>}</nav>}
+      {gamePages>1&&<nav class="game-list-pagination" aria-label="Favorite games pages">{page>1?<a class="button-secondary" href={`${Astro.url.pathname}?page=${page-1}#game-favorites`} rel="prev">Previous</a>:<span/>}<span>Page {page} of {gamePages}</span>{page<gamePages?<a class="button-secondary" href={`${Astro.url.pathname}?page=${page+1}#game-favorites`} rel="next">Next</a>:<span/>}</nav>}
     </div>
   </> : <div class="page-width"><p class="error-message" role="alert">{error}</p></div>}
 </Tracker>
@@ -72,6 +78,9 @@ const favoriteGroups = profileMediaGroups(favorites, profile?.combine_lists !== 
 import {favoriteKey,favoriteOrderChanges,favoriteOrderSaved} from '../../../lib/favorite-order';
 import {showActionFailure} from '../../../lib/action-failure';
 import {editorStore,type EditorTitle} from '../../../lib/editor-store';
+import {responsiveArtwork} from '../../../lib/responsive-artwork';
+import {trackedWorkHref} from '../../../lib/tracker';
+type Favorite = {id:number;type:string;title:string;poster:string|null};
 let favoritePageListeners: AbortController;
 function mountFavorites() {
   favoritePageListeners?.abort();
@@ -91,6 +100,58 @@ function mountFavorites() {
   let refreshFavorites = () => {};
   const cards = () => [...grid.querySelectorAll<HTMLElement>('[data-favorite-card]')];
   const order = () => cards().map(cardKey);
+  const groups = [...grid.querySelectorAll<HTMLElement>('[data-favorites-group]')];
+  const remaining = JSON.parse(page.querySelector('[data-favorites-remaining]')?.textContent || '{}') as Record<string, Favorite[]>;
+  const cardTemplate = page.querySelector<HTMLTemplateElement>('[data-favorites-card-template]');
+  function createCard(item: Favorite) {
+    const card = cardTemplate!.content.firstElementChild!.cloneNode(true) as HTMLElement;
+    card.dataset.mediaId = String(item.id);
+    card.dataset.favoriteType = item.type;
+    card.dataset.title = item.title;
+    const link = card.querySelector<HTMLAnchorElement>('.favorite-poster')!;
+    link.href = trackedWorkHref(item);
+    link.title = item.title;
+    link.setAttribute('aria-label', item.title);
+    const image = responsiveArtwork(item.poster, {size:'w342',sizes:'(max-width:650px) 30vw, 150px',route:'direct'});
+    if (image) {
+      const poster = document.createElement('img');
+      poster.alt = '';
+      poster.loading = 'lazy';
+      if (image.srcset) poster.srcset = image.srcset;
+      if (image.sizes) poster.sizes = image.sizes;
+      poster.src = image.src;
+      link.replaceChildren(poster);
+    }
+    const remove = card.querySelector<HTMLButtonElement>('[data-favorite-remove]');
+    if (remove) {
+      remove.dataset.favoriteRemove = String(item.id);
+      remove.title = `Remove ${item.title} from favorites`;
+      remove.setAttribute('aria-label', remove.title);
+    }
+    return card;
+  }
+  function showMore(group: HTMLElement, count: number) {
+    const queued = remaining[group.dataset.favoritesGroup!];
+    if (!queued?.length || count <= 0) return;
+    const added = queued.splice(0,count).map(createCard);
+    group.querySelector('.favorites-grid')!.append(...added);
+    group.querySelector<HTMLElement>('[data-favorites-more]')!.hidden = queued.length === 0;
+    savedOrder = order();
+    return added[0];
+  }
+  const previousCounts = JSON.parse(page.dataset.favoritesVisible || '{}') as Record<string,number>;
+  for (const group of groups) {
+    const more = group.querySelector<HTMLAnchorElement>('[data-favorites-more]');
+    if (!more) continue;
+    const shown = group.querySelector('.favorites-grid')!.childElementCount;
+    showMore(group, (previousCounts[group.dataset.favoritesGroup!] || 0) - shown);
+    more.addEventListener('click', event => {
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      const first = showMore(group, Number(more.dataset.favoritesMore));
+      if (event.detail === 0) first?.querySelector<HTMLAnchorElement>('.favorite-poster')?.focus();
+    }, {signal:favoritePageListeners.signal});
+  }
   const report = (message: string) => { feedback.textContent = message; };
   const setReordering = (active: boolean) => {
     page.dataset.reordering = String(active);
@@ -130,7 +191,12 @@ function mountFavorites() {
           if (version !== revision || editorStore.hasPendingWrites() || page.dataset.reordering === 'true') { loading = false; refreshFavorites(); return; }
           const next = fresh.querySelector<HTMLElement>('.favorites-page[data-profile-owner="true"]');
           if (!next) throw new Error('Favorites refresh incomplete.');
-          if (page.isConnected) { page.replaceWith(next); dirty = false; document.dispatchEvent(new Event('anylist:favorites-reconciled')); }
+          if (page.isConnected) {
+            next.dataset.favoritesVisible = JSON.stringify(Object.fromEntries(groups.map(group=>[
+              group.dataset.favoritesGroup,group.querySelector('.favorites-grid')!.childElementCount,
+            ])));
+            page.replaceWith(next); dirty = false; document.dispatchEvent(new Event('anylist:favorites-reconciled'));
+          }
         } catch { if (!signal.aborted) location.reload(); }
         finally { loading = false; }
       })();
@@ -140,7 +206,11 @@ function mountFavorites() {
   }
 
   reorder?.addEventListener('click', async () => {
-    if (page.dataset.reordering !== 'true') { setReordering(true); return; }
+    if (page.dataset.reordering !== 'true') {
+      groups.forEach(group => showMore(group, Infinity));
+      setReordering(true);
+      return;
+    }
     const current = order();
     if (current.join(',') === savedOrder.join(',')) { setReordering(false); return; }
     reorder.disabled = true;
@@ -201,8 +271,12 @@ function mountFavorites() {
       }
       }
       const card = button.closest<HTMLElement>('[data-favorite-card]')!;
+      const group = card.closest<HTMLElement>('[data-favorites-group]')!;
       const title = card.dataset.title || 'Title';
       card.remove();
+      if (!group.querySelector('[data-favorite-card]')) {
+        showMore(group, Number(group.querySelector<HTMLElement>('[data-favorites-more]')?.dataset.favoritesMore || 0));
+      }
       savedOrder = order();
       updateEmpty();
       report(`${title} removed from favorites.`);

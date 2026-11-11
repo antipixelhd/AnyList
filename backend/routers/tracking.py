@@ -695,6 +695,28 @@ async def person_header(username: str, db: AsyncSession = Depends(get_db), viewe
     return await profile_header(db, user, owner, viewer)
 
 
+@router.get('/people/{username}/favorites')
+async def people_favorites(
+    username: str,
+    response: Response,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    viewer: Annotated[User | None, Depends(get_optional_user_or_api_key)],
+    show_screen: bool = True,
+    show_games: bool = True,
+    game_offset: Annotated[int, Query(ge=0)] = 0,
+):
+    from core.game_access import allowed as games_allowed
+    from core.profile_favorites import game_cards, screen_cards
+    from core.tracking_access import profile_header
+
+    response.headers['Cache-Control'] = 'private, no-store'
+    user, owner = await profile_access(db, username, viewer)
+    profile = await profile_header(db, user, owner, viewer)
+    screen = await screen_cards(db, user.id, await anime_is_visible(db)) if show_screen or not owner else []
+    games = await game_cards(db, user.id, game_offset) if games_allowed(viewer) and (show_games or not owner) else None
+    return {'profile': profile, 'screen': screen, 'games': games}
+
+
 @router.get("/people/{username}")
 async def person(username: str, db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user_or_api_key)):
     user, owner = await profile_access(db, username, viewer)

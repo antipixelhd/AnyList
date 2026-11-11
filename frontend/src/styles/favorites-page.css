@@ -1,4 +1,6 @@
 .favorites-page { max-width:var(--page-max-width); padding-inline:var(--page-gutter); }
+.favorites-more { margin-top:16px; }
+.favorites-more[hidden] { display:none; }
 .favorites-group-heading { display:flex; align-items:center; justify-content:space-between; gap:20px; margin:0 0 10px; }
 .favorites-actions { display:flex; align-items:center; gap:8px; flex:none; }
 .favorites-actions[hidden] { display:none; }
