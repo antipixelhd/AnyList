@@ -16,6 +16,10 @@
 .media-detail.concept-marquee .lab-layout { padding-top:16px; }
 .media-detail.concept-marquee[data-has-backdrop=false] .lab-hero { height:auto; }
 .media-detail.concept-marquee[data-has-backdrop=false] .lab-hero-content { height:auto; padding-top:32px; }
+@media (min-width:651px) {
+  .media-detail.concept-marquee:is([data-media-kind=movie],[data-media-kind=series]) .lab-hero { height:auto; }
+  .media-detail.concept-marquee:is([data-media-kind=movie],[data-media-kind=series])[data-has-backdrop=false] .lab-hero-content { min-height:0; }
+}
 .media-detail .lab-hero-image,.media-detail .lab-hero-shade { pointer-events:none; }
 /* Carry the artwork's existing fade beneath the first content row without
    changing the header or content positions. Both layers share one boundary. */

@@ -40,7 +40,7 @@ export function fillDetailLoading(root:HTMLElement,hint:DetailHint){
     const node=root.querySelector<HTMLElement>(`[data-loading-${key}]`);if(node){node.textContent=value||'';node.hidden=!value;}
   }
   const genres=root.querySelector<HTMLElement>('[data-loading-genres]');
-  if(genres){genres.replaceChildren(...(heading?.genres||[]).slice(0,6).map(name=>{const span=root.ownerDocument.createElement('span');span.textContent=name;return span;}));genres.hidden=!genres.childElementCount&&!heading?.primaryPending;genres.setAttribute('aria-busy',String(!!heading?.primaryPending&&!genres.childElementCount));}
+  if(genres){const pendingGame=hint.kind==='game'&&!!heading?.primaryPending;genres.replaceChildren(...(heading?.genres||[]).slice(0,6).map(name=>{const span=root.ownerDocument.createElement('span');span.textContent=name;return span;}));genres.hidden=!genres.childElementCount&&!pendingGame;genres.setAttribute('aria-busy',String(pendingGame&&!genres.childElementCount));}
   const primary=root.querySelector<HTMLElement>('[data-loading-primary]');if(primary)primary.hidden=hint.kind!=='game'||!heading?.primaryPending;
   const artSpace=root.querySelector<HTMLElement>('.loading-detail-art-space');if(artSpace)artSpace.hidden=hint.kind==='game'||!hint.backdrop;
   const poster=root.querySelector<HTMLImageElement>('[data-loading-poster]')!,backdrop=root.querySelector<HTMLImageElement>('[data-loading-backdrop]')!;

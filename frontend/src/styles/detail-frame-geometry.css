@@ -11,6 +11,38 @@
 :is(.media-detail,.detail-loading-frame) .detail-heading .lab-genres :is(a,span){font-size:1.1rem;line-height:1.55;padding:4px 10px;background:rgb(21 31 46 / 75%);border-radius:4px;color:#aabdd1}
 .detail-heading .lab-genres[aria-busy=true]{min-height:28px}
 .detail-heading .lab-genres[aria-busy=true]::before{content:'';width:180px;height:20px;border-radius:4px;background:var(--field)}
+/* Screen details and their preview use the same fixed title origin. Artwork
+   controls and newly available kicker text cannot change its line wrapping. */
+:is(.media-detail[data-media-kind=movie],.media-detail[data-media-kind=series],.detail-loading-frame[data-loading-kind=movie],.detail-loading-frame[data-loading-kind=series]) .lab-kicker {
+  flex-wrap:nowrap;
+  white-space:nowrap;
+}
+:is(.media-detail[data-media-kind=movie],.media-detail[data-media-kind=series],.detail-loading-frame[data-loading-kind=movie],.detail-loading-frame[data-loading-kind=series]) :is([data-detail-creators],[data-loading-creators]) {
+  min-width:0;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+@media (min-width:651px) {
+  :is(.media-detail[data-media-kind=movie],.media-detail[data-media-kind=series],.detail-loading-frame[data-loading-kind=movie],.detail-loading-frame[data-loading-kind=series]) :is(.lab-hero-content,.loading-detail-identity) {
+    --screen-art-control-width:42px;
+    display:grid;
+    grid-template-columns:var(--detail-poster-width) minmax(0,1fr);
+    align-items:start;
+    height:auto;
+    min-height:var(--detail-hero-height);
+    padding-block:calc(var(--detail-hero-height) - 16px - var(--detail-poster-width) * 1.5) 16px;
+    padding-inline-end:calc(var(--screen-art-control-width) + var(--detail-identity-gap));
+  }
+  :is(.media-detail[data-media-kind=movie],.media-detail[data-media-kind=series],.detail-loading-frame[data-loading-kind=movie],.detail-loading-frame[data-loading-kind=series]) .detail-heading {
+    padding-top:clamp(32px,6vw,80px);
+  }
+  :is(.media-detail[data-media-kind=movie],.media-detail[data-media-kind=series]) .lab-hero-art-button {
+    position:absolute;
+    right:0;
+    bottom:16px;
+  }
+  :is(.detail-loading-frame[data-loading-kind=movie],.detail-loading-frame[data-loading-kind=series]) .loading-detail-art-space { display:none; }
+}
 @media(max-width:1100px){.media-detail,.detail-loading-frame{--detail-poster-width:190px;--detail-identity-gap:32px}}
 @media(max-width:900px){.media-detail,.detail-loading-frame{--detail-poster-width:170px}}
 @media(max-width:650px){.media-detail,.detail-loading-frame{--detail-hero-height:auto;--detail-poster-width:108px;--detail-identity-gap:20px;--detail-title-size:3rem}}

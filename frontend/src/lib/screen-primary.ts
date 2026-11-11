@@ -7,9 +7,18 @@ export function publishScreenPrimary(root:HTMLElement,data:Record<string,any>,id
   if(signal.aborted||data.id!==id||data.type!==root.dataset.mediaKind||!['movie','series'].includes(data.type))return false;
   const title=prepareDetail(data),pending=status.pending===true;
   root.dataset.screenPrimaryPending=String(pending);
-  for(const [selector,copy] of [['[data-screen-original-title]',title.original_title?.trim().toLocaleLowerCase()!==title.title.trim().toLocaleLowerCase()?title.original_title:''],['[data-screen-tagline]',title.tagline]]){
-    const slot=root.querySelector<HTMLElement>(selector!);
-    if(slot&&copy&&!slot.textContent?.trim()){slot.textContent=copy;slot.hidden=false;}
+  // The visible hero owns the text it had at first paint. Background reads
+  // can supply missing copy in Information without resizing the opening.
+  const rows = detailInformationRows(title, pending);
+  const original = root.querySelector<HTMLElement>('[data-screen-original-title]');
+  if (original?.hidden && title.original_title?.trim().toLocaleLowerCase() !== title.title.trim().toLocaleLowerCase() && title.original_title) {
+    rows.push({label:'Original title',value:title.original_title});
+  }
+  if (root.querySelector<HTMLElement>('[data-screen-tagline]')?.hidden && title.tagline) {
+    rows.push({label:'Tagline',value:title.tagline});
+  }
+  if (!root.querySelector('[data-screen-genres] a,[data-screen-genres] span') && title.genres.length) {
+    rows.push({label:'Genres',items:title.genres.map(name=>({name,url:detailBrowseHref(title.type,{genre:name})}))});
   }
   const rowNode=(row:DetailInformationRow)=>{
     const node=document.createElement('div'),term=document.createElement('dt'),value=document.createElement('dd');
@@ -28,7 +37,7 @@ export function publishScreenPrimary(root:HTMLElement,data:Record<string,any>,id
   root.querySelectorAll<HTMLElement>('[data-screen-facts]').forEach(list=>{
     const previous=new Map([...list.children].map(node=>[(node as HTMLElement).dataset.detailFact,node as HTMLElement]));
     let anchor:ChildNode|null=list.firstChild;
-    for(const row of detailInformationRows(title,pending)){
+    for(const row of rows){
       let node=previous.get(row.label);previous.delete(row.label);
       // A retry cannot blank an already usable fact.
       if(!node||!(row.pending&&node.dataset.factPending!=='true')&&node.dataset.factSignature!==JSON.stringify(row)){
@@ -44,14 +53,6 @@ export function publishScreenPrimary(root:HTMLElement,data:Record<string,any>,id
   if(year&&title.year&&!year.textContent?.trim()){
     const link=document.createElement('a');link.textContent=title.year;link.href=detailBrowseHref(title.type,{year:title.year})!;
     year.replaceChildren(link);year.hidden=false;
-  }
-  const genres=root.querySelector<HTMLElement>('[data-screen-genres]');
-  if(genres){
-    if(title.genres.length&&!genres.children.length)genres.replaceChildren(...title.genres.slice(0,6).map(genre=>{
-      const href=detailBrowseHref(title.type,{genre}),node=document.createElement(href?'a':'span');node.textContent=genre;if(href)(node as HTMLAnchorElement).href=href;return node;
-    }));
-    genres.hidden=!genres.children.length&&!pending;
-    if(pending&&!genres.children.length)genres.setAttribute('aria-busy','true');else genres.removeAttribute('aria-busy');
   }
   const synopsis=root.querySelector<HTMLElement>('[data-detail-synopsis]'),text=synopsis?.querySelector<HTMLElement>('[data-biography-text]');
   if(synopsis&&text&&(text.classList.contains('detail-synopsis-skeleton')||synopsis.dataset.screenSynopsisReady!=='true')){

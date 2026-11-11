@@ -4,6 +4,10 @@
 .loading-announcement{position:absolute;width:1px;height:1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 .detail-loading-frame{color:var(--text);min-height:100vh}
 .loading-detail-hero{height:var(--detail-hero-height);position:relative}
+@media(min-width:651px){
+  .detail-loading-frame:is([data-loading-kind=movie],[data-loading-kind=series]) .loading-detail-hero{height:auto}
+  .detail-loading-frame:is([data-loading-kind=movie],[data-loading-kind=series]) .loading-detail-identity{display:grid;height:auto}
+}
 .loading-detail-hero>[data-loading-backdrop]{position:absolute;inset:-20px 0 -96px;width:100%;height:calc(100% + 116px);object-fit:cover;object-position:center calc(42% + 20px);clip-path:inset(20px 0 20px);pointer-events:none}
 .detail-loading-frame[data-loading-kind=movie] [data-loading-backdrop]{object-position:center min(20px,calc(42% + 35px))}
 .detail-loading-frame[data-loading-kind=game] [data-loading-backdrop]{object-position:center}
