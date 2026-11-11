@@ -4,13 +4,10 @@ export function initializeScrollMotion(
   signal: AbortSignal,
   selector = ".lab-module",
   revealClass = "lab-scroll-reveal",
-  options: { animateInitial?: boolean; downwardOnly?: boolean; scaleEntrance?: boolean; once?: boolean; appearedAttribute?: string; visibleImmediately?: boolean } = {},
+  options: { animateInitial?: boolean; animateVisibleArrivals?: boolean; downwardOnly?: boolean; scaleEntrance?: boolean; once?: boolean; appearedAttribute?: string } = {},
 ) {
-  const scaleTiming = options.visibleImmediately ? { duration: 160, easing: "ease-out" } : { duration: 300, easing: "linear" };
-  const scaleFrames = options.visibleImmediately ? [
-    { opacity: .85, scale: "0.985" },
-    { opacity: 1, scale: "1" },
-  ] : [
+  const scaleTiming = { duration: 300, easing: "linear" };
+  const scaleFrames = [
     { opacity: 0, scale: "0.92", offset: 0, easing: "cubic-bezier(.39,.575,.565,1)" },
     { opacity: 1, offset: 0.6 },
     { opacity: 1, scale: "1", offset: 1 },
@@ -48,10 +45,10 @@ export function initializeScrollMotion(
     markAppeared(element);
     const animation = element.animate(
       options.scaleEntrance ? scaleFrames : [
-        { opacity: options.visibleImmediately ? .85 : .2, translate: `0 ${options.visibleImmediately ? 4 : mobile.matches ? 8 : 12}px` },
+        { opacity: .2, translate: `0 ${mobile.matches ? 8 : 12}px` },
         { opacity: 1, translate: "0 0" },
       ],
-      { ...(options.scaleEntrance ? scaleTiming : { duration: options.visibleImmediately ? 140 : 260, easing: "cubic-bezier(.25,.1,.25,1)" }), fill: "both" },
+      { ...(options.scaleEntrance ? scaleTiming : { duration: 260, easing: "cubic-bezier(.25,.1,.25,1)" }), fill: "both" },
     );
     pending.set(element, animation);
     animation.addEventListener("finish", () => complete(element), {
@@ -63,22 +60,23 @@ export function initializeScrollMotion(
     modules = modules.filter((element) => {
       if (element.isConnected) return true;
       complete(element);
+      registered.delete(element);
       return false;
     });
     root.querySelectorAll<HTMLElement>(selector).forEach((element) => {
       if (registered.has(element)) return;
       registered.add(element);
       modules.push(element);
-      if (options.appearedAttribute && element.hasAttribute(options.appearedAttribute)) {
+      if ((options.once && appeared.has(element)) || (options.appearedAttribute && element.hasAttribute(options.appearedAttribute))) {
         appeared.add(element);
         return;
       }
       const bounds = element.getBoundingClientRect();
       const visible = element.getClientRects().length;
-      if (!visible && options.visibleImmediately) return;
+      if (!visible && options.animateVisibleArrivals === false) return;
       if (visible && bounds.top < viewport().bottom) {
         markAppeared(element);
-        if (!options.visibleImmediately && bounds.bottom > 0 && (!initialRegistration || options.animateInitial !== false)) {
+        if (bounds.bottom > 0 && (initialRegistration ? options.animateInitial !== false : options.animateVisibleArrivals !== false)) {
           const entrance = element.animate(
             options.scaleEntrance ? scaleFrames : [
               { opacity: 0, transform: "translateY(7px)" },

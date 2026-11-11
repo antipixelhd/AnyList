@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
+import { stripTypeScriptTypes } from 'node:module';
 import test from 'node:test';
 
 const component = readFileSync(new URL('../src/components/ReloadScrollRestoration.astro', import.meta.url), 'utf8');
@@ -133,6 +134,40 @@ test('list landing does not override hard reload or back/forward positions', () 
       window: { scrollY: 0, scrollTo: (...args) => calls.push(args) } });
     assert.equal(calls.length, Number(shouldAlign), `${type}, state: ${JSON.stringify(state)}`);
   }
+});
+
+test('routed profile tabs preserve the shared tab strip position and fade the panel in place', () => {
+  const runtime = readFileSync(new URL('../src/components/NavigationRuntime.astro', import.meta.url), 'utf8');
+  const before = runtime.slice(runtime.indexOf("    document.addEventListener('astro:before-swap'"), runtime.indexOf("    document.addEventListener('click',event=>{"));
+  const after = runtime.slice(runtime.indexOf("    document.addEventListener('astro:after-swap'"), runtime.indexOf("    document.addEventListener('astro:page-load'"));
+  const handlers = new Map();
+  const source = { dataset: { profileBase: '/user/alex' }, getBoundingClientRect: () => ({ top: 105 }), scrollLeft: 46 };
+  const incoming = { dataset: { profileBase: '/user/alex' }, getBoundingClientRect: () => ({ top: 330 }), scrollLeft: 0 };
+  const content = {};
+  const scrolls = [], reveals = [];
+  const context = {
+    pageEntrance: new AbortController().signal, profileTabPosition: undefined, detailLayoutTop: undefined,
+    clearPreview: undefined, clearNavigationFeedback: undefined, prepareDetailResolution() {}, currentUser: () => 'alex',
+    state: { alignListLanding: true },
+    document: {
+      body: { hasAttribute: () => false },
+      addEventListener: (name, callback) => handlers.set(name, callback),
+      querySelector: selector => selector === '.profile-tabs' ? incoming : selector === '#content > [data-profile-tab-content]' ? content : null,
+    },
+    window: { scrollY: 0, scrollTo: (...coordinates) => scrolls.push(coordinates) },
+    settleNavigationContent: (element, kind) => reveals.push([element, kind]),
+  };
+  runInNewContext(stripTypeScriptTypes(before + after), context);
+  handlers.get('astro:before-swap')({sourceElement: {closest: () => source}, newDocument: {querySelector: () => incoming}, to: new URL('https://anylist.test/user/alex/favorites')});
+  handlers.get('astro:after-swap')();
+  assert.deepEqual(scrolls, [[0, 225]]);
+  assert.equal(incoming.scrollLeft, 46);
+  assert.deepEqual(reveals, [[content, 'tab']]);
+
+  handlers.get('astro:before-swap')({sourceElement: {closest: () => source}, newDocument: {querySelector: () => incoming}, to: new URL('https://anylist.test/user/alex')});
+  handlers.get('astro:after-swap')();
+  assert.equal(scrolls.length, 1, 'a history traversal keeps the router position');
+  assert.equal(reveals.length, 1, 'a history traversal does not replay the fade');
 });
 
 test('router scrollend saves finish before idle restoration without overriding a pending traversal', () => {

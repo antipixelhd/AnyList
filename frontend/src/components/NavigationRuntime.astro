@@ -235,8 +235,14 @@
     let clearNavigationFeedback:(()=>void)|undefined;
     let pageEntrance:AbortSignal|undefined;
     let detailLayoutTop:number|undefined;
+    let profileTabPosition:{top:number;left:number}|undefined;
     document.addEventListener('astro:before-swap',event=>{
       detailLayoutTop=document.querySelector('.route-detail-preview .loading-detail-layout')?.getBoundingClientRect().top;
+      const sourceTabs=event.sourceElement?.closest<HTMLElement>('.profile-tabs[data-profile-base]');
+      const incomingTabs=sourceTabs&&event.newDocument.querySelector<HTMLElement>('.profile-tabs[data-profile-base]');
+      if(pageEntrance&&!pageEntrance.aborted&&!event.to.hash&&sourceTabs&&incomingTabs?.dataset.profileBase===sourceTabs.dataset.profileBase){
+        profileTabPosition={top:sourceTabs.getBoundingClientRect().top,left:sourceTabs.scrollLeft};
+      }
       prepareDetailResolution(event.newDocument,event.to,currentUser());
       clearPreview?.();clearPreview=undefined;
       clearNavigationFeedback?.();
@@ -354,6 +360,7 @@
       cancelLoadingReveals();
       pageEntrance=undefined;
       detailLayoutTop=undefined;
+      profileTabPosition=undefined;
       clearPreview?.();clearPreview=undefined;
       if(!document.querySelector('[data-browse-shell]')&&document.querySelector('[data-game-browse]')){
         document.dispatchEvent(new Event('anylist:before-snapshot'));
@@ -412,20 +419,29 @@
     });
     document.addEventListener('astro:after-preparation', finishProgress);
     document.addEventListener('astro:after-swap', () => {
-      if (state.alignListLanding && document.body.hasAttribute('data-list-landing')) {
-        const tabs = document.querySelector<HTMLElement>('.profile-tabs');
-        if (tabs) window.scrollTo(0, window.scrollY + tabs.getBoundingClientRect().top);
+      const listLanding=state.alignListLanding&&document.body.hasAttribute('data-list-landing');
+      const tabs=(listLanding||profileTabPosition)&&document.querySelector<HTMLElement>('.profile-tabs');
+      if(tabs){
+        const top=profileTabPosition?.top??0;
+        if(profileTabPosition)tabs.scrollLeft=profileTabPosition.left;
+        window.scrollTo(0,window.scrollY+tabs.getBoundingClientRect().top-(listLanding?0:top));
       }
       if(pageEntrance&&!pageEntrance.aborted){
-        const detail=document.querySelector<HTMLElement>('.media-detail .lab-layout');
-        const content=detail??document.querySelector<HTMLElement>('#content, #settings-content');
-        if(content&&!content.querySelector('#resolve-title, [data-resolve-game]')){
-          const offset=detail&&detailLayoutTop!==undefined?detailLayoutTop-detail.getBoundingClientRect().top:undefined;
-          settleNavigationContent(content,'page',pageEntrance,offset);
+        if(profileTabPosition&&tabs&&!listLanding){
+          const content=document.querySelector<HTMLElement>('#content > [data-profile-tab-content]');
+          if(content)settleNavigationContent(content,'tab',pageEntrance);
+        }else{
+          const detail=document.querySelector<HTMLElement>('.media-detail .lab-layout');
+          const content=detail??document.querySelector<HTMLElement>('#content, #settings-content');
+          if(content&&!content.querySelector('#resolve-title, [data-resolve-game]')){
+            const offset=detail&&detailLayoutTop!==undefined?detailLayoutTop-detail.getBoundingClientRect().top:undefined;
+            settleNavigationContent(content,'page',pageEntrance,offset);
+          }
         }
       }
       pageEntrance=undefined;
       detailLayoutTop=undefined;
+      profileTabPosition=undefined;
     });
     document.addEventListener('astro:page-load', () => {
       finishProgress();

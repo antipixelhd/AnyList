@@ -144,7 +144,8 @@ function setup(){
         window.scrollTo(0,positions.get(key)??scrollY);
         if (changedPanel) {
           const rows = Array.from(panel.root.querySelectorAll<HTMLElement>('.entry-table [data-list-window]'));
-          for(const target of rows.length ? rows : [panel.root])settleNavigationContent(target,'tab',signal);
+          if (rows.length) rows.forEach(row => settleNavigationContent(row,'tab',signal,4));
+          else settleNavigationContent(panel.root,'tab',signal);
         }
       };
       commit();

@@ -30,7 +30,7 @@ if (profile) {
   gameActivityFailed=domains.show_games&&gameActivity==null;
 }
 ---
-<Tracker title={profile?.display_name||'Profile'} ownerProfileColor={profile?.profile_color} ownerIsViewer={profile?.owner === true}>{profile?<><ProfileHeader profile={profile}/><main class="page-width profile-overview" data-profile-owner={String(profile.owner === true)}>
+<Tracker title={profile?.display_name||'Profile'} ownerProfileColor={profile?.profile_color} ownerIsViewer={profile?.owner === true}>{profile?<><ProfileHeader profile={profile}/><main class="page-width profile-overview" data-profile-tab-content data-profile-owner={String(profile.owner === true)}>
   <ProfileOverviewLeft profile={profile} movieStats={movieStats} seriesStats={seriesStats} {domains} {gameFavorites}/>
   <section class="overview-activity activity-stream" aria-labelledby="profile-activity"><div class="section-heading"><h2 id="profile-activity">Recent activity</h2></div>
     {gameActivityFailed&&<p class="section-empty" role="status">Game activity is temporarily unavailable.</p>}

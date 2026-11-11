@@ -131,7 +131,7 @@ export function mountMediaDetail() {
   });
   requestAnimationFrame(() => requestAnimationFrame(() => {
     if (!signal.aborted) initializeScrollMotion(root,signal,'.lab-module','media-scroll-reveal', {
-      animateInitial:false,downwardOnly:true,once:true,visibleImmediately:true,
+      animateInitial:false,animateVisibleArrivals:false,downwardOnly:true,once:true,
     });
   }));
 

@@ -25,16 +25,18 @@ test('navigation settles ready content from partial opacity and replaces an inte
   const controller = new AbortController();
   settleNavigationContent(element, 'page', controller.signal);
   settleNavigationContent(element, 'tab', controller.signal);
+  settleNavigationContent(element, 'tab', controller.signal, 4);
   assert.deepEqual(calls.map(call => [call.frames, call.timing.duration, call.cancelled]), [
     [{ opacity: [.78, 1], translate: ['0 6px', '0 0'] }, 285, true],
+    [{ opacity: [.78, 1] }, 220, true],
     [{ opacity: [.78, 1], translate: ['0 4px', '0 0'] }, 220, false],
   ]);
   controller.abort();
-  assert.equal(calls[1].cancelled, true);
+  assert.equal(calls[2].cancelled, true);
   settleNavigationContent(element, 'page', controller.signal);
   const reduced = fixture({ reduced: true });
   settleNavigationContent(reduced.element, 'tab');
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 3);
   assert.equal(reduced.calls.length, 0);
 });
 

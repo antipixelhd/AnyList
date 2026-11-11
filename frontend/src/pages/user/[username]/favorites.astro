@@ -40,7 +40,7 @@ const favoriteGroups = profileMediaGroups(favorites, profile?.combine_lists !== 
 <Tracker title={`${profile?.display_name ?? 'Profile'} Favorites`} ownerProfileColor={profile?.profile_color} ownerIsViewer={profile?.owner === true}>
   {profile ? <>
     <ProfileHeader profile={profile} active="favorites" />
-    <div class="page-width favorites-page" data-profile-owner={String(profile.owner === true)} data-favorite-domain="mixed" data-favorites-owner={String(profile.owner)}>
+    <div class="page-width favorites-page" data-profile-tab-content data-profile-owner={String(profile.owner === true)} data-favorite-domain="mixed" data-favorites-owner={String(profile.owner)}>
 
       <p class="error-message" role="alert" data-favorites-error hidden={!error}>{error}</p>
       <p class="favorites-instructions" data-favorites-instructions hidden>Drag cards to arrange them. Focus a card and use the arrow keys to move it.</p>

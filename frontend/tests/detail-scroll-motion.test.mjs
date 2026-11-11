@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {initializeScrollMotion} from '../src/components/dev/detail-scroll-motion.ts';
 
-function preview(t, {mobile = false, reduced = false, loading = false, initialY = 380, animateInitial = true, downwardOnly = false, scaleEntrance = false, once = false, appearedAttribute} = {}) {
+function preview(t, {mobile = false, reduced = false, loading = false, initialY = 380, animateInitial = true, animateVisibleArrivals, downwardOnly = false, scaleEntrance = false, once = false, appearedAttribute} = {}) {
   let now = 0, y = initialY, hidden = false, focused = false, nextFrame = 0;
   const frames = new Map(), classes = new Set(), animations = [];
   const controller = new AbortController();
@@ -54,7 +54,7 @@ function preview(t, {mobile = false, reduced = false, loading = false, initialY 
       else delete globalThis[key];
     }
   });
-  initializeScrollMotion(root, controller.signal, ".lab-module", "lab-scroll-reveal", {animateInitial, downwardOnly, scaleEntrance, once, appearedAttribute});
+  initializeScrollMotion(root, controller.signal, ".lab-module", "lab-scroll-reveal", {animateInitial, animateVisibleArrivals, downwardOnly, scaleEntrance, once, appearedAttribute});
   const flush = () => {for (const [id, callback] of frames) {frames.delete(id);callback();}};
   return {
     classes, animations, observers, controller,
@@ -94,6 +94,17 @@ test('Browse keeps initially visible cards painted but still animates new cards 
   p.scroll(0);
   p.scroll(424);
   assert.equal(p.animations.length, 3);
+});
+
+test('visible arrivals stay painted while offscreen modules retain their scroll entrance', t => {
+  const p = preview(t, {initialY: 600, animateInitial: false, animateVisibleArrivals: false, downwardOnly: true});
+  p.append();
+  assert.equal(p.animations.length, 0);
+  p.scroll(0);
+  p.scroll(424);
+  assert.equal(p.animations.length, 2);
+  assert.equal(p.animations[0].keyframes[0].opacity, .2);
+  assert.equal(p.animations[0].options.duration, 260);
 });
 
 test('restored contributor scroll positions stay painted while new cards still arrive once', t => {

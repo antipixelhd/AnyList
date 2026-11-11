@@ -8,6 +8,10 @@
   margin-top: var(--profile-content-gap);
 }
 
+[data-profile-tab-content] {
+  min-block-size: calc(100svh - var(--profile-content-gap));
+}
+
 @media (max-width: 650px) {
   :root {
     --profile-content-gap: 24px;

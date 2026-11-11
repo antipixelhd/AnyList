@@ -54,7 +54,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   requestAnimationFrame(() => requestAnimationFrame(() => {
     if (signal.aborted || !root.isConnected) return;
     initializeScrollMotion(root, signal, '.browse-card-body', 'browse-scroll-reveal', {
-      animateInitial: false, downwardOnly: true, scaleEntrance: true, once: true, visibleImmediately: true,
+      animateInitial: false, animateVisibleArrivals: false, downwardOnly: true, scaleEntrance: true, once: true,
       appearedAttribute: 'data-browse-appeared',
     });
   }));

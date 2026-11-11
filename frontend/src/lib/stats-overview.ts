@@ -20,6 +20,7 @@ import { createMetricTooltip } from './stats-metric-tooltip';
 import { chartMinimumWidth, mountChartViewport } from './stats-chart-density';
 import { cancelUiMotion, reveal } from './ui-motion';
 import { cancelLoadingReveals, settleNavigationContent } from './loading-reveal';
+import { initializeScrollMotion } from './scroll-motion';
 
 const mounted = new WeakSet<HTMLElement>();
 const chartKeys = ['scores', 'episode_counts', 'release_years', 'watch_years'] as const;
@@ -479,4 +480,10 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
   loader.seed(currentSelection(),response as UnifiedStatistics);
   document.addEventListener('anylist:cache-invalidated',refresh,{signal:events.signal});
   render(response,true);updateDomainControls();scheduleSibling();
+  const mountScrollEntrance = () => initializeScrollMotion(root, events.signal,
+    '.stats-genre-card,.overview-chart,.overview-distribution', 'stats-scroll-reveal', {
+      animateInitial:false, animateVisibleArrivals:false, downwardOnly:true, once:true,
+    });
+  if (panelActive(root)) mountScrollEntrance();
+  else root.closest('[data-profile-url]')?.addEventListener('anylist:panel-active', mountScrollEntrance, {once:true,signal:events.signal});
 }

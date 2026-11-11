@@ -12,7 +12,7 @@ function revealContent(element: HTMLElement, signal: AbortSignal | undefined, of
   if (signal?.aborted || !element.isConnected || !view || typeof element.animate !== 'function' ||
     view.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
   // A module entering the viewport already has its own motion.
-  if (element.closest('.media-scroll-reveal, .browse-scroll-reveal')) return;
+  if (element.closest('.media-scroll-reveal, .browse-scroll-reveal, .stats-scroll-reveal')) return;
   const bounds = element.getBoundingClientRect();
   if (!bounds.width || !bounds.height || bounds.bottom <= 0 || bounds.top >= view.innerHeight) return;
   active.get(element)?.();
@@ -40,7 +40,7 @@ export function revealReadyContent(element: HTMLElement, signal?: AbortSignal, o
   revealContent(element, signal, offsetY, LOADING_REVEAL_DURATION_MS, 0);
 }
 
-export function settleNavigationContent(element: HTMLElement, kind: 'page' | 'tab', signal?: AbortSignal, offsetY = kind === 'page' ? 6 : 4) {
+export function settleNavigationContent(element: HTMLElement, kind: 'page' | 'tab', signal?: AbortSignal, offsetY = kind === 'page' ? 6 : 0) {
   revealContent(element, signal, offsetY, kind === 'page' ? 285 : 220, .78);
 }
 

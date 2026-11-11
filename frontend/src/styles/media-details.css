@@ -234,7 +234,8 @@ body.tracker .media-detail :is(.lab-public-score,.lab-game-offer) h2 { font-size
 .media-detail .lab-episode-copy h3 { overflow-wrap:anywhere; }
 .media-detail .lab-episode-check:disabled { opacity:.4; cursor:default; }
 .media-detail .lab-episode-check .ui-icon { transition:opacity .18s ease; }
-.media-scroll-reveal { translate:0 4px; opacity:.85; }
+.media-scroll-reveal { translate:0 12px; opacity:.2; }
+@media (max-width:650px),(pointer:coarse) { .media-scroll-reveal { translate:0 8px; } }
 @media (max-width:900px) {
   .media-detail .lab-game-offer { order:2; grid-template-columns:minmax(0,1fr) auto; align-items:center; }
   .media-detail .lab-game-offer .lab-primary-button { grid-column:1/-1; }

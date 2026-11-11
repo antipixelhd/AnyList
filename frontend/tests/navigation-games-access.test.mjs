@@ -92,7 +92,7 @@ test('cached mixed navigation waits for approval and falls back on revocation, i
     const context={URL,Date,state,document:{querySelector:()=>null,addEventListener:(_name,callback)=>handler=callback},navigator:{onLine:true},
       closeNavigationDialogs(){},resetForIdentity(){},keyFor:()=>'/home',cacheable:()=>true,approvedGamesPage:()=>false,reusableGamesPage:()=>false,
       currentUser:()=>outcome==='other-viewer'?'8':'7',startProgress(){},finishProgress(){},clearPreview:undefined,clearNavigationFeedback:undefined,detailDestination:()=>undefined,
-      cancelLoadingReveals(){},pageEntrance:undefined,detailLayoutTop:undefined,
+      cancelLoadingReveals(){},pageEntrance:undefined,detailLayoutTop:undefined,profileTabPosition:undefined,
       authorizeGameSnapshot:()=>new Promise(resolve=>authorize=resolve),
       DOMParser:class{parseFromString(){parsed++;return 'parsed';}},
     };
