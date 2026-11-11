@@ -19,7 +19,7 @@ function stop(element: HTMLElement) {
   element.style.removeProperty('transform');
 }
 
-function play(element: HTMLElement, entering: boolean, distance: number, dropdown = false) {
+function play(element: HTMLElement, entering: boolean, distance: number, dropdown = false, startOpacity = 0) {
   stop(element);
   const fading = element.hasAttribute('data-motion-fade');
   const timing = dropdown ? dropdownTiming(entering, fading) : {
@@ -29,7 +29,7 @@ function play(element: HTMLElement, entering: boolean, distance: number, dropdow
   if (dropdown) arrows.play(element, entering, timing);
   if (reduced()) return null;
   const control = animate(element, {
-    opacity: entering ? [0, 1] : [1, 0],
+    opacity: entering ? [startOpacity, 1] : [1, 0],
     ...(!fading ? {
       transform: entering
         ? [`translateY(${distance}px) scale(.99)`, 'translateY(0) scale(1)']
@@ -64,7 +64,7 @@ export function showDialog(dialog: HTMLDialogElement) {
     });
   }
   if (!dialog.open) dialog.showModal();
-  play(dialog, true, 8);
+  play(dialog, true, 5, false, .85);
 }
 
 export async function closeDialog(dialog: HTMLDialogElement, returnValue?: string) {

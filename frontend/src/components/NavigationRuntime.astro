@@ -143,6 +143,7 @@
       input.removeAttribute('value');
     });
     clone.querySelectorAll('[data-route-progress]').forEach(element => element.classList.remove('visible','finishing'));
+    clone.querySelectorAll('[data-route-pending]').forEach(element => element.removeAttribute('data-route-pending'));
     clone.querySelectorAll('[data-toast-host]').forEach(element => element.replaceChildren());
     return '<!doctype html>' + clone.outerHTML;
   }
@@ -210,13 +211,13 @@
     finally { state.usedCached.delete(key); }
   }
 
-  function startProgress() {
+  function startProgress(delay = 90) {
     window.clearTimeout(state.finishTimer);
     document.querySelector('[data-route-progress]')?.classList.remove('finishing');
     window.clearTimeout(state.timer);
     state.timer = window.setTimeout(() => {
       document.querySelector('[data-route-progress]')?.classList.add('visible');
-    }, 150);
+    }, delay);
   }
   function finishProgress() {
     window.clearTimeout(state.timer);
@@ -231,27 +232,39 @@
     state.initialized = true;
     instantPageTransitions(document);
     let clearPreview:(()=>void)|undefined;
+    let clearNavigationFeedback:(()=>void)|undefined;
     let detailReveal:ReturnType<typeof createLoadingReveal>|undefined;
-    document.addEventListener('astro:before-swap',()=>{clearPreview?.();clearPreview=undefined;});
+    document.addEventListener('astro:before-swap',()=>{
+      clearPreview?.();clearPreview=undefined;
+      clearNavigationFeedback?.();
+    });
     document.addEventListener('click',event=>{
       const link=(event.target as Element)?.closest<HTMLAnchorElement>('a[href]');if(!link)return;
       const url=new URL(link.href);if(url.origin!==location.origin||!detailDestination(url))return;
       detailHints.scope(currentUser());
-      const row=link.closest<HTMLElement>('.entry-row,.browse-card,.quick-search-result,.game-progress-card');
+      const row=link.closest<HTMLElement>('.entry-row,.browse-card,.quick-search-result,.progress-card,.visual-event');
       const destination=detailDestination(url)!;
       const id=Number(url.pathname.split('/').pop());
       const known=destination.kind==='game'&&url.pathname.startsWith('/games/')?editorStore.findSubject({kind:'game',catalogue_id:id})
         :url.pathname.startsWith('/title/')?editorStore.find(id):undefined;
-      const kind=known?.type||row?.dataset.detailKind||row?.dataset.mediaType||destination.kind;
-      const title=known?.title||row?.querySelector('h2,strong,.entry-title-link')?.firstChild?.textContent?.trim()||link.getAttribute('aria-label')||link.textContent?.trim();
-      const image=row?.querySelector<HTMLImageElement>('img');
+      const kind=known?.type||link.dataset.detailKind||row?.dataset.detailKind||row?.dataset.mediaType||destination.kind;
+      const title=known?.title||link.dataset.detailTitle||row?.dataset.detailTitle||row?.querySelector('.event-action a,.progress-card-title,.entry-title-link')?.firstChild?.textContent?.trim()
+        ||row?.querySelector('h2,strong')?.firstChild?.textContent?.trim()
+        ||link.textContent?.trim()||link.title||link.getAttribute('aria-label')?.trim();
+      const image=(row??link).querySelector<HTMLImageElement>(row?.matches('.visual-event')?'.event-cover img':'img');
+      const ownGamesList=row?.closest('[data-list-domain="game"][data-owner="true"]');
+      const child=row?.dataset.gameBase||['expansion','dlc'].includes(known?.game_class||'');
+      const progress=kind==='game'&&ownGamesList&&!child?{
+        hours:row?.querySelector('[data-game-list-hours]')?.textContent?.trim().replace(/^—$/,'')||null,
+        achievement:row?.querySelector('[data-game-list-achievements][data-known="true"]')?.textContent?.trim()||null,
+      }:undefined;
       if(title)detailHints.set(url,{kind:['movie','series','game'].includes(kind)?kind as DetailHint['kind']:'unknown',title,
-        poster:known?.poster||image?.currentSrc||image?.src,backdrop:known?.backdrop,library:known?.editor_library?.available,
+        poster:known?.poster||image?.currentSrc||image?.src,backdrop:known?.backdrop,library:known?.editor_library?.available,progress,
         heading:{year:known?.year||row?.dataset.detailYear||row?.querySelector('[data-year]')?.textContent?.trim(),
           genres:known?.genres,originalTitle:known?.original_title,tagline:known?.tagline,creators:known?.detail_creators,
           primaryPending:kind==='game'?known?.game_metadata_status?.primary_ready===false:known?.primary_status?.pending}});
     },true);
-    document.addEventListener('anylist:route-progress-start',startProgress);
+    document.addEventListener('anylist:route-progress-start',()=>startProgress(220));
     document.addEventListener('anylist:route-progress-end',finishProgress);
     document.addEventListener('anylist:cache-invalidated', () => {
       try { clearStoredBrowseCache(window.sessionStorage); } catch { /* Storage is optional. */ }
@@ -336,6 +349,7 @@
     }, true);
 
     document.addEventListener('astro:before-preparation', rawEvent => {
+      clearNavigationFeedback?.();
       cancelLoadingReveals();
       detailReveal=undefined;
       clearPreview?.();clearPreview=undefined;
@@ -346,6 +360,16 @@
       closeNavigationDialogs();
       resetForIdentity();
       const event = rawEvent;
+      const source = event.sourceElement?.closest('a[href]');
+      source?.setAttribute('data-route-pending','');
+      const clear = () => {
+        source?.removeAttribute('data-route-pending');
+        event.signal.removeEventListener('abort',abort);
+        if (clearNavigationFeedback===clear) clearNavigationFeedback=undefined;
+      };
+      const abort = () => { clear(); finishProgress(); };
+      clearNavigationFeedback=clear;
+      event.signal.addEventListener('abort',abort,{once:true});
       state.alignListLanding = event.navigationType !== 'traverse';
       const key = keyFor(event.to);
       state.predictionNavigation=undefined;
@@ -358,15 +382,16 @@
         detailReveal=createLoadingReveal();detailReveal.begin(Number(host.querySelector<HTMLElement>('[data-detail-loading]')?.dataset.loadingSince)||undefined);
       }
       if(!event.formData&&(!approvedGamesPage(event.to)||reusableGamesPage(event.to))&&(predicted?.predicted||state.prediction?.has(event.to.href))){
-        state.predictionNavigation={key,signal:event.signal,generation:state.generation||0};startProgress();return;
+        state.predictionNavigation={key,signal:event.signal,generation:state.generation||0};startProgress(clearPreview?220:90);return;
       }
       state.prediction?.cancel();
       const cached = cacheable(event.to) && (event.to.pathname !== '/connections' || !navigator.onLine)
         ? state.pages.get(key) : undefined;
       if (!cached) {
-        startProgress();
+        startProgress(clearPreview?220:90);
         return;
       }
+      if(cached.requiresGamesAccess)startProgress();
       const defaultLoader=event.loader,generation=state.generation,user=state.user;
       event.loader = async () => {
         const authorized=!cached.requiresGamesAccess||await authorizeGameSnapshot(user,event.signal,state.originalFetch,event.to);

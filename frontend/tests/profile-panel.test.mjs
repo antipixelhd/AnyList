@@ -98,5 +98,47 @@ test('profile prediction retains destination styles without applying them until 
   assert.doesNotMatch(read,/preparePanelStyles/);assert.match(read,/styles:doc/);
   const activate=source.slice(source.indexOf('    const activate='),source.indexOf('    const failed='));
   assert(activate.indexOf('await preparePanelStyles')<activate.indexOf('stage.append(root)'));
-  assert(activate.indexOf('await preparePanelStyles')<activate.indexOf('await initialize(panel,signal)',activate.indexOf('await preparePanelStyles')));
+  assert.match(activate,/await document\.fonts\.ready/);
+  assert.match(activate,/Promise\.allSettled\(\[initialize\(panel,signal,layoutReady\),layoutReady\]\)/);
+});
+
+test('returning during initial import still waits for its own font and layout barrier',async()=>{
+  const source=readFileSync(new URL('../src/lib/profile-shell.ts',import.meta.url),'utf8');
+  const start=source.indexOf('            const [mounted,layout]=');
+  const end=source.indexOf('            await panelLayoutFrame',start);
+  let initialized,layout;
+  const mount=new Promise(resolve=>{initialized=resolve;});
+  const layoutReady=new Promise(resolve=>{layout=resolve;});
+  const wait=runInNewContext('(async()=>{'+stripTypeScriptTypes(source.slice(start,end))+'})()',{
+    panel:{},signal:new AbortController().signal,initialize:()=>mount,layoutReady,
+  });
+  let settled=false;
+  const done=wait.then(()=>{settled=true;});
+  initialized();
+  await Promise.resolve();await Promise.resolve();
+  assert.equal(settled,false);
+  layout();await done;
+  assert.equal(settled,true);
+});
+
+test('failed component loading waits for staged styles before its cleanup can run',async()=>{
+  const source=readFileSync(new URL('../src/lib/profile-shell.ts',import.meta.url),'utf8');
+  const start=source.indexOf('async function initialize(');
+  const end=source.indexOf('\nfunction setup()',start);
+  const failure=new Error('Module unavailable');
+  const moduleRead=Promise.reject(failure);
+  let finishStyles;
+  const styles=new Promise(resolve=>{finishStyles=resolve;});
+  const snippet=source.slice(start,end).replaceAll(/import\('\.\/[^']+'\)/g,'moduleRead');
+  const initialize=runInNewContext(stripTypeScriptTypes(snippet)+';initialize;',{moduleRead});
+  const panel={root:{isConnected:true,querySelector:()=>null},kind:'games',ready:false};
+  const pending=initialize(panel,new AbortController().signal,styles);
+  let settled=false;
+  const result=pending.catch(error=>{settled=true;assert.equal(error,failure);});
+  await Promise.resolve();await Promise.resolve();
+  assert.equal(settled,false);
+  finishStyles();await result;
+  assert.equal(settled,true);
+  assert.equal(panel.initializing,undefined);
+  assert.equal(panel.ready,false);
 });

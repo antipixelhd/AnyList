@@ -8,18 +8,19 @@ import {createLoadingReveal,cancelLoadingReveals} from './loading-reveal';
 type Panel={root:HTMLElement;url:string;title:string;ready:boolean;kind:string;styles?:Document;initializing?:Promise<void>;preparing?:Promise<void>};
 let session:AbortController|undefined;
 let currentHost:HTMLElement|undefined;
-async function initialize(panel:Panel,signal:AbortSignal){
+async function initialize(panel:Panel,signal:AbortSignal,styles?:Promise<void>){
   if(panel.ready)return;
   if(panel.initializing)return panel.initializing;
   const pending=(async()=>{
-    let mount:(root:HTMLElement,signal:AbortSignal)=>void;
-    let root=panel.root;
     const statistics=panel.root.querySelector<HTMLElement>('[data-integrated-statistics]');
-    if(statistics){mount=(await import('./stats-overview')).initializeStatistics;root=statistics;}
-    else if(panel.kind==='games')mount=(await import('./game-list')).initializeGameList;
-    else mount=(await import('./profile-list')).initializeProfileList;
+    const component=statistics?import('./stats-overview').then(module=>module.initializeStatistics)
+      :panel.kind==='games'?import('./game-list').then(module=>module.initializeGameList)
+      :import('./profile-list').then(module=>module.initializeProfileList);
+    const [loaded,layout]=await Promise.allSettled([component,styles]);
+    if(loaded.status==='rejected')throw loaded.reason;
+    if(layout.status==='rejected')throw layout.reason;
     if(signal.aborted||!panel.root.isConnected)return;
-    mount(root,signal);panel.ready=true;
+    loaded.value(statistics??panel.root,signal);panel.ready=true;
   })().finally(()=>{panel.initializing=undefined;});
   panel.initializing=pending;return pending;
 }
@@ -109,14 +110,22 @@ function setup(){
         panel.preparing=(async()=>{
           // Prediction keeps its styles detached; only an actual selection may
           // install destination CSS into the visible document.
-          if(panel.styles){await preparePanelStyles(panel.styles,panel.url,signal);panel.styles=undefined;}
           if(signal.aborted)return;
-          const root=panel.root;root.dataset.profilePreparing='';root.inert=true;
-          root.style.cssText='position:absolute;left:0;right:0;top:0;visibility:hidden;pointer-events:none';stage.append(root);
+          const root=panel.root;
           try{
-            await document.fonts.ready;
-            if(signal.aborted)return;
-            await initialize(panel,signal);
+            const layoutReady=(async()=>{
+              if(panel.styles){
+                await preparePanelStyles(panel.styles,panel.url,signal);
+                panel.styles=undefined;
+              }
+              if(signal.aborted)return;
+              root.dataset.profilePreparing='';root.inert=true;
+              root.style.cssText='position:absolute;left:0;right:0;top:0;visibility:hidden;pointer-events:none';stage.append(root);
+              await document.fonts.ready;
+            })();
+            const [mounted,layout]=await Promise.allSettled([initialize(panel,signal,layoutReady),layoutReady]);
+            if(mounted.status==='rejected')throw mounted.reason;
+            if(layout.status==='rejected')throw layout.reason;
             await panelLayoutFrame(signal);await panelLayoutFrame(signal);
           }finally{
             root.remove();root.style.cssText='';delete root.dataset.profilePreparing;root.inert=false;

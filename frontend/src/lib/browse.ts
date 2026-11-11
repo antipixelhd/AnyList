@@ -54,7 +54,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   requestAnimationFrame(() => requestAnimationFrame(() => {
     if (signal.aborted || !root.isConnected) return;
     initializeScrollMotion(root, signal, '.browse-card-body', 'browse-scroll-reveal', {
-      animateInitial: false, downwardOnly: true, scaleEntrance: true, once: true,
+      animateInitial: false, downwardOnly: true, scaleEntrance: true, once: true, visibleImmediately: true,
       appearedAttribute: 'data-browse-appeared',
     });
   }));
@@ -507,7 +507,6 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
         }
       }
       if (!expanded) responseCache.set(path, response!, !cached);
-      if (!cached) await loadingView.settle(current.signal);
       if (request !== current || epoch !== generation || signal.aborted) return;
       if (expanded) automaticExpansion.activate(values);
       if (!append && !streamed) {
@@ -531,7 +530,6 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       if (cached) void refreshViewerContext([...items.values()], current);
 
     } catch (cause) {
-      await loadingView.settle(current.signal);
       if (current.signal.aborted || request !== current || signal.aborted)
         return;
       suspended = true;

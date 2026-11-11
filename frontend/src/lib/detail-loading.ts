@@ -2,7 +2,7 @@ import {responsiveArtwork} from './responsive-artwork.ts';
 import {detailHeroArtwork} from './detail-artwork.ts';
 
 type HeadingHint={year?:string;originalTitle?:string|null;tagline?:string|null;genres?:string[];creators?:string[];primaryPending?:boolean};
-export type DetailHint={kind:'movie'|'series'|'game'|'unknown';title?:string;poster?:string|null;backdrop?:string|null;heading?:HeadingHint;library?:boolean};
+export type DetailHint={kind:'movie'|'series'|'game'|'unknown';title?:string;poster?:string|null;backdrop?:string|null;heading?:HeadingHint;library?:boolean;progress?:{hours:string|null;achievement:string|null}};
 export function detailDestination(url:URL){
   const match=url.pathname.match(/^\/(title|games)\/([1-9]\d*)\/?$/);
   if(match&&Number.isSafeInteger(Number(match[2])))return {key:`${match[1]}:${match[2]}`,kind:match[1]==='games'?'game':'unknown'} as const;
@@ -18,6 +18,7 @@ export class DetailHints {
   get(url:URL){const key=detailDestination(url)?.key;return key?this.hints.get(key):undefined;}
   set(url:URL,hint:DetailHint){const key=detailDestination(url)?.key;if(!key)return;
     this.hints.delete(key);this.hints.set(key,{kind:hint.kind,title:hint.title?.slice(0,300),poster:hint.poster,backdrop:hint.backdrop,
+      ...(hint.progress?{progress:{hours:hint.progress.hours,achievement:hint.progress.achievement}}:{}),
       ...(hint.library!==undefined?{library:hint.library}:{}),...(hint.heading?{heading:{year:hint.heading.year,originalTitle:hint.heading.originalTitle,tagline:hint.heading.tagline,
         genres:hint.heading.genres?.slice(0,6),creators:hint.heading.creators?.slice(0,2),primaryPending:hint.heading.primaryPending}}:{})});
     while(this.hints.size>40)this.hints.delete(this.hints.keys().next().value!);
@@ -42,6 +43,14 @@ export function fillDetailLoading(root:HTMLElement,hint:DetailHint){
   const genres=root.querySelector<HTMLElement>('[data-loading-genres]');
   if(genres){const game=hint.kind==='game';genres.replaceChildren(...(heading?.genres||[]).slice(0,6).map(name=>{const span=root.ownerDocument.createElement('span');span.textContent=name;return span;}));genres.hidden=!game&&!genres.childElementCount;genres.setAttribute('aria-busy',String(game&&!!heading?.primaryPending&&!genres.childElementCount));}
   const primary=root.querySelector<HTMLElement>('[data-loading-primary]');if(primary)primary.hidden=hint.kind!=='game'||!heading?.primaryPending;
+  const progress=root.querySelector<HTMLElement>('[data-loading-game-progress]');
+  if(progress){
+    progress.hidden=hint.kind!=='game'||(!hint.progress?.hours&&!hint.progress?.achievement);
+    for(const [key,value] of [['hours',hint.progress?.hours],['achievement',hint.progress?.achievement]]){
+      const row=progress.querySelector<HTMLElement>(`[data-loading-game-${key}]`)!;
+      row.hidden=!value;row.querySelector('strong')!.textContent=value||'';
+    }
+  }
   const poster=root.querySelector<HTMLImageElement>('[data-loading-poster]')!,backdrop=root.querySelector<HTMLImageElement>('[data-loading-backdrop]')!;
   const posterURL=safeImage(hint.poster),backdropURL=safeImage(hint.backdrop);
   // Reuse an already selected responsive bucket from the source; do not warm a second size.

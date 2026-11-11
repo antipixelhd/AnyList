@@ -1,5 +1,7 @@
 /* Shared pending geometry follows the existing Marquee detail and profile layouts. */
 .loading-surface,.loading-lines>span,.loading-facts>span{display:block;background:color-mix(in srgb,var(--border) 65%,var(--panel));border-radius:4px}
+.artwork-skeleton-pulse{position:absolute;inset:0;z-index:1;pointer-events:none;border-radius:inherit;background:var(--text);opacity:0}
+button:has(> .artwork-skeleton-pulse){position:relative}
 .detail-loading-frame [hidden],.profile-loading-frame [hidden]{display:none!important}
 .loading-announcement{position:absolute;width:1px;height:1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 .detail-loading-frame{color:var(--text);min-height:100vh}
@@ -44,6 +46,7 @@
   .loading-detail-layout>aside{container-type:inline-size}
   .loading-tracking{display:grid;grid-template-columns:minmax(0,180px) 35px;grid-template-areas:'status extra' 'rating more';gap:15px 6px}
   .loading-tracking .loading-control{grid-area:status;width:100%;margin:0}.loading-tracking .loading-rating{grid-area:rating;width:100%;margin:0}
+  .detail-loading-frame .loading-game-progress{display:grid;grid-column:1/-1;min-width:0;margin-top:0}
   @container(min-width:368px){.detail-loading-frame:not([data-loading-library=true]) .loading-tracking{grid-template-columns:minmax(180px,260px) minmax(132px,180px) 35px;grid-template-areas:'status rating extra'}}
   @container(min-width:430px){.detail-loading-frame[data-loading-library=true] .loading-tracking{grid-template-columns:minmax(180px,260px) minmax(132px,180px) 35px 35px;grid-template-areas:'status rating extra more'}}
 }

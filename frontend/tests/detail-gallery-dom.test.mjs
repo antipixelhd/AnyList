@@ -31,7 +31,7 @@ function thumbnail({complete=false,width=0}={}){
   Object.assign(image,{src:'https://example.test/art.jpg',hidden:true,complete,naturalWidth:width,
     getAttribute:()=>image.src,style:{opacity:'0',removeProperty(name){delete this[name];}}});
   const classes=new Set(['detail-image-skeleton']);
-  const button={querySelector:()=>image,classList:{add:name=>classes.add(name),remove:name=>classes.delete(name)}};
+  const button={querySelector:()=>image,matches:()=>false,classList:{add:name=>classes.add(name),remove:name=>classes.delete(name)}};
   return {image,button,classes};
 }
 test('cold lazy artwork keeps a layout box and skeleton until the image loads',()=>{

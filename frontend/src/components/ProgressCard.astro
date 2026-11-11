@@ -1,7 +1,7 @@
 ---
 const {entry} = Astro.props;
 ---
-<article class={entry.airing?'progress-card airing':'progress-card'} data-progress-card data-media-id={entry.id} data-progress={entry.progress} data-released={entry.released_episodes??''} data-season-position={entry.season_position||''} data-latest-position={entry.latest} data-next-air={entry.next_release_date||''}>
+<article class={entry.airing?'progress-card airing':'progress-card'} data-progress-card data-detail-kind="series" data-media-id={entry.id} data-progress={entry.progress} data-released={entry.released_episodes??''} data-season-position={entry.season_position||''} data-latest-position={entry.latest} data-next-air={entry.next_release_date||''}>
         <a class="progress-card-poster" href={`/title/${entry.id}`} aria-label={`View ${entry.title}`}>
           {entry.artwork?.src&&<img src={entry.artwork.src} srcset={entry.artwork.srcset} sizes={entry.artwork.sizes} alt="" loading="lazy"/>}
           {entry.airing&&<span class="progress-card-airing-label"><strong data-latest-episode>{entry.latest||'Latest episode'}</strong><span data-countdown>Release date unavailable</span></span>}

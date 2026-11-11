@@ -154,7 +154,7 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
     register(find(`[data-game-shelf="${shelf.key}"]`),shelf.payload.results);paintSource(shelf);
   }
   if(!initial.categories){reconcile(payload,-1);register(grid,payload.results);if(!initial.pending&&!initial.error&&gameBrowseCacheable(payload))cache.set(gameBrowseRequest(initialValues),payload);}
-  requestAnimationFrame(()=>requestAnimationFrame(()=>{if(!signal.aborted)initializeScrollMotion(root,signal,'.browse-card-body','browse-scroll-reveal',{animateInitial:false,downwardOnly:true,scaleEntrance:true,once:true,appearedAttribute:'data-browse-appeared'});}));
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{if(!signal.aborted)initializeScrollMotion(root,signal,'.browse-card-body','browse-scroll-reveal',{animateInitial:false,downwardOnly:true,scaleEntrance:true,once:true,visibleImmediately:true,appearedAttribute:'data-browse-appeared'});}));
   bindBrowseCardActions(region,items,signal,syncItem,message=>{notice.textContent=message;notice.hidden=false;});bindBrowseCardTouch(region,signal);
   function updateControls(){
     syncing=true;

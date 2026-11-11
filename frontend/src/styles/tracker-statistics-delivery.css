@@ -157,7 +157,7 @@
   pointer-events:none;
   background:var(--blue);
   opacity:0;
-  transition:right 900ms cubic-bezier(.2,.7,.2,1),opacity 120ms ease
+  transition:right 900ms cubic-bezier(.2,.7,.2,1),opacity 75ms ease
 }
 .route-progress.visible {
   right:18%;
@@ -167,6 +167,7 @@
   right:0;
   transition-duration:160ms
 }
+:is(.profile-tabs,[data-mobile-navigation]) a[data-route-pending] { color:var(--blue); }
 .offline-toast {
   position:fixed;
   z-index:1001;

@@ -7,7 +7,7 @@ import {runInNewContext} from 'node:vm';
 test('a new list load cannot be hidden by the previous page-progress finish timer',t=>{
   t.mock.timers.enable({apis:['setTimeout']});
   const source=readFileSync(new URL('../src/components/NavigationRuntime.astro',import.meta.url),'utf8');
-  const start=source.indexOf('  function startProgress()');
+  const start=source.indexOf('  function startProgress(');
   const snippet=source.slice(start,source.indexOf('  if (!state.initialized)',start));
   const classes=new Set(),context={state:{},window:{setTimeout,clearTimeout},document:{querySelector:()=>({classList:{add:(...names)=>names.forEach(name=>classes.add(name)),remove:(...names)=>names.forEach(name=>classes.delete(name))}})}};
   runInNewContext(stripTypeScriptTypes(snippet)+';this.start=startProgress;this.finish=finishProgress;',context);

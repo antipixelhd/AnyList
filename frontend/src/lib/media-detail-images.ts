@@ -1,6 +1,7 @@
 import {mountGalleryArtworkActions} from './gallery-artwork-actions';
 import {mountGameBannerSettings} from './game-banner-settings';
-import {showDialog,reveal,cancelUiMotion} from './ui-motion';
+import {showDialog,cancelUiMotion} from './ui-motion';
+import {revealReadyContent} from './loading-reveal';
 import {showToast} from './toasts';
 import {bindImageViewerDismissal} from './image-viewer-dismissal';
 import {detailBackground,type DetailLoadState} from './detail-background';
@@ -66,7 +67,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
   const loadViewerImage=createDetailViewerImageLoader(signal);
   const preparedImages=new WeakMap<HTMLImageElement,{url:string;ready:Promise<boolean>}>();
   const watchThumbnail=createGalleryThumbnailWatcher(signal,thumbnail=>{
-    if(thumbnail.getBoundingClientRect().top<innerHeight)reveal(thumbnail);
+    if(!thumbnail.closest('.lab-art-image'))revealReadyContent(thumbnail,signal);
   });
   const loadThumbnail=createGalleryImageLoader(signal,button=>{
     if(button.matches('.lab-gallery button,.lab-art-image'))watchLandscape(button as HTMLButtonElement);
@@ -268,12 +269,10 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
       return wasSelected;
     };
     const ready=loadViewerImage(image,skeleton,url,`${name} · ${group==='posters'?'Poster':'Artwork'} ${index+1}`,urgent?'high':'low',preview);
-    const cached=image.complete&&image.naturalWidth>0;
     const settled=ready.then(loaded=>{
       if(!loaded||signal.aborted)return false;
       if(!standalone&&info.type!=='game'&&group!=='posters'&&image.naturalWidth<=image.naturalHeight){discard();return false;}
       if(lightbox.open&&active===group&&galleries[group][current]===original)fitViewer(image,viewerGroup());
-      if(!cached&&lightbox.open&&active===group&&galleries[group][current]===original)reveal(image);
       refreshPreviewLoading();
       return true;
     }).catch(()=>{

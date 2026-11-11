@@ -91,7 +91,7 @@ test('cached mixed navigation waits for approval and falls back on revocation, i
     const state={user:'7',pages:new Map([['/home',page]]),generation:1,bytes:6,usedCached:new Set()};
     const context={URL,Date,state,document:{querySelector:()=>null,addEventListener:(_name,callback)=>handler=callback},navigator:{onLine:true},
       closeNavigationDialogs(){},resetForIdentity(){},keyFor:()=>'/home',cacheable:()=>true,approvedGamesPage:()=>false,reusableGamesPage:()=>false,
-      currentUser:()=>outcome==='other-viewer'?'8':'7',startProgress(){},clearPreview:undefined,detailDestination:()=>undefined,
+      currentUser:()=>outcome==='other-viewer'?'8':'7',startProgress(){},finishProgress(){},clearPreview:undefined,clearNavigationFeedback:undefined,detailDestination:()=>undefined,
       cancelLoadingReveals(){},detailReveal:undefined,
       authorizeGameSnapshot:()=>new Promise(resolve=>authorize=resolve),
       DOMParser:class{parseFromString(){parsed++;return 'parsed';}},
