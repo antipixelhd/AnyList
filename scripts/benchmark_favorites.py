@@ -137,6 +137,9 @@ async def measure(url, tracked, screen, games, runs, compare):
             app.dependency_overrides[get_optional_user_or_api_key] = lambda: viewer
             path = f'/tracking/people/{owner.username}/favorites'
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://fixture') as client:
+                from routers.tracking import FavoriteOrderBody
+
+                assert FavoriteOrderBody(media_ids=list(range(screen))).media_ids == list(range(screen))
                 response = await client.get(path)
                 assert response.status_code == 200 and response.headers['cache-control'] == 'private, no-store'
                 assert (await client.get(path, params={'show_screen': False, 'show_games': False})).json() == {

@@ -759,7 +759,7 @@ async def person(username: str, db: AsyncSession = Depends(get_db), viewer: User
 
 
 class FavoriteOrderBody(BaseModel):
-    media_ids: list[int] = Field(max_length=500)
+    media_ids: list[int] = Field(max_length=5000)
 
     @field_validator("media_ids")
     @classmethod
