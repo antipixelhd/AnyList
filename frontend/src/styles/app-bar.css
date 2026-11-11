@@ -79,7 +79,6 @@ html.appbar-nav-transition-cursor {
   /* A detail preview starts at the top even when the outgoing list is scrolled. */
   .tracker .topbar:has(~ .route-detail-preview) {
     transform:translateY(0);
-    transition:transform .22s ease;
   }
 
   .tracker .topbar:is(.appbar-fade-capable.appbar-at-top, :has(~ .route-detail-preview)) {

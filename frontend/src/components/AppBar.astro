@@ -113,6 +113,7 @@ const mobileNavigation = appMobileNavigation({profile, pathname, signedIn: !!use
 </script>}
 <script>
   import {pageScrollPosition} from '../lib/page-scroll-position';
+  import {carryAppbarAppearance} from '../lib/appbar-appearance';
   import {mediaDomains,domainListLinks,type MediaDomains} from '../lib/media-domains';
   let appbarListeners: AbortController;
   let cursorTransitionId = 0;
@@ -127,6 +128,7 @@ const mobileNavigation = appMobileNavigation({profile, pathname, signedIn: !!use
     let scheduled = false;
     let keyboardFocus = false;
     let wheelDown = false;
+    let releaseAppearance:(()=>void)|undefined;
     const mobile = () => matchMedia('(max-width:1040px)').matches;
     const topThreshold = () => mobile() ? 16 : 0;
     const syncTopFade = (y: number) => appbar.classList.toggle('appbar-at-top', !mobile() && y <= 0);
@@ -183,9 +185,11 @@ const mobileNavigation = appMobileNavigation({profile, pathname, signedIn: !!use
       incomingAppbar.classList.toggle('appbar-at-top', startsTransparent);
       if (listLanding) incomingAppbar.classList.add('appbar-hidden');
       else if (startsTransparent) incomingAppbar.classList.remove('appbar-hidden');
+      releaseAppearance=carryAppbarAppearance(appbar,incomingAppbar);
     };
     document.addEventListener('astro:before-swap', prepareIncomingAppbar, { signal: appbarListeners.signal });
     document.addEventListener('astro:after-swap', () => {
+      releaseAppearance?.();releaseAppearance=undefined;
       if (cursorTransitionActive) document.documentElement.classList.add('appbar-nav-transition-cursor');
     }, { signal: appbarListeners.signal });
     appbar.addEventListener('pointerover', syncPointerState, { signal: appbarListeners.signal });
