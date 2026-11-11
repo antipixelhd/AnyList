@@ -224,7 +224,7 @@ export function mountMediaDetail() {
       tabs.forEach(tab => { const active = tab.dataset.detailTab === id; tab.setAttribute('aria-selected',String(active)); tab.tabIndex = active ? 0 : -1; });
       panels.forEach(panel => panel.hidden = panel.dataset.detailPanel !== id);
       if(id==='achievements')loadAchievements();
-      if (animate) settleNavigationContent(panelGroup, 'tab', signal);
+      if (animate) settleNavigationContent(panelGroup, 'tab', signal, 4);
     }
     const url = new URL(location.href);
     if (id === 'overview') url.searchParams.delete('tab'); else url.searchParams.set('tab',id);

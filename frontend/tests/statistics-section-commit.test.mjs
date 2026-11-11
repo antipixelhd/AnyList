@@ -12,11 +12,11 @@ test('ready section changes commit before the entrance while ordinary overview u
   const context={matchesSelection:()=>true,paintedView:'screen:overview',domain:'screen',section:'genres',
     panelActive:()=>true,root:{},response:{overview:{media_type:'all'}},
     results:{},events:new AbortController(),
-    settleNavigationContent:(_results,kind)=>actions.push(kind),renderNow:(data,initial)=>actions.push([data,initial])};
+    settleNavigationContent:(_results,kind,_signal,offset)=>actions.push([kind,offset]),renderNow:(data,initial)=>actions.push([data,initial])};
   runInNewContext(stripTypeScriptTypes(snippet)+';this.render=render;',context);
   const ready={status:'ready',overview:{media_type:'all'}};
   context.render(ready);
-  assert.deepEqual(actions.splice(0),[[ready,true],'tab']);
+  assert.deepEqual(actions.splice(0),[[ready,true],['tab',4]]);
   context.paintedView='screen:genres';context.render(ready);
   assert.deepEqual(actions.splice(0),[[ready,false]],'same-section refresh does not replay the tab transition');
   context.section='overview';context.paintedView='screen:overview';

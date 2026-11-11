@@ -215,7 +215,7 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
     const changedScope=next.overview&&next.overview.media_type!==response.overview?.media_type;
     if(!initial&&next.status==='ready'&&panelActive(root)&&(changedSection||(changedScope&&section!=='overview'))){
       renderNow(next,true);
-      settleNavigationContent(results,'tab',events.signal);
+      settleNavigationContent(results,'tab',events.signal,4);
     }else renderNow(next,initial);
   }
   function renderNow(next: OverviewResponse, initial = false) {
