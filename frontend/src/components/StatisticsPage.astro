@@ -9,11 +9,10 @@ import StatsGenreCard from './StatsGenreCard.astro';
 import StatsActorCard from './StatsActorCard.astro';
 import StatsStudioCard from './StatsStudioCard.astro';
 import StatsStaffCard from './StatsStaffCard.astro';
-import '../styles/stats-overview.css';
-import '../styles/stats-genres.css';
-import '../styles/stats-actors.css';
+import StatsLoadingContent from './StatsLoadingContent.astro';
+import '../styles/stats-loading.css';
 import { tracker,trackerFailure } from '../lib/tracker';
-import {emptyStatistics,gameStatisticsView,statisticsSection,statisticsPanel,type UnifiedStatistics} from '../lib/unified-statistics-data';
+import {emptyStatistics,gameStatisticsView,statisticsSection,statisticsSectionLabel,statisticsPanel,type UnifiedStatistics} from '../lib/unified-statistics-data';
 import {gameHeadlines,gameStatsQuery,signedNumber,type GameStatsResponse,type GameOverview} from '../lib/game-statistics-data';
 import type { OverviewResponse, Overview, MediaScope } from '../lib/stats-overview-data';
 import { headlineValues } from '../lib/stats-overview-data';
@@ -58,11 +57,15 @@ const actorTemplate = { key: '', label: '', image: null, href: '#', titles: 0, m
         <div id="statistics-sections" data-motion-static><StatisticsSections owner={data.owner} {domain} {section}/></div>
       </aside>
       <div class="stats-overview-content">
-      <header class="overview-heading"><h2 data-stats-heading>{section==='developers'?'Developers':section==='publishers'?'Publishers':section === 'staff' ? 'Staff' : section === 'studios' ? 'Studios' : section === 'actors' ? 'Actors' : section === 'genres' ? 'Genres' : 'Overview'}</h2><nav class="overview-media" aria-label="Statistics media type" data-screen-media hidden={games}>
+      <header class="overview-heading"><h2 data-stats-heading>{statisticsSectionLabel(section)}</h2><nav class="overview-media" aria-label="Statistics media type" data-screen-media hidden={games}>
         {[['all', 'All'], ['movie', 'Movies'], ['series', 'Series']].map(([value, label]) => <a href={`?${new URLSearchParams({media: value, section, sort, actor_sort: actorSort, studio_sort: studioSort, staff_sort: staffSort, artwork})}`} data-overview-media={value} aria-current={value === media ? 'page' : undefined}>{label}</a>)}
       </nav></header>
       <p class="overview-error error-message" role="alert" hidden></p>
-      <div class="overview-pending" role="status" hidden={ready}><p data-overview-state>{data.status === 'error' ? 'Statistics are unavailable. A retry is scheduled.' : 'Preparing statistics…'}</p><button type="button" data-overview-retry>{data.owner ? 'Refresh statistics' : 'Check again'}</button></div>
+      <div class="overview-pending" hidden={ready}>
+        <p data-overview-state role="status">{data.status === 'error' ? 'Statistics are unavailable. A retry is scheduled.' : 'Preparing statistics…'}</p>
+        <div data-overview-skeleton hidden={data.status === 'error'}><StatsLoadingContent /></div>
+        <button type="button" data-overview-retry>{data.owner ? 'Refresh statistics' : 'Check again'}</button>
+      </div>
       <span class="overview-sr-only" data-overview-announcement role="status" aria-live="polite"></span>
 
       <div class="overview-results" hidden={!ready}>

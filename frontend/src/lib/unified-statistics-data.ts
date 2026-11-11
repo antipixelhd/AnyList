@@ -5,6 +5,7 @@ export type StatisticsDomain='screen'|'game';
 export type UnifiedStatistics=OverviewResponse & {game?:GameStatsResponse;selectionSort?:string};
 export const statisticsSections={screen:['overview','genres','actors','studios','staff'],game:['overview','genres','actors','developers','publishers','staff']};
 export function statisticsSection(domain:StatisticsDomain,section:string){return statisticsSections[domain].includes(section)?section:'overview';}
+export const statisticsSectionLabel=(section:string)=>section.charAt(0).toUpperCase()+section.slice(1);
 export function statisticsPanel(section:string){return section==='developers'||section==='publishers'?'studios':section;}
 export function emptyStatistics(media:MediaScope='all'):Overview{
   return {media_type:media,totals:{listed_titles:0,watched_titles:0,episode_plays:0,distinct_episodes:0,watch_minutes:0,watch_days:0,planned_minutes:0,planned_days:0,mean_score:null,standard_deviation:null,rated_titles:0},scores:[],episode_counts:[],statuses:[],formats:[],countries:[],release_years:[],watch_years:[],coverage:{}};

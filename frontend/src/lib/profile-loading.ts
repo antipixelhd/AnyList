@@ -2,6 +2,7 @@ import { gameStatuses } from './game-editor-data.ts';
 import { mediaDomains } from './media-domains.ts';
 import { profileListQuery } from './profile-list-query.ts';
 import { statuses } from './tracking-statuses.ts';
+import { statisticsSection, statisticsSectionLabel } from './unified-statistics-data.ts';
 
 export function profileLoadingFrame(kind: string, url: URL, nav: HTMLElement) {
   const game = kind === 'games';
@@ -10,7 +11,22 @@ export function profileLoadingFrame(kind: string, url: URL, nav: HTMLElement) {
     ? '[data-profile-stats-loading]'
     : `[data-profile-list-loading="${game ? 'game' : 'screen'}"]`);
   const frame = template?.content.firstElementChild?.cloneNode(true) as HTMLElement | undefined;
-  if (!frame || statistics) return frame;
+  if (!frame) return;
+  if (statistics) {
+    const domain = kind === 'stats/games' ? 'game' : 'screen';
+    const section = statisticsSection(domain, url.searchParams.get('section') || 'overview');
+    const media = url.searchParams.get('media');
+    frame.dataset.domain = domain;
+    frame.dataset.section = section;
+    frame.dataset.media = media === 'movie' || media === 'series' ? media : 'all';
+    frame.querySelector<HTMLElement>('[data-loading-stats-heading]')!.textContent = statisticsSectionLabel(section);
+    const group = frame.querySelector<HTMLElement>(`[data-statistics-domain="${domain}"]`)!;
+    group.hidden = false;
+    const selected = group.querySelector<HTMLButtonElement>(`[data-section="${section}"]`);
+    selected?.classList.add('is-selected');
+    selected?.setAttribute('aria-pressed', 'true');
+    return frame;
+  }
 
   const preferences = mediaDomains(JSON.parse(nav.dataset.mediaDomains || '{}'));
   const choices = game ? gameStatuses : statuses;

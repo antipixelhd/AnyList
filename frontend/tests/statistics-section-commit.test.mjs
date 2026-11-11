@@ -3,7 +3,7 @@ import test from 'node:test';
 import {readFileSync} from 'node:fs';
 import {stripTypeScriptTypes} from 'node:module';
 import {runInNewContext} from 'node:vm';
-import {statisticsSection,statisticsPanel,statisticsSections} from '../src/lib/unified-statistics-data.ts';
+import {statisticsSection,statisticsSectionLabel,statisticsPanel,statisticsSections} from '../src/lib/unified-statistics-data.ts';
 const source=readFileSync(new URL('../src/lib/stats-overview.ts',import.meta.url),'utf8');
 test('ready section changes commit before the entrance while ordinary overview updates retain chart motion',()=>{
   const start=source.indexOf('  function render(next:');
@@ -73,7 +73,7 @@ test('domain switches and restored URLs update selection before reading without 
   const openStart=source.indexOf('  function openUrl(');
   const open=source.slice(openStart,source.indexOf("  root.addEventListener('anylist:statistics-open'",openStart));
   const reads=[],urls=[],controls=[];
-  const context={domain:'screen',section:'actors',page:1,media:'series',statisticsSection,URL,
+  const context={domain:'screen',section:'actors',page:1,media:'series',statisticsSection,statisticsSectionLabel,URL,
     tooltips:new Map(),pies:new Map(),statisticsPanel,cancelPanelReveal(){},render(){},response:{},root:{dataset:{}},genreSort:value=>value||'count',actorArtwork:value=>value||'media',
     node:()=>({textContent:'Actors'}),syncUrl:push=>urls.push([context.domain,context.section,push]),
     updateDomainControls:()=>controls.push(context.domain),syncLinks(){},scheduleSibling(){},loader:{load:()=>reads.push([context.domain,context.section,context.media])}};

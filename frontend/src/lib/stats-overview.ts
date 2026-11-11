@@ -1,5 +1,5 @@
 import {gameHeadlines,signedNumber,type GameOverview,type GameStatsResponse} from './game-statistics-data';
-import {statisticsSection,statisticsPanel,type StatisticsDomain,type UnifiedStatistics} from './unified-statistics-data';
+import {statisticsSection,statisticsSectionLabel,statisticsPanel,type StatisticsDomain,type UnifiedStatistics} from './unified-statistics-data';
 import {createStatisticsReader,type StatisticsSelection} from './unified-statistics-request';
 import {statisticValue} from './statistic-value';
 import {bindPredictionIntent,predictionAllowed} from './predictive-loading';
@@ -237,6 +237,7 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
     const pollDelay=domain==='game'&&next.status!=='ready'?(rawGame()?.retry_after||3)*1000:overviewPollDelay(next);
     if (pollDelay !== null) timer = setTimeout(() => { if (!stopped&&panelActive(root)) void loader.load(media,true); }, pollDelay);
     if (!ready) {
+      node('[data-overview-skeleton]').hidden = next.status === 'error';
       node('[data-overview-state]').textContent = next.status === 'error' ? 'Statistics are unavailable. A retry is scheduled.' : 'Preparing statistics…';
       return;
     }
@@ -321,7 +322,7 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
     tooltips.forEach(tooltip => tooltip.dismiss());
     pies.forEach(chart => { chart.tooltip?.setActiveElements([], {x:0,y:0}); chart.setActiveElements([]); chart.draw(); });
     section=statisticsSection(domain,next);root.dataset.section=section;root.dataset.statsPanelSection=statisticsPanel(section);page=1;
-    node('[data-stats-heading]').textContent = section==='developers'?'Developers':section==='publishers'?'Publishers':section === 'staff' ? 'Staff' : section === 'studios' ? 'Studios' : section === 'actors' ? 'Actors' : section === 'genres' ? 'Genres' : 'Overview';
+    node('[data-stats-heading]').textContent = statisticsSectionLabel(section);
     if(push)syncUrl(true);
     syncLinks();updateDomainControls();
     // A section is committed with its data in one task. Keep the outgoing
@@ -483,7 +484,7 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
   render(response,true);updateDomainControls();scheduleSibling();
   const mountScrollEntrance = () => {
     settleScrollEntrance = initializeScrollMotion(root, events.signal,
-      '.stats-genre-card,.overview-chart,.overview-distribution', 'stats-scroll-reveal', {
+      '.overview-results :is(.stats-genre-card,.overview-chart,.overview-distribution)', 'stats-scroll-reveal', {
         animateInitial:false, animateVisibleArrivals:false, downwardOnly:true, once:true, prepareBeforeEntry:false,
       });
   };

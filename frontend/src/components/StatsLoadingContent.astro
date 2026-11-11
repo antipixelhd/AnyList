@@ -1,0 +1,30 @@
+<div class="stats-loading-content" aria-hidden="true">
+  <div data-stats-loading-shape="overview">
+    <div class="overview-totals">
+      {Array.from({length:6},()=><div><span class="overview-total-icon"></span><span class="stats-loading-value"></span><span class="stats-loading-label"></span></div>)}
+    </div>
+    <section class="overview-chart">
+      <header class="overview-chart-heading"><h3>Scores</h3><span class="stats-loading-control"></span></header>
+      <div class="overview-plot stats-loading-plot">
+        <div class="stats-loading-axes"></div>
+      </div>
+    </section>
+  </div>
+  {['groups','people'].map(shape=><div data-stats-loading-shape={shape}>
+    <div class:list={[shape==='people'?'stats-actors-toolbar':'stats-genres-toolbar']}>
+      <span class="stats-loading-control stats-loading-artwork"></span><span class="stats-loading-control"></span>
+    </div>
+    <div class={shape==='people'?'stats-actors-grid':'stats-genres-grid'}>
+      {Array.from({length:3},()=><article class:list={['stats-genre-card',{'stats-actor-card':shape==='people'}]}>
+        <div class="stats-genre-summary">
+          <header><span class="stats-loading-title"></span><span class="stats-loading-rank"></span></header>
+          <dl>{Array.from({length:3},()=><div><dt><span class="stats-loading-label"></span></dt><dd><span class="stats-loading-value"></span></dd></div>)}</dl>
+        </div>
+        {shape==='people'&&<div class="stats-actor-portrait"></div>}
+        <div class="stats-genre-posters"><div class="stats-genre-track">
+          {Array.from({length:4},()=><span class="stats-genre-poster"></span>)}
+        </div></div>
+      </article>)}
+    </div>
+  </div>)}
+</div>

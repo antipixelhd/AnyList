@@ -10,6 +10,7 @@ import {gameListQuery} from '../../../lib/game-list-data';
 import {viewerMediaPreferences} from '../../../lib/viewer-media-preferences';
 import '../../../styles/game-list.css';
 import '../../../styles/virtual-profile-list.css';
+import '../../../styles/stats-loading.css';
 const preferences=await viewerMediaPreferences(Astro.locals);
 const {query}=gameListQuery(Astro.url.searchParams,preferences.default_sort);
 const request=new URLSearchParams(query);request.set('grouped','true');request.set('limit','100');
