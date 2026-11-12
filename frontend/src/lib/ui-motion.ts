@@ -5,6 +5,13 @@ type MotionControl = ReturnType<typeof animate>;
 const running = new Map<HTMLElement, MotionControl>();
 const closing = new WeakMap<HTMLElement, number>();
 const boundDialogs = new WeakSet<HTMLDialogElement>();
+type DialogMotion={enter():void;exit():Promise<void>;cancel():void};
+const dialogMotions=new Map<HTMLDialogElement,DialogMotion>();
+export function registerDialogMotion(dialog:HTMLDialogElement,motion:DialogMotion,signal:AbortSignal){
+  if(signal.aborted)return;
+  dialogMotions.get(dialog)?.cancel();dialogMotions.set(dialog,motion);
+  signal.addEventListener('abort',()=>{if(dialogMotions.get(dialog)===motion){motion.cancel();dialogMotions.delete(dialog);}},{once:true});
+}
 let sequence = 0;
 
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -64,7 +71,8 @@ export function showDialog(dialog: HTMLDialogElement) {
     });
   }
   if (!dialog.open) dialog.showModal();
-  play(dialog, true, 5, false, .85);
+  const motion=dialogMotions.get(dialog);
+  if(motion){stop(dialog);motion.enter();}else play(dialog, true, 5, false, .85);
 }
 
 export async function closeDialog(dialog: HTMLDialogElement, returnValue?: string) {
@@ -73,8 +81,9 @@ export async function closeDialog(dialog: HTMLDialogElement, returnValue?: strin
   closing.set(dialog, token);
   dialog.setAttribute('data-motion-closing','');
   dialog.style.pointerEvents = 'none';
-  const control = play(dialog, false, 8);
-  if (control) await control.finished.catch(() => {});
+  const motion=dialogMotions.get(dialog);
+  if(motion)await motion.exit();
+  else {const control=play(dialog,false,8);if(control)await control.finished.catch(()=>{});}
   if (closing.get(dialog) !== token) return;
   stop(dialog);
   dialog.style.removeProperty('pointer-events');
@@ -172,6 +181,7 @@ export async function hideOverlay(overlay: HTMLElement) {
 }
 
 export function cancelUiMotion(root?: HTMLElement) {
+  for(const [dialog,motion] of dialogMotions)if(!root||root.contains(dialog))motion.cancel();
   arrows.cancel(root);
   for (const element of running.keys()) {
     if (!root || root.contains(element)) stop(element);

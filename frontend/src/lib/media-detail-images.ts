@@ -1,6 +1,7 @@
 import {mountGalleryArtworkActions} from './gallery-artwork-actions';
 import {mountGameBannerSettings} from './game-banner-settings';
 import {showDialog,cancelUiMotion} from './ui-motion';
+import {createImageOriginMotion} from './image-origin-motion';
 import {revealReadyContent} from './loading-reveal';
 import {showToast} from './toasts';
 import {bindImageViewerDismissal} from './image-viewer-dismissal';
@@ -158,6 +159,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
   const resetZoom=bindDetailImageZoom(lightbox,track,signal,()=>carousel.slide(current)?.image,
     (index,preserveScroll=false,preserveZoom=false)=>showImage(index,false,!preserveScroll,preserveZoom),()=>{previewInteracting=false;revealPreviews();},()=>cancelUiMotion(lightbox));
   const fitViewer=bindDetailViewerFrame(lightbox,signal,!!standalone);
+  const prepareOrigin=createImageOriginMotion(lightbox,track,signal,()=>carousel.slide(current)?.image,()=>imageKey(galleries[active][current]||''));
   let followedSlot:string|undefined;
   const paintSlots=()=>{
     if(!lightbox.open)return;
@@ -250,7 +252,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
     // pending full-size slide can show it without a new preview download.
     // Dialogs are portaled outside root when opened. Take the strip image
     // directly from its slot instead of relying on a detail-root query.
-    const preview=urgent?[...(thumbnail?[thumbnail]:[]),...root.querySelectorAll<HTMLImageElement>('.lab-gallery img,.lab-art-image img')]
+    const preview=urgent?[...(thumbnail?[thumbnail]:[]),...root.querySelectorAll<HTMLImageElement>('.lab-gallery img,.lab-art-image img,.media-cover img,[data-portrait-image] img,.lab-hero-image')]
       .filter(candidate=>imageKey(candidate.currentSrc||candidate.src||candidate.dataset.gallerySrc||'')===imageKey(original)):thumbnail?[thumbnail]:undefined;
     const existing=preparedImages.get(image);
     if(existing?.url===url){
@@ -484,6 +486,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
     }
     const gridIndex=[...root.querySelectorAll('[data-detail-artwork-grid] button')].indexOf(button);
     followedSlot=undefined;
+    prepareOrigin(button,button.querySelector<HTMLImageElement>('img')||(active==='hero'?root.querySelector<HTMLImageElement>('.lab-hero-image')||undefined:undefined),imageKey(url));
     prepareViewer();
     fitViewer(undefined,viewerGroup(),active==='hero'?root.querySelector<HTMLImageElement>('.lab-hero-image')||undefined:undefined);
     showDialog(lightbox);previews.reveal();showImage(gridIndex>=0?gridIndex:Math.max(0,galleries[active].findIndex(value=>imageKey(value)===imageKey(url))));

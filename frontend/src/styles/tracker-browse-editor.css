@@ -3,7 +3,8 @@
 .editor[data-editor-domain=game] [data-game-main]:has([name=game_total_hours]){grid-column:3;grid-row:1}
 .editor[data-editor-domain=game] [data-game-main]:has([name=game_replays]){grid-column:3;grid-row:2}
 .game-achievement-editor,.game-achievement-controls{display:grid;gap:12px}
-.editor .game-achievement-editor{align-content:start;gap:6px}
+.editor .game-achievement-editor{align-content:start;gap:0}
+.editor [data-game-achievement-controls]{padding-top:6px}
 .game-field-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:28px}
 .game-field-heading>span{font-size:var(--type-label-size);color:var(--muted)}
 .editor .game-field-heading label{margin:0}

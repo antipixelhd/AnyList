@@ -4,6 +4,7 @@ import {localToday} from './date-time';
 import {setupEditorSelect} from './editor-select';
 import {watchAchievementCatalogue,type AchievementCatalogue} from './game-achievement-catalogue';
 import {gameSteamSync} from './game-steam-sync';
+import {createAnchoredFieldReveal} from './anchored-field-reveal';
 
 /** Game progress controls mounted inside the existing shared tracking form. */
 export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,signal:AbortSignal,confirm:(message:string)=>Promise<boolean>) {
@@ -23,6 +24,7 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
   const guidance=dialog.querySelector<HTMLElement>('[data-game-achievement-guidance]')!;
   const loadMore=dialog.querySelector<HTMLButtonElement>('[data-game-achievement-more]')!;
   const loadStatus=dialog.querySelector<HTMLElement>('[data-game-achievement-status]')!;
+  const reveal=createAnchoredFieldReveal(dialog,dialog.querySelector('[data-game-achievement-reveal]')!,dialog.querySelector('[data-game-achievement-controls]')!,signal);
   let current:Record<string,any>={},title:EditorTitle|null=null,child=false,totalTouched=false,firstTouched=false,confirmed=false;
   let loaded=0,loadedTotal=0,busy=false,generation=0,controller:AbortController|undefined;
   let catalogueController:AbortController|undefined;
@@ -95,7 +97,8 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
       if(active===generation){busy=false;loadMore.disabled=false;}
     }
   }
-  function renderMode() {
+  function renderMode(animate=false) {
+    reveal.change(()=>{
     const selected=mode.value;
     if(selected==='count'&&!count.value)count.value='0';
     if(selected==='percentage'&&!percentage.value)percentage.value='0';
@@ -114,6 +117,7 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
     }
     renderProgress();
     shownMode=selected;
+    },animate);
   }
   function modeOptions(selected:string){
     // Unset is form state, not a tracking mode. Only Add/Remove change it.
@@ -144,9 +148,9 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
     }
     mode.value='count';
     if(!count.value)count.value='0';if(!percentage.value)percentage.value='0';
-    renderMode();number.focus();number.select();
+    renderMode(true);number.focus({preventScroll:true});number.select();
   },{signal});
-  remove.addEventListener('click',()=>{mode.value='';renderMode();add.focus();},{signal});
+  remove.addEventListener('click',()=>{mode.value='';renderMode(true);add.focus({preventScroll:true});},{signal});
   mode.addEventListener('change',async()=>{
     const active=generation;
     const desired=mode.value;
@@ -155,7 +159,7 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
       if(!await confirm('Switch to simplified tracking? Your saved individual achievements will be kept.')||signal.aborted||active!==generation)return;
       confirmed=true;mode.value=desired;
     }
-    renderMode();
+    renderMode(true);
   },{signal});
   let progressPending=false;
   async function commitProgress(raw:string) {
@@ -233,7 +237,7 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
         totalTouched=touchedTotal;firstTouched=touchedFirst;confirmed=simplifiedConfirmed;renderMode();renderFirst();
       };
     },
-    reset(){steamSync.reset();modeControl.close();generation++;controller?.abort();catalogueController?.abort();pendingCatalogue=undefined;title=null;list.replaceChildren();updates.clear();originals.clear();datesTouched.clear();loaded=loadedTotal=0;busy=false;progressPending=false;},
+    reset(){reveal.reset();steamSync.reset();modeControl.close();generation++;controller?.abort();catalogueController?.abort();pendingCatalogue=undefined;title=null;list.replaceChildren();updates.clear();originals.clear();datesTouched.clear();loaded=loadedTotal=0;busy=false;progressPending=false;},
     populate(next:EditorTitle) {
       this.reset();title=next;current=next.game_state||next.entry||{};
       child=['expansion','dlc'].includes(next.game_class||'');totalTouched=false;firstTouched=false;confirmed=false;

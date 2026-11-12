@@ -29,12 +29,12 @@ import EditorSelect from './EditorSelect.astro';
       <div class="editor-number-field" data-game-only data-game-main hidden><label for="game-replays">Replay count</label><NumberStepper id="game-replays" name="game_replays" label="Replay count" max={2147483647}/></div>
       <section class="wide game-achievement-editor" data-game-only data-game-main hidden aria-label="Achievement progress">
         <div class="game-field-heading"><span>Achievements</span><button type="button" class="game-steam-sync" data-game-steam-achievements hidden><Icon name="shuffle" /></button><button type="button" class="game-value-button" data-game-achievement-add>Add</button><button type="button" class="game-value-button" data-game-achievement-remove hidden aria-label="Remove achievement progress">Remove</button></div>
-        <div class="game-achievement-controls" data-game-achievement-controls hidden>
+        <div data-game-achievement-reveal hidden><div class="game-achievement-controls" data-game-achievement-controls hidden>
           <div data-game-achievement-mode-field hidden><EditorSelect id="game-achievement-mode" name="game_achievement_mode" label="Achievement tracking"/></div>
           <input name="game_achievement_count" type="hidden"/><input name="game_achievement_percentage" type="hidden"/>
           <div class="game-achievement-value editor-number-field"><NumberStepper id="game-achievement-value" name="game_achievement_value" label="Achievement progress"/><span id="game-achievement-maximum" data-game-achievement-maximum></span></div>
           <div data-game-targeted hidden><p class="game-achievement-guidance" data-game-achievement-guidance></p><div class="game-achievement-options" data-game-achievement-options></div><p role="status" data-game-achievement-status hidden></p><button type="button" class="lab-text-button" data-game-achievement-more hidden>Load more</button></div>
-        </div>
+        </div></div>
       </section>
       <div class="editor-start-date"><label for="editor-start-date">Start date</label><CalendarDateInput id="editor-start-date" name="start_date" label="Start date"/></div><div class="editor-finish-date"><label for="editor-finish-date">Finish date</label><CalendarDateInput id="editor-finish-date" name="finish_date" label="Finish date"/></div>
       <label class="editor-rewatches editor-number-field" for="editor-rewatches">Total rewatches<NumberStepper id="editor-rewatches" name="rewatch_count" label="Total rewatches" max={10000}/></label>
