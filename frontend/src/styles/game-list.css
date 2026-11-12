@@ -46,10 +46,10 @@
 .category-heading {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  gap: 4px;
+  font-size: var(--type-label-size);
 }
-.category-heading h2 { flex: 1; }
+.game-list-shell .filters .category-heading h2 { margin: 0; }
 .category-heading [data-category-controls],
 .category-edit-actions { display: flex; gap: 2px; }
 .category-heading :is([data-category-controls], [data-category-edit-actions]) {
@@ -131,7 +131,8 @@
 .category-save { color: var(--blue); }
 .category-save:hover,
 .category-save:focus-visible { color: var(--bright); }
-.category-heading .ui-icon { width: 12px; font-size: 12px; }
+.category-heading .category-icon { font-size: inherit; }
+.category-heading .category-icon .ui-icon { width: 1em; height: 1em; font-size: inherit; }
 .category-restore { color: var(--blue); opacity: 1; }
 .category-restore .ui-icon { width: 14px; font-size: 14px; }
 .category-restore:hover,
@@ -141,7 +142,6 @@
   .category-edit-row:has(> input) { grid-template-columns: minmax(0, 1fr) 36px; }
   .category-move { display: inline-flex; }
   .category-drag { min-height: 40px; }
-  .category-heading .ui-icon { width: 14px; font-size: 14px; }
   .category-restore .ui-icon { width: 16px; font-size: 16px; }
 }
 @media (hover: none), (pointer: coarse) {
