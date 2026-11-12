@@ -28,7 +28,11 @@
 .category-heading h2 { flex: 1; }
 .category-heading [data-category-controls],
 .category-edit-actions { display: flex; gap: 2px; }
-.category-heading :is([data-category-controls], [data-category-edit-actions]) { opacity: 0; pointer-events: none; }
+.category-heading :is([data-category-controls], [data-category-edit-actions]) {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--list-hover-duration) var(--list-hover-easing);
+}
 .list-categories:hover .category-heading :is([data-category-controls], [data-category-edit-actions]),
 .category-heading :is([data-category-controls], [data-category-edit-actions]):has(:focus-visible) { opacity: 1; pointer-events: auto; }
 .category-icon {

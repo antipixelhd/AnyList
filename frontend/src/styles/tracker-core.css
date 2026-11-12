@@ -206,12 +206,28 @@ button:disabled {
   background:var(--panel);
   color:var(--bright)
 }
-.list-categories { display: contents; }
+.list-categories {
+  display: contents;
+  --list-hover-duration: 160ms;
+  --list-hover-easing: cubic-bezier(.2,.7,.2,1);
+}
 .status-filters button [data-list-status-count],
 .status-filters button .pending-list-count {
   float:right;
   color:var(--muted);
-  font-size:var(--type-meta-size)
+  font-size:inherit;
+  font-weight:inherit
+}
+@media (min-width: 651px) and (hover: hover) and (pointer: fine) {
+  .list-categories .status-filters :is([data-list-status-count], .pending-list-count) {
+    opacity: 0;
+    transition: opacity var(--list-hover-duration) var(--list-hover-easing);
+  }
+  .list-categories:hover .status-filters :is([data-list-status-count], .pending-list-count),
+  .list-categories:has(.status-filters button:focus-visible) .status-filters :is([data-list-status-count], .pending-list-count) { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .list-categories { --list-hover-duration: 0ms; }
 }
 .list-toolbar {
   display:flex;
