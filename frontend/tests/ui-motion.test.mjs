@@ -19,7 +19,7 @@ function fixture() {
       return control;
     },
   };
-  runInNewContext(transpile(source, { target: ScriptTarget.ES2022 }) + '\nthis.api = { showMenu, hideMenu, reveal, cancelUiMotion };', context);
+  runInNewContext(transpile(source, { target: ScriptTarget.ES2022 }) + '\nthis.api = { showMenu, hideMenu, reveal, cancelUiMotion, cancelUiMotionImmediately };', context);
   const properties = new Map();
   const panel = {
     hidden: true, inert: true,
@@ -47,7 +47,7 @@ test('ordinary surfaces preserve their original stop behavior',()=>{
 
 test('an anchored editor can cancel its own entrance without changing viewer cleanup',()=>{
   const f=fixture();f.showMenu(f.panel);
-  f.cancelUiMotion({contains:element=>element===f.panel},true);
+  f.cancelUiMotionImmediately({contains:element=>element===f.panel});
   assert.equal(f.animations[0].control.cancelled,true);
   assert.equal(f.animations[0].control.stopped,undefined);
 });

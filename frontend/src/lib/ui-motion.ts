@@ -171,9 +171,16 @@ export async function hideOverlay(overlay: HTMLElement) {
   overlay.inert = false;
 }
 
-export function cancelUiMotion(root?: HTMLElement, immediate = false) {
+export function cancelUiMotion(root?: HTMLElement) {
   arrows.cancel(root);
   for (const element of running.keys()) {
-    if (!root || root.contains(element)) stop(element, immediate);
+    if (!root || root.contains(element)) stop(element);
+  }
+}
+
+export function cancelUiMotionImmediately(root: HTMLElement) {
+  arrows.cancel(root);
+  for (const element of running.keys()) {
+    if (root.contains(element)) stop(element, true);
   }
 }

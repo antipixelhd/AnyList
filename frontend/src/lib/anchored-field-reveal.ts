@@ -1,5 +1,5 @@
 import {boundedAnimation} from './bounded-animation.ts';
-import {cancelUiMotion} from './ui-motion';
+import {cancelUiMotionImmediately as cancelUiMotion} from './ui-motion';
 
 export function createAnchoredFieldReveal(dialog:HTMLDialogElement,wrapper:HTMLElement,content:HTMLElement,signal:AbortSignal) {
   const view=dialog.ownerDocument.defaultView!;
@@ -15,7 +15,7 @@ export function createAnchoredFieldReveal(dialog:HTMLDialogElement,wrapper:HTMLE
   const pin=()=>{
     if(anchor)return;
     const top=Math.max(0,dialog.getBoundingClientRect().top);
-    cancelUiMotion(dialog,true);
+    cancelUiMotion(dialog);
     const max=view.getComputedStyle(dialog).maxHeight;
     anchor={top:dialog.style.marginTop,bottom:dialog.style.marginBottom,max:dialog.style.maxHeight};
     dialog.style.marginTop=`${top}px`;dialog.style.marginBottom='0px';
