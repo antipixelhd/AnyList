@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {initializeScrollMotion} from '../src/components/dev/detail-scroll-motion.ts';
 
-function preview(t, {mobile = false, reduced = false, loading = false, initialY = 380, animateInitial = true, animateVisibleArrivals, downwardOnly = false, scaleEntrance = false, once = false, appearedAttribute, prepareBeforeEntry} = {}) {
-  let now = 0, y = initialY, hidden = false, focused = false, nextFrame = 0;
+function preview(t, {mobile = false, reduced = false, loading = false, initialY = 380, initiallyHidden = false, animateInitial = true, animateVisibleArrivals, downwardOnly = false, scaleEntrance = false, once = false, appearedAttribute, prepareBeforeEntry, deferHidden = false} = {}) {
+  let now = 0, y = initialY, hidden = initiallyHidden, focused = false, nextFrame = 0;
   const frames = new Map(), classes = new Set(), animations = [];
   const controller = new AbortController();
   const motion = new EventTarget(), input = new EventTarget(), viewport = new EventTarget();
@@ -55,7 +55,7 @@ function preview(t, {mobile = false, reduced = false, loading = false, initialY 
       else delete globalThis[key];
     }
   });
-  const settle = initializeScrollMotion(root, controller.signal, ".lab-module", "lab-scroll-reveal", {animateInitial, animateVisibleArrivals, downwardOnly, scaleEntrance, once, appearedAttribute, prepareBeforeEntry});
+  const settle = initializeScrollMotion(root, controller.signal, ".lab-module", "lab-scroll-reveal", {animateInitial, animateVisibleArrivals, downwardOnly, scaleEntrance, once, appearedAttribute, prepareBeforeEntry, deferHidden});
   const flush = () => {for (const [id, callback] of frames) {frames.delete(id);callback();}};
   return {
     classes, animations, observers, controller, settle: () => settle(element),
@@ -68,13 +68,14 @@ function preview(t, {mobile = false, reduced = false, loading = false, initialY 
     scroll(to, elapsed = 100) {y = to;now += elapsed;viewport.dispatchEvent(new Event('scroll'));flush();},
     ready() {loading = false;observers[0].callback();flush();},
     hide() {hidden = true;observers[0].callback();flush();},
+    show() {hidden = false;observers[0].callback();flush();},
     focus() {focused = true;const event = new Event('focusin');Object.defineProperty(event, 'target', {value: {closest: () => element}});root.dispatchEvent(event);},
     reduce() {motion.matches = true;motion.dispatchEvent(new Event('change'));},
     changeInput() {input.matches = !input.matches;input.dispatchEvent(new Event('change'));},
   };
 }
 
-test('a poster inheriting an appeared skeleton slot does not zoom again', t => {
+test('a poster already marked as appeared does not zoom again', t => {
   const p = preview(t, {initialY: 600, once: true, scaleEntrance: true, appearedAttribute: 'data-browse-appeared'});
   assert.equal(p.animations.length, 1);
   p.append(true);
@@ -95,6 +96,19 @@ test('Browse keeps initially visible cards painted but still animates new cards 
   p.scroll(0);
   p.scroll(424);
   assert.equal(p.animations.length, 3);
+});
+
+test('a warmed Browse tab reveals its visible cards once, on display', t => {
+  const p = preview(t, {initialY:600, initiallyHidden:true, deferHidden:true, downwardOnly:true, scaleEntrance:true, once:true});
+  assert.equal(p.animations.length, 0);
+  assert.equal(p.classes.size, 0);
+  p.show();
+  assert.equal(p.animations.length, 1);
+  assert.equal(p.animations[0].keyframes[0].scale, '0.92');
+  assert.equal(p.animations[0].startTime, 100);
+  p.hide();
+  p.show();
+  assert.equal(p.animations.length, 1);
 });
 
 test('visible arrivals stay painted while offscreen modules retain their scroll entrance', t => {

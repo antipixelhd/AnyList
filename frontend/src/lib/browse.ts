@@ -22,7 +22,6 @@ import { initializeBrowseSort } from "./browse-sort";
 import { createBrowseOverride } from './browse-override';
 import {createSearchExpansion, shouldBroadenSearch, broadSearchParams} from './search-fallback';
 import { appendBrowseTimeline } from './browse-timeline';
-import { initializeScrollMotion } from "./scroll-motion";
 import { editorStore, type EditorTitle } from "./editor-store";
 import { cancelUiMotion } from "./ui-motion";
 import {readBrowseSections} from './browse-sections';
@@ -49,15 +48,6 @@ type Facet = { id: number | string; name: string };
 export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   root.dataset.enhanced = "";
   root.dataset.browseScripted = "";
-  // Server-rendered cards stay painted while controls enhance. Only new cards
-  // and later scroll entries need an entrance.
-  requestAnimationFrame(() => requestAnimationFrame(() => {
-    if (signal.aborted || !root.isConnected) return;
-    initializeScrollMotion(root, signal, '.browse-card-body', 'browse-scroll-reveal', {
-      animateInitial: false, animateVisibleArrivals: false, downwardOnly: true, scaleEntrance: true, once: true,
-      appearedAttribute: 'data-browse-appeared',
-    });
-  }));
   const find = <T extends HTMLElement>(selector: string) =>
     browseElement<T>(root,selector);
   const form = find<HTMLFormElement>("[data-browse-form]");
@@ -269,7 +259,6 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     }
     if(destination===grid&&field('view').value==='timeline')appendBrowseTimeline(destination,cards,items,sort.value==='upcoming'||field('status').value==='upcoming');
     else destination.append(fragment);
-    return cards;
   };
   const renderSection = (section: Section) => {
     const container = document.createElement("section");
@@ -519,11 +508,9 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       displayedCategories = categoryView;
       if ("sections" in response) {
         if(!streamed)renderSections(response.sections);
-        loadingView.handoff([...sections.querySelectorAll<HTMLElement>('.browse-card-body')]);
         payload = { results: [], has_more: false, page: 1, source: "" };
       } else {
-        const cards=render(response.results);
-        loadingView.handoff(cards.map(card=>card.querySelector<HTMLElement>('.browse-card-body')!));
+        render(response.results);
         payload = response;
       }
       notice.textContent = response.notice || "";

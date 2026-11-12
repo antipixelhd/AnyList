@@ -4,7 +4,7 @@ export function initializeScrollMotion(
   signal: AbortSignal,
   selector = ".lab-module",
   revealClass = "lab-scroll-reveal",
-  options: { animateInitial?: boolean; animateVisibleArrivals?: boolean; downwardOnly?: boolean; scaleEntrance?: boolean; once?: boolean; appearedAttribute?: string; prepareBeforeEntry?: boolean } = {},
+  options: { animateInitial?: boolean; animateVisibleArrivals?: boolean; downwardOnly?: boolean; scaleEntrance?: boolean; once?: boolean; appearedAttribute?: string; prepareBeforeEntry?: boolean; deferHidden?: boolean } = {},
 ) {
   const scaleTiming = { duration: 300, easing: "linear" };
   const scaleFrames = [
@@ -74,6 +74,8 @@ export function initializeScrollMotion(
     });
     root.querySelectorAll<HTMLElement>(selector).forEach((element) => {
       if (registered.has(element)) return;
+      const visible = element.getClientRects().length;
+      if (!visible && options.deferHidden) return;
       registered.add(element);
       modules.push(element);
       if ((options.once && appeared.has(element)) || (options.appearedAttribute && element.hasAttribute(options.appearedAttribute))) {
@@ -81,7 +83,6 @@ export function initializeScrollMotion(
         return;
       }
       const bounds = element.getBoundingClientRect();
-      const visible = element.getClientRects().length;
       if (!visible && options.animateVisibleArrivals === false) return;
       if (visible && bounds.top < viewport().bottom) {
         markAppeared(element);
@@ -93,6 +94,10 @@ export function initializeScrollMotion(
             ],
             options.scaleEntrance ? scaleTiming : { duration: 260, easing: "ease" },
           );
+          if (options.deferHidden) {
+            const startTime = element.ownerDocument.timeline.currentTime;
+            if (startTime !== null) entrance.startTime = startTime;
+          }
           entrances.add(entrance);
           entrance.addEventListener(
             "finish",

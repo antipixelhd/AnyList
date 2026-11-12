@@ -56,16 +56,6 @@ export function createBrowseLoading(region: HTMLElement, skeleton: HTMLElement) 
       region.dataset.browseLoading = append ? "append" : "empty";
       skeleton.hidden = false;
     },
-    handoff(covers: HTMLElement[]) {
-      if (skeleton.hidden) return;
-      const slots = [...active.querySelectorAll<HTMLElement>('.browse-skeleton-body')];
-      covers.forEach((cover, index) => {
-        const bounds = slots[index]?.getBoundingClientRect();
-        if (bounds && bounds.height > 0 && bounds.top < innerHeight && bounds.bottom > 0) {
-          cover.setAttribute('data-browse-appeared', '');
-        }
-      });
-    },
     finish() {
       delete region.dataset.browseLoading;
       skeleton.hidden = true;

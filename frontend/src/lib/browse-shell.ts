@@ -1,11 +1,15 @@
 import {preparePanelStyles} from './panel-readiness';
 import {initializeBrowse} from './browse';
 import {initializeGameBrowse} from './game-browse';
+import {initializeScrollMotion} from './scroll-motion';
 import {bindPredictionIntent,predictionAllowed,predictionManifest} from './predictive-loading';
 import {browseTab,browseTabHref,createBrowseTabContext,createBrowseTabs,scopeBrowseIds,type ApplyBrowseTabContext,type BrowseTab} from './browse-tabs';
 
 let session:AbortController|undefined;
 let mounted:HTMLElement|undefined;
+const documentNavigation = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined;
+let restoring = documentNavigation?.name === location.href &&
+  (documentNavigation.type === 'reload' || documentNavigation.type === 'back_forward');
 
 function setup(){
   if(mounted?.isConnected)return;
@@ -40,7 +44,12 @@ function setup(){
     scopeBrowseIds(root,tab);
     const oldNav=root.querySelector('.browse-types')!;
     const slot=document.createElement('span');slot.dataset.browseTabSlot='';oldNav.replaceWith(slot);
+    if (root===first) slot.append(nav);
     applyContext.set(root,tab==='game'?initializeGameBrowse(root,panelSignal):initializeBrowse(root,panelSignal));
+    initializeScrollMotion(root, panelSignal, '.browse-card-body', 'browse-scroll-reveal', {
+      animateInitial: !restoring, deferHidden: true, downwardOnly: true, scaleEntrance: true,
+      once: true, appearedAttribute: 'data-browse-appeared',
+    });
     return root;
   }
   function updateNav(tab:BrowseTab){
@@ -90,7 +99,7 @@ function setup(){
   },signal);
   // The first panel already passed middleware and owns the current document.
   prepare(first,initial,location.pathname+location.search);tabs.set(initial,first);
-  first.querySelector('[data-browse-tab-slot]')!.append(nav);capture();updateNav(initial);
+  capture();updateNav(initial);
 
   function select(tab:BrowseTab){
     if(tab===wanted)return;
@@ -134,5 +143,7 @@ function setup(){
 }
 
 document.addEventListener('astro:page-load',setup);
-document.addEventListener('astro:before-swap',()=>{session?.abort();mounted=undefined;});
+document.addEventListener('astro:before-swap',event=>{
+  restoring=event.navigationType==='traverse';session?.abort();mounted=undefined;
+});
 setup();
