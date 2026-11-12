@@ -35,18 +35,19 @@ CategoryDB = Annotated[AsyncSession, Depends(get_db)]
 CategoryViewer = Annotated[User, Depends(get_current_user)]
 
 
-@router.get('/list-categories/game')
-async def game_categories(db: CategoryDB, viewer: CategoryViewer, response: Response) -> CategoryPresentation:
+@router.get('/list-categories/{domain}')
+async def category_preferences(domain: Literal['game', 'screen'], db: CategoryDB, viewer: CategoryViewer, response: Response) -> CategoryPresentation:
     from core import list_categories
     response.headers['Cache-Control'] = 'private, no-store'
-    return await list_categories.read(db, viewer.id, counts=await list_categories.membership_counts(db, viewer.id))
+    counts = await list_categories.membership_counts(db, viewer.id) if domain == 'game' else None
+    return await list_categories.read(db, viewer.id, domain=domain, counts=counts)
 
 
-@router.patch('/list-categories/game')
-async def update_game_categories(body: CategoryPatch, db: CategoryDB, viewer: CategoryViewer, response: Response) -> CategoryPresentation:
+@router.patch('/list-categories/{domain}')
+async def update_category_preferences(domain: Literal['game', 'screen'], body: CategoryPatch, db: CategoryDB, viewer: CategoryViewer, response: Response) -> CategoryPresentation:
     from core import list_categories
     response.headers['Cache-Control'] = 'private, no-store'
-    return await list_categories.save(db, viewer.id, body)
+    return await list_categories.save(db, viewer.id, body, domain=domain)
 
 
 @router.delete('/entry/{media_id}')
@@ -1138,25 +1139,30 @@ async def profile_list_page(username: str, media_type: ScreenListScope, db: Scre
         q: Annotated[str, Query(max_length=200)] = '', genre: Annotated[str, Query(max_length=200)] = '',
         year: Annotated[str | None, Query(pattern=r'^\d{4}$')] = None, favorites: bool = False,
         offset: Annotated[int, Query(ge=0)] = 0, limit: Annotated[int, Query(ge=1, le=100)] = 100):
-    from core import screen_list
+    from core import list_categories, screen_list
     from core.tracking_access import profile_header
     user, owner = await profile_access(db, username, viewer)
     response.headers['Cache-Control'] = 'private, no-store'
     members = await screen_list.members(db, user.id, media_type, progress=sort == 'progress')
+    presentation = await list_categories.read(db, user.id, domain='screen')
     ids, page = screen_list.select_page(members, status=status, sort=sort, q=q, genre=genre, year=year,
-        favorites=favorites, offset=offset, limit=limit)
+        favorites=favorites, offset=offset, limit=limit,
+        status_order={category.id: index for index, category in enumerate(presentation.categories)})
     results = await screen_list.rows_for_profile(db, user.id, viewer, owner, media_type, ids)
-    return {**page, 'results': results, 'profile': await profile_header(db, user, owner, viewer)}
+    return {**page, 'results': results, 'profile': await profile_header(db, user, owner, viewer),
+        'category_presentation': presentation}
 
 
 @router.get('/profile/{username}/{media_type}/index')
 async def profile_list_index(username: str, media_type: ScreenListScope, db: ScreenListDB,
         viewer: ScreenListViewer, response: Response):
+    from core import list_categories
     from core.screen_list import members
     user, _ = await profile_access(db, username, viewer)
     response.headers['Cache-Control'] = 'private, no-store'
     result = await members(db, user.id, media_type, progress=True, cap=10000)
-    return {'complete': result is not None, 'results': [row.index_row() for row in result or []]}
+    return {'complete': result is not None, 'results': [row.index_row() for row in result or []],
+        'category_presentation': await list_categories.read(db, user.id, domain='screen')}
 
 
 @router.get('/profile/{username}/{media_type}/rows')

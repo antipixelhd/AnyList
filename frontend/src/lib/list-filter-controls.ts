@@ -162,12 +162,10 @@ export function mountListFilterControls(root:HTMLElement,signal:AbortSignal) {
     return {close(){filterDropdowns.forEach(dropdown=>{dropdown.trigger.setAttribute('aria-expanded','false');void hideMenu(dropdown.menu,true);});},selectedYear,refreshFacets,sync(status:string,defaultSort:string){
       syncYear();
       const active=[status!=='all',input('list-search').value.trim()!=='',input('genre-filter').value!=='',selectedYear()!=='',input('favorite-filter').value!=='',input('sort-filter').value!==defaultSort].filter(Boolean).length;
-      mobileToggle.toggleAttribute('data-active',active>0);
       mobileToggle.setAttribute('aria-label',active>0?`Filters and sorting (${active} active)`:'Filters and sorting');
       filterDropdowns.forEach(syncDropdown);
       root.querySelectorAll<HTMLButtonElement>('[data-status]').forEach(button=>{
         button.setAttribute('aria-pressed',String(button.dataset.status===status));
-        button.classList.toggle('selected',button.dataset.status===status);
       });
     }};
 }

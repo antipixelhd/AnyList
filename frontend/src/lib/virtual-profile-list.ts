@@ -289,7 +289,7 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
     adapter.statuses = presentation.categories.map(category => [category.id, category.label] as const);
     index.setOrder(adapter.statuses);
     const statusFilters = root.querySelector('.status-filters')!;
-    const sections = root.querySelector('[data-game-groups]');
+    const sections = root.querySelector('#entry-groups');
     for (const category of presentation.categories) {
       const button = statusFilters.querySelector<HTMLElement>(`[data-status="${category.id}"]`);
       if (button) {
@@ -304,7 +304,7 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
       }
     }
     groups = [...root.querySelectorAll<HTMLElement>('[data-list-window]')];
-    if (owner) acceptGameCategories(presentation);
+    if (owner && root.dataset.listDomain === 'game') acceptGameCategories(presentation);
     if (presentation.categories.some(category => category.hidden && category.id === field('status').value)) {
       field('status').value = '';
       submit();
@@ -315,8 +315,8 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
       }
     });
   }
-  document.addEventListener('anylist:game-categories', event => {
-    if (owner && root.dataset.listDomain === 'game') {
+  document.addEventListener(`anylist:${root.dataset.listDomain}-categories`, event => {
+    if (owner) {
       applyPresentation((event as CustomEvent<CategoryPresentation>).detail);
     }
   }, {signal});

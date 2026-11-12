@@ -7,6 +7,9 @@ import unittest
 from datetime import date
 
 from core import game_tracking, list_categories
+from models import Media
+from models.base import MediaType
+from models.tracking import TrackedEntry
 from schemas_games import GamePatch
 from schemas_list_categories import CategoryPatch
 import test_games_pg as fixture
@@ -22,6 +25,38 @@ class ListCategoriesTests(unittest.IsolatedAsyncioTestCase):
         response = await self.client.get('/tracking/list-categories/game')
         self.assertEqual(response.status_code, 200, response.text)
         return response.json()
+
+    async def test_screen_order_is_shared_by_profile_views_and_has_no_edit_capabilities(self):
+        endpoint = '/tracking/list-categories/screen'
+        order = ['completed', 'watching', 'paused', 'dropped', 'planning']
+        async with self.Session() as db:
+            movie = Media(title='First alphabetically', media_type=MediaType.movie)
+            series = Media(title='Second alphabetically', media_type=MediaType.series)
+            db.add_all([movie, series])
+            await db.flush()
+            db.add_all([TrackedEntry(user_id=self.user.id, media_id=movie.id, status='watching'),
+                TrackedEntry(user_id=self.user.id, media_id=series.id, status='completed')])
+            await db.commit()
+        for changes in ({'labels': {'watching': 'Active'}}, {'hidden': ['paused']}, {'order': order[:-1]}):
+            response = await self.client.patch(endpoint, json={'revision': 0, **changes})
+            self.assertEqual(response.status_code, 422, response.text)
+        saved = await self.client.patch(endpoint, json={'revision': 0, 'order': order})
+        self.assertEqual(saved.status_code, 200, saved.text)
+        presentation = saved.json()
+        self.assertEqual([row['id'] for row in presentation['categories']], order)
+        self.assertTrue(all(not (row['can_hide'] or row['can_rename']) for row in presentation['categories']))
+        self.assertEqual((await self.categories())['revision'], 0)
+        self.viewer = self.other
+        base = '/tracking/profile/player'
+        for offset, expected in enumerate(order[:2]):
+            result = await self.client.get(f'{base}/all/list', params={'limit': 1, 'offset': offset})
+            self.assertEqual(result.status_code, 200, result.text)
+            self.assertEqual(result.json()['results'][0]['status'], expected)
+            self.assertEqual(result.json()['category_presentation'], presentation)
+        for scope in ('all', 'movie', 'series'):
+            result = await self.client.get(f'{base}/{scope}/index')
+            self.assertEqual(result.status_code, 200, result.text)
+            self.assertEqual(result.json()['category_presentation'], presentation)
 
     async def test_defaults_and_protected_completed_and_invalid_names(self):
         defaults = await self.categories()

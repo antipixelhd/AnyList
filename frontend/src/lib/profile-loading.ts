@@ -54,7 +54,6 @@ export function profileLoadingFrame(kind: string, url: URL, nav: HTMLElement) {
   frame.querySelectorAll<HTMLElement>('.game-list-achievements,.game-achievements-column').forEach(cell => cell.hidden = !achievements);
   frame.querySelectorAll<HTMLButtonElement>('.status-filters [data-status]').forEach(button => {
     const selected = button.dataset.status === status;
-    button.classList.toggle('selected', selected);
     button.setAttribute('aria-pressed', String(selected));
   });
   const knownGroup = choices.find(([value]) => value === status)?.[1];

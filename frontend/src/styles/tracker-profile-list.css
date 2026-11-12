@@ -183,11 +183,11 @@
 .mobile-filter-toggle:focus-visible {
   background:color-mix(in srgb,var(--blue) 18%,var(--panel))
 }
-.mobile-filter-toggle:is([aria-expanded="true"],[data-active]) {
+.mobile-filter-toggle[aria-expanded="true"] {
   color:#fff;
   background:var(--blue)
 }
-.mobile-filter-toggle:is([aria-expanded="true"],[data-active]):focus-visible {
+.mobile-filter-toggle[aria-expanded="true"]:focus-visible {
   background:color-mix(in srgb,var(--blue) 85%,white)
 }
 /* Touch browsers can retain :hover after closing the panel. */
@@ -195,7 +195,7 @@
   .mobile-filter-toggle:hover {
     background:color-mix(in srgb,var(--blue) 18%,var(--panel))
   }
-  .mobile-filter-toggle:is([aria-expanded="true"],[data-active]):hover {
+  .mobile-filter-toggle[aria-expanded="true"]:hover {
     background:color-mix(in srgb,var(--blue) 85%,white)
   }
 }
@@ -423,11 +423,6 @@
   border-radius:3px;
   font:400 14px/1.15 var(--font-body);
   color:var(--muted)
-}
-.list-shell .status-filters button.selected {
-  background:color-mix(in srgb,var(--panel) 80%,transparent);
-  color:var(--text);
-  font-weight:500
 }
 @media (min-width:651px) {
   .list-shell .filters { gap:20px }

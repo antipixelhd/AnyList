@@ -202,10 +202,6 @@ button:disabled {
   border-radius:4px;
   padding:7px 12px
 }
-.status-filters button.selected {
-  background:var(--panel);
-  color:var(--bright)
-}
 .list-categories {
   display: contents;
   --list-hover-duration: 160ms;

@@ -20,6 +20,10 @@ DEFINITIONS = {
         ('dropped', 'Dropped', 'Stopped with no intention of returning.'),
         ('planning', 'Planning', 'Wishlist or backlog games.'),
     ),
+    'screen': tuple((key, label, '') for key, label in (
+        ('watching', 'Watching'), ('completed', 'Completed'), ('paused', 'Paused'),
+        ('dropped', 'Dropped'), ('planning', 'Planning'),
+    )),
 }
 KEY = 'list_categories'
 
@@ -29,20 +33,21 @@ def resolve(domain='game', preferences=None, counts=None):
     stored = ((preferences or {}).get(KEY) or {}).get(domain) or {}
     order = list(dict.fromkeys(key for key in stored.get('order', []) if key in definitions))
     order.extend(key for key in definitions if key not in order)
-    labels = stored.get('labels') or {}
-    hidden = set(stored.get('hidden') or [])
+    labels = (stored.get('labels') or {}) if domain == 'game' else {}
+    hidden = set(stored.get('hidden') or []) if domain == 'game' else set()
     return CategoryPresentation(revision=stored.get('revision', 0), categories=[
         ListCategory(id=key, label=definitions[key][1] if key == 'completed' else labels.get(key) or definitions[key][1],
             default_label=definitions[key][1], description=definitions[key][2],
             hidden=key not in {'completed', 'planning'} and key in hidden and not (counts or {}).get(key),
-            can_rename=key != 'completed', can_hide=key not in {'completed', 'planning'})
+            can_rename=domain == 'game' and key != 'completed',
+            can_hide=domain == 'game' and key not in {'completed', 'planning'})
         for key in order
     ])
 
 
-async def read(db, user_id, *, counts=None):
+async def read(db, user_id, *, domain='game', counts=None):
     preferences = await db.scalar(select(UserSettings.preferences).where(UserSettings.user_id == user_id))
-    return resolve(preferences=preferences, counts=counts)
+    return resolve(domain, preferences=preferences, counts=counts)
 
 
 async def membership_counts(db, user_id):
@@ -65,10 +70,12 @@ def store(row, domain, presentation):
     row.preferences = {**preferences, KEY: domains}
 
 
-async def save(db, user_id, patch):
+async def save(db, user_id, patch, *, domain='game'):
+    if domain == 'screen' and (patch.labels is not None or patch.hidden is not None):
+        raise HTTPException(422, 'Movies & Series categories can only be reordered.')
     await db.execute(select(User.id).where(User.id == user_id).with_for_update())
     row = await db.scalar(select(UserSettings).where(UserSettings.user_id == user_id).with_for_update().execution_options(populate_existing=True))
-    current = resolve(preferences=row.preferences if row else None)
+    current = resolve(domain, preferences=row.preferences if row else None)
     if patch.revision != current.revision:
         raise HTTPException(409, 'Categories changed. Reload them before saving.')
     ids = {category.id for category in current.categories}
@@ -86,10 +93,10 @@ async def save(db, user_id, patch):
     labels = [category.label.casefold() for category in categories.values()]
     if len(set(labels)) != len(labels):
         raise HTTPException(422, 'Category names must be unique.')
-    counts = await membership_counts(db, user_id)
     if patch.hidden is not None:
         if len(set(patch.hidden)) != len(patch.hidden) or set(patch.hidden) - ids or {'completed', 'planning'} & set(patch.hidden):
             raise HTTPException(422, 'Completed and Planning cannot be hidden.')
+        counts = await membership_counts(db, user_id)
         if any(counts.get(key) for key in patch.hidden):
             raise HTTPException(409, 'Only empty categories can be hidden.')
         for category in categories.values():
@@ -100,7 +107,7 @@ async def save(db, user_id, patch):
         await db.execute(insert(UserSettings).values(user_id=user_id).on_conflict_do_nothing())
         row = await db.scalar(select(UserSettings).where(UserSettings.user_id == user_id)
             .with_for_update().execution_options(populate_existing=True))
-    store(row, 'game', current)
+    store(row, domain, current)
     await db.commit()
     return current
 

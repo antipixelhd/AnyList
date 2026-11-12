@@ -8,6 +8,16 @@ export function mountCategoryControls(root: HTMLElement, initial: CategoryPresen
   let busy = false;
   const candidate = root.querySelector<HTMLElement>('[data-category-controls]');
   if (!candidate) return;
+  const domain = root.dataset.listDomain === 'screen' ? 'screen' : 'game';
+  const endpoint = `/api/proxy/tracking/list-categories/${domain}`;
+  const eventName = `anylist:${domain}-categories`;
+  const publish = (value: CategoryPresentation) => {
+    if (domain === 'game') acceptGameCategories(value);
+    else {
+      document.dispatchEvent(new CustomEvent(eventName, {detail:value}));
+      document.dispatchEvent(new Event('anylist:cache-invalidated'));
+    }
+  };
   const controls: HTMLElement = candidate;
   const section = root.querySelector<HTMLElement>('[data-list-categories]')!;
   const actions = root.querySelector<HTMLElement>('[data-category-edit-actions]')!;
@@ -122,6 +132,8 @@ export function mountCategoryControls(root: HTMLElement, initial: CategoryPresen
     const next = button.dataset.categoryMode!;
     if (next === 'info') {showCategoryInfo(button, presentation); return;}
     if (mode === next) {finish(); return;}
+    const current = JSON.parse(root.dataset.categoryPresentation || 'null') as CategoryPresentation | null;
+    if (current && current.revision > presentation.revision) presentation = current;
     draft = structuredClone(presentation);
     mode = next;
     error.hidden = true;
@@ -147,25 +159,25 @@ export function mountCategoryControls(root: HTMLElement, initial: CategoryPresen
       ...actions.querySelectorAll<HTMLButtonElement>('button')];
     fields.forEach(control=>control.disabled=true);
     try {
-      const response = await fetch('/api/proxy/tracking/list-categories/game', {
+      const response = await fetch(endpoint, {
         method: 'PATCH', signal, headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({revision: presentation.revision,
+        body: JSON.stringify({revision: draft.revision,
           order: draft.categories.map(category => category.id),
-          labels: Object.fromEntries(draft.categories.filter(category => category.can_rename).map(category => [category.id, category.label])),
-          hidden: draft.categories.filter(category => category.hidden).map(category => category.id)}),
+          ...(domain === 'game' && {labels: Object.fromEntries(draft.categories.filter(category => category.can_rename).map(category => [category.id, category.label])),
+            hidden: draft.categories.filter(category => category.hidden).map(category => category.id)})}),
       });
       const data = await response.json();
       if (!response.ok) {
         if (response.status === 409) {
-          const latest = await fetch('/api/proxy/tracking/list-categories/game', {signal, cache: 'no-store'});
-          if (latest.ok) {presentation = await latest.json(); acceptGameCategories(presentation);}
+          const latest = await fetch(endpoint, {signal, cache: 'no-store'});
+          if (latest.ok) {presentation = await latest.json(); publish(presentation);}
         }
         throw new Error(typeof data.detail === 'string' ? data.detail : 'Unable to save categories.');
       }
       presentation = data;
       busy = false;
       finish();
-      acceptGameCategories(presentation);
+      publish(presentation);
     } catch (cause) {
       if (!signal.aborted) {error.textContent = (cause as Error).message; error.hidden = false;}
     } finally {
@@ -173,7 +185,7 @@ export function mountCategoryControls(root: HTMLElement, initial: CategoryPresen
       fields.forEach(control=>control.disabled=control.hasAttribute('data-category-fixed'));
     }
   }, {signal});
-  document.addEventListener('anylist:game-categories', event => {
+  document.addEventListener(eventName, event => {
     const value = (event as CustomEvent<CategoryPresentation>).detail;
     if (root.dataset.owner === 'true' && value.revision >= presentation.revision) presentation = value;
   }, {signal});
