@@ -56,7 +56,7 @@ function galleryFixture(){
  let motion,identity='same';const context={boundedAnimation:f.play,registerDialogMotion(_d,m){motion=m;},queueMicrotask};
  runInNewContext(source('image-origin-motion')+';globalThis.api={createImageOriginMotion,containedImageBox,imageOriginTransform};',context);
  const controller=new AbortController(),prepare=context.api.createImageOriginMotion(dialog,track,controller.signal,()=>selected,()=>identity);
- const button={isConnected:true,focus(){this.focused=true;}};
+ const button={isConnected:true,focused:false,focus(){this.focused=true;}};
  return {...f,dialog,track,image,selected,prepare,button,context,controller,get motion(){return motion;},changeIdentity(){identity='other';}};
 }
 
