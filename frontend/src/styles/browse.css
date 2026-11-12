@@ -352,9 +352,6 @@
 .browse-range[data-range-collapsed] input[data-range-upper]::-webkit-slider-thumb { transform: translateX(8px); }
 .browse-range[data-range-collapsed] input[data-range-lower]::-moz-range-thumb { transform: translateX(-8px); }
 .browse-range[data-range-collapsed] input[data-range-upper]::-moz-range-thumb { transform: translateX(8px); }
-.browse-page[data-browse-scripted] .browse-cover[data-poster-loading] img {
-  opacity: 0;
-}
 .browse-results-area {
   display: flex;
   flex-direction: column;
@@ -904,14 +901,15 @@
 
 .browse-skeleton .skeleton-block { background:color-mix(in srgb,var(--border) 65%,var(--panel)); }
 
-/* Skeletons belong only to missing artwork, never existing card text. */
- .browse-page[data-browse-scripted] .browse-cover[data-poster-loading]::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: 6px;
+/* Keep the same surface underneath the arriving poster throughout its fade. */
+.browse-page .browse-cover:is([data-poster-loading],[data-poster-revealing]) {
   background:color-mix(in srgb,var(--border) 65%,var(--panel));
-  pointer-events: none;
+}
+.browse-page .browse-cover[data-poster-revealing] img {
+  animation: browse-poster-arrival 180ms ease-out;
+}
+@keyframes browse-poster-arrival {
+  from { opacity: 0; }
 }
 [data-browse-region][data-browse-loading="empty"] .browse-skeletons {
   margin-top: 0;

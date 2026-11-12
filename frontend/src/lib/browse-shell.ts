@@ -47,7 +47,7 @@ function setup(){
     const slot=document.createElement('span');slot.dataset.browseTabSlot='';oldNav.replaceWith(slot);
     if (root===first) slot.append(nav);
     applyContext.set(root,tab==='game'?initializeGameBrowse(root,panelSignal):initializeBrowse(root,panelSignal));
-    const motion = initializeScrollMotion(root, panelSignal, '.browse-card-body', 'browse-scroll-reveal', {
+    const motion = initializeScrollMotion(root, panelSignal, '.browse-card-body, .browse-skeleton-body', 'browse-scroll-reveal', {
       animateInitial: !restoring, deferHidden: true, downwardOnly: true, scaleEntrance: true,
       once: true, appearedAttribute: 'data-browse-appeared',
     });

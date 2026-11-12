@@ -11,7 +11,7 @@ import {
   sectionHref,
 } from "./browse-view";
 import {createBrowseCard} from "./browse-card-render";
-import { createBrowseLoading, prepareBrowsePoster } from "./browse-loading";
+import { createBrowseLoading, handoffBrowseSkeletons, prepareBrowsePoster, trackBrowseSkeleton } from "./browse-loading";
 import { initializeBrowseRanges } from "./browse-ranges";
 import { createBrowsePaginationDemand } from "./browse-pagination";
 import { initializeMobileBrowseFilters } from "./browse-mobile-filters";
@@ -259,6 +259,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     }
     if(destination===grid&&field('view').value==='timeline')appendBrowseTimeline(destination,cards,items,sort.value==='upcoming'||field('status').value==='upcoming');
     else destination.append(fragment);
+    return cards;
   };
   const renderSection = (section: Section) => {
     const container = document.createElement("section");
@@ -419,6 +420,8 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     const cached = responseCache.get(path);
     let expanded = false;
     let streamed = false;
+    const sectionPublications: Promise<void>[] = [];
+    let sectionTimings: ReturnType<typeof trackBrowseSkeleton>[] = [];
     empty.hidden = true;
     region.setAttribute("aria-busy", "true");
     updateFooter();
@@ -451,13 +454,26 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
           sections.replaceChildren(...slots);
           grid.replaceChildren();seen.clear();items.clear();
           displayedCategories=true;streamed=true;
-          loadingView.finish();sections.hidden=false;
-          response=await readBrowseSections<Section>(path,current.signal,(index,section,message)=>{
-            if(current.signal.aborted||signal.aborted||request!==current||epoch!==generation)return;
-            const container=renderSection(section);
-            slots[index].replaceWith(container);
-            if(message)notice.textContent=message;
+          const placeholders = slots.flatMap(slot => [...slot.querySelectorAll<HTMLElement>('.browse-skeleton-body')]);
+          placeholders.forEach(slot => {
+            slot.removeAttribute('data-browse-appeared');
+            slot.classList.remove('browse-scroll-reveal');
           });
+          loadingView.handoff(placeholders);
+          loadingView.finish();sections.hidden=false;
+          sectionTimings = slots.map(trackBrowseSkeleton);
+          response=await readBrowseSections<Section>(path,current.signal,(index,section,message)=>{
+            sectionPublications.push((async () => {
+              const wait = sectionTimings[index].settle(current.signal);
+              if (wait) await wait;
+              if(current.signal.aborted||signal.aborted||request!==current||epoch!==generation)return;
+              const container=renderSection(section);
+              handoffBrowseSkeletons(slots[index],container.querySelectorAll<HTMLElement>('.browse-card-body'));
+              slots[index].replaceWith(container);
+              if(message)notice.textContent=message;
+            })());
+          });
+          await Promise.all(sectionPublications);
         }else response=await json(path,{signal:current.signal}) as Payload;
         if (current.signal.aborted || signal.aborted || request !== current) return;
       }
@@ -496,6 +512,8 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
         }
       }
       if (!expanded) responseCache.set(path, response!, !cached);
+      const wait = loadingView.settle(current.signal);
+      if (wait) await wait;
       if (request !== current || epoch !== generation || signal.aborted) return;
       if (expanded) automaticExpansion.activate(values);
       if (!append && !streamed) {
@@ -507,16 +525,23 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       }
       displayedCategories = categoryView;
       if ("sections" in response) {
-        if(!streamed)renderSections(response.sections);
+        if(!streamed) {
+          renderSections(response.sections);
+          loadingView.handoff(sections.querySelectorAll<HTMLElement>('.browse-card-body'));
+        }
         payload = { results: [], has_more: false, page: 1, source: "" };
       } else {
-        render(response.results);
+        const cards = render(response.results);
+        loadingView.handoff(cards.map(card => card.querySelector<HTMLElement>('.browse-card-body')!));
         payload = response;
       }
       notice.textContent = response.notice || "";
       if (cached) void refreshViewerContext([...items.values()], current);
 
     } catch (cause) {
+      await Promise.allSettled(sectionPublications);
+      const wait = loadingView.settle(current.signal);
+      if (wait) await wait;
       if (current.signal.aborted || request !== current || signal.aborted)
         return;
       suspended = true;
@@ -538,6 +563,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
         payload = { results: [], has_more: false, page: 0, source: "" };
       }
     } finally {
+      sectionTimings.forEach(timing => timing.stop());
       if (request === current && epoch === generation && !signal.aborted) {
         currentPath = undefined;
         loading = false;

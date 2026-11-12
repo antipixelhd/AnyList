@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createBrowseLoading, prepareBrowsePoster } from "../src/lib/browse-loading.ts";
+import { createBrowseLoading, handoffBrowseSkeletons, prepareBrowsePoster, trackBrowseSkeleton } from "../src/lib/browse-loading.ts";
 
 function view(visibleCards) {
   const cards = visibleCards.map((visible) => ({
@@ -70,6 +70,86 @@ function poster(complete = false) {
   Object.assign(image, { complete, hidden: false, closest: () => cover });
   return { cover, image };
 }
+
+function paintClock(t) {
+  let now = 0, nextFrame = 0;
+  const frames = new Map();
+  const globals = {
+    innerHeight: 800,
+    requestAnimationFrame(callback) { frames.set(++nextFrame, callback); return nextFrame; },
+    cancelAnimationFrame(frame) { frames.delete(frame); },
+  };
+  const saved = Object.fromEntries(Object.keys(globals).map(key => [key, Object.getOwnPropertyDescriptor(globalThis,key)]));
+  Object.assign(globalThis, globals);
+  t.after(() => Object.entries(saved).forEach(([key, descriptor]) => {
+    if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+    else delete globalThis[key];
+  }));
+  t.mock.method(performance, 'now', () => now);
+  t.mock.timers.enable({apis:['setTimeout']});
+  return {
+    element: {isConnected:true, getBoundingClientRect: () => ({width:100, height:150, top:100, bottom:250})},
+    paint() { for (const [id,callback] of frames) { frames.delete(id); callback(); } },
+    advance(ms) { now += ms; t.mock.timers.tick(ms); },
+  };
+}
+
+test('only a painted placeholder holds a result, and abort releases the wait', async t => {
+  const clock = paintClock(t);
+  const controller = new AbortController();
+  const unpainted = trackBrowseSkeleton(clock.element);
+  assert.equal(unpainted.settle(controller.signal), undefined);
+  const painted = trackBrowseSkeleton(clock.element);
+  clock.paint();
+  clock.advance(20);
+  let resolved = false;
+  const waiting = painted.settle(controller.signal).then(() => { resolved = true; });
+  clock.advance(329);
+  await Promise.resolve();
+  assert.equal(resolved, false);
+  controller.abort();
+  await waiting;
+  assert.equal(resolved, true);
+});
+
+test('a poster arriving during a painted skeleton holds it for 350 ms before fading in', async t => {
+  const clock = paintClock(t);
+  const {cover,image} = poster();
+  Object.assign(cover,clock.element);
+  prepareBrowsePoster(image,new AbortController().signal);
+  clock.paint();
+  clock.advance(50);
+  image.dispatchEvent(new Event('load'));
+  clock.advance(299);
+  await Promise.resolve();
+  assert(cover.attributes.has('data-poster-loading'));
+  clock.advance(1);
+  await Promise.resolve();
+  assert.deepEqual([...cover.attributes],['data-poster-revealing','data-poster-ready']);
+});
+
+test('a poster continues its skeleton entrance from the same timeline position', () => {
+  const frames = [{scale:'0.92', opacity:0}, {scale:'1', opacity:1}];
+  const skeleton = {
+    hasAttribute: () => true,
+    getAnimations: () => [{playState:'running',startTime:120,effect:{getKeyframes:()=>frames,getTiming:()=>({duration:300})}}],
+  };
+  const continuation = {startTime:0};
+  const attributes = [];
+  const card = {
+    setAttribute: name => attributes.push(name),
+    classList:{remove(){}},
+    querySelector:()=>null,
+    animate(keyframes, timing) {
+      assert.deepEqual(keyframes,frames);
+      assert.equal(timing.duration,300);
+      return continuation;
+    },
+  };
+  handoffBrowseSkeletons({querySelectorAll:()=>[skeleton]},[card]);
+  assert.deepEqual(attributes,['data-browse-appeared']);
+  assert.equal(continuation.startTime,120);
+});
 
 test("cached posters fade immediately; uncached posters start with an entrance skeleton", t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });

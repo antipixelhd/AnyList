@@ -3,7 +3,7 @@ import {editorStore,type EditorTitle} from './editor-store';
 import {bindBrowseCardActions,bindBrowseCardTouch,paintBrowseCardState,type BrowseItem} from './browse-card-actions';
 import {browseCardKey,browseCardHref} from './browse-card-data';
 import {createBrowseCard} from './browse-card-render';
-import {prepareBrowsePoster,createBrowseLoading} from './browse-loading';
+import {prepareBrowsePoster,createBrowseLoading,handoffBrowseSkeletons,trackBrowseSkeleton} from './browse-loading';
 import {createBrowseCache} from './browse-cache';
 import {readVerifiedGamePage,gameBrowseCacheable,type GameVerificationPage} from './game-browse-verification';
 import {initializeMobileBrowseFilters} from './browse-mobile-filters';
@@ -131,6 +131,7 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
     const cards:HTMLElement[]=[];
     for(const item of rows){const key=browseCardKey(item);if(dedupe&&seen.has(key))continue;if(dedupe)seen.add(key);const card=createBrowseCard(item,template,signal,readyPosters);items.set(card,item);cards.push(card);}
     if(timeline)appendBrowseTimeline(container,cards,items,ascending,true);else container.append(...cards);
+    return cards;
   };
   const footer=()=>{
     const current=values(),overridden=current.has('unfiltered');
@@ -245,13 +246,25 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
     const shelf=shelves.get(key)!,host=find(`[data-game-shelf="${key}"]`),cards=host.querySelector<HTMLElement>('[data-game-shelf-cards]')!;
     if(shelf.payload)return;
     host.setAttribute('aria-busy','true');host.querySelector<HTMLElement>('[data-game-shelf-error]')!.hidden=true;
+    const timing = trackBrowseSkeleton(cards);
     try{
       const page=await json(gameBrowseRequest(new URLSearchParams({sort:key}),6),requestSignal);
+      const wait = timing.settle(requestSignal);
+      if (wait) await wait;
       if(signal.aborted||requestSignal.aborted||epoch!==generation)return;
-      shelf.payload=page;clear(cards);render(page.results,cards);paintSource(shelf);
+      const placeholders = [...cards.children];
+      shelf.payload=page;
+      const rendered = render(page.results,cards);
+      handoffBrowseSkeletons(cards,rendered.map(card => card.querySelector<HTMLElement>('.browse-card-body')!));
+      placeholders.forEach(slot => slot.remove());
+      paintSource(shelf);
       if(!page.results.length){const text=document.createElement('p');text.className='browse-category-empty';text.textContent=page.has_more?'No verified matches in this source segment. Use View all to continue.':'No games available from this source.';cards.append(text);}
-    }catch(cause){if(!signal.aborted&&!requestSignal.aborted&&epoch===generation){clear(cards);host.querySelector<HTMLElement>('[data-game-shelf-error]')!.hidden=false;}}
-    finally{if(!signal.aborted&&epoch===generation)host.setAttribute('aria-busy','false');}
+    }catch(cause){
+      const wait = timing.settle(requestSignal);
+      if (wait) await wait;
+      if(!signal.aborted&&!requestSignal.aborted&&epoch===generation){clear(cards);host.querySelector<HTMLElement>('[data-game-shelf-error]')!.hidden=false;}
+    }
+    finally{timing.stop();if(!signal.aborted&&epoch===generation)host.setAttribute('aria-busy','false');}
   }
   async function loadShelves(epoch:number,requestSignal:AbortSignal){
     const queue=[...shelves.keys()].filter(key=>!shelves.get(key)!.payload);
@@ -281,7 +294,14 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
         await loadShelves(epoch,currentRequest.signal);return;
       }
       let painted=false;
-      await readVerifiedGamePage(()=>json(path,currentRequest.signal),result=>{
+      await readVerifiedGamePage(async()=>{
+        const result = await json(path,currentRequest.signal);
+        if (result.results.length || !result.verification_pending) {
+          const wait = loadingView.settle(currentRequest.signal);
+          if (wait) await wait;
+        }
+        return result;
+      },result=>{
         if(signal.aborted||currentRequest.signal.aborted||epoch!==generation)return;
         if(!append){
           const existing=[...grid.querySelectorAll<HTMLElement>('[data-browse-card]')].map(card=>card.dataset.key);
@@ -290,7 +310,9 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
           if((!painted&&activeValues!==current.toString())||!samePrefix){clear(grid);seen.clear();}
         }
         grid.className=config.timeline?'browse-timeline':'browse-grid';
-        render(result.results,grid,config.timeline,true,current.get('status')==='upcoming');painted=true;
+        const cards = render(result.results,grid,config.timeline,true,current.get('status')==='upcoming');
+        loadingView.handoff(cards.map(card => card.querySelector<HTMLElement>('.browse-card-body')!));
+        painted=true;
         if(!result.verification_pending&&!result.verification_error)payload=result;
         presentedCategories=false;paintedTimeline=config.timeline;activeValues=current.toString();
         if(result.results.length||!result.verification_pending)loadingView.finish();
@@ -298,6 +320,8 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
         notice.textContent=!result.verification_pending&&current.has('min_metacritic')&&result.partial?'Some games have no verified critic score.':'';
       },currentRequest.signal);
     }catch(cause){
+      const wait = loadingView.settle(currentRequest.signal);
+      if (wait) await wait;
       if(signal.aborted||currentRequest.signal.aborted||epoch!==generation)return;
       loadingView.finish();sections.hidden=!presentedCategories;grid.hidden=presentedCategories;
       root.dataset.browseView=paintedTimeline?'timeline':'grid';
