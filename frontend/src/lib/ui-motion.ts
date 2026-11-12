@@ -10,9 +10,10 @@ let sequence = 0;
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 const arrows = createDropdownArrowMotion((arrow, values, timing) => animate(arrow, values, timing), reduced);
 
-function stop(element: HTMLElement) {
+function stop(element: HTMLElement, immediate = false) {
   const control = running.get(element);
-  control?.cancel();
+  if (!immediate && element.getClientRects().length) control?.stop();
+  else control?.cancel();
   running.delete(element);
   element.style.removeProperty('opacity');
   element.style.removeProperty('transform');
@@ -170,9 +171,9 @@ export async function hideOverlay(overlay: HTMLElement) {
   overlay.inert = false;
 }
 
-export function cancelUiMotion(root?: HTMLElement) {
+export function cancelUiMotion(root?: HTMLElement, immediate = false) {
   arrows.cancel(root);
   for (const element of running.keys()) {
-    if (!root || root.contains(element)) stop(element);
+    if (!root || root.contains(element)) stop(element, immediate);
   }
 }

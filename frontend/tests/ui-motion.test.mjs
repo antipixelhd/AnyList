@@ -19,7 +19,7 @@ function fixture() {
       return control;
     },
   };
-  runInNewContext(transpile(source, { target: ScriptTarget.ES2022 }) + '\nthis.api = { showMenu, hideMenu, reveal };', context);
+  runInNewContext(transpile(source, { target: ScriptTarget.ES2022 }) + '\nthis.api = { showMenu, hideMenu, reveal, cancelUiMotion };', context);
   const properties = new Map();
   const panel = {
     hidden: true, inert: true,
@@ -39,8 +39,15 @@ test('initial menu visibility settles without scheduling an entrance animation',
   assert.equal(f.rotations[0][2].duration, 0);
 });
 
-test('replacing an entrance cancels it without committing an intermediate transform',()=>{
+test('ordinary surfaces preserve their original stop behavior',()=>{
   const f=fixture();f.showMenu(f.panel);f.showMenu(f.panel);
+  assert.equal(f.animations[0].control.stopped,true);
+  assert.equal(f.animations[0].control.cancelled,undefined);
+});
+
+test('an anchored editor can cancel its own entrance without changing viewer cleanup',()=>{
+  const f=fixture();f.showMenu(f.panel);
+  f.cancelUiMotion({contains:element=>element===f.panel},true);
   assert.equal(f.animations[0].control.cancelled,true);
   assert.equal(f.animations[0].control.stopped,undefined);
 });

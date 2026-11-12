@@ -15,7 +15,7 @@ export function createAnchoredFieldReveal(dialog:HTMLDialogElement,wrapper:HTMLE
   const pin=()=>{
     if(anchor)return;
     const top=Math.max(0,dialog.getBoundingClientRect().top);
-    cancelUiMotion(dialog);
+    cancelUiMotion(dialog,true);
     const max=view.getComputedStyle(dialog).maxHeight;
     anchor={top:dialog.style.marginTop,bottom:dialog.style.marginBottom,max:dialog.style.maxHeight};
     dialog.style.marginTop=`${top}px`;dialog.style.marginBottom='0px';
