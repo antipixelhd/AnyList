@@ -1,10 +1,11 @@
 import {applyResponsiveArtwork} from './responsive-artwork';
 import {gameProgress} from './game-progress';
 import {scoreLabel} from './tracker';
+import {setFeedbackText} from './state-feedback';
 import type {ListState} from './profile-list-index';
 
 /** Share the SSR row template, icons and table styling with appended rows. */
-export function paintGameListRow(row:HTMLElement,state:ListState,template:HTMLTemplateElement){
+export function paintGameListRow(row:HTMLElement,state:ListState,template:HTMLTemplateElement,acknowledge=false){
   const id=state.subject.catalogue_id;
   Object.assign(row.dataset,{listEntry:String(id),entryStatus:state.status||'',title:state.title,
     score:String(state.score??-1),hours:String(state.total_seconds??-1),updated:state.updated_at||'',
@@ -17,7 +18,7 @@ export function paintGameListRow(row:HTMLElement,state:ListState,template:HTMLTe
   if(edit){edit.dataset.editGame=String(id);edit.setAttribute('aria-label',`Edit ${state.title}`);}
   const rate=row.querySelector<HTMLButtonElement>('[data-game-list-rate]');
   if(rate){rate.dataset.gameListRate=String(id);rate.setAttribute('aria-label',`Rate ${state.title}`);}
-  const score=row.querySelector('[data-score-label]')||row.querySelector('.entry-score');if(score)score.textContent=scoreLabel(state.score);
+  const score=row.querySelector('[data-score-label]')||row.querySelector('.entry-score');setFeedbackText(score,scoreLabel(state.score),acknowledge);
   const progress=gameProgress(state);row.querySelector('[data-game-list-hours]')!.textContent=progress.hours||'—';
   row.querySelectorAll<HTMLElement>('[data-game-list-achievements]').forEach(node=>{
     node.textContent=progress.achievement||'—';node.dataset.known=String(progress.achievement!=null);

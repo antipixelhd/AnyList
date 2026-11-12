@@ -13,7 +13,7 @@ export function initializeProfileList(panel:HTMLElement,lifetime:AbortSignal){
     editorTitle:screenListEditorTitle,
     updateState:(title,previous)=>({...previous,...title,...title.entry,id:title.id,listed:!!title.entry,
       title:title.title,favorite:!!title.favorite}),
-    paint:paintScreenListRow,
+    paint:(row,state,template)=>paintScreenListRow(row,state,template,editorStore.hasPendingSubject(state.subject||{kind:state.type,media_id:state.id})),
     editorControls:'[data-edit-entry],[data-quick-rate-id],[data-progress-increment]',
     onClick(target,title){
       const button=target.closest<HTMLButtonElement>('[data-progress-increment]');

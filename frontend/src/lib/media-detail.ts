@@ -2,6 +2,7 @@ import {preparePanelStyles} from './panel-readiness';
 import { editorStore, seedEditorPage, type EditorTitle } from './editor-store';
 import { mountDetailsMotion } from './content-motion';
 import { settleNavigationContent } from './loading-reveal';
+import {setFeedbackPressed,setFeedbackText} from './state-feedback';
 import { mountContributorBiography } from './contributor-biography';
 import { showDialog, closeDialog, reveal } from './ui-motion';
 import { mountDetailImages } from './media-detail-images';
@@ -260,6 +261,7 @@ export function mountMediaDetail() {
   let requestSeasonRefresh = () => {};
   const paint = (state: EditorTitle) => {
     title = state;
+    const acknowledge = editorStore.hasPendingEntryWrites(state);
     const progress=root.querySelector<HTMLElement>('[data-game-progress]');
     if(progress&&state.type==='game'){
       const {hours,achievement}=gameProgress(state.entry);
@@ -296,12 +298,12 @@ export function mountMediaDetail() {
     }
     if (favorite) {
       const active = state.favorite ?? !!state.entry?.favorite;
-      favorite.dataset.favorite=String(active); favorite.setAttribute('aria-pressed',String(active));
+      favorite.dataset.favorite=String(active); setFeedbackPressed(favorite,active,acknowledge,signal);
       favorite.title=active?'Remove from favorites':'Add to favorites'; favorite.setAttribute('aria-label',favorite.title);
     }
     if (library) {
       const active = !!state.editor_library?.desired;
-      library.dataset.desired=String(active); library.setAttribute('aria-pressed',String(active));
+      library.dataset.desired=String(active); setFeedbackPressed(library,active,editorStore.hasPendingWrites(state),signal);
       library.title=active?'Remove from library':'Add to library'; library.setAttribute('aria-label',library.title);
     }
     if (note && !noteDirty) note.value=state.entry?.notes || '';
@@ -313,7 +315,7 @@ export function mountMediaDetail() {
       const score = state.entry?.score || null;
       rating.dataset.quickRateScore=score==null?'':String(score);
       rating.dataset.quickRateMode=state.entry?.rating_mode || 'manual';
-      rating.querySelector('[data-score-label]')!.textContent=score==null?'—':Number(Number(score).toFixed(1)).toString();
+      setFeedbackText(rating.querySelector('[data-score-label]'),score==null?'—':Number(Number(score).toFixed(1)).toString(),acknowledge,signal);
       rating.setAttribute('aria-label',`Rate ${state.title}. Current score: ${score ?? 'Unrated'}`);
     }
   };
@@ -445,6 +447,8 @@ export function mountMediaDetail() {
           }
         }
         const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(typeof result.detail==='string'?result.detail:'Unable to update this episode.');
+        if(signal.aborted)return;
+        setFeedbackPressed(button,watched,true,signal);
         await refreshSeasonState().catch(()=>{if(!signal.aborted)location.reload();});
       }catch(error){if(!signal.aborted)showActionFailure('progress',title?.title,error);}
       finally{button.disabled=false;button.removeAttribute('aria-busy');}

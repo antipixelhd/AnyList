@@ -3,6 +3,7 @@ import type {ListState} from './profile-list-index';
 import {applyResponsiveArtwork} from './responsive-artwork';
 import {releaseAnnotation} from './release-annotation';
 import {compactListProgress,scoreLabel} from './tracker';
+import {setFeedbackText} from './state-feedback';
 
 const coverOptions={size:'w342',sizes:'(max-width:650px) 32px, 42px',route:'direct' as const};
 
@@ -20,7 +21,7 @@ export function screenListEditorTitle(state:ListState):EditorTitle{
   return {id,type,title,original_title,tagline,poster,backdrop,backdrop_fallbacks,background_status,year,genres,release_date,progress_positions,editor_library,favorite,entry};
 }
 
-export function paintScreenListRow(row:HTMLElement,state:ListState,template:HTMLTemplateElement){
+export function paintScreenListRow(row:HTMLElement,state:ListState,template:HTMLTemplateElement,acknowledge=false){
   const {id,type,title}=state;
   Object.assign(row.dataset,{listEntry:String(id),title:title.toLowerCase(),score:String(state.score??-1),
     progress:String(state.progress??0),mediaType:type,updated:state.updated_at||''});
@@ -44,7 +45,7 @@ export function paintScreenListRow(row:HTMLElement,state:ListState,template:HTML
   const edit=cover.querySelector<HTMLButtonElement>('[data-edit-entry]');
   if(edit){edit.dataset.editEntry=String(id);edit.setAttribute('aria-label',`Edit ${title}`);}
   const score=row.querySelector('[data-score-label]')||row.querySelector('.entry-score');
-  if(score)score.textContent=scoreLabel(state.score);
+  setFeedbackText(score,scoreLabel(state.score),acknowledge);
   const rate=row.querySelector<HTMLButtonElement>('[data-quick-rate-id]');
   if(rate){
     Object.assign(rate.dataset,{quickRateId:String(id),quickRateTitle:title,

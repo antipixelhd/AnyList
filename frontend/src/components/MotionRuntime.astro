@@ -3,6 +3,7 @@
   import { cancelUiMotion, dismiss, reveal } from '../lib/ui-motion';
 
   import {mountPressFeedback} from '../lib/press-feedback';
+  import {cancelStateFeedback} from '../lib/state-feedback';
   mountPressFeedback(document, window);
 
   document.addEventListener('click', event => {
@@ -25,9 +26,13 @@
     }
   });
   document.addEventListener('astro:before-swap', () => {
+    cancelStateFeedback();
     cancelLoadingReveals();
     cancelUiMotion();
   });
-  window.addEventListener('pagehide',()=>cancelLoadingReveals());
-  matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change',event=>{if(event.matches)cancelLoadingReveals();});
+  window.addEventListener('pagehide',()=>{cancelLoadingReveals();cancelStateFeedback();});
+  matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change',event=>{if(event.matches){cancelLoadingReveals();cancelStateFeedback();}});
 </script>
+<style is:global>
+  [data-score-label], [data-status-value] { display:inline-block; }
+</style>

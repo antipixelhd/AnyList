@@ -7,7 +7,7 @@ const choices=game?gameStatuses:statuses;
 const editorAction=game?{'data-edit-game':mediaId}:{'data-edit-entry':mediaId};
 ---
 <div class="status-control" data-status-control data-media={mediaId} data-game={game?'true':undefined}>
-  <div class="status-split"><button class="button-primary" data-status-label {...editorAction}>{choices.find(([s])=>s===status)?.[1]||'Add to list'}</button><button class="button-primary status-arrow" hidden={child} aria-label="Quick status actions" aria-haspopup="menu" aria-expanded="false" aria-controls={`quick-status-options-${mediaId}`}><span class="ui-icon" aria-hidden="true"><svg data-dropdown-arrow viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m5 9 7 7 7-7" /></svg></span></button></div>
+  <div class="status-split"><button class="button-primary" data-status-label {...editorAction}><span data-status-value>{choices.find(([s])=>s===status)?.[1]||'Add to list'}</span></button><button class="button-primary status-arrow" hidden={child} aria-label="Quick status actions" aria-haspopup="menu" aria-expanded="false" aria-controls={`quick-status-options-${mediaId}`}><span class="ui-icon" aria-hidden="true"><svg data-dropdown-arrow viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m5 9 7 7 7-7" /></svg></span></button></div>
   <div class="status-options tracker-dropdown-menu" id={`quick-status-options-${mediaId}`} role="menu" hidden>
     <button role="menuitem" data-quick-status="completed" aria-current={status === 'completed' ? 'true' : undefined}>Set as Completed</button>
     <button role="menuitem" data-quick-status={game?'playing':'watching'} aria-current={status === (game?'playing':'watching') ? 'true' : undefined}>Set as {game?'Playing':'Watching'}</button>
@@ -17,6 +17,7 @@ const editorAction=game?{'data-edit-game':mediaId}:{'data-edit-entry':mediaId};
 </div>
 <script>
 import { showMenu, hideMenu } from '../lib/ui-motion';
+import {setFeedbackText} from '../lib/state-feedback';
 import {editorStore,seedEditorPage} from '../lib/editor-store';
 import {statuses} from '../lib/tracker';
 import {gameStatuses,gameDatePatch} from '../lib/game-editor-data';
@@ -67,7 +68,7 @@ document.querySelectorAll<HTMLElement>('[data-status-control]').forEach(control=
   document.addEventListener('anylist:editor-state',event=>{
     const title=(event as CustomEvent).detail;
     if((title.type==='game')!==game||title.id!==Number(control.dataset.media))return;
-    control.querySelector('[data-status-label]')!.textContent=(game?gameStatuses:statuses).find(([s])=>s===title.entry?.status)?.[1]||'Add to list';
+    setFeedbackText(control.querySelector('[data-status-value]'),(game?gameStatuses:statuses).find(([s])=>s===title.entry?.status)?.[1]||'Add to list',editorStore.hasPendingEntryWrites(title),pageListeners.signal);
     options.querySelectorAll<HTMLElement>('[data-quick-status]').forEach(button=>button.setAttribute('aria-current',String(button.dataset.quickStatus===title.entry?.status)));
   },{signal:pageListeners.signal});
 });

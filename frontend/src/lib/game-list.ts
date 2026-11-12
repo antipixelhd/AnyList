@@ -12,7 +12,7 @@ export function initializeGameList(panel:HTMLElement,lifetime:AbortSignal){
     updateState:(title,previous)=>({...previous,...title.game_state,...title.entry,subject:title.subject,
       title:title.title,image_url:title.poster,year:title.year,genres:title.genres,
       game_class:title.game_class,base_work_id:title.base_work_id,listed:!!title.entry,favorite:!!title.favorite}),
-    paint:paintGameListRow,
+    paint:(row,state,template)=>paintGameListRow(row,state,template,editorStore.hasPendingSubject(state.subject)),
     editorControls:'[data-edit-game],[data-game-list-rate]',
     removeChildren:true,
     onClick(target:Element,title:EditorTitle){
