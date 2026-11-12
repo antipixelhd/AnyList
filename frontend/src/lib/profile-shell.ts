@@ -112,6 +112,7 @@ function setup(){
       if (loading) {
         loading.dataset.profileUrl = url;
         show(loading);
+        land();
       }
     }
     if(!cached?.ready){progressRunning=true;document.dispatchEvent(new Event('anylist:route-progress-start'));}
@@ -156,7 +157,7 @@ function setup(){
         const statistics=panel.root.querySelector<HTMLElement>('[data-integrated-statistics]');
         if(statistics&&panel.root.dataset.profileUrl!==url)statistics.dispatchEvent(new CustomEvent('anylist:statistics-open',{detail:{url}}));
         nav.removeAttribute('aria-busy');update();
-        land();
+        if(!loading)land();
         if (changedPanel) {
           const rows = Array.from(panel.root.querySelectorAll<HTMLElement>('.entry-table [data-list-window]'));
           if (rows.length) rows.forEach(row => settleNavigationContent(row,'tab',signal,4));

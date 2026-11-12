@@ -65,18 +65,20 @@ for(const destination of ['games','stats','stats/games'])test(`a cold ${destinat
   const sourceText=readFileSync(new URL('../src/lib/profile-shell.ts',import.meta.url),'utf8');
   const start=sourceText.indexOf('  function select(');
   const snippet=sourceText.slice(start,sourceText.indexOf('  const target=',start));
-  const source={dataset:{},matches:()=>false,dispatchEvent(){}},preview={kind:'games',dataset:{},prepend(){}},waiting=[];let rejectRead;
+  const source={dataset:{},matches:()=>false,dispatchEvent(){}},preview={kind:'games',dataset:{},prepend(){}},waiting=[],scrolls=[];let rejectRead;
   const events=[];
   const context={URL,changeStatistics:{cancel(){}},stopProgress(){},progressRunning:false,signal:new AbortController().signal,wanted:'movies',active:'movies',shown:source,scrollY:780,
     panels:new Map([['movies',{root:source,ready:true}]]),loadingTemplates:new Map(),profileLoadingFrame:()=>preview,
     createLoadingReveal:()=>({begin(){},finish(){}}),
     read:()=>new Promise((resolve,reject)=>rejectRead=reject),setPanelWaiting:(root,on)=>waiting.push([root,on]),update(){},
     show:root=>context.shown=root,nav:{setAttribute(){},removeAttribute(){},getBoundingClientRect:()=>({top:-600})},
-    host:{querySelector:()=>null,append(){}},window:{scrollTo(){}},location:{href:'https://example.test/user/alex/movies'},
-    document:{dispatchEvent:event=>events.push(event.type),createElement:()=>({dataset:{},setAttribute(){},addEventListener(){},append(){}})},Event,
+    host:{querySelector:()=>null,append(){}},window:{scrollTo:(_x,y)=>scrolls.push(y)},location:{href:'https://example.test/user/alex/movies'},
+    document:{dispatchEvent:event=>events.push(event.type),createElement:()=>({dataset:{},setAttribute(){},addEventListener(){},append(){}})},Event,CustomEvent,
   };
   runInNewContext(stripTypeScriptTypes(snippet)+';this.select=select;',context);
   context.select(destination);assert.equal(context.shown,preview);assert(events.includes('anylist:route-progress-start'));assert.equal(context.wanted,destination);
+  assert.deepEqual(scrolls,[destination==='games'?180:0],'land before the pending read resolves');
+  assert(events.includes('anylist:profile-tab-landed'));
   assert.deepEqual(waiting,[[source,true]]);
   rejectRead(new Error('unavailable'));await new Promise(setImmediate);
   assert.equal(context.shown,preview);assert.equal(context.wanted,destination);assert.deepEqual(waiting.at(-1),[source,false]);
