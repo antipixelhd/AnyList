@@ -1,48 +1,29 @@
 @media (prefers-reduced-motion: no-preference) {
-  :where(
-    .browse-skeleton .skeleton-block,
-    .browse-page .browse-cover[data-poster-loading] .browse-poster-link,
-    .stats-loading-content :is(.overview-total-icon,.stats-loading-title,.stats-loading-label,.stats-loading-value,.stats-loading-rank,.stats-loading-control,.stats-loading-plot,.stats-genre-poster,.stats-actor-portrait),
-    .media-detail :is(.detail-synopsis-skeleton,.media-person-art[data-cast-loading],.detail-person-skeleton > *, .detail-value-skeleton,.media-episode-loading > span,.game-section-skeleton span),
-    .media-detail .lab-poster-button.detail-image-skeleton
-  ) {
-    position:relative;
-    overflow:clip;
-
-    &::after {
-      --sweep-pass:850ms;
-      --sweep-start:120ms;
-      --sweep-pause:700ms;
-      content:'';
-      position:absolute;
-      inset:0;
-      border-radius:inherit;
-      pointer-events:none;
-      background:linear-gradient(105deg,transparent,color-mix(in srgb,var(--text, currentColor) 23%,transparent),transparent);
-      animation:
-        skeleton-soft-sweep var(--sweep-pass) ease-in-out var(--sweep-start),
-        skeleton-soft-sweep var(--sweep-pass) ease-in-out calc(var(--sweep-start) + var(--sweep-pass) + var(--sweep-pause));
-      opacity:0;
-    }
+  .browse-skeleton,.browse-cover[data-poster-loading] {
+    --skeleton-base:var(--panel);
+    --skeleton-highlight:#243449;
+    --skeleton-tile-scale:2.2;
+    --skeleton-duration:1.5s;
   }
 
-  :where(.detail-synopsis-skeleton,.media-episode-loading > span,.stats-loading-plot) {
-    container-type:inline-size;
-
-    &::after {
-      --sweep-pass:1350ms;
-    }
+  .stats-loading-content {
+    --skeleton-base:transparent;
+    --skeleton-highlight:color-mix(in srgb,var(--text) 12%,transparent);
   }
 
-  @supports (animation-duration: calc(1px / 1px * 1ms)) {
-    :where(.detail-synopsis-skeleton,.media-episode-loading > span,.stats-loading-plot)::after {
-      --sweep-pass:calc(850ms * max(1, 100cqw / 260px));
-    }
+  .browse-skeleton .skeleton-block,
+  .browse-page .browse-cover[data-poster-loading] .browse-poster-link,
+  .stats-loading-content :is(.overview-total-icon,.stats-loading-title,.stats-loading-label,.stats-loading-value,.stats-loading-rank,.stats-loading-control,.stats-loading-plot,.stats-genre-poster,.stats-actor-portrait),
+  .media-detail :is(.detail-synopsis-skeleton,.media-person-art[data-cast-loading],.detail-person-skeleton > *, .detail-value-skeleton,.media-episode-loading > span,.game-section-skeleton span),
+  .media-detail .lab-poster-button.detail-image-skeleton {
+    background-image:linear-gradient(100deg,var(--skeleton-base,var(--field)) 20%,var(--skeleton-highlight,var(--panel)) 45%,var(--skeleton-base,var(--field)) 70%);
+    background-size:calc(100% * var(--skeleton-tile-scale,2.4)) 100%;
+    background-repeat:repeat-x;
+    animation:skeleton-shimmer var(--skeleton-duration,1.8s) linear infinite;
   }
 }
 
-@keyframes skeleton-soft-sweep {
-  from { transform:translateX(-50%); opacity:0; }
-  12%, 88% { opacity:1; }
-  to { transform:translateX(50%); opacity:0; }
+@keyframes skeleton-shimmer {
+  from { background-position:100% 0; }
+  to { background-position:calc(100% / (1 - var(--skeleton-tile-scale,2.4))) 0; }
 }

@@ -179,7 +179,7 @@ body.tracker .media-detail :is(.lab-public-score,.lab-game-offer) h2 { font-size
 .media-detail .media-person-art { position:relative; flex-shrink:0; width:57px; height:77px; }
 .media-detail .media-person-art :is(img,.lab-person-initials) { position:absolute; inset:0; width:100%; height:100%; }
 .media-detail .media-person-art [hidden] { display:none; }
-.detail-image-skeleton,.detail-synopsis-skeleton,.media-person-art[data-cast-loading],.detail-person-skeleton>span,.detail-person-skeleton>div { background:color-mix(in srgb,var(--border) 65%,var(--panel)); border-radius:4px; }
+.detail-image-skeleton,.detail-synopsis-skeleton,.media-person-art[data-cast-loading],.detail-person-skeleton>span,.detail-person-skeleton>div { background-color:var(--field); border-radius:4px; }
 .detail-person-skeleton { display:flex; align-items:center; gap:12px; min-height:77px; }
 .detail-person-skeleton>span { width:57px; height:77px; flex-shrink:0; }
 .detail-person-skeleton>div { width:65%; height:32px; }
@@ -193,8 +193,8 @@ body.tracker .media-detail :is(.lab-public-score,.lab-game-offer) h2 { font-size
 @media(max-width:650px) { .media-detail .lab-gallery button { height:190px; } }
 .media-detail [data-credit-preview] { min-height:77px; }
 .media-episode-loading { display:grid; gap:12px; padding:16px 0; }
-.media-episode-loading>span { display:block; height:64px; border-radius:4px; background:var(--field); }
-.detail-value-skeleton { display:inline-block; width:48px; height:18px; background:var(--field); border-radius:3px; }
+.media-episode-loading>span { display:block; height:64px; border-radius:4px; background-color:var(--field); }
+.detail-value-skeleton { display:inline-block; width:48px; height:18px; background-color:var(--field); border-radius:3px; }
 @media (max-width:650px) {
   .media-detail .media-person-art { width:50px; height:72px; }
   .media-detail .lab-people-preview .lab-section-title,.media-credit-group>.lab-section-title { flex-wrap:wrap; gap:12px; }

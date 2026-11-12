@@ -899,12 +899,8 @@
   }
 }
 
-.browse-skeleton .skeleton-block { background:color-mix(in srgb,var(--border) 65%,var(--panel)); }
+.browse-skeleton .skeleton-block { background-color:var(--panel); }
 
-/* Keep the same surface underneath the arriving poster throughout its fade. */
-.browse-page .browse-cover:is([data-poster-loading],[data-poster-revealing]) {
-  background:color-mix(in srgb,var(--border) 65%,var(--panel));
-}
 .browse-page .browse-cover[data-poster-revealing] img {
   animation: browse-poster-arrival 180ms ease-out;
 }

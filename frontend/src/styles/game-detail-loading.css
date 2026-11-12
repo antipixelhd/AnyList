@@ -1,6 +1,6 @@
 .game-section-skeleton{display:grid;gap:14px;padding:4px 0;min-width:0}
 .game-section-skeleton[hidden]{display:none}
-.game-section-skeleton span{display:block;height:20px;border-radius:4px;background:color-mix(in srgb,var(--border) 65%,var(--panel))}
+.game-section-skeleton span{display:block;height:20px;border-radius:4px;background-color:var(--field)}
 .game-section-skeleton>span:nth-child(2n){width:72%}
 .game-section-skeleton-price{grid-column:1/-1;min-height:166px;align-content:center}
 .game-section-skeleton-price>span:first-child{height:34px;width:55%}
