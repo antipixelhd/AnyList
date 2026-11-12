@@ -56,6 +56,10 @@
 }
 .category-edit-row > span,
 .category-edit-row > input { min-width: 0; flex: 1; }
+.category-edit-row:has(> input) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 22px;
+}
 .category-edit-row input {
   width: 100%;
   border: 0;
@@ -103,6 +107,7 @@
 @media (max-width: 650px), (hover: none), (pointer: coarse) {
   .category-heading [data-category-controls] { opacity: 1; pointer-events: auto; }
   .category-icon { min-width: 36px; min-height: 40px; }
+  .category-edit-row:has(> input) { grid-template-columns: minmax(0, 1fr) 36px; }
   .category-move { display: inline-flex; }
   .category-drag { min-height: 40px; }
   .category-heading .ui-icon { width: 14px; font-size: 14px; }
