@@ -12,6 +12,18 @@ export function profileLoadingFrame(kind: string, url: URL, nav: HTMLElement) {
     : `[data-profile-list-loading="${game ? 'game' : 'screen'}"]`);
   const frame = template?.content.firstElementChild?.cloneNode(true) as HTMLElement | undefined;
   if (!frame) return;
+  if (!statistics) {
+    // Pending controls are inert; track the surrounding frame so an early
+    // mouse hover can still reveal count placeholders without enabling them.
+    frame.addEventListener('pointermove', event => {
+      if (event.pointerType !== 'mouse') return;
+      const heading = frame.querySelector<HTMLElement>('.category-heading')?.getBoundingClientRect();
+      const counts = frame.querySelector<HTMLElement>('.status-filters')?.getBoundingClientRect();
+      frame.toggleAttribute('data-list-counts-hover', !!heading && !!counts && event.clientX >= counts.left &&
+        event.clientX <= counts.right && event.clientY >= heading.top && event.clientY <= counts.bottom);
+    });
+    frame.addEventListener('pointerleave', () => frame.removeAttribute('data-list-counts-hover'));
+  }
   if (statistics) {
     const domain = kind === 'stats/games' ? 'game' : 'screen';
     const section = statisticsSection(domain, url.searchParams.get('section') || 'overview');
