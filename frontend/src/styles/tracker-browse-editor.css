@@ -706,10 +706,6 @@
 .filters .filter-control select {
   margin:0
 }
-:is(#reset-filters,#pending-reset-filters):disabled {
-  cursor:default;
-  opacity:.45
-}
 @media(max-width:650px) {
   .filters h2 {
     margin-top:16px

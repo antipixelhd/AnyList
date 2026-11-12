@@ -27,7 +27,7 @@ const yearFill=availableYears.length?yearPosition/availableYears.length*100:0;
 const id=(name:string)=>pending?`pending-${name}`:name;
 ---
 <aside class="filters" id={id('list-filters')} aria-label="List filters" inert={pending}>
-  <form method="GET" class="list-filter-form" data-list-filter-form>
+  <form method="GET" class="list-filter-form" data-list-filter-form data-default-sort={defaultSort}>
     <input type="hidden" name="status" value={status==='all'?'':status}/>
     <input type="hidden" name="year" value={year} data-list-selected-year/>
     <div class="list-filter-search-row">
@@ -46,7 +46,6 @@ const id=(name:string)=>pending?`pending-${name}`:name;
       <ListFilterSelect id={id('favorite-filter')} name="favorites" label="Favorites" value={favorites?'true':''} options={[["","All entries"],["true","Favorites only"]]}/>
       <h2>Sort</h2>
       <ListFilterSelect id={id('sort-filter')} name="sort" label="Sort" value={sort} defaultValue={defaultSort} options={[["title","Title"],["score","Score"],["progress",progressLabel],["updated","Recently updated"]]}/>
-      <button type="button" class="button-secondary" id={id('reset-filters')} data-default-sort={defaultSort} disabled={pending}>Reset filters</button>
     </div>
   </form>
 </aside>

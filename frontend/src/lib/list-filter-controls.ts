@@ -5,7 +5,6 @@ import {reveal,dismiss,showMenu,hideMenu} from './ui-motion';
 export function mountListFilterControls(root:HTMLElement,signal:AbortSignal) {
     const input=(id:string)=>root.querySelector<HTMLInputElement>(`#${id}`)!;
     const mobileToggle=root.querySelector<HTMLButtonElement>('.mobile-filter-toggle')!;
-    const resetButton=root.querySelector<HTMLButtonElement>('#reset-filters')!;
     const yearSlider=input('year-filter');
     const yearOutput=root.querySelector<HTMLOutputElement>('#year-value')!;
     const yearField=root.querySelector<HTMLInputElement>('[data-list-selected-year]')!;
@@ -165,7 +164,6 @@ export function mountListFilterControls(root:HTMLElement,signal:AbortSignal) {
       const active=[status!=='all',input('list-search').value.trim()!=='',input('genre-filter').value!=='',selectedYear()!=='',input('favorite-filter').value!=='',input('sort-filter').value!==defaultSort].filter(Boolean).length;
       mobileToggle.toggleAttribute('data-active',active>0);
       mobileToggle.setAttribute('aria-label',active>0?`Filters and sorting (${active} active)`:'Filters and sorting');
-      resetButton.disabled=active===0;
       filterDropdowns.forEach(syncDropdown);
       root.querySelectorAll<HTMLButtonElement>('[data-status]').forEach(button=>{
         button.setAttribute('aria-pressed',String(button.dataset.status===status));

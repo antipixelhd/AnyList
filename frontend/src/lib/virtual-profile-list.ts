@@ -7,7 +7,7 @@ import {mountListCoverPreview} from './list-cover-preview';
 import {mountListFilterControls} from './list-filter-controls';
 import {profileListQuery} from './profile-list-query';
 import {profileListPageSize,profileListPages,ProfileListGeometry} from './profile-list-window';
-import {panelActive,panelUrl,setPanelUrl} from './profile-panel';
+import {panelActive,panelUrl} from './profile-panel';
 import {listEditorArtwork} from './list-editor-artwork';
 
 type Page={category_presentation?:CategoryPresentation;offset:number;total:number;results:Record<string,any>[];group_counts:Record<string,number>;status_counts:Record<string,number>;genres:string[];years:string[]};
@@ -37,12 +37,14 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
   const controls=mountListFilterControls(filters,signal);
   const form=filters.querySelector<HTMLFormElement>('[data-list-filter-form]')!;
   const field=(name:string)=>form.elements.namedItem(name) as HTMLInputElement;
-  const defaultSort=filters.querySelector<HTMLButtonElement>('#reset-filters')!.dataset.defaultSort||'title';
+  const defaultSort=form.dataset.defaultSort||'title';
+  const defaultQuery=profileListQuery(new URLSearchParams(),adapter.statuses,defaultSort).toString();
   let groups=[...root.querySelectorAll<HTMLElement>('[data-list-window]')];
   let total=Number(root.dataset.listTotal),counts=JSON.parse(root.dataset.listCounts||'{}') as Record<string,number>;
   let query=profileListQuery(new URL(panelUrl(panel)).searchParams,adapter.statuses,defaultSort);
   let epoch=0,frame=0,searchTimer:ReturnType<typeof setTimeout>|undefined,retryTimer:ReturnType<typeof setTimeout>|undefined;
   let previousY=scrollY,previousTime=performance.now(),ahead=3200,dirty=false,refreshing=false;
+  let resetOnReturn=false;
   let requests=new AbortController();
   const template=panel.querySelector<HTMLTemplateElement>('[data-list-row-template]')!;
   const index=new ProfileListIndex(adapter.statuses),states=new Map<number,ListState>(),rowCache=new Map<number,HTMLElement>();
@@ -265,7 +267,16 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
     const values=new URLSearchParams();for(const [key,value] of new FormData(form))if(typeof value==='string')values.set(key,value);
     query=profileListQuery(values,adapter.statuses,defaultSort);controls.sync(query.get('status')||'all',defaultSort);
     root.dataset.status=query.get('status')||'';root.dataset.sort=query.get('sort')||'title';root.dataset.favorites=String(query.has('favorites'));
-    const url=new URL(panelUrl(panel));url.search=query.toString();setPanelUrl(panel,url);reset();
+    reset();
+  }
+  function resetFiltersOnReturn(){
+    for(const name of ['q','genre','favorites','status','year'])field(name).value='';
+    filters.querySelector<HTMLInputElement>('#year-filter')!.value='0';
+    field('sort').value=defaultSort;
+    const reload=dirty||refreshing||query.toString()!==defaultQuery;
+    dirty=false;
+    if(reload)submit();
+    else controls.sync('all',defaultSort);
   }
   let presentationRevision = Number(JSON.parse(root.dataset.categoryPresentation || 'null')?.revision || 0);
   function applyPresentation(presentation: CategoryPresentation) {
@@ -313,16 +324,23 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
   filters.querySelectorAll<HTMLButtonElement>('[data-status]').forEach(button=>button.addEventListener('click',()=>{field('status').value=button.dataset.status==='all'?'':button.dataset.status!;submit();},{signal}));
   form.addEventListener('input',event=>{if((event.target as Element).closest('[data-category-editor]'))return;const input=event.target as HTMLInputElement;if(input.id==='year-filter')return;clearTimeout(searchTimer);if(input.name==='q')searchTimer=setTimeout(submit,250);else submit();},{signal});
   filters.querySelector('#year-filter')!.addEventListener('change',submit,{signal});
-  filters.querySelector('#reset-filters')!.addEventListener('click',()=>{for(const name of ['q','genre','favorites','status','year'])field(name).value='';filters.querySelector<HTMLInputElement>('#year-filter')!.value='0';field('sort').value=defaultSort;submit();},{signal});
   window.addEventListener('scroll',()=>{const now=performance.now();ahead=Math.min(16000,Math.max(3200,Math.abs(scrollY-previousY)/Math.max(1,now-previousTime)*700));previousY=scrollY;previousTime=now;schedule();},{signal,passive:true});
   window.addEventListener('resize',schedule,{signal});
   panel.addEventListener('anylist:panel-active',()=>{
-    if(requests.signal.aborted)requests=new AbortController();blocked.clear();if(dirty){dirty=false;submit();}schedule();queueWarm();
+    if(requests.signal.aborted)requests=new AbortController();
+    blocked.clear();
+    if(resetOnReturn){resetOnReturn=false;resetFiltersOnReturn();}
+    else if(dirty){dirty=false;submit();}
+    schedule();queueWarm();
   },{signal});
   panel.addEventListener('anylist:panel-inactive',()=>{
-    controls.close();preview?.hide();dirty=dirty||refreshing||searchTimer!==undefined;
+    resetOnReturn=true;
+    controls.close();preview?.hide();dirty=dirty||refreshing;
     clearTimeout(searchTimer);searchTimer=undefined;clearTimeout(retryTimer);retryTimer=undefined;
     requests.abort();epoch++;flights.clear();warming?.abort();clearTimeout(warmTimer);warmTimer=undefined;
+  },{signal});
+  window.addEventListener('pageshow',event=>{
+    if(event.persisted&&panelActive(panel))resetFiltersOnReturn();
   },{signal});
   document.addEventListener('anylist:editor-state',event=>{
     const title=(event as CustomEvent<EditorTitle>).detail;if(!owner||!adapter.accepts(title))return;
