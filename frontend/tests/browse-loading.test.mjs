@@ -42,54 +42,34 @@ test("category and grid refreshes keep existing cards visible without skeletons"
   }
 });
 
-test("an explicitly configured minimum does not restart when shown again", () => {
-  let now = 100;
-  const v = view([]);
-  const loading = createBrowseLoading(v.region, v.skeleton, () => now, 350);
-  assert.equal(loading.remaining(), 0);
-  loading.show();
-  now = 200;
-  assert.equal(loading.remaining(), 250);
-  loading.show(); // Showing again cannot restart the minimum.
-  now = 450;
-  assert.equal(loading.remaining(), 0);
-  loading.finish();
-  assert.equal(loading.remaining(), 0);
-});
-
-test('normal browse results never wait for an artificial skeleton minimum', async () => {
-  const v=view([]);
-  v.loading.show();
-  assert.equal(v.loading.remaining(),0);
-  await v.loading.settle(new AbortController().signal);
-  assert.equal(v.loading.remaining(),0);
-});
-
-test("aborting the active search cancels its minimum wait", async () => {
+test("replacing a pending view releases its skeleton synchronously", () => {
   const v = view([]);
   v.loading.show();
-  const controller = new AbortController();
-  const settled = v.loading.settle(controller.signal);
-  controller.abort();
-  await settled;
+  assert.equal(v.skeleton.hidden, false);
+  v.loading.finish();
+  assert.equal(v.skeleton.hidden, true);
+  assert.equal(v.region.dataset.browseLoading, undefined);
 });
-
 test("only skeleton slots that appeared hand their entrance to replacement covers", () => {
   const v = view([]);
-  const appeared = {hasAttribute: () => true};
-  const pending = {hasAttribute: () => false};
+  const appeared = {getBoundingClientRect: () => ({top:20,bottom:120,height:100})};
+  const pending = {getBoundingClientRect: () => ({top:900,bottom:1000,height:100})};
   v.skeleton.querySelectorAll = selector => selector === '.browse-skeleton-body' ? [appeared, pending] : [];
   const covers = Array.from({length: 3}, () => ({
     attributes: new Set(),
     setAttribute(name) { this.attributes.add(name); },
   }));
-  v.loading.handoff(covers);
-  assert.equal(covers[0].attributes.size, 0);
-  v.loading.show();
-  v.loading.handoff(covers);
-  assert(covers[0].attributes.has('data-browse-appeared'));
-  assert.equal(covers[1].attributes.size, 0);
-  assert.equal(covers[2].attributes.size, 0);
+  const previousHeight=globalThis.innerHeight;
+  globalThis.innerHeight=800;
+  try {
+    v.loading.handoff(covers);
+    assert.equal(covers[0].attributes.size, 0);
+    v.loading.show();
+    v.loading.handoff(covers);
+    assert(covers[0].attributes.has('data-browse-appeared'));
+    assert.equal(covers[1].attributes.size, 0);
+    assert.equal(covers[2].attributes.size, 0);
+  } finally { globalThis.innerHeight=previousHeight; }
 });
 
 test("category discovery uses section slots; filtered results and pagination use grid slots", () => {

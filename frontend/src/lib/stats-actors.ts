@@ -1,3 +1,3 @@
 import { mountPeople } from './stats-people';
-export const mountActors = (root: HTMLElement) => mountPeople(root, 'actors');
-export const mountStaff = (root: HTMLElement) => mountPeople(root, 'staff');
+export const mountActors = (root: HTMLElement, settleScroll: (card: HTMLElement) => void) => mountPeople(root, 'actors', settleScroll);
+export const mountStaff = (root: HTMLElement, settleScroll: (card: HTMLElement) => void) => mountPeople(root, 'staff', settleScroll);

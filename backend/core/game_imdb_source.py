@@ -1,0 +1,231 @@
+"""Direct IMDb website queries; no authentication, fallback transport or catalogue.
+
+Technical access is not a supported API guarantee or permission to reuse data.
+The caller owns durable component leases, cached evidence and authorization.
+"""
+import re
+import hashlib
+from datetime import timedelta
+from urllib.parse import quote
+
+from core.catalogue_providers import ProviderError, ProviderHTTP
+from core.game_search import matches_partial
+
+TITLE_ID = re.compile(r'tt[0-9]+\Z')
+PERSON_ID = re.compile(r'nm[0-9]+\Z')
+ENDPOINT = 'https://caching.graphql.imdb.com/'
+HEADERS = {'Content-Type':'application/json', 'User-Agent':'AnyList catalogue/1',
+           'Origin':'https://www.imdb.com', 'Referer':'https://www.imdb.com/'}
+TITLE_FIELDS = 'id titleText { text } titleType { id } releaseYear { year } releaseDate { year month day }'
+TITLE_QUERY = 'query GameIdentity($id: ID!) { title(id: $id) { '+TITLE_FIELDS+' } }'
+TITLE_CREDITS = '''query GameCredits($id: ID!, $after: ID) {
+  title(id: $id) {
+    '''+TITLE_FIELDS+'''
+    credits(first: 100, after: $after) {
+      total pageInfo { hasNextPage endCursor }
+      edges { node {
+        name { id nameText { text } } category { id text }
+        ... on Cast { characters { name } attributes { text } }
+        ... on Crew { jobs { text } }
+      } }
+    }
+  }
+}'''
+PERSON_CREDITS = '''query GamePersonCredits($id: ID!, $after: ID, $profile: Boolean!) {
+  name(id: $id) {
+    id nameText { text }
+    birthDate @include(if: $profile) { dateComponents { year month day } }
+    deathDate @include(if: $profile) { dateComponents { year month day } }
+    primaryProfessions @include(if: $profile) { category { text } }
+    bio @include(if: $profile) { text { plainText } }
+    credits(first: 250, after: $after, filter: {titleType: "videoGame"}) {
+      total pageInfo { hasNextPage endCursor }
+      edges { node {
+        title { id titleText { text } titleType { id } releaseYear { year } }
+        category { id }
+        ... on Cast { characters { name } attributes { text } }
+        ... on Crew { jobs { text } }
+      } }
+    }
+  }
+}'''
+
+
+def identifier(value, person=False):
+    if not isinstance(value,str) or not (PERSON_ID if person else TITLE_ID).fullmatch(value):
+        raise ProviderError('invalid_request')
+    return value
+
+
+def game_header(raw, native):
+    if not isinstance(raw,dict) or raw.get('id')!=native or (raw.get('titleType') or {}).get('id')!='videoGame':
+        raise ProviderError('identity_conflict')
+    name=(raw.get('titleText') or {}).get('text')
+    if not isinstance(name,str) or not name.strip():raise ProviderError('bad_response')
+    return {key:raw.get(key) for key in ('id','titleText','titleType','releaseYear','releaseDate')}
+
+
+def page(raw, maximum):
+    if not isinstance(raw,dict):raise ProviderError('bad_response')
+    total, edges, info = raw.get('total'), raw.get('edges'), raw.get('pageInfo')
+    if isinstance(total,bool) or not isinstance(total,int) or total<0 or not isinstance(edges,list) or len(edges)>maximum:
+        raise ProviderError('bad_response')
+    if not isinstance(info,dict) or type(info.get('hasNextPage')) is not bool:
+        raise ProviderError('bad_response')
+    cursor=info.get('endCursor')
+    if cursor is not None and (not isinstance(cursor,str) or not 1<=len(cursor)<=4096):
+        raise ProviderError('bad_response')
+    if info['hasNextPage'] and (not cursor or not edges):raise ProviderError('bad_response')
+    if any(not isinstance(edge,dict) or not isinstance(edge.get('node'),dict) for edge in edges):
+        raise ProviderError('bad_response')
+    return {'rows':[edge['node'] for edge in edges], 'total':total,
+            'has_next':info['hasNextPage'], 'cursor':cursor}
+
+
+class IMDbGameSource:
+    def __init__(self,http=None):
+        self.http=http or ProviderHTTP()
+
+    async def query(self,query,variables):
+        # Ordinary website headers are not credentials. Never forward a failed
+        # request, its headers or its body to another host or challenge solver.
+        body=await self.http.request('imdb','POST',ENDPOINT,cache=False,
+            headers=HEADERS,json={'query':query,'variables':variables})
+        if isinstance(body,dict) and body.get('errors'):
+            errors=body['errors']
+            if ('query GameCredits(' in query and 'first: 100' not in query and isinstance(errors,list)
+                    and all(isinstance(error,dict) and re.search(
+                        r'\b(first|page size)\b.*\b(maximum|max|at most|exceed|greater than)\b.*\b(100|200)\b',
+                        str(error.get('message','')),re.I) for error in errors)):
+                raise ProviderError('unsupported_page_size')
+            raise ProviderError('graphql_error')
+        if not isinstance(body,dict) or not isinstance(body.get('data'),dict):
+            raise ProviderError('graphql_error')
+        fields=((body.get('extensions') or {}).get('entitlements') or {}).get('fields') or {}
+        denied=[key for key,value in fields.items() if value=='DENY'] if isinstance(fields,dict) else []
+        if 'credits(' in query and any(key.startswith(('Title.credits','Name.credits')) for key in denied):
+            raise ProviderError('not_entitled')
+        if any(key=='Title.releaseDate' or key.startswith('Title.releaseDate.') for key in denied) and isinstance(body['data'].get('title'),dict):
+            body['data']['title']={**body['data']['title'],'releaseDate':None}
+        return {**body['data'],'_denied_fields':denied}
+
+    async def title(self,native):
+        identifier(native)
+        raw=await self.query(TITLE_QUERY,{'id':native})
+        return game_header(raw.get('title'),native)
+
+    async def portraits(self,natives):
+        """Small optional alias batch; never fetch a filmography for a headshot."""
+        if not isinstance(natives,list) or not 1<=len(natives)<=16:
+            raise ProviderError('invalid_request')
+        for native in natives:identifier(native,person=True)
+        if len(set(natives))!=len(natives):raise ProviderError('invalid_request')
+        variables={f'id{i}':native for i,native in enumerate(natives)}
+        query='query GamePersonImages('+', '.join(f'${key}: ID!' for key in variables)+') { '+ ' '.join(
+            f'p{i}: name(id: $id{i}) {{ id primaryImage {{ url width height }} }}' for i in range(len(natives)))+' }'
+        body=await self.query(query,variables)
+        if any(field=='Name.primaryImage' or field.startswith('Name.primaryImage.') for field in body.get('_denied_fields',[])):
+            raise ProviderError('not_entitled')
+        from urllib.parse import urlsplit
+        result={}
+        for i,native in enumerate(natives):
+            person=body.get(f'p{i}')
+            if not isinstance(person,dict) or person.get('id')!=native:raise ProviderError('identity_conflict')
+            if 'primaryImage' not in person:raise ProviderError('bad_response')
+            raw=person['primaryImage']
+            result[native]={'image':None,'width':None,'height':None}
+            if raw is None:continue
+            if not isinstance(raw,dict):raise ProviderError('bad_response')
+            url=raw.get('url')
+            try:parsed=urlsplit(url) if isinstance(url,str) else None
+            except ValueError:parsed=None
+            if (not parsed or parsed.scheme!='https' or parsed.netloc!='m.media-amazon.com'
+                or not re.fullmatch(r'/images/M/[^/]+\._V1[^.]*\.(?:jpg|jpeg|png)',parsed.path) or parsed.query or parsed.fragment
+                or not all(type(raw.get(key)) is int and 0<raw[key]<=100000 for key in ('width','height'))):
+                raise ProviderError('bad_response')
+            result[native]={'image':url,'width':raw['width'],'height':raw['height']}
+        return result
+
+    async def credits(self,native,after=None,*,person=False,page_size=100):
+        identifier(native,person)
+        if type(page_size) is not int or page_size not in (100,200,250) or person and page_size!=100:
+            raise ProviderError('invalid_request')
+        if after is not None and (not isinstance(after,str) or not 1<=len(after)<=4096):
+            raise ProviderError('invalid_request')
+        sessions=getattr(self.http,'session_factory',None)
+        if person and sessions:
+            from core.game_source_cache import GameSourceCache
+            key=hashlib.sha256((native+':2:'+str(after)).encode()).hexdigest()
+            # The shared loader owns its transport, so a bulk deadline cannot
+            # close a client still needed by the verifier waiting on this page.
+            async def load():
+                return await IMDbGameSource(ProviderHTTP(session_factory=sessions))._credits(native,after,person=True)
+            cached=await GameSourceCache(sessions).get('imdb','game_person_source',key,load,
+                ttl=timedelta(minutes=5),max_stale=timedelta(minutes=5))
+            if cached['stale']:raise ProviderError('retry_pending')
+            return cached['data']
+        return await self._credits(native,after,person=person,page_size=page_size)
+
+    async def _credits(self,native,after=None,*,person=False,page_size=100):
+        identifier(native,person)
+        if after is not None and (not isinstance(after,str) or not 1<=len(after)<=4096):
+            raise ProviderError('invalid_request')
+        query=PERSON_CREDITS if person else TITLE_CREDITS.replace('first: 100',f'first: {page_size}')
+        try:
+            body=await self.query(query,
+                {'id':native,'after':after,**({'profile':after is None} if person else {})})
+        except ProviderError as error:
+            if person or page_size==100 or error.code!='unsupported_page_size':raise
+            result=await self._credits(native,after,page_size=100)
+            return {**result,'page_size_fallback':True}
+        raw=body.get('name' if person else 'title')
+        if person:
+            if not isinstance(raw,dict) or raw.get('id')!=native or not isinstance((raw.get('nameText') or {}).get('text'),str):
+                raise ProviderError('identity_conflict')
+            header={key:raw.get(key) for key in ('id','nameText','birthDate','deathDate','primaryProfessions','bio')}
+        else:
+            header=game_header(raw,native)
+        if body.get('_denied_fields'):
+            header['unavailable_fields']=body['_denied_fields']
+        return {'header':header, **page(raw.get('credits'),250 if person else page_size)}
+
+    async def candidates(self,term):
+        if not isinstance(term,str) or not 2<=len(term.strip())<=100:raise ProviderError('invalid_request')
+        body=await self.http.request('imdb','GET',
+            'https://v3.sg.media-imdb.com/suggestion/titles/x/'+quote(term.strip(),safe='')+'.json',
+            headers=HEADERS)
+        rows=body.get('d') if isinstance(body,dict) else None
+        if not isinstance(rows,list):raise ProviderError('bad_response')
+        # These are review candidates only. A selected record is validated by
+        # GraphQL before a reviewer can explicitly bind it to an IGDB entity.
+        return [{'id':row['id'],'name':row.get('l'),'year':row.get('y')}
+            for row in rows if isinstance(row,dict) and isinstance(row.get('id'),str)
+            and TITLE_ID.fullmatch(row['id']) and isinstance(row.get('l'),str)
+            and (row.get('qid')=='videoGame' or row.get('q')=='video game')]
+
+    async def people_candidates(self, term):
+        """Name suggestions establish source identities, never shared people."""
+        if not isinstance(term, str) or not 2 <= len(term.strip()) <= 100:
+            raise ProviderError('invalid_request')
+        body = await self.http.request('imdb', 'GET',
+            'https://v3.sg.media-imdb.com/suggestion/names/x/' + quote(term.strip(), safe='') + '.json',
+            headers=HEADERS)
+        rows = body.get('d') if isinstance(body, dict) else None
+        if (not isinstance(rows, list) or len(rows) > 50 or any(not isinstance(row, dict)
+                or not isinstance(row.get('id'), str) or not PERSON_ID.fullmatch(row['id'])
+                or not isinstance(row.get('l'), str) or not 1 <= len(row['l'].strip()) <= 500 for row in rows)):
+            raise ProviderError('bad_response')
+        result = []
+        seen = set()
+        for row in rows:
+            if row['id'] in seen or not matches_partial(term, row['l']):
+                continue
+            seen.add(row['id'])
+            artwork = (row.get('i') or {}).get('imageUrl') if isinstance(row.get('i'), dict) else None
+            # A provider's portrait is optional; never use arbitrary suggestion
+            # URLs as images or infer identity from the image/name/description.
+            if not isinstance(artwork, str) or not re.fullmatch(
+                    r'https://m\.media-amazon\.com/images/M/[^/?#]+\._V1[^/?#]*\.(?:jpg|jpeg|png)', artwork):
+                artwork = None
+            result.append({'id': row['id'], 'name': row['l'].strip(), 'image': artwork})
+        return result[:8]

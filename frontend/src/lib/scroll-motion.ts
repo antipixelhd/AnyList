@@ -4,9 +4,8 @@ export function initializeScrollMotion(
   signal: AbortSignal,
   selector = ".lab-module",
   revealClass = "lab-scroll-reveal",
-  options: { animateInitial?: boolean; downwardOnly?: boolean; scaleEntrance?: boolean; once?: boolean; appearedAttribute?: string } = {},
+  options: { animateInitial?: boolean; animateVisibleArrivals?: boolean; downwardOnly?: boolean; scaleEntrance?: boolean; once?: boolean; appearedAttribute?: string; prepareBeforeEntry?: boolean } = {},
 ) {
-  // Approximate easeOutSine: fast arrival with a gentle finish.
   const scaleTiming = { duration: 300, easing: "linear" };
   const scaleFrames = [
     { opacity: 0, scale: "0.92", offset: 0, easing: "cubic-bezier(.39,.575,.565,1)" },
@@ -44,37 +43,49 @@ export function initializeScrollMotion(
   };
   const start = (element: HTMLElement) => {
     markAppeared(element);
+    element.classList.add(revealClass);
     const animation = element.animate(
       options.scaleEntrance ? scaleFrames : [
-        { opacity: 0.2, translate: `0 ${mobile.matches ? 8 : 12}px` },
+        { opacity: .2, translate: `0 ${mobile.matches ? 8 : 12}px` },
         { opacity: 1, translate: "0 0" },
       ],
       { ...(options.scaleEntrance ? scaleTiming : { duration: 260, easing: "cubic-bezier(.25,.1,.25,1)" }), fill: "both" },
     );
+    if (options.prepareBeforeEntry === false) {
+      const startTime = element.ownerDocument.timeline.currentTime;
+      if (startTime !== null) animation.startTime = startTime;
+    }
     pending.set(element, animation);
     animation.addEventListener("finish", () => complete(element), {
       once: true,
     });
+  };
+  const prepare = (element: HTMLElement) => {
+    if (options.prepareBeforeEntry !== false) element.classList.add(revealClass);
+    pending.set(element, null);
   };
 
   const register = () => {
     modules = modules.filter((element) => {
       if (element.isConnected) return true;
       complete(element);
+      registered.delete(element);
       return false;
     });
     root.querySelectorAll<HTMLElement>(selector).forEach((element) => {
       if (registered.has(element)) return;
       registered.add(element);
       modules.push(element);
-      if (options.appearedAttribute && element.hasAttribute(options.appearedAttribute)) {
+      if ((options.once && appeared.has(element)) || (options.appearedAttribute && element.hasAttribute(options.appearedAttribute))) {
         appeared.add(element);
         return;
       }
       const bounds = element.getBoundingClientRect();
-      if (element.getClientRects().length && bounds.top < viewport().bottom) {
+      const visible = element.getClientRects().length;
+      if (!visible && options.animateVisibleArrivals === false) return;
+      if (visible && bounds.top < viewport().bottom) {
         markAppeared(element);
-        if (bounds.bottom > 0 && (!initialRegistration || options.animateInitial !== false)) {
+        if (bounds.bottom > 0 && (initialRegistration ? options.animateInitial !== false : options.animateVisibleArrivals !== false)) {
           const entrance = element.animate(
             options.scaleEntrance ? scaleFrames : [
               { opacity: 0, transform: "translateY(7px)" },
@@ -93,8 +104,7 @@ export function initializeScrollMotion(
       }
       // Set the starting appearance BEFORE entry, rather than resetting an
       // already visible component to transparent in an observer callback.
-      element.classList.add(revealClass);
-      pending.set(element, null);
+      prepare(element);
     });
   };
 
@@ -158,15 +168,15 @@ export function initializeScrollMotion(
         }
         if (animation || !pending.has(element)) {
           complete(element);
-          element.classList.add(revealClass);
-          pending.set(element, null);
+          prepare(element);
         }
         continue;
       }
       if (!pending.has(element)) continue;
       // Start just inside the viewport so the fade happens on screen. Let the
       // short animation finish even during a wheel step or swipe.
-      if (top > bottom - 24 || moduleBottom < viewportTop + 24) continue;
+      const entryInset = options.prepareBeforeEntry === false ? 0 : 24;
+      if (top > bottom - entryInset || moduleBottom < viewportTop + entryInset) continue;
       if (
         !animation &&
         !element.matches("[data-lab-pending], [data-lab-loading]")
@@ -233,4 +243,9 @@ export function initializeScrollMotion(
     },
     { once: true },
   );
+  return (element: HTMLElement) => {
+    if (!registered.has(element)) return;
+    markAppeared(element);
+    complete(element);
+  };
 }

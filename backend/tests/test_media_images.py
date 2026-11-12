@@ -11,6 +11,11 @@ from core import tmdb
 
 
 class ImageProjectionTests(unittest.TestCase):
+    def test_complete_games_gallery_is_not_a_display_limit(self):
+        rows=[f'https://images.igdb.com/igdb/image/upload/t_thumb/sc{i}.jpg' for i in range(23)]
+        self.assertEqual(len(unique_images(rows)),10)
+        self.assertEqual(unique_images(rows+rows,limit=None),rows)
+        self.assertEqual(unique_images(rows+[rows[0].replace('t_thumb','t_1080p')],limit=None),rows)
     def test_movie_has_a_provider_fallback_when_metahub_is_unavailable(self):
         from core.media_images import screen_backdrop
         media=SimpleNamespace(media_type=SimpleNamespace(value='movie'),imdb_id='tt0133093',

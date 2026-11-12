@@ -1,9 +1,22 @@
 import type { EditorTitle } from './editor-store';
-import {countryLabel} from './stats-overview-data';
-import {formatDate,localToday} from './date-time';
+import {countryLabel} from './stats-overview-data.ts';
+import {formatDate,localToday} from './date-time.ts';
 
 export type MediaKind = 'movie' | 'series' | 'game' | 'book';
-export type DetailPerson = {id: number; kind: 'actor' | 'staff' | 'studio'; name: string; image?: string | null; character_image?: string | null; character_images?: string[]; url: string | null; roles: string[]; role_codes?: string[]; position?: number | null; credit_order?:number; episode_count?:number; producer_episode_count?:number; episode_total?:number; characters: string[]};
+export type GameCreditPerformance = {source?:string;position?:number|null;characters:string[];languages:string[];
+  attributes?:({text?:string|null}|null)[]|null;voice?:boolean|null;credited_as?:string|null;uncredited?:boolean|null};
+export type DetailPerson = {id: number; kind: 'actor' | 'staff' | 'studio' | 'character'; card_key?:string; performances?:{id:number;name:string;image?:string|null;language?:string|null}[]; name: string; image?: string | null; character_image?: string | null; character_images?: string[]; url: string | null; roles: string[]; role_codes?: string[]; position?: number | null; credit_order?:number; episode_count?:number; producer_episode_count?:number; episode_total?:number; characters: string[];languages?:string[];credit_performances?:GameCreditPerformance[];jobs?:string[]};
+export function detailCreditText(person:DetailPerson) {
+  return person.characters.join(' / ')||(person.jobs?.length?person.jobs.join(' · '):person.roles.join(', '));
+}
+export function detailCreditDescription(person:DetailPerson) {
+  return person.credit_performances?.map(performance=>{
+    const attributes=[...new Set((performance.attributes||[]).map(value=>value?.text).filter((value):value is string=>typeof value==='string'&&!!value))];
+    if(performance.credited_as&&!attributes.includes(`as ${performance.credited_as}`))attributes.push(`as ${performance.credited_as}`);
+    if(performance.uncredited===true&&!attributes.includes('uncredited'))attributes.push('uncredited');
+    return [performance.characters.join(' / '),attributes.join(', ')].filter(Boolean).join(' — ');
+  }).filter(Boolean).join('\n')||detailCreditText(person);
+}
 export function detailCreditEpisodes(person:DetailPerson) {
   const count=person.producer_episode_count,total=person.episode_total;
   if(person.kind!=='staff'||!person.roles.some(role=>/^(executive )?producer$/i.test(role))||
@@ -19,25 +32,42 @@ export function detailCastPresentation(person: DetailPerson, mode: 'actors' | 'c
     images: [...new Set((mode === 'characters' ? [person.character_image, ...(person.character_images || []), person.image] : [person.image]).filter((url):url is string=>!!url))]};
 }
 export type DetailMedia = EditorTitle & {
+  primary?:Record<string,any>;
+  primary_status?:import('./detail-background').DetailLoadState;
   id: number; type: MediaKind; overview?: string | null; year?: string; release_date?: string | null;
+  release_date_precision?:string|null; release_quarter?:number|null;
   original_title?: string; tagline?: string; release_status?: string; original_language?: string;
   runtime?: number; episode_runtime?: number; season_count?: number; episode_count?: number;
   budget?: number | null; revenue?: number | null;
-  genres: string[]; seasons: any[]; friends: any[]; friends_average?: number | null;
+  genres: string[]; seasons: any[]; episodes_loaded?:boolean; friends: any[]; friends_average?: number | null;
   people: DetailPerson[]; organizations: DetailPerson[]; posters: string[]; artwork: string[]; relations: any[]; similar: any[]; related_pending?: boolean;
   character_status?: {state:string;pending?:boolean;error?:string|null;retry_after?:number};
+  game_characters?:import('./game-cast-data').GameCharacter[];
+  game_character_status?:{complete?:boolean;source?:string;pending?:boolean};
+  game_credit_status?: {state:string;pending?:boolean;error?:string|null;retry_after?:number;complete?:boolean;coverage?:string};
+  completion_estimates?:import('./game-time-to-beat').CompletionEstimates|null;
+  game_estimate_status?:import('./detail-background').DetailLoadState;
+  game_rating_status?:import('./detail-background').DetailLoadState;
+  game_info_status?:import('./detail-background').DetailLoadState;
+  game_offer_context?:Omit<import('./game-offer-data').GameOffers,'offers'>;
+  game_ratings?:import('./game-ratings-data').GameRatings|null;
+  game_metadata_status?:{primary_ready:boolean;primary_revision?:string|null;state:string;pending?:boolean;error?:string|null;retry_after?:number};
+  game_info?:import('./game-info-data').GameInfo|null;
   image_status?: {state:string;error?:string|null;retry_after?:number};
   background_status?: {state:string;error?:string|null;retry_after?:number};
   backdrop_fallback?:string;
+  backdrop_mobile?:string;
   backdrop_fallbacks?:string[];
   preview_status?:{state:string;retry_after?:number};
   artwork_preview?:{image?:string|null;thumbnail?:string|null};
   artwork_thumbnails?:Record<string,string>;
   scores_pending?: boolean;
   sources: {name: string; url: string}[]; editions: any[]; releases: any[]; prices: any[];
+  platforms?:string[];
   countries: string[]; pages?: number; creators?: {name: string}[]; networks?: {name: string}[];
   tmdb_score?: number | null; imdb_score?: number | null; rt_critic_score?: number | null; rt_audience_score?: number | null;
   imdb_id?: string; tvdb_id?: number; tracking_available?: boolean;
+  base_game?:{id:number;title:string;image_url?:string|null}|null;
 };
 export const kindLabel = {movie:'Movie', series:'Series', game:'Game', book:'Book'};
 // Browse's canonical movie/series genre IDs; provider-specific names stay local.
@@ -79,7 +109,8 @@ export function detailCredits(media:DetailMedia) {
   const screen=media.type==='movie'||media.type==='series';
   const cast=media.people.filter(person=>person.kind==='actor').sort((a,b)=>position(a)-position(b)).slice(0,screen?(media.type==='movie'?16:24):undefined);
   const priority=(person:DetailPerson)=>{
-    const roles=person.roles.length?person.roles:person.role_codes||[];
+    const roles=media.type==='game'?[...person.roles,...(person.role_codes||[]),
+      ...(person.jobs||[]).map(job=>job.split(':',1)[0].trim())]:person.roles.length?person.roles:person.role_codes||[];
     const ranks=[/^(director|supervising director|creator|showrunner|head writer)$/i,/^(writer|screenplay|screenwriter|teleplay|story|author|novel|book|play|original story|characters|characters created by)$/i,/^(cinematographer|cinematography|director of photography|composer|original music composer|editor|film editor|production design|production designer|costume design|costume designer|casting|casting director|visual effects supervisor|animation director)$/i,/^(producer|developer)$/i,...(media.type==='series'?[/^executive producer$/i]:[])];
     const rank=ranks.findIndex(pattern=>roles.some(role=>pattern.test(role.trim())));
     return rank<0?99:rank;
@@ -116,6 +147,16 @@ export function detailOrganizationFacts(media:DetailMedia) {
   }else add('Studios',production);
   return groups;
 }
+export type DetailInformationRow={label:string;value?:string;items?:{name:string;url?:string|null}[];pending?:boolean};
+/** Shared SSR/live order; absence becomes a skeleton only while acquisition is pending. */
+export function detailInformationRows(media:DetailMedia,pending=false,facts=detailFacts(media)):DetailInformationRow[] {
+  const values=new Map<string,DetailInformationRow>(facts.map(row=>[row.label,row]));
+  for(const group of detailOrganizationFacts(media))values.set(group.label,{label:group.label,items:group.rows});
+  const release=values.has('Releases')?'Releases':'Released';
+  const order=[release,'Status',...(media.type==='series'?['Episode runtime','Seasons','Episodes','Created by','Network']:['Runtime']),
+    'Language','Country',...(media.type==='movie'?['Budget','Box office']:[]),'Studios'];
+  return order.flatMap(label=>values.has(label)?[values.get(label)!]:pending?[{label,pending:true}]:[]);
+}
 export function localMediaId(value: string | undefined) {
   return /^[1-9][0-9]{0,9}$/.test(value || '') && Number(value) <= 2147483647 ? Number(value) : null;
 }
@@ -132,11 +173,16 @@ export function durationLabel(minutes?: number | null) {
   const hours = Math.floor(minutes / 60), rest = Math.round(minutes % 60);
   return hours ? `${hours}h${rest ? ` ${rest}m` : ''}` : `${rest}m`;
 }
-export function detailDate(value?: string | null) {
+export function detailDate(value?: string | null, quarter?:number|null) {
+  if(value&&/^\d{4}$/.test(value)&&typeof quarter==='number'&&Number.isInteger(quarter)&&quarter>=1&&quarter<=4)return `Q${quarter} ${value}`;
   return formatDate(value?.slice(0, 10));
 }
-export function detailSynopsis(value?: string | null) {
+export function detailSynopsis(value?: string | null, oneParagraph=false) {
   const full=(value||'').trim();
+  if(oneParagraph){
+    const end=full.search(/\r?\n\s*\r?\n/);
+    return {lead:end<0?full:full.slice(0,end),rest:end<0?'':full.slice(end),shortened:false,expandable:end>=0};
+  }
   const words=[...full.matchAll(/\S+/g)];
   const shortened=words.length>120;
   const end=shortened?words[119].index!+words[119][0].length:full.length;
@@ -154,7 +200,8 @@ export function detailFacts(media: DetailMedia, today = localToday()) {
   const add = (label: string, value: unknown) => { if (value != null && value !== '' && value !== 0) facts.push({label,value:String(value)}); };
   const release = (media.release_date || media.year || '').slice(0,10);
   const future = /^\d{4}(?:-\d{2}){0,2}$/.test(release) && release > today.slice(0,release.length);
-  add(media.type === 'book' ? 'First published' : future ? 'Releases' : 'Released', detailDate(media.release_date) || media.year);
+  add(media.type === 'book' ? 'First published' : future ? 'Releases' : 'Released', detailDate(media.release_date,
+    media.type==='game'&&media.release_date_precision==='quarter'?media.release_quarter:null) || media.year);
   add('Status',media.release_status);
   if (media.type === 'movie') add('Runtime',durationLabel(media.runtime));
   if (media.type === 'series') {
@@ -169,7 +216,7 @@ export function detailFacts(media: DetailMedia, today = localToday()) {
     }
   }
   if (media.type === 'book') add('Pages',media.pages);
-  if (media.type === 'game') add('Platforms',[...new Set(media.releases.map(release => release.platform).filter(Boolean))].join(', '));
+  if (media.type === 'game') add('Platforms',[...new Set([...(media.platforms||[]),...media.releases.map(release => release.platform)].filter(Boolean))].join(', '));
   return facts;
 }
 export function relationLabel(relation: string, reverse = false) {

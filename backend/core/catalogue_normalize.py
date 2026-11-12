@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 from core.countries import country_codes, game_countries, numeric_country, screen_countries
 from core.studio_names import studio_name, studio_attributes
 from core.movie_financials import movie_financials
+GAME_ARTWORK_VERSION = 7
 
 
 PRIMARY = {"movie": "tmdb", "series": "tmdb", "game": "igdb", "book": "hardcover"}
@@ -25,7 +26,9 @@ NAMESPACE_KINDS = {
     "tmdb.series": {"series"},
     "tvdb.series": {"series"},
     "tvdb.movie": {"movie"},
-    "imdb.title": {"movie", "series"},
+    "imdb.title": {"movie", "series", "game"},
+    "imdb.person": {"person"},
+    "wikidata.item": {"game", "person", "organization", "character"},
     "tmdb.person": {"person"},
     "tvdb.person": {"person"},
     "tmdb.company": {"organization"},
@@ -370,7 +373,41 @@ def normalize_tvdb(raw, kind="series"):
     return project_selection(doc)
 
 
+def game_artwork(raw):
+    gallery, scenes = [], []
+    # IGDB still reports some standalone logos only in the legacy type field.
+    # Screenshots have no promotional/gameplay classification in the API.
+    priorities={2:0,3:1,1:2,4:3,16:4}
+    for field in ('artworks','screenshots'):
+        for position,row in enumerate(raw.get(field) or []):
+            if not isinstance(row,dict) or row.get('animated'):continue
+            kind=row.get('image_type')
+            if kind in (5,6,7,8,9,10,11,12,13,14,15):continue
+            if kind is None and row.get('artwork_type') in (5,6,7,14):continue
+            width,height=(row.get(key) for key in ('width','height'))
+            if all(type(value) is int and value>0 for value in (width,height)) and max(width,height)<256:continue
+            url=image(row)
+            if not url:continue
+            priority=priorities.get(kind,2) if field=='artworks' else 5
+            gallery.append((priority,position,url))
+            # Wide key art and Steam-shaped banners are valid hero candidates.
+            if all(type(value) is int and value>0 for value in (width,height)) and width>=640 and 1.25<=width/height<=4:
+                scenes.append((priority,-width*height,position,url))
+    ordered=list(dict.fromkeys(row[-1] for row in sorted(scenes)))
+    return {'artwork':list(dict.fromkeys(row[-1] for row in sorted(gallery))),
+            'scene_artwork':ordered,'artwork_policy_version':GAME_ARTWORK_VERSION}
+
+
+def igdb_steam_identities(raw):
+    return [identity('steam.app', x['uid']) for x in raw.get('external_games') or []
+            if (x.get('external_game_source') or {}).get('name') == 'Steam'
+            and steam_app(x.get('url')) == str(x.get('uid'))]
+
+
 def normalize_igdb(raw):
+    from core.game_release_dates import game_release, release
+    from core.game_store_source import igdb_age_ratings
+    from core.game_types import igdb_game_class, platform_group, game_platforms, mobile_only
     doc = document(
         entity(
             "game",
@@ -379,18 +416,25 @@ def normalize_igdb(raw):
             description=raw.get("summary"),
             artwork=raw.get("cover"),
             attributes={
-                "release_date": date(raw.get("first_release_date")),
-                "genres": raw.get("genres"),
-                "artwork": [image(a) for a in raw.get("artworks") or []],
+                "game_class": igdb_game_class(raw),
+                **({'mobile_only':mobile_only(raw),'platform_evidence':raw['platforms']}
+                   if raw.get('platforms') else {}),
+                "age_ratings": igdb_age_ratings(raw.get('age_ratings')),
+                "igdb_id": str(raw['id']),
+                "igdb_slug": raw.get('slug'),
+                "game_type": raw.get("game_type"),
+                "platforms": [{"id": str(p['id']), "name": p.get('name'), "group": platform_group(p)}
+                              for p in game_platforms(raw)],
+                **game_release(raw),
+                "genres": [g['name'] for g in raw.get('genres') or [] if isinstance(g,dict) and isinstance(g.get('name'),str)],
+                "genre_filters": {g['name'].casefold():f"igdb.genre:{g['id']}" for g in raw.get('genres') or []
+                    if isinstance(g,dict) and isinstance(g.get('name'),str) and type(g.get('id')) is int and g['id']>0},
+                **(game_artwork(raw) if raw.get('artworks') or raw.get('screenshots') else {}),
                 **game_countries(raw),
             },
         )
     )
-    for x in raw.get("external_games") or []:
-        if (x.get("external_game_source") or {}).get("name") == "Steam" and steam_app(
-            x.get("url")
-        ) == str(x.get("uid")):
-            doc["work"]["identities"].append(identity("steam.app", x["uid"]))
+    doc['work']['identities'].extend(igdb_steam_identities(raw))
     for p in raw.get("involved_companies") or []:
         c = p.get("company")
         if not isinstance(c, dict):
@@ -432,6 +476,7 @@ def normalize_igdb(raw):
             "igdb.release",
             r,
             name=f"{raw['name']} — {platform.get('name', platform['id'])}",
+            attributes={**release(r),'release_status':(r.get('status') or {}).get('name')},
         )
         doc["releases"].append(
             {
@@ -440,7 +485,7 @@ def normalize_igdb(raw):
                 "platform_id": str(platform["id"]),
                 "platform_name": platform.get("name"),
                 "region": str(r.get("region")) if r.get("region") else None,
-                "release_date": date(r.get("date")),
+                "release_date": release(r)['release_date'],
             }
         )
     for field, rel in [
@@ -455,17 +500,23 @@ def normalize_igdb(raw):
         for r in raw.get(field) or []:
             if not isinstance(r, dict):
                 r = {"id": r}
+            if mobile_only(r):
+                continue
             parent = r.get("version_parent")
             target = (
                 entity(
                     "game",
                     "igdb.game",
                     parent if isinstance(parent, dict) else {"id": parent},
+                    description=parent.get('summary') if isinstance(parent,dict) else None,
                     artwork=parent.get('cover') if isinstance(parent, dict) else None,
-                    attributes={'release_date':date(parent.get('first_release_date'))} if isinstance(parent, dict) else {},
+                    attributes={**game_release(parent),
+                                **({'game_class': igdb_game_class(parent)} if parent.get('game_type') is not None else {})} if isinstance(parent, dict) else {},
                 )
                 if parent
-                else entity("game", "igdb.game", r, artwork=r.get('cover'), attributes={'release_date':date(r.get('first_release_date'))})
+                else entity("game", "igdb.game", r, description=r.get('summary'),artwork=r.get('cover'), attributes={
+                    **game_release(r),
+                    **({'game_class': igdb_game_class(r)} if r.get('game_type') is not None else {})})
             )
             if parent:
                 target["identities"].append(identity("igdb.game", r["id"]))
@@ -485,17 +536,11 @@ def normalize_igdb(raw):
                 }
             )
     parent = raw.get("parent_game")
-    relation = {
-        "DLC Add-on": "dlc",
-        "Expansion": "expansion",
-        "Standalone Expansion": "standalone_expansion",
-        "Remake": "remake",
-        "Remaster": "remaster",
-        "Port": "port",
-    }.get((raw.get("game_type") or {}).get("type"))
+    relation = {kind:kind for kind in ('dlc','expansion','update','episode','standalone_expansion','remake','remaster','port')}.get(igdb_game_class(raw))
     if isinstance(parent, dict) and relation:
         doc["relationships"].append(
-            {"target": entity("game", "igdb.game", parent), "relation": relation}
+            {"target": entity("game", "igdb.game", parent, attributes={
+                'game_class': igdb_game_class(parent)} if parent.get('game_type') is not None else {}), "relation": relation}
         )
     doc["coverage"] = raw.get("_coverage", {})
     return doc

@@ -4,6 +4,7 @@ import {transpile} from 'typescript';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as view from '../src/lib/browse-view.ts';
+import {browseTabHref,createBrowseTabContext} from '../src/lib/browse-tabs.ts';
 import {releaseYearBounds,releaseYearLabel} from '../src/lib/browse-ranges.ts';
 
 const page=readFileSync(new URL('../src/pages/browse.astro',import.meta.url),'utf8');
@@ -13,7 +14,9 @@ const script=transpile(`(async()=>{${frontmatter};return {params,region,categori
 test('browse renders without waiting for discovery or facets and preserves URL filters',{timeout:1000},async()=>{
   const calls=[];
   const result=await runInNewContext(script,{
-    ...view,releaseYearBounds,releaseYearLabel,URLSearchParams,Intl,Date,
+    viewerMediaPreferences:async()=>({show_movies_series:true,show_games:true}),
+    viewerProfilePreferences:async()=>({country:'DE'}),
+    ...view,browseTabHref,createBrowseTabContext,releaseYearBounds,releaseYearLabel,URLSearchParams,Intl,Date,
     Astro:{url:new URL('https://example.test/browse?type=series&genres=18&provider=8&view=timeline'),locals:{token:'viewer',user:{id:1}},cookies:{get:()=>undefined},request:{headers:{get:()=>null}}},
     api:{profile:{get:async()=>({country:'DE'})}},
     tracker:path=>{calls.push(path);return new Promise(()=>{});},

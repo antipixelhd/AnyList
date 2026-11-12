@@ -2,6 +2,46 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {detailPeopleLoading,waitForDetailPortraits} from '../src/lib/detail-people-loading.ts';
 
+test('settled game crew does not wait or show an error for optional character retry',async()=>{
+  const nativeFetch=globalThis.fetch,controller=new AbortController(),states=[];
+  let selected=false,calls=0;
+  globalThis.fetch=async()=>{calls++;return Response.json({people:[{kind:'staff'}],
+    game_credit_status:{state:'ready',complete:true,pending:false},
+    character_status:{state:'retry',pending:true,error:'unavailable',retry_after:60}});};
+  try{
+    const resource=detailPeopleLoading(7,controller.signal,data=>data.character_status,state=>states.push(state),
+      {selected:()=>selected,needed:()=>true,primaryReady:async()=>{},warm:()=>{},source:{people:'/game/credits'}});
+    await resource.characters();assert.equal(states.at(-1),'ready');
+    selected=true;
+    await resource.characters();assert.equal(calls,2);assert.equal(states.at(-1),'retry');
+  }finally{controller.abort();globalThis.fetch=nativeFetch;}
+});
+
+test('a game connection polls its own progress without a second character request',async()=>{
+  const originalFetch=globalThis.fetch,originalSet=globalThis.setTimeout,originalClear=globalThis.clearTimeout;
+  const controller=new AbortController(),calls=[],timers=[];
+  globalThis.setTimeout=(callback,ms)=>{const timer={callback,ms};timers.push(timer);return timer;};
+  globalThis.clearTimeout=()=>{};
+  globalThis.fetch=async path=>{
+    calls.push(path);
+    return Response.json({people:[{kind:'actor'}],character_status:calls.length===1
+      ?{state:'loading',pending:true,retry_after:2}:{state:'ready',pending:false}});
+  };
+  try{
+    const resource=detailPeopleLoading(7,controller.signal,data=>data.character_status,()=>{},
+      {selected:()=>true,needed:()=>true,primaryReady:async()=>{},warm:()=>{},
+        source:{people:'/api/proxy/tracking/games/works/7/credits'}});
+    resource.start(true);await resource.characters();
+    assert.deepEqual(calls,['/api/proxy/tracking/games/works/7/credits']);
+    assert.equal(timers[0].ms,2000);
+    timers.shift().callback();await resource.characters();
+    assert.deepEqual(calls,Array(2).fill('/api/proxy/tracking/games/works/7/credits'));
+    assert.equal(timers.length,0);
+  }finally{
+    controller.abort();globalThis.fetch=originalFetch;globalThis.setTimeout=originalSet;globalThis.clearTimeout=originalClear;
+  }
+});
+
 test('missing credits load immediately and do not poll for optional character artwork',async()=>{
   const nativeFetch=globalThis.fetch,controller=new AbortController(),calls=[],published=[];
   globalThis.fetch=async path=>{calls.push(path);return Response.json({people:[{kind:'actor'}],credits_status:'updated',character_status:{state:'pending',pending:true}});};
@@ -91,4 +131,18 @@ test('a stalled portrait cannot leave secondary enrichment waiting forever',asyn
   const controller=new AbortController(),image=new EventTarget();image.complete=false;
   await waitForDetailPortraits([image],controller.signal,5);
   controller.abort();
+});
+
+
+test('usable cast does not prematurely finish pending primary metadata',async()=>{
+  const nativeFetch=globalThis.fetch,controller=new AbortController(),states=[];
+  let calls=0;
+  globalThis.fetch=async()=>Response.json({people:[{kind:'actor'}],credits_status:'cached',character_status:{state:'ready'},
+    primary_status:++calls===1?{state:'pending',pending:true,retry_after:60}:{state:'ready',pending:false}});
+  try{
+    const resource=detailPeopleLoading(7,controller.signal,data=>data.character_status,state=>states.push(state),
+      {selected:()=>false,needed:()=>false,primaryReady:async()=>{},warm:()=>{}});
+    await resource.characters();assert.equal(states.at(-1),'loading');
+    await resource.retry();assert.equal(states.at(-1),'ready');assert.equal(calls,2);
+  }finally{controller.abort();globalThis.fetch=nativeFetch;}
 });

@@ -1,5 +1,9 @@
 ---
 import ProgressCard from "../components/ProgressCard.astro";
+import GameProgressCard from '../components/GameProgressCard.astro';
+import {viewerMediaPreferences} from '../lib/viewer-media-preferences';
+import {gameListEditorTitle} from '../lib/game-list-data';
+import {mergeActivityFeeds,activityPresentation} from '../lib/activity-feed';
 import Tracker from '../layouts/Tracker.astro';
 import ActivityCard from '../components/ActivityCard.astro';
 import Icon from '../components/Icon.astro';
@@ -11,19 +15,26 @@ let activities:any[]=[],error='',seriesInProgress:any[]=[],upcomingSeasons:any[]
 if(!Astro.locals.user)return Astro.redirect(shareLoginPath('/home'));
 const profile=`/user/${encodeURIComponent(Astro.locals.user.username)}`;
 const imageRoute='direct';
-const [activityResult,listResult,upcomingResult]=await Promise.allSettled([
-  tracker('activity',Astro.locals.token),
-  tracker(`profile/${encodeURIComponent(Astro.locals.user.username)}/all`,Astro.locals.token),
-  tracker('upcoming-seasons',Astro.locals.token),
+const domains=await viewerMediaPreferences(Astro.locals);
+const [activityResult,listResult,upcomingResult,gamesResult,gameActivityResult]=await Promise.allSettled([
+  domains.show_movies_series?tracker('activity',Astro.locals.token):Promise.resolve({results:[]}),
+  domains.show_movies_series?tracker(`profile/${encodeURIComponent(Astro.locals.user.username)}/all`,Astro.locals.token):Promise.resolve({entries:[]}),
+  domains.show_movies_series?tracker('upcoming-seasons',Astro.locals.token):Promise.resolve({results:[]}),
+  domains.show_games?tracker('games/playing?limit=12',Astro.locals.token):Promise.resolve({results:[],total:0}),
+  domains.show_games?tracker('games/activity',Astro.locals.token):Promise.resolve({results:[]}),
 ]);
-if(activityResult.status==='fulfilled')activities=activityResult.value.results;
-else error=activityResult.reason.message;
+activities=mergeActivityFeeds([activityResult.status==='fulfilled'?activityResult.value.results:[],gameActivityResult.status==='fulfilled'?gameActivityResult.value.results:[]]).map(activityPresentation);
+const activitySources=[...(domains.show_movies_series?[activityResult]:[]),...(domains.show_games?[gameActivityResult]:[])];
+const activityFailures=activitySources.filter(result=>result.status==='rejected').length;
+if(activitySources.length&&activityFailures===activitySources.length)error='Activity is temporarily unavailable.';
 if(listResult.status==='fulfilled'){
   const watching=listResult.value.entries.filter((entry:any)=>entry.status==='watching');
   seriesInProgress=watching.filter((entry:any)=>entry.type==='series');
   watchingCount=watching.length;
 }
 if(upcomingResult.status==='fulfilled')upcomingSeasons=upcomingResult.value.results||[];
+const playingGames=gamesResult.status==='fulfilled'?gamesResult.value.results||[]:[];
+const playingGamesTotal=gamesResult.status==='fulfilled'?gamesResult.value.total||0:0;
 const seriesCards=seriesInProgress.map((entry:any)=>({
   ...entry,
   airing:entry.currently_airing===true,
@@ -42,12 +53,12 @@ const upcomingSeasonCards=upcomingSeasons.map((entry:any)=>({
 ---
 <Tracker title="Home"><div class="page-width dashboard home-dashboard" data-username={Astro.locals.user.username} data-watching-count={watchingCount??''}>
   <header class="page-intro"><div><span class="eyebrow">Following feed</span><h1>Welcome back, {Astro.locals.user.display_name || Astro.locals.user.username}</h1><p>See the latest updates from the public profiles you follow.</p></div><a class="button-primary" href="/browse" data-find-title hidden={watchingCount!==0}>Find your next title</a></header>
-  <div class="home-columns"><aside class="series-progress" aria-labelledby="series-progress-heading"><div class="section-heading"><h2 id="series-progress-heading">Series in Progress</h2></div>
+  <div class="home-columns"><aside class="series-progress" aria-label="In progress">{domains.show_movies_series&&<section><div class="section-heading"><h2 id="series-progress-heading">Series in Progress</h2></div>
     <script id="home-editor-entries" type="application/json" set:html={JSON.stringify(seriesInProgress).replace(/</g, '\\u003c')}></script>
     {seriesCards.length ? <div class="series-progress-grid" data-progress-grid>{seriesCards.map((entry:any)=><ProgressCard entry={entry}/>)}</div> : <p class="series-progress-empty" data-progress-empty>Series you mark as Watching will appear here.</p>}
     <section class="upcoming-releases" aria-labelledby="upcoming-releases-heading" data-upcoming-releases>
       <div class="section-heading"><h2 id="upcoming-releases-heading">Upcoming releases</h2></div>
-      {upcomingSeasonCards.length ? <div class="series-progress-grid upcoming-releases-grid" data-upcoming-grid>{upcomingSeasonCards.map((entry:any)=><article class="progress-card upcoming-season-card" data-upcoming-card data-media-id={entry.id} data-season-number={entry.seasonNumber} data-release-date={entry.releaseDate} data-season-poster={entry.season_poster_path||''} data-artwork-fallback={String(entry.artworkFallback)} data-artwork-retry={String(entry.artwork_retry===true)}>
+      {upcomingSeasonCards.length ? <div class="series-progress-grid upcoming-releases-grid" data-upcoming-grid>{upcomingSeasonCards.map((entry:any)=><article class="progress-card upcoming-season-card" data-detail-title={entry.title} data-detail-kind="series" data-upcoming-card data-media-id={entry.id} data-season-number={entry.seasonNumber} data-release-date={entry.releaseDate} data-season-poster={entry.season_poster_path||''} data-artwork-fallback={String(entry.artworkFallback)} data-artwork-retry={String(entry.artwork_retry===true)}>
         <a class="progress-card-poster" href={`/title/${entry.id}`} aria-label={`View ${entry.title}, Season ${entry.seasonNumber}`}>
           {entry.artwork?.src?<img src={entry.artwork.src} srcset={entry.artwork.srcset} sizes={entry.artwork.sizes} alt="" loading="lazy"/>:<span class="upcoming-poster-placeholder" aria-hidden="true">Season {entry.seasonNumber}</span>}
         </a>
@@ -57,15 +68,19 @@ const upcomingSeasonCards=upcomingSeasons.map((entry:any)=>({
           <strong class="upcoming-release-countdown" data-upcoming-countdown>Countdown unavailable</strong>
         </div>
       </article>)}</div> : <p class="series-progress-empty" data-upcoming-empty>Tracked series with confirmed upcoming season dates will appear here.</p>}
-    </section>
-  </aside><section class="activity-stream" aria-labelledby="activity-heading" data-activity-feed><div class="section-heading"><h2 id="activity-heading">Activity</h2><span>Following</span></div>
+    </section></section>}
+    {domains.show_games&&<section class="home-playing-games" data-playing-games data-show-achievements={String(domains.show_game_achievements)} data-playing-revisions={gamesResult.status==='fulfilled'?JSON.stringify([playingGamesTotal,playingGames.map((entry:any)=>[entry.subject.catalogue_id,entry.revision])]):undefined}><div class="section-heading"><h2>Currently playing games</h2>{playingGamesTotal>0&&<a href={`${profile}/games?status=playing`}>View all</a>}</div>{gamesResult.status==='rejected'?<p class="series-progress-empty" role="status">Games are temporarily unavailable.</p>:playingGames.length?<div class="series-progress-grid">{playingGames.map((entry:any)=><GameProgressCard entry={entry} showAchievements={domains.show_game_achievements}/>)}</div>:<p class="series-progress-empty">Games you mark as Playing will appear here.</p>}</section>}
+  </aside><section class="activity-stream" aria-labelledby="activity-heading" data-activity-feed data-show-movies-series={String(domains.show_movies_series)} data-show-games={String(domains.show_games)}><div class="section-heading"><h2 id="activity-heading">Activity</h2><span>Following</span></div>
+  <p class="section-empty" role="status" data-activity-refresh-status hidden={!activityFailures||!!error}>Some activity is temporarily unavailable.</p>
   {error?<p class="error-message" role="alert" data-activity-error>{error}</p>:activities.length?activities.map(a=><ActivityCard activity={a} showUser/>):<div class="empty-state" data-activity-empty><span class="empty-symbol"><Icon name="play" /></span><h2>Your following feed is quiet</h2><p>Follow public profiles to see their tracking updates here. Your own updates live on your profile.</p><a class="button-primary" href={`${profile}/social?section=search#social-search-input`}>Find people</a></div>}
   </section></div>
 </div>
+{playingGames.length>0&&<script id="list-editor-entries" type="application/json" set:html={JSON.stringify(playingGames.map(gameListEditorTitle)).replaceAll('<','\\u003c')}/>}
+<script id="home-activity-data" type="application/json" set:html={JSON.stringify(activities).replaceAll('<','\\u003c')}/>
 <template id="activity-card-template"><article class="visual-event following-event" data-activity-card>
   <a class="event-cover"><img alt="" loading="lazy"/><span class="cover-placeholder" hidden><Icon name="play" /></span></a>
   <div class="event-body"><div class="event-meta"><time data-relative-time></time></div>
-  <div class="event-content"><a class="event-user"></a><p class="event-action"><span></span> <a></a></p><a class="event-avatar"><img alt="" loading="lazy"/><span aria-hidden="true"></span></a></div><div class="event-footer" hidden><span class="score-pill"><Icon name="star"/> <span data-rating-previous hidden><span data-rating-previous-value></span><span class="score-transition" aria-hidden="true">→</span></span><b data-rating-current></b><small>/10</small></span></div></div>
+  <div class="event-content"><a class="event-user"></a><p class="event-action"><span></span> <a></a><span data-activity-completion></span></p><a class="event-avatar"><img alt="" loading="lazy"/><span aria-hidden="true"></span></a></div><div class="event-footer" hidden><span class="score-pill"><Icon name="star"/> <span data-rating-previous hidden><span data-rating-previous-value></span><span class="score-transition" aria-hidden="true">→</span></span><b data-rating-current></b><small>/10</small></span></div></div>
 </article></template>
 <template id="activity-empty-template"><div class="empty-state" data-activity-empty><span class="empty-symbol"><Icon name="play" /></span><h2>Your following feed is quiet</h2><p>Follow public profiles to see their tracking updates here. Your own updates live on your profile.</p><a class="button-primary" href={`${profile}/social?section=search#social-search-input`}>Find people</a></div></template>
 </Tracker>
@@ -74,18 +89,23 @@ const upcomingSeasonCards=upcomingSeasons.map((entry:any)=>({
 import {localToday} from '../lib/date-time';
 import {startVisibleRefresh, type VisibleRefreshHandle} from '../lib/visible-refresh';
 import {createHomePanelRefresh} from '../lib/home-panel-refresh';
+import {reconcileHomePanel} from '../lib/home-panel-reconcile';
+import {paintHomeGameProgress} from '../lib/home-game-progress';
 import {editorStore, type EditorTitle} from '../lib/editor-store';
 import {showActionFailure} from '../lib/action-failure';
 
 let homeProgressListeners: AbortController | undefined;
 let homeSeriesRefresh: VisibleRefreshHandle | undefined;
 let homeUpcomingRefresh: VisibleRefreshHandle | undefined;
+let homeGamesRefresh:VisibleRefreshHandle|undefined;
 function initializeHomeProgress() {
   homeSeriesRefresh?.stop();
   homeSeriesRefresh = undefined;
   homeUpcomingRefresh?.stop();
   homeUpcomingRefresh = undefined;
+  homeGamesRefresh?.stop();homeGamesRefresh=undefined;
   homeProgressListeners?.abort();
+  if(!document.querySelector('.home-dashboard'))return;
   homeProgressListeners = new AbortController();
   const {signal} = homeProgressListeners;
   editorStore.scope(document.body.dataset.cacheUser || 'anonymous');
@@ -103,7 +123,7 @@ function initializeHomeProgress() {
       const freshDashboard = fresh.querySelector<HTMLElement>('.home-dashboard');
       const dashboard = document.querySelector<HTMLElement>('.home-dashboard');
       if (!current || !next || !dashboard || !freshDashboard || dashboard.dataset.username !== freshDashboard.dataset.username) return;
-      current.replaceWith(next);
+      reconcileHomePanel(current,next);
       dashboard.dataset.watchingCount = freshDashboard.dataset.watchingCount || '0';
       const browse = dashboard.querySelector<HTMLElement>('[data-find-title]');
       if (browse) browse.hidden = Number(dashboard.dataset.watchingCount) !== 0;
@@ -112,6 +132,14 @@ function initializeHomeProgress() {
   });
   const grid = document.querySelector<HTMLElement>('[data-progress-grid]') || document.createElement('div');
   const upcomingGrid = document.querySelector<HTMLElement>('[data-upcoming-grid]');
+  const gameShelf=document.querySelector<HTMLElement>('[data-playing-games]');
+  if(gameShelf)homeGamesRefresh=startVisibleRefresh({intervalMs:60_000,wakeIntervalMs:60_000,refresh:async refreshSignal=>{
+    if(document.querySelector('dialog[open]'))return;
+    const response=await fetch('/api/proxy/tracking/games/playing?limit=12',{cache:'no-store',signal:refreshSignal});if(!response.ok)return;
+    const data=await response.json();
+    const expected=JSON.stringify([data.total,data.results.map((entry:any)=>[entry.subject.catalogue_id,entry.revision])]);
+    if(expected!==gameShelf.dataset.playingRevisions)await refreshPanels();
+  }});
 
   const positionDetails = () => document.querySelectorAll<HTMLElement>('.series-progress-grid').forEach(cardGrid => cardGrid.querySelectorAll<HTMLElement>('.progress-card').forEach(card => {
     const right = card.getBoundingClientRect().right;
@@ -186,6 +214,8 @@ function initializeHomeProgress() {
 
   document.addEventListener('anylist:editor-state', event => {
     const title = (event as CustomEvent<EditorTitle>).detail;
+    if(title.type==='game'){if(gameShelf)paintHomeGameProgress(gameShelf,title);return;}
+    if(title.type!=='series')return;
     const card = [...grid.querySelectorAll<HTMLElement>('[data-progress-card]')].find(item => item.dataset.mediaId === String(title.id));
     if (!card) return;
     const entry = title.entry;
@@ -218,7 +248,7 @@ function initializeHomeProgress() {
   const dashboard = document.querySelector<HTMLElement>('.home-dashboard');
   const username = dashboard?.dataset.username;
   if (!dashboard || !username) return;
-  homeSeriesRefresh = startVisibleRefresh({intervalMs:60_000, refresh:async refreshSignal => {
+  homeSeriesRefresh = startVisibleRefresh({intervalMs:60_000,wakeIntervalMs:60_000, refresh:async refreshSignal => {
     if (editorStore.hasPendingWrites() || grid.querySelector('[data-updating="true"]')) return;
     const revision=progressRevision;
     const response = await fetch(`/api/proxy/tracking/profile/${encodeURIComponent(username)}/all`, {cache:'no-store',signal:refreshSignal});
@@ -247,7 +277,7 @@ function initializeHomeProgress() {
     }
     updateCountdowns();
   }});
-  homeUpcomingRefresh = startVisibleRefresh({intervalMs:60_000, refresh:async refreshSignal => {
+  if(upcomingGrid)homeUpcomingRefresh = startVisibleRefresh({intervalMs:60_000,wakeIntervalMs:60_000, refresh:async refreshSignal => {
     const response = await fetch('/api/proxy/tracking/upcoming-seasons', {cache:'no-store',signal:refreshSignal});
     if (!response.ok) return;
     const results = (await response.json()).results;
@@ -267,17 +297,20 @@ function initializeHomeProgress() {
     void homeSeriesRefresh?.refresh();
     void homeUpcomingRefresh?.refresh();
   }, {signal});
-  document.addEventListener('anylist:editor-committed', () => {
-    void (async () => { await homeSeriesRefresh?.refresh(); if (!signal.aborted) await refreshPanels(() => location.reload()); })();
-    void homeUpcomingRefresh?.refresh();
+  document.addEventListener('anylist:editor-committed', event => {
+    const title=(event as CustomEvent<{title:EditorTitle}>).detail.title;
+    void (async () => { if(title.type!=='game')await homeSeriesRefresh?.refresh(); if (!signal.aborted) await refreshPanels(); })();
+    if(title.type!=='game')void homeUpcomingRefresh?.refresh();
   }, {signal});
 }
 document.addEventListener('astro:page-load', initializeHomeProgress);
 </script>
 <script>
-import {activityAction,activityRating,activityTime,scoreLabel} from '../lib/tracker';
+import {activityAction,activityCompletionSuffix,activityRating,activityTime,scoreLabel} from '../lib/tracker';
+import {mergeActivityFeeds,activityPresentation} from '../lib/activity-feed';
 import {applyResponsiveArtwork} from '../lib/responsive-artwork';
 import {startVisibleRefresh, type VisibleRefreshHandle} from '../lib/visible-refresh';
+import {reconcileHomePanel} from '../lib/home-panel-reconcile';
 
 let activityFeedRefresh: VisibleRefreshHandle|undefined;
 let activityEvents: AbortController;
@@ -293,6 +326,9 @@ document.addEventListener('astro:page-load',()=>{
   const template=document.querySelector<HTMLTemplateElement>('#activity-card-template');
   const emptyTemplate=document.querySelector<HTMLTemplateElement>('#activity-empty-template');
   if(!feed||!template)return;
+  const seeded=JSON.parse(document.querySelector('#home-activity-data')?.textContent||'[]');
+  const signatures=new Map<string,string>(seeded.map((activity:any)=>[activity.key,JSON.stringify(activity)]));
+  let movieActivity=seeded.filter((row:any)=>row.media.type!=='game'),gameActivity=seeded.filter((row:any)=>row.media.type==='game');
 
   const updateTimes=()=>document.querySelectorAll<HTMLTimeElement>('[data-relative-time]').forEach(time=>{
     if(!time.dateTime)return;
@@ -302,8 +338,8 @@ document.addEventListener('astro:page-load',()=>{
 
   const render=(activity:any)=>{
     const card=template.content.firstElementChild!.cloneNode(true) as HTMLElement;
-    card.dataset.activityKey=activity.key;card.dataset.createdAt=activity.created_at;
-    const mediaHref=`/title/${activity.media.id}`;
+    card.dataset.activityKey=activity.key;card.dataset.createdAt=activity.created_at;card.dataset.detailKind=activity.media.type;
+    const mediaHref=`/${activity.media.type==='game'?'games':'title'}/${activity.media.id}`;
     const cover=card.querySelector<HTMLAnchorElement>('.event-cover')!;
     cover.href=mediaHref;cover.setAttribute('aria-label',`View ${activity.media.title}`);
     const coverImage=cover.querySelector('img')!;const coverFallback=cover.querySelector<HTMLElement>('.cover-placeholder')!;
@@ -319,6 +355,7 @@ document.addEventListener('astro:page-load',()=>{
     time.dateTime=relative.datetime;time.textContent=relative.label;time.title=relative.exact;
     const action=card.querySelector<HTMLElement>('.event-action span')!;action.textContent=activityAction(activity);
     const title=card.querySelector<HTMLAnchorElement>('.event-action>a')!;title.href=mediaHref;title.textContent=activity.media.title;
+    card.querySelector('[data-activity-completion]')!.textContent=activityCompletionSuffix(activity);
     const footer=card.querySelector<HTMLElement>('.event-footer')!;
     const rating=activityRating(activity);
     if(rating){
@@ -338,12 +375,22 @@ document.addEventListener('astro:page-load',()=>{
     const visibleKeys=new Set(activities.map(activity=>activity.key));
     cards.forEach((card,key)=>{if(!visibleKeys.has(key))card.remove();});
     if(activities.length)feed.querySelector('[data-activity-empty]')?.remove();
+    const focused=feed.contains(document.activeElement)?document.activeElement as HTMLElement:null;
+    let anchor:ChildNode|null=feed.querySelector('[data-activity-card]');
     activities.forEach(activity=>{
       const existing=cards.get(activity.key);
-      const card=render(activity);
-      if(card!==existing)existing?.remove();
-      feed.append(card);
+      const signature=JSON.stringify(activity);
+      let card=existing;
+      if(!card||signatures.get(activity.key)!==signature){
+        const fresh=render(activity);
+        if(card)reconcileHomePanel(card,fresh);else card=fresh;
+      }
+      signatures.set(activity.key,signature);
+      if(card!==anchor)feed.insertBefore(card,anchor);
+      anchor=card.nextSibling;
     });
+    for(const key of signatures.keys())if(!visibleKeys.has(key))signatures.delete(key);
+    if(focused?.isConnected&&document.activeElement!==focused)focused.focus({preventScroll:true});
     if(!activities.length&&!feed.querySelector('[data-activity-empty]')&&emptyTemplate)
       feed.append(emptyTemplate.content.firstElementChild!.cloneNode(true));
   };
@@ -351,8 +398,17 @@ document.addEventListener('astro:page-load',()=>{
   const refresh=async(signal:AbortSignal)=>{
     updateTimes();
     try{
-      const response=await fetch('/api/proxy/tracking/activity',{cache:'no-store',signal});
-      if(response.ok)reconcile((await response.json()).results||[]);
+      const read=async(path:string)=>{const response=await fetch(path,{cache:'no-store',signal});if(!response.ok)throw new Error('Activity unavailable');return (await response.json()).results.map(activityPresentation);};
+      const results=await Promise.allSettled([
+        feed.dataset.showMoviesSeries!=='false'?read('/api/proxy/tracking/activity'):Promise.resolve([]),
+        feed.dataset.showGames!=='false'?read('/api/proxy/tracking/games/activity'):Promise.resolve([]),
+      ]);
+      if(signal.aborted)return;
+      if(results[0].status==='fulfilled')movieActivity=results[0].value;
+      if(results[1].status==='fulfilled')gameActivity=results[1].value;
+      const enabled=[feed.dataset.showMoviesSeries!=='false',feed.dataset.showGames!=='false'];
+      const notice=feed.querySelector<HTMLElement>('[data-activity-refresh-status]');if(notice)notice.hidden=!results.some((result,index)=>enabled[index]&&result.status==='rejected');
+      if(results.some((result,index)=>enabled[index]&&result.status==='fulfilled'))reconcile(mergeActivityFeeds([movieActivity,gameActivity]));
     }catch(error){if(!signal.aborted)console.debug('Activity refresh deferred.',error);}
   };
 

@@ -1,6 +1,42 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createPrediction,predictionAllowed,predictionManifest,predictivePage,paginationPosition,bindPredictivePagination} from '../src/lib/predictive-loading.ts';
+import {createPrediction,predictionAllowed,predictionManifest,predictivePage,paginationPosition,bindPredictivePagination,bindPredictionIntent} from '../src/lib/predictive-loading.ts';
+
+test('route preparation cancels pending dwell and suppresses new intent until the next page is ready',t=>{
+  t.mock.timers.enable({apis:['setTimeout']});
+  const previous=globalThis.PointerEvent;globalThis.PointerEvent=class extends Event{};
+  t.after(()=>{if(previous)globalThis.PointerEvent=previous;else delete globalThis.PointerEvent;});
+  const doc=new EventTarget(),root=new EventTarget(),link={isConnected:true};
+  root.ownerDocument=doc;root.closest=()=>link;
+  const controller=new AbortController();let calls=0;
+  bindPredictionIntent(root,controller.signal,()=>calls++);
+  root.dispatchEvent(new Event('focusin'));t.mock.timers.tick(100);
+  doc.dispatchEvent(new Event('astro:before-preparation'));t.mock.timers.tick(200);assert.equal(calls,0);
+  root.dispatchEvent(new Event('focusin'));t.mock.timers.tick(200);assert.equal(calls,0);
+  doc.dispatchEvent(new Event('astro:page-load'));
+  root.dispatchEvent(new Event('focusin'));t.mock.timers.tick(180);assert.equal(calls,1);
+  root.dispatchEvent(new Event('focusout'));root.dispatchEvent(new Event('focusin'));
+  controller.abort();t.mock.timers.tick(200);assert.equal(calls,1);
+});
+
+test('prediction warms only the initial viewport hero without spending its budget on the other provider',()=>{
+  const artwork=[{src:'https://cdn.test/poster.jpg'},
+    {src:'https://cdn.test/desktop.jpg',media:'(min-width:651px)'},
+    {src:'https://cdn.test/mobile.jpg',media:'(max-width:650px)'}];
+  const html=`<script id="page-prediction">${JSON.stringify({user:'viewer',requiresGamesAccess:true,artwork})}</script>`;
+  assert.deepEqual(predictionManifest(html,'viewer',true,query=>query==='(max-width:650px)').map(image=>image.src),[artwork[0].src,artwork[2].src]);
+  assert.deepEqual(predictionManifest(html,'viewer',true,query=>query==='(min-width:651px)').map(image=>image.src),[artwork[0].src,artwork[1].src]);
+});
+
+test('category streaming can bypass unfinished warming and reuse completed predictions',async()=>{
+  let finish;const controller=new AbortController();
+  const prediction=createPrediction(()=>new Promise(resolve=>{finish=resolve;}),controller.signal,()=>true);
+  prediction.prefetch('sections');
+  assert.equal(prediction.peek('sections'),undefined,'pending warming must not block streaming');
+  finish({sections:[1,2,3,4]});await Promise.resolve();
+  assert.deepEqual(prediction.peek('sections'),{sections:[1,2,3,4]});
+  controller.abort();assert.equal(prediction.peek('sections'),undefined);
+});
 
 test('prediction shares an in-flight batch with demand and is consumed once',async()=>{
   let resolve,calls=0;
@@ -47,9 +83,14 @@ test('manifest exposes only two primary images for the current identity',()=>{
   assert.equal(predictionManifest('<script id="page-prediction">broken</script>','7'),undefined);
 });
 
+test('implicit Games documents cannot be installed from prediction caches',()=>{
+  const html='<script id="page-prediction" type="application/json">'+JSON.stringify({user:'7',artwork:[],requiresGamesAccess:true})+'</script>';
+  assert.equal(predictionManifest(html,'7'),undefined);
+});
+
 test('only same-origin title and contributor pages can be predicted',()=>{
   const origin='https://anylist.test';
-  for(const path of ['/title/1','/actors/tmdb%3A123','/person/catalogue:7','/studio/tmdb:12'])assert.equal(predictivePage(new URL(path,origin),origin),true);
+  for(const path of ['/title/1','/games/7','/actors/tmdb%3A123','/person/catalogue:7','/studio/tmdb:12','/browse/games','/user/alex/games','/user/alex/stats/games'])assert.equal(predictivePage(new URL(path,origin),origin),true);
   for(const path of ['/logout','/discover-title?id=7','/title/0','/title/1#gallery','https://other.test/title/1'])assert.equal(predictivePage(new URL(path,origin),origin),false);
 });
 
@@ -57,6 +98,13 @@ test('pagination predicts at 70% and appends within 500px of the end',()=>{
   assert.deepEqual(paginationPosition({top:-1399,height:3000,bottom:1601},1000),{predict:false,append:false});
   assert.deepEqual(paginationPosition({top:-1400,height:3000,bottom:1600},1000),{predict:true,append:false});
   assert.deepEqual(paginationPosition({top:-1500,height:3000,bottom:1500},1000),{predict:true,append:true});
+});
+
+test('approved Games tab manifests require an explicit restricted-tab caller',()=>{
+  const html='<script id="page-prediction">'+JSON.stringify({user:'7',requiresGamesAccess:true,artwork:[]})+'</script>';
+  assert.equal(predictionManifest(html,'7'),undefined);
+  assert.deepEqual(predictionManifest(html,'7',true),[]);
+  assert.equal(predictionManifest(html,'8',true),undefined);
 });
 
 test('people pagination requires downward intent and never loops on layout changes',()=>{

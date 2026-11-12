@@ -25,7 +25,7 @@ const sections = profileMediaGroups(entries, profile?.combine_lists !== false);
 ---
 <Tracker title="Library" ownerProfileColor={profile?.profile_color} ownerIsViewer={profile?.owner === true}>
   {profile && <ProfileHeader profile={profile} active="library"/>}
-  <div class="page-width library-page">
+  <div class="page-width library-page" data-profile-tab-content={profile?'':undefined}>
     <header class="library-intro">
       <h1>Streaming Library</h1>
       <p>This list syncs to connected Stremio/Nuvio accounts.</p>

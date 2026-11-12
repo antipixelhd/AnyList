@@ -15,7 +15,7 @@ from sqlalchemy import delete, func, or_, and_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 from datetime import datetime, timedelta, timezone
-from typing import Annotated
+from typing import Annotated, Literal
 from jose import jwt, JWTError
 
 from db import get_db
@@ -415,6 +415,19 @@ async def delete_user_me(
     await db.commit()
     return {"status": "account deleted"}
 
+
+@router.delete("/me/lists/{category}")
+async def delete_user_list(
+    category: Literal['movies', 'series', 'games'],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    confirm: Annotated[Literal['delete'], Query()],
+) -> dict[str, str]:
+    from core.list_deletion import delete_list_data
+    await delete_list_data(db, current_user.id, category)
+    await db.commit()
+    return {'status': 'deleted', 'category': category}
+
 async def _settings_response(settings: UserSettings, db: AsyncSession) -> schemas.UserSettings:
     """Build a UserSettings schema response, injecting computed fields."""
     data = schemas.UserSettings.model_validate(settings)
@@ -696,6 +709,9 @@ async def update_connection(
     conn = result.scalar_one_or_none()
     if not conn:
         raise HTTPException(status_code=404, detail="Connection not found")
+
+    if conn.type == 'steam':
+        raise HTTPException(400, 'Use Steam connection settings to change this connection.')
 
     if conn.type in ("stremio", "nuvio"):
         from core import stremio, nuvio
@@ -1536,6 +1552,10 @@ async def get_connection_status(
 
     async def check_media_server(conn):
         from core import arvio, jellyfin, nuvio, plex, stremio
+
+        if conn.type == 'steam':
+            from core.config import settings as runtime_settings
+            return {'id': conn.id, 'connected': bool(runtime_settings.steam_web_api_key)}
 
         try:
             if conn.type == "plex":

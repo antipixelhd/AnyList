@@ -14,7 +14,7 @@ from db import AsyncSessionLocal
 from models.statistics import StatsMetadataRevision, UserStatsSnapshot, UserStatsState
 from schemas_statistics import Overview
 
-CONTRACT_VERSION = 13
+CONTRACT_VERSION = 14
 LEASE_TIME = timedelta(minutes=10)
 REFRESH_TIME = timedelta(hours=24)
 log = logging.getLogger(__name__)

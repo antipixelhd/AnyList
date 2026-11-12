@@ -35,6 +35,56 @@ URL = os.getenv("STATISTICS_TEST_DATABASE_URL") or os.getenv("TRACKING_TEST_DATA
 
 @unittest.skipUnless(URL, "Requires explicit disposable statistics PostgreSQL")
 class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
+    async def test_screen_profile_windows_match_complete_membership_and_project_released_progress(self):
+        async with self.Session() as db:
+            series = Media(title='Later % Series', original_title='Original series name',tagline='A different beginning.', media_type=MediaType.series, release_date='2024-01-01',
+                tmdb_data={'genres': [{'name': 'Adventure'}], 'tracking_catalogue_refreshed_at': '2026-01-01',
+                    'tracking_catalogue_provider': 'tvdb', 'tracking_episode_ids': [91201, 91202]})
+            first = Media(title='Episode 1', media_type=MediaType.episode, tvdb_id=91201,
+                season_number=1, episode_number=1, release_date='2024-01-02')
+            second = Media(title='Episode 2', media_type=MediaType.episode, tvdb_id=91202,
+                season_number=1, episode_number=2, release_date='2024-01-03')
+            anime = Media(title='Hidden anime', media_type=MediaType.series,
+                tmdb_data={'genres':['Animation'], 'original_language':'ja'})
+            db.add_all([series, first, second, anime])
+            await db.flush()
+            db.add_all([TrackedEntry(user_id=self.user_id,media_id=series.id,status='completed',
+                progress=8, rating_mode='average',season_scores={'0':10,'1':6,'2':8},favorite=True,notes='Public note'),
+                TrackedEntry(user_id=self.user_id,media_id=anime.id,status='watching'),
+                WatchEvent(user_id=self.user_id,media_id=first.id,completed=True,watched_at=datetime(2026,1,1))])
+            (await db.get(GlobalSettings,1)).show_anime=False
+            ids=(series.id,first.id,anime.id)
+            await db.commit()
+        root=f'/tracking/profile/{self.viewer.username}'
+        first_page=await self.client.get(f'{root}/all/list',params={'limit':1,'sort':'progress'})
+        self.assertEqual(first_page.status_code,200,first_page.text)
+        self.assertEqual(first_page.json()['total'],2)
+        self.assertEqual(len(first_page.json()['results']),1)
+        self.assertEqual(first_page.json()['group_counts'],{'completed':2})
+        index=(await self.client.get(f'{root}/all/index')).json()
+        self.assertTrue(index['complete'])
+        self.assertEqual({row[0] for row in index['results']},{self.media_id,ids[0]})
+        indexed=next(row for row in index['results'] if row[0]==ids[0])
+        self.assertEqual(indexed[3:5],[7,1])
+        self.assertNotIn('Public note',str(index))
+        filtered=(await self.client.get(f'{root}/all/list',params={'q':'%','genre':'Adventure','year':'2024','favorites':'true'})).json()
+        self.assertEqual([entry['id'] for entry in filtered['results']],[ids[0]])
+        row=filtered['results'][0]
+        self.assertEqual((row['progress'],row['released_episodes'],row['season_position']),(1,2,'S1E1'))
+        self.assertEqual(row['progress_positions'],['S1E1','S1E2'])
+        self.assertEqual(row['notes'],'Public note')
+        self.assertEqual(row['new_episodes'],1)
+        params=[('ids',identifier) for identifier in (ids[2],ids[0],ids[1],self.media_id,ids[0])]
+        rows=(await self.client.get(f'{root}/all/rows',params=params)).json()
+        self.assertEqual([entry['id'] for entry in rows],[ids[0],self.media_id])
+        self.assertEqual((rows[0]['original_title'],rows[0]['tagline']),('Original series name','A different beginning.'))
+        self.assertEqual((await self.client.get(f'{root}/series/rows',params=params)).json(),[row])
+        self.assertEqual((await self.client.get(f'{root}/movie/rows',params=params)).json(),[rows[1]])
+        self.assertEqual((await self.client.get(f'{root}/all/rows',params=[('ids',self.media_id)]*101)).status_code,422)
+        self.assertEqual((await self.client.get(f'{root}/all/list',params={'limit':101})).status_code,422)
+        self.viewer=None
+        self.assertEqual((await self.client.get(f'{root}/all/index')).status_code,401)
+
     async def asyncSetUp(self):
         if not (":55449/catalogue_test" in URL or "/anylist_test" in URL):
             raise RuntimeError("Refusing non-disposable statistics DB")
@@ -48,8 +98,11 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
 
         def setup(conn):
             conn.execute(text(f'SET LOCAL search_path TO "{self.schema}"'))
-            wanted = [t for t in Base.metadata.sorted_tables if not t.name.startswith("user_stats_") and t.name not in ("stats_metadata_revision", "catalogue_contributor_search")]
+            wanted = [t for t in Base.metadata.sorted_tables if not t.name.startswith("user_stats_") and t.name not in ("stats_metadata_revision", "catalogue_contributor_search", "game_stats_state")]
             Base.metadata.create_all(conn, tables=wanted)
+            # This production identity index is created by its data migration,
+            # rather than Base.metadata; exercise real episode conflict handling.
+            conn.execute(text('CREATE UNIQUE INDEX uq_media_tmdb_type ON media (tmdb_id, media_type) WHERE tmdb_id IS NOT NULL'))
             conn.execute(text("ALTER TABLE catalogue_credits DROP COLUMN character_image_url"))
             conn.execute(text("ALTER TABLE catalogue_credits DROP COLUMN screen_character_id"))
             conn.execute(text("DROP TABLE catalogue_screen_characters"))
@@ -63,6 +116,11 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 importlib.import_module("migrations.versions.mt041_actor_role_artwork").upgrade()
                 importlib.import_module("migrations.versions.mt042_screen_characters").upgrade()
                 importlib.import_module("migrations.versions.mt050_contributor_search").upgrade()
+                importlib.import_module("migrations.versions.mt061_game_contributor_search").upgrade()
+                importlib.import_module("migrations.versions.mt064_game_credit_participation").upgrade()
+                importlib.import_module("migrations.versions.mt065_person_credit_scope").upgrade()
+                importlib.import_module("migrations.versions.mt066_game_statistics").upgrade()
+                importlib.import_module("migrations.versions.mt081_game_statistics_totals").upgrade()
             self.assertEqual(conn.scalar(text("SELECT count(*) FROM user_stats_state")), 1)
             self.assertEqual(tuple(conn.execute(text(
                 "SELECT condeferrable, condeferred FROM pg_constraint "

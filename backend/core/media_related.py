@@ -83,6 +83,10 @@ async def catalogue_related(db, work):
     def card(target):
         if target.kind not in ('movie', 'series', 'game', 'book') or target.id == work.id or (target.attributes or {}).get('adult'):
             return None
+        if work.kind=='game' and target.kind=='game':
+            from core.game_types import capabilities
+            if not capabilities(target.attributes).independent:
+                return None  # Child content belongs to the dedicated DLC tab.
         url = f'/title/{links[target.id]}' if target.id in links else None
         if target.kind in ('game', 'book'):
             url = f'/{"games" if target.kind == "game" else "books"}/{target.id}'
@@ -104,6 +108,8 @@ async def catalogue_related(db, work):
 
     relations, similar, seen = [], [], set()
     for edge in edges:
+        if work.kind=='game' and edge.target_id==work.id and edge.relation in ('dlc','expansion'):
+            continue  # Playable children have their own bounded DLC projection.
         target = targets.get(edge.target_id if edge.source_id == work.id else edge.source_id)
         row = card(target) if target else None
         reverse = edge.target_id == work.id

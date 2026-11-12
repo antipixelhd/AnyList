@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 ContributorKind = Literal["actor", "staff", "studio"]
+ContributorMediaScope = Literal["all", "movie", "series", "game"]
 ListScope = Literal["all", "in", "out"]
 
 
@@ -19,16 +20,31 @@ class ContributorImages(BaseModel):
     image_status: ContributorImageStatus
 
 
+class ContributorAvailability(BaseModel):
+    key: str
+    domains: dict[Literal['movie','series','game'],Literal['unknown','available','empty']]
+    pending: bool
+    retry_after: int = Field(default=3,ge=1,le=3600)
+
+
 class ContributorLink(BaseModel):
     label: str
     href: str
+
+
+class ContributorCreditSource(BaseModel):
+    kind: Literal['dlc','expansion','update','episode','edition','port']
+    title: str
 
 
 class ContributorWork(BaseModel):
     key: str
     id: int | None = None
     tmdb_id: int | None = None
-    type: Literal["movie", "series"]
+    type: Literal["movie", "series", "game"]
+    game_class: str | None = None
+    base_work_id: int | None = Field(default=None,exclude_if=lambda value:value is None)
+    base_listed: bool | None = Field(default=None,exclude_if=lambda value:value is None)
     title: str
     poster: str | None = None
     backdrop: str | None = None
@@ -37,6 +53,8 @@ class ContributorWork(BaseModel):
     release_date: str | None = None
     roles: list[str] = Field(default_factory=list)
     characters: list[str] = Field(default_factory=list)
+    characters_pending: bool = Field(default=False,exclude_if=lambda value:not value)
+    credit_sources: list[ContributorCreditSource] = Field(default_factory=list,exclude_if=lambda value:not value)
     list_status: str | None = None
     score: float | None = None
     rating_mode: str = "manual"
@@ -69,3 +87,5 @@ class ContributorPage(BaseModel):
     next_cursor: str | None = None
     source: Literal["local", "provider"] = "local"
     notice: str | None = None
+    game_person_status: dict | None = None
+    game_company_status: dict | None = None

@@ -53,7 +53,9 @@ async def lifespan(app: FastAPI):
         async with scheduler.background_jobs():
             yield
     finally:
-        from core import tmdb
+        from core import chronological_discovery, tmdb, tracking_episode_loading
+        await tracking_episode_loading.close()
+        await chronological_discovery.close()
         await tmdb.close()
 
 from core.config import settings
@@ -66,6 +68,8 @@ app = FastAPI(title="AnyList", version=settings.app_version, lifespan=lifespan, 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
+from core.game_work import GameWorkMiddleware
+app.add_middleware(GameWorkMiddleware)
 
 
 @app.get("/openapi.json", include_in_schema=False)
@@ -94,8 +98,12 @@ app.add_middleware(
 )
 
 from routers import tracking
+from routers import games
+from routers import admin_game_runner
+app.include_router(admin_game_runner.router)
 from routers import catalogue
 app.include_router(catalogue.router)
+app.include_router(games.router)
 app.include_router(tracking.router, prefix="/tracking", tags=["tracking"])
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(oidc.router, prefix="/auth/oidc", tags=["oidc"])
@@ -112,6 +120,8 @@ app.include_router(lists.router, prefix="/lists", tags=["lists"])
 app.include_router(profile.router, prefix="/profile", tags=["profile"])
 app.include_router(sharing.router)
 app.include_router(legal.router)
+from routers import steam
+app.include_router(steam.router)
 app.include_router(trakt.router, prefix="/trakt", tags=["trakt"])
 app.include_router(simkl.router, prefix="/simkl", tags=["simkl"])
 app.include_router(mdblist.router, prefix="/mdblist", tags=["mdblist"])

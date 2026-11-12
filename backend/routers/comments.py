@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Literal, Optional, get_args
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete as sa_delete, or_
@@ -14,8 +14,12 @@ from dependencies import get_current_user, get_current_user_or_api_key
 
 router = APIRouter()
 
+# These subjects use the legacy TMDB namespace. Catalogue games must never be
+# addressed through the same unqualified numeric ID.
+CommentMediaType = Literal['movie', 'series', 'season', 'episode', 'person']
+
 class CommentCreate(BaseModel):
-    media_type: str
+    media_type: CommentMediaType
     tmdb_id: int
     season_number: Optional[int] = None
     episode_number: Optional[int] = None
@@ -28,7 +32,7 @@ class CommentUpdate(BaseModel):
 
 @router.get("")
 async def list_comments(
-    media_type: str,
+    media_type: CommentMediaType,
     tmdb_id: int,
     season_number: Optional[int] = None,
     episode_number: Optional[int] = None,
@@ -139,7 +143,7 @@ async def update_comment(
     result = await db.execute(select(Comment).where(Comment.id == comment_id))
     comment = result.scalar_one_or_none()
 
-    if not comment:
+    if not comment or comment.media_type not in get_args(CommentMediaType):
         raise HTTPException(status_code=404, detail="Comment not found")
 
     if comment.user_id != current_user.id:
@@ -171,7 +175,7 @@ async def delete_comment(
     result = await db.execute(query)
     comment = result.scalar_one_or_none()
     
-    if not comment:
+    if not comment or comment.media_type not in get_args(CommentMediaType):
         raise HTTPException(status_code=404, detail="Comment not found")
         
     if comment.user_id != current_user.id and current_user.role != "admin":

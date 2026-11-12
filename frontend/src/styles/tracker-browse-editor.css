@@ -1,4 +1,52 @@
 /* Browse keeps the search compact while the default view leads with trending titles. */
+[data-game-only][hidden],.editor [hidden]{display:none!important}
+.editor[data-editor-domain=game] [data-game-main]:has([name=game_total_hours]){grid-column:3;grid-row:1}
+.editor[data-editor-domain=game] [data-game-main]:has([name=game_replays]){grid-column:3;grid-row:2}
+.game-achievement-editor,.game-achievement-controls{display:grid;gap:12px}
+.editor .game-achievement-editor{align-content:start;gap:0}
+.editor [data-game-achievement-controls]{padding-top:6px}
+.game-field-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:28px}
+.game-field-heading>span{font-size:var(--type-label-size);color:var(--muted)}
+.editor .game-field-heading label{margin:0}
+.editor .game-value-button{padding:4px 0;min-height:28px;background:transparent;color:var(--blue);border:0;font:inherit;font-size:var(--type-control-size);cursor:pointer;transition:color .15s}
+.editor .game-value-button:hover,.editor .game-value-button:focus-visible{color:var(--bright)}
+.game-first-completion{display:grid;align-content:start;gap:6px;margin-top:10px}
+.editor .game-first-completion label{font-size:var(--type-label-size);color:var(--muted)}
+.editor[data-editor-domain=game] .game-achievement-editor{grid-column:1 / 3;max-width:480px;min-width:0}
+.editor[data-editor-domain=game] .game-achievement-editor:has([data-game-targeted]:not([hidden])){grid-column:1 / -1;max-width:none}
+.game-achievement-controls{grid-template-columns:minmax(0,1fr) minmax(0,190px);align-items:center}
+.game-achievement-value{display:flex;align-items:center;gap:10px;min-width:0;font-variant-numeric:tabular-nums}
+.game-achievement-value .score-stepper{flex:1;min-width:0}
+.editor .game-achievement-value input{width:100%;text-align:right}
+.game-achievement-value>[data-game-achievement-maximum]{flex:none;color:var(--muted);white-space:nowrap;font-size:var(--type-control-size)}
+.game-achievement-controls [data-game-achievement-mode-field]{min-width:0}
+.editor .game-achievement-value>.score-stepper,.editor [data-game-achievement-mode-field] .editor-status-trigger{margin-top:0}
+.game-achievement-controls:has(>[data-game-achievement-mode-field][hidden]){grid-template-columns:minmax(0,190px)}
+.game-achievement-controls:has(>[data-game-achievement-mode-field][hidden]) .game-achievement-value{grid-column:1}
+.game-achievement-controls [data-game-targeted]{grid-column:1 / -1;min-width:0}
+.game-achievement-guidance{margin:0 0 12px;color:var(--muted)}
+.game-achievement-options{display:grid;gap:8px;max-height:320px;overflow:auto}
+.editor .game-achievement-option{display:flex;align-items:center;gap:12px;min-height:56px;padding:8px;background:var(--field);border-radius:4px;cursor:pointer}
+.editor .game-achievement-option input{width:18px;height:18px;min-height:0;margin:0;padding:0;accent-color:var(--blue);flex:none}
+.game-achievement-option img{width:40px;height:40px;border-radius:3px;flex:none}
+.game-achievement-option>span{display:grid;gap:3px;flex:1}
+.game-achievement-option strong{font-weight:500;color:var(--text)}
+.game-achievement-option small{font-size:var(--type-caption-size);color:var(--muted)}
+.game-base-link{display:flex;align-items:center;gap:14px;margin:0 0 24px;padding:14px 0;color:var(--muted)}
+.game-base-link strong{flex:1;color:var(--bright);font-weight:500}
+.game-base-link:hover{color:var(--blue)}
+.game-tracking-progress{display:grid;gap:8px;margin-top:16px;color:var(--muted);font-size:var(--type-label-size)}
+.game-tracking-progress p{display:flex;justify-content:space-between;gap:16px;margin:0}
+.game-tracking-progress strong{font-weight:500;color:var(--text)}
+.editor [data-game-only] input::-webkit-outer-spin-button,.editor [data-game-only] input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.editor [data-game-only] input[type=number]{-moz-appearance:textfield}
+@media(max-width:650px){.editor[data-editor-domain=game] .editor-fields>*{grid-column:auto!important;grid-row:auto!important}.game-achievement-editor{grid-template-columns:1fr}.game-achievement-option small{max-width:64px;text-align:right}.game-base-link{flex-wrap:wrap}}
+@media(max-width:650px){.editor[data-editor-domain=game] .editor-fields>.game-achievement-editor{grid-column:1 / -1!important;max-width:none}}
+@media(max-width:650px){
+  .game-achievement-controls{grid-template-columns:minmax(0,1fr) auto;gap:10px}
+  .game-achievement-controls .game-achievement-value{grid-column:2;width:auto;max-width:190px;gap:8px}
+  .game-achievement-value .score-stepper{width:clamp(76px,24vw,110px)}
+}
 .browse-heading h1 {
   margin:.32rem 0 .4rem
 }
@@ -655,7 +703,7 @@
 .filters .filter-control select {
   margin:0
 }
-#reset-filters:disabled {
+:is(#reset-filters,#pending-reset-filters):disabled {
   cursor:default;
   opacity:.45
 }
@@ -865,3 +913,10 @@
   box-shadow:none;
   background:var(--field);
 }
+
+ .editor .game-field-heading:has(.game-steam-sync){justify-content:flex-start;gap:6px}
+.editor .game-field-heading:has(.game-steam-sync) .game-value-button{margin-left:auto}
+.editor .game-steam-sync{display:inline-flex;align-items:center;justify-content:center;flex:none;width:22px;height:24px;padding:4px;background:transparent;color:var(--muted);border:0;cursor:pointer}
+.editor .game-steam-sync :is(.ui-icon,.ui-icon-svg){width:12px;height:12px}
+.editor .game-steam-sync.is-out-of-sync{color:#f59e0b}
+.editor .game-steam-sync:hover,.editor .game-steam-sync:focus-visible{background:transparent;color:var(--text)}

@@ -240,7 +240,7 @@ class SecretCategoryTests(unittest.IsolatedAsyncioTestCase):
 
         payload = await data_export.build_export_zip(
             db, user, None,
-            include_watched=False, include_ratings=False, include_collection=False,
+            include_games=False, include_watched=False, include_ratings=False, include_collection=False,
             include_lists=False, include_comments=False,
         )
 
@@ -257,7 +257,7 @@ class SecretCategoryTests(unittest.IsolatedAsyncioTestCase):
         for include in (False, True):
             payload = await data_export.build_export_zip(
                 _FakeSession([]), user, settings,
-                include_watched=False, include_ratings=False, include_collection=False,
+                include_games=False, include_watched=False, include_ratings=False, include_collection=False,
                 include_lists=False, include_comments=False, include_api_keys=include,
             )
             with zipfile.ZipFile(io.BytesIO(payload)) as archive:

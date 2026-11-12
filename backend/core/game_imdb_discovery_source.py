@@ -1,0 +1,413 @@
+"""Bounded reverse discovery from explicit IMDb/Wikidata/IGDB identifiers."""
+import asyncio
+import hashlib
+import json
+import re
+from time import monotonic
+from datetime import timedelta
+from contextvars import ContextVar
+
+from core.catalogue_normalize import normalize_igdb
+from core.catalogue_providers import ProviderError
+from core.game_browse_sources import GameBrowseSources,positive,SLUG
+from core.game_credit_sources import GameCreditSources
+from core.game_imdb_mapping import game_mapping
+from core.game_imdb_source import TITLE_ID
+from core.game_types import capabilities,igdb_game_class,CREDIT_CHILDREN
+from core.game_release_dates import FIELDS as RELEASE_FIELDS
+from core.wikidata_claims import best_claims,qualified,snak_value
+
+SIZE=20
+_game_rows=ContextVar('discovery_game_rows',default=None)
+FIELDS=('id,name,slug,first_release_date,game_type.type,version_parent,parent_game.name,parent_game.game_type.type,'
+    'cover.url,genres.name,platforms.name,platforms.platform_family.name,'
+    'ports.game_type.type,ports.platforms.name,ports.platforms.platform_family.name,'
+    'involved_companies.developer,involved_companies.publisher,involved_companies.supporting,involved_companies.porting,'
+    'involved_companies.company.name,involved_companies.company.logo.url,involved_companies.company.country,'
+    'external_games.uid,external_games.url,external_games.external_game_source.name,'+RELEASE_FIELDS)
+
+
+def game_reference(item):
+    """Numeric claims/qualifiers outrank renamed slugs; ambiguity stays unresolved."""
+    rows=best_claims(item,'P5794')
+    ids=[snak_value(row.get('mainsnak')) for row in best_claims(item,'P9043')]
+    ids += [value for row in rows for value in qualified(row,'P9043')]
+    ids=[value for value in ids if value is not None]
+    if ids:
+        if any(not isinstance(value,str) or not re.fullmatch(r'[1-9][0-9]*',value) for value in ids) or len(set(ids))!=1:
+            return None
+        value=int(ids[0])
+        return {'id':value} if value<=2147483647 else None
+    slugs=[snak_value(row.get('mainsnak')) for row in rows]
+    slugs=[value for value in slugs if value is not None]
+    if not slugs or any(not isinstance(value,str) or not SLUG.fullmatch(value) for value in slugs) or len(set(slugs))!=1:return None
+    return {'slug':slugs[0]}
+
+
+def project(title_id,item,raw,games):
+    mapped=game_mapping(item,str(raw['id']),raw.get('slug'))
+    if mapped['status']!='verified' or mapped['imdb_id']!=title_id:
+        return {'id':title_id,'status':'conflict','reason':'explicit_identity_conflict'}
+    return project_game(title_id,raw,games,mapped['evidence'])
+
+
+def project_game(title_id,raw,games,evidence):
+    from core.game_types import mobile_only
+    if mobile_only(raw):
+        return {'id':title_id,'status':'excluded','reason':'mobile_only','igdb_id':raw['id'],'evidence':evidence}
+    kind=igdb_game_class(raw)
+    if raw.get('version_parent') or kind=='port':
+        # Preserve source identity; an edition-specific IMDb record must not
+        # replace the base game's primary IMDb identity.
+        return {'id':title_id,'status':'unresolved','reason':'edition_or_port','igdb_id':raw['id'],'evidence':evidence}
+    if kind=='unknown':return {'id':title_id,'status':'unresolved','reason':'unknown_type','igdb_id':raw['id']}
+    if not capabilities({'game_class':kind}).searchable and kind not in CREDIT_CHILDREN:
+        return {'id':title_id,'status':'excluded','reason':kind,'igdb_id':raw['id'],'game_title':raw['name'],'evidence':evidence}
+    parent=None
+    if kind in CREDIT_CHILDREN:
+        value=raw.get('parent_game');native=value.get('id') if isinstance(value,dict) else value
+        parent=games.get(native)
+        if not parent or parent.get('version_parent') or igdb_game_class(parent) not in {'game','standalone_expansion','remake','remaster','expanded_game'}:
+            return {'id':title_id,'status':'unresolved','reason':'expansion_parent' if kind=='expansion' else 'credit_parent','igdb_id':raw['id']}
+    doc=normalize_igdb(raw)
+    if parent:
+        for edge in doc['relationships']:
+            if edge['relation']==kind and not edge.get('reverse'):edge['target']=normalize_igdb(parent)['work']
+    doc['coverage']={'person_discovery':True,'credits_complete':False,'characters_complete':False}
+    return {'id':title_id,'status':'verified','igdb_id':raw['id'],'document':doc,
+        'evidence':evidence}
+
+
+class GameIMDbDiscoverySource:
+    def __init__(self,sessions,*,sources=None,wiki=None):
+        self.sessions=sessions
+        self.sources=sources or GameBrowseSources(sessions)
+        self.wiki=wiki or GameCreditSources(self.sources)
+        self._candidate_queries=None
+
+    async def close(self):
+        if self._candidate_queries:await self._candidate_queries.close()
+
+    async def items(self,ids):
+        if self.sessions is not None:
+            from core.game_mapping_index import lookup
+            records=await lookup(self.sessions,'wikidata',imdb_ids=ids,max_age=timedelta(days=7))
+            if records and len(records)<101 and all(row['coverage'].get('scope')=='complete_wikidata_dump' for row in records):
+                known={native:[] for native in ids}
+                for record in records:
+                    item=record['value']
+                    claims={snak_value(row.get('mainsnak')) for row in best_claims(item,'P345')}
+                    for native in ids:
+                        if native in claims:known[native].append(item['id'])
+                if all(known.values()):
+                    return {'data':{'items':known},'stale':False,'fetched_at':records[0]['observed_at'].isoformat()}
+            # A deferred matching quantum requests a subset of the same identity
+            # group. Reuse its complete reverse evidence, including verified
+            # empty results, without renewing freshness or making another call.
+            from sqlalchemy import select
+            from sqlalchemy.dialects.postgresql import array
+            from core.game_source_cache import utcnow
+            from models.catalogue import MetadataSnapshot
+            async with self.sessions() as db:
+                covering=(await db.execute(select(MetadataSnapshot.payload,
+                    MetadataSnapshot.fetched_at,MetadataSnapshot.external_id).where(
+                        MetadataSnapshot.provider=='wikidata',MetadataSnapshot.kind=='game_imdb_reverse',
+                        MetadataSnapshot.external_id.startswith('v1:'),
+                        MetadataSnapshot.expires_at>utcnow(),
+                        MetadataSnapshot.payload['items'].has_all(array(list(ids))))
+                    .order_by(MetadataSnapshot.fetched_at.desc()).limit(1))).first()
+            if covering:
+                payload,fetched,key=covering
+                return {'data':{'items':{native:payload['items'][native] for native in ids}},
+                    'stale':False,'fetched_at':fetched.isoformat(),
+                    'support_snapshots':[{'kind':'game_imdb_reverse','key':key[3:],'fetched_at':fetched.isoformat()}]}
+        key=hashlib.sha256(json.dumps(sorted(ids)).encode()).hexdigest()
+        async def load():
+            values=' '.join(json.dumps(value) for value in sorted(ids))
+            query=('SELECT DISTINCT ?title ?item WHERE { VALUES ?title { '+values+' } '
+                '?item p:P345 ?statement. ?statement ps:P345 ?title; wikibase:rank ?rank. '
+                'FILTER(?rank != wikibase:DeprecatedRank) } LIMIT 401')
+            # Documented form POST keeps batch queries out of URL length limits.
+            try:
+                raw=await self.sources.api.http.request('wikidata','POST','https://query.wikidata.org/sparql',
+                    data={'query':query,'format':'json'},headers={
+                        'User-Agent':'AnyList catalogue/1 (https://github.com/antipixelhd/AnyList)',
+                        'Accept':'application/sparql-results+json'})
+            except ProviderError as error:
+                if error.code not in ('rate_limited','unavailable','timeout'):raise
+                return await self.indexed_items(ids)
+            rows=(raw.get('results') or {}).get('bindings') if isinstance(raw,dict) else None
+            if not isinstance(rows,list) or len(rows)>=401:raise ProviderError('bad_response')
+            result={value:[] for value in ids}
+            for row in rows:
+                if not isinstance(row,dict) or not all(isinstance(row.get(key),dict) for key in ('title','item')):raise ProviderError('bad_response')
+                title=row['title'].get('value');url=row['item'].get('value')
+                match=re.fullmatch(r'https?://www\.wikidata\.org/entity/(Q[1-9][0-9]*)',url) if isinstance(url,str) else None
+                if not isinstance(title,str) or title not in result or not match:raise ProviderError('bad_response')
+                item=match[1]
+                if item not in result[title]:result[title].append(item)
+            return {'items':result}
+        result=await self.sources.cache.get('wikidata','game_imdb_reverse',key,load,
+            ttl=timedelta(days=7),max_stale=timedelta(days=30))
+        return {**result,'support_snapshots':[{'kind':'game_imdb_reverse','key':key,'fetched_at':result['fetched_at']}]
+            if result.get('fetched_at') else []}
+
+    async def entities(self,ids):
+        if self.sessions is None:return await self.wiki.entities(ids)
+        from core.game_mapping_index import lookup
+        records=await lookup(self.sessions,'wikidata',natives=ids,max_age=timedelta(days=7))
+        known={record['native']:record['value'] for record in records}
+        missing=set(ids)-set(known)
+        if missing:
+            result=await self.wiki.entities(missing)
+            key=hashlib.sha256(json.dumps(['identity-v2',sorted(missing)]).encode()).hexdigest()
+            return {**result,'data':{'entities':{**known,**result['data']['entities']}},
+                'support_snapshots':[{'kind':'game_credit_items','key':key,'fetched_at':result['fetched_at']}]
+                    if result.get('fetched_at') else []}
+        return {'data':{'entities':known},'stale':False}
+
+    async def indexed_items(self,ids):
+        # WikibaseCirrusSearch supports exact external-ID statement queries.
+        # Search only proposes QIDs; actual nondeprecated P345 claims below,
+        # and the existing bidirectional IGDB mapping, still prove identity.
+        raw=await self.sources.api.http.request('wikidata','GET','https://www.wikidata.org/w/api.php',params={
+            'action':'query','list':'search','srsearch':'haswbstatement:'+'|'.join('P345='+value for value in sorted(ids)),
+            'srnamespace':0,'srlimit':50,'srprop':'','format':'json','maxlag':5},headers={
+            'User-Agent':'AnyList catalogue/1 (https://github.com/antipixelhd/AnyList)'})
+        rows=(raw.get('query') or {}).get('search') if isinstance(raw,dict) else None
+        if isinstance(raw,dict) and (raw.get('error') or {}).get('code')=='maxlag':
+            raise ProviderError('rate_limited',60)
+        if not isinstance(rows,list) or raw.get('error') or raw.get('continue') or len(rows)>=50:
+            raise ProviderError('coverage_limited')
+        qids=[row.get('title') for row in rows if isinstance(row,dict)]
+        if len(qids)!=len(rows) or any(not isinstance(q,str) or not re.fullmatch(r'Q[1-9][0-9]*',q) for q in qids) or len(set(qids))!=len(qids):
+            raise ProviderError('bad_response')
+        fetched=await self.entities(qids) if qids else {'data':{'entities':{}},'stale':False}
+        if fetched.get('stale'):raise ProviderError('stale_mapping')
+        entities=fetched['data']['entities'];result={value:[] for value in ids}
+        if any(q not in entities for q in qids):raise ProviderError('incomplete_cache')
+        for q,item in entities.items():
+            claims={snak_value(row.get('mainsnak')) for row in best_claims(item,'P345')}
+            for native in ids:
+                if native in claims:result[native].append(q)
+        return {'items':result}
+
+    async def games(self,ids=(),slugs=()):
+        cached=_game_rows.get()
+        if cached is not None and all(native in cached for native in ids) and all(
+                any(row.get('slug')==slug for row in cached.values()) for slug in slugs):
+            return {native:row for native,row in cached.items() if native in ids or row.get('slug') in slugs}
+        clauses=[]
+        if ids:clauses.append('id=('+','.join(map(str,sorted(ids)))+')')
+        if slugs:clauses.append('slug=('+','.join(json.dumps(value) for value in sorted(slugs))+')')
+        if not clauses:return {}
+        raw=await self.sources.igdb('games',f'fields {FIELDS}; where ({" | ".join(clauses)}); limit 100;')
+        if not isinstance(raw,list) or len(raw)>100:raise ProviderError('bad_response')
+        result={}
+        for row in raw:
+            if (not isinstance(row,dict) or not positive(row.get('id')) or not isinstance(row.get('name'),str)
+                or not row['name'].strip() or row['id'] in result
+                or row['id'] not in ids and row.get('slug') not in slugs):raise ProviderError('bad_response')
+            result[row['id']]=row
+        if cached is not None:cached.update(result)
+        return result
+
+    async def page(self,ids,*,titles=None,on_progress=None,candidate_budget=None):
+        tasks=[]
+        token=_game_rows.set({})
+        try:
+            return await self._page(ids,titles=titles,on_progress=on_progress,tasks=tasks,candidate_budget=candidate_budget)
+        finally:
+            for task in tasks:
+                if not task.done():task.cancel()
+            if tasks:await asyncio.gather(*tasks,return_exceptions=True)
+            _game_rows.reset(token)
+
+    async def _page(self,ids,*,titles=None,on_progress=None,tasks=None,candidate_budget=None):
+        if titles is None:
+            return await self.explicit_page(ids)
+        from core.game_title_candidates import retrieve
+        from core.game_title_match import decide
+        from core.game_mapping_policy import corroboration_useful
+        from core.game_mapping_index import lookup,wikidata_generation
+        if not isinstance(titles,dict) or set(titles)!=set(ids):raise ProviderError('invalid_request')
+        if candidate_budget is not None and (type(candidate_budget) is not int or not 1<=candidate_budget<=SIZE):raise ProviderError('invalid_request')
+        wiki_generation=await wikidata_generation(self.sessions)
+        try:
+            result=await self.explicit_page(ids)
+        except ProviderError as error:
+            if error.code not in ('rate_limited','unavailable','timeout','retry_pending','stale_mapping'):raise
+            result={'outcomes':[{'id':native,'status':'unresolved','reason':error.code} for native in ids],'stale':False}
+        outputs=[]
+        deep_remaining=8
+        indexed={row['native']:row for row in await lookup(self.sessions,'imdb',natives=ids)}
+        prepared={}
+        for native in ids:
+            title=dict(titles[native]);local=indexed.get(native)
+            if local:
+                title['aliases']=local['value'].get('aliases',[])
+                if title.get('year') is None:title['year']=local['value'].get('year')
+            prepared[native]=title
+        # Resolve the whole cheap identity group before budgeting fuzzy work.
+        # Known child/version matching follows the primary inventory.
+        def priority(row):
+            return row.get('game_class') in CREDIT_CHILDREN|{'port'} or row.get('reason')=='edition_or_port'
+        result['outcomes']=sorted(result['outcomes'],key=priority)
+        from core.game_version_scope import original_parent
+        candidates=[]
+        for row in result['outcomes']:
+            reference=result.get('version_references',{}).get(row['id'])
+            reconsider=bool(reference and original_parent(prepared[row['id']],reference))
+            if row.get('reason')!='explicit_identity_conflict' and (row['status'] not in ('verified','excluded') or reconsider):
+                candidates.append(row['id'])
+        deferred=candidates[candidate_budget:] if candidate_budget is not None else []
+        candidates=[native for native in candidates if native not in deferred]
+        ready=[row for row in result['outcomes'] if row['status']=='verified' and row['id'] not in candidates+deferred and not priority(row)]
+        if ready and on_progress and not result.get('stale'):await on_progress(ready)
+        acquired_titles={}
+        if isinstance(self.sources,GameBrowseSources):
+            from core.game_candidate_queries import GameCandidateQueries,collection_size
+            if self._candidate_queries is None:self._candidate_queries=GameCandidateQueries(self.sources)
+            batched=self._candidate_queries
+            collection_token=collection_size.set(candidate_budget or len(candidates))
+            try:
+                from core.game_work import work_context
+                for position,native in enumerate(candidates):
+                    with work_context(scope=f'candidate-order:{position:04}'):
+                        acquired_titles[native]=asyncio.create_task(retrieve(batched,prepared[native]))
+            finally:collection_size.reset(collection_token)
+            tasks.extend(acquired_titles.values())
+        for outcome in result['outcomes']:
+            native=outcome['id'];title=prepared[native];local=indexed.get(native)
+            if native in deferred:continue
+            if on_progress and outputs and native in acquired_titles and not acquired_titles[native].done() and not result.get('stale'):
+                await on_progress(outputs)
+            from core.game_version_scope import original_parent
+            reference=result.get('version_references',{}).get(outcome['id'])
+            scope_parent=original_parent(title,reference) if reference else None
+            version_reference={'version':1,'game':reference,'wikidata':outcome.get('evidence')} if scope_parent else None
+            if scope_parent:outcome={**outcome,'status':'unresolved','reason':'cross_version_reference'}
+            if outcome['status'] in ('verified','excluded') or outcome.get('reason')=='explicit_identity_conflict':
+                outputs.append(outcome);continue
+            if title.get('id')!=native or not isinstance(title.get('title'),str) or not title['title'].strip():
+                raise ProviderError('bad_response')
+            try:
+                acquired=await acquired_titles[native] if native in acquired_titles else await retrieve(self.sources,title)
+                if isinstance(acquired,BaseException):raise acquired
+            except ProviderError as error:
+                outputs.append({'id':native,'status':'unresolved','reason':error.code,
+                    **({'retry_after':60} if error.code!='coverage_limited' else {})});continue
+            data=acquired['data']
+            if scope_parent:
+                current=next((row for row in data['rows'] if row['id']==reference['id']),None)
+                if not current or original_parent(title,current)!=scope_parent:
+                    outputs.append({'id':native,'status':'unresolved','reason':'incomplete_version_scope'});continue
+                from core.game_version_scope import reference_game
+                version_reference['game']=reference_game(current)
+            decision=decide(title,data['rows'],complete=data['complete'] and not acquired['stale'],branches=data['branches'])
+            from core.game_credit_parents import parent_proposal
+            proposal=parent_proposal(title,data['rows'],complete=data['complete'] and not acquired['stale']) if not scope_parent and any(
+                row.get('version_parent') or igdb_game_class(row)=='port' for row in data['rows']) else None
+            deeper=[]
+            if not proposal and decision['status'] in ('unresolved','unmapped') and data['rows'] and data['complete'] and not acquired['stale'] and corroboration_useful(decision):
+                from core.game_match_support import corroborate
+                # Retrieval has its own bounded query/worker timeout. Only
+                # corroboration spends this shared deep-work allowance.
+                budget=min(4,deep_remaining)
+                if budget<=.05:
+                    outputs.append({'id':native,'status':'unresolved','reason':'corroboration_deferred','retry_after':2});continue
+                if on_progress and outputs and not result.get('stale'):await on_progress(outputs)
+                started=monotonic()
+                try:
+                    async with asyncio.timeout(budget):extra,deeper=await corroborate(self.sources,title,data['rows'])
+                    decision=decide(title,data['rows'],complete=True,branches=data['branches'],corroboration=extra)
+                except (ProviderError,TimeoutError) as error:
+                    outputs.append({'id':native,'status':'unresolved','reason':getattr(error,'code','timeout'),'retry_after':60});continue
+                finally:
+                    deep_remaining=max(0,deep_remaining-(monotonic()-started))
+            dependencies=[f'imdb:{native}',f'wikidata-imdb:{native}',
+                *[f'igdb:{row["id"]}' for row in data['rows']],
+                *[f'wikidata:{qid}' for qid in result.get('consulted',{}).get(native,[])],
+                *[f'{source}-name:{name}' for name in data.get('scope_names',[]) for source in ('igdb','wikidata')],
+                f'igdb-query:{data.get("scope_key", "")}',
+                *[f'support:{row["provider"]}:{row["kind"]}:{row["key"]}' for row in deeper]]
+            if decision['status']!='verified' and not proposal:
+                if outcome.get('reason') in ('rate_limited','unavailable','timeout','retry_pending','stale_mapping'):
+                    outputs.append({'id':native,'status':'unresolved','reason':outcome['reason'],'retry_after':60});continue
+                outputs.append({'id':native,**decision,'dependencies':dependencies});continue
+            if scope_parent and decision['igdb_id']!=scope_parent:
+                outputs.append({'id':native,'status':'conflict','reason':'version_parent_mismatch','dependencies':dependencies});continue
+            games={row['id']:row for row in data['rows']}
+            raw=games[proposal['child_igdb_id'] if proposal else decision['igdb_id']]
+            parent=raw.get('parent_game')
+            if igdb_game_class(raw) in CREDIT_CHILDREN and isinstance(parent,dict) and positive(parent.get('id')) and parent['id'] not in games:
+                games.update(await self.games({parent['id']}))
+            evidence={**decision['evidence'],'method':'title_match','source_outcome':{key:value for key,value in outcome.items() if key in ('status','reason')},
+                **({'version_reference':version_reference} if version_reference else {}),
+                'direction':'imdb_to_igdb','scope':'primary_title','dependencies':[f'imdb:{native}',f'igdb:{raw["id"]}',
+                    *([f'igdb:{reference["id"]}'] if scope_parent else []),
+                    f'wikidata-imdb:{native}',*[f'wikidata:{qid}' for qid in result.get('consulted',{}).get(native,[])],
+                    f'igdb-query:{data.get("scope_key","")}',*[f'igdb-name:{name}' for name in data.get('scope_names',[])],
+                    *[f'support:{row["provider"]}:{row["kind"]}:{row["key"]}' for row in deeper]],
+                'support':{'imdb_generation':local['generation'] if local else None,
+                    'candidate_key':data.get('scope_key'),'candidate_fingerprint':data.get('scope_fingerprint'),
+                    'candidate_observations':data.get('scope_observations',{}),
+                    'check_wikidata_generation':True,'wikidata_generation':wiki_generation,
+                    'wiki_snapshots':result.get('support_snapshots',[]),'snapshots':deeper}}
+            if proposal:
+                from core.game_credit_parents import automatic_parent_valid,VERSION as PARENT_VERSION
+                from core.game_title_candidates import IDENTITY_FIELDS
+                parent_id=proposal['parent_igdb_id']
+                if parent_id not in games:games.update(await self.games({parent_id}))
+                parent=games.get(parent_id,{})
+                evidence.update(scope='parent_participation',variant={'version':PARENT_VERSION,
+                    'child':{key:raw[key] for key in IDENTITY_FIELDS if key in raw},
+                    'parent':{key:parent[key] for key in IDENTITY_FIELDS if key in parent}})
+                evidence['dependencies'].append(f'igdb:{parent_id}')
+                if not automatic_parent_valid(evidence):
+                    outputs.append({'id':native,'status':'unresolved','reason':'variant_parent_scope',
+                        'dependencies':list(dict.fromkeys([*dependencies,*evidence['dependencies']]))});continue
+                projected=project_game(native,parent,games,evidence)
+                projected['credit_parent']=True
+                outputs.append(projected);continue
+            projected=project_game(native,raw,games,evidence)
+            projected['binding_source']='matched';outputs.append(projected)
+        return {**result,'outcomes':outputs,**({'deferred':deferred} if deferred else {})}
+
+    async def explicit_page(self,ids):
+        if not isinstance(ids,list) or not ids or len(ids)>SIZE or any(
+            not isinstance(value,str) or not TITLE_ID.fullmatch(value) for value in ids) or len(set(ids))!=len(ids):raise ProviderError('invalid_request')
+        reverse=await self.items(ids);candidates=reverse['data']['items']
+        qids=sorted({q for values in candidates.values() for q in values})
+        if len(qids)>50:raise ProviderError('coverage_limited')
+        fetched=await self.entities(qids) if qids else {'data':{'entities':{}},'stale':False}
+        entities=fetched['data']['entities'];references={};outcomes={}
+        for native,items in candidates.items():
+            found=[entities.get(q) for q in items]
+            if not items:outcomes[native]={'id':native,'status':'unmapped'};continue
+            if any(value is None for value in found):outcomes[native]={'id':native,'status':'unresolved','reason':'missing_entity'};continue
+            roots={value['id']:value for value in found}
+            if len(roots)!=1:outcomes[native]={'id':native,'status':'conflict'};continue
+            item=next(iter(roots.values()));reference=game_reference(item)
+            if not reference:outcomes[native]={'id':native,'status':'unresolved','reason':'igdb_reference'};continue
+            references[native]=(item,reference)
+        games=await self.games({value['id'] for _,value in references.values() if 'id' in value},
+            {value['slug'] for _,value in references.values() if 'slug' in value})
+        parents={value['parent_game']['id'] for value in games.values() if igdb_game_class(value) in CREDIT_CHILDREN
+            and isinstance(value.get('parent_game'),dict) and positive(value['parent_game'].get('id'))}-set(games)
+        if parents:games.update(await self.games(parents))
+        version_references={}
+        def resolve():
+            for native,(item,reference) in references.items():
+                matches=[value for value in games.values() if value['id']==reference.get('id') or value.get('slug')==reference.get('slug') and 'slug' in reference]
+                outcomes[native]=project(native,item,matches[0],games) if len(matches)==1 else {
+                    'id':native,'status':'unresolved','reason':'igdb_metadata'}
+                if len(matches)==1:outcomes[native]['game_class']=igdb_game_class(matches[0])
+                if len(matches)==1 and outcomes[native]['status']=='verified' and igdb_game_class(matches[0]) in ('remake','remaster'):
+                    from core.game_version_scope import reference_game
+                    version_references[native]=reference_game(matches[0])
+            return [outcomes[native] for native in ids]
+        return {'outcomes':await asyncio.to_thread(resolve),'stale':reverse['stale'] or fetched['stale'],
+            'version_references':version_references,
+            'fetched_at':reverse.get('fetched_at'),'consulted':candidates,
+            'support_snapshots':[*reverse.get('support_snapshots',[]),*fetched.get('support_snapshots',[])]}

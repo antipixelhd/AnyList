@@ -22,6 +22,7 @@ export const importFormats: readonly ImportFormat[] = [
     id: "scrob", title: "AnyList", extension: ".zip", endpoint: "/api/proxy/export/import",
     fieldPrefix: "", color: "blue",
     options: [...personalOptions,
+      { key: "games", label: "Games" },
       { key: "api_keys", label: "Api Keys", secret: true },
       { key: "media_connections", label: "Media & Cloud Connections", secret: true },
       { key: "scrobble_connections", label: "Scrobble-only Connections", secret: true },

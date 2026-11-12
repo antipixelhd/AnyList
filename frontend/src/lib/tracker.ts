@@ -1,19 +1,31 @@
 import { responsiveArtwork,type ArtworkRoute } from "./responsive-artwork";
 import { formatDateTime, timestamp } from './date-time';
 
+export class TrackerRequestError extends Error {
+  readonly status:number;
+  constructor(status:number) {
+    super(status===403?'This profile is private.':status===404?'Not found.':'Unable to load this page. Please try again.');
+    this.name='TrackerRequestError';this.status=status;
+  }
+}
+
+/** Profile pages preserve access failures without treating upstream outages as content. */
+export function trackerFailure(cause:unknown) {
+  return {message:cause instanceof Error?cause.message:'Unable to load this page. Please try again.',
+    status:cause instanceof TrackerRequestError&&[401,403,404].includes(cause.status)?cause.status:503};
+}
+
 export async function tracker(path: string, token?: string) {
   const port = process.env.BACKEND_PORT ?? '7331';
   const response = await fetch(`http://127.0.0.1:${port}/tracking/${path}`, {
     headers: token ? {Authorization: `Bearer ${token}`} : {},
   });
-  if (!response.ok) throw new Error(response.status === 403 ? 'This profile is private.' : response.status === 404 ? 'Not found.' : 'Unable to load this page. Please try again.');
+  if (!response.ok) throw new TrackerRequestError(response.status);
   return response.json();
 }
 
-export const statuses = [
-  ['watching', 'Watching'], ['completed', 'Completed'], ['paused', 'Paused'],
-  ['dropped', 'Dropped'], ['planning', 'Planning'],
-];
+export {statuses} from './tracking-statuses.ts';
+import {statuses} from './tracking-statuses.ts';
 
 export function artwork(path: string | null, size = 'w342',route:ArtworkRoute='auto') {
   if (!path) return '';
@@ -27,6 +39,8 @@ export function artwork(path: string | null, size = 'w342',route:ArtworkRoute='a
 }
 
 export const scoreLabel = (value: number | null) => value == null || value === 0 ? '—' : Number(value.toFixed(1)).toString();
+
+export const trackedWorkHref=(work:{id:number;type:string})=>`/${work.type==='game'?'games':'title'}/${work.id}`;
 
 export const compactListProgress = (entry: {type?: string; progress: number; released_episodes?: number | null}) =>
   `Progress ${entry.progress}/${entry.type === 'movie' ? 1 : entry.released_episodes ?? '?'}`;
@@ -47,8 +61,21 @@ export function activityRating(activity: any) {
   return { previous, current, label };
 }
 
+export function activityCompletionSuffix(activity:any){
+  const seconds=activity.payload?.completion_seconds;
+  return activity.media?.type==='game'&&activity.status==='completed'&&activity.payload?.status_changed&&seconds!=null
+    ? ` with ${new Intl.NumberFormat(undefined,{maximumFractionDigits:1}).format(seconds/3600)} hours` : '';
+}
+
 export function activityAction(activity: any) {
   const details = activity.payload || {};
+  if(activity.media?.type==='game'){
+    if(details.status_changed)return ({planning:'Plans to play',playing:'Started playing',completed:'Completed',paused:'Paused',dropped:'Dropped'} as Record<string,string>)[activity.status]||'Updated';
+    if(details.rating_changed)return activity.score==null?'Removed rating for':details.rating_first?'Rated':'Changed rating for';
+    if(details.hours_changed)return 'Updated playtime for';
+    if(details.achievements_changed)return 'Updated achievement progress for';
+    return details.added_to_list?'Added to list':'Updated';
+  }
   const finished = details.finished_seasons || [];
   if (details.status_changed && ['completed', 'dropped', 'paused', 'planning'].includes(activity.status)) {
     return activity.status === 'planning' ? 'Plans to watch' : statuses.find(([status]) => status === activity.status)?.[1] || 'Updated';

@@ -32,7 +32,7 @@ export function createDetailImageCarousel(track:HTMLElement,signal:AbortSignal,s
     if(frame)return;
     frame=requestAnimationFrame(()=>{
       frame=0;
-      if(navigating||!track.clientWidth||!count)return;
+      if(navigating||!track.clientWidth||!count||track.clientWidth!==width)return;
       if(track.closest('[data-viewer-zoom-frame]'))return;
       // Prepare the incoming image as soon as the gesture exposes it, before
       // it crosses the selection boundary. Programmatic jumps skip this.
@@ -76,8 +76,8 @@ export function createDetailImageCarousel(track:HTMLElement,signal:AbortSignal,s
         slide.append(image,loading);
       }
       slide.setAttribute('aria-hidden',String(position!==index));
-      // Only selected or gesture-exposed images receive a source. Keep visited
-      // elements attached so returning to them reuses the browser's cache.
+      // The shared viewer prepares all images after opening. Keep the same
+      // elements attached so navigation reuses their in-flight/decoded state.
       return slide;
     });
     reconcileGalleryChildren(track,slides);

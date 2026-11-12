@@ -1,9 +1,9 @@
 import {createBrowseCache} from './browse-cache.ts';
 import {verifiedEmptySearch, broadSearchParams, type SearchPage} from './search-fallback.ts';
-export type SearchSection = 'all' | 'movie' | 'series' | 'actor' | 'staff' | 'studio';
+export type SearchSection = 'all' | 'movie' | 'series' | 'game' | 'actor' | 'staff' | 'studio';
 export type ResultSection = SearchSection;
 export type ContributorScope = 'people'|'actor'|'staff'|'studio';
-export type SearchRequest = {kind:'movie'|'series'|'contributors';url:string;scope?:ContributorScope};
+export type SearchRequest = {kind:'movie'|'series'|'game'|'contributors';url:string;scope?:ContributorScope};
 
 function verificationPause(signal:AbortSignal) {
   return new Promise<void>((resolve,reject)=>{
@@ -19,15 +19,20 @@ function verificationPause(signal:AbortSignal) {
 export async function readQuickSearch(request:SearchRequest,signal:AbortSignal,onResult:(data:any)=>void,
   fetcher:typeof fetch=fetch,pause=verificationPause) {
   let previous:string|undefined;
-  for(let attempt=0;attempt<5;attempt++) {
+  for(let attempt=0;attempt<20;attempt++) {
     const response=await fetcher(request.url,{signal});
     if(!response.ok)throw new Error('Search unavailable');
     const data=await response.json();
     if(signal.aborted)return;
-    const signature=JSON.stringify([data.results,data.partial,data.verification_pending]);
-    if(signature!==previous){onResult(data);previous=signature;}
+    // A slow cold career may need several worker ticks. Preserve its usable
+    // results, but never turn an exhausted/cooling-down check into verified empty.
+    const stoppedPending=request.kind==='contributors'&&data.verification_pending&&
+      (attempt===19||(typeof data.retry_after==='number'&&data.retry_after>30));
+    const published=stoppedPending?{...data,partial:true}:data;
+    const signature=JSON.stringify([published.results,published.partial,published.verification_pending]);
+    if(signature!==previous){onResult(published);previous=signature;}
     if(signal.aborted)return;
-    if(request.kind!=='contributors'||!data.verification_pending||attempt===4)return;
+    if(request.kind!=='contributors'||!data.verification_pending||stoppedPending)return;
     await pause(signal);
   }
 }
@@ -54,9 +59,11 @@ export function createQuickSearchReader(lifetime: AbortSignal, fetcher: typeof f
     },
   };
 }
-export function quickSearchRequests(query:string,region?:string): SearchRequest[] {
-  const requests:SearchRequest[] = (['movie','series'] as const).map(kind=>({kind,url:`/api/proxy/tracking/catalog?${new URLSearchParams({media_type:kind,q:query,scan_empty:'true',...(region?{region}:{})})}`}));
-  for(const scope of ['people','studio'] as const)requests.push({kind:'contributors',scope,url:`/api/proxy/tracking/quick-search/contributors?${new URLSearchParams({q:query,kind:scope})}`});
+export function quickSearchRequests(query:string,region?:string,showMoviesSeries=true,showGames=true): SearchRequest[] {
+  const requests:SearchRequest[] = (showMoviesSeries?['movie','series'] as const:[]).map(kind=>({kind,url:`/api/proxy/tracking/catalog?${new URLSearchParams({media_type:kind,q:query,scan_empty:'true',...(region?{region}:{})})}`}));
+  if(showGames)requests.push({kind:'game',url:`/api/proxy/tracking/games/search?${new URLSearchParams({q:query})}`});
+  const work_domain=showGames?(showMoviesSeries?'all':'game'):'movies_series';
+  for(const scope of ['people','studio'] as const)requests.push({kind:'contributors',scope,url:`/api/proxy/tracking/quick-search/contributors?${new URLSearchParams({q:query,kind:scope,work_domain})}`});
   return requests;
 }
 
@@ -112,17 +119,19 @@ export function mergeContributorResults<T>(current:Record<'actor'|'staff'|'studi
     staff:scope==='studio'||scope==='actor'?current.staff:incoming.staff||[],
     studio:scope==='people'||scope==='actor'||scope==='staff'?current.studio:incoming.studio||[]};
 }
-export function visibleQuickSearchSections(mobile:boolean, selected:SearchSection, combined:boolean, counts:Record<ResultSection,number>): ResultSection[] {
-  const sections:ResultSection[] = mobile ? [resolvedQuickSearchTab(selected,quickSearchTabOrder(combined))] : quickSearchTabOrder(combined);
-  return sections.filter(section=>counts[section]>0);
+type SectionCounts=Partial<Record<ResultSection,number>>;
+export function visibleQuickSearchSections(mobile:boolean, selected:SearchSection, combined:boolean, counts:SectionCounts,showMoviesSeries=true,showGames=true): ResultSection[] {
+  const order=quickSearchTabOrder(combined,showMoviesSeries,showGames);
+  const sections:ResultSection[] = mobile ? [resolvedQuickSearchTab(selected,order)] : order;
+  return sections.filter(section=>(counts[section]||0)>0);
 }
 
-function quickSearchTabOrder(combined:boolean):SearchSection[] {
-  return [...(combined ? ['all' as const] : ['movie' as const,'series' as const]),'actor','staff','studio'];
+function quickSearchTabOrder(combined:boolean,showMoviesSeries=true,showGames=true):SearchSection[] {
+  return [...(showMoviesSeries?(combined ? ['all' as const] : ['movie' as const,'series' as const]):[]),...(showGames?['game' as const]:[]),'actor','staff','studio'];
 }
-export function availableQuickSearchTabs(counts:Record<ResultSection,number>, searching:boolean, mediaPending=false, combined=true):SearchSection[] {
-  const order=quickSearchTabOrder(combined);
-  return searching?order.filter(kind=>counts[kind]>0||(['all','movie','series'].includes(kind)&&mediaPending)):order;
+export function availableQuickSearchTabs(counts:SectionCounts, searching:boolean, mediaPending=false, combined=true,showMoviesSeries=true,showGames=true,gamePending=false):SearchSection[] {
+  const order=quickSearchTabOrder(combined,showMoviesSeries,showGames);
+  return searching?order.filter(kind=>(counts[kind]||0)>0||(['all','movie','series'].includes(kind)&&mediaPending)||(kind==='game'&&gamePending)):order;
 }
 export function resolvedQuickSearchTab(selected:SearchSection, available:SearchSection[]):SearchSection {
   return available.includes(selected)?selected:available[0]??'all';

@@ -7,9 +7,12 @@ import {currentDetailSeason,detailSeasonState,visibleDetailSeasons} from '../lib
 import {scoreLabel} from '../lib/tracker';
 const {title,signedIn,removeSpecials=true}=Astro.props as {title:DetailMedia;signedIn:boolean;removeSpecials?:boolean};
 const seasons=visibleDetailSeasons(title.seasons,removeSpecials);
+const loaded=title.episodes_loaded!==false;
 const current=currentDetailSeason(seasons,title.entry?.status==='watching');
 ---
-<section class="seasons-section lab-season-panel" id="seasons" data-season-details>
+<section class="seasons-section lab-season-panel" id="seasons" data-season-details aria-busy={!loaded}>
+  {!loaded&&<span class="sr-only" role="status">Loading episodes</span>}
+  <p class="error-message" data-season-load-error role="status" hidden></p><button class="lab-text-button" type="button" data-season-retry hidden>Try again</button>
   <div class="lab-section-title"><h2>Seasons</h2><div class="media-season-actions"><button class="lab-text-button" type="button" data-episode-spoilers aria-pressed="false"><span data-episode-titles-hidden><Icon name="eye-slash"/></span><span data-episode-titles-shown><Icon name="eye"/></span><span data-episode-spoilers-label>Titles hidden</span></button>{signedIn&&<button class="lab-text-button" id="refresh-episodes" type="button" aria-label="Refresh episode metadata" title="Refresh episode metadata"><Icon name="arrows-rotate"/></button>}</div></div>
   {signedIn&&<div class="lab-season-rating-rule"><label><input type="checkbox" data-season-average checked={title.entry?.rating_mode==='average'}/> Use season average</label></div>}
   <div class="lab-season-cards">{seasons.map(season=>{
@@ -18,14 +21,14 @@ const current=currentDetailSeason(seasons,title.entry?.status==='watching');
     return <article class="lab-season-card" data-season-card={number}>
       <div class="lab-season-head" data-season-can-rate={signedIn ? "" : undefined}><button class="media-season-card-toggle" type="button" data-season-toggle={number} data-motion-static aria-label={`Toggle episodes for season ${number}`} aria-controls={`season-episodes-${number}`} aria-expanded={number===current}></button><div class="lab-season-identity"><span class="lab-season-number" aria-hidden="true">{String(number).padStart(2,'0')}</span><div><h3>{season.name||`Season ${number}`}</h3>{season.air_date&&<p>{season.air_date.slice(0,4)}</p>}</div></div>{signedIn&&<div class="media-season-rating-area"><button class="lab-season-rate" type="button" data-open-season-score={number} aria-label={`Rate season ${number}`} aria-haspopup="dialog"><strong><Icon name="star"/><span data-season-score={number}>{scoreLabel(title.entry?.season_scores?.[String(number)]??null)}</span></strong></button></div>}</div>
       <details id={`season-episodes-${number}`} class="media-season-disclosure" data-season-disclosure open={number===current}>
-        <summary class="lab-season-toolbar"><span class="media-season-state" data-season-state={number} hidden={!signedIn} data-watched={String(state.watched)} data-motion-fade><Icon name="check"/><span data-season-state-label>{state.label}</span></span><span class="lab-season-expand">Episodes <Icon name="chevron-down"/></span></summary>
-        <div class="lab-episode-list">{season.episodes?.length?season.episodes.map(episode=>{
+        <summary class="lab-season-toolbar"><span class="media-season-state" data-season-state={number} hidden={!signedIn||!loaded} data-watched={String(state.watched)} data-motion-fade><Icon name="check"/><span data-season-state-label>{state.label}</span></span><span class="lab-season-expand">Episodes <Icon name="chevron-down"/></span></summary>
+        <div class="lab-episode-list">{!loaded?<div class="media-episode-loading" aria-hidden="true"><span></span><span></span><span></span></div>:season.episodes?.length?season.episodes.map(episode=>{
           const image=responsiveArtwork(episode.image,{size:'w300',sizes:'(max-width:650px) 55px, 125px',route:'direct'});
           return <article class="lab-episode" data-episode-row={episode.id} data-watched={String(episode.watched)}><span class="lab-episode-number">{String(episode.episode_number).padStart(2,'0')}</span>{image?<div class="lab-episode-image"><img data-deferred-src={image.src} data-deferred-srcset={image.srcset} data-deferred-sizes={image.sizes} alt="" loading="lazy" fetchpriority="low"/></div>:<div class="lab-episode-image lab-episode-placeholder" aria-hidden="true"><Icon name="play"/></div>}<div class="lab-episode-copy"><h3 data-episode-title={episode.title} data-episode-number={episode.episode_number}>{episode.watched?episode.title:`Episode ${episode.episode_number}`}</h3><p>{durationLabel(episode.runtime)}{episode.runtime&&episode.air_date?' · ':''}{episode.air_date&&<LocalDateTime value={episode.air_date}/>}</p></div>{signedIn&&<button class="lab-episode-check" type="button" data-watch-episode={episode.id} aria-pressed={episode.watched} aria-label={`Mark season ${number} episode ${episode.episode_number} ${episode.watched?'unwatched':'watched'}`} disabled={!episode.released||season.released_count==null} title={!episode.released?'Not released yet':season.released_count==null?'Refresh episode metadata':undefined}><Icon name="check"/></button>}</article>;
-        }):<p class="section-empty">Episode metadata has not been loaded yet.</p>}</div>
+        }):<p class="section-empty">No episodes available.</p>}</div>
       </details>
     </article>;
   })}</div>
-  {!seasons.length&&<p class="section-empty">Season metadata has not been loaded yet.</p>}
+  {!seasons.length&&(!loaded?<div class="media-episode-loading" aria-hidden="true"><span></span><span></span><span></span></div>:<p class="section-empty">No seasons available.</p>)}
 </section>
 <dialog class="editor" id="season-mode"><div class="editor-header"><h2>Show score</h2></div><form method="dialog" class="season-mode-form"><div class="season-mode-actions"><button class="button-primary" value="average">Average my rated seasons</button><button class="button-secondary" value="manual">Keep a separate show rating</button><button class="button-secondary" value="cancel">Cancel</button></div></form></dialog>

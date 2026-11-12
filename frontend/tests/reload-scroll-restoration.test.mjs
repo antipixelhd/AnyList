@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
+import { stripTypeScriptTypes } from 'node:module';
 import test from 'node:test';
 
 const component = readFileSync(new URL('../src/components/ReloadScrollRestoration.astro', import.meta.url), 'utf8');
@@ -133,6 +134,84 @@ test('list landing does not override hard reload or back/forward positions', () 
       window: { scrollY: 0, scrollTo: (...args) => calls.push(args) } });
     assert.equal(calls.length, Number(shouldAlign), `${type}, state: ${JSON.stringify(state)}`);
   }
+});
+
+test('routed profile tabs preserve the shared tab strip position and fade the panel in place', () => {
+  const runtime = readFileSync(new URL('../src/components/NavigationRuntime.astro', import.meta.url), 'utf8');
+  const before = runtime.slice(runtime.indexOf("    document.addEventListener('astro:before-swap'"), runtime.indexOf("    document.addEventListener('click',event=>{"));
+  const after = runtime.slice(runtime.indexOf("    document.addEventListener('astro:after-swap'"), runtime.indexOf("    document.addEventListener('astro:page-load'"));
+  const handlers = new Map();
+  const source = { dataset: { profileBase: '/user/alex' }, getBoundingClientRect: () => ({ top: 105 }), scrollLeft: 46 };
+  const incoming = { dataset: { profileBase: '/user/alex' }, getBoundingClientRect: () => ({ top: 330 }), scrollLeft: 0 };
+  const content = {};
+  const main = { querySelector: () => null };
+  const scrolls = [], reveals = [];
+  let detail = null;
+  const context = {
+    pageEntrance: new AbortController().signal, profileTabPosition: undefined, detailLayoutTop: undefined,
+    clearPreview: undefined, clearNavigationFeedback: undefined, prepareDetailResolution() {}, currentUser: () => 'alex',
+    state: { alignListLanding: true },
+    document: {
+      body: { hasAttribute: () => false },
+      addEventListener: (name, callback) => handlers.set(name, callback),
+      querySelector: selector => new Map([
+        ['.profile-tabs', incoming], ['#content > [data-profile-tab-content]', content], ['#content, #settings-content', main],
+        ['.media-detail [data-detail-panels]', detail],
+      ]).get(selector) ?? null,
+    },
+    window: { scrollY: 0, scrollTo: (...coordinates) => scrolls.push(coordinates) },
+    settleNavigationContent: (element, kind, _signal, offset) => reveals.push([element, kind, offset]),
+  };
+  runInNewContext(stripTypeScriptTypes(before + after), context);
+  handlers.get('astro:before-swap')({sourceElement: {closest: () => source}, newDocument: {querySelector: () => incoming}, to: new URL('https://anylist.test/user/alex/favorites')});
+  handlers.get('astro:after-swap')();
+  assert.deepEqual(scrolls, [[0, 225]]);
+  assert.equal(incoming.scrollLeft, 46);
+  assert.deepEqual(reveals, [[content, 'tab', undefined]]);
+
+  handlers.get('astro:before-swap')({sourceElement: {closest: () => source}, newDocument: {querySelector: () => incoming}, to: new URL('https://anylist.test/user/alex')});
+  handlers.get('astro:after-swap')();
+  assert.equal(scrolls.length, 1, 'a history traversal keeps the router position');
+  assert.equal(reveals.length, 1, 'a history traversal does not replay the fade');
+
+  context.pageEntrance = new AbortController().signal;
+  handlers.get('astro:before-swap')({newDocument: {}, to: new URL('https://anylist.test/browse')});
+  handlers.get('astro:after-swap')();
+  assert.deepEqual(reveals[1], [main, 'page', 0], 'a main page settles without moving the whole surface');
+
+  detail = { querySelector: () => null };
+  context.pageEntrance = new AbortController().signal;
+  handlers.get('astro:before-swap')({newDocument: {}, to: new URL('https://anylist.test/title/1')});
+  handlers.get('astro:after-swap')();
+  assert.deepEqual(reveals[2], [detail, 'page', undefined], 'detail entrances settle the panels while the sidebar and tabs stay fixed');
+});
+
+test('router scrollend saves finish before idle restoration without overriding a pending traversal', () => {
+  const documentEvents = new Map(), windowEvents = new Map(), settledTasks = [];
+  const state = { index: 4, scrollX: 0, scrollY: 900 };
+  const history = { state, scrollRestoration: 'manual' };
+  const context = contextFor(history, [{ type: 'navigate' }]);
+  context.setTimeout = callback => settledTasks.push(callback);
+  context.document.addEventListener = (event, handler) => documentEvents.set(event, handler);
+  context.window.addEventListener = (event, handler) => windowEvents.set(event, handler);
+  runInNewContext(script, context);
+  documentEvents.get('astro:page-load')();
+  windowEvents.get('scrollend')();
+  // Astro may register its scrollend listener after the inline initializer.
+  history.scrollRestoration = 'manual'; state.scrollY = 1100;
+  settledTasks.shift()();
+  assert.equal(history.scrollRestoration, 'auto');
+  assert.equal(history.state, state); assert.equal(history.state.scrollY, 1100);
+  windowEvents.get('scrollend')();
+  documentEvents.get('astro:before-preparation')();
+  settledTasks.shift()();
+  assert.equal(history.scrollRestoration, 'manual');
+  windowEvents.get('scrollend')(); settledTasks.shift()();
+  assert.equal(history.scrollRestoration, 'manual');
+  documentEvents.get('astro:page-load')();
+  assert.equal(history.scrollRestoration, 'auto');
+  windowEvents.get('scrollend')(); windowEvents.get('popstate')(); settledTasks.shift()();
+  assert.equal(history.scrollRestoration, 'manual');
 });
 
 test('shared layouts preload the same primary typefaces without route-specific exceptions', () => {

@@ -9,6 +9,8 @@ export interface MetricGroup {
   minutes: number;
   mean_score: number | null;
   rated_titles: number;
+  detail?:string;
+  time_known?:boolean;
 }
 export interface Distribution { key: string; label: string; titles: number; }
 export interface GenreTitle { key: string; title: string; poster: string | null; href: string; score: number | null; }
@@ -17,6 +19,7 @@ export interface MediaGroup extends MetricGroup {
   runtime_missing_plays: number;
 }
 export interface GenreGroup extends MediaGroup {
+  href?:string;
   browse_filters: { movie: string; series: string };
 }
 export interface StudioGroup extends MediaGroup { href: string; }
@@ -65,7 +68,7 @@ export function countryLabel(code: string): string {
   return code === 'Unknown' ? 'Unknown' : new Intl.DisplayNames(['en'], { type: 'region' }).of(code) || code;
 }
 export function metricValue(row: MetricGroup, metric: ChartMetric): number | null {
-  return metric === 'hours' ? row.minutes / 60 : row[metric];
+  return metric === 'hours' ? row.time_known===false?null:row.minutes / 60 : row[metric];
 }
 export function displayNumber(value: number | null, decimals = 0): string {
   return value === null ? '—' : value.toLocaleString('en', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });

@@ -1,10 +1,11 @@
 from core import settings_store
+from core.profile_images import background_url as profile_background_url
 import asyncio
 from collections import defaultdict
 from html import escape
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, UploadFile, File
-from fastapi.responses import FileResponse, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, UploadFile, File, Form
+from fastapi.responses import FileResponse, Response, RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import func, case, or_, text
@@ -18,7 +19,7 @@ from core import tmdb as tmdb_client
 from core.credits import credits_stats, maybe_backfill_credits
 from core.translations import upsert_media_translation, upsert_show_translation
 
-from dependencies import get_current_user, get_current_user_or_api_key
+from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user_or_api_key
 from models.users import User
 from models.profile import UserProfileData, PrivacyLevel
 from models.events import WatchEvent
@@ -40,19 +41,15 @@ router = APIRouter()
 @router.get("/public-access-status")
 async def get_public_access_status(
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user_or_api_key),
 ):
-    """Global feature flags for authenticated page renders
-    about, regardless of login state. Originally just anon-nav access status
-    (read by the frontend's auth middleware to decide whether an anonymous
-    request to a gated page should be let through) - now also carries other
-    admin toggles like disable_comments (#301) that hide UI for every
-    visitor, not just anonymous ones."""
+    """Public display flags used before authenticating anonymous navigation.
+
+    This response contains no provider credentials or private account data.
+    Each destination still checks its own access and privacy policy.
+    """
     result = await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))
     gs = result.scalar_one_or_none()
     return {
-        # Requires a global TMDB key even if the toggle is on, in case the key
-        # was removed after the admin enabled it.
         "enable_logged_out_navigation": bool(gs and gs.enable_logged_out_navigation),
         "disable_comments": bool(gs and gs.disable_comments),
         "image_cache_enabled": bool(gs and gs.image_cache_enabled),
@@ -125,6 +122,9 @@ async def get_profile(
     )
     profile = result.scalar_one_or_none()
     resp = schemas.UserProfileResponse.model_validate(profile) if profile else schemas.UserProfileResponse()
+    if profile:
+        from core.profile_images import background_url
+        resp.background_url=await background_url(db,profile)
     if profile and profile.avatar_path:
         resp.avatar_url = f"/profile/avatar/{current_user.id}"
     return resp
@@ -152,6 +152,7 @@ async def update_profile(
         db.add(profile)
 
     values = body.model_dump(exclude_unset=True)
+    if "background_url" in values and "background_crop" not in values:values["background_crop"]=None
     for field, value in values.items():
         setattr(profile, field, value)
 
@@ -183,45 +184,92 @@ async def rename_account(body: schemas.AccountNameUpdate, current_user: CurrentA
     return {"username": body.username}
 
 
-_ALLOWED_AVATAR_TYPES = {"image/jpeg", "image/png", "image/webp"}
-_AVATAR_EXT = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
-_MAX_AVATAR_BYTES = 5 * 1024 * 1024  # 5 MB
-
-
-@router.post("/me/avatar")
-async def upload_avatar(
-    file: UploadFile = File(...),
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    if file.content_type not in _ALLOWED_AVATAR_TYPES:
-        raise HTTPException(status_code=400, detail="Unsupported image type. Use JPEG, PNG or WebP.")
-
-    content = await file.read()
-    if len(content) > _MAX_AVATAR_BYTES:
-        raise HTTPException(status_code=400, detail="File too large. Maximum size is 5 MB.")
-
-    ext = _AVATAR_EXT[file.content_type]
+async def save_profile_upload(kind,file,crop,current_user,db):
+    from core import profile_images
+    from pydantic import ValidationError
+    try:framing=schemas.BackgroundCrop.model_validate_json(crop)
+    except ValidationError:raise HTTPException(422,'Invalid crop selection') from None
+    content=await profile_images.read_upload(file,kind,framing)
     await db.execute(text(AVATAR_WRITE_LOCK_SQL))
-    avatars_dir = settings.data_dir / "avatars"
-    avatars_dir.mkdir(parents=True, exist_ok=True)
-
-    # Remove any existing avatar for this user (may have different extension)
-    for old in avatars_dir.glob(f"{current_user.id}.*"):
-        old.unlink(missing_ok=True)
-
-    fname = f"{current_user.id}.{ext}"
-    (avatars_dir / fname).write_bytes(content)
-
-    result = await db.execute(select(UserProfileData).where(UserProfileData.user_id == current_user.id))
-    profile = result.scalar_one_or_none()
-    if profile is None:
-        profile = UserProfileData(user_id=current_user.id)
-        db.add(profile)
-    profile.avatar_path = fname
+    profile=await db.scalar(select(UserProfileData).where(UserProfileData.user_id==current_user.id).with_for_update())
+    if profile is None:profile=UserProfileData(user_id=current_user.id);db.add(profile)
+    await profile_images.store(current_user.id,kind,content)
+    if kind=='avatar':profile.avatar_path=profile_images.filename(current_user.id,kind)
+    else:profile.background_url=profile_images.background_route(current_user.id);profile.background_crop=None
     await db.commit()
+    return {'avatar_url':f'/profile/avatar/{current_user.id}'} if kind=='avatar' else {'background_url':profile.background_url,'background_crop':None}
 
-    return {"avatar_url": f"/profile/avatar/{current_user.id}"}
+
+@router.post('/me/avatar')
+async def upload_avatar(file:Annotated[UploadFile,File()],db:Annotated[AsyncSession,Depends(get_db)],
+    current_user:Annotated[User,Depends(get_current_user)],crop:Annotated[str,Form()]='{}') -> dict:
+    return await save_profile_upload('avatar',file,crop,current_user,db)
+
+
+@router.post('/me/background')
+async def upload_background(file:Annotated[UploadFile,File()],db:Annotated[AsyncSession,Depends(get_db)],
+    current_user:Annotated[User,Depends(get_current_user)],crop:Annotated[str,Form()]='{}') -> dict:
+    return await save_profile_upload('background',file,crop,current_user,db)
+
+
+@router.put('/me/background')
+async def select_background(body:schemas.ProfileBackgroundSource,background_tasks:BackgroundTasks,
+    db:Annotated[AsyncSession,Depends(get_db)],current_user:Annotated[User,Depends(get_current_user)]) -> dict:
+    from core.image_cache import parse_image_url,upstream_image_url
+    try:
+        size,path=parse_image_url(body.image)
+        valid=bool(size and path and upstream_image_url(size,path)==body.image)
+    except ValueError:valid=False
+    if not valid:
+        raise HTTPException(422,'Choose artwork from a supported gallery')
+    await db.execute(text(AVATAR_WRITE_LOCK_SQL))
+    profile=await db.scalar(select(UserProfileData).where(UserProfileData.user_id==current_user.id).with_for_update())
+    if profile is None:profile=UserProfileData(user_id=current_user.id);db.add(profile)
+    profile.background_url=body.image;profile.background_crop=body.crop.model_dump()
+    await db.commit()
+    config=await settings_store.get_global_settings(db)
+    if config and config.image_cache_enabled:background_tasks.add_task(cache_profile_background,size,path,config.image_cache_limit_gb)
+    from core.profile_images import background_url
+    return {'background_url':await background_url(db,profile),'background_crop':profile.background_crop}
+
+
+async def cache_profile_background(size,path,limit_gb):
+    from core.image_cache import download_and_cache_image,prune_cache_bg
+    async with AsyncSessionLocal() as db:await download_and_cache_image(db,size,path)
+    await prune_cache_bg(limit_gb)
+
+
+@router.delete('/me/background')
+async def delete_background(db:Annotated[AsyncSession,Depends(get_db)],current_user:Annotated[User,Depends(get_current_user)]) -> dict:
+    await db.execute(text(AVATAR_WRITE_LOCK_SQL))
+    profile=await db.scalar(select(UserProfileData).where(UserProfileData.user_id==current_user.id).with_for_update())
+    if profile:
+        profile.background_url=None;profile.background_crop=None
+        from core.profile_images import filename
+        await asyncio.to_thread((settings.data_dir/'avatars'/filename(current_user.id,'background')).unlink,missing_ok=True)
+        await db.commit()
+    return {'background_url':None,'background_crop':None}
+
+
+@router.get('/background/{user_id}')
+async def get_background(user_id:int,db:Annotated[AsyncSession,Depends(get_db)],
+    current_user:Annotated[User|None,Depends(get_optional_user_or_api_key)]) -> Response:
+    _,profile=await _check_profile_access(user_id,current_user,db)
+    if not profile or not profile.background_url:raise HTTPException(404,'No profile background')
+    from core import profile_images
+    if profile.background_url==profile_images.background_route(user_id):
+        path=settings.data_dir/'avatars'/profile_images.filename(user_id,'background')
+        if not path.is_file() or path.is_symlink():raise HTTPException(404,'No profile background')
+        return FileResponse(path,media_type='image/webp',headers={'Cache-Control':'private, no-store'})
+    from core.image_cache import download_and_cache_image,parse_image_url,prune_cache_bg
+    size,path=parse_image_url(profile.background_url)
+    config=await settings_store.get_global_settings(db)
+    if config and config.image_cache_enabled and size and path:
+        local=await download_and_cache_image(db,size,path)
+        if local:
+            from starlette.background import BackgroundTask
+            return FileResponse(local,media_type='image/jpeg' if size=='metahub' else None,headers={'Cache-Control':'private, no-store'},background=BackgroundTask(prune_cache_bg,limit_gb=config.image_cache_limit_gb))
+    return RedirectResponse(profile.background_url,headers={'Cache-Control':'private, no-store'})
 
 
 @router.delete("/me/avatar")
@@ -234,8 +282,8 @@ async def delete_avatar(
     profile = result.scalar_one_or_none()
     if profile and profile.avatar_path:
         avatars_dir = settings.data_dir / "avatars"
-        for old in avatars_dir.glob(f"{current_user.id}.*"):
-            old.unlink(missing_ok=True)
+        for ext in ("jpg","png","webp"):
+            (avatars_dir/f"{current_user.id}.{ext}").unlink(missing_ok=True)
         profile.avatar_path = None
         await db.commit()
     return {"status": "ok"}
@@ -471,7 +519,7 @@ async def _run_translation_backfill(user_id: int, language: str, tmdb_key: str) 
 async def get_avatar(
     user_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user_or_api_key),
+    current_user: User | None = Depends(get_optional_user_or_api_key),
 ):
     user, _ = await _check_profile_access(user_id, current_user, db)
 
@@ -965,7 +1013,8 @@ async def get_public_profile(
         "username": user.username,
         "display_name": display_name,
         "avatar_url": f"/profile/avatar/{user.id}" if (profile and profile.avatar_path) else None,
-        "background_url": profile.background_url if profile else None,
+        "background_crop": profile.background_crop if profile else None,
+        "background_url": await profile_background_url(db,profile),
         "bio": profile.bio if profile else None,
         "profile_color": profile.profile_color if profile else "#3db4f2",
         "country": profile.country if profile else None,

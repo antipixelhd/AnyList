@@ -1,20 +1,27 @@
 import { editorStore, type EditorTitle } from './editor-store';
 import {showActionFailure} from './action-failure';
 import {predictionAllowed} from './predictive-loading';
+import {resolveGameId} from './game-discovery';
+import {localToday} from './date-time';
+import {browseActionLabel,browseStatusLabel,expansionCard,browseCardCanEdit,browseCardQuickActions} from './browse-card-data';
 
 export type BrowseItem = {
-  id: number | null; tmdb_id: number | null; type: string; title: string;
+  id: number | null; tmdb_id?: number | null; type: string; title: string;
+  igdb_id?:number; game_class?:string;
+  base_work_id?:number|null; base_listed?:boolean|null;
   poster?: string | null; backdrop?: string | null; year?: string; release_date?: string | null;
+  release_date_precision?: string | null; release_quarter?: number | null;
   release_event?: string | null; release_season?: number | null; release_country?: string | null;
   list_status?: string | null; score?: number | null; rating_mode?: string;
   favorite?: boolean;
   entry?: Record<string, any> | null; editor_library?: EditorTitle['editor_library'];
 };
-const labels: Record<string, string> = {watching:'Watching',completed:'Completed',planning:'Planning',paused:'Paused',dropped:'Dropped'};
 export const sameBrowseTitle = (a: BrowseItem, b: Pick<EditorTitle, 'id' | 'tmdb_id' | 'type'>) =>
-  !!(b.id && a.id === b.id) || !!(b.tmdb_id && a.tmdb_id === b.tmdb_id && a.type === b.type);
+  a.type === b.type && (!!(b.id && a.id === b.id) || !!(b.tmdb_id && a.tmdb_id === b.tmdb_id));
 
 export function paintBrowseCardState(card: HTMLElement, item: BrowseItem) {
+  const actions=card.querySelector<HTMLElement>('.browse-actions');if(actions)actions.hidden=!browseCardCanEdit(item);
+  card.querySelector('[data-browse-action=edit]')?.setAttribute('aria-label',`Open list editor for ${item.title}`);
   card.dataset.state = item.list_status || '';
   card.querySelectorAll<HTMLElement>('[data-editor-icon]').forEach(icon => icon.hidden = icon.dataset.editorIcon === 'edit' ? !item.list_status : !!item.list_status);
   const score = Number(item.score || 0).toFixed(1);
@@ -23,13 +30,19 @@ export function paintBrowseCardState(card: HTMLElement, item: BrowseItem) {
   rating.setAttribute('aria-label', `Your rating: ${score} out of 10`);
   rating.querySelector('[data-score]')!.textContent = score;
   const state = card.querySelector<HTMLElement>('[data-list-state]')!;
-  state.hidden = !item.list_status; state.title = labels[item.list_status || ''] || '';
+  const game=item.type==='game';
+  state.hidden = !item.list_status; state.title = browseStatusLabel(item.list_status||'',game);
   state.setAttribute('aria-label', state.title);
   state.querySelectorAll<HTMLElement>('[data-state-icon]').forEach(icon => icon.hidden = icon.dataset.stateIcon !== item.list_status);
   for (const action of ['watch','plan','rate']) {
     const button = card.querySelector<HTMLButtonElement>(`[data-browse-action=${action}]`);
-    if (button) button.hidden = action === 'watch' ? item.list_status === 'watching' : action === 'plan' ? !!item.list_status : item.score != null && item.score > 0;
+    if (button){
+      button.hidden = !browseCardQuickActions(item)||(action === 'watch' ? item.list_status === (game?'playing':'watching') : action === 'plan' ? !!item.list_status : item.score != null && item.score > 0);
+      button.setAttribute('aria-label',`${browseActionLabel(action,game)} ${item.title}`);
+      if(action!=='rate')button.dataset.tooltip=browseActionLabel(action,game);
+    }
   }
+  const extras=card.querySelector<HTMLElement>('.browse-extra-actions');if(extras)extras.hidden=!browseCardQuickActions(item);
 }
 
 export function bindBrowseCardActions<T extends BrowseItem>(
@@ -37,6 +50,21 @@ export function bindBrowseCardActions<T extends BrowseItem>(
   onUpdate: (item: T) => void, onError: (message: string) => void,
 ) {
   const titleFor = (item: T) => editorStore.get({...item, entry:item.entry ?? null});
+  const gameReads=new Map<number,Promise<EditorTitle>>();
+  const gameTitle=async(item:T)=>{
+    const key=item.igdb_id||-item.id!;
+    const existing=gameReads.get(key);if(existing)return existing;
+    const read=(async()=>{
+      const id=item.id||await resolveGameId(item.igdb_id!,signal);
+      if(signal.aborted)throw new Error('Browse changed.');
+      for(const other of items.values())if(other.type==='game'&&(other.igdb_id===item.igdb_id&&item.igdb_id||other.id===id))other.id=id;
+      const title=await editorStore.loadSubject({kind:'game',catalogue_id:id});
+      if(!signal.aborted)onUpdate({...item,id,list_status:title.entry?.status,score:title.entry?.score});
+      return title;
+    })();
+    gameReads.set(key,read);
+    try{return await read;}finally{if(gameReads.get(key)===read)gameReads.delete(key);}
+  };
   let warmTimer:ReturnType<typeof setTimeout>|undefined;
   let warmCard:HTMLElement|undefined;
   const clearWarm=()=>{clearTimeout(warmTimer);warmCard=undefined;};
@@ -49,7 +77,8 @@ export function bindBrowseCardActions<T extends BrowseItem>(
       warmTimer=setTimeout(()=>{
         if(signal.aborted||!card.isConnected||!predictionAllowed())return;
         const image = card.querySelector<HTMLImageElement>('[data-poster]');
-        editorStore.warmArtwork(titleFor(item), image?.currentSrc || image?.src);
+        const title=item.type==='game'?item.id?editorStore.findSubject({kind:'game',catalogue_id:item.id}):undefined:titleFor(item);
+        if(title)editorStore.warmArtwork(title, image?.currentSrc || image?.src);
       },180);
     }
   };
@@ -60,6 +89,12 @@ export function bindBrowseCardActions<T extends BrowseItem>(
   signal.addEventListener('abort',clearWarm,{once:true});
   document.addEventListener('anylist:editor-state', event => {
     const title = (event as CustomEvent<EditorTitle>).detail;
+    if(title.type==='game')for(const dependent of items.values()){
+      if(expansionCard(dependent)&&dependent.base_work_id===title.id){
+        const listed=!!title.entry;
+        onUpdate({...dependent,base_listed:listed,...(!listed?{entry:null,list_status:null,score:null}:{})});
+      }
+    }
     const item = [...items.values()].find(item => sameBrowseTitle(item, title));
     if (item) onUpdate({...item,id:title.id,entry:title.entry,list_status:title.entry?.status,score:title.entry?.score,rating_mode:title.entry?.rating_mode});
   }, {signal});
@@ -67,20 +102,25 @@ export function bindBrowseCardActions<T extends BrowseItem>(
     const button = (event.target as Element).closest<HTMLButtonElement>('[data-browse-action]');
     const card = button?.closest<HTMLElement>('[data-browse-card]');
     const item = card && items.get(card);
-    if (!button || !card || !item || button.disabled) return;
-    const title = titleFor(item);
-    const wasNew = !title.entry;
+    if (!button || !card || !item || button.disabled || !browseCardCanEdit(item)) return;
+    let wasNew = !item.list_status;
     const saved = (entry: any) => { if (!signal.aborted) document.dispatchEvent(new CustomEvent('anylist:entry-saved', {detail:entry})); };
     try {
-      if (button.dataset.browseAction === 'edit') {
-        document.dispatchEvent(new CustomEvent('anylist:open-editor', {detail:{mediaId:item.id,opener:button,title}}));
+      const game=item.type==='game';if(game)button.disabled=true;
+      const title=game?await gameTitle(item):titleFor(item);
+      wasNew = !title.entry;
+      if(signal.aborted)return;
+      if(game)editorStore.warmArtwork(title,card.querySelector<HTMLImageElement>('[data-poster]')?.currentSrc);
+      if (button.dataset.browseAction === 'edit'||!browseCardQuickActions(item)) {
+        document.dispatchEvent(new CustomEvent('anylist:open-editor', {detail:game?{subject:title.subject,opener:button,title}:{mediaId:item.id,opener:button,title}}));
       } else if (button.dataset.browseAction === 'plan' || button.dataset.browseAction === 'watch') {
         button.disabled = true;
-        saved(await editorStore.write(title, {status:button.dataset.browseAction === 'watch' ? 'watching' : 'planning'}));
+        const status=button.dataset.browseAction==='watch'?(game?'playing':'watching'):'planning';
+        saved(await editorStore.write(title, {status,...(game&&status==='playing'&&title.entry?.status!=='playing'&&!title.entry?.start_date?{start_date:localToday()}:{} )}));
       } else {
         (window as any).anyListQuickRate?.({title:item.title,poster:item.poster,posterSrc:card.querySelector<HTMLImageElement>('[data-poster]')?.currentSrc,
           score:title.entry?.score,ratingMode:title.entry?.rating_mode || 'manual',
-          onScore: async (score: number | null) => saved(await editorStore.write(title, {manual_score:score ?? 0,...(score != null ? {status:'completed',rating_mode:'manual'} : {})})),
+          onScore: async (score: number | null) => saved(await editorStore.write(title, game?{score,...(score!=null?{status:'completed',...(title.entry?.status!=='completed'&&!title.entry?.finish_date?{finish_date:localToday()}:{})}:{})}:{manual_score:score ?? 0,...(score != null ? {status:'completed',rating_mode:'manual'} : {})})),
         });
       }
     } catch (error) { if (!signal.aborted) showActionFailure(wasNew ? 'add' : 'status', item.title, error); }

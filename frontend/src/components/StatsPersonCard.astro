@@ -6,14 +6,14 @@ import { genreTime } from '../lib/stats-genres-data';
 import { actorTitleImage, type ActorArtwork } from '../lib/stats-actors-data';
 import { personTitleLabel } from '../lib/stats-staff-data';
 import { responsiveArtwork } from '../lib/responsive-artwork';
-interface Props { person: ActorGroup | StaffGroup; rank: number; mode: ActorArtwork; prefix: 'actor' | 'staff'; }
-const { person: actor, rank, mode, prefix } = Astro.props;
+interface Props { person: ActorGroup | StaffGroup; rank: number; mode: ActorArtwork; prefix: 'actor' | 'staff';timeLabel?:string; }
+const { person: actor, rank, mode, prefix,timeLabel='Time Watched' } = Astro.props;
 const portrait = responsiveArtwork(actor.image, { size: 'w185', sizes: '(max-width:650px) 80px, 110px', route:'direct' });
 ---
 <article class="stats-genre-card stats-actor-card" {...{[`data-${prefix}-key`]: actor.key, [`data-${prefix}-signature`]: JSON.stringify(actor)}} aria-label={actor.label}>
   <div class="stats-genre-summary">
     <header><h3><a {...{[`data-${prefix}-link`]: ""}} href={actor.href} title={actor.label}>{actor.label}</a></h3><span class="stats-genre-rank" {...{[`data-${prefix}-rank`]: ""}} aria-label={`Rank ${rank}`}>{rank}</span></header>
-    <dl><div><dt>Count</dt><dd {...{[`data-${prefix}-count`]: ""}}>{displayNumber(actor.titles)}</dd></div><div><dt>Mean Score</dt><dd {...{[`data-${prefix}-score`]: ""}}>{displayNumber(actor.mean_score, 2)}</dd></div><div><dt>Time Watched</dt><dd {...{[`data-${prefix}-time`]: ""}}>{genreTime(actor)}</dd></div></dl>
+    <dl><div><dt>Count</dt><dd {...{[`data-${prefix}-count`]: ""}}>{displayNumber(actor.titles)}</dd></div><div><dt>Mean Score</dt><dd {...{[`data-${prefix}-score`]: ""}}>{displayNumber(actor.mean_score, 2)}</dd></div><div><dt>{timeLabel}</dt><dd {...{[`data-${prefix}-time`]: ""}}>{genreTime(actor)}</dd></div></dl>
   </div>
   <a class="stats-actor-portrait" {...{[`data-${prefix}-portrait`]: ""}} href={actor.href} aria-label={actor.label}>
     {portrait ? <img {...portrait} data-artwork-fallback="true" alt="" loading="lazy" /> : <span class="stats-actor-placeholder" aria-hidden="true">{actor.label.slice(0, 1)}</span>}

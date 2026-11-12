@@ -41,8 +41,8 @@ test('browser writes require an origin check and independently authenticated API
 });
 
 test('anonymous catalog imports require same-origin validation', () => {
-  for (const type of ['movie','series']) {
-    const path=`/api/proxy/tracking/catalog/${type}/123`;
+  for (const type of ['catalog/movie','catalog/series','games/resolve']) {
+    const path=`/api/proxy/tracking/${type}/123`;
     assert.equal(requiresSameOrigin('POST',path,false,false),true);
     assert.equal(requiresSameOrigin('POST',`${path}/`,false,false),true);
     assert.equal(requiresSameOrigin('POST',path,false,true),false);

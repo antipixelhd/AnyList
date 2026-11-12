@@ -5,13 +5,20 @@
   import { mutationFetch } from '../lib/mutation-fetch';
   import { showToast as notify } from '../lib/toasts';
   import {createPrediction,bindPredictionIntent,predictionManifest,predictivePage,predictionAllowed,type PredictionArtwork} from '../lib/predictive-loading';
+  import {approvedGamesPage,reusableGamesPage} from '../lib/game-public-routes';
+  import {profilePanelKey} from '../lib/profile-panel';
+  import {snapshotHasGames,authorizeGameSnapshot} from '../lib/navigation-games-access';
   import {editorStore,type EditorTitle} from '../lib/editor-store';
   import {isFailureHandled} from '../lib/handled-failures';
   import {responsiveArtwork} from '../lib/responsive-artwork';
   import {clearStoredBrowseCache} from '../lib/browse-cache';
+  import {createGameIntent,gameIntentTarget} from '../lib/game-intent';
+  import {instantPageTransitions} from '../lib/instant-page-transitions';
+  import {detailDestination,detailHints,detailLinkTitle,mountRoutePreview,prepareDetailResolution,type DetailHint} from '../lib/detail-loading';
+  import {settleNavigationContent,cancelLoadingReveals} from '../lib/loading-reveal';
   wirePasswordToggles();
 
-  type CachedPage = { html: string; bytes: number; storedAt: number; predicted?:boolean };
+  type CachedPage = { html: string; bytes: number; storedAt: number; predicted?:boolean; requiresGamesAccess?:boolean };
   type NavigationState = {
     user: string;
     pages: Map<string, CachedPage>;
@@ -19,6 +26,7 @@
     usedCached: Set<string>;
     generation?: number;
     timer?: number;
+    finishTimer?: number;
     initialized?: boolean;
     alignListLanding?: boolean;
     originalFetch?: typeof window.fetch;
@@ -26,6 +34,7 @@
     predictionNavigation?: {key:string;signal:AbortSignal;generation:number};
     predictionBudget?: number;
     previewPrediction?:ReturnType<typeof createPrediction<EditorTitle>>;
+    gameIntent?:ReturnType<typeof createGameIntent>;
     artwork?: Map<string,HTMLImageElement>;
   };
   declare global {
@@ -36,10 +45,10 @@
   }
 
   const currentUser = () => document.body.dataset.cacheUser || 'anonymous';
-  const cacheable = (url: URL) => url.origin === location.origin && (
-    ['/home','/browse','/recent-events','/connections'].includes(url.pathname)
+  const cacheable = (url: URL) => url.origin === location.origin && (!approvedGamesPage(url)||reusableGamesPage(url)) && (
+    ['/home','/browse','/browse/games','/recent-events','/connections'].includes(url.pathname)
     || predictivePage(url,location.origin)
-    || /^\/user\/[^/]+(?:\/(?:movies|series|list|library|social|stats))?$/.test(url.pathname)
+    || /^\/user\/[^/]+(?:\/(?:movies|series|list|games|library|social|stats(?:\/games)?))?$/.test(url.pathname)
   );
   const keyFor = (url: URL, user = currentUser()) => `${user}:${url.pathname}${url.search}`;
   const state: NavigationState = window.__anyListNavigation ||= {
@@ -48,6 +57,7 @@
 
   function clearPages() {
     state.prediction?.cancel();state.previewPrediction?.cancel();state.predictionNavigation=undefined;
+    state.gameIntent?.reset();
     state.pages.clear();
     document.dispatchEvent(new Event('anylist:cache-invalidated'));
     state.usedCached.clear();
@@ -57,6 +67,7 @@
 
   function resetForIdentity() {
     const user = currentUser();
+    detailHints.scope(user);
     if (state.user === user) return;
     state.user = user;
     clearPages();
@@ -118,7 +129,10 @@
   }
 
   function sanitizedHtml(doc: Document, url: URL) {
-    const clone = doc.documentElement.cloneNode(true) as HTMLElement;
+    // Copy into an inert template document: cloning into the live document can
+    // start image/preload requests before their media/source attributes exist.
+    const inert = document.createElement('template').content.ownerDocument;
+    const clone = inert.importNode(doc.documentElement, true) as HTMLElement;
     if (url.pathname === '/connections' && !redactedConnections(doc, clone)) return null;
     clone.querySelectorAll('[data-token]').forEach(element => element.removeAttribute('data-token'));
     // An open attribute copied into cached HTML restores a non-modal dialog:
@@ -129,13 +143,15 @@
       input.removeAttribute('value');
     });
     clone.querySelectorAll('[data-route-progress]').forEach(element => element.classList.remove('visible','finishing'));
+    clone.querySelectorAll('[data-route-pending]').forEach(element => element.removeAttribute('data-route-pending'));
     clone.querySelectorAll('[data-toast-host]').forEach(element => element.replaceChildren());
     return '<!doctype html>' + clone.outerHTML;
   }
 
   function remember(url: URL, doc: Document) {
     resetForIdentity();
-    if (!cacheable(url) || doc.body.dataset.cacheUser !== state.user) return;
+    if (!cacheable(url) || doc.body.dataset.cacheUser !== state.user || doc.querySelector('[data-browse-shell],[data-profile-shell]')) return;
+    if(!reusableGamesPage(url)&&(doc.body.hasAttribute('data-games-access')||doc.querySelector('[data-contributor-page][data-media-type="game"]')))return;
     const html = sanitizedHtml(doc, url);
     if (!html) return;
     const bytes = new Blob([html]).size;
@@ -144,7 +160,7 @@
     const previous = state.pages.get(key);
     if (previous) state.bytes -= previous.bytes;
     state.pages.delete(key);
-    state.pages.set(key, { html, bytes, storedAt: Date.now() });
+    state.pages.set(key, { html, bytes, storedAt: Date.now(),requiresGamesAccess:reusableGamesPage(url)||snapshotHasGames(html) });
     state.bytes += bytes;
     while (state.pages.size > 18 || state.bytes > 10_000_000) {
       const oldest = state.pages.keys().next().value as string | undefined;
@@ -195,22 +211,66 @@
     finally { state.usedCached.delete(key); }
   }
 
-  function startProgress() {
+  function startProgress(delay = 90) {
+    window.clearTimeout(state.finishTimer);
+    document.querySelector('[data-route-progress]')?.classList.remove('finishing');
     window.clearTimeout(state.timer);
     state.timer = window.setTimeout(() => {
       document.querySelector('[data-route-progress]')?.classList.add('visible');
-    }, 150);
+    }, delay);
   }
   function finishProgress() {
     window.clearTimeout(state.timer);
     const bar = document.querySelector<HTMLElement>('[data-route-progress]');
     if (!bar) return;
     bar.classList.add('finishing');
-    window.setTimeout(() => bar.classList.remove('visible','finishing'), 170);
+    window.clearTimeout(state.finishTimer);
+    state.finishTimer=window.setTimeout(() => bar.classList.remove('visible','finishing'), 170);
   }
 
   if (!state.initialized) {
     state.initialized = true;
+    instantPageTransitions(document);
+    let clearPreview:(()=>void)|undefined;
+    let clearNavigationFeedback:(()=>void)|undefined;
+    let pageEntrance:AbortSignal|undefined;
+    let profileTabPosition:{top:number;left:number}|undefined;
+    document.addEventListener('astro:before-swap',event=>{
+      const sourceTabs=event.sourceElement?.closest<HTMLElement>('.profile-tabs[data-profile-base]');
+      const incomingTabs=sourceTabs&&event.newDocument.querySelector<HTMLElement>('.profile-tabs[data-profile-base]');
+      if(pageEntrance&&!pageEntrance.aborted&&!event.to.hash&&sourceTabs&&incomingTabs?.dataset.profileBase===sourceTabs.dataset.profileBase){
+        profileTabPosition={top:sourceTabs.getBoundingClientRect().top,left:sourceTabs.scrollLeft};
+      }
+      prepareDetailResolution(event.newDocument,event.to,currentUser());
+      clearPreview?.();clearPreview=undefined;
+      clearNavigationFeedback?.();
+    });
+    document.addEventListener('click',event=>{
+      const link=(event.target as Element)?.closest<HTMLAnchorElement>('a[href]');if(!link)return;
+      const url=new URL(link.href);if(url.origin!==location.origin||!detailDestination(url))return;
+      detailHints.scope(currentUser());
+      const row=link.closest<HTMLElement>('.entry-row,.browse-card,.quick-search-result,.progress-card,.visual-event');
+      const destination=detailDestination(url)!;
+      const id=Number(url.pathname.split('/').pop());
+      const known=destination.kind==='game'&&url.pathname.startsWith('/games/')?editorStore.findSubject({kind:'game',catalogue_id:id})
+        :url.pathname.startsWith('/title/')?editorStore.find(id):undefined;
+      const kind=known?.type||link.dataset.detailKind||row?.dataset.detailKind||row?.dataset.mediaType||destination.kind;
+      const title=known?.title||detailLinkTitle(link,row??undefined);
+      const image=(row??link).querySelector<HTMLImageElement>(row?.matches('.visual-event')?'.event-cover img':'img');
+      const ownGamesList=row?.closest('[data-list-domain="game"][data-owner="true"]');
+      const child=row?.dataset.gameBase||['expansion','dlc'].includes(known?.game_class||'');
+      const progress=kind==='game'&&ownGamesList&&!child?{
+        hours:row?.querySelector('[data-game-list-hours]')?.textContent?.trim().replace(/^—$/,'')||null,
+        achievement:row?.querySelector('[data-game-list-achievements][data-known="true"]')?.textContent?.trim()||null,
+      }:undefined;
+      if(title)detailHints.set(url,{kind:['movie','series','game'].includes(kind)?kind as DetailHint['kind']:'unknown',title,
+        poster:known?.poster||image?.currentSrc||image?.src,backdrop:known?.backdrop,library:known?.editor_library?.available,progress,
+        heading:{year:known?.year||row?.dataset.detailYear||row?.querySelector('[data-year]')?.textContent?.trim(),
+          genres:known?.genres,originalTitle:known?.original_title,tagline:known?.tagline,creators:known?.detail_creators,
+          primaryPending:kind==='game'?known?.game_metadata_status?.primary_ready===false:known?.primary_status?.pending}});
+    },true);
+    document.addEventListener('anylist:route-progress-start',()=>startProgress(220));
+    document.addEventListener('anylist:route-progress-end',finishProgress);
     document.addEventListener('anylist:cache-invalidated', () => {
       try { clearStoredBrowseCache(window.sessionStorage); } catch { /* Storage is optional. */ }
     });
@@ -220,10 +280,10 @@
       const url=new URL(href),generation=state.generation,user=state.user;
       const response=await state.originalFetch!(href,{signal:AbortSignal.any([signal,AbortSignal.timeout(6000)]),credentials:'same-origin',cache:'no-store',headers:{Accept:'text/html'}});
       if(!response.ok||response.redirected||!response.headers.get('content-type')?.includes('text/html'))throw new Error('Prediction unavailable');
-      const html=await response.text(),sources=predictionManifest(html,user);
+      const html=await response.text(),sources=predictionManifest(html,user,reusableGamesPage(url));
       if(signal.aborted||generation!==state.generation||!sources)throw new Error('Prediction invalidated');
       const bytes=new Blob([html]).size;if(bytes>2_000_000)throw new Error('Prediction too large');
-      const page={html,bytes,storedAt:Date.now(),predicted:true};storePrediction(url,page);warmPrimary(sources);return page;
+      const page={html,bytes,storedAt:Date.now(),predicted:true,requiresGamesAccess:reusableGamesPage(url)||snapshotHasGames(html)};storePrediction(url,page);warmPrimary(sources);return page;
     },lifetime.signal);
     state.previewPrediction=createPrediction<EditorTitle>(async(path,signal)=>{
       const generation=state.generation,user=state.user;
@@ -236,9 +296,16 @@
         responsiveArtwork(title.backdrop,{size:'w1280',sizes:'100vw',route:'auto'})].filter(Boolean) as PredictionArtwork[]);
       return title;
     },lifetime.signal);
+    state.gameIntent=createGameIntent(state.originalFetch!);
     bindPredictionIntent(document,lifetime.signal,link=>{
       const url=new URL(link.href);
-      if(url.origin!==location.origin||link.target||link.hasAttribute('download')||link.hasAttribute('data-astro-reload'))return;
+      if(!link.target&&!link.hasAttribute('download')&&!link.hasAttribute('data-astro-reload')){
+        const game=gameIntentTarget(url,location.origin);
+        if(game){state.gameIntent!.warm(game);return;}
+      }
+      if(url.origin!==location.origin||approvedGamesPage(url)&&!reusableGamesPage(url)||link.target||link.hasAttribute('download')||link.hasAttribute('data-astro-reload'))return;
+      if(link.closest('[data-profile-shell]')&&profilePanelKey(url))return;
+      if(link.hasAttribute('data-browse-type')&&link.closest('[data-browse-shell]'))return;
       if(url.pathname==='/discover-title'){
         const type=url.searchParams.get('type'),id=url.searchParams.get('id');
         if(!['movie','series'].includes(type||'')||!id||!/^\d+$/.test(id))return;
@@ -260,6 +327,10 @@
       if(String(init?.method||request?.method||'GET').toUpperCase()==='GET'&&target?.key===keyFor(url)){
         let page=state.pages.get(target.key);
         if(!page||!page.predicted||Date.now()-page.storedAt>=30_000)page=await state.prediction!.consume(url.href,target.signal);
+        if(page?.requiresGamesAccess&&!await authorizeGameSnapshot(state.user,target.signal,state.originalFetch,url)){
+          if(state.pages.get(target.key)===page){state.pages.delete(target.key);state.bytes-=page.bytes;}
+          page=undefined;state.predictionNavigation=undefined;
+        }
         if(page&&target===state.predictionNavigation&&!target.signal.aborted&&target.generation===state.generation){
           state.predictionNavigation=undefined;
           return new Response(page.html,{headers:{'Content-Type':'text/html'}});
@@ -283,38 +354,94 @@
     }, true);
 
     document.addEventListener('astro:before-preparation', rawEvent => {
+      clearNavigationFeedback?.();
+      cancelLoadingReveals();
+      pageEntrance=undefined;
+      profileTabPosition=undefined;
+      clearPreview?.();clearPreview=undefined;
+      if(!document.querySelector('[data-browse-shell]')&&document.querySelector('[data-game-browse]')){
+        document.dispatchEvent(new Event('anylist:before-snapshot'));
+        if(document.querySelector<HTMLElement>('[data-game-browse]')?.dataset.navigationSnapshotReady==='true')remember(new URL(location.href),document);
+      }
       closeNavigationDialogs();
       resetForIdentity();
       const event = rawEvent;
+      const source = event.sourceElement?.closest('a[href]');
+      source?.setAttribute('data-route-pending','');
+      const clear = () => {
+        source?.removeAttribute('data-route-pending');
+        event.signal.removeEventListener('abort',abort);
+        if (clearNavigationFeedback===clear) clearNavigationFeedback=undefined;
+      };
+      const abort = () => { clear(); finishProgress(); };
+      clearNavigationFeedback=clear;
+      event.signal.addEventListener('abort',abort,{once:true});
       state.alignListLanding = event.navigationType !== 'traverse';
       const key = keyFor(event.to);
       state.predictionNavigation=undefined;
       let predicted=state.pages.get(key);
       if(predicted?.predicted&&Date.now()-predicted.storedAt>=30_000){state.pages.delete(key);state.bytes-=predicted.bytes;predicted=undefined;}
-      if(!event.formData&&(predicted?.predicted||state.prediction?.has(event.to.href))){
-        state.predictionNavigation={key,signal:event.signal,generation:state.generation||0};startProgress();return;
+      const destination=detailDestination(event.to),host=document.querySelector<HTMLElement>('#content');
+      if(!event.formData&&event.navigationType!=='traverse'&&
+        (event.from.pathname!==event.to.pathname||destination?.key!==detailDestination(event.from)?.key)){
+        pageEntrance=event.signal;
+      }
+      const resolving=host?.querySelector<HTMLElement>('[data-loading-destination]')?.dataset.loadingDestination===event.to.href;
+      if(destination&&host&&!resolving&&!event.formData&&event.navigationType!=='traverse'&&!predicted&&!state.prediction?.peek(event.to.href)
+        &&document.querySelector('[data-detail-loading-template]')){
+        clearPreview=mountRoutePreview(host,detailHints.get(event.to)||{kind:destination.kind},event.to,event.signal);
+      }
+      if(!event.formData&&(!approvedGamesPage(event.to)||reusableGamesPage(event.to))&&(predicted?.predicted||state.prediction?.has(event.to.href))){
+        state.predictionNavigation={key,signal:event.signal,generation:state.generation||0};startProgress(clearPreview?220:90);return;
       }
       state.prediction?.cancel();
       const cached = cacheable(event.to) && (event.to.pathname !== '/connections' || !navigator.onLine)
         ? state.pages.get(key) : undefined;
       if (!cached) {
-        startProgress();
+        startProgress(clearPreview?220:90);
         return;
       }
-      state.usedCached.add(key);
+      if(cached.requiresGamesAccess)startProgress();
+      const defaultLoader=event.loader,generation=state.generation,user=state.user;
       event.loader = async () => {
+        const authorized=!cached.requiresGamesAccess||await authorizeGameSnapshot(user,event.signal,state.originalFetch,event.to);
+        if(event.signal.aborted)return;
+        if(!authorized||generation!==state.generation||user!==currentUser()){
+          if(state.pages.get(key)===cached){state.pages.delete(key);state.bytes-=cached.bytes;}
+          await defaultLoader();return;
+        }
+        state.usedCached.add(key);
         event.newDocument = new DOMParser().parseFromString(cached.html, 'text/html');
       };
     });
     document.addEventListener('astro:after-preparation', finishProgress);
     document.addEventListener('astro:after-swap', () => {
-      if (!state.alignListLanding || !document.body.hasAttribute('data-list-landing')) return;
-      const tabs = document.querySelector<HTMLElement>('.profile-tabs');
-      if (tabs) window.scrollTo(0, window.scrollY + tabs.getBoundingClientRect().top);
+      const listLanding=state.alignListLanding&&document.body.hasAttribute('data-list-landing');
+      const tabs=(listLanding||profileTabPosition)&&document.querySelector<HTMLElement>('.profile-tabs');
+      if(tabs){
+        const top=profileTabPosition?.top??0;
+        if(profileTabPosition)tabs.scrollLeft=profileTabPosition.left;
+        window.scrollTo(0,window.scrollY+tabs.getBoundingClientRect().top-(listLanding?0:top));
+      }
+      if(pageEntrance&&!pageEntrance.aborted){
+        if(profileTabPosition&&tabs&&!listLanding){
+          const content=document.querySelector<HTMLElement>('#content > [data-profile-tab-content]');
+          if(content)settleNavigationContent(content,'tab',pageEntrance);
+        }else{
+          const detail=document.querySelector<HTMLElement>('.media-detail [data-detail-panels]');
+          const content=detail??document.querySelector<HTMLElement>('#content, #settings-content');
+          if(content&&!content.querySelector('#resolve-title, [data-resolve-game]')){
+            settleNavigationContent(content,'page',pageEntrance,detail||listLanding?undefined:0);
+          }
+        }
+      }
+      pageEntrance=undefined;
+      profileTabPosition=undefined;
     });
     document.addEventListener('astro:page-load', () => {
       finishProgress();
       state.predictionBudget=0;state.predictionNavigation=undefined;
+      state.gameIntent?.reset();
       resetForIdentity();
       const url = new URL(location.href);
       const key = keyFor(url);

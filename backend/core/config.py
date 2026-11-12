@@ -57,6 +57,8 @@ class Settings(BaseSettings):
     oidc_disable_password_login: bool = False
 
     enable_registrations: bool = False
+    new_accounts_games_access: bool = False
+    game_background_mapper_enabled: bool = True
     registration_max_allowed_users: int = 0
 
     # Server defaults survive database resets; account/global DB overrides win.
@@ -68,6 +70,9 @@ class Settings(BaseSettings):
     hardcover_api_key: Optional[str] = Field(default=None, repr=False)
     rawg_api_key: Optional[str] = Field(default=None, repr=False)
     itad_api_key: Optional[str] = Field(default=None, repr=False)
+    steam_web_api_key: Optional[str] = Field(default=None, repr=False)
+    steamgriddb_api_key: Optional[str] = Field(default=None, repr=False)
+    steam_daily_budget: int = Field(default=90000, ge=0, le=100000)
     # Local safety budget; the provider account's plan is still authoritative.
     rawg_monthly_budget: int = Field(default=19000, ge=0, le=20000)
     hardcover_daily_budget: int = Field(default=5000, ge=0, le=5000)

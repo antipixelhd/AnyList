@@ -26,9 +26,17 @@ const summary = healthSummary(data?.checks || []);
     </div>
     <section class="health-repairs" aria-labelledby="health-repairs-title">
       <h3 id="health-repairs-title">Safe repairs</h3>
-      <p>Existing records and watch history are preserved. Duplicate candidates require review.</p>
+      <p>Private tracking is preserved. Game reconciliation requires a scan and confirmation.</p>
       <div class="health-operations">
         {healthActions.map(item => <div><div><h4>{item.label}</h4><p>{item.description}</p></div><button class="health-button" type="button" aria-label={`Run ${item.label.toLowerCase()}`} data-health-action={item.action} disabled={isHealthJobActive(data?.job ?? null)}>Run</button></div>)}
+      </div>
+    </section>
+    <section id="health-game-results" class="health-game-results" hidden aria-labelledby="health-game-title">
+      <h3 id="health-game-title">Game scan</h3>
+      <ul id="health-game-candidates"></ul>
+      <div class="health-game-actions">
+        <button id="health-game-reconcile" class="health-button" type="button">Reconcile verified matches</button>
+        <button id="health-game-next" class="health-button" type="button" hidden>Scan next batch</button>
       </div>
     </section>
     <div id="health-job" class="health-job" hidden={!data?.job} role="status" aria-live="polite">
@@ -48,6 +56,11 @@ const summary = healthSummary(data?.checks || []);
       <p id="health-all-clear" hidden={!data || data.checks.some(check => check.count > 0)}>All checks are clear.</p>
     </section>
   </div>
+  <dialog id="health-game-confirm" aria-labelledby="health-game-confirm-title" class="health-game-confirm">
+    <h3 id="health-game-confirm-title">Reconcile verified game matches?</h3>
+    <p>This combines confirmed duplicates and links verified identities. Private tracking is preserved. Conflicting records stay unchanged.</p>
+    <form method="dialog"><button class="health-button" value="cancel" autofocus>Cancel</button><button class="health-button" value="reconcile">Reconcile</button></form>
+  </dialog>
 </TrackerSettings>
 
 <script>
@@ -61,6 +74,7 @@ const summary = healthSummary(data?.checks || []);
   .health-toolbar p, .health-repairs p, .health-check-body p, .health-checks-heading label { color:var(--text-muted, #9aadc0); font-size:14px; }
   .health-button { border:1px solid var(--border, #334557); background:var(--bg-secondary, #192b3e); color:var(--text-primary, #edf5ff); border-radius:8px; padding:9px 14px; cursor:pointer; font-weight:600; transition:background 180ms ease; }
   .health-button:hover { background:var(--bg-hover, #263e57); }
+  .health-button:focus-visible { outline:none; background:var(--bg-hover, #263e57); color:var(--blue, #5bb8ff); }
   .health-button:disabled { opacity:.5; cursor:wait; }
   .health-summary { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:1rem; margin-bottom:2.5rem; }
   .health-summary div { display:flex; flex-direction:column; gap:.45rem; padding:18px; background:var(--bg-secondary, #192b3e); border-radius:10px; }
@@ -90,6 +104,15 @@ const summary = healthSummary(data?.checks || []);
   .health-check-body a { color:var(--blue, #5bb8ff); }
   .health-check-body small { color:var(--text-muted, #9aadc0); }
   .health-sample-note { margin-top:1rem; }
+  .health-game-results { margin-bottom:2rem; }
+  #health-game-candidates { margin:1rem 0; }
+  .health-game-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:.4rem 1rem; padding:1rem 0; border-bottom:1px solid var(--border, #334557); overflow-wrap:anywhere; }
+  .health-game-row small { grid-column:1/-1; color:var(--text-muted, #9aadc0); }
+  .health-game-row a { color:var(--blue, #5bb8ff); }
+  .health-game-actions, .health-game-confirm form { display:flex; gap:.75rem; flex-wrap:wrap; }
+  .health-game-confirm { margin:auto; padding:1.5rem; max-width:480px; width:calc(100% - 2rem); border:0; border-radius:14px; background:var(--bg-secondary, #192b3e); color:var(--text-primary, #edf5ff); }
+  .health-game-confirm::backdrop { background:rgb(0 0 0 / .7); backdrop-filter:blur(4px); }
+  .health-game-confirm p { margin:1rem 0 1.5rem; line-height:1.5; }
   [hidden] { display:none !important; }
   @media (max-width:760px) { .health-summary { grid-template-columns:repeat(2,minmax(0,1fr)); } .health-operations > div { gap:.8rem; } }
   @media (prefers-reduced-motion:reduce) { .health-button { transition:none; } }

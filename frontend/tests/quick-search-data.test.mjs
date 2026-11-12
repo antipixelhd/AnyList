@@ -2,6 +2,22 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {quickSearchRequests,rankCombinedMedia,createQuickTitleBatch,createQuickSearchReader,visibleQuickSearchSections,availableQuickSearchTabs,resolvedQuickSearchTab,steppedQuickSearchTab,mergeContributorResults,readQuickSearch} from '../src/lib/quick-search-data.ts';
 
+test('contributor discovery follows enabled domains instead of revealing hidden game studios',()=>{
+  for(const [movies,games,domain] of [[true,true,'all'],[true,false,'movies_series'],[false,true,'game']]){
+    const requests=quickSearchRequests('Supergiant',undefined,movies,games).filter(row=>row.kind==='contributors');
+    assert.equal(requests.length,2);
+    for(const request of requests)assert.equal(new URL(request.url,'https://example.test').searchParams.get('work_domain'),domain);
+  }
+});
+
+test('movie/series opt-out rejects title fan-out and title tabs together, retaining shared people search',()=>{
+  const requests=quickSearchRequests('Troy',undefined,false,false);
+  assert.equal(requests.length,2);assert.ok(requests.every(request=>request.kind==='contributors'));
+  const counts={all:1,movie:1,series:0,actor:2,staff:1,studio:0};
+  assert.deepEqual(availableQuickSearchTabs(counts,false,false,true,false,false),['actor','staff','studio']);
+  assert.deepEqual(availableQuickSearchTabs(counts,true,false,true,false),['actor','staff']);
+});
+
 test('warm titles reuse private dialog cache until expiry, invalidation or unmount',async()=>{
   let calls=0, now=0;
   const lifetime=new AbortController(), query=new AbortController();
@@ -89,18 +105,38 @@ test('verification polling is bounded and cancelled on query change',async()=>{
   const controller=new AbortController();let calls=0;
   const fetcher=async()=>{calls++;return {ok:true,json:async()=>({verification_pending:true})};};
   await readQuickSearch({kind:'contributors',url:'/studios'},controller.signal,()=>{},fetcher,async()=>{});
-  assert.equal(calls,5);
+  assert.equal(calls,20);
   calls=0;
   await readQuickSearch({kind:'contributors',url:'/studios'},controller.signal,()=>controller.abort(),fetcher);
   assert.equal(calls,1);
 });
 
+test('cold people can settle after the old seven-second polling window',async()=>{
+  let calls=0;const updates=[];
+  await readQuickSearch({kind:'contributors',url:'/people'},new AbortController().signal,data=>updates.push(data),
+    async()=>({ok:true,json:async()=>({results:{actor:++calls>=8?['verified person']:[]},verification_pending:calls<8})}),async()=>{});
+  assert.equal(calls,8);
+  assert.deepEqual(updates.at(-1).results.actor,['verified person']);
+  assert.equal(updates.at(-1).verification_pending,false);
+});
+
+test('exhausted or long-cooldown verification stays partial and preserves usable results',async()=>{
+  for(const retry_after of [2,60]){
+    let calls=0;const updates=[];
+    await readQuickSearch({kind:'contributors',url:'/people'},new AbortController().signal,data=>updates.push(data),
+      async()=>{calls++;return {ok:true,json:async()=>({results:{actor:['existing person']},verification_pending:true,retry_after})};},async()=>{});
+    assert.equal(calls,retry_after===60?1:20);
+    assert.equal(updates.at(-1).partial,true);
+    assert.deepEqual(updates.at(-1).results.actor,['existing person']);
+  }
+});
+
 test('desktop searches both media types and all contributors without duplicating people requests',()=>{
   const requests=quickSearchRequests('James & Co');
-  assert.deepEqual(requests.map(row=>row.kind),['movie','series','contributors','contributors']);
-  const params=new URL(requests[2].url,'https://anylist.test').searchParams;
+  assert.deepEqual(requests.map(row=>row.kind),['movie','series','game','contributors','contributors']);
+  const params=new URL(requests[3].url,'https://anylist.test').searchParams;
   assert.equal(params.get('q'),'James & Co');assert.equal(params.get('kind'),'people');
-  assert.equal(new URL(requests[3].url,'https://anylist.test').searchParams.get('kind'),'studio');
+  assert.equal(new URL(requests[4].url,'https://anylist.test').searchParams.get('kind'),'studio');
 });
 
 test('independent studio verification never erases people, regardless of response order',()=>{
@@ -112,8 +148,8 @@ test('independent studio verification never erases people, regardless of respons
 });
 test('mobile tabs share the same simultaneous media and contributor requests',()=>{
   const requests=quickSearchRequests('James');
-  assert.deepEqual(requests.map(row=>row.kind),['movie','series','contributors','contributors']);
-  assert.deepEqual(requests.slice(2).map(row=>new URL(row.url,'https://anylist.test').searchParams.get('kind')),['people','studio']);
+  assert.deepEqual(requests.map(row=>row.kind),['movie','series','game','contributors','contributors']);
+  assert.deepEqual(requests.slice(3).map(row=>new URL(row.url,'https://anylist.test').searchParams.get('kind')),['people','studio']);
 });
 test('combined movie and series results follow shared relevance instead of alternating types',()=>{
   const movies=[{title:'War movie',search_rank:305},{title:'War stories',search_rank:210}];
@@ -133,7 +169,7 @@ test('desktop shows only matching sections and respects combined media; mobile d
 
 test('separate mobile lists navigate movies and series independently through loading and empty results',()=>{
   const empty={all:0,movie:0,series:0,actor:0,staff:0,studio:0};
-  assert.deepEqual(availableQuickSearchTabs(empty,false,false,false),['movie','series','actor','staff','studio']);
+  assert.deepEqual(availableQuickSearchTabs(empty,false,false,false),['movie','series','game','actor','staff','studio']);
   assert.deepEqual(availableQuickSearchTabs(empty,true,true,false),['movie','series']);
   const counts={...empty,all:2,series:2,actor:1};
   const available=availableQuickSearchTabs(counts,true,false,false);
@@ -146,7 +182,7 @@ test('separate mobile lists navigate movies and series independently through loa
 
 test('mobile navigation removes empty tabs, recovers selection, and wraps through available results',()=>{
   const counts={all:0,movie:0,series:0,actor:2,staff:0,studio:1};
-  assert.deepEqual(availableQuickSearchTabs(counts,false),['all','actor','staff','studio']);
+  assert.deepEqual(availableQuickSearchTabs(counts,false),['all','game','actor','staff','studio']);
   const available=availableQuickSearchTabs(counts,true);
   assert.deepEqual(available,['actor','studio']);
   assert.deepEqual(availableQuickSearchTabs(counts,true,true),['all','actor','studio']);

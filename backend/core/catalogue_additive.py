@@ -60,7 +60,7 @@ async def fill_document(db, document, provider, *, credit_groups=None):
         await entities.get(credit['contributor'], additive=True)
     doc['credits'] = new_credits
     doc['coverage'] = {**doc.get('coverage', {}), 'credits_complete': False}
-    for field in ('characters', 'editions', 'releases', 'relationships', 'performances'):
+    for field in ('characters', 'editions', 'releases', 'relationships', 'performances', 'performance_keys_complete', 'retired_credit_keys'):
         if field in doc:
             doc[field] = []
     return await catalogue.ingest_document(db, doc, provider, entities=entities, project_screen_roles=reproject)

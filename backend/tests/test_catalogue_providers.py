@@ -23,6 +23,89 @@ def fixture(name):
 
 
 class NormalizationTests(unittest.TestCase):
+    def test_game_gallery_excludes_typed_logos_but_keeps_artwork_and_screenshots(self):
+        screenshots=[{'url':f'https://cdn.test/scene-{i}.jpg','width':1920,'height':1080} for i in range(10)]
+        key_art='https://cdn.test/ar6knj.jpg'
+        logo='https://cdn.test/ar627t.jpg'
+        raw={'screenshots':screenshots,'artworks':[
+            {'url':'https://cdn.test/black.png','image_type':6,'width':5981,'height':920},
+            {'url':'https://cdn.test/white.png','image_type':5,'width':1920,'height':1080},
+            {'url':'https://cdn.test/art.jpg','image_type':1,'width':1920,'height':620},
+            {'url':'https://cdn.test/color.png','image_type':7,'width':5981,'height':920},
+            {'url':logo,'artwork_type':7,'width':1195,'height':887},
+            {'url':key_art,'image_type':3,'artwork_type':3,'width':1920,'height':1080},
+            {'url':'https://cdn.test/unknown.jpg','width':256,'height':256}]}
+        result=normalize.game_artwork(raw)
+        self.assertEqual(result['artwork'],[key_art,'https://cdn.test/art.jpg','https://cdn.test/unknown.jpg']+[r['url'] for r in screenshots])
+        self.assertEqual(result['scene_artwork'],[key_art,'https://cdn.test/art.jpg']+[r['url'] for r in screenshots])
+        self.assertIn('artworks.image_type',providers.IGDB_FIELDS.split(','))
+        self.assertIn('artworks.artwork_type',providers.IGDB_FIELDS.split(','))
+
+    def test_game_scenes_use_typed_dimensions_and_keep_every_gallery_asset(self):
+        raw={'id':1,'name':'Scene fixture','game_type':{'id':0},
+            'screenshots':[{'url':'https://cdn.test/scene.jpg','width':1920,'height':1080}],
+            'artworks':[{'url':'https://cdn.test/logo.jpg','width':5981,'height':920},
+                        {'url':'https://cdn.test/square.jpg','width':256,'height':256},
+                        {'url':'https://cdn.test/art.jpg','width':1920,'height':1080}]}
+        attrs=normalize.normalize_igdb(raw)['work']['attributes']
+        self.assertEqual(attrs['scene_artwork'],['https://cdn.test/art.jpg','https://cdn.test/scene.jpg'])
+        self.assertEqual(len(attrs['artwork']),4)
+        self.assertEqual(attrs['artwork'][0],'https://cdn.test/logo.jpg')
+        raw['screenshots'].append({'url':'https://cdn.test/high-resolution-scene.jpg','width':3840,'height':2160})
+        upgraded=normalize.normalize_igdb(raw)['work']['attributes']
+        self.assertEqual(upgraded['scene_artwork'][0],'https://cdn.test/art.jpg')
+        self.assertEqual(upgraded['artwork'][0],'https://cdn.test/logo.jpg')
+        self.assertEqual(len(upgraded['artwork']),5)
+    def test_game_platform_availability_includes_verified_ports_without_copying_remakes(self):
+        raw={'id':1960,'name':'Original','game_type':{'id':0},'platforms':[{'id':7,'name':'PlayStation'}],
+             'ports':[{'id':266501,'game_type':{'id':11},'platforms':[{'id':6,'name':'PC (Microsoft Windows)'}]},
+                      {'id':99,'game_type':{'id':8},'platforms':[{'id':167,'name':'PlayStation 5'}]}]}
+        result=normalize.normalize_igdb(raw)
+        self.assertEqual([p['id'] for p in result['work']['attributes']['platforms']],['7','6'])
+        self.assertEqual(result['work']['identities'],[normalize.identity('igdb.game',1960)])
+
+    def test_game_search_resolves_editions_before_filtering_addons(self):
+        from core.game_types import search_candidate
+        base = {'id': 119133, 'name': 'Elden Ring', 'game_type': {'id': 0}}
+        expansion = {'id': 240009, 'name': 'Erdtree', 'game_type': {'id': 2}, 'parent_game': base}
+        edition = {'id': 999, 'name': 'Premium edition', 'game_type': {'id': 0}, 'version_parent': expansion}
+        self.assertEqual(search_candidate(edition)['external_id'], '240009')
+        self.assertEqual(search_candidate(edition)['game_class'], 'expansion')
+        for raw in ({'id': 2, 'name': 'Weapon pack', 'game_type': {'id': 1}},
+                    {'id': 3, 'name': 'Pack', 'game_type': {'id': 13}},
+                    {'id': 4, 'name': 'Update', 'game_type': {'id': 14}},
+                    {'id': 5, 'name': 'Unverified'},
+                    {**expansion, 'parent_game': None},
+                    {**edition, 'version_parent': 240009},
+                    {**edition, 'version_parent': {}},
+                    {**edition, 'version_parent': 0},
+                    {**expansion, 'parent_game': {**base, 'id': True}},
+                    {**edition, 'version_parent': {**expansion, 'version_parent': 123}}):
+            self.assertIsNone(search_candidate(raw))
+
+    def test_game_classification_and_pc_platform_group_are_source_scoped(self):
+        from core.game_types import capabilities
+        raw = {'id': 240009, 'name': 'Expansion', 'game_type': {'id': 2, 'type': 'Expansion'},
+               'parent_game': {'id': 119133, 'name': 'Base', 'game_type': {'id': 0, 'type': 'Main Game'}},
+               'platforms': [{'id': 6, 'name': 'PC (Microsoft Windows)'}, {'id': 14, 'name': 'Mac'},
+                             {'id': 3, 'name': 'Linux', 'platform_family': {'name': 'Linux'}},
+                             {'id': 167, 'name': 'PlayStation 5', 'platform_family': {'name': 'PlayStation'}}]}
+        doc = normalize.normalize_igdb(raw)
+        attrs = doc['work']['attributes']
+        self.assertFalse(capabilities(attrs).independent)
+        self.assertTrue(capabilities(attrs).expansion_page)
+        self.assertEqual([p['group'] for p in attrs['platforms']], ['PC', 'PC', 'PC', 'PlayStation'])
+        self.assertEqual(doc['relationships'][0]['relation'], 'expansion')
+        self.assertEqual(doc['relationships'][0]['target']['attributes']['game_class'], 'game')
+        for source_id, source_name in ((13, 'Pack / Addon'), (14, 'Update'), (999, 'Future unknown type')):
+            raw['game_type'] = {'id': source_id, 'type': source_name}
+            caps = capabilities(normalize.normalize_igdb(raw)['work']['attributes'])
+            self.assertFalse(caps.searchable)
+            self.assertFalse(caps.playable_child)
+        raw['game_type'] = {'id': 1, 'type': 'DLC'}
+        doc = normalize.normalize_igdb(raw)
+        self.assertEqual(doc['relationships'][0]['relation'], 'dlc')
+
     def test_game_cross_reference_and_separate_character_art(self):
         doc = normalize.normalize_igdb(fixture("igdb"))
         self.assertIn(
@@ -98,6 +181,84 @@ class NormalizationTests(unittest.TestCase):
 
 
 class ClientTests(unittest.IsolatedAsyncioTestCase):
+    async def test_igdb_waiter_rechecks_cooldown_published_during_start_spacing(self):
+        import asyncio
+        providers._local_next.clear();providers._local_igdb_slots=None
+        self.addCleanup(setattr,providers,'_local_igdb_slots',None)
+        self.addCleanup(providers._local_next.clear)
+        waiting=asyncio.Event();sleep=asyncio.sleep;http=providers.ProviderHTTP()
+        async def observed_sleep(delay):
+            if delay>0:waiting.set()
+            await sleep(delay)
+        async def load():
+            async with providers.ProviderHTTP().lane('igdb'):self.fail('Ignored new cooldown')
+        with patch.dict(providers.INTERVALS,{'igdb':.1}),patch.object(providers.asyncio,'sleep',observed_sleep):
+            async with http.lane('igdb'):
+                task=asyncio.create_task(load())
+                try:
+                    await asyncio.wait_for(waiting.wait(),1)
+                    await http.defer('igdb',10)
+                    with self.assertRaises(providers.ProviderError) as error:
+                        await asyncio.wait_for(task,1)
+                    self.assertEqual(error.exception.code,'rate_limited')
+                    self.assertGreater(error.exception.retry_after,9)
+                finally:
+                    task.cancel();await asyncio.gather(task,return_exceptions=True)
+
+    async def test_igdb_overlaps_two_requests_and_releases_cancelled_slots(self):
+        import asyncio,time
+        providers._local_next.clear();providers._local_igdb_slots=None
+        self.addCleanup(setattr,providers,'_local_igdb_slots',None)
+        self.addCleanup(providers._local_next.clear)
+        release=asyncio.Event();two_started=asyncio.Event();starts=[]
+        async def load():
+            async with providers.ProviderHTTP().lane('igdb'):
+                starts.append(time.monotonic())
+                if len(starts)>=2:two_started.set()
+                await release.wait()
+        with patch.dict(providers.INTERVALS,{'igdb':.02}):
+            tasks=[asyncio.create_task(load()) for _ in range(3)]
+            try:
+                await asyncio.wait_for(two_started.wait(),1)
+                self.assertEqual(len(starts),2)
+                self.assertGreaterEqual(starts[1]-starts[0],.019)
+                tasks[0].cancel();await asyncio.gather(tasks[0],return_exceptions=True)
+                # A cancelled HTTP owner releases its slot for the third caller.
+                release.set();await asyncio.wait_for(asyncio.gather(*tasks[1:]),1)
+                self.assertEqual(len(starts),3)
+                await providers.ProviderHTTP().defer('igdb',10)
+                with self.assertRaises(providers.ProviderError) as error:
+                    async with providers.ProviderHTTP().lane('igdb'):self.fail('Ignored shared cooldown')
+                self.assertEqual(error.exception.code,'rate_limited')
+            finally:
+                release.set()
+                for task in tasks:task.cancel()
+                await asyncio.gather(*tasks,return_exceptions=True)
+
+    async def test_igdb_start_spacing_does_not_add_a_pause_after_slow_io_or_shorten_deferral(self):
+        import asyncio,time
+        providers._local_next.clear()
+        http=providers.ProviderHTTP()
+        with patch.dict(providers.INTERVALS,{'igdb':.01}):
+            async with http.lane('igdb'):
+                await asyncio.sleep(.025)
+            self.assertLess(providers._local_next['igdb'],time.monotonic())
+            async with http.lane('igdb'):
+                await http.defer('igdb',2)
+                deferred=providers._local_next['igdb']
+            self.assertGreaterEqual(providers._local_next['igdb'],deferred)
+        providers._local_next.clear()
+
+    async def test_wikidata_query_cooldown_does_not_block_exact_entity_reads(self):
+        providers._local_next.clear()
+        async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request:
+            httpx.Response(429,headers={'Retry-After':'300'},json={}) if request.url.host=='query.wikidata.org'
+            else httpx.Response(200,json={'entities':{}}))) as client:
+            api=providers.ProviderHTTP(client)
+            with self.assertRaises(providers.ProviderError):
+                await api.request('wikidata','POST','https://query.wikidata.org/sparql',data={'query':'fixture'},cache=False)
+            self.assertEqual(await api.request('wikidata','GET','https://www.wikidata.org/w/api.php',cache=False),{'entities':{}})
+        providers._local_next.clear()
     async def test_tvdb_enriches_principals_and_verified_studios_without_fetching_supporting_people(self):
         from core import tvdb
         raw={'id':1,'name':'Movie','characters':[

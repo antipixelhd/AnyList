@@ -6,14 +6,15 @@ interface Props {
   label: string;
   options: ReadonlyArray<readonly [string, string]>;
   value?: string;
+  name?: string;
 }
 
-const { id, label, options, value = '' } = Astro.props;
+const { id, label, options, value = '', name } = Astro.props;
 const selectedLabel = options.find(([optionValue]) => optionValue === value)?.[1] ?? options[0]?.[1] ?? '';
 ---
 <div class="filter-control filter-dropdown-field">
   <span id={`${id}-label`}>{label}</span>
-  <select id={id} class="filter-select-native" tabindex="-1" aria-hidden="true">
+  <select id={id} name={name} class="filter-select-native" tabindex="-1" aria-hidden="true">
     {options.map(([optionValue, optionLabel]) => <option value={optionValue} selected={optionValue === value}>{optionLabel}</option>)}
   </select>
   <div class="filter-dropdown" data-filter-dropdown data-motion-static>

@@ -1,4 +1,4 @@
-"""Bounded additive repairs: no duplicate merges or personal-history edits."""
+"""Admin-triggered bounded repairs; private history is preserved."""
 import asyncio
 from datetime import timedelta
 
@@ -135,6 +135,7 @@ async def run_job(job_id, *, factory=AsyncSessionLocal, bind=engine):
                 if job is None or job.status != SyncStatus.pending:
                     return
                 action = job.stats['action']
+                options = dict(job.stats)
                 job.status = SyncStatus.running
                 job.updated_at = statistics_snapshots.utcnow()
                 await db.commit()
@@ -153,27 +154,32 @@ async def run_job(job_id, *, factory=AsyncSessionLocal, bind=engine):
                     await db.commit()
 
             async with asyncio.timeout(600):
-                async with factory() as db:
-                    global_settings = await settings_store.get_global_settings(db, cached=False)
-                    tmdb_key = settings_store.get_server_tmdb_key(global_settings)
-                    tvdb_key, pin = settings_store.get_server_tvdb_credentials(global_settings)
-                    if tvdb_key:
-                        from core import tvdb
-                        tvdb.set_subscriber_pin(tvdb_key, pin)
-                    providers = CatalogueProviders(ProviderHTTP(session_factory=factory), tmdb_key=tmdb_key, tvdb_key=tvdb_key)
-                    if action == 'metadata':
-                        await step('Screen metadata', lambda: fill_screen_metadata(db, providers))
-                        await step('Watched runtimes', lambda: backfill_history_runtimes(db, tmdb_key, tvdb_api_key=tvdb_key, limit=50))
-                        async def countries():
-                            legacy = await backfill_legacy_countries(db, tmdb_key, tvdb_api_key=tvdb_key, limit=50)
-                            canonical = await backfill_catalogue_countries(db, providers, limit=25, missing_only=True)
-                            return {key: legacy.get(key, 0) + canonical.get(key, 0) for key in ('examined', 'recovered', 'unresolved', 'failed')}
-                        await step('Country metadata', countries)
-                        await step('Character artwork', lambda: backfill_tvmaze_images(db, providers, limit=10))
-                        from core.screen_character_art import backfill_character_art
-                        await step('TVDB character artwork', lambda: backfill_character_art(db, providers, limit=10))
-                    if action in ('metadata', 'characters'):
-                        await step('Character links', lambda: backfill_screen_characters(db, limit=100))
+                if action in ('game_scan', 'game_reconcile'):
+                    from core.game_health import run_game_health
+                    await step('Games', lambda: run_game_health(factory, job_id, action,
+                        scan_job_id=options.get('scan_job_id'), after_id=options.get('after_id', 0)))
+                if action in ('metadata', 'characters'):
+                    async with factory() as db:
+                        global_settings = await settings_store.get_global_settings(db, cached=False)
+                        tmdb_key = settings_store.get_server_tmdb_key(global_settings)
+                        tvdb_key, pin = settings_store.get_server_tvdb_credentials(global_settings)
+                        if tvdb_key:
+                            from core import tvdb
+                            tvdb.set_subscriber_pin(tvdb_key, pin)
+                        providers = CatalogueProviders(ProviderHTTP(session_factory=factory), tmdb_key=tmdb_key, tvdb_key=tvdb_key)
+                        if action == 'metadata':
+                            await step('Screen metadata', lambda: fill_screen_metadata(db, providers))
+                            await step('Watched runtimes', lambda: backfill_history_runtimes(db, tmdb_key, tvdb_api_key=tvdb_key, limit=50))
+                            async def countries():
+                                legacy = await backfill_legacy_countries(db, tmdb_key, tvdb_api_key=tvdb_key, limit=50)
+                                canonical = await backfill_catalogue_countries(db, providers, limit=25, missing_only=True)
+                                return {key: legacy.get(key, 0) + canonical.get(key, 0) for key in ('examined', 'recovered', 'unresolved', 'failed')}
+                            await step('Country metadata', countries)
+                            await step('Character artwork', lambda: backfill_tvmaze_images(db, providers, limit=10))
+                            from core.screen_character_art import backfill_character_art
+                            await step('TVDB character artwork', lambda: backfill_character_art(db, providers, limit=10))
+                        if action in ('metadata', 'characters'):
+                            await step('Character links', lambda: backfill_screen_characters(db, limit=100))
                 if action == 'characters':
                     await step('Unmapped roles', lambda: repair_unmapped_roles(factory))
                 if action == 'statistics':

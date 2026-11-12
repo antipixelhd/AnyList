@@ -31,7 +31,10 @@ async def get_repair_job(db: DB, response: Response):
 @router.post('/repair', response_model=HealthJob, status_code=202)
 async def repair_data_health(body: RepairRequest, db: DB, admin: Admin, background: BackgroundTasks, response: Response):
     response.headers['Cache-Control'] = 'no-store'
-    job = await enqueue(db, admin.id, body.action)
+    if body.action == 'game_reconcile':
+        from core.game_health import require_scan
+        await require_scan(db, body.scan_job_id)
+    job = await enqueue(db, admin.id, body.action, scan_job_id=body.scan_job_id, after_id=body.after_id)
     if job is None:
         raise HTTPException(status_code=409, detail='A data health repair is already running.')
     background.add_task(run_job, job.id)

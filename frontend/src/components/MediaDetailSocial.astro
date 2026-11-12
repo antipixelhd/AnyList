@@ -1,32 +1,39 @@
 ---
 import ActivityCard from './ActivityCard.astro';
 import {scoreLabel,statuses} from '../lib/tracker';
-const {data,type}=Astro.props as {data:{people:any[];activities:any[];following_activities:any[]};type:'movie'|'series'};
+import {gameStatuses} from '../lib/game-editor-data';
+import {gameProgress} from '../lib/game-progress';
+const {data,type}=Astro.props as {data:{people:any[];activities:any[];following_activities?:any[];game_class?:string};type:'movie'|'series'|'game'};
+const showPlaytime=type==='game'&&!['expansion','dlc'].includes(data.game_class||'');
+const choices=type==='game'?gameStatuses:statuses;
+const followingActivities=data.following_activities||[];
+const followingSelected=type==='game'&&!data.activities.length&&!!followingActivities.length;
 ---
 <div class="media-social-grid">
   <section class="media-social-activity" aria-labelledby="media-social-activity-heading">
     <div class="media-social-heading">
       <h2 id="media-social-activity-heading">Recent Activity</h2>
-      <div class="media-social-switch app-tabs" role="tablist" aria-label="Activity from">
-        <button type="button" role="tab" id="social-self-tab" aria-controls="social-self" aria-selected="true" data-social-scope="self">Self</button>
-        <button type="button" role="tab" id="social-following-tab" aria-controls="social-following" aria-selected="false" tabindex="-1" data-social-scope="following">Following</button>
+      <div class="media-social-switch app-tabs" role="tablist" aria-label="Activity from" hidden={type==='game'&&!data.activities.length&&!followingActivities.length}>
+        <button type="button" role="tab" id="social-self-tab" aria-controls="social-self" aria-selected={!followingSelected} tabindex={followingSelected?-1:0} disabled={type==='game'&&!data.activities.length} data-social-scope="self">Self</button>
+        <button type="button" role="tab" id="social-following-tab" aria-controls="social-following" aria-selected={followingSelected} tabindex={followingSelected?0:-1} disabled={type==='game'&&!followingActivities.length} data-social-scope="following">Following</button>
       </div>
     </div>
     <div data-social-panels>
-      <div id="social-self" role="tabpanel" aria-labelledby="social-self-tab" data-social-panel="self">
+      <div id="social-self" role="tabpanel" aria-labelledby="social-self-tab" data-social-panel="self" hidden={followingSelected}>
         {data.activities.length?<div class="activity-stream">{data.activities.map(activity=><ActivityCard activity={activity}/>)}</div>:<p class="section-empty">No activity for this title yet.</p>}
       </div>
-      <div id="social-following" role="tabpanel" aria-labelledby="social-following-tab" data-social-panel="following" hidden>
-        {data.following_activities.length?<div class="activity-stream">{data.following_activities.map(activity=><ActivityCard activity={activity} showUser/>)}</div>:<p class="section-empty">No activity from people you follow yet.</p>}
+      <div id="social-following" role="tabpanel" aria-labelledby="social-following-tab" data-social-panel="following" hidden={!followingSelected}>
+        {followingActivities.length?<div class="activity-stream">{followingActivities.map(activity=><ActivityCard activity={activity} showUser/>)}</div>:<p class="section-empty">No activity from people you follow yet.</p>}
       </div>
     </div>
   </section>
   <section class="media-social-people" aria-labelledby="media-social-people-heading">
     <div class="media-social-heading"><h2 id="media-social-people-heading">People you follow</h2></div>
-    {data.people.length?<div class="media-social-list">{data.people.map(person=><a class="lab-friend media-social-person" href={`/user/${encodeURIComponent(person.username)}/${type==='movie'?'movies':'series'}`}>
+    {data.people.length?<div class:list={['media-social-list',{'media-social-games':showPlaytime}]}>{data.people.map(person=><a class="lab-friend media-social-person" href={`/user/${encodeURIComponent(person.username)}/${type==='game'?'games':type==='movie'?'movies':'series'}`}>
       <span class="lab-friend-avatar" aria-hidden="true">{person.has_avatar?<img src={`/api/proxy/profile/avatar/${person.id}`} alt="" loading="lazy"/>:(person.display_name||person.username).slice(0,1).toUpperCase()}</span>
       <strong class="media-social-person-name">{person.display_name||person.username}</strong>
-      <span class="media-social-person-status">{statuses.find(([id])=>id===person.status)?.[1]||person.status}</span>
+      <span class="media-social-person-status">{choices.find(([id])=>id===person.status)?.[1]||person.status}</span>
+      {showPlaytime&&<span class="media-social-playtime" aria-label={`Playtime: ${gameProgress(person).hours||'Unknown'}`}>{gameProgress(person).hours||'—'}</span>}
       <span class="media-social-score">{scoreLabel(person.score)} <small>/ 10</small></span>
     </a>)}</div>:<p class="section-empty">No one has added this title yet.</p>}
   </section>

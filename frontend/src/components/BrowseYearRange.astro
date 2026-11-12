@@ -1,0 +1,16 @@
+---
+import {releaseYearBounds,releaseYearLabel} from '../lib/browse-ranges';
+const {start='',end='',firstYear=1900,lastYear=new Date().getFullYear()+3}=Astro.props;
+const years=releaseYearBounds(start,end,firstYear,lastYear);
+---
+            <div class="browse-range" data-year-range data-range-collapsed={years.lower === years.upper ? '' : undefined} style={`--range-start:${(years.lower - firstYear) / (lastYear - firstYear) * 100}%;--range-end:${(years.upper - firstYear) / (lastYear - firstYear) * 100}%`}>
+              <div class="browse-range-heading"><span id="browse-year-label">Year range</span><output>{releaseYearLabel(start,end,firstYear,lastYear)}</output></div>
+              <div class="browse-range-track">
+                <input type="range" min={firstYear} max={lastYear} value={years.lower} data-range-lower aria-label="Earliest release year" />
+                <input type="range" min={firstYear} max={lastYear} value={years.upper} data-range-upper aria-label="Latest release year" />
+              </div>
+              <div class="browse-year-dates">
+                <label><span>Released after</span><input type="date" name="start" value={start} /></label>
+                <label><span>Released before</span><input type="date" name="end" value={end} /></label>
+              </div>
+            </div>

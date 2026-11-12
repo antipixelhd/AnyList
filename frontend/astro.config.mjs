@@ -23,6 +23,8 @@ export default defineConfig({
   output: 'server',
   compressHTML: true,
   devToolbar: {enabled: false},
+  // NavigationRuntime owns bounded, viewer-scoped prediction and demand reuse.
+  prefetch: {prefetchAll: false},
 
   security: {
     // middleware.ts checks browser writes while preserving external API clients.

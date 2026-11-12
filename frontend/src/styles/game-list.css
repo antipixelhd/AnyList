@@ -1,0 +1,15 @@
+.game-list-shell :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) :is(.entry-head,.entry-row){grid-template-columns:60px minmax(0,5fr) minmax(56px,1fr) minmax(84px,1fr) minmax(84px,1fr)}
+.game-list-shell[data-show-achievements=false] :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) :is(.entry-head,.entry-row){grid-template-columns:60px minmax(0,5fr) minmax(56px,1fr) minmax(84px,1fr)}
+.game-list-shell .game-list-achievements{text-align:center;color:var(--text-data);font-size:var(--type-row-size)}
+.game-inline-achievements{display:none}
+.game-list-shell [hidden]{display:none!important}
+.game-list-shell .row-menu:focus-visible{outline:none;background:var(--blue);color:var(--bright)}
+@media(max-width:650px){
+  .game-list-shell :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) :is(.entry-head,.entry-row),.game-list-shell[data-show-achievements=false] :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) :is(.entry-head,.entry-row){grid-template-columns:44px minmax(0,3fr) minmax(44px,1fr)}
+  .game-list-shell :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-row{grid-template-areas:"cover title score" "cover progress score";grid-template-rows:minmax(22px,auto) minmax(22px,auto)}
+  .game-list-shell :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .game-hours{grid-area:progress;justify-content:flex-start;padding:0;color:var(--muted)}
+  .game-list-shell .game-list-achievements{display:none}
+  .game-list-shell .game-inline-achievements[data-known=true]{display:inline}
+  .game-inline-achievements::before{content:'Â·';margin-right:4px}
+  .game-list-shell .game-hours-column,.game-list-shell .game-achievements-column{display:none}
+}

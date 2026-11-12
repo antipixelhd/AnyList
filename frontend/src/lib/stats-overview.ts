@@ -1,8 +1,15 @@
+import {gameHeadlines,signedNumber,type GameOverview,type GameStatsResponse} from './game-statistics-data';
+import {statisticsSection,statisticsSectionLabel,statisticsPanel,type StatisticsDomain,type UnifiedStatistics} from './unified-statistics-data';
+import {createStatisticsReader,type StatisticsSelection} from './unified-statistics-request';
+import {statisticValue} from './statistic-value';
+import {bindPredictionIntent,predictionAllowed} from './predictive-loading';
+import {initializeProfileSections} from './profile-section-selector';
+import {panelActive,panelUrl,setPanelUrl} from './profile-panel';
 import Chart from 'chart.js/auto';
 import type { ChartOptions } from 'chart.js';
 import type { ChartMetric, MediaScope, MetricGroup, Overview, OverviewResponse } from './stats-overview-data';
 import { barChartRows, displayNumber, distributionRows, headlineValues, knownRows, metricLabels, metricValue, watchYearRows } from './stats-overview-data';
-import { createOverviewLoader, overviewPollDelay } from './stats-overview-request';
+import { overviewPollDelay } from './stats-overview-request';
 import { refreshStatistics } from './statistics-refresh-request';
 import { mountGenres, mountStudios } from './stats-genres';
 import { genreSort } from './stats-genres-data';
@@ -11,25 +18,28 @@ import { mountActors, mountStaff } from './stats-actors';
 import { mountStatisticsNavigation } from './stats-navigation';
 import { createMetricTooltip } from './stats-metric-tooltip';
 import { chartMinimumWidth, mountChartViewport } from './stats-chart-density';
-import { createContentTransition } from './content-motion';
-import { initializeScrollMotion } from './scroll-motion';
 import { cancelUiMotion, reveal } from './ui-motion';
+import { cancelLoadingReveals, settleNavigationContent } from './loading-reveal';
+import { initializeScrollMotion } from './scroll-motion';
 
 const mounted = new WeakSet<HTMLElement>();
 const chartKeys = ['scores', 'episode_counts', 'release_years', 'watch_years'] as const;
 
-function mount(root: HTMLElement) {
+export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
+  initializeProfileSections();
   if (mounted.has(root)) return;
   mounted.add(root);
   const node = <T extends HTMLElement = HTMLElement>(selector: string) => root.querySelector<T>(selector)!;
   let response: OverviewResponse = JSON.parse(root.dataset.initial || '{}');
+  let domain:StatisticsDomain=root.dataset.domain==='game'?'game':'screen';
+  let page=1;
   let media: MediaScope = root.dataset.media as MediaScope;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let stopped = false;
   let refreshing = false;
   const events = new AbortController();
-  const switchPanel = createContentTransition(node('.overview-results'), events.signal);
-  initializeScrollMotion(root, events.signal, '.stats-genre-card,.overview-chart,.overview-distribution', 'stats-scroll-reveal', {animateInitial:false, downwardOnly:true, once:true});
+  const results = node('.overview-results');
+  const cancelPanelReveal = () => cancelLoadingReveals(results);
   events.signal.addEventListener('abort', () => cancelUiMotion(root), {once:true});
   root.addEventListener('load', event => {
     const image = event.target;
@@ -38,11 +48,17 @@ function mount(root: HTMLElement) {
     }
   }, {capture:true, signal:events.signal});
   mountStatisticsNavigation(root, events.signal);
-  const genres = mountGenres(root);
-  const actors = mountActors(root);
-  const studios = mountStudios(root);
-  const staff = mountStaff(root);
-  let section = root.dataset.section === 'genres' || root.dataset.section === 'actors' || root.dataset.section === 'studios' || root.dataset.section === 'staff' ? root.dataset.section : 'overview';
+  let settleScrollEntrance: ReturnType<typeof initializeScrollMotion>;
+  const settleCardScroll = (card: HTMLElement) => settleScrollEntrance?.(card);
+  const genres = mountGenres(root, settleCardScroll);
+  const actors = mountActors(root, settleCardScroll);
+  const studios = mountStudios(root, settleCardScroll);
+  const staff = mountStaff(root, settleCardScroll);
+  let section=statisticsSection(domain,root.dataset.section||'overview');
+  let paintedView=`${domain}:${section}`;
+  const rawGame=()=> (response as UnifiedStatistics).game;
+  const sectionSort=(value:string)=>genreSort(root.dataset[statisticsPanel(value)==='actors'?'actorSort':statisticsPanel(value)==='staff'?'staffSort':statisticsPanel(value)==='studios'?'studioSort':'genreSort']);
+  const currentSelection=():StatisticsSelection=>({domain,media,section,sort:sectionSort(section),page,generation:rawGame()?.generation});
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
   const chartTextStyle=getComputedStyle(node('.overview-metrics button'));
   const chartFont = {size:parseFloat(chartTextStyle.fontSize),
@@ -74,13 +90,13 @@ function mount(root: HTMLElement) {
     return fixed[key] || palette[([...key].reduce((sum, letter) => sum * 31 + letter.charCodeAt(0), 0) >>> 0) % palette.length];
   };
   function dataRows(data: Overview, key: typeof chartKeys[number]): MetricGroup[] {
-    const rows = knownRows(data[key]);
-    return key === 'watch_years' ? watchYearRows(rows) : key === 'scores' || key === 'episode_counts' ? barChartRows(rows) : rows;
+    const rows=domain==='game'?data[key]:knownRows(data[key]);
+    return key === 'watch_years'&&domain!=='game' ? watchYearRows(rows) : key === 'scores' || key === 'episode_counts' ? barChartRows(rows) : rows;
   }
   function table(key: string, rows: MetricGroup[]) {
     node(`[data-chart-table="${key}"]`).replaceChildren(...rows.map(row => {
       const tr = document.createElement('tr');
-      [row.label, displayNumber(row.titles), displayNumber(row.minutes / 60, 1), ...(key === 'scores' ? [] : [displayNumber(row.mean_score, 2)])].forEach((value, index) => {
+      [row.label, displayNumber(row.titles), ...(domain==='game'&&key==='watch_years'?[]:[displayNumber(row.time_known===false?null:row.minutes/60,1)]), ...(key === 'scores' ? [] : [displayNumber(row.mean_score, 2)])].forEach((value, index) => {
         const cell = document.createElement(index ? 'td' : 'th');
         if (cell instanceof HTMLTableCellElement && !index) cell.scope = 'row';
         cell.textContent = value;
@@ -90,11 +106,12 @@ function mount(root: HTMLElement) {
     }));
   }
   function drawMetric(data: Overview, key: typeof chartKeys[number], initial = false) {
-    const rows = dataRows(data, key), metric = metrics.get(key)!;
+    const rows=dataRows(data,key);let metric=metrics.get(key)!;
+    if(domain==='game'&&key==='watch_years'&&metric==='hours'){metric='titles';metrics.set(key,metric);}
     const plotted = rows;
     const canvas = node<HTMLCanvasElement>(`[data-overview-chart="${key}"]`);
     canvas.parentElement!.style.setProperty('--chart-min-width', `${chartMinimumWidth(rows.length)}px`);
-    const tooltip = tooltips.get(key) || createMetricTooltip(canvas, key, events.signal);
+    const tooltip = tooltips.get(key) || createMetricTooltip(canvas,key,events.signal,(_key,row)=>({title:row.detail||(domain==='screen'&&key==='episode_counts'?`${row.label} episodes`:row.label),values:[{metric:'titles',label:domain==='game'?'Games':'Titles',value:displayNumber(row.titles)},...(domain==='game'&&key==='watch_years'?[]:[{metric:'hours',label:'Hours',value:displayNumber(row.time_known===false?null:row.minutes/60,1)}]),...(key==='scores'?[]:[{metric:'mean_score',label:'Mean score',value:displayNumber(row.mean_score,2)}])]}));
     tooltips.set(key, tooltip); tooltip.update(plotted, metric);
     const isLine = key.includes('years');
     const cyan = color('--stats-cyan'), axisText = color('--text-data'), bright = color('--bright');
@@ -102,7 +119,7 @@ function mount(root: HTMLElement) {
     const empty = rows.every(row => row.titles === 0 || (metric === 'mean_score' && row.mean_score === null));
     const message = node(`[data-chart-empty="${key}"]`);
     message.hidden = !empty;
-    message.textContent = metric === 'mean_score' ? 'No rated watched titles.' : 'No watched titles.';
+    message.textContent=domain==='game'?(metric==='mean_score'?'No rated games.':'No played games.'):(metric==='mean_score'?'No rated watched titles.':'No watched titles.');
     const highest=plotted.reduce((maximum,row)=>Math.max(maximum,metricValue(row,metric) ?? 0),0);
     canvas.setAttribute('aria-label', `${node(`[data-chart-section="${key}"] h3`).textContent}: ${metricLabels[metric]}`);
     const options: ChartOptions<'bar' | 'line'> = {
@@ -187,7 +204,23 @@ function mount(root: HTMLElement) {
       return wrapper;
     }));
   }
-  function render(next: OverviewResponse, initial = false) {
+  function setResultsWaiting(waiting:boolean){
+    node('.overview-results').inert=waiting;
+  }
+  function matchesSelection(next:OverviewResponse){
+    const game=(next as UnifiedStatistics).game;
+    return domain==='game'?Boolean(game&&game.section===section&&game.page===page&&(next as UnifiedStatistics).selectionSort===currentSelection().sort):!game&&(!next.overview||next.overview.media_type===media);
+  }
+  function render(next:OverviewResponse,initial=false){
+    if(!matchesSelection(next))return;
+    const changedSection=paintedView!==`${domain}:${section}`;
+    if(!initial&&next.status==='ready'&&panelActive(root)&&changedSection){
+      renderNow(next,true);
+      settleNavigationContent(results,'tab',events.signal,4);
+    }else renderNow(next,initial);
+  }
+  function renderNow(next: OverviewResponse, initial = false) {
+    if(!matchesSelection(next))return;
     colors.clear();
     // Resolve the theme once before chart/table writes, avoiding repeated
     // synchronous layout reads during first paint and snapshot updates.
@@ -197,49 +230,61 @@ function mount(root: HTMLElement) {
     node('.overview-error').hidden = true;
     const ready = next.status === 'ready' && next.overview !== null;
     const wasPending = node('.overview-results').hidden;
-    node('.overview-results').hidden = !ready;
-    node('.overview-pending').hidden = ready;
+    const retainContent=!ready&&!wasPending;
+    node('.overview-results').hidden = !ready&&!retainContent;
+    node('.overview-pending').hidden = ready||retainContent;
     clearTimeout(timer);
-    const pollDelay = overviewPollDelay(next);
-    if (pollDelay !== null) timer = setTimeout(() => { if (!stopped) void loader.load(media); }, pollDelay);
+    const pollDelay=domain==='game'&&next.status!=='ready'?(rawGame()?.retry_after||3)*1000:overviewPollDelay(next);
+    if (pollDelay !== null) timer = setTimeout(() => { if (!stopped&&panelActive(root)) void loader.load(media,true); }, pollDelay);
     if (!ready) {
+      node('[data-overview-skeleton]').hidden = next.status === 'error';
       node('[data-overview-state]').textContent = next.status === 'error' ? 'Statistics are unavailable. A retry is scheduled.' : 'Preparing statistics…';
       return;
     }
+    setResultsWaiting(false);
     const data = next.overview!;
-    root.dataset.media = data.media_type;
-    headlineValues(data).forEach((metric, index) => {
+    const animateCards=!initial&&paintedView===`${domain}:${section}`;
+    if(domain==='screen')root.dataset.media=data.media_type;
+    updateDomainControls(true);
+    (domain==='game'?gameHeadlines(section==='overview'?rawGame()?.data as GameOverview:null):headlineValues(data)).forEach((metric, index) => {
       const value = node(`[data-headline-value="${index}"]`);
-      const changed = value.textContent !== metric.value;
-      value.textContent = metric.value;
-      if (changed && !initial && section === 'overview') { value.setAttribute('data-motion-fade',''); reveal(value); }
+      statisticValue(value,metric.value,events.signal,!initial&&section==='overview');
       value.parentElement!.title = metric.detail;
       node(`[data-headline-label="${index}"]`).textContent = metric.label;
     });
-    node('[data-chart-section="episode_counts"]').hidden = data.media_type === 'movie';
+    node('[data-chart-section="episode_counts"]').hidden=domain==='screen'&&media==='movie';
+    if(domain==='game'&&section==='overview')paintGameExtra(rawGame()?.data as GameOverview);
+    if(!panelActive(root)&&!initial)return;
     if (section === 'overview') {
       chartKeys.forEach(key => { if (!(key === 'episode_counts' && data.media_type === 'movie')) drawMetric(data, key, initial); });
       (['statuses', 'formats', 'countries'] as const).forEach(key => drawDistribution(data, key, initial));
     }
     // Hidden sections already have server-rendered cards. Enhance only the
     // section being viewed; switching sections uses the current snapshot.
-    if (section === 'genres') genres.render(data, !initial);
-    if (section === 'actors') actors.render(data, !initial);
-    if (section === 'studios') studios.render(data, !initial);
-    if (section === 'staff') staff.render(data, !initial);
+    if (section === 'genres') genres.render(data, animateCards);
+    if (section === 'actors') actors.render(data, animateCards);
+    if(statisticsPanel(section)==='studios')studios.render(data,animateCards);
+    if (section === 'staff') staff.render(data, animateCards);
+    paintedView=`${domain}:${section}`;
     if (wasPending && !initial) reveal(node('.overview-results'));
-    syncLinks();
-    node('[data-overview-announcement]').textContent = `${data.media_type === 'all' ? 'All media' : data.media_type === 'movie' ? 'Movie' : 'Series'} statistics loaded.`;
+    syncLinks();updateDomainControls(true);
+    node('[data-overview-announcement]').textContent = `${domain==='game'?'Games':data.media_type === 'all' ? 'All media' : data.media_type === 'movie' ? 'Movie' : 'Series'} statistics loaded.`;
   }
-  const loader = createOverviewLoader(root.dataset.username!, {
-    render: next => {
-      const changedScope = next.overview && next.overview.media_type !== response.overview?.media_type;
-      if (changedScope && section !== 'overview') void switchPanel(() => {
-        if (next.overview?.media_type === media) render(next, true);
-      });
-      else render(next);
+  let progressRunning=false;
+  function statisticsBusy(busy:boolean,quiet=false){
+    if(busy)cancelPanelReveal();
+    root.setAttribute('aria-busy',String(busy));
+    setResultsWaiting(busy||response.status!=='ready'||!matchesSelection(response));
+    const progress=busy&&!quiet&&panelActive(root);
+    if(progress!==progressRunning){progressRunning=progress;document.dispatchEvent(new Event(progress?'anylist:route-progress-start':'anylist:route-progress-end'));}
+  }
+  events.signal.addEventListener('abort',()=>statisticsBusy(false,true),{once:true});
+  const loader=createStatisticsReader(root.dataset.username!,events.signal,currentSelection,{
+    render:next=>{
+      render(next);scheduleSibling();
     },
-    onBusy: busy => root.setAttribute('aria-busy', String(busy)),
+    changed:()=>{page=1;syncUrl(false);void loader.load(media);},
+    onBusy:statisticsBusy,
     onError: (message, denied) => {
       const error = node('.overview-error'); error.textContent = message; error.hidden = false;
       error.setAttribute('data-motion-fade',''); reveal(error);
@@ -261,7 +306,7 @@ function mount(root: HTMLElement) {
   });
   function syncLinks() {
     root.querySelectorAll<HTMLAnchorElement>('[data-overview-media]').forEach(link => {
-      const url = new URL(location.href); url.searchParams.set('media', link.dataset.overviewMedia!);
+      const url = new URL(panelUrl(root)); url.searchParams.set('media', link.dataset.overviewMedia!);
       url.searchParams.set('section', section); url.searchParams.set('sort', root.dataset.genreSort || 'count');
       url.searchParams.set('actor_sort', root.dataset.actorSort || 'count'); url.searchParams.set('artwork', root.dataset.actorArtwork || 'media');
       url.searchParams.set('studio_sort', root.dataset.studioSort || 'count');
@@ -269,31 +314,33 @@ function mount(root: HTMLElement) {
       link.href = url.pathname + url.search;
     });
   }
-  function selectSection(next: string, push: boolean) {
+  function selectSection(next: string, push: boolean,nextDomain:StatisticsDomain=domain) {
+    cancelPanelReveal();
+    const domainChanged=domain!==nextDomain;
+    domain=nextDomain;
+
     tooltips.forEach(tooltip => tooltip.dismiss());
     pies.forEach(chart => { chart.tooltip?.setActiveElements([], {x:0,y:0}); chart.setActiveElements([]); chart.draw(); });
-    const previous = section;
-    section = next === 'genres' || next === 'actors' || next === 'studios' || next === 'staff' ? next : 'overview'; root.dataset.section = section;
-    node('[data-stats-heading]').textContent = section === 'staff' ? 'Staff' : section === 'studios' ? 'Studios' : section === 'actors' ? 'Actors' : section === 'genres' ? 'Genres' : 'Overview';
-    root.querySelectorAll<HTMLButtonElement>('.profile-section-selector__option').forEach(button => {
-      const selected = button.dataset.section === section; button.classList.toggle('is-selected', selected); button.setAttribute('aria-pressed', String(selected));
-    });
-    if (push) { const url = new URL(location.href); url.searchParams.set('section', section); history.pushState({}, '', url); }
-    syncLinks();
-    const update = () => {
-      root.querySelectorAll<HTMLElement>('[data-stats-panel]').forEach(panel => panel.hidden = panel.dataset.statsPanel !== section);
-      if (response.overview) render(response, true);
-    };
-    if (previous !== section) void switchPanel(update); else update();
+    section=statisticsSection(domain,next);root.dataset.section=section;root.dataset.statsPanelSection=statisticsPanel(section);page=1;
+    node('[data-stats-heading]').textContent = statisticsSectionLabel(section);
+    if(push)syncUrl(true);
+    syncLinks();updateDomainControls();
+    // A section is committed with its data in one task. Keep the outgoing
+    // panel painted during cold reads; never expose an unpopulated grid.
+    if(domain==='game'||domainChanged)void loader.load(media);
+    else render(response);
+    scheduleSibling();
   }
-  root.addEventListener('profile-section-change', event => selectSection((event as CustomEvent).detail.value, true), { signal: events.signal });
+  root.addEventListener('anylist:statistics-domain-section',event=>{const next=(event as CustomEvent<{section:string}>).detail.section;if(next!==section)selectSection(next,false);},{signal:events.signal});
+  root.addEventListener('profile-section-change', event => selectSection((event as CustomEvent).detail.value,true,(event.target as HTMLElement).closest<HTMLElement>('[data-statistics-domain]')?.dataset.statisticsDomain as StatisticsDomain||domain), { signal: events.signal });
   root.addEventListener('statistics-url-change', syncLinks, { signal: events.signal });
   function navigate(next: MediaScope, push: boolean) {
+    cancelPanelReveal();
     tooltips.forEach(tooltip => tooltip.dismiss());
     pies.forEach(chart => { chart.tooltip?.setActiveElements([], {x:0,y:0}); chart.setActiveElements([]); chart.draw(); });
-    media = next;
+    media=next;
     clearTimeout(timer);
-    if (push) { const url = new URL(location.href); url.searchParams.set('media', media); history.pushState({}, '', url); }
+    if(push)syncUrl(true);
     root.querySelectorAll<HTMLElement>('[data-overview-media]').forEach(link => { if (link.dataset.overviewMedia === media) link.setAttribute('aria-current', 'page'); else link.removeAttribute('aria-current'); });
     void loader.load(media);
   }
@@ -315,6 +362,8 @@ function mount(root: HTMLElement) {
     }
   }, { signal: events.signal });
   async function refreshMissing() {
+    page=1;
+    if(domain==='game'){loader.clear();await loader.load(media);return;}
     if (!response.owner) { await loader.load(media); return; }
     if (refreshing) return;
     refreshing = true;
@@ -322,7 +371,7 @@ function mount(root: HTMLElement) {
     button.disabled = true;
     button.textContent = 'Refreshing…';
     try {
-      await refreshStatistics(events.signal);
+      loader.clear();await refreshStatistics(events.signal);
       if (!stopped) await loader.load(media);
     } catch (error) {
       if (!stopped) {
@@ -335,6 +384,75 @@ function mount(root: HTMLElement) {
       button.textContent = 'Refresh statistics';
     }
   }
+  let siblingTimer:ReturnType<typeof setTimeout>|undefined;
+  function scheduleSibling(){
+    clearTimeout(siblingTimer);
+    siblingTimer=setTimeout(()=>{
+      if(events.signal.aborted||!panelActive(root)||!predictionAllowed()||!root.querySelector(`[data-statistics-domain="${domain==='screen'?'game':'screen'}"]`))return;
+      const other:StatisticsDomain=domain==='screen'?'game':'screen';
+      void loader.prefetch({...currentSelection(),domain:other,section:statisticsSection(other,section),page:1,generation:null});
+    },250);
+  }
+  events.signal.addEventListener('abort',()=>clearTimeout(siblingTimer),{once:true});
+  function syncUrl(push:boolean){
+    const url=new URL(panelUrl(root));url.pathname=`/user/${encodeURIComponent(root.dataset.username!)}/stats${domain==='game'?'/games':''}`;
+    url.searchParams.set('section',section);
+    if(domain==='screen'){url.searchParams.set('media',media);url.searchParams.delete('page');}
+    else {url.searchParams.delete('media');url.searchParams.set('sort',currentSelection().sort);url.searchParams.delete('page');}
+    setPanelUrl(root,url,push);
+  }
+  function updateDomainControls(commit=false){
+    root.dataset.domain=domain;root.dataset.section=section;root.dataset.statsPanelSection=statisticsPanel(section);root.dataset.statsRankOffset='0';
+    root.querySelectorAll<HTMLButtonElement>('.profile-section-selector [data-section]').forEach(button=>{const selected=button.closest<HTMLElement>('[data-statistics-domain]')?.dataset.statisticsDomain===domain&&button.dataset.section===section;button.classList.toggle('is-selected',selected);button.setAttribute('aria-pressed',String(selected));});
+    node('[data-stats-heading]').textContent=node<HTMLButtonElement>(`[data-statistics-domain="${domain}"] [data-section="${section}"]`).textContent||'Overview';
+    node('[data-screen-media]').hidden=domain==='game';
+    root.querySelectorAll<HTMLElement>('[data-overview-media]').forEach(link=>{if(link.dataset.overviewMedia===media)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');});
+    if(!commit)return;
+    root.querySelectorAll<HTMLElement>('[data-chart-section="watch_years"] thead th').forEach(th=>{if(th.textContent==='Hours')th.hidden=domain==='game';});
+    const titles:{[key:string]:string}={scores:'Scores',episode_counts:domain==='game'?'Recorded time':'Episode count',release_years:'Release year',watch_years:domain==='game'?'Completion year':'Watch year'};
+    for(const key of chartKeys){node(`[data-chart-section="${key}"] h3`).textContent=titles[key];root.querySelectorAll<HTMLButtonElement>(`[data-chart="${key}"]`).forEach(button=>{if(button.dataset.metric==='titles')button.textContent=domain==='game'?'Games':'Titles';button.hidden=domain==='game'&&key==='watch_years'&&button.dataset.metric==='hours';});}
+    for(const id of ['formats','countries'])node(`[data-distribution="${id}"]`).hidden=domain==='game';
+    node('[data-game-statistics-extra]').hidden=domain!=='game';
+    root.querySelectorAll<HTMLElement>('.stats-genres-toolbar button,.stats-actors-toolbar button,.stats-genre-summary dt,.stats-actor-summary dt').forEach(label=>{if(label.textContent==='Time Watched'||label.textContent==='Time Played')label.textContent=domain==='game'?'Time Played':'Time Watched';});
+    root.querySelectorAll<HTMLElement>('[data-stats-panel]').forEach(panel=>panel.hidden=panel.dataset.statsPanel!==statisticsPanel(section));
+  }
+  function paintGameExtra(data:GameOverview){
+    node('[data-game-planned-count]').textContent=displayNumber(data.planned.games);node('[data-game-planned-hours]').textContent=data.planned.estimated_seconds==null?'—':`${data.planned.known_estimate_games<data.planned.games?'≥ ':''}${displayNumber(data.planned.estimated_seconds/3600,1)}`;
+    node('[data-game-replays]').textContent=data.totals.replay_games?displayNumber(data.totals.replays):'—';const undated=data.coverage.undated_completions||0;node('[data-game-undated]').hidden=!undated;node('[data-game-undated]').textContent=`${undated} completions have no date.`;
+    node('[data-game-comparisons]').replaceChildren(...data.comparisons.map(row=>{const tr=document.createElement('tr');[row.label,displayNumber(row.games),signedNumber(row.mean_difference_seconds,3600),row.mean_relative_percent==null?'—':`${signedNumber(row.mean_relative_percent)}%`].forEach((text,index)=>{const cell=document.createElement(index?'td':'th');if(!index)cell.scope='row';cell.textContent=text;tr.append(cell);});return tr;}));
+  }
+  root.addEventListener('click',event=>{
+    const sortButton=(event.target as Element).closest<HTMLButtonElement>('button[data-genre-sort],button[data-actor-sort],button[data-studio-sort],button[data-staff-sort]');
+    if(domain==='game'&&sortButton){event.preventDefault();event.stopImmediatePropagation();for(const prefix of ['genre','actor','studio','staff'])if(sortButton.dataset[prefix+'Sort'])root.dataset[prefix+'Sort']=sortButton.dataset[prefix+'Sort'];page=1;syncUrl(true);void loader.load(media);}
+  },{capture:true,signal:events.signal});
+  function openUrl(url:URL){
+    cancelPanelReveal();
+    domain=url.pathname.endsWith('/games')?'game':'screen';
+    section=statisticsSection(domain,url.searchParams.get('section')||'overview');
+    page=1;
+    const value=url.searchParams.get('media');if(domain==='screen')media=value==='movie'||value==='series'?value:'all';
+    for(const [prefix,param] of [['genre','sort'],['actor','actor_sort'],['studio','studio_sort'],['staff','staff_sort']])root.dataset[prefix+'Sort']=genreSort(url.searchParams.get(domain==='game'?'sort':param));
+    root.dataset.actorArtwork=actorArtwork(url.searchParams.get('artwork'));
+    syncUrl(false);syncLinks();updateDomainControls();void loader.load(media);scheduleSibling();
+  }
+  root.addEventListener('anylist:statistics-open',event=>openUrl(new URL((event as CustomEvent<{url:string}>).detail.url)),{signal:events.signal});
+  bindPredictionIntent(root,events.signal,link=>{if(link.dataset.overviewMedia)void loader.prefetch({...currentSelection(),domain:'screen',media:link.dataset.overviewMedia as MediaScope,page:1,generation:null});});
+  let intentTimer:ReturnType<typeof setTimeout>|undefined,intentButton:HTMLElement|undefined;
+  const cancelIntent=()=>{clearTimeout(intentTimer);intentButton=undefined;};
+  const sectionIntent=(event:Event)=>{
+    if(event instanceof PointerEvent&&event.pointerType!=='mouse')return;
+    const button=(event.target as Element).closest<HTMLElement>('.profile-section-selector [data-section]');
+    if(!button||button.hidden||intentButton===button)return;
+    cancelIntent();intentButton=button;
+    const targetDomain=button.closest<HTMLElement>('[data-statistics-domain]')?.dataset.statisticsDomain as StatisticsDomain;
+    if(targetDomain!=='screen'&&targetDomain!=='game')return;
+    intentTimer=setTimeout(()=>{if(!events.signal.aborted&&button.isConnected&&predictionAllowed()&&(targetDomain!==domain||button.dataset.section!==section))void loader.prefetch({...currentSelection(),domain:targetDomain,section:statisticsSection(targetDomain,button.dataset.section!),sort:sectionSort(button.dataset.section!),page:1,generation:null});},180);
+  };
+  root.addEventListener('pointerover',sectionIntent,{signal:events.signal,passive:true});
+  root.addEventListener('focusin',sectionIntent,{signal:events.signal});
+  root.addEventListener('pointerout',event=>{if(intentButton&&!intentButton.contains((event as PointerEvent).relatedTarget as Node|null))cancelIntent();},{signal:events.signal});
+  root.addEventListener('focusout',cancelIntent,{signal:events.signal});
+  events.signal.addEventListener('abort',cancelIntent,{once:true});
   function highlightLegend(event: Event) {
     const target = (event.target as HTMLElement).closest<HTMLElement>('[data-pie]');
     if (!target || !response.overview) return;
@@ -348,24 +466,28 @@ function mount(root: HTMLElement) {
   function clearHighlight() { pies.forEach(chart => { chart.setActiveElements([]); chart.render(); }); }
   root.addEventListener('focusout', clearHighlight, { signal: events.signal });
   root.addEventListener('pointerout', clearHighlight, { signal: events.signal });
-  window.addEventListener('popstate', () => {
-    const params = new URL(location.href).searchParams, value = params.get('media');
-    root.dataset.genreSort = genreSort(params.get('sort')); root.dataset.actorSort = genreSort(params.get('actor_sort'));
-    root.dataset.studioSort = genreSort(params.get('studio_sort'));
-    root.dataset.staffSort = genreSort(params.get('staff_sort'));
-    root.dataset.actorArtwork = actorArtwork(params.get('artwork')); selectSection(params.get('section') || 'overview', false);
-    navigate(value === 'movie' || value === 'series' ? value : 'all', false);
-  }, { signal: events.signal });
+  window.addEventListener('popstate',()=>{if(panelActive(root))openUrl(new URL(location.href));},{signal:events.signal});
   reducedMotion.addEventListener('change', () => { cancelUiMotion(root); if (response.overview) render(response, true); }, { signal: events.signal });
-  const observer = new MutationObserver(() => { if (response.overview) render(response, true); });
+  const observer = new MutationObserver(() => { if (panelActive(root)&&response.overview) render(response, true); });
   observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
   // The profile runtime applies the owner/viewer accent on body, including
   // saved choices restored during client-side navigation. Repaint canvases too.
   observer.observe(document.body, { attributes: true, attributeFilter: ['style'] });
-  document.addEventListener('anylist:editor-committed', () => { if (response.owner) void loader.load(media); }, {signal:events.signal});
-  document.addEventListener('astro:before-swap', () => { stopped = true; clearTimeout(timer); loader.stop(); events.abort(); genres.stop(); actors.stop(); studios.stop(); staff.stop(); observer.disconnect(); charts.forEach(chart => chart.destroy()); pies.forEach(chart => chart.destroy()); }, { once: true, signal: events.signal });
-  render(response, true);
+  let dirty=false;
+  root.closest('[data-profile-url]')?.addEventListener('anylist:panel-inactive',()=>{clearTimeout(timer);cancelPanelReveal();},{signal:events.signal});
+  const refresh=()=>{page=1;loader.clear();if(panelActive(root)){dirty=false;void loader.load(media);}else dirty=true;};
+  root.closest('[data-profile-url]')?.addEventListener('anylist:panel-active',()=>{if(dirty||response.status!=='ready')refresh();else if(response.overview)render(response,true);},{signal:events.signal});
+  document.addEventListener('anylist:editor-committed', () => { if (response.owner) refresh(); }, {signal:events.signal});
+  lifetime.addEventListener('abort', () => { stopped = true; clearTimeout(timer); loader.stop(); events.abort(); genres.stop(); actors.stop(); studios.stop(); staff.stop(); observer.disconnect(); charts.forEach(chart => chart.destroy()); pies.forEach(chart => chart.destroy()); }, { once: true, signal: events.signal });
+  loader.seed(currentSelection(),response as UnifiedStatistics);
+  document.addEventListener('anylist:cache-invalidated',refresh,{signal:events.signal});
+  render(response,true);updateDomainControls();scheduleSibling();
+  const mountScrollEntrance = () => {
+    settleScrollEntrance = initializeScrollMotion(root, events.signal,
+      '.overview-results :is(.stats-genre-card,.overview-chart,.overview-distribution)', 'stats-scroll-reveal', {
+        animateInitial:false, animateVisibleArrivals:false, downwardOnly:true, once:true, prepareBeforeEntry:false,
+      });
+  };
+  if (panelActive(root)) mountScrollEntrance();
+  else root.closest('[data-profile-url]')?.addEventListener('anylist:panel-active', mountScrollEntrance, {once:true,signal:events.signal});
 }
-function setup() { const root = document.querySelector<HTMLElement>('#statistics-overview'); if (root) mount(root); }
-document.addEventListener('astro:page-load', setup);
-setup();

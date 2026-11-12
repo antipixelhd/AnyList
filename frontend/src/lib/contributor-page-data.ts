@@ -1,8 +1,23 @@
 import type { BrowseItem } from './browse-card-actions';
+import {browseCardHref} from './browse-card-data.ts';
 
 export interface ContributorWork extends BrowseItem {
   entry: Record<string, any> | null;
   key: string; href: string | null; release_date: string | null; roles: string[]; characters: string[];
+  characters_pending?:boolean;
+  credit_sources?:{kind:string;title:string}[];
+}
+export function contributorCreditScope(work: Pick<ContributorWork,'title'|'credit_sources'>) {
+  const sources=work.credit_sources||[];
+  const labels:Record<string,string>={dlc:'DLC',expansion:'Expansion',update:'Update',episode:'Episode',edition:'Edition',port:'Port'};
+  return sources.map(source=>{
+    if(source.kind==='episode'){
+      const episode=/^(.+?):\s*(Episode\s+.+)$/i.exec(source.title);
+      if(episode&&(work.title===episode[1]||work.title.startsWith(episode[1]+':')))return episode[2];
+    }
+    const title=source.title.startsWith(work.title+':')?source.title.slice(work.title.length+1).trim():source.title;
+    return `${labels[source.kind]||source.kind}: ${title}`;
+  }).join(' · ');
 }
 export interface ContributorPage {
   kind: 'actor' | 'staff' | 'studio'; key: string; name: string; image: string | null; description: string | null;
@@ -11,11 +26,14 @@ export interface ContributorPage {
   aliases: string[]; countries: string[]; headquarters: string | null; links: {label:string;href:string}[];
   roles: string[]; works: ContributorWork[]; known_works: number; list_count: number | null;
   total: number | null; page: number; has_more: boolean; next_cursor: string | null; source: 'local' | 'provider'; notice: string | null;
+  game_person_status?:import('./contributor-source-refresh').GamePersonStatus|null;
+  game_company_status?:import('./contributor-source-refresh').GamePersonStatus|null;
 }
 export function contributorParams(search: URLSearchParams, signedIn: boolean) {
   const params = new URLSearchParams();
   const type = search.get('media_type');
-  if (type === 'movie' || type === 'series') params.set('media_type', type);
+  if (search.get('domain') === 'game' || search.get('domain') !== 'movies-series' && type === 'game') params.set('media_type', 'game');
+  else if (type === 'all' || type === 'movie' || type === 'series') params.set('media_type', type);
   const list = search.get('list_scope');
   if (signedIn && list === 'in') params.set('list_scope', list);
   const page = Number(search.get('page'));
@@ -32,6 +50,7 @@ export function contributorMediaLabel(type: string) {
   return ({movie:'Movie',series:'Series',game:'Game',book:'Book'} as Record<string,string>)[type] || '';
 }
 export function workHref(work: BrowseItem & {href?:string|null}) {
+  if (work.type === 'game') return browseCardHref({...work,href:work.href||undefined}) || null;
   return work.id ? `/title/${work.id}` : work.tmdb_id ? `/discover-title?type=${work.type}&id=${work.tmdb_id}` : work.href || null;
 }
 

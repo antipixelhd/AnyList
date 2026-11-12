@@ -1,8 +1,11 @@
 ---
+import ProfileImageSettings from './ProfileImageSettings.astro';
 import RatingPosterSettings from "./RatingPosterSettings.astro";
 import StatisticsRefresh from "./StatisticsRefresh.astro";
 import { api } from "../../lib/api";
 import { tracker } from "../../lib/tracker";
+import {viewerMediaPreferences} from '../../lib/viewer-media-preferences';
+import {viewerProfilePreferences} from '../../lib/viewer-profile-preferences';
 import type { UserPreferences, PrivacyLevel } from "../../lib/api";
 import '../../styles/profile-color-settings.css';
 
@@ -12,12 +15,24 @@ const RESULT_CATEGORIES = [
   [99, 'Documentary'], [10764, 'Reality'], [10767, 'Talk shows'],
   [10763, 'News'], [10766, 'Soap operas'], [10770, 'TV movies'], [10402, 'Music'],
 ] as const;
+const GAME_THRESHOLDS = [
+  ['game_min_ratings', 'Released · Minimum IGDB ratings', 5, 10000000],
+  ['game_min_follows', 'Released · Minimum prerelease follows', 2, 10000000],
+  ['game_upcoming_min_follows', 'Upcoming · Minimum prerelease follows', 5, 10000000],
+  ['game_released_min_score', 'Released · Minimum IGDB score (out of 100)', 0, 100],
+] as const;
+const GAME_AI_FILTERS = [
+  ['hide_ai_artwork', 'Hide AI-generated artwork'],
+  ['hide_ai_voices', 'Hide AI-generated voices'],
+  ['hide_ai_music', 'Hide AI-generated music'],
+] as const;
 const { token } = Astro.locals;
 const settings = Astro.locals.settings;
-const [profileData, me, trackingPrefs] = await Promise.all([
-  api.profile.get(token!).catch(() => null),
+const [profileData, me, trackingPrefs, notificationPrefs] = await Promise.all([
+  viewerProfilePreferences(Astro.locals),
   api.auth.me(token!),
-  tracker('preferences', token!).catch(() => ({ combine_lists: true, default_sort: 'title' })),
+  viewerMediaPreferences(Astro.locals),
+  category === 'notifications' ? tracker('preferences', token) : null,
 ]);
 
 const prefs: UserPreferences = {
@@ -127,33 +142,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
           <h2 class="section-headline">Identity</h2>
         </div>
 
-        <!-- Avatar -->
-        <div class="flex items-center gap-6 mb-8">
-          <div id="avatar-preview" class="w-20 h-20 rounded-2xl overflow-hidden bg-zinc-800 border border-zinc-700 flex items-center justify-center shrink-0">
-            {prefs.avatar_url ? (
-              <img id="avatar-img" src={`/api/proxy${prefs.avatar_url}`} alt="Avatar" class="w-full h-full object-cover" />
-            ) : (
-              <span id="avatar-initials" class="text-2xl font-black text-zinc-400 select-none">
-                {me.username[0].toUpperCase()}
-              </span>
-            )}
-          </div>
-          <div class="space-y-2">
-            <p class="text-sm font-medium text-zinc-300">Profile Picture</p>
-            <p class="text-xs text-zinc-500">JPEG, PNG or WebP · Max 5 MB</p>
-            <div class="flex items-center gap-2 flex-wrap">
-              <label class="cursor-pointer px-4 py-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 hover:border-zinc-500 text-zinc-200 text-sm font-medium rounded-lg transition-all">
-                <span id="upload-label">Choose file</span>
-                <input id="avatar-input" type="file" accept="image/jpeg,image/png,image/webp" class="sr-only" />
-              </label>
-              {prefs.avatar_url && (
-                <button id="remove-avatar-btn" type="button" class="px-4 py-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 text-sm font-medium rounded-lg transition-all">
-                  Remove
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
+        <ProfileImageSettings {prefs}/>
 
         <div class="grid grid-cols-1 gap-5">
           <div class="space-y-2">
@@ -162,20 +151,6 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
             <div class="flex items-center justify-between gap-3"><span id="bio-count" class="text-xs text-zinc-500" aria-live="polite">{(prefs.bio ?? '').length.toLocaleString()} / 5,000</span><button id="save-bio" type="button" class="button-primary px-4 py-2 text-sm" disabled>Save bio</button></div>
           </div>
         </div>
-      </section>
-
-      <section class="mb-8" aria-labelledby="background-heading">
-        <h2 id="background-heading" class="section-headline mb-4">Profile Background</h2>
-        <form id="background-form" class="space-y-3">
-          <label for="background-url" class="block text-sm text-zinc-400">Background image URL</label>
-          <input id="background-url" type="url" maxlength="2048" value={prefs.background_url ?? ''} placeholder="https://example.com/banner.jpg" class="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100" />
-          <p class="text-xs text-zinc-400">Use a wide image for your profile banner. Clear the URL to restore the default background.</p>
-          <div class="relative h-40 overflow-hidden rounded-lg" style="background:#242538">
-            <img id="background-preview" src={prefs.background_url || undefined} hidden={!prefs.background_url} alt="Background preview" referrerpolicy="no-referrer" class="w-full h-full object-cover" />
-            <div class="absolute inset-0" style="background:linear-gradient(rgba(6,13,34,0) 40%,rgba(6,13,34,.6))"></div>
-          </div>
-          <button type="submit" id="save-background" class="button-primary px-4 py-2 text-sm">Save background</button>
-        </form>
       </section>
 
       <!-- Privacy -->
@@ -205,6 +180,24 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
       </div>
       )}
       {category === "lists" && <div class="settings-stack">
+      <section>
+        <div class="mb-4 border-b border-zinc-800 pb-2"><h2 class="section-headline">Media</h2></div>
+        <label class="setting-switch-row" for="show-movies-series"><span><strong>Movies & Series</strong></span><input id="show-movies-series" type="checkbox" checked={trackingPrefs.show_movies_series}/></label>
+        <label class="setting-switch-row" for="show-games"><span><strong>Games</strong></span><input id="show-games" type="checkbox" checked={trackingPrefs.show_games}/></label>
+        <p class="settings-note">Controls your navigation and discovery. Saved entries, direct links and other users’ profiles remain available.</p>
+      </section>
+      <section>
+        <div class="mb-4 border-b border-zinc-800 pb-2"><h2 class="section-headline">Watch state sync</h2></div>
+        <div class="settings-inline-grid settings-single-column">
+          <label>Automatically set Watching
+            <select id="watch-state-sync" aria-describedby="watch-state-sync-help">
+              <option value="conservative" selected={trackingPrefs.watch_state_sync !== 'immediate'}>Conservative</option>
+              <option value="immediate" selected={trackingPrefs.watch_state_sync === 'immediate'}>Immediate</option>
+            </select>
+          </label>
+        </div>
+        <p id="watch-state-sync-help" class="setting-help">Conservative keeps sampled movies off Watching and adds a series only after a completed episode; Immediate can add either as soon as playback progress syncs. Resume positions still sync between connections in both modes.</p>
+      </section>
       <!-- List presentation -->
       <section>
         <div class="mb-4 border-b border-zinc-800 pb-2">
@@ -214,6 +207,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
           <span><strong>Combine movies and series</strong><small>Use one Movie/Series List on your profile with a Type column.</small></span>
           <input id="combine-lists" type="checkbox" checked={trackingPrefs.combine_lists !== false} />
         </label>
+        <label class="setting-switch-row" for="show-game-achievements"><span><strong>Show game achievements</strong></span><input id="show-game-achievements" type="checkbox" checked={trackingPrefs.show_game_achievements}/></label>
         <div class="settings-inline-grid settings-single-column">
           <label>Default list sorting
             <select id="default-list-sort">
@@ -233,7 +227,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
         <h2 class="section-headline">Sync reviews</h2>
         <label class="setting-switch-row" for="auto-approve-uncertain-resume">
           <span><strong>Auto-approve uncertain resume positions</strong></span>
-          <input id="auto-approve-uncertain-resume" type="checkbox" checked={trackingPrefs.auto_approve_uncertain_resume} />
+          <input id="auto-approve-uncertain-resume" type="checkbox" checked={notificationPrefs?.auto_approve_uncertain_resume} />
         </label>
       </section>
       <!-- Device notifications -->
@@ -260,12 +254,16 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
       </section>
       <section>
         <h2 class="section-headline mb-4 border-b border-zinc-800 pb-2">Results filters</h2>
-        <p class="text-sm text-zinc-400">Titles qualify with enough votes or enough popularity.</p>
+        <label class="setting-switch-row" for="hide-erotic-games">
+          <span><strong>Hide erotic games</strong><small>Excludes games classified as erotic regardless of votes or popularity. Mature age ratings remain visible.</small></span>
+          <input id="hide-erotic-games" type="checkbox" checked={trackingPrefs.hide_erotic_games !== false}/>
+        </label>
         <div class="space-y-2 max-w-xs mt-5">
           <div class="setting-label-line"><label for="minimum_movie_runtime" class="block text-sm font-medium text-zinc-400">Minimum movie runtime (minutes)</label></div>
           <input id="minimum_movie_runtime" name="minimum_movie_runtime" type="number" min="0" max="1440" step="1" value={prefs.minimum_movie_runtime} class="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:bg-zinc-800 transition-colors" />
         </div>
         <div class="space-y-2 max-w-xs mt-5">
+          <p class="text-sm text-zinc-400">Movies and series qualify with enough votes or enough popularity.</p>
           <label for="minimum_votes" class="block text-sm font-medium text-zinc-400">Minimum votes</label>
           <input id="minimum_votes" name="minimum_votes" type="number" min="0" max="10000000" step="1" value={prefs.minimum_votes} class="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:bg-zinc-800 transition-colors" />
         </div>
@@ -285,6 +283,19 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
         </fieldset>
 
       </section>
+      <section>
+        <h2 class="section-headline mb-4 border-b border-zinc-800 pb-2">Games Browse</h2>
+        <p class="text-sm text-zinc-400">Released games qualify by ratings or follows. Set a minimum to 0 to turn it off.</p>
+        {GAME_THRESHOLDS.map(([key,label,fallback,max])=><div class="space-y-2 max-w-xs mt-5">
+          <label for={key} class="block text-sm font-medium text-zinc-400">{label}</label>
+          <input id={key} data-game-browse-preference type="number" min="0" max={max} step="1" required
+            value={trackingPrefs[key] ?? fallback} class="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:bg-zinc-800 transition-colors" />
+        </div>)}
+        {GAME_AI_FILTERS.map(([key,label])=><label class="setting-switch-row" for={key}>
+          <span><strong>{label}</strong></span>
+          <input id={key} data-game-browse-preference type="checkbox" checked={trackingPrefs[key] === true}/>
+        </label>)}
+      </section>
       <!-- Localization -->
       <section>
         <div class="mb-4 border-b border-zinc-800 pb-2">
@@ -298,7 +309,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
             name="country"
             class="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
           >
-            <option value="">— Not set —</option>
+            <option value="">Automatic</option>
             {COUNTRIES.map(([code, name]) => (
               <option value={code} selected={prefs.country === code}>{name}</option>
             ))}
@@ -373,7 +384,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
                 aria-pressed={active}
                 data-chip="streaming"
                 data-value={id}
-                class={`chip px-5 py-3 rounded-full border text-base font-medium transition-all cursor-pointer active:scale-95 active:opacity-70 ${active ? "bg-blue-500/20 border-blue-500 text-blue-400" : "bg-zinc-900 border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200"}`}
+                class={`chip px-5 py-3 rounded-full border text-base font-medium transition-all cursor-pointer active:opacity-70 ${active ? "bg-blue-500/20 border-blue-500 text-blue-400" : "bg-zinc-900 border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200"}`}
               >
                 {name}
               </button>
@@ -396,10 +407,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
     const appData = document.getElementById('app-data');
     const token = appData?.dataset.token ?? '';
 
-    function esc(s: unknown): string {
-      if (s == null) return '';
-      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-    }
+
 
 
 
@@ -408,88 +416,17 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
       const names: Record<string, string> = {
         'profile-appearance': 'Profile appearance', background: 'Profile background', bio: 'Bio',
         'remove-specials-seasons': 'Seasons',
+        'auto-approve-uncertain-resume': 'Resume reviews',
+        'game-browse': 'Games Browse preferences',
         minimum_movie_runtime: 'Minimum movie runtime', excluded_categories: 'Excluded categories',
         minimum_votes: 'Minimum votes',
         country: 'Country', metadata_language: 'Metadata language',
-        'auto-approve-uncertain-resume': 'Resume reviews',
         'combine-lists': 'List preferences', streaming_services: 'Streaming services',
       };
       showMessage(state === 'error' ? message : `${names[group] || 'Setting'} saved.`, state === 'error' ? 'error' : 'success');
     }
 
     // Avatar upload
-    const avatarInput = document.getElementById('avatar-input') as HTMLInputElement | null;
-    const uploadLabel = document.getElementById('upload-label');
-    const removeBtn = document.getElementById('remove-avatar-btn') as HTMLButtonElement | null;
-
-    function setAvatarPreview(src: string | null) {
-      const preview = document.getElementById('avatar-preview');
-      if (!preview) return;
-      const appbarAvatar = document.querySelector<HTMLElement>('[data-appbar-avatar]');
-      if (src) {
-        preview.innerHTML = `<img id="avatar-img" src="${esc(src)}" alt="Avatar" class="w-full h-full object-cover" />`;
-        const image = document.createElement('img');
-        image.src = src;
-        image.alt = '';
-        appbarAvatar?.replaceChildren(image);
-      } else {
-        const initial = page?.dataset.username?.[0]
-          ?? (uploadLabel?.closest('section')?.querySelector('span')?.textContent?.trim()[0] ?? '?');
-        preview.innerHTML = `<span class="text-2xl font-black text-zinc-400 select-none">${esc(initial.toUpperCase())}</span>`;
-        const fallback = document.createElement('span');
-        fallback.setAttribute('aria-hidden', 'true');
-        fallback.textContent = initial.toUpperCase();
-        appbarAvatar?.replaceChildren(fallback);
-      }
-    }
-
-    avatarInput?.addEventListener('change', async () => {
-      const file = avatarInput.files?.[0];
-      if (!file) return;
-      if (uploadLabel) uploadLabel.textContent = 'Uploading…';
-      const form = new FormData();
-      form.append('file', file);
-      try {
-        const res = await fetch('/api/proxy/profile/me/avatar', {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${token}` },
-          body: form,
-        });
-        if (!res.ok) {
-          const data = await res.json() as { detail?: string };
-          throw new Error(data.detail ?? 'Upload failed');
-        }
-        const data = await res.json() as { avatar_url: string };
-        setAvatarPreview(`/api/proxy${data.avatar_url}?t=${Date.now()}`);
-        if (removeBtn) removeBtn.classList.remove('hidden');
-        // A normal reload clears client-navigation snapshots rendered with the old avatar.
-        location.reload();
-      } catch (e: unknown) {
-        showMessage(e instanceof Error ? e.message : 'Upload failed.', 'error');
-      } finally {
-        if (uploadLabel) uploadLabel.textContent = 'Choose file';
-        avatarInput.value = '';
-      }
-    });
-
-    removeBtn?.addEventListener('click', async () => {
-      removeBtn.disabled = true;
-      try {
-        const res = await fetch('/api/proxy/profile/me/avatar', {
-          method: 'DELETE',
-          headers: { 'Authorization': `Bearer ${token}` },
-        });
-        if (!res.ok) throw new Error('Failed to remove avatar');
-        setAvatarPreview(null);
-        removeBtn.classList.add('hidden');
-        location.reload();
-      } catch (e: unknown) {
-        showMessage(e instanceof Error ? e.message : 'Failed to remove avatar.', 'error');
-      } finally {
-        removeBtn.disabled = false;
-      }
-    });
-
     const streamingButtons = [...page.querySelectorAll<HTMLButtonElement>('[data-chip="streaming"]')];
     const streamingValues = () => streamingButtons.filter(button => button.getAttribute('aria-pressed') === 'true').map(button => button.dataset.value!);
     function paintStreaming(values: string[]) {
@@ -509,30 +446,6 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
         throw new Error(typeof data.detail === 'string' ? data.detail : 'Could not save this setting.');
       }
     }
-    const backgroundForm = document.getElementById('background-form') as HTMLFormElement | null;
-    const backgroundInput = document.getElementById('background-url') as HTMLInputElement | null;
-    const backgroundPreview = document.getElementById('background-preview') as HTMLImageElement | null;
-    backgroundInput?.addEventListener('input', () => {
-      if (!backgroundPreview) return;
-      const value = backgroundInput.value.trim();
-      const valid = /^https?:\/\//i.test(value) && backgroundInput.validity.valid;
-      backgroundPreview.hidden = !valid;
-      if (valid) backgroundPreview.src = value;
-      else backgroundPreview.removeAttribute('src');
-    });
-    backgroundForm?.addEventListener('submit', async event => {
-      event.preventDefault();
-      const button = document.getElementById('save-background') as HTMLButtonElement;
-      if (button.disabled || !backgroundInput) return;
-      button.disabled = true;
-      setStatus('background', 'Saving…', 'saving');
-      try {
-        await patchProfile({ background_url: backgroundInput.value.trim() || null });
-        setStatus('background', 'Saved');
-      } catch (error) {
-        setStatus('background', error instanceof Error ? error.message : 'Could not save background.', 'error');
-      } finally { button.disabled = false; }
-    });
     const bio = document.getElementById('bio') as HTMLTextAreaElement | null;
     const bioCount = document.getElementById('bio-count');
     const saveBio = document.getElementById('save-bio') as HTMLButtonElement | null;
@@ -690,9 +603,6 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
     });
 
     // Save
-    const approveResume = document.getElementById('auto-approve-uncertain-resume') as HTMLInputElement | null;
-    if (approveResume) approveResume.dataset.savedValue = String(approveResume.checked);
-    approveResume?.addEventListener('change', () => saveTrackingPreferences({ auto_approve_uncertain_resume: approveResume.checked }, approveResume, 'auto_approve_uncertain_resume'));
     const combineLists = document.getElementById('combine-lists') as HTMLInputElement | null;
     const defaultSort = document.getElementById('default-list-sort') as HTMLSelectElement | null;
     const removeSpecials = document.getElementById('remove-specials-seasons') as HTMLInputElement | null;
@@ -709,6 +619,18 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
     });
     const trackingChains = new Map<string, Promise<void>>();
     const trackingRevisions = new Map<string, number>();
+    for (const control of document.querySelectorAll<HTMLInputElement>('[data-game-browse-preference]')) {
+      const checkbox = control.type === 'checkbox';
+      control.dataset.savedValue = checkbox ? String(control.checked) : control.value;
+      control.addEventListener('change', () => {
+        if (control.reportValidity()) saveTrackingPreferences({[control.id]: checkbox ? control.checked : control.valueAsNumber}, control, control.id);
+      });
+    }
+    for(const [id,field] of [['show-movies-series','show_movies_series'],['show-games','show_games'],['show-game-achievements','show_game_achievements'],['hide-erotic-games','hide_erotic_games'],['auto-approve-uncertain-resume','auto_approve_uncertain_resume']]){
+      const control=document.getElementById(id) as HTMLInputElement|null;if(!control)continue;
+      control.dataset.savedValue=String(control.checked);
+      control.addEventListener('change',()=>saveTrackingPreferences({[field]:control.checked},control,field));
+    }
     function publishCombinePreference(value: boolean) {
       document.dispatchEvent(new CustomEvent('anylist:combine-lists-changed', { detail: { combineLists: value } }));
     }
@@ -716,8 +638,9 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
       const revision = (trackingRevisions.get(field) || 0) + 1;
       trackingRevisions.set(field, revision);
       const requestedValue = control instanceof HTMLInputElement && control.type === 'checkbox' ? String(control.checked) : control.value;
-      const statusKey = field === 'auto_approve_uncertain_resume' ? 'auto-approve-uncertain-resume' : field === 'minimum_popularity' ? 'minimum-popularity' : field === 'include_rereleases' ? 'include-rereleases' : field === 'remove_specials_seasons' ? 'remove-specials-seasons' : 'combine-lists';
+      const statusKey = control.hasAttribute('data-game-browse-preference') ? 'game-browse' : field === 'watch_state_sync' ? 'watch-state-sync' : field === 'auto_approve_uncertain_resume' ? 'auto-approve-uncertain-resume' : field === 'minimum_popularity' ? 'minimum-popularity' : field === 'include_rereleases' ? 'include-rereleases' : field === 'remove_specials_seasons' ? 'remove-specials-seasons' : 'combine-lists';
       if (field === 'combine_lists') publishCombinePreference(requestedValue === 'true');
+      if(field.startsWith('show_'))document.dispatchEvent(new CustomEvent('anylist:media-domains-changed',{detail:{[field]:requestedValue==='true'}}));
       setStatus(statusKey, 'Saving…', 'saving');
       const pending = (trackingChains.get(field) || Promise.resolve()).catch(() => {}).then(async () => {
         try {
@@ -739,6 +662,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
             if (control instanceof HTMLInputElement && control.type === 'checkbox') control.checked = savedValue === 'true';
             else control.value = savedValue;
             if (field === 'combine_lists') publishCombinePreference(savedValue === 'true');
+            if(field.startsWith('show_'))document.dispatchEvent(new CustomEvent('anylist:media-domains-changed',{detail:{[field]:savedValue==='true'}}));
             setStatus(statusKey, error instanceof Error ? error.message : 'Could not update your preferences.', 'error');
           }
         }
@@ -747,6 +671,11 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
     }
     combineLists?.addEventListener('change', () => saveTrackingPreferences({ combine_lists: combineLists.checked }, combineLists, 'combine_lists'));
     defaultSort?.addEventListener('change', () => saveTrackingPreferences({ default_sort: defaultSort.value }, defaultSort, 'default_sort'));
+    const watchStateSync = document.getElementById('watch-state-sync') as HTMLSelectElement | null;
+    if (watchStateSync) {
+      watchStateSync.dataset.savedValue = watchStateSync.value;
+      watchStateSync.addEventListener('change', () => saveTrackingPreferences({ watch_state_sync: watchStateSync.value }, watchStateSync, 'watch_state_sync'));
+    }
     removeSpecials?.addEventListener('change', () => saveTrackingPreferences({ remove_specials_seasons: removeSpecials.checked }, removeSpecials, 'remove_specials_seasons'));
 
     // Completion-rating Web Push is enrolled per browser/PWA installation.

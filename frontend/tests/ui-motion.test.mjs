@@ -14,12 +14,12 @@ function fixture() {
     matchMedia: () => ({ matches: false }),
     createDropdownArrowMotion: () => ({ play: (...args) => rotations.push(args), cancel() {} }),
     animate: (element, values, timing) => {
-      const control = { stop() {}, cancel() {}, finished: new Promise(() => {}) };
-      animations.push({ element, values, timing });
+      const control = { stop() {this.stopped=true;}, cancel() {this.cancelled=true;}, finished: new Promise(() => {}) };
+      animations.push({ element, values, timing, control });
       return control;
     },
   };
-  runInNewContext(transpile(source, { target: ScriptTarget.ES2022 }) + '\nthis.api = { showMenu, hideMenu, reveal };', context);
+  runInNewContext(transpile(source, { target: ScriptTarget.ES2022 }) + '\nthis.api = { showMenu, hideMenu, reveal, cancelUiMotion, cancelUiMotionImmediately };', context);
   const properties = new Map();
   const panel = {
     hidden: true, inert: true,
@@ -37,6 +37,19 @@ test('initial menu visibility settles without scheduling an entrance animation',
   assert.equal(f.panel.inert, false);
   assert.equal(f.animations.length, 0);
   assert.equal(f.rotations[0][2].duration, 0);
+});
+
+test('ordinary surfaces preserve their original stop behavior',()=>{
+  const f=fixture();f.showMenu(f.panel);f.showMenu(f.panel);
+  assert.equal(f.animations[0].control.stopped,true);
+  assert.equal(f.animations[0].control.cancelled,undefined);
+});
+
+test('an anchored editor can cancel its own entrance without changing viewer cleanup',()=>{
+  const f=fixture();f.showMenu(f.panel);
+  f.cancelUiMotionImmediately({contains:element=>element===f.panel});
+  assert.equal(f.animations[0].control.cancelled,true);
+  assert.equal(f.animations[0].control.stopped,undefined);
 });
 
 test('user dropdown interactions share their slower duration with the arrow', () => {

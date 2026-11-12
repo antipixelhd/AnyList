@@ -93,6 +93,10 @@ class ContributorSearch(Base):
     staff_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default='0')
     screen_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default='0')
     roles: Mapped[list] = mapped_column(JSONB, nullable=False, server_default='[]')
+    game_work_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default='0')
+    game_actor_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default='0')
+    game_staff_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default='0')
+    game_roles: Mapped[list] = mapped_column(JSONB, nullable=False, server_default='[]')
 
 
 class CatalogueIdentity(Base):
@@ -298,6 +302,7 @@ class CharacterPerformance(Base):
     work_id: Mapped[int] = mapped_column(Integer, nullable=False)
     credit_id: Mapped[int] = mapped_column(Integer, nullable=False)
     appearance_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    source: Mapped[str] = mapped_column(String(80), nullable=False, default='reviewed', server_default='reviewed')
     language: Mapped[str] = mapped_column(
         String(80), nullable=False, default="", server_default=""
     )
@@ -317,7 +322,7 @@ class CatalogueRelationship(Base):
             "source_id <> target_id", name="ck_catalogue_relationship_distinct"
         ),
         CheckConstraint(
-            "relation IN ('dlc','expansion','standalone_expansion','remake','remaster','port','version','series_member','recommendation','adaptation','based_on','prequel','sequel','spin_off','shared_universe')",
+            "relation IN ('dlc','expansion','update','episode','standalone_expansion','remake','remaster','port','version','series_member','recommendation','adaptation','based_on','prequel','sequel','spin_off','shared_universe')",
             name="ck_catalogue_relationship_type",
         ),
         Index("ix_catalogue_relationship_target", "target_id", "relation"),
@@ -343,6 +348,7 @@ class MetadataSnapshot(Base):
             "provider", "kind", "external_id", name="uq_catalogue_snapshot"
         ),
         Index("ix_catalogue_snapshot_due", "next_attempt_at"),
+        Index("ix_catalogue_snapshot_entity", "entity_id"),
     )
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     provider: Mapped[str] = mapped_column(String(32), nullable=False)

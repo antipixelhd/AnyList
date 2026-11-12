@@ -4,11 +4,12 @@ export const watchRollbackWarning = 'Move watched progress back? All episodes af
 export const episodeRollbackWarning = 'Mark this episode and all later episodes unwatched? Their recorded watch dates and evidence will be deleted.';
 
 /** Share the existing editor confirmation, including dismissal and page cleanup. */
-export function confirmEntryAction(message:string,signal:AbortSignal):Promise<boolean> {
+export function confirmEntryAction(message:string,signal:AbortSignal,options:{confirmLabel?:string}={}):Promise<boolean> {
   const dialog=document.querySelector<HTMLDialogElement>('#editor-confirmation');
   if(signal.aborted||!dialog||dialog.open)return Promise.resolve(false);
   return new Promise(resolve=>{
     dialog.querySelector<HTMLElement>('#editor-confirmation-body')!.textContent=message;
+    dialog.querySelector<HTMLButtonElement>('[value="confirm"]')!.textContent=options.confirmLabel||'OK';
     dialog.returnValue='cancel';
     const finish=(accepted:boolean)=>{
       dialog.removeEventListener('close',closed);dialog.removeEventListener('click',backdrop);

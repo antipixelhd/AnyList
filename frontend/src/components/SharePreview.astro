@@ -5,7 +5,7 @@ const loginPage = Astro.url.pathname === '/login' ? loginSharePage(Astro.url.sea
 const loginIdentity = Astro.url.pathname === '/login' ? loginShareIdentity(Astro.url.searchParams.get('next')) : null;
 const metadata = loginIdentity ? await shareMetadata(loginIdentity) : null;
 const title = metadata?.title || loginPage?.title || pageTitle;
-const path = metadata ? loginIdentity : sharePath(Astro.url.pathname);
+const path = metadata ? loginIdentity : sharePath(Astro.url.pathname,Astro.url.search);
 const description = metadata?.description || suppliedDescription || (path?.startsWith('/user/') ? `${title} on AnyList` : 'Track movies and series with AnyList.');
 const origin = process.env.SERVER_URL || Astro.url.origin;
 const destination = metadata && loginIdentity ? new URL(Astro.url.searchParams.get('next')!, origin) : null;

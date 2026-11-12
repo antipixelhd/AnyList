@@ -22,10 +22,19 @@
     const restoration = (mode) => {
       if ('scrollRestoration' in history) history.scrollRestoration = mode;
     };
-    document.addEventListener('astro:page-load', () => restoration('auto'));
-    window.addEventListener('pageshow', () => restoration('auto'));
-    document.addEventListener('astro:before-preparation', () => restoration('manual'));
-    window.addEventListener('popstate', () => restoration('manual'), { capture: true });
+    let navigating = false;
+    const idle = () => { navigating = false; restoration('auto'); };
+    const prepare = () => { navigating = true; restoration('manual'); };
+    document.addEventListener('astro:page-load', idle);
+    window.addEventListener('pageshow', idle);
+    document.addEventListener('astro:before-preparation', prepare);
+    window.addEventListener('popstate', prepare, { capture: true });
+    // ClientRouter saves its history coordinates on scrollend and sets manual
+    // again. Let that save finish before returning the idle document to native
+    // reload restoration. Never compete with an in-progress route traversal.
+    window.addEventListener('scrollend', () => setTimeout(() => {
+      if (!navigating) restoration('auto');
+    }, 0), { passive: true });
     window.addEventListener('pagehide', () => {
       const state = history.state;
       if (typeof state?.index === 'number') {

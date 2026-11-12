@@ -7,8 +7,45 @@ import {formatDate,localToday} from '../src/lib/date-time.ts';
 import {countryLabel} from '../src/lib/stats-overview-data.ts';
 const source=readFileSync(new URL('../src/lib/media-detail-data.ts',import.meta.url),'utf8');
 const context={Intl,Date,URLSearchParams,countryLabel,formatDate,localToday};
-runInNewContext(stripTypeScriptTypes(source.replace(/^import .*$/gm,'').replace(/export /g,''))+';globalThis.api={localMediaId,prepareDetail,detailCredits,detailCreditEpisodes,detailOrganizationFacts,durationLabel,detailDate,detailSynopsis,progressTotal,detailFacts,relationLabel,moneyLabel,detailWorkCaption,detailCastPresentation,detailBrowseHref,detailCreators};',context);
+runInNewContext(stripTypeScriptTypes(source.replace(/^import .*$/gm,'').replace(/export /g,''))+';globalThis.api={localMediaId,prepareDetail,detailCredits,detailCreditEpisodes,detailCreditText,detailCreditDescription,detailOrganizationFacts,detailInformationRows,durationLabel,detailDate,detailSynopsis,progressTotal,detailFacts,relationLabel,moneyLabel,detailWorkCaption,detailCastPresentation,detailBrowseHref,detailCreators};',context);
 const {api}=context;
+
+test('Games overview collapses at the first paragraph without truncating or losing stored text',()=>{
+  for(const separator of ['\n\n','\r\n\r\n','\n \n']){
+    const lead='First paragraph. '+Array(150).fill('word').join(' '),full=lead+separator+'Second paragraph.\n\nThird.';
+    const result=api.detailSynopsis(full,true);
+    assert.equal(result.lead,lead);assert.equal(result.lead+result.rest,full);
+    assert.equal(result.expandable,true);assert.equal(result.shortened,false);
+  }
+  for(const full of ['','Short synopsis.','One paragraph\nwith a line break.']){
+    const result=api.detailSynopsis(full,true);
+    assert.equal(result.lead,full);assert.equal(result.rest,'');assert.equal(result.expandable,false);
+  }
+});
+
+test('full game crew jobs keep expansion qualifiers, while screen and character subtitles retain existing presentation',()=>{
+  const person={name:'Composer',characters:[],roles:['Music department'],jobs:['composer: main game','composer: Blood and Wine expansion']};
+  assert.equal(api.detailCreditText(person),'composer: main game · composer: Blood and Wine expansion');
+  assert.equal(api.detailCreditText({...person,jobs:undefined}),'Music department');
+  assert.equal(api.detailCreditText({...person,characters:['Character']}),'Character');
+  const text=api.detailCreditDescription({...person,credit_performances:[{characters:['English role'],languages:['en'],attributes:[{text:'English version'},{text:'voice'}],credited_as:'Alias',uncredited:null},
+    {characters:['Other role'],languages:[],attributes:[null,{text:null}],uncredited:true}]});
+  assert.equal(text,'English role — English version, voice, as Alias\nOther role — uncredited');
+});
+
+test('verified composer jobs remain prominent inside broader music departments without changing their qualified text',()=>{
+  const person=(id,name,role,position,jobs=[])=>({id,kind:'staff',name,roles:[role],role_codes:[role],position,jobs,characters:[]});
+  const media=api.prepareDetail({type:'game',organizations:[],people:[person(1,'Sound','sound_department',0),
+    person(2,'Producer','producer',1),person(3,'Composer','music_department',2,['composer: Blood and Wine expansion']),person(4,'Writer','writer',3)]});
+  const rows=api.detailCredits(media).principal;
+  assert.deepEqual(Array.from(rows,row=>row.name),['Writer','Composer','Producer','Sound']);
+  assert.equal(api.detailCreditText(rows[1]),'composer: Blood and Wine expansion');
+});
+
+test('game platform facts include known availability without requiring a dated release',()=>{
+  const media=api.prepareDetail({type:'game',platforms:['PC','PlayStation'],releases:[{platform:'PC'},{platform:'Xbox'}]});
+  assert.equal(api.detailFacts(media).find(row=>row.label==='Platforms').value,'PC, PlayStation, Xbox');
+});
 
 test('release labels distinguish future calendar dates without guessing partial dates',()=>{
   for(const [release,label] of [['2026-10-20','Releases'],['2026-10-19','Released'],['2026-10-18','Released'],['2027','Releases'],['2026-11','Releases'],['2026-10','Released']]) {
@@ -124,6 +161,16 @@ test('partial release dates remain stable and absent metadata is omitted',()=>{
   assert.deepEqual(Array.from(facts,fact=>fact.label),['First published','Pages']);
 });
 
+test('game Information preserves known release quarters without inventing precision',()=>{
+  const game={type:'game',release_date:'2027',release_date_precision:'quarter',release_quarter:2};
+  assert.equal(api.detailFacts(api.prepareDetail(game),'2026-11-02')[0].value,'Q2 2027');
+  for(const quarter of [null,0,5,2.5,'2']){
+    assert.equal(api.detailFacts(api.prepareDetail({...game,release_quarter:quarter}),'2026-11-02')[0].value,'2027');
+  }
+  assert.equal(api.detailFacts(api.prepareDetail({...game,release_date_precision:'year'}),'2026-11-02')[0].value,'2027');
+  assert.equal(api.detailFacts(api.prepareDetail({...game,type:'movie'}),'2026-11-02')[0].value,'2027');
+});
+
 test('movie budget and box office follow Country with whole-dollar currency formatting',()=>{
   const facts=api.detailFacts(api.prepareDetail({type:'movie',countries:['US'],budget:150000000,revenue:825000001}));
   assert.deepEqual(Array.from(facts,fact=>[fact.label,fact.value]),[
@@ -163,4 +210,29 @@ test('similar titles stay in the viewed media type while relations preserve dire
   assert.equal(media.relations[0].type,'book');
   assert.equal(api.relationLabel('based_on',false),'Source');
   assert.equal(api.relationLabel('based_on',true),'Adaptation');
+});
+
+test('game crew keep their detailed jobs while canonical writer roles determine prominence',()=>{
+  const people=[
+    {id:1,kind:'staff',name:'Composer',roles:['Composer'],role_codes:['composer'],position:0},
+    {id:2,kind:'staff',name:'Writer',roles:['world created by'],role_codes:['writer'],position:20},
+  ];
+  const game=api.prepareDetail({type:'game',people,organizations:[]});
+  assert.deepEqual(Array.from(api.detailCredits(game).principal,row=>row.name),['Writer','Composer']);
+  assert.equal(api.detailCredits(game).principal[0].roles[0],'world created by');
+});
+
+
+test('screen information distinguishes pending fields from confirmed unavailable fields',()=>{
+  const media=context.api.prepareDetail({id:1,type:'series',title:'Series',genres:[],countries:[],people:[],organizations:[]});
+  const pending=context.api.detailInformationRows(media,true);
+  assert.ok(pending.some(row=>row.label==='Network'&&row.pending));
+  assert.ok(pending.some(row=>row.label==='Episode runtime'&&row.pending));
+  assert.equal(context.api.detailInformationRows(media,false).length,0);
+  media.episode_count=12;
+  media.organizations=[{id:3,kind:'studio',name:'Studio',url:'/studio/3',roles:['producer'],characters:[]}];
+  const ready=context.api.detailInformationRows(media,false);
+  assert.equal(ready.find(row=>row.label==='Episodes').value,'12');
+  assert.equal(ready.find(row=>row.label==='Studios').items[0].name,'Studio');
+  assert.ok(ready.every(row=>!row.pending));
 });

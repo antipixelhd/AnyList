@@ -22,6 +22,8 @@ class UserProfileData(Base):
     display_name        : Mapped[Optional[str]]        = mapped_column(String(64))
     bio                 : Mapped[Optional[str]]        = mapped_column(String(5000))
     background_url      : Mapped[Optional[str]]        = mapped_column(String(2048))
+    background_crop     : Mapped[Optional[dict]]       = mapped_column(JSONB)
+    game_banners        : Mapped[dict]                 = mapped_column(JSONB, default=dict, server_default='{}', nullable=False)
     country             : Mapped[Optional[str]]        = mapped_column(String(2))
     minimum_votes       : Mapped[int]                  = mapped_column(Integer, default=250, server_default="250", nullable=False)
     minimum_movie_runtime : Mapped[int]                = mapped_column(Integer, default=30, server_default="30", nullable=False)

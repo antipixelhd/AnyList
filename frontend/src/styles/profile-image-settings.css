@@ -1,0 +1,21 @@
+.profile-image-settings { display:grid; gap:28px; margin-bottom:28px; }
+.profile-image-settings h3 { color:var(--text); font-size:1.4rem; font-weight:600; margin:0 0 4px; }
+.profile-image-guidance { margin:0 0 12px; color:var(--muted); font-size:1.2rem; }
+.profile-image-row { display:flex; align-items:flex-start; gap:24px; flex-wrap:wrap; }
+.profile-upload-zone { --upload-surface:var(--field); width:180px; height:180px; padding:20px; color:var(--muted); background:transparent; border:0; border-radius:5px; position:relative; isolation:isolate; cursor:pointer; }
+.profile-upload-zone:before { content:''; position:absolute; inset:0; z-index:-1; border-radius:inherit; background:var(--upload-surface); transition:background-color .18s ease,transform .18s ease; pointer-events:none; }
+.profile-upload-zone:after { content:''; position:absolute; inset:10px; border:2px dashed color-mix(in srgb,var(--text) 20%,transparent); transition:transform .18s ease; pointer-events:none; }
+.profile-upload-zone:is(:hover,:focus-visible,[data-drag=true]) { --upload-surface:color-mix(in srgb,var(--blue) 12%,var(--field)); outline:none; color:var(--bright); }
+@media(hover:hover) and (pointer:fine) { .profile-upload-zone:hover:not(:disabled):before,.profile-upload-zone:hover:not(:disabled):after { transform:scale(1.025); } }
+.profile-upload-zone:active:not(:disabled):before,.profile-upload-zone:active:not(:disabled):after { transform:scale(.98); }
+@media(prefers-reduced-motion:reduce) { .profile-upload-zone:before,.profile-upload-zone:after { transition:none; transform:none!important; } }
+.profile-image-preview { width:180px; }
+.profile-image-preview[hidden] { display:none; }
+.profile-image-thumb { overflow:hidden; border-radius:5px; }
+.profile-image-preview img { width:100%; aspect-ratio:1; object-fit:cover; border-radius:5px; display:block; }
+.profile-banner-preview { width:min(100%,420px); }
+.profile-banner-preview img { aspect-ratio:1700/330; }
+.profile-image-preview button { margin-top:8px; border:0; padding:0; background:none; color:var(--muted); cursor:pointer; font-size:1.2rem; }
+.profile-image-preview button:is(:hover,:focus-visible) { outline:none; color:var(--blue); }
+.profile-image-error { color:#ef9696; font-size:1.2rem; margin-top:10px; }
+@media(max-width:650px) { .profile-upload-zone { width:145px; height:145px; }.profile-image-preview { width:145px; }.profile-banner-preview { width:100%; }.profile-image-row { gap:16px; } }

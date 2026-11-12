@@ -1,0 +1,77 @@
+---
+import Tracker from '../../../layouts/Tracker.astro';
+import BrowseSelect from '../../../components/BrowseSelect.astro';
+import BrowseSearchField from '../../../components/BrowseSearchField.astro';
+import {gameAdminRequest} from '../../../lib/game-admin-api';
+import {reviewPerson,reviewKind,reviewHome} from '../../../lib/game-credit-review-data';
+import '../../../styles/browse.css';
+import '../../../styles/game-credits-review.css';
+const id=Astro.params.id||'';
+const admin=Astro.locals.user?.is_admin===true;
+let returnPerson=reviewPerson(Astro.url.searchParams.get('return_person')),returnKind=reviewKind(Astro.url.searchParams.get('return_kind'));
+Astro.response.headers.set('Cache-Control','private, no-store');
+let data:any=null,candidate:any=null,results:{id:string;name:string;year?:number}[]=[],error='',reason='';
+let query=Astro.url.searchParams.get('q')||'',selected=Astro.url.searchParams.get('imdb')||'';
+async function endpoint(path:string,body?:unknown){
+  return gameAdminRequest(`/works/${id}/imdb${path}`,Astro.locals.token,body);
+}
+if(!admin){Astro.response.status=403;error='An admin account is required.';}
+else if(!/^[1-9][0-9]*$/.test(id)){Astro.response.status=404;error='Game not found.';}
+else {
+  if(Astro.request.method==='POST'){
+    const form=await Astro.request.formData();selected=String(form.get('imdb')||'');reason=String(form.get('reason')||'');
+    returnPerson=reviewPerson(String(form.get('return_person')||''));returnKind=reviewKind(String(form.get('return_kind')||''));
+    try{
+      await endpoint('',{imdb_id:selected,reason,confirmed_game_and_edition:form.get('confirmed')==='on'});
+      return Astro.redirect((returnPerson&&reviewHome(returnPerson,returnKind))||`/games/${id}?tab=people`,303);
+    }catch(cause){error=cause instanceof Error?cause.message:'Could not save the binding.';Astro.response.status=409;}
+  }
+  try{
+    data=await endpoint('');
+    if(!query)query=data.game.name.slice(0,100);
+    if(!selected&&data.binding){selected=data.binding.id;candidate=data.binding.evidence?.imdb_identity;}
+    const direct=query.match(/^(?:https:\/\/(?:www\.)?imdb\.com\/title\/)?(tt[0-9]+)\/?$/)?.[1];
+    if(direct)selected=direct;
+    else results=(await endpoint(`/candidates?${new URLSearchParams({q:query})}`)).results;
+    if(selected&&!candidate&&Astro.request.method!=='POST')candidate=await endpoint(`/candidates/${encodeURIComponent(selected)}`);
+  }catch(cause){error=cause instanceof Error?cause.message:'IMDb is temporarily unavailable.';}
+}
+const selectedLabel=results.find(row=>row.id===selected)?.name||'Choose an IMDb game';
+---
+<Tracker title="Match IMDb credits" requiresGamesAccess>
+  <div class="page-width browse-page imdb-match" data-game-credits-admin>
+    <header class="browse-header"><h1>Match IMDb credits</h1>{data&&<a href={(returnPerson&&reviewHome(returnPerson,returnKind))||`/games/${id}?tab=people`}>{returnPerson?'Back to review':'Back to game'}</a>}</header>
+    {error&&<p class="match-error" role="alert">{error}</p>}
+    {data&&<>
+      <form method="get" class="match-search" data-astro-reload>
+        {returnPerson&&<><input type="hidden" name="return_person" value={returnPerson}/><input type="hidden" name="return_kind" value={returnKind}/></>}
+        <BrowseSearchField query={query}/><button class="button-primary match-submit" type="submit">Search IMDb</button>
+      </form>
+      {!!results.length&&<form method="get" class="browse-filters match-candidates" data-astro-reload>
+        {returnPerson&&<><input type="hidden" name="return_person" value={returnPerson}/><input type="hidden" name="return_kind" value={returnKind}/></>}
+        <input type="hidden" name="q" value={query}/>
+        <BrowseSelect name="imdb" aria-label="IMDb game" valueLabel={selectedLabel} required>
+          <option value="">Choose an IMDb game</option>
+          {results.map(row=><option value={row.id} selected={row.id===selected}>{row.name}{row.year?` · ${row.year}`:''}</option>)}
+        </BrowseSelect>
+        <button class="button-primary match-submit" type="submit">Preview</button>
+      </form>}
+      <div class="match-records">
+        <section><h2>IGDB · {data.game.game_class==='expansion'?'Expansion':'Game'}</h2><h3>{data.game.name}</h3><p>{data.game.release_date?.slice(0,4)||'—'}</p>{data.game.igdb_slug?<a href={`https://www.igdb.com/games/${encodeURIComponent(data.game.igdb_slug)}`} target="_blank" rel="noreferrer">IGDB {data.game.igdb_id}</a>:<span>IGDB {data.game.igdb_id}</span>}</section>
+        {candidate&&<section><h2>IMDb · Video game</h2><h3>{candidate.titleText?.text}</h3><p>{candidate.releaseYear?.year||'—'}</p><a href={`https://www.imdb.com/title/${selected}/`} target="_blank" rel="noreferrer">{selected}</a></section>}
+      </div>
+      {candidate&&<form method="post" class="match-review" data-astro-reload>
+        {returnPerson&&<><input type="hidden" name="return_person" value={returnPerson}/><input type="hidden" name="return_kind" value={returnKind}/></>}
+        <input type="hidden" name="imdb" value={selected}/>
+        <label for="match-reason">Review note</label>
+        <textarea id="match-reason" name="reason" rows={2} required minlength={3} maxlength={1000}>{reason}</textarea>
+        <label class="match-confirm"><input type="checkbox" name="confirmed" required/>Same game and edition</label>
+        <button class="button-primary match-submit" type="submit">Save binding</button>
+      </form>}
+    </>}
+  </div>
+</Tracker>
+<script>
+  import {initializeGameCreditsAdmin} from '../../../lib/admin-game-credits';
+  initializeGameCreditsAdmin();
+</script>

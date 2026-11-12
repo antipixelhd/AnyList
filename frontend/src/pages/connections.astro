@@ -9,6 +9,7 @@ import TraktSettings from "../components/settings/TraktSettings.astro";
 import SimklSettings from "../components/settings/SimklSettings.astro";
 import MdblistSettings from "../components/settings/MdblistSettings.astro";
 import BingebaseSettings from "../components/settings/BingebaseSettings.astro";
+import SteamSettings from "../components/settings/SteamSettings.astro";
 import MetadataConnections from '../components/MetadataConnections.astro';
 import TrackerSettings from "../layouts/TrackerSettings.astro";
 import { api } from "../lib/api";
@@ -78,7 +79,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
 
             <!-- Connections list (server-side rendered, managed client-side) -->
             <div id="connections-list" class="space-y-3 min-w-0 w-full">
-            {connections.map((conn) => {
+            {connections.filter(conn => conn.type !== 'steam').map((conn) => {
               const typeLabel = conn.type === "jellyfin" ? "Jellyfin" : conn.type === "emby" ? "Emby" : conn.type === "plex" ? "Plex" : conn.type === "stremio" ? "Stremio" : conn.type === "arvio" ? "ARVIO" : "Nuvio";
               const isStreamProvider = conn.type === "nuvio" || conn.type === "stremio";
               const needsLibrarySelection = conn.libraries_confirmed === false;
@@ -627,6 +628,8 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
               </div>
             </div>
           </div>
+
+          {me.can_access_games && <SteamSettings />}
 
           <!-- ======== MEDIA TRACKERS SECTION ======== -->
           <div class="space-y-3 mt-8">

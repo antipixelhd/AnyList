@@ -2,7 +2,7 @@
 
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,7 +18,7 @@ from core.catalogue_providers import (
 )
 from core.limiter import limiter
 from db import get_db, AsyncSessionLocal
-from dependencies import get_current_user, require_admin
+from dependencies import get_current_user, get_optional_user, require_admin
 from models.users import User
 from models.catalogue import (
     CatalogueEntity,
@@ -35,10 +35,12 @@ from models.catalogue import (
 )
 from schemas_characters import ScreenCharacterDetail, ScreenCharacterList
 from core.screen_characters import character_detail
+from core.game_access import require as require_games, allowed as games_allowed
 
 router = APIRouter(prefix="/catalogue", tags=["catalogue"])
 DB = Annotated[AsyncSession, Depends(get_db)]
 Caller = Annotated[User, Depends(get_current_user)]
+OptionalCaller = Annotated[User | None, Depends(get_optional_user)]
 Admin = Annotated[User, Depends(require_admin)]
 Provider = Literal["tmdb", "tvdb", "igdb", "hardcover", "rawg", "openlibrary"]
 WorkKind = Literal["movie", "series", "game", "book"]
@@ -71,6 +73,29 @@ class ManualCorrection(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=500)
     description: str | None = Field(default=None, max_length=20000)
     image_url: str | None = Field(default=None, max_length=2000)
+
+
+async def authorize_entity(db, entity, viewer):
+    if games_allowed(viewer):
+        return
+    if entity.kind in ('game', 'release', 'game_collection'):
+        require_games(viewer)
+    if entity.kind in ('person', 'organization', 'character'):
+        from sqlalchemy import or_
+        games = select(CatalogueEntity.id).where(CatalogueEntity.kind == 'game')
+        others = select(CatalogueEntity.id).where(CatalogueEntity.kind != 'game')
+        credit = CatalogueCredit.contributor_id == entity.id
+        character = CharacterAppearance.character_id == entity.id
+        restricted, public = (await db.execute(select(
+            or_(select(CatalogueCredit.id).where(credit, CatalogueCredit.work_id.in_(games)).exists(),
+                select(CharacterAppearance.id).where(character, CharacterAppearance.work_id.in_(games)).exists()),
+            or_(select(CatalogueCredit.id).where(credit, CatalogueCredit.work_id.in_(others)).exists(),
+                select(CharacterAppearance.id).where(character, CharacterAppearance.work_id.in_(others)).exists(),
+                select(CatalogueIdentity.id).where(CatalogueIdentity.entity_id == entity.id,
+                    CatalogueIdentity.namespace.in_(('tmdb.person', 'tmdb.company', 'tmdb.network'))).exists())
+        ))).one()
+        if restricted and not public:
+            require_games(viewer)
 
 
 async def providers(db, user):
@@ -108,6 +133,8 @@ async def search(
     limit: Annotated[int, Query(ge=1, le=50)] = 20,
 ) -> dict:
     try:
+        if kind == 'game':
+            require_games(current_user)
         provider = provider or ("openlibrary" if kind == "book" else PRIMARY[kind])
         client = await providers(db, current_user)
         rows = await client.search(provider, kind, q, page, limit)
@@ -120,6 +147,8 @@ async def search(
         }
     except ProviderError as e:
         raise safe_error(e) from None
+    except HTTPException:
+        raise
     except Exception:
         raise HTTPException(503, detail={"code": "unavailable"}) from None
 
@@ -169,6 +198,10 @@ async def resolve(
         mapping = await catalogue.resolve_identity(db, namespace, external_id)
     except catalogue.IdentityConflict as e:
         raise safe_error(e) from None
+    if mapping:
+        entity = await db.get(CatalogueEntity, mapping.entity_id)
+        if entity:
+            await authorize_entity(db, entity, current_user)
     return {"entity_id": mapping.entity_id if mapping else None}
 
 
@@ -183,6 +216,8 @@ async def refresh(
     current_user: Caller,
     edition_page: Annotated[int | None, Query(ge=1, le=10000)] = None,
 ) -> dict:
+    if kind == 'game':
+        require_games(current_user)
     try:
         return await catalogue.refresh_metadata(
             db,
@@ -201,6 +236,7 @@ async def detail(entity_id: int, db: DB, current_user: Caller):
     row = await db.get(CatalogueEntity, entity_id)
     if not row:
         raise HTTPException(404, "Catalogue entity not found")
+    await authorize_entity(db, row, current_user)
     out = EntityOut.model_validate(row)
     if row.kind in ("edition", "release"):
         item = await db.get(
@@ -241,6 +277,10 @@ async def screen_characters(db: DB, current_user: Caller,
     limit: Annotated[int, Query(ge=1, le=100)] = 30):
     if actor_id is None and work_id is None:
         raise HTTPException(422, "Select an actor or media")
+    if work_id is not None:
+        work = await db.get(CatalogueEntity, work_id)
+        if work:
+            await authorize_entity(db, work, current_user)
     query = select(ScreenCharacter.id)
     if actor_id is not None:
         query = query.where(ScreenCharacter.actor_id == actor_id)
@@ -260,12 +300,46 @@ async def screen_character(character_id: Annotated[int, Path(gt=0)], db: DB, cur
 
 
 @router.get("/entities/{entity_id}/details")
-async def media_detail(entity_id: Annotated[int, Path(gt=0)], db: DB, current_user: Caller) -> dict:
+async def media_detail(entity_id: Annotated[int, Path(gt=0)], db: DB, current_user: OptionalCaller, response:Response, background:BackgroundTasks,
+    country:Annotated[str|None,Query(pattern=r'^[A-Za-z]{2}$')]=None) -> dict:
     from core.media_details import catalogue_title
+    from core.tracking_access import catalog_access
+    await catalog_access(db, current_user)
     work = await db.get(CatalogueEntity, entity_id)
+    if work is None:
+        from core.game_identity_reconciliation import alias_target
+        canonical = await alias_target(db, entity_id)
+        if canonical:
+            work = await db.get(CatalogueEntity, canonical)
     if not work or work.kind not in ('game', 'book'):
         raise HTTPException(404, "Game or book not found")
-    return await catalogue_title(db, work)
+    await authorize_entity(db, work, current_user)
+    response.headers['Cache-Control']='private, no-store'
+    identities=None;metadata_status=None
+    if work.kind=='game':
+        from core.game_imdb_enrichment import request as request_credits
+        credit_state=await request_credits(db,work.id)
+        from core.game_background import observe_work
+        background.add_task(observe_work,work.id,db.bind,current_user.id if current_user else None)
+        from core.game_metadata import GameMetadata
+        from sqlalchemy.ext.asyncio import async_sessionmaker
+        identities=list(await db.scalars(select(CatalogueIdentity).where(CatalogueIdentity.entity_id==work.id)))
+        service=GameMetadata(async_sessionmaker(db.bind,expire_on_commit=False),scope=db.bind)
+        metadata_status,changed=await service.ensure(db,work,identities=identities,wait_seconds=.25)
+        if changed:await db.refresh(work);identities=None
+    try:data=await catalogue_title(db, work, current_user.id if current_user else None,store_country=country,enqueue_offers=True,enqueue_ratings=True,enqueue_info=True,identities=identities)
+    except ProviderError as error:raise safe_error(error) from None
+    if work.kind=='game':
+        data['game_metadata_status']=metadata_status
+        data['game_credit_status']=credit_state
+        from core.game_time_to_beat import view as time_estimates
+        times=await time_estimates(db,work,enqueue=True)
+        await db.commit()
+        data['completion_estimates']=times['estimates']
+        data['game_estimate_status']=times['status']
+        from core.game_offers import notify_refresh
+        notify_refresh(data.get('game_offer_context') or {})
+    return data
 
 
 @router.get("/entities/{entity_id}/{section}")
@@ -287,8 +361,10 @@ async def related(
     page: Annotated[int, Query(ge=1, le=10000)] = 1,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
 ) -> dict:
-    if not await db.get(CatalogueEntity, entity_id):
+    entity = await db.get(CatalogueEntity, entity_id)
+    if not entity:
         raise HTTPException(404, "Catalogue entity not found")
+    await authorize_entity(db, entity, current_user)
     models = {
         "identities": (
             CatalogueIdentity,
@@ -381,6 +457,12 @@ async def related(
         ),
     }
     model, condition, fields = models[section]
+    if not games_allowed(current_user):
+        if section == 'relationships':
+            permitted = select(CatalogueEntity.id).where(CatalogueEntity.kind.not_in(('game', 'release', 'game_collection')))
+            condition = condition & model.source_id.in_(permitted) & model.target_id.in_(permitted)
+        elif section == 'sources':
+            condition = condition & (model.provider != 'imdb')
     pk = list(model.__table__.primary_key)[0]
     rows = (
         (
@@ -489,11 +571,17 @@ async def prices(
     appid: Annotated[str, Path(pattern=r"^[1-9][0-9]{0,18}$")],
     db: DB,
     current_user: Caller,
-    country: Annotated[str, Query(pattern=r"^[A-Za-z]{2}$")] = "DE",
+    country: Annotated[str|None, Query(pattern=r"^[A-Za-z]{2}$")] = None,
 ) -> dict:
+    entity = await db.get(CatalogueEntity, entity_id)
+    if not entity:
+        raise HTTPException(404, "Catalogue entity not found")
+    await authorize_entity(db, entity, current_user)
     try:
+        from core.game_offers import country as effective_country
+        selected=await effective_country(db,current_user.id,country)
         return await catalogue.refresh_prices(
-            db, await providers(db, current_user), entity_id, appid, country
+            db, await providers(db, current_user), entity_id, appid, selected['country']
         )
     except (ProviderError, catalogue.IdentityConflict) as e:
         raise safe_error(e) from None

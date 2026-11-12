@@ -22,6 +22,46 @@ from routers.catalogue import router
 
 @unittest.skipUnless(fixture.URL, 'Requires explicit disposable statistics PostgreSQL')
 class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_snapshot_entity_index_migration_round_trip(self):
+        migration=importlib.import_module('migrations.versions.mt083_snapshot_entity')
+        async with self.engine.begin() as conn:
+            def exercise(sync):
+                with Operations.context(MigrationContext.configure(sync)):
+                    migration.downgrade()
+                    migration.upgrade()
+                definition=sync.scalar(text("SELECT indexdef FROM pg_indexes WHERE schemaname=current_schema() AND indexname='ix_catalogue_snapshot_entity'"))
+                self.assertIn('(entity_id)',definition)
+            await conn.run_sync(exercise)
+
+    async def test_shared_snapshot_scope_preserves_sources_behind_newer_jobs(self):
+        from datetime import datetime, timedelta
+        from core.media_details import detail_snapshots
+        async with self.Session() as db:
+            for kind in ('movie','series','game','book'):
+                work=CatalogueEntity(kind=kind,name='Snapshot scope '+kind)
+                other=CatalogueEntity(kind=kind,name='Unrelated '+kind)
+                db.add_all([work,other]);await db.flush()
+                stamp=datetime(2026,1,1)
+                for n in range(8):
+                    db.add(MetadataSnapshot(provider='test',kind='source',external_id=f'{work.id}:{n}',
+                        entity_id=work.id,fetched_at=stamp+timedelta(seconds=n),
+                        payload={'homepage':f'https://example.test/{kind}/{n}','images':{},'budget':0,'revenue':100+n}))
+                for n in range(12):
+                    db.add(MetadataSnapshot(provider='test',kind='auxiliary',external_id=f'{work.id}:job:{n}',
+                        entity_id=work.id,fetched_at=stamp+timedelta(days=1),payload={'raw':'large evidence '*1000}))
+                for excluded in ('game_credit_page','game_binding_review'):
+                    db.add(MetadataSnapshot(provider='test',kind=excluded,external_id=str(work.id),entity_id=work.id,
+                        fetched_at=stamp+timedelta(days=2),payload={'homepage':'https://example.test/excluded'}))
+                db.add(MetadataSnapshot(provider='test',kind='source',external_id=str(other.id),entity_id=other.id,
+                    fetched_at=stamp+timedelta(days=3),payload={'homepage':'https://example.test/unrelated'}))
+                await db.flush()
+                fields=('images','homepage','budget','revenue','url')
+                rows=await detail_snapshots(db,work.id,fields)
+                self.assertEqual([r.homepage for r in rows],[f'https://example.test/{kind}/{n}' for n in range(7,1,-1)])
+                self.assertTrue(all(r.budget==0 and r.images=={} and r.url is None for r in rows))
+                compact=await detail_snapshots(db,work.id,('homepage','url'))
+                self.assertEqual([r.homepage for r in rows],[r.homepage for r in compact])
+
     async def test_title_social_separates_self_and_latest_public_following_milestones(self):
         from datetime import datetime, timedelta
         async with self.Session() as db:
@@ -484,34 +524,62 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.json()['entry']['status'], 'completed')
         self.assertEqual(len(response.json()['people']), 1)
 
+    async def test_game_characters_include_unvoiced_roles_and_use_compact_source_completeness(self):
+        from models.catalogue import CharacterAppearance
+        async with self.Session() as db:
+            work=CatalogueEntity(kind='game',name='Unvoiced fixture',attributes={'game_class':'game'})
+            character=CatalogueEntity(kind='character',name='The Knight',image_url='https://images.igdb.com/igdb/image/upload/t_cover_big/knight.jpg')
+            db.add_all([work,character]);await db.flush()
+            db.add(CharacterAppearance(work_id=work.id,character_id=character.id,provider='igdb'))
+            db.add(MetadataSnapshot(provider='igdb',kind='game',external_id='42',entity_id=work.id,
+                coverage={'characters_complete':False},payload={'raw':'CHARACTER_EVIDENCE_SENTINEL '*5000}))
+            await db.commit()
+            data=await work_details(db,work,extras=False)
+            self.assertEqual(data['game_characters'][0]['name'],'The Knight');self.assertEqual(data['game_characters'][0]['performers'],[])
+            self.assertFalse(data['game_character_status']['complete']);self.assertNotIn('SENTINEL',str(data))
+            record=await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.entity_id==work.id));record.coverage={'characters_complete':True};await db.commit()
+            self.assertTrue((await work_details(db,work,extras=False))['game_character_status']['complete'])
+
     async def test_game_details_use_stored_releases_relations_prices_and_safe_artwork(self):
         async with self.Session() as db:
             game = CatalogueEntity(kind='game', name='Fixture game', attributes={
-                'release_date':'2020-01-01', 'artwork':['javascript:alert(1)', 'https://example.test/game.jpg']})
-            other = CatalogueEntity(kind='game', name='Expansion', attributes={})
+                'game_class':'game','release_date':'2020-01-01', 'artwork':['javascript:alert(1)', 'https://example.test/game.jpg']})
+            other = CatalogueEntity(kind='game', name='Expansion', attributes={'game_class':'expansion'})
             release = CatalogueEntity(kind='release', name='PC edition', attributes={})
             db.add_all([game, other, release]); await db.flush()
             db.add(CatalogueIdentity(entity_id=game.id, namespace='steam.app', external_id='123', source='igdb'))
             db.add(GameRelease(entity_id=release.id, work_id=game.id, platform_namespace='igdb.platform',
                 platform_id='6', platform_name='PC', region='Worldwide', release_date='2020-01-01'))
             db.add(CatalogueRelationship(source_id=other.id, target_id=game.id, relation='expansion', provider='igdb'))
+            collection=CatalogueEntity(kind='game_collection',name='Shared game collection')
+            db.add(collection);await db.flush()
+            db.add_all([CatalogueRelationship(source_id=member.id,target_id=collection.id,relation='series_member',provider='igdb')
+                for member in (game,other)])
             db.add(SteamPriceSnapshot(work_id=game.id, steam_app_id='123', country='DE',
                 current={'currency':'EUR','amount':7.99,'amountInt':799}, url='https://store.steampowered.com/app/123/', payload={}))
             db.add(MetadataSnapshot(provider='igdb', kind='game', external_id='99', entity_id=game.id,
                 payload={'url':'javascript:alert(1)'}, coverage={}))
             await db.commit(); game_id, other_id = game.id, other.id
-        self.assertEqual((await self.client.get(f'/catalogue/entities/{game_id}/details')).status_code, 401)
+        self.assertEqual((await self.client.get(f'/catalogue/entities/{game_id}/details')).status_code, 403)
         await self.login()
-        response = await self.client.get(f'/catalogue/entities/{game_id}/details')
+        self.assertEqual((await self.client.get(f'/catalogue/entities/{game_id}/details')).status_code,403)
+        async with self.Session() as db:
+            user=await db.get(User,self.user_id);user.games_access=True
+            await db.commit();self.viewer=user
+        response = await self.client.get(f'/catalogue/entities/{game_id}/details?country=DE')
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertEqual(data['artwork'], ['https://example.test/game.jpg'])
         self.assertEqual(data['releases'][0]['platform'], 'PC')
-        self.assertEqual(data['relations'][0]['url'], f'/games/{other_id}')
-        self.assertTrue(data['relations'][0]['reverse'])
+        # Expansion relationships remain stored but belong to the lazy DLC
+        # tab, rather than a duplicate generic Relations card.
+        self.assertEqual(data['relations'],[])
+        async with self.Session() as db:
+            self.assertIsNotNone(await db.scalar(select(CatalogueRelationship).where(
+                CatalogueRelationship.source_id==other_id,CatalogueRelationship.target_id==game_id)))
         self.assertEqual(data['prices'][0]['country'], 'DE')
         self.assertEqual(data['sources'], [{'name':'Steam','url':'https://store.steampowered.com/app/123/'}])
-        self.assertFalse(data['tracking_available'])
+        self.assertTrue(data['tracking_available'])
 
     async def test_following_ratings_respect_privacy_and_country_falls_back_to_screen_metadata(self):
         async with self.Session() as db:
@@ -559,8 +627,8 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
             book = CatalogueEntity(kind='book', name='Original novel', attributes={})
             movie = CatalogueEntity(kind='movie', name='Similar movie', attributes={'genres':[{'name':'Drama'}, 'Mystery']})
             series = CatalogueEntity(kind='series', name='Related series', attributes={})
-            game = CatalogueEntity(kind='game', name='A game', attributes={})
-            other_game = CatalogueEntity(kind='game', name='Similar game', attributes={})
+            game = CatalogueEntity(kind='game', name='A game', attributes={'game_class':'game'})
+            other_game = CatalogueEntity(kind='game', name='Similar game', attributes={'game_class':'game'})
             db.add_all([book,movie,series,game,other_game]); await db.flush()
             db.add_all([CatalogueIdentity(entity_id=movie.id, namespace='tmdb.movie', external_id='55', source='tmdb'),
                 CatalogueIdentity(entity_id=series.id, namespace='tmdb.series', external_id='66', source='tmdb'),

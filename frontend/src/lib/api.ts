@@ -156,6 +156,7 @@ export interface ShowSeasonOverride {
 export type MediaType = "movie" | "series" | "episode" | "person" | "collection" | "network" | "studio";
 
 export interface UserProfile {
+  can_access_games: boolean;
   id: number;
   email: string;
   username: string;
@@ -170,6 +171,7 @@ export interface UserProfile {
 }
 
 export interface AdminUser {
+  games_access: boolean;
   id: number;
   username: string;
   email: string;
@@ -269,6 +271,7 @@ export interface OidcExchangeResponse {
 export type PrivacyLevel = "public" | "friends_only" | "private";
 
 export interface PersonalDataSelection {
+  games: boolean;
   watched: boolean;
   ratings: boolean;
   collection: boolean;
@@ -383,7 +386,7 @@ export interface MediaServerConnection {
   setup_pending?: boolean;
   id: number;
   user_id: number;
-  type: "jellyfin" | "emby" | "plex" | "nuvio" | "stremio" | "arvio";
+  type: "jellyfin" | "emby" | "plex" | "nuvio" | "stremio" | "arvio" | "steam";
   name: string;
   url: string;
   token: string;
@@ -635,6 +638,7 @@ export interface ProfileCommentItem {
 }
 
 export interface PublicProfile {
+  background_crop?: {x:number;y:number;zoom:number}|null;
   background_url: string | null;
   profile_color: string;
   id: number;

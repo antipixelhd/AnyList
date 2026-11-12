@@ -9,14 +9,15 @@ from collections import OrderedDict
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
+from urllib.parse import urlsplit
 
 import httpx
-from sqlalchemy import select, text, update, func
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import update, func
 
 from core.config import settings
 from models.catalogue import MetadataProviderBudget
 from .catalogue_normalize import (
+    GAME_ARTWORK_VERSION,
     normalize_hardcover,
     normalize_igdb,
     normalize_rawg,
@@ -47,6 +48,11 @@ INTERVALS = {
     "tmdb": 0.3,
     "tvdb": 0.5,
     "tvmaze": 0.5,
+    "steam": 0.5,
+    "steamgriddb": 0.3,
+    "wikidata": 1.0,
+    "wikidata_query": 1.0,
+    "imdb": 1.0,
 }
 SUPPORT = {
     "tmdb": {"movie", "series"},
@@ -78,6 +84,12 @@ class _PrivateRequests(logging.Filter):
                 "id.twitch.tv",
                 "api.hardcover.app",
                 "api.themoviedb.org",
+                "query.wikidata.org",
+                "caching.graphql.imdb.com",
+                "v3.sg.media-imdb.com",
+                "api.steampowered.com",
+                "partner.steam-api.com",
+                "www.steamgriddb.com",
             )
         )
 
@@ -88,6 +100,7 @@ for _logger in ("httpx", "httpcore"):
 
 _local_locks = {}
 _local_next = {}
+_local_igdb_slots = None
 _cache = OrderedDict()
 _tokens = {}
 _token_locks = {}
@@ -115,90 +128,50 @@ class ProviderHTTP:
         self.client = client
         self.session_factory = session_factory
 
+    @staticmethod
+    def open_client():
+        return httpx.AsyncClient(
+            timeout=httpx.Timeout(15, connect=5),
+            follow_redirects=False,
+            headers={"User-Agent": "AnyList catalogue/1"},
+        )
+
     @asynccontextmanager
     async def lane(self, provider):
-        """Serialize provider requests across workers; retain RAWG monthly and Hardcover daily budgets.
-
-        A dedicated session owns a transaction advisory lock through the HTTP
-        call. Never use the caller's catalogue/history transaction for this.
-        """
-        interval = (
-            1.1
-            if provider == "openlibrary" and not settings.openlibrary_contact_email
-            else INTERVALS[provider]
-        )
+        """Share budgets with reserved foreground capacity on database deployments."""
         if self.session_factory:
-            async with self.session_factory() as db:
-                await db.execute(
-                    text("SELECT pg_advisory_xact_lock(:key)"),
-                    {
-                        "key": int.from_bytes(
-                            hashlib.sha256(
-                                ("catalogue-provider:" + provider).encode()
-                            ).digest()[:8],
-                            "big",
-                            signed=True,
-                        )
-                    },
-                )
-                await db.execute(
-                    insert(MetadataProviderBudget)
-                    .values(provider=provider)
-                    .on_conflict_do_nothing()
-                )
-                row = (
-                    await db.execute(
-                        select(MetadataProviderBudget).where(
-                            MetadataProviderBudget.provider == provider
-                        )
-                    )
-                ).scalar_one()
-                now = datetime.now(timezone.utc).replace(tzinfo=None)
-                if row.next_request_at and row.next_request_at > now:
-                    delay = (row.next_request_at - now).total_seconds()
-                    if delay > 5:
-                        raise ProviderError('rate_limited', delay)
-                    await asyncio.sleep(delay)
-                month = now.strftime("%Y-%m")
-                if row.month != month:
-                    row.month, row.request_count = month, 0
-                if (
-                    provider == "rawg"
-                    and row.request_count >= settings.rawg_monthly_budget
-                ):
-                    raise ProviderError("monthly_budget")
-                if provider == "hardcover":
-                    day = now.strftime("%Y-%m-%d")
-                    if row.day != day:
-                        row.day, row.daily_request_count = day, 0
-                    if row.daily_request_count >= settings.hardcover_daily_budget:
-                        tomorrow = now.replace(
-                            hour=0, minute=0, second=0, microsecond=0
-                        ) + timedelta(days=1)
-                        raise ProviderError(
-                            "daily_budget", (tomorrow - now).total_seconds()
-                        )
-                    row.daily_request_count += 1
-                row.request_count += 1
-                # Persist request accounting even when HTTP fails.
-                try:
-                    yield
-                finally:
-                    row.next_request_at = datetime.now(timezone.utc).replace(
-                        tzinfo=None
-                    ) + timedelta(seconds=interval)
-                    await db.commit()
-        else:
-            lock = _local_locks.setdefault(provider, asyncio.Lock())
-            async with lock:
-                delay = max(0, _local_next.get(provider, 0) - time.monotonic())
+            from core.game_work import provider_slot
+            async with provider_slot(self.session_factory, provider):
+                yield
+            return
+        if provider != 'igdb':
+            async with self._budget_lane(provider):
+                yield
+            return
+        global _local_igdb_slots
+        if _local_igdb_slots is None:_local_igdb_slots=asyncio.Semaphore(2)
+        # Bound local slot waiters before they occupy database connections.
+        async with _local_igdb_slots:
+            async with self._budget_lane(provider):
+                pass
+            yield
+
+    @asynccontextmanager
+    async def _budget_lane(self, provider):
+        """In-memory fallback for clients without a database deployment."""
+        interval = 1.1 if provider == "openlibrary" and not settings.openlibrary_contact_email else INTERVALS[provider]
+        lock = _local_locks.setdefault(provider, asyncio.Lock())
+        async with lock:
+            while (delay := max(0, _local_next.get(provider, 0) - time.monotonic())):
                 if delay > 5:
                     raise ProviderError('rate_limited', delay)
                 await asyncio.sleep(delay)
-                try:
-                    yield
-                finally:
-                    _local_next[provider] = time.monotonic() + interval
+            started = time.monotonic()
+            try:
+                yield
+            finally:
+                base = started if provider == 'igdb' else time.monotonic()
+                _local_next[provider] = max(_local_next.get(provider, 0), base + interval)
 
     async def defer(self, provider, delay):
         """Share cooldowns; callers return a retry state without a long wait."""
@@ -211,11 +184,16 @@ class ProviderHTTP:
         else:
             _local_next[provider] = max(_local_next.get(provider, 0), time.monotonic() + delay)
 
-    async def request(self, provider, method, url, *, cache=True, **kwargs):
+    async def request(self, provider, method, url, *, cache=True, attempts=3, steam_result=False, **kwargs):
+        if type(attempts) is not int or not 1 <= attempts <= 3:
+            raise ProviderError('invalid_request')
+        # WDQS and the Action API are separate services. A query-service 429
+        # must not prevent reading explicit entities from the Action API.
+        budget = 'wikidata_query' if provider=='wikidata' and urlsplit(url).hostname=='query.wikidata.org' else provider
         # Cache keys are digests, never raw credentials. Max 128 responses, 10m.
         key = hashlib.sha256(
             json.dumps(
-                [provider, method, url, kwargs], sort_keys=True, default=str
+                [provider, method, url, kwargs, steam_result], sort_keys=True, default=str
             ).encode()
         ).hexdigest()
         hit = _cache.get(key)
@@ -223,15 +201,11 @@ class ProviderHTTP:
             _cache.move_to_end(key)
             return json.loads(hit[1])
         owned = self.client is None
-        client = self.client or httpx.AsyncClient(
-            timeout=httpx.Timeout(15, connect=5),
-            follow_redirects=False,
-            headers={"User-Agent": "AnyList catalogue/1"},
-        )
+        client = self.client or self.open_client()
         try:
-            for attempt in range(3):
+            for attempt in range(attempts):
                 try:
-                    async with self.lane(provider):
+                    async with self.lane(budget):
                         async with client.stream(method, url, **kwargs) as response:
                             status = response.status_code
                             headers = response.headers
@@ -254,8 +228,8 @@ class ProviderHTTP:
                             headers.get("Retry-After", ""), 2**attempt
                         )
                         if status == 429:
-                            await self.defer(provider, delay)
-                        if attempt == 2 or delay > 5:
+                            await self.defer(budget, delay)
+                        if attempt == attempts - 1 or delay > 5:
                             raise ProviderError(
                                 "rate_limited" if status == 429 else "unavailable",
                                 delay,
@@ -277,6 +251,8 @@ class ProviderHTTP:
                                 404: "not_found",
                             }.get(status, "bad_response")
                         )
+                    if steam_result and headers.get('x-eresult') != '1':
+                        raise ProviderError('forbidden' if headers.get('x-eresult') == '15' else 'bad_response')
                     try:
                         data = json.loads(body)
                     except ValueError:
@@ -302,7 +278,7 @@ class ProviderHTTP:
                     httpx.NetworkError,
                     httpx.RemoteProtocolError,
                 ):
-                    if attempt == 2:
+                    if attempt == attempts - 1:
                         raise ProviderError("unavailable") from None
                     await asyncio.sleep(2**attempt)
         finally:
@@ -311,7 +287,8 @@ class ProviderHTTP:
 
 
 IGDB_FIELDS = (
-    "id,name,summary,first_release_date,version_parent,parent_game.name,game_type.type,cover.url,genres.name,artworks.url,involved_companies.developer,involved_companies.publisher,involved_companies.supporting,involved_companies.porting,involved_companies.company.name,involved_companies.company.country,involved_companies.company.description,involved_companies.company.logo.url,external_games.uid,external_games.url,external_games.external_game_source.name,release_dates.date,release_dates.region,release_dates.platform.name,collections.name,"
+    'age_ratings.organization.name,age_ratings.rating_category.rating,'
+    "id,slug,name,summary,first_release_date,version_parent,parent_game.name,parent_game.game_type.type,game_type.type,cover.url,genres.name,artworks.url,artworks.width,artworks.height,artworks.image_type,artworks.artwork_type,screenshots.url,screenshots.width,screenshots.height,platforms.name,platforms.platform_family.name,involved_companies.developer,involved_companies.publisher,involved_companies.supporting,involved_companies.porting,involved_companies.company.name,involved_companies.company.country,involved_companies.company.description,involved_companies.company.logo.url,external_games.uid,external_games.url,external_games.external_game_source.name,release_dates.date,release_dates.date_format.format,release_dates.y,release_dates.m,release_dates.d,release_dates.status.name,release_dates.region,release_dates.platform.name,collections.name,"
     + ",".join(
         f"{field}.{projection}"
         for field in (
@@ -323,8 +300,9 @@ IGDB_FIELDS = (
             "ports",
             "similar_games",
         )
-        for projection in ("name", "cover.url", "first_release_date", "version_parent.name", "version_parent.cover.url", "version_parent.first_release_date")
+        for projection in ("platforms.id", "name", "summary", "cover.url", "first_release_date", "game_type.type", "release_dates.date", "release_dates.date_format.format", "release_dates.y", "release_dates.m", "release_dates.d", "release_dates.status.name", "version_parent.name", "version_parent.summary", "version_parent.cover.url", "version_parent.first_release_date", "version_parent.game_type.type")
     )
+    + ',ports.platforms.name,ports.platforms.platform_family.name'
 )
 
 
@@ -451,18 +429,27 @@ class CatalogueProviders:
 
             return await search(self.http, query, page, limit)
         if provider == "igdb":
+            from core.game_types import search_candidate, candidate_fields
+            from core.game_search import broader_query, matches_partial, rank
+            fields=candidate_fields('id,name,cover.url,first_release_date,game_type.type')
             rows = await self.igdb(
                 "games",
-                f"search {json.dumps(query)}; fields id,name,cover.url,first_release_date; where version_parent = null; limit {limit}; offset {(page - 1) * limit};",
+                f"search {json.dumps(query)}; fields {fields}; limit {limit}; offset {(page - 1) * limit};",
             )
-            return [
-                {
-                    "external_id": str(r["id"]),
-                    "name": r["name"],
-                    "image_url": r.get("cover", {}).get("url"),
-                }
-                for r in rows
-            ]
+            results = {}
+            for row in rows:
+                if candidate := search_candidate(row):
+                    results.setdefault(candidate['external_id'], candidate)
+            # IGDB search can return no matches while a user types the last
+            # word ("Elden R"). One bounded broader query recovers prefix
+            # candidates; it never establishes cross-provider identity.
+            if not results and page==1 and (broader:=broader_query(query)):
+                fallback=await self.igdb('games',f'search {json.dumps(broader)}; fields {fields}; limit {limit}; offset 0;')
+                for row in fallback:
+                    candidate=search_candidate(row)
+                    if candidate and matches_partial(query,candidate['name']):
+                        results.setdefault(candidate['external_id'],candidate)
+            return sorted(results.values(),key=lambda row:-rank(query,row['name']))
         if provider == "hardcover":
             d = await self.hardcover(
                 'query($q:String!,$page:Int!,$limit:Int!){ search(query:$q,query_type:"Book",page:$page,per_page:$limit){results} }',
@@ -531,7 +518,7 @@ class CatalogueProviders:
             for r in rows[(page - 1) * limit : page * limit]
         ]
 
-    async def detail(self, provider, kind, external_id, *, credit_groups=None):
+    async def detail(self, provider, kind, external_id, *, credit_groups=None,on_primary=None):
         self.validate(provider, kind)
         if provider == "openlibrary":
             from .openlibrary import detail
@@ -540,7 +527,7 @@ class CatalogueProviders:
         if not str(external_id).isdigit() or int(external_id) <= 0:
             raise ProviderError("invalid_request")
         return await asyncio.wait_for(
-            self._detail(provider, kind, int(external_id), credit_groups=credit_groups), timeout=120
+            self._detail(provider, kind, int(external_id), credit_groups=credit_groups,on_primary=on_primary), timeout=120
         )
 
     async def openlibrary_isbn(self, value):
@@ -553,8 +540,10 @@ class CatalogueProviders:
 
         return await asyncio.wait_for(detail(self.http, external_id, page), timeout=120)
 
-    async def _detail(self, provider, kind, id, *, credit_groups=None):
+    async def _detail(self, provider, kind, id, *, credit_groups=None,on_primary=None):
         if provider == "igdb":
+            from core.game_types import igdb_game_class
+            from core.game_release_dates import VERSION as RELEASE_VERSION
             rows = await self.igdb(
                 "games", f"fields {IGDB_FIELDS}; where id = {id}; limit 1;"
             )
@@ -573,34 +562,27 @@ class CatalogueProviders:
                 raw = rows[0]
                 if raw.get("version_parent"):
                     raise ProviderError("identity_conflict")
+            def document():
+                doc=normalize_igdb(raw)
+                if version:
+                    from .catalogue_normalize import entity
+                    doc['releases'].append({'entity':entity('release','igdb.game_version',version),
+                        'platform_namespace':'igdb.version','platform_id':str(version['id'])})
+                    doc['work']['identities'].extend(x for x in normalize_igdb(version)['work']['identities']
+                        if x not in doc['work']['identities'])
+                return doc
+            raw['_coverage']={'primary_complete':True,'source_game_id':str(raw['id']),
+                'characters_complete':False,'release_dates':'provider_projection','release_precision_version':RELEASE_VERSION,'artwork_policy_version':GAME_ARTWORK_VERSION,'contributors':'companies_only',
+                'children_complete':all(isinstance(raw.get(field,[]),list) and all(
+                    isinstance(child,dict) and child.get('id') and child.get('name') and igdb_game_class(child)!='unknown'
+                    for child in raw.get(field,[])) for field in ('dlcs','expansions'))}
+            if on_primary:await on_primary(document(),{'game':raw,'version':version})
             raw["_characters"], complete = await self._igdb_pages(
                 "characters",
                 f"fields id,name,description,mug_shot.url; where games = ({raw['id']}); sort id asc;",
             )
-            raw["_coverage"] = {
-                "characters_complete": complete,
-                "release_dates": "provider_projection",
-                "contributors": "companies_only",
-            }
-            doc = normalize_igdb(raw)
-            if version:
-                from .catalogue_normalize import entity
-
-                doc["releases"].append(
-                    {
-                        "entity": entity("release", "igdb.game_version", version),
-                        "platform_namespace": "igdb.version",
-                        "platform_id": str(version["id"]),
-                    }
-                )
-                # Provider search/detail IDs and verified Steam IDs of an
-                # edition resolve to the work, while its release stays distinct.
-                doc["work"]["identities"].extend(
-                    x
-                    for x in normalize_igdb(version)["work"]["identities"]
-                    if x not in doc["work"]["identities"]
-                )
-            return doc, {"game": raw, "version": version}
+            raw['_coverage']['characters_complete']=complete
+            return document(), {"game": raw, "version": version}
         if provider == "hardcover":
             d = await self.hardcover(
                 "query($id:Int!){books(where:{id:{_eq:$id}},limit:1){id canonical_id title description release_date pages cached_image}}",
@@ -875,7 +857,10 @@ class CatalogueProviders:
                 return out, True
         return out, False
 
-    async def steam_prices(self, appid, country="DE"):
+    async def steam_prices(self, appid, country):
+        from core.countries import country_code
+        country=country_code(country) if isinstance(country,str) else None
+        if not country:raise ProviderError('invalid_request')
         return await asyncio.wait_for(self._steam_prices(appid, country), timeout=120)
 
     async def _steam_prices(self, appid, country):
@@ -884,6 +869,7 @@ class CatalogueProviders:
         if (
             not str(appid).isdigit()
             or int(appid) <= 0
+            or not isinstance(country,str)
             or len(country) != 2
             or not country.isalpha()
         ):
@@ -895,46 +881,20 @@ class CatalogueProviders:
             "https://api.isthereanydeal.com/games/lookup/v1",
             params={**params, "appid": str(appid)},
         )
-        if not lookup.get("found") or not lookup.get("game"):
-            raise ProviderError("not_found")
-        gid = lookup["game"]["id"]
+        from core.itad_prices import game_id,normalized
+        gid = game_id(lookup)
         # Steam is shop 61 in the current official catalogue, verified live.
         params.update(country=country.upper(), shops="61")
-        prices = await self.http.request(
-            "itad",
-            "POST",
-            "https://api.isthereanydeal.com/games/prices/v3",
-            params=params,
-            json=[gid],
-        )
-        lows = await self.http.request(
-            "itad",
-            "POST",
-            "https://api.isthereanydeal.com/games/storelow/v2",
-            params=params,
-            json=[gid],
-        )
-        deals = [
-            d
-            for row in prices
-            if row.get("id") == gid
-            for d in row.get("deals", [])
-            if d.get("shop", {}).get("id") == 61
-        ]
-        low = [
-            d
-            for row in lows
-            if row.get("id") == gid
-            for d in row.get("lows", [])
-            if d.get("shop", {}).get("id") == 61
-        ]
-        current = deals[0] if deals else {}
-        historical = low[0] if low else {}
+        # Independent components share the existing provider budget. Overlap
+        # network latency rather than waiting for prices before requesting lows.
+        tasks=[asyncio.create_task(self.http.request('itad','POST',f'https://api.isthereanydeal.com/games/{path}',
+            params=params,json=[gid])) for path in ('prices/v3','storelow/v2')]
+        try:prices,lows=await asyncio.gather(*tasks)
+        finally:
+            for task in tasks:
+                if not task.done():task.cancel()
+            await asyncio.gather(*tasks,return_exceptions=True)
         return {
-            "itad_id": gid,
-            "current": current.get("price"),
-            "historical_low": historical.get("price"),
-            "historical_low_at": historical.get("timestamp"),
-            "url": current.get("url"),
+            **normalized(gid,prices,lows),
             "payload": {"lookup": lookup, "prices": prices, "storelow": lows},
         }

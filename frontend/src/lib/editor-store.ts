@@ -1,32 +1,49 @@
 import { localToday } from './date-time';
 import { responsiveArtwork,artworkIdentity } from './responsive-artwork';
 import { DecodedArtwork } from './decoded-artwork.ts';
+import {gameHeroChoice} from './game-hero-choice.ts';
+import {detailHeroArtwork} from './detail-artwork.ts';
+
+export type WorkSubject = {kind:'game'; catalogue_id:number}
+  | {kind:'movie'|'series'; media_id:number; tmdb_id?:number|null};
 
 export type EditorTitle = {
   id: number | null; tmdb_id?: number | null; type: string; title: string;
+  subject?: WorkSubject; game_class?:string; base_work_id?:number|null;
+  game_state?:Record<string,any>;
   poster?: string | null; backdrop?: string | null;
+  backdrop_mobile?:string|null;pinned_banner?:string|null;
+  backdrop_fallbacks?:string[];background_status?:{state?:string;retry_after?:number};
   entry: Record<string, any> | null;
   favorite?: boolean;
   editor_library?: { available: boolean; desired: boolean };
   overview?:string|null; runtime?:number|null; release_date?:string|null; year?:string;
+  original_title?:string|null;tagline?:string|null;detail_creators?:string[];
+  game_metadata_status?:{primary_ready?:boolean};primary_status?:{pending?:boolean};
   genres?:string[]; tmdb_score?:number|null; progress_positions?:string[];
+  seasons?:import('./season-detail-data').DetailSeason[];episodes_loaded?:boolean;
 };
 type RecordState = {
   title: EditorTitle; committed: EditorTitle['entry'];
   pending: { patch: Record<string, any> | null }[]; tail: Promise<unknown>;
   importing?: Promise<number>; stale?: boolean;
   posterSrc?: string; backdropSrc?: string;
+  displayedHero?:{primary:string|null|undefined;path:string;src:string};
+  artworkRead?:Promise<void>;artworkRetry?:number;artworkReadPriority?:boolean;
   libraryCommitted?: EditorTitle['editor_library']; libraryPending: {desired: boolean}[];
   favoriteCommitted: boolean;
 };
 type Transport = (path: string, options?: RequestInit) => Promise<any>;
+export type ArtworkUpdate = {poster?:string;backdrop?:string;backdropSrc?:string;
+  primaryBackdrop?:string|null;pinnedBanner?:string|null};
 
 /** One viewer-scoped source for editor reads and ordered optimistic writes. */
 export class EditorStore {
   private records = new Map<string, RecordState>();
   private viewer = '';
-  private reads = new Map<number, Promise<EditorTitle>>();
-  private decodedArtwork=new DecodedArtwork();
+  private reads = new Map<string, Promise<EditorTitle>>();
+  private artworkListeners=new Set<()=>void>();
+  private decodedArtwork=new DecodedArtwork(32,12_000_000,()=>this.artworkListeners.forEach(listener=>listener()));
   private request: Transport;
   private changed: (title: EditorTitle) => void;
   private committed: (title:EditorTitle,patch:Record<string,any>|null) => void;
@@ -42,16 +59,47 @@ export class EditorStore {
     this.reads.clear();
     this.decodedArtwork.clear();
   }
-  private key(title: Pick<EditorTitle, 'id' | 'type' | 'tmdb_id'>) {
-    return title.tmdb_id ? `${title.type}:${title.tmdb_id}` : `id:${title.id}`;
+  private key(title: Pick<EditorTitle, 'id' | 'type' | 'tmdb_id' | 'subject'>) {
+    if(title.type==='game') {
+      if(title.subject?.kind!=='game'||title.id!==title.subject.catalogue_id||!Number.isSafeInteger(title.id)||!title.id||title.id<=0)
+        throw new Error('A typed canonical game identity is required.');
+      return `game:${title.subject.catalogue_id}`;
+    }
+    return title.tmdb_id ? `${title.type}:${title.tmdb_id}` : `${title.type}:media:${title.id}`;
   }
   private record(title: EditorTitle) {
-    return this.records.get(this.key(title)) || [...this.records.values()].find(r => title.id && r.title.id === title.id);
+    return this.records.get(this.key(title)) || [...this.records.values()].find(r => title.id && r.title.id === title.id && r.title.type===title.type);
   }
   seed(title: EditorTitle) {
     const existing = this.record(title);
+    if(existing?.title===title)return title;
+    if(title.type==='game'){
+      const pinned_banner=title.pinned_banner===undefined?title.game_state?.pinned_banner:title.pinned_banner;
+      title={...title,pinned_banner,backdrop:gameHeroChoice({...title,pinned_banner},this.viewer,this.mobileArtwork())};
+    }
     if (existing) {
       if (!existing.pending.length && !existing.libraryPending.length && !existing.importing) {
+        const displayed=existing.displayedHero;
+        if(title.type!=='game'&&displayed&&title.backdrop===displayed.primary){
+          title={...title,backdrop:displayed.path};
+        }else if(title.backdrop&&title.backdrop!==displayed?.path){
+          existing.displayedHero=undefined;
+        }
+        if(existing.title.backdrop&&(existing.title.pinned_banner||null)===(title.pinned_banner||null)
+          &&existing.title.background_status?.state==='ready'&&(!title.backdrop||title.background_status?.state==='pending'))
+          title={...title,backdrop:existing.title.backdrop,background_status:existing.title.background_status,
+            backdrop_fallbacks:existing.title.backdrop_fallbacks};
+        if(title.entry&&existing.title.entry){
+          // A lightweight detail response may omit list-editor projections.
+          // Missing metadata is not an instruction to discard known totals.
+          const incoming={...title.entry};
+          if(!('released_episodes' in incoming))incoming.released_episodes=existing.title.entry.released_episodes;
+          if(incoming.progress===existing.title.entry.progress&&!('season_position' in incoming))
+            incoming.season_position=existing.title.entry.season_position;
+          title={...title,entry:incoming};
+        }
+        this.applyArtwork(existing,{poster:title.poster||undefined,backdrop:title.backdrop||undefined});
+        if('backdrop' in title&&!title.backdrop){existing.title.backdrop=null;existing.backdropSrc=undefined;}
         Object.assign(existing.title, title);
         existing.committed = title.entry;
         existing.favoriteCommitted = title.favorite ?? !!title.entry?.favorite;
@@ -66,34 +114,81 @@ export class EditorStore {
     return record.title;
   }
   get(title: EditorTitle) { return this.record(title)?.title || this.seed(title); }
-  hasPendingWrites() { return [...this.records.values()].some(record => record.pending.length || record.libraryPending.length || record.importing); }
+  hasPendingWrites(title?:EditorTitle) {
+    const records=title?[this.record(title)]:[...this.records.values()];
+    return records.some(record=>record&&(record.pending.length||record.libraryPending.length||record.importing));
+  }
   hasPendingEntryWrites(title: EditorTitle) { return !!this.record(title)?.pending.length; }
-  find(id: number) { return [...this.records.values()].find(r => r.title.id === id && !r.stale)?.title; }
+  // Bare ids are the legacy Media adapter. Games always use a typed subject.
+  find(id: number) { return [...this.records.values()].find(r => r.title.id === id && r.title.type!=='game' && !r.stale)?.title; }
+  findSubject(subject:WorkSubject) {
+    return [...this.records.values()].find(r=>(!r.stale||r.pending.length>0)&&r.title.type===subject.kind&&r.title.id===
+      (subject.kind==='game'?subject.catalogue_id:subject.media_id))?.title;
+  }
+  hasPendingSubject(subject:WorkSubject){
+    const record=subject.kind==='game'?this.records.get(`game:${subject.catalogue_id}`):[...this.records.values()].find(r=>r.title.type===subject.kind&&r.title.id===subject.media_id);
+    return !!record?.pending.length;
+  }
+  invalidateSubject(subject:WorkSubject){
+    const record=subject.kind==='game'?this.records.get(`game:${subject.catalogue_id}`):[...this.records.values()].find(r=>r.title.type===subject.kind&&r.title.id===subject.media_id);
+    if(record&&!record.pending.length&&!record.libraryPending.length)record.stale=true;
+  }
+  async loadSubject(subject:WorkSubject) {
+    if(subject.kind!=='game') {
+      const title=await this.load(subject.media_id);
+      if(title.type!==subject.kind)throw new Error('Title identity changed. Please try again.');
+      return title;
+    }
+    const cached=this.findSubject(subject);
+    if(cached)return cached;
+    const key=`game:${subject.catalogue_id}`;
+    const active=this.reads.get(key);
+    if(active)return active;
+    const viewer=this.viewer;
+    const pending=this.request(`games/works/${subject.catalogue_id}`).then(state=>{
+      if(viewer!==this.viewer)throw new Error('Your account changed. Please try again.');
+      return this.seed({id:subject.catalogue_id,subject,type:'game',title:state.title,poster:state.image_url,
+        backdrop:state.backdrop,backdrop_mobile:state.backdrop_mobile,pinned_banner:state.pinned_banner,background_status:state.background_status,
+        game_class:state.game_class,base_work_id:state.base_work_id,game_state:state,
+        favorite:state.favorite,entry:state.listed?state:null});
+    });
+    this.reads.set(key,pending);
+    try{return await pending;}finally{if(this.reads.get(key)===pending)this.reads.delete(key);}
+  }
   async load(id: number) {
-    const cached = [...this.records.values()].find(r => r.title.id === id);
+    const cached = [...this.records.values()].find(r => r.title.id === id && r.title.type!=='game');
     if (cached && !cached.stale) return cached.title;
-    const active = this.reads.get(id);
+    const key=`media:${id}`;
+    const active = this.reads.get(key);
     if (active) return active;
     const viewer = this.viewer;
     const pending = this.request(`editor/${id}`).then(title => {
       if (viewer !== this.viewer) throw new Error('Your account changed. Please try again.');
       return this.seed(title);
     });
-    this.reads.set(id, pending);
-    try { return await pending; } finally { if (this.reads.get(id) === pending) this.reads.delete(id); }
+    this.reads.set(key, pending);
+    try { return await pending; } finally { if (this.reads.get(key) === pending) this.reads.delete(key); }
   }
   invalidate(id: number) {
-    const record = [...this.records.values()].find(r => r.title.id === id);
+    const record = [...this.records.values()].find(r => r.title.id === id && r.title.type!=='game');
     if (record) record.stale = true;
   }
   acceptSaved(saved: Record<string, any>) {
-    const record = [...this.records.values()].find(r => r.title.id === saved.id);
+    const record = saved.subject?.kind==='game'
+      ? [...this.records.values()].find(r=>r.title.type==='game'&&r.title.id===saved.subject.catalogue_id)
+      : [...this.records.values()].find(r => r.title.id === saved.id && r.title.type!=='game');
     if (!record || record.pending.length) return;
-    this.seed({...record.title, entry:saved.status ? saved : null});
+    this.seed({...record.title, ...(record.title.type==='game'?{game_state:saved,favorite:saved.favorite}:{}),
+      entry:(record.title.type==='game'?saved.listed:saved.status) ? saved : null});
     this.changed(record.title);
   }
   async resolveId(title: EditorTitle): Promise<number> {
     const record = this.record(title)!;
+    if(title.type==='game') {
+      const id=title.subject?.kind==='game'?title.subject.catalogue_id:title.id;
+      if(!id||!Number.isSafeInteger(id)||id<=0)throw new Error('A canonical game is required.');
+      return id;
+    }
     if (record.title.id) return record.title.id;
     if (!record.importing) {
       record.importing = this.request(`catalog/${title.type}/${title.tmdb_id}`, {method:'POST'})
@@ -111,8 +206,27 @@ export class EditorStore {
       if (!entry && Object.keys(operation.patch).length===1 && 'favorite' in operation.patch) continue;
       const previous = entry?.status;
       const previousProgress = entry?.progress ?? 0;
-      entry = {...(entry || {status:'planning', progress:0, rating_mode:'manual', manual_score:null,
-        season_scores:{}, favorite:false, rewatch_count:0, notes:'', start_date:null, finish_date:null}), ...operation.patch};
+      const defaults=record.title.type==='game'
+        ? {status:'planning',listed:true,score:null,total_seconds:null,completion_seconds:null,replay_count:null,notes:'',start_date:null,finish_date:null}
+        : {status:'planning', progress:0, rating_mode:'manual', manual_score:null,
+          season_scores:{}, favorite:false, rewatch_count:0, notes:'', start_date:null, finish_date:null};
+      entry = {...(entry || defaults), ...operation.patch};
+      if(record.title.type==='game'&&'achievement_mode' in operation.patch){
+        const achievements={...(entry.achievements||record.title.game_state?.achievements||{})};
+        const mode=operation.patch.achievement_mode;achievements.mode=mode;
+        if(mode==='percentage'){
+          achievements.count=null;achievements.percentage=operation.patch.achievement_percentage;
+        }else if(mode==='count'){
+          achievements.count=operation.patch.achievement_count;
+          achievements.percentage=achievements.total>0?achievements.count/achievements.total*100:null;
+        }else if(mode==='targeted'){
+          const delta=Object.values(operation.patch.unlock_updates||{}).reduce<number>((sum,value)=>sum+(value?1:-1),0);
+          achievements.exact_count=Math.max(0,(achievements.exact_count||0)+delta);
+          achievements.count=achievements.exact_count;
+          achievements.percentage=achievements.total>0?achievements.count/achievements.total*100:null;
+        }else if(mode==null){achievements.count=achievements.percentage=null;}
+        entry.achievements=achievements;
+      }
       if ('status' in operation.patch && record.title.type === 'movie') {
         entry.progress = entry.status === 'completed' ? 1 : 0;
       } else if (entry.status === 'completed' && previous !== 'completed' && record.title.type === 'series') {
@@ -133,7 +247,7 @@ export class EditorStore {
       }
       if ('manual_score' in operation.patch) entry.score = operation.patch.manual_score || null;
       const today = localToday();
-      if (entry.status !== previous && entry.status === 'watching' && !entry.start_date && !('start_date' in operation.patch)) entry.start_date = today;
+      if (entry.status !== previous && entry.status === (record.title.type==='game'?'playing':'watching') && !entry.start_date && !('start_date' in operation.patch)) entry.start_date = today;
       if (entry.status !== previous && entry.status === 'completed' && !entry.finish_date && !('finish_date' in operation.patch)) entry.finish_date = today;
     }
     if(entry)entry={...entry,favorite};
@@ -153,12 +267,25 @@ export class EditorStore {
         if (viewer !== this.viewer) throw new Error('Your account changed. Please try again.');
         const id = await this.resolveId(record.title);
         if (viewer !== this.viewer) throw new Error('Your account changed. Please try again.');
-        const saved = await this.request(`entry/${id}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify(patch)});
-        record.committed = saved.status ? saved : null;
+        const game=record.title.type==='game';
+        const favoriteOnly=game&&Object.keys(patch).length===1&&'favorite' in patch;
+        const child=game&&['expansion','dlc'].includes(record.title.game_class||'');
+        const path=game?(favoriteOnly?`games/favorites/${id}`:`games/${child?'children':'entries'}/${id}${record.title.game_class==='dlc'?'?listed=false':''}`):`entry/${id}`;
+        const body=game&&!favoriteOnly?{...patch,revision:record.committed?.revision??record.title.game_state?.revision??null}:patch;
+        const saved = await this.request(path, {method:favoriteOnly?'PUT':'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+        record.committed = (game?saved.listed:saved.status) ? saved : null;
+        if(game)record.title.game_state=saved;
         record.favoriteCommitted = saved.favorite ?? record.favoriteCommitted;
         record.stale = false;
         succeeded=true;
         return saved;
+      } catch(cause) {
+        if(record.title.type==='game'&&(cause as any).status===409){
+          record.stale=true;
+          const base=(cause as any).detail?.base_work_id;
+          if(base)for(const other of this.records.values())if(other.title.type==='game'&&other.title.id===base)other.stale=true;
+        }
+        throw cause;
       } finally {
         record.pending.splice(record.pending.indexOf(operation), 1);
         this.paint(record);
@@ -180,7 +307,17 @@ export class EditorStore {
         if (viewer !== this.viewer) throw new Error('Your account changed. Please try again.');
         const id = await this.resolveId(record.title);
         if (viewer !== this.viewer) throw new Error('Your account changed. Please try again.');
-        await this.request(`entry/${id}?confirmed=true`, {method:'DELETE'});
+        if(record.title.type==='game') {
+          const child=record.title.game_class==='expansion';
+          const revision=record.committed?.revision??record.title.game_state?.revision;
+          const saved=await this.request(`games/${child?'children':'entries'}/${id}?confirmed=true&revision=${revision}`,{method:'DELETE'});
+          // Independent entries are erased; only children retain private prefill.
+          record.title.game_state=child?saved:{subject:record.title.subject,title:record.title.title,
+            game_class:record.title.game_class,listed:false,status:null,revision:null,favorite:false};
+          if(!child)for(const other of this.records.values()){
+            if(other.title.type==='game'&&other.title.base_work_id===id)other.stale=true;
+          }
+        } else await this.request(`entry/${id}?confirmed=true`, {method:'DELETE'});
         record.committed = null;
         record.favoriteCommitted = false;
         record.stale = false;
@@ -196,6 +333,7 @@ export class EditorStore {
     return task;
   }
   writeLibrary(title: EditorTitle, desired: boolean) {
+    if(title.type==='game')return Promise.reject(new Error('Game ownership is separate from tracking.'));
     const record = this.record(title)!;
     const viewer = this.viewer;
     const operation = {desired};
@@ -222,17 +360,95 @@ export class EditorStore {
     record.tail = task;
     return task;
   }
-  warmArtwork(title: EditorTitle, posterSrc?: string, backdropSrc?:string) {
+  private mobileArtwork(){return typeof matchMedia!=='undefined'&&matchMedia('(max-width:650px)').matches;}
+  onArtworkReady(listener:()=>void,signal:AbortSignal){
+    if(signal.aborted)return;
+    this.artworkListeners.add(listener);
+    signal.addEventListener('abort',()=>this.artworkListeners.delete(listener),{once:true});
+  }
+  private backdropURL(title:EditorTitle,path=title.backdrop) {
+    return detailHeroArtwork(path)?.src;
+  }
+  private fallbackURLs(title:EditorTitle,path=title.backdrop) {
+    return (title.backdrop_fallbacks||[])
+      .filter(url=>artworkIdentity(url)!==artworkIdentity(path||''))
+      .map(url=>this.backdropURL(title,url)).filter((src):src is string=>!!src);
+  }
+  async warmListArtwork(title:EditorTitle,signal:AbortSignal) {
+    if(signal.aborted)return;
+    title=this.get(title);
+    await this.prepareArtwork(title,undefined,undefined,signal,false);
+    // A usable fallback can finish before enrichment. Retain the row's lane
+    // until that shared read settles, so two rows also bound provider lookups.
+    await this.record(title)?.artworkRead;
+  }
+  async prepareArtwork(title:EditorTitle,posterSrc?:string,backdropSrc?:string,signal?:AbortSignal,priority=true){
+    if(signal?.aborted)return;
+    const record=this.record(title)!;
+    const original=record.title.backdrop;
+    const warm=this.warmArtwork(record.title,posterSrc,backdropSrc,priority);
+    const state=record.title.background_status?.state;
+    const mobileGame=title.type==='game'&&this.mobileArtwork();
+    // An empty projection can predate primary metadata publication. Direct
+    // intent may recheck it even when optional banner acquisition is unavailable.
+    const needsRead=!record.displayedHero&&(!original&&priority
+      ||state!=='unavailable'&&state!=='ready'&&(!original||!mobileGame&&(state==='pending'||state==='deferred')));
+    if(priority&&record.artworkRead)record.artworkReadPriority=true;
+    const retryAllowed=Date.now()>=(record.artworkRetry||0)||priority&&!original&&record.artworkReadPriority===false;
+    if(needsRead&&title.id&&!record.artworkRead&&retryAllowed){
+      const path=title.type==='game'?`games/works/${title.id}/background${mobileGame?'?provider=igdb':''}`:`title/${title.id}/background`;
+      record.artworkRetry=Date.now()+30_000;
+      record.artworkReadPriority=priority;
+      // Game acquisition already has a 20s provider budget. Do not abandon its
+      // shared lookup at 8s while an open editor is waiting for its first hero.
+      const timeout=AbortSignal.timeout(title.type==='game'?25000:8000);
+      const requestSignal=signal?AbortSignal.any([signal,timeout]):timeout;
+      record.artworkRead=this.request(path,{signal:requestSignal}).then(async data=>{
+        if(requestSignal.aborted||this.record(title)!==record||record.displayedHero)return;
+        if(title.type==='game'&&!original&&!data.backdrop&&record.artworkReadPriority){
+          // A list may contain a game before its IGDB primary is published.
+          // Join the existing primary acquisition instead of requiring a details visit.
+          const metadata=await this.request(`games/works/${title.id}/metadata?primary=true`,{signal:requestSignal});
+          if(metadata.primary)data={...data,...metadata.primary};
+          else if(!metadata.primary_ready)data={...data,background_status:{state:'pending',retry_after:10}};
+        }
+        if(requestSignal.aborted||this.record(title)!==record||record.displayedHero)return;
+        record.title.background_status=data.background_status;
+        record.title.backdrop_fallbacks=data.backdrop_fallbacks;
+        record.artworkRetry=Date.now()+Math.max(30,data.background_status?.retry_after||0)*1000;
+        if(title.type==='game')record.title.pinned_banner=data.pinned_banner;
+        const chosen=title.type==='game'?gameHeroChoice({...record.title,backdrop:data.backdrop,backdrop_mobile:data.backdrop},this.viewer,mobileGame):data.backdrop;
+        this.applyArtwork(record,{backdrop:chosen});
+        if(chosen&&chosen!==original)void this.warmArtwork(record.title,posterSrc,backdropSrc,!!record.artworkReadPriority);
+      }).catch(()=>{if(signal?.aborted)record.artworkRetry=undefined;}).finally(()=>{record.artworkRead=undefined;});
+    }
+    await warm;
+    if(signal?.aborted||this.record(title)!==record)return;
+    if(this.artwork(record.title).backdropImage)return;
+    await record.artworkRead;
+    if(signal?.aborted||this.record(title)!==record)return;
+    if(record.title.backdrop!==original)await this.warmArtwork(record.title,posterSrc,backdropSrc,priority);
+    if(this.artwork(record.title).backdropImage)return;
+    for(const src of this.fallbackURLs(record.title)){
+      if(signal?.aborted)return;
+      await this.decodedArtwork.warm(src,priority);
+      if(this.decodedArtwork.get(src))return;
+    }
+  }
+  warmArtwork(title: EditorTitle, posterSrc?: string, backdropSrc?:string,priority=false) {
     const record = this.record(title)!;
     // A global search opener may sit above a different title's details page.
     // Reuse decoded/displayed sources only when they belong to this title.
     if (posterSrc && title.poster && artworkIdentity(posterSrc) === artworkIdentity(title.poster)) record.posterSrc = posterSrc;
-    if (!title.backdrop) return;
+    if (!title.backdrop) return Promise.resolve();
     // A details-page editor reuses the hero's selected source instead of warming another bucket.
     if(backdropSrc&&artworkIdentity(backdropSrc)===artworkIdentity(title.backdrop))record.backdropSrc=backdropSrc;
-    record.backdropSrc ||= responsiveArtwork(title.backdrop, {size:'w1280', route:'auto'})?.src;
-    if (!record.backdropSrc) return;
-    void this.decodedArtwork.warm(record.backdropSrc);
+    const displayed=record.displayedHero;
+    record.backdropSrc ||= displayed?.path===title.backdrop?displayed.src:this.backdropURL(title);
+    if (!record.backdropSrc) return Promise.resolve();
+    return this.decodedArtwork.warm(record.backdropSrc,priority).then(()=>{
+      if(this.record(title)===record)this.artworkListeners.forEach(listener=>listener());
+    });
   }
   warmMetadata(title:EditorTitle) {
     const record=this.record(title);
@@ -244,8 +460,15 @@ export class EditorStore {
     record.title.backdrop ||= title.backdrop;
     return record.title;
   }
-  updateArtwork(id:number,artwork:{poster?:string;backdrop?:string}) {
-    const record=[...this.records.values()].find(record=>record.title.id===id);
+  updateArtwork(id:number,artwork:ArtworkUpdate) {
+    const record=[...this.records.values()].find(record=>record.title.id===id&&record.title.type!=='game');
+    this.applyArtwork(record,artwork);
+  }
+  updateSubjectArtwork(subject:WorkSubject,artwork:ArtworkUpdate) {
+    const title=this.findSubject(subject);
+    this.applyArtwork(title?this.record(title):undefined,artwork);
+  }
+  private applyArtwork(record:RecordState|undefined,artwork:ArtworkUpdate) {
     if(!record)return;
     if(artwork.poster){
       if(artworkIdentity(record.title.poster||'')!==artworkIdentity(artwork.poster))record.posterSrc=undefined;
@@ -256,21 +479,30 @@ export class EditorStore {
         record.backdropSrc=undefined;
       }
       record.title.backdrop=artwork.backdrop;
+      if(artwork.backdropSrc){
+        record.displayedHero={path:artwork.backdrop,src:artwork.backdropSrc,primary:artwork.primaryBackdrop};
+        record.backdropSrc=artwork.backdropSrc;
+      }
     }
+    if('pinnedBanner' in artwork)record.title.pinned_banner=artwork.pinnedBanner;
   }
   artwork(title: EditorTitle, posterSrc?: string) {
     const record = this.record(title)!;
     const poster = posterSrc || record.posterSrc || responsiveArtwork(title.poster, {size:'w342', route:'auto'})?.src;
-    // Choose once before opening. Never swap artwork under an active editor.
-    const backdropImage=this.decodedArtwork.get(record.backdropSrc);
-    return {poster, backdrop: backdropImage ? record.backdropSrc : poster, backdropImage};
+    // Only decoded images are exposed to either the initial paint or a live update.
+    for(const src of [record.backdropSrc||this.backdropURL(record.title),...this.fallbackURLs(record.title)]){
+      const backdropImage=this.decodedArtwork.get(src);
+      if(backdropImage)return {poster,backdrop:src,backdropImage};
+    }
+    return {poster,backdrop:undefined,backdropImage:undefined};
   }
 }
 
 export const editorStore = new EditorStore(async (path, options) => {
   const response = await fetch(`/api/proxy/tracking/${path}`, options);
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Unable to save this entry. Try again.');
+  if (!response.ok) throw Object.assign(new Error(typeof data.detail === 'string' ? data.detail : 'Unable to save this entry. Try again.'),
+    {status:response.status,detail:data.detail});
   return data;
 }, title => {
   document.dispatchEvent(new CustomEvent('anylist:editor-state', {detail:title}));
@@ -278,13 +510,13 @@ export const editorStore = new EditorStore(async (path, options) => {
   document.dispatchEvent(new CustomEvent('anylist:editor-committed', {detail:{title,patch}}));
 });
 
-export function seedEditorPage() {
+export function seedEditorPage(root:ParentNode=document) {
   editorStore.scope(document.body.dataset.cacheUser || 'anonymous');
-  const list = JSON.parse(document.querySelector('#list-editor-entries')?.textContent || '[]');
+  const list = JSON.parse(root.querySelector('#list-editor-entries')?.textContent || '[]');
   list.forEach((entry: any) => editorStore.seed({...entry, entry:entry.entry ? {...entry.entry, progress:entry.progress, released_episodes:entry.released_episodes, season_position:entry.season_position} : entry}));
-  const title = JSON.parse(document.querySelector('#title-editor-data')?.textContent || 'null');
+  const title = JSON.parse(root.querySelector('#title-editor-data')?.textContent || 'null');
   if (title) editorStore.seed(title);
-  const browse = JSON.parse(document.querySelector('#browse-data')?.textContent || '{}');
+  const browse = JSON.parse(root.querySelector('#browse-data')?.textContent || '{}');
   [...(browse.payload?.results || []), ...(browse.sections || []).flatMap((section: any) => section.results)]
     .forEach((item: any) => { if ('entry' in item) editorStore.seed(item); });
 }

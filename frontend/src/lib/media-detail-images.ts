@@ -1,4 +1,7 @@
-import {showDialog,reveal,cancelUiMotion} from './ui-motion';
+import {mountGalleryArtworkActions} from './gallery-artwork-actions';
+import {mountGameBannerSettings} from './game-banner-settings';
+import {showDialog,cancelUiMotion} from './ui-motion';
+import {revealReadyContent} from './loading-reveal';
 import {showToast} from './toasts';
 import {bindImageViewerDismissal} from './image-viewer-dismissal';
 import {detailBackground,type DetailLoadState} from './detail-background';
@@ -10,22 +13,24 @@ import {bindDetailImageDragDismiss} from './detail-image-dismiss';
 import {bindDetailImageZoom} from './detail-image-zoom';
 import {editorStore} from './editor-store';
 import {createDetailViewerImageLoader} from './detail-viewer-image';
+import {preloadDetailGallery} from './detail-gallery-preload';
 import {bindDetailViewerFrame} from './detail-viewer-frame';
 import {detailHeroArtwork,detailSceneArtwork} from './detail-artwork';
-import {commitDetailHero} from './detail-hero';
+import {commitDetailHero,nextDetailHero,publishDetailArtwork} from './detail-hero';
 import {createGalleryPreviewTimer,galleryPreviewImagesSettled} from './gallery-preview-timer';
 import {createGallerySelection} from './gallery-selection';
+import {rememberGameHero} from './game-hero-choice';
 
 type Galleries = {posters:string[]; artwork:string[]};
 const imageKey=artworkIdentity;
-export function uniqueDetailImages(values:unknown[]):string[] {
+export function uniqueDetailImages(values:unknown[],limit=10):string[] {
   const seen=new Set<string>();
   return values.filter((url):url is string=>{
     if(typeof url!=='string'||!(/^https?:\/\//.test(url)||url.startsWith('/api/proxy/media/image/')))return false;
     const key=imageKey(url);
     if(seen.has(key))return false;
     seen.add(key);return true;
-  }).slice(0,10);
+  }).slice(0,limit);
 }
 
 export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,standalone?:{lightbox:HTMLDialogElement;logo:boolean;imagesPath?:string}) {
@@ -33,10 +38,25 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
   const track=lightbox.querySelector<HTMLElement>('[data-image-viewer-track]')!;
   const prepareViewer=bindDetailImageDragDismiss(lightbox,track,signal);
   const name=info.name||root.querySelector('.lab-heading h1')?.textContent||'Image';
-  const initialHero=root.querySelector<HTMLButtonElement>('.lab-hero-art-button')?.dataset.detailImage;
-  const galleries:Galleries&{hero:string[]}={posters:uniqueDetailImages(info.posters||[]),artwork:uniqueDetailImages(info.artwork||[]),hero:initialHero?[initialHero]:[]};
+  const mobileGameHero=info.type==='game'&&matchMedia('(max-width:650px)').matches;
+  if(info.type==='game')root.ownerDocument.querySelectorAll<HTMLLinkElement>('link[rel="preload"][as="image"][media]').forEach(link=>{
+    if(!matchMedia(link.media).matches)link.remove();
+    else link.removeAttribute('media');
+  });
+  const initialHero=(mobileGameHero?info.backdropMobile:info.backdropDesktop)||root.querySelector<HTMLButtonElement>('.lab-hero-art-button')?.dataset.detailImage;
+  const initialPreview=root.querySelector<HTMLImageElement>('.lab-art-image img');
+  if(initialPreview?.parentElement?.tagName==='PICTURE'){
+    const source=mobileGameHero?initialPreview.parentElement.querySelector('source')?.srcset||initialPreview.src:initialPreview.currentSrc||initialPreview.src;
+    if(source)initialPreview.src=source;
+    initialPreview.parentElement.replaceWith(initialPreview);
+  }
+  const artworkLimit=info.type==='game'?Infinity:10;
+  const posterLimit=info.type==='game'?Infinity:10;
+  let gameBannerSelected:string|undefined;
+  const imagePath=info.type==='game'?`/api/proxy/tracking/games/works/${info.id}`:`/api/proxy/tracking/title/${info.id}`;
+  const galleries:Galleries&{hero:string[]}={posters:uniqueDetailImages(info.posters||[],posterLimit),artwork:uniqueDetailImages(info.artwork||[],artworkLimit),hero:initialHero?[initialHero]:[]};
   const galleryLimit=standalone&&!standalone.logo?5:10;
-  let pending=!!info.imagesAvailable&&(!info.imageStatus?.state||['pending','deferred'].includes(info.imageStatus.state));
+  let pending=info.type!=='game'&&!!info.imagesAvailable&&(!info.imageStatus?.state||['pending','deferred'].includes(info.imageStatus.state));
   const slots=lightbox.querySelector<HTMLElement>('[data-image-viewer-slots]')!;
   const selection=createGallerySelection(slots,signal);
   const viewerStatus=lightbox.querySelector<HTMLElement>('[data-image-viewer-status]')!;
@@ -45,9 +65,9 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
   const viewerGroup=()=>active==='posters'?'posters':'artwork';
   const viewerPending=()=>pending&&active!=='hero';
   const loadViewerImage=createDetailViewerImageLoader(signal);
-  const preparedImages=new WeakMap<HTMLImageElement,string>();
+  const preparedImages=new WeakMap<HTMLImageElement,{url:string;ready:Promise<boolean>}>();
   const watchThumbnail=createGalleryThumbnailWatcher(signal,thumbnail=>{
-    if(thumbnail.getBoundingClientRect().top<innerHeight)reveal(thumbnail);
+    if(!thumbnail.closest('.lab-art-image'))revealReadyContent(thumbnail,signal);
   });
   const loadThumbnail=createGalleryImageLoader(signal,button=>{
     if(button.matches('.lab-gallery button,.lab-art-image'))watchLandscape(button as HTMLButtonElement);
@@ -134,7 +154,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
   window.addEventListener('pagehide',()=>{previews.reset();previewInteracting=false;previewGesture=undefined;},{signal});
   window.addEventListener('pageshow',()=>{previewInteracting=false;previewGesture=undefined;if(lightbox.open)revealPreviews();},{signal});
   signal.addEventListener('abort',clearPreviewTimer,{once:true});
-  const carousel=createDetailImageCarousel(track,signal,index=>showImage(index,false,false),index=>prepareImage(index));
+  const carousel=createDetailImageCarousel(track,signal,index=>showImage(index,false,false),index=>prepareImage(index,true));
   const resetZoom=bindDetailImageZoom(lightbox,track,signal,()=>carousel.slide(current)?.image,
     (index,preserveScroll=false,preserveZoom=false)=>showImage(index,false,!preserveScroll,preserveZoom),()=>{previewInteracting=false;revealPreviews();},()=>cancelUiMotion(lightbox));
   const fitViewer=bindDetailViewerFrame(lightbox,signal,!!standalone);
@@ -175,6 +195,12 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
         behavior:matchMedia('(prefers-reduced-motion:reduce)').matches?'instant':'smooth'});
     }
   };
+  const artworkActions=mountGalleryArtworkActions(lightbox,info,signal,
+    ()=>({url:galleries[active][current],artwork:active!=='posters'}),url=>{
+      gameBannerSelected=url;if(url)paintHero(url);
+      root.dispatchEvent(new CustomEvent('anylist:banner-pinned',{detail:{url}}));
+    });
+  if(info.type==='game')artworkActions(info.pinnedBanner||'');
   const showImage=(index:number,animate=false,scroll=true,preserveZoom=false,fast=false)=>{
     if(!preserveZoom){if(scroll)resetZoom();else resetZoom.preserveInteraction();}
     const rows=galleries[active];
@@ -182,6 +208,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
     const previous=current;
     current=count?(index+count)%count:0;
     if(current!==previous)revealPreviews();
+    artworkActions();
     const group=active;
     const alt=`${name} · ${group==='posters'?'Poster':'Artwork'} ${current+1}`;
     if(announcement)announcement.textContent=count?`${group==='posters'?'Poster':'Artwork'} ${current+1}${viewerPending()?'':` of ${count}`}`:'No images available';
@@ -195,17 +222,41 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
       skeleton.textContent=viewerPending()?'':'No images available.';
       return;
     }
-    prepareImage(current);
+    // Keep every decoded slide. Only bulk admission waits for the selected
+    // image; selecting/swiping to another slide always prepares it immediately.
+    if(active==='hero')prepareImage(current);
+    else void preloadDetailGallery(current,rows.length,prepareImage,()=>
+      !signal.aborted&&lightbox.open&&active===group&&galleries[group]===rows);
   };
-  const prepareImage=(index:number)=>{
+  const prepareImage=(index:number,exposed=false):Promise<boolean>|undefined=>{
     if(!lightbox.open||signal.aborted)return;
     const group=active,original=galleries[group][index];
     if(!original)return;
     const url=responsiveArtwork(original,{size:group==='posters'?'w780':'original',route:'auto'})?.src;
     const slide=carousel.slide(index);
-    if(!url||!slide||preparedImages.get(slide.image)===url)return;
+    if(!url||!slide)return;
+    const urgent=index===current||exposed;
+    if(urgent)slide.image.fetchPriority='high';
     const {image,skeleton}=slide;
-    preparedImages.set(image,url);
+    // Full-viewer intent also admits its tiny strip previews. Keep them ahead
+    // of a fast swipe, including slides whose grid previews remain offscreen.
+    const button=slots.querySelector<HTMLButtonElement>(`button[data-image-index="${index}"]`);
+    const thumbnail=button?.querySelector<HTMLImageElement>('img');
+    if(button){
+      if(thumbnail&&!thumbnail.getAttribute('src'))thumbnail.fetchPriority=urgent?'high':'low';
+      loadThumbnail(button,true);
+    }
+    // Reuse a grid/strip image already requested for this exact artwork. A
+    // pending full-size slide can show it without a new preview download.
+    // Dialogs are portaled outside root when opened. Take the strip image
+    // directly from its slot instead of relying on a detail-root query.
+    const preview=urgent?[...(thumbnail?[thumbnail]:[]),...root.querySelectorAll<HTMLImageElement>('.lab-gallery img,.lab-art-image img')]
+      .filter(candidate=>imageKey(candidate.currentSrc||candidate.src||candidate.dataset.gallerySrc||'')===imageKey(original)):thumbnail?[thumbnail]:undefined;
+    const existing=preparedImages.get(image);
+    if(existing?.url===url){
+      if(urgent)void loadViewerImage(image,skeleton,url,image.alt,'high',preview);
+      return existing.ready;
+    }
     skeleton.classList.add('detail-image-skeleton');skeleton.textContent='';
     const discard=()=>{
       const selected=galleries[active][current];
@@ -217,21 +268,25 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
       }
       return wasSelected;
     };
-    const ready=loadViewerImage(image,skeleton,url,`${name} · ${group==='posters'?'Poster':'Artwork'} ${index+1}`);
-    const cached=image.complete&&image.naturalWidth>0;
-    void ready.then(loaded=>{
-      if(!loaded||signal.aborted)return;
-      if(!standalone&&group!=='posters'&&image.naturalWidth<=image.naturalHeight){discard();return;}
+    const ready=loadViewerImage(image,skeleton,url,`${name} · ${group==='posters'?'Poster':'Artwork'} ${index+1}`,urgent?'high':'low',preview);
+    const settled=ready.then(loaded=>{
+      if(!loaded||signal.aborted)return false;
+      if(!standalone&&info.type!=='game'&&group!=='posters'&&image.naturalWidth<=image.naturalHeight){discard();return false;}
       if(lightbox.open&&active===group&&galleries[group][current]===original)fitViewer(image,viewerGroup());
-      if(!cached&&lightbox.open&&active===group&&galleries[group][current]===original)reveal(image);
       refreshPreviewLoading();
+      return true;
     }).catch(()=>{
-      if(signal.aborted)return;
+      if(signal.aborted)return false;
       if(discard())showToast('Unable to load this image. Retry the gallery.','error');
       refreshPreviewLoading();
+      return false;
     });
+    preparedImages.set(image,{url,ready:settled});return settled;
   };
   const watchLandscape=(button:HTMLButtonElement)=>{
+    // Games retain the provider's complete gallery. Scene selection is based
+    // on typed source evidence; a square extra must not remove a usable panel.
+    if(info.type==='game')return;
     const thumbnail=button.querySelector<HTMLImageElement>('img');
     if(!thumbnail)return;
     const inspect=()=>{
@@ -243,7 +298,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
     };
     if(thumbnail.complete)inspect();else thumbnail.addEventListener('load',inspect,{signal,once:true});
   };
-  root.querySelectorAll<HTMLButtonElement>('.lab-gallery [data-detail-image],.lab-art-image').forEach(loadThumbnail);
+  root.querySelectorAll<HTMLButtonElement>('.lab-gallery [data-detail-image],.lab-art-image').forEach(button=>loadThumbnail(button));
   const galleryStatus=root.querySelector<HTMLElement>('[data-detail-artwork-status]');
   let previewInfo=info.artworkPreview as {image?:string;thumbnail?:string}|undefined;
   let thumbnails:Record<string,string>=info.artworkThumbnails||{};
@@ -258,16 +313,33 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
     if(image.complete&&image.naturalWidth&&imageKey(button.dataset.detailImage||'')===imageKey(url))return;
     button.dataset.detailImage=url;
     const art=detailSceneArtwork(url,null,'auto',previewInfo?.image===url?previewInfo.thumbnail:thumbnails[url]);
-    if(art&&image.getAttribute('src')!==art.src)applyResponsiveArtwork(image,art.src,{size:'w780',route:'auto'});
+    const hero=root.querySelector<HTMLImageElement>('.lab-hero-image');
+    if(hero&&imageKey(hero.currentSrc||hero.src)===imageKey(url)){
+      image.removeAttribute('srcset');image.removeAttribute('sizes');image.src=hero.currentSrc||hero.src;
+    }else if(art&&image.getAttribute('src')!==art.src)applyResponsiveArtwork(image,art.src,{size:'w780',route:'auto'});
     watchThumbnail(button);
   };
+  if(info.type==='game'){
+    const image=root.querySelector<HTMLImageElement>('.lab-art-image img');
+    const failed=new Set<string>();
+    const recover=()=>{
+      if(signal.aborted||!image)return;
+      failed.add(imageKey(image.currentSrc||image.src));
+      const next=(info.backdropFallbacks||[]).find((url:string)=>!failed.has(imageKey(url)));
+      if(next){previewInfo={image:next};paintPreview();}
+      else root.querySelector<HTMLElement>('.lab-art-preview')?.setAttribute('hidden','');
+    };
+    image?.addEventListener('error',recover,{signal});
+    if(image?.complete&&image.currentSrc&&!image.naturalWidth)recover();
+  }
   let loadPreview=()=>Promise.resolve();
   const failedHeroes=new Set<string>();
   let fallback=info.backdropFallback as string|undefined;
   let heroRevision=0;
+  let gameBannerKnown=info.type==='game',gamePinnedBanner:string|null=info.pinnedBanner||null;
   const paintHero=(url:string|undefined)=>{
     if(!url)return;
-    if(failedHeroes.has(url))return;
+    if(failedHeroes.has(imageKey(url)))return;
     const hero=root.querySelector<HTMLImageElement>('.lab-hero-image');
     const button=root.querySelector<HTMLButtonElement>('.lab-hero-art-button');
     if(!hero)return;
@@ -277,20 +349,25 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
     const commit=()=>{
       if(signal.aborted||revision!==heroRevision)return;
       commitDetailHero(hero,candidate,url,button,backdrop=>{
-        galleries.hero=[backdrop];
-        editorStore.updateArtwork(info.id,{backdrop});
+        galleries.hero=uniqueDetailImages([backdrop,...galleries.hero],15);
+        const backdropSrc=candidate.currentSrc||candidate.src;
+        publishDetailArtwork(editorStore,info,{backdrop,backdropSrc,primaryBackdrop:initialHero,
+          ...(info.type==='game'&&gameBannerKnown?{pinnedBanner:gamePinnedBanner}:{})});
+        if(info.type==='game'&&gameBannerKnown)
+          rememberGameHero(String(info.bannerViewer||''),info.id,mobileGameHero,backdropSrc,gamePinnedBanner);
       });
     };
     const failed=()=>{
       if(signal.aborted||revision!==heroRevision)return;
-      failedHeroes.add(url);
+      failedHeroes.add(imageKey(url));
+      if(!hero.naturalWidth)hero.hidden=true;
       const recover=()=>{
         if(signal.aborted)return;
-        const next=[previewInfo?.image,fallback,...(info.backdropFallbacks||[])].find(next=>next&&!failedHeroes.has(next));
+        const next=nextDetailHero([previewInfo?.image,fallback,...(info.backdropFallbacks||[])],failedHeroes);
         if(next){paintHero(next);return;}
         if(!hero.naturalWidth){hero.hidden=true;if(button)button.hidden=true;}
       };
-      if(previewInfo?.image||fallback)recover();else void loadPreview().then(recover);
+      if(info.type==='game'||previewInfo?.image||fallback)recover();else void loadPreview().then(recover);
     };
     candidate.onload=()=>{void candidate.decode().then(commit,failed);};
     candidate.onerror=failed;
@@ -300,11 +377,11 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
     if(artwork?.srcset)candidate.srcset=artwork.srcset;
     candidate.sizes=artwork?.sizes||'100vw';candidate.src=artwork?.src||url;
   };
-  const applyImages=(data:Galleries&{poster?:string;backdrop?:string;backdrop_fallback?:string;artwork_thumbnails?:Record<string,string>;image_status?:DetailLoadState;image_replacements?:Record<string,string>})=>{
+  const applyImages=(data:Galleries&{poster?:string;backdrop?:string;backdrop_mobile?:string;backdrop_fallback?:string;artwork_thumbnails?:Record<string,string>;image_status?:DetailLoadState;image_replacements?:Record<string,string>})=>{
       const selected=galleries[active][current];
-      galleries.posters=uniqueDetailImages(standalone?[info.posters?.[0],...(data.image_status?.state==='deferred'?galleries.posters:data.posters||[])]:data.posters||[]).slice(0,galleryLimit);
-      galleries.artwork=uniqueDetailImages(data.artwork||[]);
-      if(lightbox.open&&active==='artwork'&&selected&&selected===previewInfo?.image&&!galleries.artwork.includes(selected))galleries.artwork.unshift(selected);
+      galleries.posters=uniqueDetailImages(standalone?[info.posters?.[0],...(data.image_status?.state==='deferred'?galleries.posters:data.posters||[])]:data.posters||[],posterLimit).slice(0,info.type==='game'?Infinity:galleryLimit);
+      galleries.artwork=uniqueDetailImages(data.artwork||[],artworkLimit);
+      if(info.type!=='game'&&lightbox.open&&active==='artwork'&&selected&&selected===previewInfo?.image&&!galleries.artwork.includes(selected))galleries.artwork.unshift(selected);
       thumbnails={...thumbnails,...data.artwork_thumbnails};
       pending=!!data.image_status&&['pending','deferred'].includes(data.image_status.state||'');
       if(galleryStatus){galleryStatus.hidden=!!galleries.artwork.length;galleryStatus.textContent='No artwork available.';}
@@ -316,8 +393,8 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
         if(coverImage&&imageKey(coverImage.src)!==imageKey(primary))applyResponsiveArtwork(coverImage,primary,{size:'w500',sizes:coverImage.sizes||'(max-width:650px) 108px, 210px',route:'auto'});
       }
       fallback=data.backdrop_fallback||fallback;
-      paintHero(data.backdrop);
-      if(!standalone)editorStore.updateArtwork(info.id,{poster:primary});
+      paintHero(info.type==='game'&&gameBannerSelected?gameBannerSelected:mobileGameHero?data.backdrop_mobile||data.backdrop:data.backdrop);
+      if(!standalone)publishDetailArtwork(editorStore,info,{poster:primary});
       paintPreview();
       const grid=root.querySelector<HTMLElement>('[data-detail-artwork-grid]');
       if(grid){
@@ -342,7 +419,25 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
       }
       return data.image_status;
   };
-  const resource=detailBackground(standalone?.imagesPath||`/api/proxy/tracking/title/${info.id}/images`,signal,applyImages,(state,error)=>{
+  root.addEventListener('anylist:game-primary',event=>{
+    const data=(event as CustomEvent).detail;
+    if(signal.aborted||info.type!=='game'||data?.type!=='game'||data.id!==info.id)return;
+    previewInfo=data.artwork_preview;info.backdropFallbacks=data.backdrop_fallbacks||info.backdropFallbacks;
+    applyImages({...data,
+      posters:uniqueDetailImages([...(data.posters||[]),...galleries.posters]),
+      artwork:uniqueDetailImages(data.artwork||galleries.artwork,artworkLimit),image_status:{state:'ready'}});
+    const tab=root.querySelector<HTMLButtonElement>('[data-detail-tab="artwork"]');
+    if(tab){
+      const empty=!galleries.artwork.length,focused=document.activeElement===tab;
+      if(empty&&tab.getAttribute('aria-selected')==='true')root.querySelector<HTMLButtonElement>('[data-detail-tab="overview"]')?.click();
+      tab.hidden=empty;tab.disabled=empty;if(empty)tab.tabIndex=-1;
+      if(empty&&focused)root.querySelector<HTMLButtonElement>('[data-detail-tab="overview"]')?.focus({preventScroll:true});
+    }
+  },{signal});
+  const resource=detailBackground<Galleries&{artwork_preview?:{image?:string;thumbnail?:string};image_status?:DetailLoadState}>(standalone?.imagesPath||`${imagePath}/images`,signal,data=>{
+    if(info.type==='game'&&data.artwork_preview)previewInfo=data.artwork_preview;
+    return applyImages(data);
+  },(state,error)=>{
     viewerStatus.hidden=state!=='retry';
     if(state==='retry'){
       viewerStatus.replaceChildren(document.createTextNode(error||'Images are temporarily unavailable. Retrying automatically.'));
@@ -350,7 +445,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
     }
     if(galleryStatus){galleryStatus.hidden=state!=='retry'&&(!!galleries.artwork.length||pending);galleryStatus.textContent=state==='retry'?error||'Artwork is temporarily unavailable. Retrying automatically.':'No artwork available.';}
   });
-  const loadImages=()=>info.imagesAvailable?resource.load():Promise.resolve();
+  const loadImages=()=>info.imagesAvailable&&(info.type!=='game'||active==='posters')?resource.load():Promise.resolve();
   const previewResource=detailBackground<{artwork_preview?:{image?:string;thumbnail?:string};preview_status?:DetailLoadState}>(
     `/api/proxy/tracking/title/${info.id}/artwork-preview`,signal,data=>{
       if(data.artwork_preview?.image){
@@ -366,32 +461,61 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
     },()=>{});
   loadPreview=()=>previewResource.load();
   if(pending)applyImages({...galleries,image_status:{state:'pending'}});
+  if(initialHero)paintHero(initialHero);
   if(info.heroAvailable){
     // One preview is visible content; full gallery analysis still waits for intent.
-    if(info.previewStatus?.state!=='ready')void loadPreview();
+    if(info.type!=='game'&&info.previewStatus?.state!=='ready')void loadPreview();
     else if(!previewInfo?.image&&!galleries.artwork.length)root.querySelector<HTMLElement>('.lab-art-preview')?.setAttribute('hidden','');
-    if(initialHero)paintHero(initialHero);
   }
+  let gameBannerSettings:ReturnType<typeof mountGameBannerSettings>|undefined;
   root.addEventListener('click',event=>{
     const button=(event.target as Element).closest<HTMLButtonElement>(standalone?'[data-portrait-image]':'[data-detail-image]');
     if(!button||button.disabled)return;
     active=button.matches('.lab-hero-art-button')?'hero':button.dataset.detailGallery==='posters'||(standalone&&!standalone.logo)?'posters':'artwork';
-    if(active==='hero')galleries.hero=[button.dataset.detailImage!];
+    if(active==='hero'&&!galleries.hero.includes(button.dataset.detailImage!))galleries.hero=[button.dataset.detailImage!,...galleries.hero];
     lightbox.dataset.gallery=viewerGroup();
     const url=(standalone?button.dataset.portraitImage:button.dataset.detailImage)!;
     if(active==='artwork'&&url&&!galleries.artwork.includes(url))galleries.artwork.unshift(url);
+    // A portrait may arrive after initialization. Keep that primary image in
+    // the standalone gallery before opening or requesting optional extras.
+    if(standalone&&url){
+      if(!galleries[active].some(value=>imageKey(value)===imageKey(url)))galleries[active].unshift(url);
+      info[active]=[url];
+    }
     const gridIndex=[...root.querySelectorAll('[data-detail-artwork-grid] button')].indexOf(button);
+    const openingIndex=gridIndex>=0?gridIndex:Math.max(0,galleries[active].findIndex(value=>imageKey(value)===imageKey(url)));
+    const cachedSlide=track.children[openingIndex] as HTMLElement|undefined;
+    const cachedImage=cachedSlide?.dataset.imageKey===`${active}:${imageKey(url)}`?carousel.slide(openingIndex)?.image:undefined;
+    const source=button.querySelector<HTMLImageElement>('img')||(active==='hero'?root.querySelector<HTMLImageElement>('.lab-hero-image'):null);
+    const selectedURL=responsiveArtwork(url,{size:active==='posters'?'w780':'original',route:'auto'})?.src;
+    const fullSource=source&&(source.currentSrc||source.src)===selectedURL;
+    const scale=!fullSource&&source?.naturalWidth&&source.naturalHeight?Math.max(1,1920/source.naturalWidth,1080/source.naturalHeight):1;
+    const seed=source?.naturalWidth?{naturalWidth:source.naturalWidth*scale,naturalHeight:source.naturalHeight*scale}:undefined;
     followedSlot=undefined;
     prepareViewer();
-    fitViewer(undefined,viewerGroup());
-    showDialog(lightbox);previews.reveal();showImage(gridIndex>=0?gridIndex:Math.max(0,galleries[active].findIndex(value=>imageKey(value)===imageKey(url))));if(active!=='hero')void loadImages();
+    fitViewer(cachedImage,viewerGroup(),seed);
+    showDialog(lightbox);previews.reveal();showImage(openingIndex);
+    if(active==='hero')void gameBannerSettings?.load();else void loadImages();
   },{signal});
   // The hero is critical: start its small metadata read immediately. Full
   // gallery curation and extra image downloads wait for a gallery interaction.
-  if(info.heroAvailable){
-    const background=detailBackground<{backdrop?:string;backdrop_fallback?:string;background_status?:DetailLoadState}>(
-      `/api/proxy/tracking/title/${info.id}/background`,signal,data=>{
+  if(info.type==='game'&&info.heroAvailable)gameBannerSettings=mountGameBannerSettings(root,info.id,String(info.bannerViewer||''),signal,data=>{
+    gameBannerKnown=true;gamePinnedBanner=data.pinned_banner||null;
+    gameBannerSelected=data.backdrop;
+    artworkActions(data.pinned_banner||'');
+    const selected=active==='hero'?galleries.hero[current]:undefined;
+    galleries.hero=uniqueDetailImages([data.backdrop||initialHero,...(data.banners||[])],15);
+    if(data.backdrop||initialHero)paintHero(data.backdrop||initialHero);
+    if(lightbox.open&&active==='hero')showImage(Math.max(0,galleries.hero.findIndex(url=>imageKey(url)===imageKey(selected||''))));
+  },mobileGameHero,{backdrop:initialHero,pinned_banner:info.pinnedBanner,background_status:info.backgroundStatus});
+  if(info.heroAvailable&&info.type!=='game'){
+    const background=detailBackground<Partial<Galleries>&{artwork_preview?:{image?:string;thumbnail?:string};backdrop?:string;backdrop_fallback?:string;background_status?:DetailLoadState}>(
+      `${imagePath}/background`,signal,data=>{
         fallback=data.backdrop_fallback||fallback;
+        if(info.type==='game'){
+          previewInfo=data.artwork_preview||previewInfo;
+          applyImages({...galleries,...data,posters:uniqueDetailImages([...galleries.posters,...(data.posters||[])],posterLimit),image_status:{state:'ready'}});
+        }
         if(data.backdrop)paintHero(data.backdrop);
         return data.background_status;
       },()=>{});

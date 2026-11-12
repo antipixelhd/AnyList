@@ -2,9 +2,12 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {stripTypeScriptTypes} from 'node:module';
 import test from 'node:test';
-import {commitDetailHero} from '../src/lib/detail-hero.ts';
+import {commitDetailHero,nextDetailHero,publishDetailArtwork} from '../src/lib/detail-hero.ts';
+import {artworkIdentity} from '../src/lib/responsive-artwork.ts';
 
 const source = readFileSync(new URL('../src/lib/editor-store.ts', import.meta.url), 'utf8')
+  .replace("'./detail-artwork.ts'", JSON.stringify(new URL('../src/lib/detail-artwork.ts', import.meta.url).href))
+  .replace("'./game-hero-choice.ts'", JSON.stringify(new URL('../src/lib/game-hero-choice.ts', import.meta.url).href))
   .replace("'./decoded-artwork.ts'", JSON.stringify(new URL('../src/lib/decoded-artwork.ts', import.meta.url).href))
   .replace("'./responsive-artwork'", JSON.stringify(new URL('../src/lib/responsive-artwork.ts', import.meta.url).href))
   .replace("'./date-time'", JSON.stringify(new URL('../src/lib/date-time.ts', import.meta.url).href));
@@ -12,6 +15,149 @@ const {EditorStore} = await import(`data:text/javascript;base64,${Buffer.from(st
 const turn = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => { let resolve, reject; const promise = new Promise((yes,no) => {resolve=yes;reject=no;}); return {promise,resolve,reject}; };
 const draft = () => ({id:null,tmdb_id:123,type:'movie',title:'Film',poster:'/poster.jpg',backdrop:'/backdrop.jpg',entry:null,editor_library:{available:true,desired:false}});
+
+const gameState = (id=7, extra={}) => ({subject:{kind:'game',catalogue_id:id},title:'Game',image_url:'/game.jpg',
+  game_class:'game',listed:false,status:null,revision:null,favorite:false,...extra});
+const gameTitle = state => ({id:state.subject.catalogue_id,subject:state.subject,type:'game',title:state.title,
+  poster:state.image_url,game_class:state.game_class,base_work_id:state.base_work_id,game_state:state,
+  entry:state.listed?state:null,favorite:state.favorite});
+
+test('lightweight details retain cached list-editor progress without waiting for episode rows',()=>{
+  const store=new EditorStore(async()=>{});
+  const title=store.seed({id:42,tmdb_id:99,type:'series',title:'Series',progress_positions:['S1E1','S1E2','S1E3'],
+    entry:{status:'watching',progress:2,released_episodes:3,season_position:'S1E2'}});
+  store.seed({id:42,tmdb_id:99,type:'series',title:'Series',episodes_loaded:false,seasons:[],
+    entry:{status:'watching',progress:2}});
+  assert.equal(title.entry.released_episodes,3);
+  assert.equal(title.entry.season_position,'S1E2');
+  assert.deepEqual(title.progress_positions,['S1E1','S1E2','S1E3']);
+  store.seed({id:42,tmdb_id:99,type:'series',title:'Series',entry:{status:'watching',progress:1}});
+  assert.equal(title.entry.released_episodes,3);
+  assert.equal(title.entry.season_position,undefined,'a changed progress must not retain its older position');
+  store.seed({id:42,tmdb_id:99,type:'series',title:'Series',entry:null});
+  assert.equal(title.entry,null,'removed membership must still clear private state');
+});
+
+test('detail artwork publishing keeps colliding game/movie identities and pending tracking separate',async()=>{
+  const pending=deferred(),calls=[];
+  const store=new EditorStore(path=>{calls.push(path);return pending.promise;});
+  const movie=store.seed({...draft(),id:7,entry:{score:6,status:'completed'}});
+  const game=store.seed(gameTitle(gameState(7,{listed:true,status:'playing',score:8,revision:1})));
+  const write=store.write(game,{score:9});
+  publishDetailArtwork(store,{id:7,type:'game'},{poster:'/game-cover.jpg',backdrop:'/game-fallback.jpg'});
+  assert.equal(game.entry.score,9);assert.equal(game.backdrop,'/game-fallback.jpg');assert.equal(game.poster,'/game-cover.jpg');
+  assert.equal(movie.poster,'/poster.jpg');assert.equal(movie.backdrop,'/backdrop.jpg');assert.equal(movie.entry.score,6);
+  publishDetailArtwork(store,{id:7,type:'movie'},{backdrop:'/movie-fallback.jpg'});
+  assert.equal(movie.backdrop,'/movie-fallback.jpg');assert.equal(game.backdrop,'/game-fallback.jpg');
+  await turn();pending.resolve(gameState(7,{listed:true,status:'playing',score:9,revision:2}));await write;
+  assert.deepEqual(calls,['games/entries/7']);assert.equal(game.backdrop,'/game-fallback.jpg');
+});
+
+test('hero recovery skips failed image identities across sizes and stops when alternatives are exhausted',()=>{
+  const asset=size=>`https://images.igdb.com/igdb/image/upload/t_${size}/ar123.jpg`;
+  const alternative='https://images.igdb.com/igdb/image/upload/t_thumb/ar456.jpg';
+  const failed=new Set([artworkIdentity(asset('1080p'))]);
+  assert.equal(nextDetailHero([undefined,asset('thumb'),asset('720p'),alternative],failed),alternative);
+  failed.add(artworkIdentity(alternative));assert.equal(nextDetailHero([asset('thumb'),alternative],failed),undefined);
+});
+
+test('game catalogue ids cannot collide with legacy Media ids across reads writes or artwork',async()=>{
+  const calls=[];
+  const store=new EditorStore(async(path,options)=>{
+    calls.push([path,options]);
+    if(path==='games/works/7')return gameState();
+    if(path==='games/entries/7')return gameState(7,{listed:true,status:'playing',revision:1});
+    throw new Error('Unexpected request '+path);
+  });
+  const movie=store.seed({...draft(),id:7,entry:{status:'watching',progress:4}});
+  const game=await store.loadSubject({kind:'game',catalogue_id:7});
+  assert.equal(store.find(7),movie);
+  assert.equal(await store.load(7),movie);
+  assert.equal(store.findSubject({kind:'game',catalogue_id:7}),game);
+  store.updateArtwork(7,{poster:'/movie-choice.jpg'});
+  assert.equal(game.poster,'/game.jpg');
+  store.updateSubjectArtwork({kind:'game',catalogue_id:7},{poster:'/game-choice.jpg'});
+  assert.equal(movie.poster,'/movie-choice.jpg');
+  await store.write(game,{status:'playing'});
+  assert.equal(game.entry.status,'playing');
+  assert.equal(movie.entry.status,'watching');
+  assert.equal(movie.entry.progress,4);
+  store.acceptSaved({id:7,status:'completed'});
+  assert.equal(game.entry.status,'playing');
+  assert.equal(movie.entry.status,'completed');
+  assert.deepEqual(calls.map(([path])=>path),['games/works/7','games/entries/7']);
+});
+
+test('queued game writes use committed revisions and preserve completed status during hours updates',async()=>{
+  const pending=deferred();const calls=[];
+  const store=new EditorStore(async(path,options)=>{
+    const body=JSON.parse(options.body);calls.push({path,body});
+    if(calls.length===1)return pending.promise;
+    return gameState(7,{listed:true,status:'completed',revision:3,total_seconds:7200,completion_seconds:3600});
+  });
+  const title=store.seed(gameTitle(gameState(7,{listed:true,status:'completed',revision:1,total_seconds:3600,completion_seconds:3600})));
+  const score=store.write(title,{score:9});
+  const hours=store.write(title,{total_seconds:7200});
+  assert.equal(title.entry.status,'completed');
+  assert.equal(title.entry.completion_seconds,3600);
+  await turn();pending.resolve(gameState(7,{listed:true,status:'completed',revision:2,total_seconds:3600,completion_seconds:3600,score:9}));
+  await Promise.all([score,hours]);
+  assert.deepEqual(calls.map(c=>c.body.revision),[1,2]);
+  assert.ok(calls.every(c=>c.path==='games/entries/7'));
+  assert.equal(title.entry.total_seconds,7200);
+});
+
+test('game achievement summaries update optimistically, preserve zero and roll back failed writes',async()=>{
+  const pending=deferred();const store=new EditorStore(()=>pending.promise);
+  const original={mode:'percentage',percentage:40,count:null,total:null,exact_count:7};
+  const title=store.seed(gameTitle(gameState(7,{listed:true,status:'completed',revision:1,achievements:original})));
+  const write=store.write(title,{achievement_mode:'percentage',achievement_percentage:0});
+  assert.equal(title.entry.achievements.percentage,0);
+  assert.equal(title.entry.achievements.exact_count,7);
+  assert.equal(original.percentage,40);
+  await turn();pending.reject(new Error('Retry save'));
+  await assert.rejects(write,/Retry save/);
+  assert.equal(title.entry.achievements.percentage,40);
+  assert.equal(title.entry.achievements.mode,'percentage');
+});
+
+test('unlisted expansion editor uses retained revision without creating an independent entry',async()=>{
+  const calls=[];const store=new EditorStore(async(path,options)=>{
+    calls.push({path,body:JSON.parse(options.body)});
+    return gameState(8,{game_class:'expansion',base_work_id:7,listed:true,status:'completed',score:8,revision:5});
+  });
+  const title=store.seed(gameTitle(gameState(8,{game_class:'expansion',base_work_id:7,status:'completed',score:8,revision:4})));
+  assert.equal(title.entry,null);
+  await store.write(title,{score:8});
+  assert.equal(calls[0].path,'games/children/8');
+  assert.equal(calls[0].body.revision,4);
+  assert.equal(title.entry.listed,true);
+});
+
+test('targeted achievement optimism uses exact evidence instead of the previous simplified count',async()=>{
+  const pending=deferred();const store=new EditorStore(()=>pending.promise);
+  const original={mode:'count',count:8,percentage:80,total:10,exact_count:2};
+  const title=store.seed(gameTitle(gameState(7,{listed:true,status:'playing',revision:1,achievements:original})));
+  const write=store.write(title,{achievement_mode:'targeted',unlock_updates:{13:true},expected_achievement_total:10});
+  assert.equal(title.entry.achievements.count,3);
+  assert.equal(title.entry.achievements.percentage,30);
+  assert.equal(original.count,8);
+  await turn();pending.resolve(gameState(7,{listed:true,status:'playing',revision:2,achievements:{...original,mode:'targeted',count:3,exact_count:3,percentage:30}}));
+  await write;
+  assert.equal(title.entry.achievements.count,3);
+});
+
+test('game favorite actions do not create list membership and never use the streaming library',async()=>{
+  const calls=[];const store=new EditorStore(async(path,options)=>{
+    calls.push({path,method:options.method});return gameState(7,{favorite:true});
+  });
+  const title=store.seed(gameTitle(gameState()));
+  await store.write(title,{favorite:true});
+  assert.equal(title.entry,null);assert.equal(title.favorite,true);
+  assert.deepEqual(calls,[{path:'games/favorites/7',method:'PUT'}]);
+  await assert.rejects(store.writeLibrary(title,true));
+  assert.equal(calls.length,1);
+});
 
 test('predicted metadata preserves pending list edits and existing artwork',async()=>{
   const pending=deferred();const store=new EditorStore(()=>pending.promise);
@@ -72,7 +218,7 @@ test('seeded editor snapshots open without reads, preserve all fields and share 
   store.warmArtwork(title,'https://image.tmdb.org/t/p/w185/poster.jpg');
   assert.equal((await store.load(1)).entry.notes,'Keep me');
   assert.equal(store.artwork(title).poster,'https://image.tmdb.org/t/p/w185/poster.jpg');
-  assert.equal(store.artwork(title).backdrop,store.artwork(title).poster);
+  assert.equal(store.artwork(title).backdrop,undefined);
   assert.deepEqual(calls,[]);
 });
 
@@ -84,7 +230,7 @@ test('unrelated details artwork cannot overwrite a quick-search poster or its co
   // Quick search restores focus to the global search trigger on a different details page.
   store.warmArtwork(title,'https://image.tmdb.org/t/p/w500/other-poster.jpg','https://image.tmdb.org/t/p/original/other-backdrop.jpg');
   assert.equal(store.artwork(title).poster,searchPoster);
-  assert.equal(store.artwork(title).backdrop,searchPoster);
+  assert.equal(store.artwork(title).backdrop,undefined);
   const cold=store.seed({...draft(),tmdb_id:456,poster:'/cold.jpg',backdrop:null});
   store.warmArtwork(cold,'https://image.tmdb.org/t/p/w500/other-poster.jpg');
   assert.equal(store.artwork(cold).poster,'https://image.tmdb.org/t/p/w342/cold.jpg');
@@ -201,18 +347,144 @@ test('saved ratings and deletions update every retained reference without losing
   assert.equal(title.entry,null);
 });
 
-test('cold backdrop decoding never changes the artwork chosen for an open editor', async () => {
+test('cold artwork notifies the open editor when decoded, and navigation unsubscribes', async () => {
   const ready=deferred();const previous=globalThis.Image;
   globalThis.Image=class {decode(){return ready.promise;}};
   try {
     const store=new EditorStore(()=>{}), title=store.seed(draft());
-    store.warmArtwork(title,'https://image.tmdb.org/t/p/w185/poster.jpg');
-    const opened=store.artwork(title);
-    assert.equal(opened.backdrop,'https://image.tmdb.org/t/p/w185/poster.jpg');
+    const controller=new AbortController();let shown,updates=0;
+    store.onArtworkReady(()=>{shown=store.artwork(title).backdrop;updates++;},controller.signal);
+    const warming=store.warmArtwork(title,'https://image.tmdb.org/t/p/w185/poster.jpg');
+    assert.equal(shown,undefined);
     ready.resolve();await turn();
-    assert.equal(opened.backdrop,'https://image.tmdb.org/t/p/w185/poster.jpg');
-    assert.equal(store.artwork(title).backdrop,'https://image.tmdb.org/t/p/w1280/backdrop.jpg');
+    await warming;
+    assert.equal(shown,'https://image.tmdb.org/t/p/w1280/backdrop.jpg');
+    controller.abort();const before=updates;
+    await store.warmArtwork(title);assert.equal(updates,before);
   } finally {globalThis.Image=previous;}
+});
+
+test('preparation waits for decoded landscape artwork and ready reopening starts no image request',async()=>{
+  const ready=deferred(),previous=globalThis.Image;let images=0;
+  globalThis.Image=class {constructor(){images++;}decode(){return ready.promise;}};
+  try{
+    const store=new EditorStore(()=>{throw Error('Unexpected metadata read');}),title=store.seed({...draft(),id:7});
+    let prepared=false;const waiting=store.prepareArtwork(title).then(()=>{prepared=true;});
+    await turn();assert.equal(prepared,false);assert.equal(store.artwork(title).backdrop,undefined);
+    ready.resolve();await waiting;
+    assert.equal(store.artwork(title).backdrop,'https://image.tmdb.org/t/p/w1280/backdrop.jpg');
+    await store.prepareArtwork(title);assert.equal(images,1);
+  }finally{globalThis.Image=previous;}
+});
+
+test('reseed invalidates a previous decoded source and pending projections preserve resolved artwork',async()=>{
+  const previous=globalThis.Image;
+  globalThis.Image=class {decode(){return Promise.resolve();}};
+  try{
+    const store=new EditorStore(()=>{}),title=store.seed({...draft(),id:7});
+    await store.prepareArtwork(title);
+    store.seed({...title,backdrop:'/replacement.jpg',background_status:{state:'ready'}});
+    assert.equal(store.artwork(title).backdrop,undefined);await store.prepareArtwork(title);
+    store.seed({...title,backdrop:'/stale.jpg',background_status:{state:'pending'}});
+    assert.equal(title.backdrop,'/replacement.jpg');
+    assert.equal(store.artwork(title).backdrop,'https://image.tmdb.org/t/p/w1280/replacement.jpg');
+  }finally{globalThis.Image=previous;}
+});
+
+test('nearby rows resolve missing artwork and share the pending metadata read with editor intent',async()=>{
+  const previous=globalThis.Image,requests=[],read=deferred();let reads=0;
+  globalThis.Image=class {set src(value){requests.push(value);}decode(){return Promise.resolve();}};
+  try{
+    const store=new EditorStore(async()=>{reads++;return read.promise;}),title=store.seed({...draft(),id:7,backdrop:null,background_status:{state:'pending'}});
+    const nearby=store.warmListArtwork(title,new AbortController().signal);await turn();assert.equal(reads,1);
+    const first=store.prepareArtwork(title),second=store.prepareArtwork(title);
+    assert.equal(reads,1);assert.deepEqual(requests,[]);
+    read.resolve({backdrop:'/canonical.jpg',background_status:{state:'ready'}});await Promise.all([nearby,first,second]);
+    assert.deepEqual(requests,['https://image.tmdb.org/t/p/w1280/canonical.jpg']);
+  }finally{globalThis.Image=previous;}
+});
+
+test('nearby row admission stays occupied while preferred metadata is pending behind a ready fallback',async()=>{
+  const previous=globalThis.Image;globalThis.Image=class {decode(){return Promise.resolve();}};
+  try{
+    const read=deferred(),store=new EditorStore(()=>read.promise);
+    const title=store.seed({...gameTitle(gameState()),backdrop:'/fallback.jpg',background_status:{state:'pending'}});
+    let complete=false;const warm=store.warmListArtwork(title,new AbortController().signal).then(()=>complete=true);
+    await turn();assert(store.artwork(title).backdropImage);assert.equal(complete,false);
+    read.resolve({backdrop:'/fallback.jpg',background_status:{state:'ready'}});await warm;assert.equal(complete,true);
+  }finally{globalThis.Image=previous;}
+});
+
+test('an empty game projection rechecks on intent and reveals a newly published background without reload',async()=>{
+  const previous=globalThis.Image;globalThis.Image=class {decode(){return Promise.resolve();}};
+  try{
+    for(const state of ['ready','unavailable']){
+      let reads=0;const store=new EditorStore(async()=>{reads++;return {backdrop:'/published.jpg',background_status:{state:'ready'}};});
+      const title=store.seed({...gameTitle(gameState()),backdrop:null,background_status:{state}});
+      await store.warmListArtwork(title,new AbortController().signal);assert.equal(reads,0);
+      await store.prepareArtwork(title);assert.equal(reads,1);
+      assert.equal(store.artwork(title).backdrop,'https://image.tmdb.org/t/p/w1280/published.jpg');
+    }
+  }finally{globalThis.Image=previous;}
+});
+
+test('a game without SteamGridDB heroes joins primary publication and survives a stale empty row',async()=>{
+  const previous=globalThis.Image;globalThis.Image=class {decode(){return Promise.resolve();}};
+  try{
+    const paths=[],store=new EditorStore(async path=>{
+      paths.push(path);return path.includes('/metadata?')?{primary_ready:true,primary:{backdrop:'/igdb-published.jpg',background_status:{state:'ready'}}}
+        :{backdrop:null,background_status:{state:'unavailable'}};
+    });
+    const row={...gameTitle(gameState()),backdrop:null,pinned_banner:null,background_status:{state:'unavailable'}};
+    const title=store.seed(row);await store.prepareArtwork(title);
+    assert.deepEqual(paths,['games/works/7/background','games/works/7/metadata?primary=true']);
+    store.seed(row);assert.equal(title.backdrop,'/igdb-published.jpg');
+    assert.equal(store.artwork(title).backdrop,'https://image.tmdb.org/t/p/w1280/igdb-published.jpg');
+  }finally{globalThis.Image=previous;}
+});
+
+test('opening an empty game bypasses a completed speculative cooldown once and joins primary publication',async()=>{
+  const previous=globalThis.Image;globalThis.Image=class {decode(){return Promise.resolve();}};
+  try{
+    const paths=[],store=new EditorStore(async path=>{
+      paths.push(path);return path.includes('/metadata?')?{primary_ready:true,primary:{backdrop:'/published.jpg',background_status:{state:'ready'}}}
+        :{backdrop:null,background_status:{state:'ready'}};
+    });
+    const title=store.seed({...gameTitle(gameState()),backdrop:null,background_status:{state:'pending'}});
+    await store.warmListArtwork(title,new AbortController().signal);
+    assert.equal(paths.length,1);
+    await store.prepareArtwork(title);
+    assert.deepEqual(paths,['games/works/7/background','games/works/7/background','games/works/7/metadata?primary=true']);
+    assert.equal(store.artwork(title).backdrop,'https://image.tmdb.org/t/p/w1280/published.jpg');
+    await store.prepareArtwork(title);assert.equal(paths.length,3);
+  }finally{globalThis.Image=previous;}
+});
+
+test('detail fallback and exact source survive a subsequent list seed',async()=>{
+  const previous=globalThis.Image,requests=[];
+  globalThis.Image=class {set src(value){requests.push(value);}decode(){return Promise.resolve();}};
+  try{
+    const store=new EditorStore(()=>{throw Error('Unexpected metadata read');});
+    const row={...draft(),id:7,background_status:{state:'ready'}};
+    const title=store.seed(row),src='https://image.tmdb.org/t/p/original/detail-fallback.jpg';
+    publishDetailArtwork(store,{id:7,type:'movie'},{backdrop:'/detail-fallback.jpg',backdropSrc:src,primaryBackdrop:row.backdrop});
+    await store.warmListArtwork(row,new AbortController().signal);
+    store.seed(row);await store.prepareArtwork(title);
+    assert.deepEqual(requests,[src]);assert.equal(store.artwork(title).backdrop,src);
+  }finally{globalThis.Image=previous;}
+});
+
+test('a new displayed game banner wins over older tracking state on the same detail page',async()=>{
+  const previous=globalThis.Image,requests=[];
+  globalThis.Image=class {set src(value){requests.push(value);}decode(){return Promise.resolve();}};
+  try{
+    const store=new EditorStore(()=>{throw Error('Unexpected metadata read');});
+    const title=store.seed(gameTitle(gameState(7,{pinned_banner:'/old.jpg'})));
+    assert.equal(title.backdrop,'/old.jpg');
+    publishDetailArtwork(store,{id:7,type:'game'},{backdrop:'/next.jpg',backdropSrc:'/next.jpg',pinnedBanner:null});
+    await store.prepareArtwork(title);
+    assert.equal(title.pinned_banner,null);assert.deepEqual(requests,['/next.jpg']);
+  }finally{globalThis.Image=previous;}
 });
 
 test('background enrichment does not download editor artwork until intent, and reuses the detail source',async()=>{
@@ -262,7 +534,7 @@ test('curated artwork updates preserve optimistic intent and ignore an old decod
     store.warmArtwork(title);
     assert.equal(title.favorite,true);assert.equal(title.entry,null);
     old.resolve();await turn();
-    assert.equal(store.artwork(title).backdrop,'https://image.tmdb.org/t/p/w342/new-poster.jpg');
+    assert.equal(store.artwork(title).backdrop,undefined);
     curated.resolve();await turn();
     assert.equal(store.artwork(title).backdrop,'https://image.tmdb.org/t/p/w1280/new-background.jpg');
     save.resolve({id:7,status:null,favorite:true});await pending;
@@ -344,4 +616,22 @@ test('optimistic progress follows ordered episodes across season boundaries and 
   await turn(); pending.reject(new Error('offline')); await assert.rejects(write,/offline/);
   assert.equal(title.entry.season_position,'S1E2');
   assert.equal(title.entry.released_episodes,4);
+});
+
+
+test('deleting an independent game clears private prefill before re-add',async()=>{
+  const original=gameState(7,{listed:true,status:'playing',revision:2,score:9,notes:'erase',
+    start_date:'2025-01-01',total_seconds:36000,completion_seconds:7200,replay_count:2,
+    achievements:{mode:'count',count:4,total:5,exact_count:2}});
+  const calls=[];const store=new EditorStore(async(path)=>{
+    calls.push(path);return {deleted:true};
+  });
+  const title=store.seed(gameTitle(original));
+  await store.remove(title);
+  const reopened=await store.loadSubject(original.subject);
+  assert.equal(reopened.entry,null);
+  for(const key of ['score','notes','start_date','total_seconds','completion_seconds','replay_count','achievements'])
+    assert.equal(reopened.game_state[key],undefined,key);
+  assert.equal(reopened.game_state.favorite,false);
+  assert.equal(calls.length,1);
 });

@@ -452,7 +452,6 @@
   margin-top: 8px;
   min-height: calc(var(--browse-title-size) * 2.7 + var(--browse-meta-size) * 1.55 + 3px);
 }
-.browse-card-caption { animation: browse-poster-fade .24s ease-out; }
 .browse-cover {
   position: relative;
   aspect-ratio: 2/3;
@@ -472,13 +471,6 @@
   transition: transform 0.3s cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 .browse-cover[data-poster-pending] .browse-poster-link img { opacity: 0; }
-.browse-cover[data-poster-ready] .browse-poster-link img {
-  animation: browse-poster-fade .24s ease-out;
-}
-@keyframes browse-poster-fade {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
 .browse-card:hover .browse-poster-link img {
   transform: scale(1.035);
 }
@@ -642,6 +634,12 @@
   opacity: 1;
   visibility: visible;
 }
+.browse-card[data-controls-dismissed] .browse-extra-actions {
+  max-height: 0;
+  margin-bottom: 0;
+  opacity: 0;
+  visibility: hidden;
+}
 .browse-card-title {
   display: block;
 }
@@ -731,6 +729,7 @@
   height: 10px;
 }
 .browse-loading-view [data-skeleton-sections] .browse-skeletons { margin-top: 0; }
+.browse-category .browse-skeletons { margin-top: 0; }
 .browse-loading-view [data-skeleton-timeline] .browse-skeletons { margin-top: 0; }
 .browse-notice:empty {
   display: none;
@@ -888,9 +887,13 @@
     transform: none;
   }
 }
+/* Override hover and restored focus on both mouse and touch layouts. */
+.browse-card[data-controls-dismissed] .browse-actions {
+  pointer-events: none;
+  opacity: 0;
+  translate: 0 4px;
+}
 @media (prefers-reduced-motion: reduce) {
-  .browse-card-caption { animation: none; }
-  .browse-cover[data-poster-ready] .browse-poster-link img { animation: none; }
   .browse-scroll-reveal { scale: none; opacity: 1; }
   .browse-page * {
     transition: none !important;
@@ -899,24 +902,7 @@
   }
 }
 
-.browse-skeleton .skeleton-block {
-  background: linear-gradient(
-    100deg,
-    var(--panel) 20%,
-    #243449 45%,
-    var(--panel) 70%
-  );
-  background-size: 220% 100%;
-  animation: browse-shimmer 1.5s ease-in-out infinite;
-}
-@keyframes browse-shimmer {
-  from {
-    background-position: 100% 0;
-  }
-  to {
-    background-position: -100% 0;
-  }
-}
+.browse-skeleton .skeleton-block { background:color-mix(in srgb,var(--border) 65%,var(--panel)); }
 
 /* Skeletons belong only to missing artwork, never existing card text. */
  .browse-page[data-browse-scripted] .browse-cover[data-poster-loading]::after {
@@ -924,19 +910,11 @@
   position: absolute;
   inset: 0;
   border-radius: 6px;
-  background: linear-gradient(100deg, var(--panel) 20%, #243449 45%, var(--panel) 70%);
-  background-size: 220% 100%;
-  animation: browse-shimmer 1.5s ease-in-out infinite;
+  background:color-mix(in srgb,var(--border) 65%,var(--panel));
   pointer-events: none;
 }
 [data-browse-region][data-browse-loading="empty"] .browse-skeletons {
   margin-top: 0;
-}
-@media (prefers-reduced-motion: reduce) {
-  .browse-page[data-browse-scripted] .browse-cover[data-poster-loading]::after,
-  [data-browse-region][data-browse-loading] .browse-card ::after {
-    animation: none;
-  }
 }
 .browse-grid {
   transition: opacity 0.15s ease;
@@ -1013,6 +991,12 @@
 
 .tracker .browse-page .browse-filters .browse-secondary-filters :is(select, .tracker-select-trigger, .browse-filter-menu > summary) { background: var(--bg); }
 .browse-secondary-filters .browse-filter-menu summary .ui-icon { font-size: 12px; }
+[data-game-browse] .browse-filters .browse-secondary-filters [data-game-platform-options] {
+  position: relative;
+  inset: auto;
+  width: 100%;
+  margin-top: 8px;
+}
 .browse-filters:has(.browse-cinema-toggle:not([hidden])) { padding-right:108px; }
 .browse-cinema-toggle { position:absolute; top:calc(2.25rem + 9px); right:54px; display:grid; place-items:center; width:42px; height:42px; border:1px solid transparent; border-radius:5px; background:var(--panel); color:var(--muted); cursor:pointer; transition:background-color .18s ease,border-color .18s ease,color .18s ease; }
 .browse-cinema-toggle:has(input:checked) { color:#fff; border-color:var(--blue); background:var(--blue); }
@@ -1053,3 +1037,6 @@
 
 .browse-rereleases-toggle { display: flex; align-items: center; gap: .6rem; cursor: pointer; }
 .browse-rereleases-toggle input { width: 1rem; height: 1rem; accent-color: var(--accent); }
+
+[data-browse-shell]>[hidden] { display:none!important; }
+[data-browse-tab-slot] { display:contents; }

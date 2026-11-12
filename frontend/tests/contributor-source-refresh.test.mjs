@@ -1,0 +1,177 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {contributorSourceRefresh} from '../src/lib/contributor-source-refresh.ts';
+
+async function fixture(run){
+  const original={fetch:globalThis.fetch,set:globalThis.setTimeout,clear:globalThis.clearTimeout};
+  const timers=[],calls=[],paint=[],controller=new AbortController();
+  let reply={id:'nm1',pending:false,complete:true,fetched_at:'new'};
+  globalThis.setTimeout=(callback,delay)=>{const timer={callback,delay};timers.push(timer);return timer;};
+  globalThis.clearTimeout=timer=>{const index=timers.indexOf(timer);if(index>=0)timers.splice(index,1);};
+  globalThis.fetch=async(path,options)=>{calls.push({path,options});return Response.json(reply);};
+  const resource=contributorSourceRefresh(controller.signal,value=>paint.push(value));
+  const tick=async()=>{timers.shift()?.callback();await new Promise(resolve=>setImmediate(resolve));};
+  try{await run({resource,timers,calls,paint,controller,tick,reply:value=>reply=value});}
+  finally{controller.abort();globalThis.fetch=original.fetch;globalThis.setTimeout=original.set;globalThis.clearTimeout=original.clear;}
+}
+test('game people use small private status polls and offer refresh without replacing works',()=>fixture(async f=>{
+  f.resource.update({id:'nm1',pending:true,complete:false,fetched_at:'old'});assert.equal(f.calls.length,0);
+  await f.tick();assert.deepEqual(f.paint,[false,true]);assert.equal(f.timers.length,0);
+  assert.equal(f.calls[0].path,'/api/proxy/tracking/games/people/nm1/imdb');assert.equal(f.calls[0].options.cache,'no-store');
+}));
+test('cached, missing and invalid identities never trigger provider status polling',()=>fixture(async f=>{
+  for(const initial of [null,{id:'nm1',pending:false,complete:true},{id:'tt1',pending:true,complete:false}])f.resource.update(initial);
+  assert.equal(f.timers.length,0);assert.equal(f.calls.length,0);
+}));
+test('domain changes and aborted pages cancel timers and hide stale refresh actions',()=>fixture(async f=>{
+  f.resource.update({id:'nm1',pending:true,complete:false});f.resource.update(null);
+  assert.equal(f.timers.length,0);assert.equal(f.paint.at(-1),false);
+  f.resource.update({id:'nm1',pending:true,complete:false});f.controller.abort();assert.equal(f.timers.length,0);
+}));
+test('provider failures and an unchanged component do not claim new usable data',()=>fixture(async f=>{
+  f.resource.update({id:'nm1',pending:true,complete:false});f.reply({id:'nm1',pending:true,complete:false,error:'forbidden'});
+  await f.tick();assert.equal(f.timers.length,0);assert.equal(f.paint.at(-1),false);
+  f.resource.update({id:'nm1',pending:true,complete:false,fetched_at:'same'});f.reply({id:'nm1',pending:false,complete:true,fetched_at:'same'});
+  await f.tick();assert.equal(f.paint.at(-1),false);
+}));
+test('new mappings offer a refresh even when the cached source timestamp stays fixed',()=>fixture(async f=>{
+  f.resource.update({id:'nm1',pending:true,complete:false,fetched_at:'same',revision:'old'});
+  f.reply({id:'nm1',pending:false,complete:true,fetched_at:'same',revision:'new'});
+  await f.tick();assert.equal(f.paint.at(-1),true);
+}));
+
+test('every new source revision publishes while unchanged polls do not repeat the read',()=>fixture(async f=>{
+  f.resource.update({id:'nm1',pending:true,complete:false,revision:'old'});
+  f.reply({id:'nm1',pending:true,complete:false,revision:'first'});await f.tick();
+  f.reply({id:'nm1',pending:true,complete:false,revision:'first'});await f.tick();
+  assert.equal(f.paint.filter(Boolean).length,1);
+  f.reply({id:'nm1',pending:false,complete:true,revision:'second'});await f.tick();
+  assert.equal(f.paint.filter(Boolean).length,2);
+}));
+
+test('identity resolution can finish after complete credits without replacing a scrolled portfolio',()=>fixture(async f=>{
+  f.resource.update({id:'nm1',pending:false,complete:true,identity_pending:true,fetched_at:'same',revision:'old'});
+  f.reply({id:'nm1',pending:false,complete:true,identity_pending:true,retry_after:60,fetched_at:'same',revision:'old'});
+  await f.tick();assert.equal(f.paint.at(-1),false);assert.equal(f.timers[0].delay,60000);
+  f.reply({id:'nm1',pending:false,complete:true,fetched_at:'same',revision:'joined'});
+  await f.tick();assert.equal(f.paint.at(-1),true);assert.equal(f.timers.length,0);
+}));
+
+test('new usable works can be refreshed while later mappings still wait and retries preserve the offer',()=>fixture(async f=>{
+  f.resource.update({id:'nm1',pending:true,complete:false,fetched_at:'same',revision:'old'});
+  f.reply({id:'nm1',pending:true,complete:false,error:'rate_limited',retry_after:60,fetched_at:'same',revision:'more-works'});
+  await f.tick();assert.equal(f.paint.at(-1),true);assert.equal(f.timers[0].delay,60000);
+  f.reply({id:'nm1',pending:true,complete:false,error:'unavailable',retry_after:300,fetched_at:'same',revision:'more-works'});
+  await f.tick();assert.equal(f.paint.at(-1),true);assert.equal(f.timers[0].delay,300000);
+  f.reply({id:'nm1',pending:false,complete:true,fetched_at:'same',revision:'more-works'});
+  await f.tick();assert.equal(f.paint.at(-1),true);assert.equal(f.timers.length,0);
+  f.resource.update(null);assert.equal(f.paint.at(-1),false);
+}));
+
+test('transient discovery failures respect cooldown and offer recovered works without reshuffling',()=>fixture(async f=>{
+  f.resource.update({id:'nm1',pending:true,complete:false,error:'rate_limited',retry_after:180,fetched_at:'same',revision:'old'});
+  assert.equal(f.timers[0].delay,180000);assert.equal(f.calls.length,0);
+  f.reply({id:'nm1',pending:true,complete:false,error:'rate_limited',retry_after:300});
+  await f.tick();assert.equal(f.paint.at(-1),false);assert.equal(f.timers[0].delay,300000);
+  f.reply({id:'nm1',pending:false,complete:true,fetched_at:'same',revision:'new'});
+  await f.tick();assert.equal(f.paint.at(-1),true);assert.equal(f.timers.length,0);
+}));
+
+test('healthy cold acquisition continues past twenty polls and navigation clears cooldowns',()=>fixture(async f=>{
+  f.resource.update({id:'nm1',pending:true,complete:false});
+  f.reply({id:'nm1',pending:true,complete:false,error:'unavailable',retry_after:3600});
+  for(let index=0;index<20;index++)await f.tick();
+  assert.equal(f.calls.length,20);assert.equal(f.timers.length,1);assert.equal(f.paint.at(-1),false);
+  f.reply({id:'nm1',pending:false,complete:true,revision:'late'});await f.tick();
+  assert.equal(f.paint.at(-1),true);assert.equal(f.timers.length,0);
+  f.resource.update({id:'nm1',pending:true,complete:false,error:'rate_limited',retry_after:3600});
+  assert.equal(f.timers[0].delay,3600000);f.controller.abort();assert.equal(f.timers.length,0);
+}));
+
+test('temporary status transport failures retry and successful reads reset the failure budget',async()=>{
+  const original=globalThis.fetch;
+  try{await fixture(async f=>{
+    f.resource.update({id:'nm1',pending:true,complete:false});
+    globalThis.fetch=async()=>{throw new TypeError('offline');};
+    await f.tick();assert.equal(f.timers[0].delay,3000);
+    await f.tick();assert.equal(f.timers[0].delay,6000);
+    globalThis.fetch=async()=>Response.json({id:'nm1',pending:true,complete:false});
+    await f.tick();
+    globalThis.fetch=async()=>new Response('',{status:503});
+    await f.tick();assert.equal(f.timers[0].delay,3000);
+    for(let i=0;i<3;i++)await f.tick();
+    assert.equal(f.timers.length,0);
+  });}finally{globalThis.fetch=original;}
+});
+
+test('company portfolios poll an approval-protected compact status and preserve the shared refresh behavior',()=>fixture(async f=>{
+  f.resource.update({id:'42',source:'igdb-company',pending:true,complete:false,fetched_at:'old'});
+  f.reply({id:'42',source:'igdb-company',pending:false,complete:true,fetched_at:'new'});
+  await f.tick();assert.equal(f.calls[0].path,'/api/proxy/tracking/games/companies/42/works/status');
+  assert.equal(f.paint.at(-1),true);
+  f.resource.update({id:'42/../names',source:'igdb-company',pending:true,complete:false});
+  assert.equal(f.timers.length,0);
+}));
+
+test('displayed role captions publish through one bounded status poll',async()=>{
+  const original={fetch:globalThis.fetch,set:globalThis.setTimeout,clear:globalThis.clearTimeout};
+  const timers=[],calls=[],captions=[],controller=new AbortController();
+  globalThis.setTimeout=callback=>{timers.push(callback);return callback;};globalThis.clearTimeout=()=>{};
+  globalThis.fetch=async path=>{calls.push(path);return Response.json({id:'nm1',pending:false,complete:true,roles:[{id:7,roles:['Actor'],characters:['A role']}]});};
+  try{
+    const resource=contributorSourceRefresh(controller.signal,()=>{},
+      {kind:'actor',ids:()=>[7,7,...Array.from({length:110},(_,i)=>i+8)],apply:rows=>captions.push(rows)});
+    resource.update({id:'nm1',pending:true,complete:false});timers.shift()();
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(calls.length,1);
+    const query=new URL(calls[0],'https://test.invalid').searchParams;
+    assert.equal(query.getAll('work_id').length,100);assert.equal(query.get('kind'),'actor');
+    assert.deepEqual(captions,[[{id:7,roles:['Actor'],characters:['A role']}]]);
+  }finally{controller.abort();globalThis.fetch=original.fetch;globalThis.setTimeout=original.set;globalThis.clearTimeout=original.clear;}
+});
+
+test('caption publication covers every mounted card in sequential bounded batches',async()=>{
+  const original={fetch:globalThis.fetch,set:globalThis.setTimeout,clear:globalThis.clearTimeout};
+  const timers=[],sizes=[],published=[],controller=new AbortController();let active=0,maxActive=0;
+  globalThis.setTimeout=callback=>{timers.push(callback);return callback;};globalThis.clearTimeout=()=>{};
+  globalThis.fetch=async path=>{
+    active++;maxActive=Math.max(maxActive,active);
+    const ids=new URL(path,'https://test.invalid').searchParams.getAll('work_id').map(Number);sizes.push(ids.length);
+    await Promise.resolve();active--;
+    return Response.json({id:'nm1',pending:false,complete:true,revision:'new',roles:ids.map(id=>({id,roles:['Actor'],characters:['Role']}))});
+  };
+  try{
+    const resource=contributorSourceRefresh(controller.signal,()=>{},{kind:'actor',ids:()=>Array.from({length:211},(_,i)=>i+1),apply:rows=>published.push(...rows)});
+    resource.update({id:'nm1',pending:true,complete:false,revision:'old'});timers.shift()();
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.deepEqual(sizes,[100,100,11]);assert.equal(maxActive,1);
+    assert.equal(new Set(published.map(row=>row.id)).size,211);
+  }finally{controller.abort();globalThis.fetch=original.fetch;globalThis.setTimeout=original.set;globalThis.clearTimeout=original.clear;}
+});
+
+test('character-only enrichment polls after the works are complete and then stops',()=>fixture(async f=>{
+ f.resource.update({id:'nm1',pending:false,complete:true,works_pending:false,characters_pending:true});
+ f.reply({id:'nm1',pending:false,complete:true,works_pending:false,characters_pending:true});
+ await f.tick();assert.equal(f.timers.length,1);
+ f.reply({id:'nm1',pending:false,complete:true,works_pending:false,characters_pending:false});
+ await f.tick();assert.equal(f.timers.length,0);
+}));
+
+test('pending characters beyond the first caption batch keep silent polling alive',async()=>{
+ const original={fetch:globalThis.fetch,set:globalThis.setTimeout,clear:globalThis.clearTimeout};
+ const timers=[],sizes=[],controller=new AbortController();let phase=0;
+ globalThis.setTimeout=callback=>{timers.push(callback);return callback;};globalThis.clearTimeout=()=>{};
+ globalThis.fetch=async path=>{
+  const ids=new URL(path,'https://test.invalid').searchParams.getAll('work_id').map(Number);sizes.push(ids.length);
+  const pending=phase===0&&ids.includes(101);
+  return Response.json({id:'nm1',pending:false,works_pending:false,complete:true,revision:'same',characters_pending:pending,
+   roles:ids.map(id=>({id,roles:['Actor'],characters:[],characters_pending:pending&&id===101}))});
+ };
+ try{
+  const resource=contributorSourceRefresh(controller.signal,()=>{},{kind:'actor',ids:()=>Array.from({length:211},(_,i)=>i+1),apply:()=>{}});
+  resource.update({id:'nm1',pending:false,works_pending:false,complete:true,revision:'same',characters_pending:true});
+  timers.shift()();await new Promise(resolve=>setImmediate(resolve));assert.equal(timers.length,1);
+  phase=1;timers.shift()();await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(sizes,[100,100,11,100,100,11]);assert.equal(timers.length,0);
+ }finally{controller.abort();globalThis.fetch=original.fetch;globalThis.setTimeout=original.set;globalThis.clearTimeout=original.clear;}
+});

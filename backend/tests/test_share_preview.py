@@ -17,9 +17,12 @@ from core.share_cards import render_card
 class ShareProjectionTests(unittest.TestCase):
     def test_target_is_an_identity_not_a_proxy_url(self):
         self.assertEqual(preview.target('/user/alex/stats'), ('profile', 'alex'))
+        self.assertEqual(preview.target('/user/alex/stats/games'), ('game_statistics', 'alex'))
         self.assertEqual(preview.target('/actors/tmdb%3A42'), ('actor', 'tmdb:42'))
         self.assertEqual(preview.target('/studio/42'), ('studio', 'tmdb:42'))
-        for path in ['/title/2147483648', '/title/1?token=x', '//evil.test', '/user/a%2fb', '/actors/0']:
+        self.assertEqual(preview.target('/actors/catalogue:42?media_type=game'), ('game_actor', 'catalogue:42'))
+        for path in ['/title/2147483648', '/title/1?token=x', '//evil.test', '/user/a%2fb', '/actors/0',
+                     '/title/1?media_type=game', '/actors/42?media_type=game&list_scope=in']:
             with self.assertRaises(HTTPException):
                 preview.target(path)
 
@@ -64,6 +67,11 @@ class ShareProjectionTests(unittest.TestCase):
 class ShareAsyncTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         preview._images.clear()
+
+    async def test_game_statistics_preview_is_denied_before_database_or_cache_reads(self):
+        with self.assertRaises(HTTPException) as denied:
+            await preview.card_data(None,'/user/alex/stats/games')
+        self.assertEqual(denied.exception.status_code,403)
 
     async def test_private_and_local_images_are_never_requested(self):
         with patch('core.share_preview.httpx.AsyncClient') as client:

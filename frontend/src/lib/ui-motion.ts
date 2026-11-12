@@ -10,16 +10,16 @@ let sequence = 0;
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 const arrows = createDropdownArrowMotion((arrow, values, timing) => animate(arrow, values, timing), reduced);
 
-function stop(element: HTMLElement) {
+function stop(element: HTMLElement, immediate = false) {
   const control = running.get(element);
-  if (element.getClientRects().length) control?.stop();
+  if (!immediate && element.getClientRects().length) control?.stop();
   else control?.cancel();
   running.delete(element);
   element.style.removeProperty('opacity');
   element.style.removeProperty('transform');
 }
 
-function play(element: HTMLElement, entering: boolean, distance: number, dropdown = false) {
+function play(element: HTMLElement, entering: boolean, distance: number, dropdown = false, startOpacity = 0) {
   stop(element);
   const fading = element.hasAttribute('data-motion-fade');
   const timing = dropdown ? dropdownTiming(entering, fading) : {
@@ -29,7 +29,7 @@ function play(element: HTMLElement, entering: boolean, distance: number, dropdow
   if (dropdown) arrows.play(element, entering, timing);
   if (reduced()) return null;
   const control = animate(element, {
-    opacity: entering ? [0, 1] : [1, 0],
+    opacity: entering ? [startOpacity, 1] : [1, 0],
     ...(!fading ? {
       transform: entering
         ? [`translateY(${distance}px) scale(.99)`, 'translateY(0) scale(1)']
@@ -64,7 +64,7 @@ export function showDialog(dialog: HTMLDialogElement) {
     });
   }
   if (!dialog.open) dialog.showModal();
-  play(dialog, true, 8);
+  play(dialog, true, 5, false, .85);
 }
 
 export async function closeDialog(dialog: HTMLDialogElement, returnValue?: string) {
@@ -175,5 +175,12 @@ export function cancelUiMotion(root?: HTMLElement) {
   arrows.cancel(root);
   for (const element of running.keys()) {
     if (!root || root.contains(element)) stop(element);
+  }
+}
+
+export function cancelUiMotionImmediately(root: HTMLElement) {
+  arrows.cancel(root);
+  for (const element of running.keys()) {
+    if (root.contains(element)) stop(element, true);
   }
 }

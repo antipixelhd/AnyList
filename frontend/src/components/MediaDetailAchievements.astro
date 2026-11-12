@@ -1,0 +1,9 @@
+---
+const {id}=Astro.props;
+---
+<section class="lab-module" data-detail-achievements>
+  <div class="lab-section-title"><h2 data-achievement-progress>Your progress</h2><button class="lab-text-button" type="button" data-edit-game={id}>Edit progress</button></div>
+  <p class="detail-load-status" data-achievement-status role="status" hidden></p>
+  <div class="game-detail-achievements" data-achievement-rows></div>
+  <button class="lab-text-button" type="button" data-achievement-more hidden>Show more</button>
+</section>

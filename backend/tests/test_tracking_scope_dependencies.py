@@ -19,6 +19,7 @@ from models import Media, OAuthDeviceGrant, User
 from models.base import MediaType
 from routers.history import router as history_router
 from routers.tracking import router as tracking_router
+from routers.games import router as games_router
 
 
 @unittest.skipUnless(os.getenv("TRACKING_TEST_DATABASE_URL"), "Requires disposable PostgreSQL database")
@@ -48,6 +49,7 @@ class TrackingScopeIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
         app = FastAPI()
         app.include_router(tracking_router, prefix="/tracking")
+        app.include_router(games_router)
         app.include_router(history_router, prefix="/history")
 
         async def session():
@@ -83,6 +85,10 @@ class TrackingScopeIntegrationTests(unittest.IsolatedAsyncioTestCase):
             f"/tracking/entry/{self.media.id}", headers=headers, json={"notes": "should not be writable"},
         )
         self.assertEqual(rich_write.status_code, 403)
+        game_write = await self.client.patch(
+            f"/tracking/games/entries/{self.media.id}", headers=headers, json={"notes": "private"},
+        )
+        self.assertEqual(game_write.status_code, 403)
 
         extra_field = await self.client.patch(
             f"/tracking/entry/{self.media.id}/external", headers=headers,

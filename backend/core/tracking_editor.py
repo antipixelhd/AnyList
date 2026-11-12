@@ -2,11 +2,26 @@
 
 from sqlalchemy import or_, select, tuple_
 
+from core.media_images import screen_backdrop
 from core.tracking_rules import effective_score
 from models import Collection, CollectionFile, Media, MediaServerConnection
 from models.base import CollectionSource
 from models.streaming_library import StreamingLibraryIntent
 from models.tracking import MediaFavorite, TrackedEntry
+
+
+async def progress_context(db, media, entry):
+    """Read cached progress positions without episode descriptions/artwork payloads."""
+    if media.media_type.value != 'series' or not (media.tmdb_data or {}).get('tracking_catalogue_refreshed_at'):
+        return {}
+    from core.tracking_metadata import released_episodes
+    positions = [f'S{season}E{episode}' for season, episode in
+        await released_episodes(db, media, positions_only=True)]
+    if entry is not None:
+        entry['released_episodes'] = len(positions)
+        progress = entry.get('progress') or 0
+        entry['season_position'] = positions[progress - 1] if 0 < progress <= len(positions) else None
+    return {'released_episodes': len(positions), 'progress_positions': positions}
 
 
 async def attach_editor_context(db, viewer, results, *, media_rows=None):
@@ -44,7 +59,13 @@ async def attach_editor_context(db, viewer, results, *, media_rows=None):
         cached = by_id.get(row.get("id")) or by_external.get((row["type"], row.get("tmdb_id")))
         if cached:
             row["id"] = cached.id
-            row["backdrop"] = cached.backdrop_path
+            background = screen_backdrop(cached)
+            row["backdrop"] = background["backdrop"]
+            if media_rows is not None:
+                if background["backdrop_fallbacks"]:
+                    row["backdrop_fallbacks"] = background["backdrop_fallbacks"]
+                status = background["background_status"]
+                row["background_status"] = {key: value for key, value in status.items() if value}
             row["poster"] = row.get("poster") or cached.poster_path
         entry = entries.get(row.get("id"))
         row['favorite'] = row.get('id') in favorites or bool(entry and entry.favorite)

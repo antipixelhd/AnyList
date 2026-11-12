@@ -48,3 +48,67 @@ test('read-only Browse context POST does not invalidate cached results', async (
   await wrapped('/api/proxy/tracking/browse/update', {method:'POST', body:'{}'});
   assert.equal(invalidations, 1);
 });
+
+test('optional portrait batches preserve caches while tracking writes still invalidate', async () => {
+  let invalidations = 0, failures = 0;
+  const wrapped = mutationFetch(async () => Response.json({people:[]}), 'https://beta.example/games/1',
+    () => invalidations++, () => failures++);
+  await wrapped('/api/proxy/tracking/games/people/images', {method:'POST', body:'{"ids":[1]}'});
+  await wrapped(new Request('https://beta.example/api/proxy/tracking/games/people/images?batch=2',
+    {method:'POST', body:'{"ids":[2]}'}));
+  assert.deepEqual([invalidations, failures], [0, 0]);
+  await wrapped('/api/proxy/tracking/games/entries/1', {method:'PATCH', body:'{"status":"playing"}'});
+  await wrapped('/api/proxy/tracking/games/people/images/review', {method:'POST'});
+  assert.deepEqual([invalidations, failures], [2, 0]);
+});
+
+test('optional portrait network failures stay with their caller instead of reporting a failed save', async () => {
+  let invalidations = 0, failures = 0;
+  const error = new TypeError('network failed');
+  const wrapped = mutationFetch(async () => {throw error;}, 'https://beta.example',
+    () => invalidations++, () => failures++);
+  await assert.rejects(wrapped('/api/proxy/tracking/games/people/images', {method:'POST'}), error);
+  assert.deepEqual([invalidations, failures], [0, 0]);
+  await assert.rejects(wrapped('/api/proxy/tracking/games/entries/1', {method:'PATCH'}), error);
+  assert.deepEqual([invalidations, failures], [0, 1]);
+});
+
+
+test('Games state reads preserve mounted caches on success and network failure', async () => {
+  let invalidations = 0, failures = 0;
+  const wrapped = mutationFetch(async () => Response.json({states:[]}), 'https://beta.example',
+    () => invalidations++, () => failures++);
+  await wrapped('/api/proxy/tracking/games/state', {method:'POST', body:'{}'});
+  const error = new TypeError('network failed');
+  const failed = mutationFetch(async () => {throw error;}, 'https://beta.example',
+    () => invalidations++, () => failures++);
+  await assert.rejects(failed('/api/proxy/tracking/games/state', {method:'POST'}), error);
+  assert.deepEqual([invalidations, failures], [0, 0]);
+  await wrapped('/api/proxy/tracking/games/entries/1', {method:'PATCH'});
+  assert.equal(invalidations, 1);
+});
+
+test('public title resolution preserves caches while personal and admin writes still invalidate',async()=>{
+  let invalidations=0,failures=0;
+  const read=mutationFetch(async()=>Response.json({id:7}),'https://beta.example',
+    ()=>invalidations++,()=>failures++);
+  const paths=['/api/proxy/tracking/catalog/movie/42','/api/proxy/tracking/catalog/series/42',
+    '/api/proxy/tracking/games/resolve/42'];
+  for(const path of paths){
+    await read(path,{method:'POST'});
+    await read(new Request('https://beta.example'+path+'/?source=browse',{method:'POST'}));
+  }
+  const error=new TypeError('network failed');
+  const failed=mutationFetch(async()=>{throw error;},'https://beta.example',
+    ()=>invalidations++,()=>failures++);
+  for(const path of paths)await assert.rejects(failed(path,{method:'POST'}),error);
+  assert.deepEqual([invalidations,failures],[0,0]);
+  for(const [path,method] of [
+    ['/api/proxy/tracking/entry/7','PATCH'],
+    ['/api/proxy/tracking/games/entries/7','PATCH'],
+    ['/api/proxy/tracking/catalog/movie/42/review','POST'],
+    ['/api/proxy/tracking/games/resolve/42/review','POST'],
+    ['/api/proxy/tracking/games/resolve/42','DELETE'],
+  ])await read(path,{method});
+  assert.equal(invalidations,5);
+});

@@ -467,7 +467,17 @@ class ContributorDetailsTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn('Official website', [link['label'] for link in data['links']])
             self.assertEqual((await self.request('staff', 'tmdb:77')).json()['works'][0]['roles'], ['Director'])
         with patch('core.contributor_details.tmdb.get_person', AsyncMock(return_value={**profile, 'id': 88})):
-            self.assertEqual((await self.request(key='tmdb:77')).status_code, 404)
+            # Verified person identity now survives a later provider mismatch;
+            # do not borrow that mismatched response's profile or works.
+            cached=await self.request(key='tmdb:77')
+            self.assertEqual(cached.status_code,200)
+            self.assertEqual(cached.json()['name'],'Real Person')
+            self.assertEqual(cached.json()['works'],[])
+        with patch('core.contributor_details.tmdb.get_person', AsyncMock(return_value=profile)):
+            self.assertEqual((await self.request(key='tmdb:88')).status_code,404)
+        async with self.Session() as db:
+            self.assertIsNone(await db.scalar(select(CatalogueIdentity).where(
+                CatalogueIdentity.namespace=='tmdb.person',CatalogueIdentity.external_id=='88')))
 
     async def test_studio_cursor_keeps_interleaved_sources_in_date_order(self):
         self.key_mock.return_value = 'fixture'

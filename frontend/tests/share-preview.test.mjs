@@ -2,6 +2,27 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {SHARE_IMAGE_REVISION, shareImagePath, crawlerShareResponse, generalSharePage, loginSharePage, loginShareIdentity, shareMetadata, shareLoginPath, sharePagePath, sharePath, mediaShareDescription} from '../src/lib/share-preview.ts';
 
+test('Games statistics share identity retains its approved-access boundary and only safe destination state',async()=>{
+  const path='/user/alex/stats/games';
+  assert.equal(sharePath(path),path);
+  assert.equal(sharePagePath(path,'?section=actors&sort=time&page=2&token=secret'),`${path}?section=actors&sort=time&page=2`);
+  const login=new URL(shareLoginPath(path),'https://anylist.test');
+  assert.equal(loginShareIdentity(login.searchParams.get('next')),path);
+  assert.equal(await shareMetadata(path,async()=>new Response(null,{status:403})),null);
+});
+
+test('game contributor previews retain only the public domain through cards and login',async()=>{
+  const path='/actors/catalogue:42',query='?media_type=game&list_scope=in&token=secret&page=9';
+  assert.equal(sharePath(path,query),`${path}?media_type=game`);
+  assert.equal(sharePagePath(path,query),`${path}?media_type=game`);
+  const redirect=new URL(shareLoginPath(path,query),'https://anylist.test');
+  assert.equal(loginShareIdentity(redirect.searchParams.get('next')),`${path}?media_type=game`);
+  assert.ok(!redirect.href.includes('secret'));
+  let request;
+  await shareMetadata(`${path}?media_type=game`,async url=>{request=new URL(url);return {ok:true,json:async()=>({title:'Actor',description:'1 Known games'})};});
+  assert.equal(request.searchParams.get('path'),`${path}?media_type=game`);
+});
+
 test('general previews retain public page labels through the login redirect', () => {
   for (const [path, title] of [['/', 'Welcome'], ['/home', 'Home'], ['/settings', 'Account'],
     ['/settings/media', 'Movies & series'], ['/settings/notifications', 'Notifications']]) {
@@ -23,7 +44,7 @@ test('login previews never disclose arbitrary paths or replace dedicated cards',
 });
 
 test('detail identities survive login for title, actor, crew, studio and profile cards', async () => {
-  for (const path of ['/title/102', '/actors/catalogue:42', '/person/tmdb:42', '/studio/42', '/user/alex/stats']) {
+  for (const path of ['/title/102', '/games/102', '/actors/catalogue:42', '/person/tmdb:42', '/studio/42', '/user/alex/stats', '/user/alex/games']) {
     const redirect = new URL(shareLoginPath(path, '?token=secret'), 'https://anylist.test');
     const identity = loginShareIdentity(redirect.searchParams.get('next'));
     assert.equal(identity, sharePath(path));
@@ -52,7 +73,7 @@ test('private, missing and failed metadata cannot populate a login card', async 
 });
 
 test('messaging crawlers get custom metadata directly without a login redirect', async () => {
-  for (const path of ['/title/102', '/actors/catalogue:42', '/person/tmdb:42', '/studio/42', '/user/alex/stats']) {
+  for (const path of ['/title/102', '/games/102', '/actors/catalogue:42', '/person/tmdb:42', '/studio/42', '/user/alex/stats', '/user/alex/games']) {
     const response = await crawlerShareResponse(new URL(`${path}?token=secret`, 'https://anylist.test'),
       'Mozilla/5.0 (compatible; Discordbot/2.0)', 'https://anylist.test', async () =>
         Response.json({title: 'A title <script> & "quoted"', description: 'Movie · 2026'}));

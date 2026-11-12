@@ -22,6 +22,7 @@ router = APIRouter()
 
 @router.get("/data")
 async def export_data(
+    games: bool = Query(True),
     watched: bool = Query(True),
     ratings: bool = Query(True),
     collection: bool = Query(True),
@@ -48,6 +49,7 @@ async def export_data(
 
     payload = await build_export_zip(
         db, current_user, settings,
+        include_games=games,
         include_watched=watched,
         include_ratings=ratings,
         include_collection=collection,
@@ -104,6 +106,7 @@ async def run_scrob_import(user_id: int, job_id: int, data, include: dict) -> No
 async def import_data(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    games: bool = Form(True),
     watched: bool = Form(True),
     ratings: bool = Form(True),
     collection: bool = Form(True),
@@ -122,7 +125,7 @@ async def import_data(
         raise HTTPException(status_code=400, detail="Only .zip export files are accepted.")
 
     include = {
-        "include_watched": watched, "include_ratings": ratings, "include_collection": collection,
+        "include_games": games, "include_watched": watched, "include_ratings": ratings, "include_collection": collection,
         "include_lists": lists, "include_comments": comments, "include_api_keys": api_keys,
         "include_media_connections": media_connections, "include_scrobble_connections": scrobble_connections,
         "include_connections": connections,
@@ -149,6 +152,10 @@ async def import_data(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+    if games and data.games and data.games.games:
+        from core.game_access import require
+        require(current_user)
+
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
     settings = settings_result.scalar_one_or_none()
     _tmdb_key = settings.tmdb_api_key if settings else None
@@ -156,7 +163,10 @@ async def import_data(
         gs_result = await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))
         gs = gs_result.scalar_one_or_none()
         _tmdb_key = settings_store.get_server_tmdb_key(gs)
-    if not _tmdb_key:
+    needs_tmdb = (watched and (data.history_movies or data.history_episodes)
+        or ratings and any(data.ratings.values()) or collection and (data.collection_movies or data.collection_episodes)
+        or lists and (data.watchlist or data.lists) or comments and any(data.comments.values()))
+    if not _tmdb_key and needs_tmdb:
         raise HTTPException(status_code=400, detail="TMDB API key required for import")
 
     job = SyncJob(user_id=current_user.id, source=CollectionSource.manual, status=SyncStatus.pending, job_type="import")

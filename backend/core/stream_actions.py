@@ -243,6 +243,29 @@ async def push_nuvio_progress(db, conn, record, *, verified=None, auto_approve=F
             return nuvio_resume_signature(confirmed[0])
 
 
+async def valid_forwarded_progress(db, action, entry, deleted):
+    """Validate a resume relay independently of the optional tracked entry."""
+    payload = action.payload or {}
+    if action.action != 'upsert' or not payload.get('source_connection_id') or deleted:
+        return False
+    source = await db.get(MediaServerConnection, payload['source_connection_id'])
+    if not source or source.user_id != action.user_id or source.type not in ('stremio', 'nuvio') or not source.sync_playback:
+        return False
+    if payload.get('source_identity_version') != source.identity_version:
+        return False
+    baseline = await db.get(StreamBaseline, source.id)
+    media = await db.get(Media, action.media_id)
+    if not baseline or not baseline.approved or not media:
+        return False
+    observed_at = provider_changed_at({'updated_at': payload.get('observed_at')})
+    if entry and status_changed_at(entry) and (not observed_at or status_changed_at(entry) > observed_at):
+        return False
+    snapshot = baseline.snapshot or {}
+    mappings = snapshot.get('mappings', {})
+    return any(mappings.get(key) == media.tmdb_id and same_progress(row, payload)
+        for key, row in snapshot.get('progress', {}).items())
+
+
 async def queue_progress_update(db, source, media, record):
     """Coalesce a trustworthy inbound resume delta for every eligible peer."""
     evidence = record
@@ -284,6 +307,7 @@ async def queue_progress_update(db, source, media, record):
             **record, 'content_id': key, 'content_type': media.media_type.value,
             'observed_at': _iso_utc(changed_at),
             'source_connection_id': source.id,
+            'source_identity_version': source.identity_version,
         }
         payload.pop('modified_at', None)
         payload.pop('updated_at', None)
@@ -1118,6 +1142,8 @@ async def dispatch_stream_actions(db, user_id):
         deleted = (await db.execute(select(TrackingDeletion).where(TrackingDeletion.user_id == user_id, TrackingDeletion.media_id == action.media_id))).scalar_one_or_none()
         valid_statuses = ('watching',) if action.action in ('restore','upsert') else ('planning','paused','dropped','completed')
         invalid=(not deleted or entry is not None) if action.action=='reset' else (deleted or not entry or entry.status not in valid_statuses)
+        if invalid and action.action == 'upsert':
+            invalid = not await valid_forwarded_progress(db, action, entry, deleted)
         if invalid:
             action.state = 'cancelled'; action.payload = {}
             continue

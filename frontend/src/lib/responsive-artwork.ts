@@ -18,6 +18,8 @@ export interface ResponsiveArtworkOptions {
   size?: string;
   /** CSS image width expression, passed through as the `sizes` attribute. */
   sizes?: string;
+  /** Allow the browser to reuse a compact IGDB cover for a list preview. */
+  compactIgdbCover?: boolean;
   /** Public provider images use their CDN; proxy is an explicit opt-in. */
   route?: ArtworkRoute;
 }
@@ -29,7 +31,7 @@ export interface ResponsiveArtworkAttributes {
 }
 
 interface ParsedArtwork {
-  kind: "tmdb" | "tvdb" | "other";
+  kind: "tmdb" | "tvdb" | "igdb" | "imdb" | "other";
   suffix?: string;
   raw: string;
 }
@@ -43,6 +45,7 @@ function suffixWithQuery(pathname: string, search = "", hash = "") {
 }
 
 function parseArtwork(path: string): ParsedArtwork {
+  if(path.startsWith('//images.igdb.com/'))return parseArtwork(`https:${path}`);
   // The frontend's backend image route contains the TMDB size bucket in the
   // path.  Rating-poster URLs deliberately do not match this expression, so
   // they remain one source URL.
@@ -96,6 +99,16 @@ function parseArtwork(path: string): ParsedArtwork {
           suffix: suffixWithQuery(url.pathname, url.search, url.hash),
           raw: path,
         };
+      }
+      if(url.hostname.toLowerCase()==='images.igdb.com'){
+        const match=/^\/igdb\/image\/upload\/t_[^/]+(\/[^/]+)$/.exec(url.pathname);
+        if(match)return {kind:'igdb',suffix:suffixWithQuery(match[1],url.search,url.hash),raw:path};
+      }
+      if(url.hostname==='m.media-amazon.com'&&url.protocol==='https:'&&!url.search&&!url.hash){
+        // Retain the provider's crop; remove only our verified resize/quality
+        // modifiers so cards and the portrait viewer share one asset identity.
+        const match=/^(\/images\/M\/[^/]+\._V1[^.]*?)\.(jpg|jpeg|png)$/.exec(url.pathname);
+        if(match)return {kind:'imdb',suffix:`${match[1].replace(/_(?:QL\d+|UX\d+)(?=_|$)/g,'').replace(/_+$/,'')}_.${match[2]}`,raw:path};
       }
     } catch {
       // Keep malformed or unsupported absolute URLs as-is below.
@@ -151,6 +164,22 @@ export function responsiveArtwork(
 
   const parsed = parseArtwork(path);
   const route=options.route==='proxy'?'proxy':'direct';
+  if(parsed.kind==='imdb'){
+    const original=`https://m.media-amazon.com${parsed.suffix}`;
+    const url=(width:number)=>original.replace(/_\.(jpg|jpeg|png)$/,`_QL75_UX${width}_.$1`);
+    const width=widthFromSize(options.size||'w500');
+    if(options.size==='original')return {src:original};
+    const bucket=width!=null&&width<=185?185:width!=null&&width<=342?342:780;
+    return {src:url(bucket),...(options.sizes?{sizes:options.sizes,
+      srcset:[185,342,780].map(value=>`${url(value)} ${value}w`).join(', ')}:{})};
+  }
+  if(parsed.kind==='igdb'){
+    const width=widthFromSize(options.size||'w500');
+    const bucket=options.size==='original'?'1080p':width!=null&&width<=185?'cover_small_2x':width!=null&&width<=500?'cover_big_2x':'720p';
+    const url=(size:string)=>`https://images.igdb.com/igdb/image/upload/t_${size}${parsed.suffix}`;
+    return {src:url(bucket),...(options.compactIgdbCover&&options.sizes?{sizes:options.sizes,
+      srcset:`${url('cover_small_2x')} 180w, ${url('cover_big_2x')} 528w`}:{})};
+  }
   if (parsed.kind === "tvdb") {
     return {src:route==='proxy'?`${PROXY_PREFIX}tvdb${parsed.suffix??''}`:`https://${TVDB_HOST}${parsed.suffix??''}`};
   }

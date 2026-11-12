@@ -53,6 +53,16 @@ class EvidenceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(evidence.work_summary(data,'actor',FILTERS,True)['works'],1)
         self.assertEqual(evidence.work_summary(data,'staff',FILTERS,True)['works'],1)
 
+    def test_cached_movie_candidate_joins_only_the_same_verified_game_provider_identity(self):
+        from core.contributor_search import merge_game_matches
+        groups={'actor':[{'key':'tmdb:10','name':'Actor','_native':10,'roles':['Actor'],'image':'portrait'},
+            {'key':'tmdb:20','name':'Actor','_native':20,'roles':['Actor'],'image':None}],'staff':[],'studio':[]}
+        games={'actor':[{'key':'catalogue:1','name':'Actor','_native':10,'roles':['Voice actor'],
+            'image':None,'url':'/actors/catalogue:1?media_type=game','_works':1}],'staff':[],'studio':[]}
+        result=merge_game_matches(groups,games)['actor']
+        self.assertEqual([row['key'] for row in result],['catalogue:1','tmdb:20'])
+        self.assertEqual((result[0]['url'],result[0]['image']),('/actors/catalogue:1','portrait'))
+
     async def test_studio_verification_is_two_calls_and_continues_instead_of_inventing_empty(self):
         key,config=evidence.evidence_key('studio',429,FILTERS,True)
         job={'kind':'studio','config':config,'payload':None}

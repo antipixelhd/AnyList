@@ -1,0 +1,46 @@
+@import './stats-overview.css';
+@import './stats-genres.css';
+@import './stats-actors.css';
+
+.stats-loading-content [data-stats-loading-shape] { display:none; }
+[data-section="overview"] [data-stats-loading-shape="overview"],
+:is([data-section="genres"],[data-section="studios"],[data-section="developers"],[data-section="publishers"]) [data-stats-loading-shape="groups"],
+:is([data-section="actors"],[data-section="staff"]) [data-stats-loading-shape="people"] { display:block; }
+.stats-loading-content { --stats-placeholder:color-mix(in srgb,var(--text) 12%,transparent); }
+.stats-loading-content :is(.stats-loading-title,.stats-loading-label,.stats-loading-value,.stats-loading-rank,.stats-loading-control) {
+  display:block; max-width:100%; background:var(--stats-placeholder); border-radius:4px;
+}
+.stats-loading-title { width:52%; height:1.55rem; }
+.stats-loading-content .stats-loading-rank { width:25px; height:25px; border-radius:50%; }
+.stats-loading-value { width:3.2ch; height:1.45rem; }
+.stats-loading-label { width:5.4ch; height:.8rem; margin-top:5px; }
+.stats-loading-content .stats-loading-control { width:min(100%,220px); height:38px; border-radius:20px; }
+.stats-loading-content .stats-loading-artwork { width:114px; display:none; }
+[data-section="actors"] .stats-loading-content .stats-loading-artwork { display:block; }
+.stats-loading-content .overview-totals .stats-loading-value { grid-column:2; grid-row:1; }
+.stats-loading-content .overview-totals .stats-loading-label { grid-column:2; grid-row:2; }
+.stats-loading-content .overview-totals > div { min-height:52px; }
+.stats-loading-content .stats-genre-summary header { min-height:30px; }
+.stats-loading-content .stats-genre-summary dd { min-height:2rem; }
+.stats-loading-content .stats-genre-track { overflow:hidden; }
+.stats-loading-content .stats-genre-poster { background:var(--stats-placeholder); }
+.stats-loading-plot { display:grid; padding:22px 20px 30px 32px; }
+.stats-loading-axes {
+  background:repeating-linear-gradient(to top,var(--stats-placeholder) 0 1px,transparent 1px 25%);
+}
+.overview-pending:has([data-overview-skeleton]:not([hidden])) { padding-top:0; }
+.overview-pending:has([data-overview-skeleton]:not([hidden])) [data-overview-state] {
+  position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%);
+}
+.overview-pending [data-overview-skeleton]:not([hidden])+button { margin-top:24px; }
+[data-loading-profile-stats] .overview-media span {
+  display:grid; place-items:center; padding:8px 15px; min-height:40px;
+  font-size:var(--stats-data-size); font-weight:var(--stats-data-weight); color:var(--muted);
+}
+[data-loading-profile-stats][data-domain="game"] .overview-media { display:none; }
+[data-loading-profile-stats][data-media="all"] [data-loading-media="all"],
+[data-loading-profile-stats][data-media="movie"] [data-loading-media="movie"],
+[data-loading-profile-stats][data-media="series"] [data-loading-media="series"] { color:var(--stats-cyan); }
+@media(max-width:760px) {
+  [data-loading-profile-stats] .overview-sidebar [data-loading-statistics-navigation] { display:none; }
+}

@@ -1,0 +1,17 @@
+---
+interface Props {
+  game?: boolean;
+  combined?: boolean;
+  showAchievements?: boolean;
+  pending?: boolean;
+}
+const { game=false, combined=false, showAchievements=false, pending=false }=Astro.props;
+---
+<div class:list={['entry-head',{'combined-row':combined}]}>
+  <span class="entry-cover-column" aria-hidden="true"></span>
+  <span class="entry-title-column">Title</span>
+  <span class={game?undefined:'entry-score-column'}>Score</span>
+  <span class={game?'game-hours-column':'entry-progress-column'}>{game?'Hours':'Progress'}</span>
+  {(combined||pending&&!game)&&<span class="entry-type-column" hidden={!combined}>Type</span>}
+  {(showAchievements||pending&&game)&&<span class="game-achievements-column" hidden={!showAchievements}>Achievements</span>}
+</div>

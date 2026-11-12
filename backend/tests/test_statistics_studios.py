@@ -34,11 +34,11 @@ class StudioTests(unittest.TestCase):
         groups = studio_groups([title(1), title(2, studios=[{"key": "catalogue:2", "label": "Studio"}])])
         self.assertEqual(len(groups), 2)
 
-    def test_top_eighteen_candidates_for_each_sort_are_preserved(self):
+    def test_top_thirty_candidates_for_each_sort_are_preserved(self):
         rows = [title(i, score=i % 20 / 2, minutes=i, studios=[{"key": str(i), "label": str(i)}]) for i in range(1, 101)]
         groups = studio_groups(rows)
-        self.assertLessEqual(len(groups), 54)
-        self.assertTrue({str(i) for i in range(83, 101)} <= {r["key"] for r in groups})
+        self.assertLessEqual(len(groups), 90)
+        self.assertTrue({str(i) for i in range(71, 101)} <= {r["key"] for r in groups})
 
     def test_planning_and_history_only_are_excluded_from_cards(self):
         planned = fixtures.media(1, "movie", title="Planning")

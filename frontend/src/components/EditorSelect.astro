@@ -1,0 +1,23 @@
+---
+import Icon from './Icon.astro';
+interface Props {
+  id: string;
+  name: string;
+  label: string;
+  labelledBy?: string;
+  options?: readonly (readonly [string, string])[];
+  value?: string;
+}
+const {id, name, label, labelledBy, options = [], value = ''} = Astro.props;
+---
+<div class="editor-status-dropdown" data-editor-select data-motion-static>
+  <select {id} {name} class="editor-status-native" tabindex="-1" aria-hidden="true" aria-label={label}>
+    {options.map(([key, text]) => <option value={key} selected={value === key}>{text}</option>)}
+  </select>
+  <button type="button" id={`${id}-trigger`} class="editor-status-trigger tracker-dropdown-trigger" aria-label={labelledBy ? undefined : `${label}: ${options.find(([key]) => key === value)?.[1] || ''}`} aria-labelledby={labelledBy ? `${labelledBy} ${id}-value` : undefined} aria-haspopup="listbox" aria-expanded="false" aria-controls={`${id}-options`}>
+    <span id={`${id}-value`} data-editor-select-value>{options.find(([key]) => key === value)?.[1] || label}</span><Icon name="chevron-down"/>
+  </button>
+  <div id={`${id}-options`} class="editor-status-options tracker-dropdown-menu" role="listbox" aria-label={labelledBy ? undefined : label} aria-labelledby={labelledBy} hidden>
+    {options.map(([key, text]) => <button type="button" role="option" aria-selected={value === key ? 'true' : 'false'} data-editor-option={key}>{text}</button>)}
+  </div>
+</div>

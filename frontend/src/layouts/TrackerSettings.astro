@@ -13,6 +13,7 @@ import QuickRating from '../components/QuickRating.astro';
 import AttentionPrompt from '../components/AttentionPrompt.astro';
 import PwaRuntime from '../components/PwaRuntime.astro';
 import NavigationRuntime from '../components/NavigationRuntime.astro';
+import LoadingFrames from '../components/LoadingFrames.astro';
 import MotionRuntime from '../components/MotionRuntime.astro';
 import StyledSelectRuntime from '../components/StyledSelectRuntime.astro';
 import ProfileThemeRuntime from '../components/ProfileThemeRuntime.astro';
@@ -26,10 +27,11 @@ import ReloadScrollRestoration from '../components/ReloadScrollRestoration.astro
 import PrimaryFontPreloads from '../components/PrimaryFontPreloads.astro';
 import SharePreview from '../components/SharePreview.astro';
 import { settingsGroups, isSettingsLinkActive } from '../lib/settings-navigation';
+import {viewerProfilePreferences} from '../lib/viewer-profile-preferences';
 
 const { title = 'Settings' } = Astro.props;
 const { user } = Astro.locals;
-const viewerTheme = await viewerProfileTheme(Astro.locals.token);
+const viewerTheme = await viewerProfileTheme(Astro.locals.token,viewerProfilePreferences(Astro.locals));
 const activeColor = viewerTheme.applySiteWide ? viewerTheme.profileColor : undefined;
 const pathname = Astro.url.pathname;
 ---
@@ -49,7 +51,7 @@ const pathname = Astro.url.pathname;
     <ReloadScrollRestoration />
     <ClientRouter fallback="swap" />
   </head>
-  <body class:list={['tracker', 'settings-app', { 'connections-settings-page': pathname === '/connections' }]} data-cache-user={user?.id ?? 'anonymous'} data-theme-viewer-color={viewerTheme.profileColor} data-theme-site-wide={String(viewerTheme.applySiteWide)} data-theme-active={activeColor ? '' : undefined} style={activeColor ? `--blue: ${activeColor}` : undefined}>
+  <body class:list={['tracker', 'settings-app', { 'connections-settings-page': pathname === '/connections' }]} data-cache-user={user?.id ?? 'anonymous'} data-cache-username={user?.username} data-games-approved={String(user?.can_access_games===true)} data-theme-viewer-color={viewerTheme.profileColor} data-theme-site-wide={String(viewerTheme.applySiteWide)} data-theme-active={activeColor ? '' : undefined} style={activeColor ? `--blue: ${activeColor}` : undefined}>
     <a class="skip-link" href="#settings-content">Skip to settings</a>
     <AppBar />
 
@@ -66,7 +68,7 @@ const pathname = Astro.url.pathname;
             return <a href={item.href} class:list={{ active }} aria-current={active ? 'page' : undefined}>{item.label}</a>;
           })}
         </div>)}
-        {user?.is_admin && <div class="settings-nav-group"><p class="settings-nav-heading">Instance</p><a href="/admin" class:list={{ active: pathname === '/admin' }} aria-current={pathname === '/admin' ? 'page' : undefined}>Administration</a><a href="/admin/data-health" class:list={{ active: pathname === '/admin/data-health' }} aria-current={pathname === '/admin/data-health' ? 'page' : undefined}>Data health</a></div>}
+        {user?.is_admin && <div class="settings-nav-group"><p class="settings-nav-heading">Instance</p><a href="/admin" class:list={{ active: pathname === '/admin' || pathname === '/admin/game-runner' }} aria-current={pathname === '/admin' || pathname === '/admin/game-runner' ? 'page' : undefined}>Administration</a><a href="/admin/data-health" class:list={{ active: pathname === '/admin/data-health' }} aria-current={pathname === '/admin/data-health' ? 'page' : undefined}>Data health</a></div>}
       </nav>
       <main id="settings-content" class="settings-content" aria-labelledby="settings-category-title">
         <h2 id="settings-category-title" class="settings-category-title">{title}</h2>
@@ -78,6 +80,7 @@ const pathname = Astro.url.pathname;
     <SiteFooter />
     <PwaRuntime />
     <NavigationRuntime />
+      <LoadingFrames />
     <MotionRuntime />
     <StyledSelectRuntime />
     <ProfileThemeRuntime />

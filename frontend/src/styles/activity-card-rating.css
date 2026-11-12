@@ -12,3 +12,4 @@
   color: var(--muted);
   margin: 0 5px;
 }
+.tracker .activity-stream .event-footer[hidden],.tracker .activity-stream [data-rating-previous][hidden]{display:none!important}

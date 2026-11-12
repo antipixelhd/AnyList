@@ -1,0 +1,9 @@
+---
+import {gameProgress} from '../lib/game-progress';
+const {state,showAchievements=true}=Astro.props;
+const {hours,achievement}=gameProgress(state);
+---
+<div class="game-tracking-progress" data-game-progress data-show-achievements={String(showAchievements)} hidden={!hours&&(!showAchievements||!achievement)}>
+  <p data-game-hours hidden={!hours}><span>Total time</span><strong>{hours}</strong></p>
+  <p data-game-achievements hidden={!showAchievements||!achievement}><span>Achievements</span><strong>{achievement}</strong></p>
+</div>

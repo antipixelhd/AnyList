@@ -7,13 +7,13 @@ import test from 'node:test';
 const source=stripTypeScriptTypes(readFileSync(new URL('../src/lib/entry-confirmation.ts',import.meta.url),'utf8'))
   .replace(/^import .*;$/m,'').replaceAll('export ','');
 function fixture(){
-  const dialog=new EventTarget(),body={textContent:''};
-  dialog.open=false;dialog.querySelector=()=>body;
+  const dialog=new EventTarget(),body={textContent:''},button={textContent:''};
+  dialog.open=false;dialog.querySelector=selector=>selector==='[value="confirm"]'?button:body;
   dialog.close=value=>{dialog.returnValue=value;dialog.open=false;dialog.dispatchEvent(new Event('close'));};
   const context={document:{querySelector:()=>dialog},showDialog:element=>{element.open=true;},
     closeDialog:(element,value)=>element.close(value)};
   runInNewContext(source+';this.confirm=confirmEntryAction;',context);
-  return {dialog,body,confirm:context.confirm};
+  return {dialog,body,button,confirm:context.confirm};
 }
 test('shared confirmation keeps cancellation safe and can be reopened for explicit confirmation',async()=>{
   const {dialog,body,confirm}=fixture(),controller=new AbortController();
@@ -22,6 +22,13 @@ test('shared confirmation keeps cancellation safe and can be reopened for explic
   dialog.close('cancel');assert.equal(await cancelled,false);
   const accepted=confirm('Clear later episodes',controller.signal);
   dialog.close('confirm');assert.equal(await accepted,true);
+});
+test('Games base-game action uses Add and later confirmations restore the shared label',async()=>{
+  const {dialog,button,confirm}=fixture(),controller=new AbortController();
+  const add=confirm('Base game has to be added first',controller.signal,{confirmLabel:'Add'});
+  assert.equal(button.textContent,'Add');dialog.close('confirm');assert.equal(await add,true);
+  const remove=confirm('Delete entry?',controller.signal);
+  assert.equal(button.textContent,'OK');dialog.close('cancel');assert.equal(await remove,false);
 });
 test('navigation cancels an open confirmation and removes its lifetime listeners',async()=>{
   const {dialog,confirm}=fixture(),controller=new AbortController();

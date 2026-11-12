@@ -61,6 +61,24 @@ test('combined quick search expands both title scopes only after both curated sc
   assert.equal(f.calls.length, 4, 'people/studio requests are not retried');
 });
 
+test('movie/series opt-out skips the entire fallback batch while Games and shared contributors remain independent',async()=>{
+  const requests=quickSearchRequests('Elden R',undefined,false,true);
+  assert.deepEqual(requests.map(request=>request.kind),['game','contributors','contributors']);
+  const result=await readQuickTitles(requests,new AbortController().signal,async()=>assert.fail('Disabled movie/series provider invoked'));
+  assert.deepEqual(result,{movie:[],series:[],failed:0});
+});
+
+test('movie/series broadening never requests Games or changes its query or access boundary',async()=>{
+  const requests=quickSearchRequests('Elden R','DE',true,true),calls=[];
+  const game=requests.find(request=>request.kind==='game');
+  await readQuickTitles(requests,new AbortController().signal,async(request,signal,publish)=>{
+    assert.ok(['movie','series'].includes(request.kind));calls.push(request.url);publish(empty);
+  });
+  assert.equal(calls.length,4);
+  assert.equal(game.url,'/api/proxy/tracking/games/search?q=Elden+R');
+  assert.ok(calls.every(url=>new URL(url,'https://anylist.test').searchParams.get('region')==='DE'));
+});
+
 test('one curated hit prevents broadening in combined mode but separate categories expand independently', async () => {
   const f = fixture(({type, broad}) => ({...empty, results: type === 'series' || broad ? [type] : []}));
   assert.deepEqual(await f.run(), {movie: [], series: ['series'], failed: 0});

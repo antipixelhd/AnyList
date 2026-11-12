@@ -262,7 +262,7 @@
     background:transparent;
     color:var(--text);
     cursor:pointer;
-    transition:background-color .18s,color .18s;
+    transition:color .18s;
   }
   .quick-search-mobile-tabs > [data-search-tab-step="-1"] { grid-column:1; }
   .quick-search-mobile-tabs > .quick-search-tab-current { grid-column:2; }

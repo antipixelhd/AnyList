@@ -1,10 +1,11 @@
 """Load and refresh complete regular-episode catalogues for tracked series."""
 import asyncio
+import weakref
 from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import and_, or_, select
 from core import tmdb, tvdb
 from core.descriptive_metadata import tvdb_fields, tmdb_fields
-from core.enrichment import create_media_safely
+from core.tracking_episode_persistence import persist_tmdb_episodes
 from models import Media, Show
 from models.base import MediaType
 from models.tracking import TrackedEntry
@@ -12,6 +13,41 @@ from models.tracking import TrackedEntry
 
 FINAL_SHOW_STATUSES = {"Ended", "Canceled"}
 EPISODE_DETAILS_VERSION = 1
+_season_slots = weakref.WeakKeyDictionary()
+
+
+async def fetch_tmdb_seasons(tmdb_id, seasons, api_key):
+    """Acquire complete seasons in order, with four shared provider reads per loop."""
+    loop = asyncio.get_running_loop()
+    reference = _season_slots.get(loop)
+    slots = reference() if reference else None
+    if slots is None:
+        slots = asyncio.Semaphore(4)
+        # A contended semaphore retains its loop; keep both sides weak so
+        # closing a worker/test loop does not leave it alive through this map.
+        _season_slots[loop] = weakref.ref(slots)
+
+    async def fetch(season):
+        async with slots:
+            number = season['season_number']
+            data = await tmdb.get_season(tmdb_id, number, api_key=api_key)
+            episodes = data.get('episodes')
+            if not isinstance(episodes, list) or len(episodes) != season.get('episode_count'):
+                raise ValueError('Episode metadata is incomplete; try refreshing again later')
+            if any(not e.get('id') or not e.get('episode_number') for e in episodes):
+                raise ValueError('Episode identities are incomplete')
+            return [(number, episode) for episode in episodes]
+
+    tasks = [asyncio.create_task(fetch(season)) for season in seasons
+        if isinstance(season.get('season_number'), int) and season['season_number'] > 0]
+    try:
+        return [episode for batch in await asyncio.gather(*tasks) for episode in batch]
+    finally:
+        # Failed/cancelled catalogues must not leave page-owned acquisitions running.
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def retain_episode_runtime(episode, data):
@@ -21,7 +57,7 @@ def retain_episode_runtime(episode, data):
         episode.runtime = value
 
 
-async def released_episodes(db, media, *, include_unreleased=False):
+async def released_episodes(db, media, *, include_unreleased=False, positions_only=False):
     """Read the same regular-episode catalogue for edits and reconciliation."""
     if media.media_type == MediaType.movie:
         return [media] if not media.release_date or media.release_date[:10] <= date.today().isoformat() else []
@@ -32,12 +68,12 @@ async def released_episodes(db, media, *, include_unreleased=False):
         terms.append(Show.tvdb_id == media.tvdb_id)
     if not terms:
         return []
-    show = (await db.execute(select(Show).where(or_(*terms)))).scalars().first()
-    if not show:
+    show_id = await db.scalar(select(Show.id).where(or_(*terms)).limit(1))
+    if not show_id:
         return []
     imported_release = Media.tmdb_data["tracking_import_released"].as_boolean().is_(True)
     query = select(Media).where(
-        Media.show_id == show.id,
+        Media.show_id == show_id,
         Media.media_type == MediaType.episode,
         Media.season_number > 0,
     )
@@ -52,7 +88,10 @@ async def released_episodes(db, media, *, include_unreleased=False):
         provider = (media.tmdb_data or {}).get('tracking_catalogue_provider', 'tmdb')
         identity = Media.tvdb_id if provider == 'tvdb' else Media.tmdb_id
         query = query.where(or_(identity.in_(catalogue_ids), Media.id.in_(imported_ids), imported_release))
-    return (await db.execute(query.order_by(Media.season_number, Media.episode_number))).scalars().all()
+    query = query.order_by(Media.season_number, Media.episode_number)
+    if positions_only:
+        return (await db.execute(query.with_only_columns(Media.season_number, Media.episode_number))).all()
+    return (await db.execute(query)).scalars().all()
 
 
 def tracking_catalogue_is_fresh(media, show_status: str | None, now: datetime | None = None) -> bool:
@@ -147,33 +186,12 @@ async def hydrate_tracking_episodes(db, media, api_key=None, tvdb_api_key=None):
         raise ValueError('The provider did not return a complete season catalogue')
     # Fetch everything before persisting: one failed season must not make a
     # partial catalogue look like a complete show.
-    fetched = []
-    for season in seasons:
-        number = season.get('season_number')
-        if not isinstance(number, int) or number <= 0:
-            continue
-        data = await tmdb.get_season(media.tmdb_id, number, api_key=api_key)
-        episodes = data.get('episodes')
-        if not isinstance(episodes, list) or len(episodes) != season.get('episode_count'):
-            raise ValueError('Episode metadata is incomplete; try refreshing again later')
-        if any(not e.get('id') or not e.get('episode_number') for e in episodes):
-            raise ValueError('Episode identities are incomplete')
-        fetched.extend((number, e) for e in episodes)
+    fetched = await fetch_tmdb_seasons(media.tmdb_id, seasons, api_key)
     if show is None:
         show = Show(tmdb_id=media.tmdb_id, title=media.title, canonical_source='tmdb')
         db.add(show)
         await db.flush()
-    for number, data in fetched:
-        episode, created = await create_media_safely(db, data['id'], MediaType.episode,
-            title=data.get('name') or f'Episode {data["episode_number"]}', show_id=show.id,
-            season_number=number, episode_number=data['episode_number'])
-        if (episode.show_id, episode.season_number, episode.episode_number) != (show.id, number, data['episode_number']):
-            raise ValueError('Episode numbering changed; existing watch history was preserved')
-        episode.release_date = data.get('air_date')
-        episode.title = data.get('name') or episode.title
-        episode.poster_path = data.get('still_path') or episode.poster_path
-        episode.overview = data.get('overview') or episode.overview
-        retain_episode_runtime(episode, data)
+    await persist_tmdb_episodes(db, show.id, fetched)
     air_metadata = {key: details[key] for key in ('status', 'last_episode_to_air', 'next_episode_to_air') if key in details}
     media.status = details.get('status') or media.status
     media.tmdb_data = {**(media.tmdb_data or {}), **tmdb_fields(details, media.tmdb_data), **air_metadata, 'seasons': seasons,

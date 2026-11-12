@@ -3,13 +3,15 @@ import Icon from './Icon.astro';
 import {releaseAnnotation} from '../lib/release-annotation';
 interface Props {
   rewatchCount?: number;
+  replayCount?: number;
   notes?: string | null;
   newSeasons?: number;
   newEpisodes?: number;
 }
-const {rewatchCount = 0, notes, newSeasons = 0, newEpisodes = 0} = Astro.props;
+const {rewatchCount:screenRewatches = 0, replayCount, notes, newSeasons = 0, newEpisodes = 0} = Astro.props;
+const rewatchCount=replayCount??screenRewatches;
+const rewatchLabel = `${rewatchCount} ${replayCount!=null?(rewatchCount===1?'replay':'replays'):(rewatchCount === 1 ? 'rewatch' : 'rewatches')}`;
 const releaseLabel = releaseAnnotation(newSeasons, newEpisodes);
-const rewatchLabel = `${rewatchCount} ${rewatchCount === 1 ? 'rewatch' : 'rewatches'}`;
 const hasNote = Boolean(notes?.trim());
 ---
 {(releaseLabel || rewatchCount > 0 || hasNote) && <span class="entry-annotations">
@@ -21,38 +23,6 @@ const hasNote = Boolean(notes?.trim());
   </span>}
 </span>}
 <script>
-  let annotationListeners: AbortController;
-  function initAnnotations() {
-    annotationListeners?.abort();
-    annotationListeners = new AbortController();
-    const {signal} = annotationListeners;
-    // Keep long notes inside the viewport in compact and cover-grid layouts.
-    const place = (note: HTMLElement) => {
-      note.removeAttribute('data-tooltip-dismissed');
-      const tooltip = note.querySelector<HTMLElement>('.entry-note-tooltip')!;
-      tooltip.style.translate = '0 0';
-      tooltip.classList.remove('tooltip-below');
-      const bounds = tooltip.getBoundingClientRect();
-      const shift = bounds.left < 12 ? 12 - bounds.left : bounds.right > window.innerWidth - 12 ? window.innerWidth - 12 - bounds.right : 0;
-      tooltip.style.translate = `${shift}px 0`;
-      const below = bounds.top < 12;
-      tooltip.classList.toggle('tooltip-below', below);
-    };
-    document.addEventListener('pointerover', event => {
-      const note = (event.target as HTMLElement).closest<HTMLElement>('.entry-note');
-      if (note && !note.contains(event.relatedTarget as Node | null)) place(note);
-    }, {signal});
-    document.addEventListener('focusin', event => {
-      const note = (event.target as HTMLElement).closest<HTMLElement>('.entry-note');
-      if (note) place(note);
-    }, {signal});
-    document.addEventListener('keydown', event => {
-      if (event.key === 'Escape') (event.target as HTMLElement).closest('.entry-note')?.setAttribute('data-tooltip-dismissed', 'true');
-    }, {signal});
-    window.addEventListener('resize', () => {
-      document.querySelectorAll<HTMLElement>('.entry-note:hover,.entry-note:focus-within').forEach(place);
-    }, {signal});
-  }
-  initAnnotations();
-  document.addEventListener('astro:page-load', initAnnotations);
+  import {initializeEntryAnnotations} from '../lib/entry-annotations';
+  initializeEntryAnnotations();
 </script>

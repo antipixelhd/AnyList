@@ -1,8 +1,10 @@
 # app/models/__init__.py
+from .game_mapping import GameMappingGeneration, GameMappingReference
 from .base import Base, UserRole, MediaType, CollectionSource
 from .users import User, UserSettings, TotpBackupCode
 from .account_security import OidcIdentity, EmailChangeToken
 from .connections import MediaServerConnection
+from .steam import SteamConnection, SteamPlayerGame
 from .scrobble_connection import ScrobbleConnection
 from .profile import UserProfileData
 from .comments import Comment
@@ -36,6 +38,8 @@ from .streaming_library import StreamingLibraryIntent, StreamingLibraryDelivery
 from .netflix_import import NetflixImportSession
 from .watch_intent import WatchIntent
 from .statistics import StatsMetadataRevision, UserStatsSnapshot, UserStatsState
+from .game_statistics import GameStatsState
+from .games import GameEntry, GameChildState, GameFavorite, GameAchievement, GameAchievementUnlock, GameActivity
 from .catalogue import (CatalogueEntity, CatalogueIdentity, CatalogueLegacyLink, CatalogueShowLink,
                         BookEdition, GameRelease, CatalogueCredit, ScreenCharacter, CharacterAppearance,
                         CharacterPerformance, CatalogueRelationship, MetadataSnapshot,
@@ -43,6 +47,8 @@ from .catalogue import (CatalogueEntity, CatalogueIdentity, CatalogueLegacyLink,
 
 from .timestamps import configure_millisecond_timestamps
 configure_millisecond_timestamps(Base)
+
+from .game_runner import GameWorkDemand, GameProviderTicket, GameProviderTurn, GameMapperState, GameMapperItem, GameMapperInterest, GameMapperEdge
 
 __all__ = [
     "Base",
@@ -94,4 +100,6 @@ __all__ = [
     "CharacterPerformance", "CatalogueRelationship", "MetadataSnapshot",
     "MetadataProviderBudget", "SteamPriceSnapshot",
     "StatsMetadataRevision", "UserStatsSnapshot", "UserStatsState",
+    "GameStatsState",
+    "GameEntry", "GameChildState", "GameFavorite", "GameAchievement", "GameAchievementUnlock", "GameActivity", "SteamConnection",
 ]

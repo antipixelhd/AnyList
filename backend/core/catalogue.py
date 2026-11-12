@@ -8,7 +8,7 @@ import asyncio
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, select, text, tuple_, update
 from sqlalchemy.dialects.postgresql import insert
 
 from models.catalogue import (
@@ -27,6 +27,8 @@ from models.catalogue import (
 )
 from .catalogue_normalize import NAMESPACE_KINDS, PRIMARY, identity, document, image
 from .catalogue_providers import ProviderError
+from .enrichment_retry import (CONTENT_FAILURES, schedule_failure, pause_unused,
+    retain_demand, release_context, requested_coverage, public_coverage)
 
 
 class IdentityConflict(Exception):
@@ -56,6 +58,10 @@ def validate_identity(namespace, external_id, kind=None):
 
         if not re.fullmatch(r"tt[0-9]+", external_id):
             raise IdentityConflict("Invalid IMDb title identifier")
+    if namespace in ('imdb.person','wikidata.item'):
+        import re
+        if not re.fullmatch(r'nm[0-9]+' if namespace=='imdb.person' else r'Q[1-9][0-9]*',external_id):
+            raise IdentityConflict('Invalid contributor or Wikidata identifier')
     if namespace.startswith("isbn."):
         from .catalogue_normalize import isbn
 
@@ -105,6 +111,11 @@ async def bind_identity(db, entity_id, namespace, external_id, source, evidence=
                 "Identifier already belongs to another entity; review before merging"
             )
         return previous
+    if namespace=='imdb.title' and entity.kind=='game':
+        from core.game_title_match import valid_binding_evidence
+        supported=source in ('reviewed','wikidata') or source=='matched' and valid_binding_evidence(evidence or {},external_id)
+        if not supported or (evidence or {}).get('title_type')!='videoGame':
+            raise IdentityConflict('Game IMDb identity requires verified or reviewed videoGame evidence')
     row = CatalogueIdentity(
         entity_id=entity_id,
         namespace=namespace,
@@ -122,10 +133,14 @@ def source_rank(kind, source):
         return 1000
     if source == "legacy":
         return 200
+    if source == 'imdb':
+        return 5  # Credit/person enrichment must preserve richer primary metadata.
     if source == PRIMARY.get(kind):
         return 100
     if source == "rawg":
         return 20
+    if source == 'wikidata':
+        return 30
     if source == "openlibrary":
         return 60
     return 80
@@ -146,7 +161,15 @@ def preferred_person_portrait(row, value, source):
             and 'image_url' not in (row.protected_fields or []))
 
 
+def older_wikidata(row,values,source):
+    incoming=(values.get('attributes') or {}).get('wikidata_revision')
+    current=(row.attributes or {}).get('wikidata_revision')
+    return source=='wikidata' and all(isinstance(value,int) and not isinstance(value,bool) for value in (incoming,current)) and incoming<current
+
+
 def merge_fields(row, values, source):
+    if older_wikidata(row,values,source):
+        return
     sources = dict(row.field_sources or {})
     protected = set(row.protected_fields or [])
     for field in ("name", "description", "image_url"):
@@ -176,17 +199,29 @@ def merge_fields(row, values, source):
                 setattr(row, field, value)
             sources[field] = source
     attrs = dict(row.attributes or {})
-    for key, value in (values.get("attributes") or {}).items():
+    incoming_attrs = values.get("attributes") or {}
+    from core.game_release_dates import KEYS as RELEASE_KEYS, merge_release
+    release_source=sources.get('attributes.release_date')
+    release_handled = row.kind in ('game','release') and merge_release(
+        attrs,sources,protected,incoming_attrs,source,
+        rank_allowed=not release_source or source_rank(row.kind,source)>=source_rank(row.kind,release_source))
+    for key, value in incoming_attrs.items():
+        if release_handled and key in RELEASE_KEYS:
+            continue
         field = "attributes." + key
+        old_source = sources.get(field)
+        # IGDB only emits this projection when it has source images to filter.
+        clear_igdb_artwork = (value == [] and row.kind == 'game' and source == old_source == 'igdb'
+                              and key in ('artwork', 'scene_artwork')
+                              and 'artwork_policy_version' in incoming_attrs)
         if (
             value is None
-            or value == []
+            or (value == [] and not clear_igdb_artwork)
             or value == {}
             or value == ""
             or field in protected
         ):
             continue
-        old_source = sources.get(field)
         if attrs.get(key) is None or (
             old_source
             and source_rank(row.kind, source) >= source_rank(row.kind, old_source)
@@ -274,7 +309,7 @@ async def upsert(db, model, values, keys, preserve_missing=False):
     await db.execute(statement)
     return (
         await db.execute(
-            select(model).where(*(getattr(model, k) == values[k] for k in keys))
+            select(model).where(*(getattr(model, k) == values[k] for k in keys)).execution_options(populate_existing=True)
         )
     ).scalar_one()
 
@@ -312,6 +347,8 @@ async def ingest_document(db, doc, provider, *, entities=None, project_screen_ro
                     {"edition_cross_references": evidence},
                 )
     work = await upsert_entity(db, doc["work"], provider)
+    if older_wikidata(work,doc['work'],provider):
+        return work
     if work.kind not in ("movie", "series", "game", "book", "person"):
         raise IdentityConflict("Invalid catalogue work kind")
     from core.catalogue_batch import DocumentEntities, write_credits
@@ -332,6 +369,12 @@ async def ingest_document(db, doc, provider, *, entities=None, project_screen_ro
         })
     await db.flush()
     changed = await write_credits(db, credit_rows)
+    retired=doc.get('retired_credit_keys') or []
+    if retired:
+        await db.execute(update(CatalogueCredit).where(CatalogueCredit.work_id==work.id,
+            CatalogueCredit.provider==provider,CatalogueCredit.source_key.in_(retired))
+            .values(attributes=CatalogueCredit.attributes.op('||')({'source_active':False}))
+            .execution_options(synchronize_session=False))
     # A complete authoritative screen-credit response replaces obsolete rows.
     # Partial payloads and other providers retain their last successful credits.
     if provider == "tmdb" and work.kind in ("movie", "series") and doc.get("coverage", {}).get("credits_complete"):
@@ -346,11 +389,12 @@ async def ingest_document(db, doc, provider, *, entities=None, project_screen_ro
         if missing:
             from core.screen_characters import project_characters
             await project_characters(db, work.id)
+    appearances={}
     for c in doc["characters"]:
         character = await upsert_entity(db, c["character"], provider)
         if character.kind != "character":
             raise IdentityConflict("Appearance requires a fictional character")
-        await upsert(
+        appearance=await upsert(
             db,
             CharacterAppearance,
             {
@@ -362,6 +406,45 @@ async def ingest_document(db, doc, provider, *, entities=None, project_screen_ro
             ["work_id", "character_id", "provider"],
             preserve_missing=True,
         )
+        for item in c['character']['identities']:
+            appearances[(item['namespace'],str(item['external_id']))]=appearance.id
+    performances=doc.get('performances') or []
+    complete_keys=set(doc.get('performance_keys_complete') or [])
+    if performances or complete_keys:
+        keys=complete_keys|{p['credit_key'] for p in performances}
+        credits={row.source_key:row for row in await db.scalars(select(CatalogueCredit).where(
+            CatalogueCredit.work_id==work.id,CatalogueCredit.provider==provider,
+            CatalogueCredit.source_key.in_(keys)))}
+        incoming={str(credit['source_key'])[:200]:credit for credit in doc['credits']}
+        if not complete_keys<=set(credits) or not complete_keys<=set(incoming):
+            raise IdentityConflict('Complete performance evidence requires a credit from this work and source')
+        rows=[]
+        for performance in performances:
+            credit=credits.get(performance['credit_key'])
+            character=performance['character_identity']
+            appearance_id=appearances.get((character['namespace'],str(character['external_id'])))
+            language=performance.get('language','')
+            if not credit or credit.role not in ('actor','voice_actor','narrator') or not appearance_id or not isinstance(language,str) or len(language)>80:
+                raise IdentityConflict('Performance requires a performer and character from this work and source')
+            rows.append({'work_id':work.id,'credit_id':credit.id,'appearance_id':appearance_id,'language':language,'source':provider})
+        # Repeated source statements are idempotent. Composite database FKs and
+        # the existing performer trigger independently enforce the work boundary.
+        unique={(row['credit_id'],row['appearance_id'],row['language']):row for row in rows}
+        if complete_keys:
+            obsolete=delete(CharacterPerformance).where(CharacterPerformance.work_id==work.id,
+                CharacterPerformance.source==provider,CharacterPerformance.credit_id.in_([credits[key].id for key in complete_keys]))
+            if unique:obsolete=obsolete.where(tuple_(CharacterPerformance.credit_id,CharacterPerformance.appearance_id,
+                CharacterPerformance.language).not_in(list(unique)))
+            await db.execute(obsolete.execution_options(synchronize_session=False))
+            for key in complete_keys:
+                # These fields describe a fully retrieved source statement;
+                # removing its qualifier must not retain an obsolete label.
+                credits[key].character_label=incoming[key].get('character_label')
+                credits[key].position=incoming[key].get('position')
+        rows=list(unique.values())
+        for offset in range(0,len(rows),200):
+            await db.execute(insert(CharacterPerformance).values(rows[offset:offset+200])
+                .on_conflict_do_nothing(index_elements=['credit_id','appearance_id','language']))
     for e in doc["editions"]:
         if work.kind != "book":
             raise IdentityConflict("Edition requires a book work")
@@ -417,10 +500,13 @@ async def ingest_document(db, doc, provider, *, entities=None, project_screen_ro
             ["work_id", "provider", "source_key"],
             preserve_missing=True,
         )
+    current_releases = set()
     for r in doc["releases"]:
         if work.kind != "game":
             raise IdentityConflict("Release requires a game work")
         release = await upsert_entity(db, r["entity"], provider)
+        if r.get('platform_namespace') == 'igdb.platform':
+            current_releases.add(release.id)
         old = await db.get(GameRelease, release.id)
         if old and old.work_id != work.id:
             raise IdentityConflict("Release already belongs to another game work")
@@ -440,7 +526,15 @@ async def ingest_document(db, doc, provider, *, entities=None, project_screen_ro
         }
         if old:
             values = {k: v for k, v in values.items() if has_value(v)}
+        if provider=='igdb' and (release.attributes or {}).get('release_date_projection') in (1,2,3):
+            values['release_date']=(release.attributes or {}).get('release_date')
         await upsert(db, GameRelease, values, ["entity_id"])
+    if provider == 'igdb' and work.kind == 'game' and doc.get('coverage', {}).get('release_dates') == 'provider_projection':
+        # A provider may replace release IDs when postponing a game. Retaining
+        # superseded rows makes the earliest-per-platform view show old dates.
+        await db.execute(delete(GameRelease).where(GameRelease.work_id == work.id,
+            GameRelease.platform_namespace == 'igdb.platform', GameRelease.entity_id.not_in(current_releases)))
+    child_edges={'dlc':set(),'expansion':set()}
     for r in doc["relationships"]:
         target = await upsert_entity(db, r["target"], provider)
         source_id, target_id = (
@@ -448,6 +542,8 @@ async def ingest_document(db, doc, provider, *, entities=None, project_screen_ro
         )
         if source_id == target_id:
             continue
+        if target_id==work.id and r['relation'] in child_edges:
+            child_edges[r['relation']].add(source_id)
         await upsert(
             db,
             CatalogueRelationship,
@@ -456,11 +552,20 @@ async def ingest_document(db, doc, provider, *, entities=None, project_screen_ro
                 "target_id": target_id,
                 "relation": r["relation"],
                 "provider": provider,
-                "attributes": r.get("attributes", {}),
+                "attributes": {**r.get("attributes", {}),**({'source_active':True}
+                    if provider=='igdb' and r['relation'] in child_edges else {})},
             },
             ["source_id", "target_id", "relation", "provider"],
             preserve_missing=True,
         )
+    if provider=='igdb' and work.kind=='game' and doc.get('coverage',{}).get('children_complete') is True:
+        # Only a successful complete child projection can withdraw old IGDB
+        # relationships. Personal child records and other sources are retained.
+        for relation,ids in child_edges.items():
+            await db.execute(update(CatalogueRelationship).where(CatalogueRelationship.provider=='igdb',
+                CatalogueRelationship.target_id==work.id,CatalogueRelationship.relation==relation,
+                CatalogueRelationship.source_id.not_in(ids)).values(
+                    attributes=CatalogueRelationship.attributes.op('||')({'source_active':False})))
     await db.flush()
     if work.kind == "book":
         await rollup_book_countries(db, work)
@@ -499,6 +604,7 @@ async def link_performance(db, credit_id, appearance_id, language=""):
             "credit_id": credit.id,
             "appearance_id": appearance.id,
             "language": language,
+            'source':'reviewed',
         },
         ["credit_id", "appearance_id", "language"],
     )
@@ -520,7 +626,7 @@ def refresh_result(row, status):
         "fetched_at": row.fetched_at,
         "error_code": row.error_code,
         "next_attempt_at": row.next_attempt_at,
-        "coverage": row.coverage or {},
+        "coverage": public_coverage(row.coverage),
     }
 
 
@@ -551,8 +657,7 @@ async def record_refresh_failure(db, row, token, error, base_delay):
         await db.refresh(row, with_for_update=True)
         if row.lease_token != token:
             return "refreshing", False
-        row.attempts += 1
-        row.error_code = (
+        code = (
             error.code
             if isinstance(error, ProviderError)
             else "identity_conflict"
@@ -561,14 +666,9 @@ async def record_refresh_failure(db, row, token, error, base_delay):
             if isinstance(error, asyncio.TimeoutError)
             else "ingestion_failed"
         )
-        row.next_attempt_at = datetime.now(timezone.utc).replace(
-            tzinfo=None
-        ) + timedelta(
-            seconds=max(
-                getattr(error, "retry_after", 0) or 0,
-                min(86400, base_delay * 2 ** min(row.attempts, 10)),
-            )
-        )
+        work=await release_context(db,row.entity_id) if code in CONTENT_FAILURES else None
+        schedule_failure(row,code,datetime.now(timezone.utc).replace(tzinfo=None),work=work,
+                         retry_after=getattr(error,'retry_after',None),base_delay=base_delay*2,max_delay=86400)
         return ("last_good" if row.fetched_at else "failed"), True
     except Exception:
         await db.rollback()
@@ -577,7 +677,7 @@ async def record_refresh_failure(db, row, token, error, base_delay):
 
 async def refresh_metadata(
     db, providers, provider, kind, external_id, edition_page=None, *, additive=False, expected_entity_id=None,
-    credit_groups=None
+    credit_groups=None,on_primary=None
 ):
     providers.validate(provider, kind)
     namespace = f"{provider}.{kind}"
@@ -600,7 +700,8 @@ async def refresh_metadata(
     await write_lock(db)
     await db.execute(
         insert(MetadataSnapshot)
-        .values(provider=provider, kind=snapshot_kind, external_id=snapshot_id)
+        .values(provider=provider, kind=snapshot_kind, external_id=snapshot_id,
+                coverage=requested_coverage(datetime.now(timezone.utc).replace(tzinfo=None)))
         .on_conflict_do_nothing()
     )
     row = (
@@ -622,7 +723,32 @@ async def refresh_metadata(
         return result
     row.lease_token = token
     row.lease_until = now + timedelta(minutes=3)
+    snapshot_row_id=row.id
     await db.commit()
+    async def verify_game(doc):
+        if provider!='igdb':return
+        if not any(x['namespace']==namespace and x['external_id']==external_id for x in doc['work']['identities']):
+            raise IdentityConflict('Provider reply identity mismatch')
+        if expected_entity_id:
+            identity=await resolve_identity(db,namespace,external_id)
+            if not identity or identity.entity_id!=expected_entity_id:raise IdentityConflict('Game identity changed during retrieval')
+
+    async def primary(doc,payload):
+        # Commit the next interaction before fetching optional characters.
+        # Established content remains intact until its full refresh succeeds.
+        await write_lock(db)
+        await db.refresh(row,with_for_update=True)
+        if row.lease_token!=token:raise IdentityConflict('Metadata lease changed')
+        await verify_game(doc)
+        if not row.fetched_at:
+            async with db.begin_nested():
+                entity=await ingest_document(db,doc,provider)
+                if expected_entity_id and entity.id!=expected_entity_id:raise IdentityConflict('Existing title bridge requires review')
+                row.entity_id=entity.id;row.payload=payload;row.coverage=retain_demand(row,{**doc.get('coverage',{}),'primary_complete':True})
+                row.fetched_at=datetime.now(timezone.utc).replace(tzinfo=None);row.expires_at=None
+                row.error_code=None
+        await db.commit()
+        await on_primary(row.entity_id)
     try:
         if edition_page and provider == "openlibrary":
             doc, payload = await providers.openlibrary_editions_page(
@@ -634,6 +760,7 @@ async def refresh_metadata(
             )
         else:
             options = {'credit_groups': credit_groups} if credit_groups is not None else {}
+            if on_primary and provider=='igdb':options['on_primary']=primary
             doc, payload = await providers.detail(provider, kind, external_id, **options)
         # Recheck ownership before publishing. Late workers cannot overwrite.
         await write_lock(db)
@@ -643,6 +770,7 @@ async def refresh_metadata(
             await db.commit()
             return result
         async with db.begin_nested():
+            await verify_game(doc)
             if additive:
                 if not any(x['namespace'] == namespace and x['external_id'] == external_id
                            for x in doc['work']['identities']):
@@ -655,7 +783,7 @@ async def refresh_metadata(
                 raise IdentityConflict('Existing title bridge requires review')
             row.entity_id = entity.id
             row.payload = payload
-            row.coverage = doc.get("coverage", {})
+            row.coverage = retain_demand(row,doc.get("coverage", {}))
             row.fetched_at = datetime.now(timezone.utc).replace(tzinfo=None)
             row.expires_at = row.fetched_at + timedelta(
                 days=30 if provider == "hardcover" else 7
@@ -664,6 +792,14 @@ async def refresh_metadata(
             row.error_code = None
             row.next_attempt_at = None
         status = "updated"
+    except asyncio.CancelledError:
+        await db.rollback()
+        await write_lock(db)
+        owned=await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.id==snapshot_row_id).with_for_update())
+        if owned and owned.lease_token==token:
+            owned.lease_token=owned.lease_until=None;owned.next_attempt_at=datetime.now(timezone.utc).replace(tzinfo=None)
+        await db.commit()
+        raise
     except (ProviderError, IdentityConflict, asyncio.TimeoutError) as e:
         status, owned = await record_refresh_failure(db, row, token, e, 60)
         if not owned:
@@ -686,18 +822,21 @@ async def refresh_metadata(
 
 
 async def refresh_prices(db, providers, work_id, appid, country):
+    from core.countries import country_code
+    country=country_code(country) if isinstance(country,str) else None
+    if not country:raise ProviderError('invalid_request')
     appid = validate_identity("steam.app", appid, "game")
     mapping = await resolve_identity(db, "steam.app", appid)
     work = await db.get(CatalogueEntity, work_id)
     if not mapping or mapping.entity_id != work_id or not work or work.kind != "game":
         raise IdentityConflict("Prices require a verified Steam AppID for this game")
-    country = country.upper()
     # The same durable lease/cache machinery bounds price refreshes across users.
     key = f"{appid}:{country}"
     await write_lock(db)
     await db.execute(
         insert(MetadataSnapshot)
-        .values(provider="itad", kind="price", external_id=key)
+        .values(provider="itad", kind="price", external_id=key,
+                coverage=requested_coverage(datetime.now(timezone.utc).replace(tzinfo=None)))
         .on_conflict_do_nothing()
     )
     state = (
@@ -717,6 +856,9 @@ async def refresh_prices(db, providers, work_id, appid, country):
         result = refresh_result(state, cached_status)
         await db.commit()
         return result
+    if pause_unused(state,now):
+        result=refresh_result(state,'last_good' if state.fetched_at else 'failed')
+        await db.commit();return result
     token = uuid.uuid4().hex
     state.lease_token = token
     state.lease_until = now + timedelta(minutes=3)
@@ -731,6 +873,9 @@ async def refresh_prices(db, providers, work_id, appid, country):
             return result
         async with db.begin_nested():
             await write_lock(db)
+            mapping=await resolve_identity(db,'steam.app',appid)
+            if not mapping or mapping.entity_id!=work_id:
+                raise IdentityConflict('Steam identity changed during offer refresh')
             await bind_identity(
                 db,
                 work_id,
@@ -768,12 +913,22 @@ async def refresh_prices(db, providers, work_id, appid, country):
             )
             state.entity_id = work_id
             state.payload = prices["payload"]
+            state.coverage=retain_demand(state,{'state':'complete','complete':True,'steam_app_id':appid,'country':country})
             state.fetched_at = datetime.now(timezone.utc).replace(tzinfo=None)
             state.expires_at = state.fetched_at + timedelta(hours=6)
             state.error_code = None
             state.next_attempt_at = None
             state.attempts = 0
         status = "updated"
+    except asyncio.CancelledError:
+        await db.rollback()
+        await write_lock(db)
+        await db.refresh(state,with_for_update=True)
+        if state.lease_token==token:
+            state.lease_token=state.lease_until=None
+            state.next_attempt_at=datetime.now(timezone.utc).replace(tzinfo=None)+timedelta(seconds=5)
+            await db.commit()
+        raise
     except (ProviderError, IdentityConflict, asyncio.TimeoutError) as e:
         status, owned = await record_refresh_failure(db, state, token, e, 120)
         if not owned:

@@ -9,18 +9,26 @@ from core.movie_financials import movie_financials
 
 
 def is_anime(media: Media) -> bool:
-    data = media.tmdb_data or {}
+    return is_anime_data(media.tmdb_data or {})
+
+
+def media_genres(data):
+    return [g if isinstance(g, str) else g['name'] for g in data.get('genres', []) or []
+        if isinstance(g, str) or (isinstance(g, dict) and isinstance(g.get('name'), str) and g['name'])]
+
+
+def is_anime_data(data) -> bool:
     genres = {
         str(g if isinstance(g, str) else g.get("name", "")).lower()
-        for g in data.get("genres", [])
+        for g in data.get("genres", []) or []
         if isinstance(g, (str, dict))
     }
     countries = {
-        str(value).upper() for value in data.get("origin_country", []) if value
+        str(value).upper() for value in data.get("origin_country", []) or [] if value
     }
     countries.update(
         str(value.get("iso_3166_1", "")).upper()
-        for value in data.get("production_countries", [])
+        for value in data.get("production_countries", []) or []
         if isinstance(value, dict)
     )
     return "animation" in genres and (
@@ -79,11 +87,7 @@ def media_data(media):
         "episode_count": data.get("number_of_episodes"),
         "last_air_date": data.get("last_air_date"),
         "release_status": media.status or data.get("status"),
-        "genres": [
-            g if isinstance(g, str) else g["name"]
-            for g in data.get("genres", [])
-            if isinstance(g, str) or (isinstance(g, dict) and g.get("name"))
-        ],
+        "genres": media_genres(data),
         "tmdb_id": media.tmdb_id,
         "tvdb_id": media.tvdb_id,
         "imdb_id": media.imdb_id,

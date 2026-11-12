@@ -1,0 +1,67 @@
+/* Identity geometry is shared by real details and their pending frame. */
+.media-detail,.detail-loading-frame{--detail-hero-height:520px;--detail-poster-width:210px;--detail-identity-gap:56px;--detail-title-size:clamp(4.8rem,6.2vw,7.8rem)}
+:is(.media-detail,.detail-loading-frame) .detail-heading{--text:#aabdd1;--muted:#70869e;--bright:var(--white);--lab-muted:color-mix(in srgb,var(--text) 86%,var(--muted));padding:0;min-width:0;line-height:1.55;animation:none}
+:is(.media-detail,.detail-loading-frame) .detail-heading .lab-kicker{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:0;font:500 1.1rem/1.6 var(--font-body);color:#aabdd1;min-height:1.6em}
+:is(.media-detail,.detail-loading-frame) .detail-heading .lab-kicker>span{display:inline;color:inherit}
+:is(.media-detail,.detail-loading-frame) .detail-heading .lab-kicker>span+span::before{content:'·';margin-right:10px;color:var(--lab-muted)}
+:is(.media-detail,.detail-loading-frame) .detail-heading h1{font-family:var(--font-display);font-size:var(--detail-title-size);font-weight:700;line-height:1.12;letter-spacing:-.035em;margin:10px 0;color:var(--white)}
+:is(.media-detail,.detail-loading-frame) .detail-heading .media-original-title{font-size:1.3rem;line-height:1.55;color:var(--lab-muted);margin:0 0 8px}
+:is(.media-detail,.detail-loading-frame) .detail-heading .lab-tagline{font-size:1.6rem;line-height:1.65;margin:0;color:var(--white)}
+:is(.media-detail,.detail-loading-frame) .detail-heading .lab-genres{display:flex;flex-wrap:wrap;gap:7px;margin:16px 0 0}
+:is(.media-detail,.detail-loading-frame) .detail-heading .lab-genres :is(a,span){font-size:1.1rem;line-height:1.55;padding:4px 10px;background:rgb(21 31 46 / 75%);border-radius:4px;color:#aabdd1}
+.detail-heading .lab-genres[aria-busy=true]{min-height:28px}
+.detail-heading .lab-genres[aria-busy=true]::before{content:'';width:180px;height:20px;border-radius:4px;background:var(--field)}
+/* Details and their preview use the same fixed title origin. Artwork
+   controls and newly available kicker text cannot change its line wrapping. */
+:is(.media-detail,.detail-loading-frame) .detail-heading .lab-kicker {
+  flex-wrap:nowrap;
+  white-space:nowrap;
+}
+:is(.media-detail,.detail-loading-frame) :is([data-detail-creators],[data-loading-creators]) {
+  min-width:0;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+@media (min-width:651px) {
+  :is(.media-detail.concept-marquee,.detail-loading-frame) :is(.lab-hero-content,.loading-detail-identity) {
+    --detail-art-control-width:42px;
+    display:grid;
+    grid-template-columns:var(--detail-poster-width) minmax(0,1fr);
+    align-items:start;
+    height:auto;
+    min-height:var(--detail-hero-height);
+    padding-block:calc(var(--detail-hero-height) - 16px - var(--detail-poster-width) * 1.5) 16px;
+    padding-inline-end:calc(var(--detail-art-control-width) + var(--detail-identity-gap));
+  }
+  :is(.media-detail.concept-marquee,.detail-loading-frame) .detail-heading {
+    padding-top:clamp(32px,6vw,80px);
+  }
+  :is(.media-detail[data-media-kind=game],.detail-loading-frame[data-loading-kind=game]) :is(.lab-hero-content,.loading-detail-identity) {
+    --detail-art-control-width:72px;
+  }
+  :is(.media-detail[data-media-kind=game],.detail-loading-frame[data-loading-kind=game]) .detail-heading {
+    /* Fit two rows of tags beneath a single-line title within the poster height. */
+    padding-top:max(0px,calc(var(--detail-poster-width) * 1.5 - var(--detail-title-size) * 1.12 - 104px));
+  }
+  :is(.media-detail[data-media-kind=movie],.media-detail[data-media-kind=series]) .lab-hero-art-button {
+    position:absolute;
+    right:0;
+    bottom:16px;
+  }
+}
+@media(max-width:1100px){.media-detail,.detail-loading-frame{--detail-poster-width:190px;--detail-identity-gap:32px}}
+@media(max-width:900px){.media-detail,.detail-loading-frame{--detail-poster-width:170px}}
+@media(max-width:650px){.media-detail,.detail-loading-frame{--detail-hero-height:auto;--detail-poster-width:108px;--detail-identity-gap:20px;--detail-title-size:3rem}}
+@media(max-width:650px){:is(.media-detail,.detail-loading-frame) .detail-heading .lab-kicker{gap:7px;font-size:1rem;line-height:1.8;min-height:1.8em}:is(.media-detail,.detail-loading-frame) .detail-heading h1{margin:8px 0;overflow-wrap:anywhere}:is(.media-detail,.detail-loading-frame) .detail-heading .lab-tagline{font-size:1.2rem}:is(.media-detail,.detail-loading-frame) .detail-heading .lab-genres{gap:5px;margin-top:12px}:is(.media-detail,.detail-loading-frame) .detail-heading .lab-genres :is(a,span){font-size:.9rem;padding:4px 7px}}
+@media (max-width:650px) {
+  :is(.media-detail[data-media-kind=game],.detail-loading-frame[data-loading-kind=game]) .detail-heading .lab-genres {
+    flex-wrap:nowrap;
+    min-height:calc(.9rem * 1.55 + 8px);
+    overflow-x:auto;
+    scrollbar-width:none;
+  }
+  :is(.media-detail[data-media-kind=game],.detail-loading-frame[data-loading-kind=game]) .lab-genres > :is(a,span) {
+    flex:none;
+    white-space:nowrap;
+  }
+}

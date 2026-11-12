@@ -28,6 +28,7 @@ class User(UserBase):
     api_key: str
     display_name: str
     is_admin: bool = False
+    can_access_games: bool = False
     totp_enabled: bool = False
     email_confirmed: bool = True
     has_password: bool = True
@@ -431,7 +432,21 @@ class AccountNameResponse(BaseModel):
     username: str
 
 
+class BackgroundCrop(BaseModel):
+    model_config={'extra':'forbid'}
+    x: float = Field(default=50,ge=0,le=100,allow_inf_nan=False)
+    y: float = Field(default=50,ge=0,le=100,allow_inf_nan=False)
+    zoom: float = Field(default=1,ge=1,le=3,allow_inf_nan=False)
+
+
+class ProfileBackgroundSource(BaseModel):
+    model_config={'extra':'forbid'}
+    image:str=Field(min_length=1,max_length=2048)
+    crop:BackgroundCrop=Field(default_factory=BackgroundCrop)
+
+
 class UserProfileUpdate(BaseModel):
+    background_crop: Optional[BackgroundCrop] = None
     background_url: Optional[str] = Field(default=None, max_length=2048)
 
     @field_validator("background_url")
@@ -439,12 +454,7 @@ class UserProfileUpdate(BaseModel):
     def validate_background_url(cls, value: Optional[str]) -> Optional[str]:
         if not value or not value.strip():
             return None
-        from urllib.parse import urlsplit
-        value = value.strip()
-        parsed = urlsplit(value)
-        if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password:
-            raise ValueError("Use an HTTP or HTTPS image URL without credentials")
-        return value
+        raise ValueError('Upload a background image or choose artwork from a gallery')
 
     bio: Optional[str] = Field(default=None, max_length=5000)
     minimum_movie_runtime: int = Field(default=30, ge=0, le=1440)
@@ -481,6 +491,7 @@ class UserProfileUpdate(BaseModel):
         return value.lower()
 
 class UserProfileResponse(BaseModel):
+    background_crop: Optional[BackgroundCrop] = None
     minimum_movie_runtime: int = 30
     minimum_votes: int = Field(default=250, ge=0, le=10000000)
     excluded_categories: list[int] = Field(default_factory=default_excluded_categories)
@@ -503,6 +514,7 @@ class UserProfileResponse(BaseModel):
         from_attributes = True
 
 class PublicProfileResponse(BaseModel):
+    background_crop: Optional[BackgroundCrop] = None
     id: int
     username: str
     display_name: str
@@ -566,6 +578,7 @@ class AdminUser(BaseModel):
     username   : str
     email      : str
     is_admin   : bool
+    games_access: bool = False
     api_key    : str
     created_at : datetime
     avatar_url : Optional[str] = None

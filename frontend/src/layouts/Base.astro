@@ -22,12 +22,13 @@ import MobileNavigation from "../components/MobileNavigation.astro";
 import type {MobileNavigationItem, MobileNavigationGroup} from '../lib/mobile-navigation';
 import { api } from "../lib/api";
 import { themeVariables, viewerProfileTheme } from "../lib/profile-theme";
+import {viewerProfilePreferences} from '../lib/viewer-profile-preferences';
 import {legalConfig, legalHref} from '../lib/legal';
 
 interface Props { title: string; hideNav?: boolean; fullBleed?: boolean; inlineInstallPrompt?: boolean }
 const { title, hideNav, fullBleed = false, inlineInstallPrompt = false } = Astro.props;
 const { user, token } = Astro.locals;
-const viewerTheme = await viewerProfileTheme(token);
+const viewerTheme = await viewerProfileTheme(token,viewerProfilePreferences(Astro.locals));
 const siteColor = viewerTheme.applySiteWide ? viewerTheme.profileColor : undefined;
 
 let pendingRequestCount = 0;
@@ -226,7 +227,7 @@ const mobileGroups: MobileNavigationGroup[] = [
     };
   </script>
 </head>
-<body class="bg-zinc-950 text-zinc-100 min-h-screen overflow-x-hidden" data-cache-user={user?.id ?? 'anonymous'} data-theme-viewer-color={viewerTheme.profileColor} data-theme-site-wide={String(viewerTheme.applySiteWide)}>
+<body class="bg-zinc-950 text-zinc-100 min-h-screen overflow-x-hidden" data-cache-user={user?.id ?? 'anonymous'} data-cache-username={user?.username} data-games-approved={String(user?.can_access_games===true)} data-theme-viewer-color={viewerTheme.profileColor} data-theme-site-wide={String(viewerTheme.applySiteWide)}>
   {!hideNav && (
     <nav class="legacy-navigation px-4 md:px-6 py-3 md:py-4 text-sm relative z-30 bg-zinc-950 md:bg-transparent" data-legacy-navigation>
       <!-- Default bar -->
@@ -437,10 +438,10 @@ const mobileGroups: MobileNavigationGroup[] = [
         </button>
       </div>
       <div class="px-5 pt-4 pb-5 space-y-2.5">
-        <button id="rewatch-modal-restart" class="w-full px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm rounded-xl transition-all cursor-pointer active:scale-95">
+        <button id="rewatch-modal-restart" class="w-full px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm rounded-xl transition-all cursor-pointer ">
           Restart rewatch
         </button>
-        <button id="rewatch-modal-cancel" class="w-full px-4 py-2.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 font-bold text-sm rounded-xl transition-all cursor-pointer active:scale-95">
+        <button id="rewatch-modal-cancel" class="w-full px-4 py-2.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 font-bold text-sm rounded-xl transition-all cursor-pointer ">
           Cancel rewatch
         </button>
       </div>
@@ -458,10 +459,10 @@ const mobileGroups: MobileNavigationGroup[] = [
       </div>
       <div class="px-5 pt-4 pb-5 space-y-3">
         <p id="drop-modal-body" class="text-sm text-zinc-400"></p>
-        <button id="drop-modal-hide" class="w-full px-4 py-2.5 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-400 font-bold text-sm rounded-xl transition-all cursor-pointer active:scale-95">
+        <button id="drop-modal-hide" class="w-full px-4 py-2.5 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 text-amber-400 font-bold text-sm rounded-xl transition-all cursor-pointer ">
           Hide from Next Up
         </button>
-        <button id="drop-modal-drop" class="w-full px-4 py-2.5 bg-rose-600 hover:bg-rose-500 text-white font-bold text-sm rounded-xl transition-all cursor-pointer active:scale-95">
+        <button id="drop-modal-drop" class="w-full px-4 py-2.5 bg-rose-600 hover:bg-rose-500 text-white font-bold text-sm rounded-xl transition-all cursor-pointer ">
           Drop
         </button>
       </div>
@@ -516,7 +517,7 @@ const mobileGroups: MobileNavigationGroup[] = [
       </div>
       <div id="watch-history-modal-events" class="watch-history-scroll max-h-52 overflow-y-auto divide-y divide-zinc-800/50"></div>
       <div class="px-4 pt-3 pb-4 border-t border-zinc-800 space-y-2.5">
-        <button id="watch-history-unwatch-btn" class="hidden w-full px-4 py-2.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 font-bold text-sm rounded-xl transition-all cursor-pointer active:scale-95 disabled:opacity-50 disabled:pointer-events-none">
+        <button id="watch-history-unwatch-btn" class="hidden w-full px-4 py-2.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 font-bold text-sm rounded-xl transition-all cursor-pointer disabled:opacity-50 disabled:pointer-events-none">
           Mark as unwatched
         </button>
         <p id="watch-history-add-play-label" class="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Add a play</p>
@@ -527,7 +528,7 @@ const mobileGroups: MobileNavigationGroup[] = [
           <button id="watch-history-unknown-btn" class="px-3 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer bg-zinc-800 text-zinc-400 border border-zinc-700 hover:text-zinc-200">Unknown</button>
         </div>
         <input type="datetime-local" id="watch-history-date-input" class="hidden w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-xl text-sm text-zinc-200 focus:outline-none focus:border-green-500 [color-scheme:dark]" />
-        <button id="watch-history-log-btn" class="w-full px-4 py-2.5 bg-green-600 hover:bg-green-500 text-white font-bold text-sm rounded-xl transition-all cursor-pointer active:scale-95">
+        <button id="watch-history-log-btn" class="w-full px-4 py-2.5 bg-green-600 hover:bg-green-500 text-white font-bold text-sm rounded-xl transition-all cursor-pointer ">
           Mark as watched
         </button>
       </div>

@@ -5,6 +5,7 @@ import uuid
 from weakref import WeakValueDictionary
 from datetime import datetime, timezone, timedelta
 from typing import Optional
+from urllib.parse import urlsplit
 
 import httpx
 from sqlalchemy import select, func, delete as sa_delete, update
@@ -30,12 +31,24 @@ ALLOWED_SIZES = {"w92", "w154", "w185", "w300", "w342", "w500", "w780", "w1280",
 # Synthetic "size" bucket for TheTVDB artwork, which has no size variants - the
 # path alone identifies the image. Stored under image_cache/tvdb/<path>.
 TVDB_SIZE = "tvdb"
+ARTWORK_ORIGINS={'igdb':'https://images.igdb.com','steamgriddb':'https://cdn2.steamgriddb.com',
+    'metahub':'https://images.metahub.space'}
+
+
+def valid_artwork_path(size,path):
+    patterns={'igdb':r'/igdb/image/upload/t_[A-Za-z0-9_]+/[A-Za-z0-9_]+\.(?:jpg|png|webp)',
+        'steamgriddb':r'/(?:hero|grid)/[a-fA-F0-9]+\.(?:jpg|png|webp)',
+        'metahub':r'/background/(?:high|medium|small)/tt[0-9]+/img'}
+    return bool(size in patterns and re.fullmatch(patterns[size],path))
 
 
 def upstream_image_url(size: str, path: str) -> str:
     """Origin URL for a cached image, by size bucket."""
     if size == TVDB_SIZE:
         return f"{TVDB_IMAGE_BASE}{path}"
+    if size in ARTWORK_ORIGINS:
+        if not valid_artwork_path(size,path):raise ValueError('Invalid artwork path')
+        return ARTWORK_ORIGINS[size]+path
     return f"{TMDB_IMAGE_BASE}/{size}{path}"
 
 
@@ -56,6 +69,11 @@ def parse_image_url(url: str) -> tuple[Optional[str], Optional[str]]:
     synthetic ``tvdb`` size bucket. Returns (None, None) for anything else."""
     if not url:
         return None, None
+    try:parsed=urlsplit(url)
+    except ValueError:return None,None
+    for size,origin in ARTWORK_ORIGINS.items():
+        if parsed.scheme=='https' and parsed.netloc==urlsplit(origin).netloc and not parsed.query and valid_artwork_path(size,parsed.path):
+            return size,parsed.path
 
     if "image.tmdb.org" in url:
         match = re.search(r"image\.tmdb\.org/t/p/([^/]+)(/.+)$", url)
@@ -85,8 +103,9 @@ async def download_and_cache_image(db, size: str, path: str, image_type: str = "
 
 async def _download_and_cache_image(db, size: str, path: str, image_type: str) -> Optional[str]:
     """Download an image from TMDB or TheTVDB and cache it locally."""
-    if size != TVDB_SIZE and size not in ALLOWED_SIZES:
+    if size != TVDB_SIZE and size not in ALLOWED_SIZES and size not in ARTWORK_ORIGINS:
         return None
+    if size in ARTWORK_ORIGINS and not valid_artwork_path(size,path):return None
     if ".." in path or not path.startswith("/"):
         return None
     if len(path) > 255:  # ImageCache.path column width; skip caching, let the caller redirect
@@ -120,7 +139,7 @@ async def _download_and_cache_image(db, size: str, path: str, image_type: str) -
         if primary is not None: image_type = 'collected'
     url = upstream_image_url(size, path)
     try:
-        async with _downloads, httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+        async with _downloads, httpx.AsyncClient(timeout=15.0, follow_redirects=size not in ARTWORK_ORIGINS) as client:
             async with client.stream('GET', url) as r:
                 if r.status_code != 200 or not r.headers.get('content-type','').startswith('image/'):
                     return None

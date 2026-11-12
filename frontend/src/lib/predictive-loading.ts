@@ -3,28 +3,30 @@ export function predictionAllowed(network: {onLine?:boolean;connection?:{saveDat
 }
 
 /** Read only JSON from HTML text. Parsing a detached document can fetch images. */
-export type PredictionArtwork={src:string;srcset?:string;sizes?:string};
-export function predictionManifest(html:string,user:string) {
+export type PredictionArtwork={src:string;srcset?:string;sizes?:string;media?:string};
+export function predictionManifest(html:string,user:string,allowGames=false,matches=(query:string)=>matchMedia(query).matches) {
   const script=html.match(/<script\b[^>]*\bid=["']page-prediction["'][^>]*>([\s\S]*?)<\/script>/i);
   if(!script)return;
   try{
     const value=JSON.parse(script[1]);
-    if(value.user!==user||!Array.isArray(value.artwork))return;
+    if(value.user!==user||value.requiresGamesAccess===true&&!allowGames||!Array.isArray(value.artwork))return;
     return value.artwork.map((image:unknown)=>typeof image==='string'?{src:image}:image)
       .filter((image:any)=>typeof image?.src==='string'&&(image.src.startsWith('https://')||image.src.startsWith('/api/proxy/media/image/')))
+      .filter((image:any)=>!image.media||typeof image.media==='string'&&matches(image.media))
       .slice(0,2) as PredictionArtwork[];
   }catch{return;}
 }
 
 export function predictivePage(url:URL,origin:string) {
-  return url.origin===origin&&!url.hash&&(/^\/title\/[1-9]\d*$/.test(url.pathname)||
+  return url.origin===origin&&!url.hash&&(/^\/(?:title|games)\/[1-9]\d*$/.test(url.pathname)||
+    /^\/(?:browse(?:\/games)?|user\/[^/]+\/(?:movies|series|list|games|stats(?:\/games)?))\/?$/.test(url.pathname)||
     /^\/(actors|person|studio)\/(catalogue|tmdb)(:|%3A)[1-9]\d*$/i.test(url.pathname));
 }
 
 /** One speculative result, shared with an actual request, and never persisted. */
 export function createPrediction<T>(fetcher:(key:string,signal:AbortSignal)=>Promise<T>,signal:AbortSignal,
   allowed=predictionAllowed,now=()=>Date.now(),ttl=30_000) {
-  let slot:{key:string;controller:AbortController;pending:Promise<T|undefined>;expires:number}|undefined;
+  let slot:{key:string;controller:AbortController;pending:Promise<T|undefined>;value?:T;expires:number}|undefined;
   const cancel=()=>{slot?.controller.abort();slot=undefined;};
   const current=(key:string)=>{
     if(slot&&slot.expires<=now())cancel();
@@ -39,7 +41,7 @@ export function createPrediction<T>(fetcher:(key:string,signal:AbortSignal)=>Pro
       const controller=new AbortController();
       const entry:NonNullable<typeof slot>={key,controller,expires:now()+ttl,pending:Promise.resolve<T|undefined>(undefined)};
       slot=entry;
-      entry.pending=fetcher(key,controller.signal).then(value=>controller.signal.aborted?undefined:value).catch(()=>undefined);
+      entry.pending=fetcher(key,controller.signal).then(value=>{if(!controller.signal.aborted){entry.value=value;return value;}}).catch(()=>undefined);
     },
     async consume(key:string,requestSignal:AbortSignal):Promise<T|undefined>{
       const entry=current(key);
@@ -55,15 +57,19 @@ export function createPrediction<T>(fetcher:(key:string,signal:AbortSignal)=>Pro
       });
     },
     has(key:string){return !!current(key);},
+    peek(key:string){return current(key)?.value;},
   };
 }
 
 /** A brief dwell avoids loading links merely passed by the pointer. */
 export function bindPredictionIntent(root:Document|HTMLElement,signal:AbortSignal,predict:(link:HTMLAnchorElement)=>void) {
   let timer:ReturnType<typeof setTimeout>|undefined,target:HTMLAnchorElement|undefined;
+  let navigating=false;
+  const documentRoot=root.ownerDocument||root;
   const clear=()=>{clearTimeout(timer);target=undefined;};
   const linkFor=(event:Event)=>(event.target as Element)?.closest<HTMLAnchorElement>('a[href]')||undefined;
   const schedule=(event:Event)=>{
+    if(navigating)return;
     if(event instanceof PointerEvent&&event.pointerType!=='mouse')return;
     const link=linkFor(event);
     if(!link||target===link)return;
@@ -77,9 +83,11 @@ export function bindPredictionIntent(root:Document|HTMLElement,signal:AbortSigna
   },{signal});
   root.addEventListener('focusout',clear,{signal});
   root.addEventListener('pointerdown',event=>{
-    if((event as PointerEvent).pointerType!=='touch'||!predictionAllowed())return;
+    if(navigating||(event as PointerEvent).pointerType!=='touch'||!predictionAllowed())return;
     const link=linkFor(event);if(link)predict(link);
   },{signal,passive:true});
+  documentRoot.addEventListener('astro:before-preparation',()=>{navigating=true;clear();},{signal});
+  documentRoot.addEventListener('astro:page-load',()=>{navigating=false;},{signal});
   signal.addEventListener('abort',clear,{once:true});
 }
 

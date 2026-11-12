@@ -224,8 +224,20 @@ async def load_evidence(job, api_key):
         credits = profile['combined_credits']
         if not isinstance(credits.get('cast'), list) or not isinstance(credits.get('crew'), list):
             raise ValueError('Incomplete person credits')
-        return {'cast':credits['cast'], 'crew':credits['crew'], 'complete':True}
+        from core.contributor_availability import person_domains
+        return {'cast':credits['cast'], 'crew':credits['crew'], 'complete':True,
+                'person_identity':{key:profile.get(key) for key in ('id','name','imdb_id','profile_path')},
+                'domain_availability':await asyncio.to_thread(person_domains,credits)}
     config = job['config']
+    if config.get('scope')=='domain_availability':
+        async def domain(kind):
+            response=await (tmdb.discover_movies if kind=='movie' else tmdb.discover_shows)(
+                page=1,with_companies=config['companies'],vote_count_min=0,api_key=api_key)
+            rows=response.get('results');total=response.get('total_results')
+            if not isinstance(rows,list) or type(total) is not int or total<0 or bool(rows)!=(total>0):
+                raise ValueError('Incomplete company domain evidence')
+            return kind,'available' if total else 'empty'
+        return {'complete':True,'domain_availability':{'studio':dict(await asyncio.gather(domain('movie'),domain('series')))}}
     previous = job.get('payload') or {}
     pages = previous.get('pages', {'movie':1, 'series':1}) if not previous.get('complete') else {'movie':1, 'series':1}
     async def discover(kind):
@@ -289,9 +301,16 @@ async def run_batch(factory=AsyncSessionLocal):
                 # slot forever. A later search can retry after the cooldown.
                 values.update(next_attempt_at=None, expires_at=now() + timedelta(hours=6))
         async with factory() as db, db.begin():
-            await db.execute(update(table).where(table.kind == job['kind'], table.native_id == job['native_id'],
+            accepted=await db.execute(update(table).where(table.kind == job['kind'], table.native_id == job['native_id'],
                 table.variant == job['variant'], table.lease_token == job['lease_token'])
-                .values(**values, lease_token=None, lease_until=None))
+                .values(**values, lease_token=None, lease_until=None).returning(table.native_id))
+            if accepted.scalar_one_or_none() is not None and job['kind']=='person' and 'payload' in values:
+                from core.person_identities import verified_tmdb_person
+                from core.catalogue import IdentityConflict
+                raw=values['payload'].get('person_identity')
+                if raw:
+                    try:await verified_tmdb_person(db,job['native_id'],raw)
+                    except IdentityConflict:log.warning('Conflicting verified contributor identifiers left unresolved')
     await asyncio.gather(*(process(job) for job in jobs))
     return len(jobs)
 

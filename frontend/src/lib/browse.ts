@@ -1,3 +1,4 @@
+import {browseElement,browsePanelActive,setBrowsePanelUrl} from './browse-tabs';
 import { bindBrowseCardActions, bindBrowseCardTouch, paintBrowseCardState, type BrowseItem } from './browse-card-actions';
 import { formatDate } from './date-time';
 import { wireSearchWordCapitalization } from './search-word-capitalization';
@@ -9,21 +10,23 @@ import {
   browseRequestParams,
   sectionHref,
 } from "./browse-view";
-import { applyResponsiveArtwork } from "./responsive-artwork";
+import {createBrowseCard} from "./browse-card-render";
 import { createBrowseLoading, prepareBrowsePoster } from "./browse-loading";
 import { initializeBrowseRanges } from "./browse-ranges";
 import { createBrowsePaginationDemand } from "./browse-pagination";
 import { initializeMobileBrowseFilters } from "./browse-mobile-filters";
-import { BROWSE_FACET_TTL, browseResultTtl, createBrowseCache, createBrowseSharedRequests, waitForBrowseRequest } from "./browse-cache";
+import { BROWSE_FACET_TTL, browseResultTtl, createBrowseCache, waitForBrowseRequest } from "./browse-cache";
 import { refreshBrowseContextBatches } from './browse-context';
-import {createPrediction, paginationPosition, predictionAllowed} from "./predictive-loading";
+import {createPrediction, paginationPosition} from "./predictive-loading";
 import { initializeBrowseSort } from "./browse-sort";
 import { createBrowseOverride } from './browse-override';
 import {createSearchExpansion, shouldBroadenSearch, broadSearchParams} from './search-fallback';
 import { appendBrowseTimeline } from './browse-timeline';
 import { initializeScrollMotion } from "./scroll-motion";
 import { editorStore, type EditorTitle } from "./editor-store";
-import { cancelUiMotion, showMenu, hideMenu, dismiss } from "./ui-motion";
+import { cancelUiMotion } from "./ui-motion";
+import {readBrowseSections} from './browse-sections';
+import {initializeBrowseMenus} from "./browse-menus";
 
 type Item = BrowseItem & {search_rank?: number};
 type Payload = {
@@ -50,13 +53,13 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   // and later scroll entries need an entrance.
   requestAnimationFrame(() => requestAnimationFrame(() => {
     if (signal.aborted || !root.isConnected) return;
-    initializeScrollMotion(root, signal, '.browse-card-body, .browse-skeleton-body', 'browse-scroll-reveal', {
-      animateInitial: false, downwardOnly: true, scaleEntrance: true, once: true,
+    initializeScrollMotion(root, signal, '.browse-card-body', 'browse-scroll-reveal', {
+      animateInitial: false, animateVisibleArrivals: false, downwardOnly: true, scaleEntrance: true, once: true,
       appearedAttribute: 'data-browse-appeared',
     });
   }));
   const find = <T extends HTMLElement>(selector: string) =>
-    root.querySelector<T>(selector)!;
+    browseElement<T>(root,selector);
   const form = find<HTMLFormElement>("[data-browse-form]");
   initializeMobileBrowseFilters(form, signal);
   const searchClear = find<HTMLButtonElement>("[data-browse-search-clear]");
@@ -66,8 +69,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   const grid = find<HTMLElement>("[data-browse-results]");
   const sections = find<HTMLElement>("[data-browse-sections]");
   const paintRanges = initializeBrowseRanges(form, signal);
-  const advancedFilters = find<HTMLDetailsElement>(".browse-more");
-  const advancedPanel = find<HTMLElement>(".browse-secondary-filters");
+  initializeBrowseMenus(form,signal);
   const skeleton = find<HTMLElement>("[data-browse-skeleton]");
   const region = find<HTMLElement>("[data-browse-region]");
   const loadingView = createBrowseLoading(region, skeleton);
@@ -102,7 +104,8 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   document.addEventListener('anylist:editor-state', () => { contextRevision++; }, {signal});
   document.addEventListener('anylist:cache-invalidated',()=>{
     contextRevision++;
-    prediction.cancel();sectionRequests.clear();responseCache.clear();facetCache.clear();
+    prediction.cancel();responseCache.clear();facetCache.clear();
+    if(loading){request?.abort();currentPath=undefined;void load(false);}
   },{signal});
   const readyPosters = new Set<string>();
   let currentPath: string | undefined;
@@ -160,24 +163,18 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     values.delete('unfiltered');
     values.delete("media_type");
     if (field("type").value === "series") values.set("type", "series");
+    else if(root.dataset.browseScreenEnabled==='false')values.set("type","movie");
     if (values.get("sort") === "all") values.delete("sort");
     if (values.get("min_score") === "0") values.delete("min_score");
-    history.replaceState(
-      history.state,
-      "",
-      `${location.pathname}${values.size ? `?${values}` : ""}`,
-    );
+    const pathname=root.dataset.browseTab?'/browse':location.pathname;
+    setBrowsePanelUrl(root,`${pathname}${values.size?`?${values}`:''}`);
     root.querySelectorAll<HTMLAnchorElement>('[data-browse-layout]').forEach(link=>{
       const target=new URLSearchParams(values);
       if(link.dataset.browseLayout==='timeline')target.set('view','timeline');else target.delete('view');
-      link.href=`${location.pathname}${target.size?'?'+target:''}`;
+      link.href=`${pathname}${target.size?'?'+target:''}`;
       if(link.dataset.browseLayout===field('view').value)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');
     });
-    root.querySelectorAll<HTMLAnchorElement>('[data-browse-type]').forEach(link=>{
-      const target=new URLSearchParams(values);target.delete('genres');target.delete('status');target.delete('cinema');
-      if(link.dataset.browseType==='series')target.set('type','series');else target.delete('type');
-      link.href=`${location.pathname}${target.size?'?'+target:''}`;
-    });
+
   };
   const json = async (path: string, options: RequestInit = {}) => {
     const response = await fetch(`/api/proxy/tracking/${path}`, options);
@@ -189,25 +186,6 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
           : "Unable to load titles. Try again.",
       );
     return body;
-  };
-  const sectionRequests = createBrowseSharedRequests<SectionsPayload>(
-    (path, requestSignal) => json(path, {signal: requestSignal}) as Promise<SectionsPayload>,
-    (path, result) => responseCache.set(path, result), signal,
-  );
-  const prefetchAdjacentSections = (values: URLSearchParams, epoch: number) => {
-    const alternate = new URLSearchParams(values);
-    if (categoryMode(values)) alternate.set('media_type', values.get('media_type') === 'movie' ? 'series' : 'movie');
-    else if (values.get('view') === 'timeline') alternate.delete('view');
-    else return;
-    if (!categoryMode(alternate)) return;
-    const path = requestPath(alternate);
-    const revision = contextRevision;
-    const prefetch = () => {
-      if (!signal.aborted && generation === epoch && contextRevision === revision &&
-          !document.hidden && predictionAllowed() && !responseCache.get(path)) sectionRequests.prefetch(path);
-    };
-    if ('requestIdleCallback' in window) window.requestIdleCallback(prefetch, {timeout: 1500});
-    else setTimeout(prefetch, 250);
   };
   const paintState = paintBrowseCardState;
   const initialItems = new Map<string, Item>(
@@ -245,10 +223,8 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       paintState(card, item);
     }
   };
-  const refreshViewerContext = async (response: Payload | SectionsPayload, current: AbortController) => {
+  const refreshViewerContext = async (selection: Item[], current: AbortController) => {
     if (viewer === 'anonymous') return;
-    const selection = 'sections' in response
-      ? response.sections.flatMap(section => section.results) : response.results;
     const unique = new Map<string, Item>();
     for (const item of selection) if (item.id || item.tmdb_id) unique.set(titleKey(item), item);
     if (!unique.size) return;
@@ -273,54 +249,19 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       }
     }, () => !current.signal.aborted && !signal.aborted && request === current && revision === contextRevision);
   };
+  let contextAt=Date.now();
+  root.addEventListener('anylist:browse-active',()=>{
+    if(loading||Date.now()-contextAt<60_000)return;
+    if(!items.size)return;
+    contextAt=Date.now();request??=new AbortController();void refreshViewerContext([...items.values()],request);
+  },{signal});
   const render = (results: Item[], destination = grid, deduplicate = true) => {
     const fragment = document.createDocumentFragment();
     const cards:HTMLElement[]=[];
     for (const item of results) {
       if (deduplicate && seen.has(key(item))) continue;
       if (deduplicate) seen.add(key(item));
-      const card = template.content.firstElementChild!.cloneNode(
-        true,
-      ) as HTMLElement;
-      card.dataset.key = key(item);
-      const href = item.id
-        ? `/title/${item.id}`
-        : `/discover-title?type=${item.type}&id=${item.tmdb_id}`;
-      card
-        .querySelectorAll<HTMLAnchorElement>("a")
-        .forEach((a) => (a.href = href));
-      card.querySelector("h2")!.textContent = item.title;
-      card
-        .querySelector(".browse-poster-link")!
-        .setAttribute("aria-label", item.title);
-      const img = card.querySelector<HTMLImageElement>("[data-poster]")!;
-      img.hidden = !item.poster;
-      if (item.poster)
-        applyResponsiveArtwork(img, item.poster, {
-          size: "w342",
-          sizes: "(max-width: 650px) 30vw, (max-width: 1000px) 22vw, 185px",
-          route:'auto',
-        });
-      prepareBrowsePoster(img, signal, readyPosters);
-      const placeholder = card.querySelector<HTMLElement>(
-        ".browse-placeholder",
-      )!;
-      placeholder.hidden = !!item.poster;
-      placeholder.textContent = item.title.slice(0, 1);
-      card.querySelector("[data-year]")!.textContent = item.year || "";
-      if (item.release_event) card.querySelector<HTMLElement>('[data-year]')!.title = item.release_country ? `Release date · ${item.release_country}` : 'Worldwide release date';
-      card
-        .querySelectorAll<HTMLButtonElement>("[data-browse-action]")
-        .forEach((button) => {
-          const label =
-            button.dataset.browseAction === "edit"
-              ? "Open list editor for"
-              : button.dataset.browseAction === "plan"
-                ? "Plan to watch"
-                : button.dataset.browseAction === "watch" ? "Set to Watching" : "Rate and complete";
-          button.setAttribute("aria-label", `${label} ${item.title}`);
-        });
-      paintState(card, item);
+      const card=createBrowseCard(item,template,signal,readyPosters);
       items.set(card, item);
       cards.push(card);
       if ('entry' in item) editorStore.seed(item as EditorTitle);
@@ -330,40 +271,39 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     else destination.append(fragment);
     return cards;
   };
-  const renderSections = (results: Section[]) => {
-    for (const section of results) {
-      const container = document.createElement("section");
-      container.className = "browse-category";
-      container.setAttribute("aria-label", section.title);
-      const header = document.createElement("header"),
-        heading = document.createElement("h2"),
-        link = document.createElement("a"),
-        cards = document.createElement("div");
-      const headingLink = document.createElement("a");
-      headingLink.textContent = section.title;
-      link.textContent = "View all";
-      link.dataset.viewAll = "";
-      link.href = sectionHref(
-        field("type").value,
-        field("region").value,
-        section.filters,
-      );
-      headingLink.href = link.href;
-      headingLink.dataset.viewAll = "";
-      heading.append(headingLink);
-      header.append(heading, link);
-      cards.className = "browse-grid";
-      render(section.results, cards, false);
-      container.append(header, cards);
-      if (!section.results.length) {
-        const message = document.createElement("p");
-        message.className = "browse-category-empty";
-        message.textContent = "No titles found.";
-        container.append(message);
-      }
-      sections.append(container);
+  const renderSection = (section: Section) => {
+    const container = document.createElement("section");
+    container.className = "browse-category";
+    container.setAttribute("aria-label", section.title);
+    const header = document.createElement("header"),
+      heading = document.createElement("h2"),
+      link = document.createElement("a"),
+      cards = document.createElement("div");
+    const headingLink = document.createElement("a");
+    headingLink.textContent = section.title;
+    link.textContent = "View all";
+    link.dataset.viewAll = "";
+    link.href = sectionHref(
+      field("type").value,
+      field("region").value,
+      section.filters,
+    );
+    headingLink.href = link.href;
+    headingLink.dataset.viewAll = "";
+    heading.append(headingLink);
+    header.append(heading, link);
+    cards.className = "browse-grid";
+    render(section.results, cards, false);
+    container.append(header, cards);
+    if (!section.results.length) {
+      const message = document.createElement("p");
+      message.className = "browse-category-empty";
+      message.textContent = "No titles found.";
+      container.append(message);
     }
+    return container;
   };
+  const renderSections = (results:Section[]) => sections.append(...results.map(renderSection));
   const paintChips = () => {
     paintRanges();
     chips.replaceChildren();
@@ -435,7 +375,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     ]
       .map((input) => input.value)
       .join(",");
-    find("[id=browse-genres-value]").textContent = genreSelectionLabel(field("genres").value, facets.genres);
+    find("#browse-genres-value").textContent = genreSelectionLabel(field("genres").value, facets.genres);
   };
   const updateFooter = () => {
     const manualOverride = resultOverride.forQuery(field('q').value);
@@ -456,28 +396,6 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       !!grid.childElementCount ||
       !error.hidden;
   };
-  const closeMenus = (except?: HTMLDetailsElement) =>
-    form
-      .querySelectorAll<HTMLDetailsElement>("[data-filter-menu]")
-      .forEach((menu) => {
-        if (menu === except || !menu.open) return;
-        void closeFilter(menu);
-      });
-  async function closeFilter(menu: HTMLDetailsElement, restoreFocus = false) {
-    const panel = menu.querySelector<HTMLElement>(".browse-options")!;
-    await hideMenu(panel);
-    if (panel.hidden) menu.open = false;
-    if (restoreFocus) menu.querySelector<HTMLElement>("summary")?.focus();
-  }
-  async function closeAdvancedFilters(restoreFocus = false) {
-    if (!advancedFilters.open || advancedPanel.inert) return;
-    advancedPanel.inert = true;
-    if (await dismiss(advancedPanel)) {
-      advancedFilters.open = false;
-      advancedPanel.inert = false;
-      if (restoreFocus) advancedFilters.querySelector<HTMLElement>("summary")?.focus();
-    }
-  }
   async function load(append = false, debounce = 0) {
     if (
       signal.aborted ||
@@ -490,7 +408,6 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       region.setAttribute("aria-busy", "false");
       return;
     }
-    if(!append)prediction.cancel();
     const values = params();
     const categoryView = categoryMode(values);
     values.set("page", String(append ? payload.page + 1 : 1));
@@ -499,6 +416,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       if(payload.cursor)values.set('cursor',payload.cursor);
     }
     const path = requestPath(values);
+    if(!append&&!prediction.has(path))prediction.cancel();
     if (loading && currentPath === path) return;
     request?.abort();
     const current = new AbortController();
@@ -511,6 +429,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     error.hidden = true;
     const cached = responseCache.get(path);
     let expanded = false;
+    let streamed = false;
     empty.hidden = true;
     region.setAttribute("aria-busy", "true");
     updateFooter();
@@ -534,9 +453,23 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       let response = cached;
       if (!response) {
         await waitForBrowseRequest(debounce, current.signal);
-        response = categoryView
-          ? await sectionRequests.consume(path, current.signal)
-          : await prediction.consume(path,current.signal) ?? await json(path, {signal: current.signal}) as Payload;
+        const predicted=categoryView?prediction.peek(path):await prediction.consume(path,current.signal);
+        if(predicted)response=predicted;
+        else if(categoryView){
+          const slots=[...skeleton.querySelector<HTMLElement>('[data-skeleton-sections]')!.children]
+            .map(section=>section.cloneNode(true) as HTMLElement);
+          slots.forEach(slot=>slot.setAttribute('aria-busy','true'));
+          sections.replaceChildren(...slots);
+          grid.replaceChildren();seen.clear();items.clear();
+          displayedCategories=true;streamed=true;
+          loadingView.finish();sections.hidden=false;
+          response=await readBrowseSections<Section>(path,current.signal,(index,section,message)=>{
+            if(current.signal.aborted||signal.aborted||request!==current||epoch!==generation)return;
+            const container=renderSection(section);
+            slots[index].replaceWith(container);
+            if(message)notice.textContent=message;
+          });
+        }else response=await json(path,{signal:current.signal}) as Payload;
         if (current.signal.aborted || signal.aborted || request !== current) return;
       }
       async function fillViewport(first: Payload, requestValues: URLSearchParams): Promise<Payload> {
@@ -574,10 +507,9 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
         }
       }
       if (!expanded) responseCache.set(path, response!, !cached);
-      if (!cached) await loadingView.settle(current.signal);
       if (request !== current || epoch !== generation || signal.aborted) return;
       if (expanded) automaticExpansion.activate(values);
-      if (!append) {
+      if (!append && !streamed) {
         cancelUiMotion(region);
         grid.replaceChildren();
         sections.replaceChildren();
@@ -586,7 +518,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       }
       displayedCategories = categoryView;
       if ("sections" in response) {
-        renderSections(response.sections);
+        if(!streamed)renderSections(response.sections);
         loadingView.handoff([...sections.querySelectorAll<HTMLElement>('.browse-card-body')]);
         payload = { results: [], has_more: false, page: 1, source: "" };
       } else {
@@ -595,16 +527,21 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
         payload = response;
       }
       notice.textContent = response.notice || "";
-      if (cached) void refreshViewerContext(response, current);
-      if (!append) prefetchAdjacentSections(values, epoch);
+      if (cached) void refreshViewerContext([...items.values()], current);
+
     } catch (cause) {
-      await loadingView.settle(current.signal);
       if (current.signal.aborted || request !== current || signal.aborted)
         return;
       suspended = true;
       error.hidden = false;
       error.querySelector("span")!.textContent = (cause as Error).message;
-      if (!append) {
+      if(streamed)sections.querySelectorAll<HTMLElement>('[aria-busy="true"]').forEach(slot=>{
+        slot.removeAttribute('aria-busy');
+        const message=document.createElement('p');message.className='browse-category-empty';
+        message.textContent='Unable to load titles.';
+        slot.querySelector('.browse-grid')?.replaceChildren(message);
+      });
+      if (!append && !streamed) {
         cancelUiMotion(region);
         grid.replaceChildren();
         sections.replaceChildren();
@@ -675,7 +612,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       if (current !== facetRequest || current.signal.aborted || signal.aborted) return;
       facetCache.set(cacheKey, result, !cachedFacets);
       facets = result;
-      find("[id=browse-genres-value]").textContent = genreSelectionLabel(field("genres").value, facets.genres);
+      find("#browse-genres-value").textContent = genreSelectionLabel(field("genres").value, facets.genres);
       const options = find<HTMLElement>("[data-genre-options]");
       options.replaceChildren();
       for (const genre of facets.genres) {
@@ -698,10 +635,10 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
         new Option("Any service", ""),
         ...facets.providers.map((p) => new Option(p.name, String(p.id))),
       );
+      if (selected && !facets.providers.some(p=>String(p.id)===selected))
+        provider.add(new Option('Selected service', selected));
       provider.value = selected;
-      if (!provider.value) provider.value = "";
       refreshSelect(provider);
-      if (selected !== provider.value) changed();
       notice.textContent = result.notice || "";
       paintChips();
     } catch (cause) {
@@ -775,103 +712,6 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     changed();
   },{signal}));
   root
-    .querySelectorAll<HTMLAnchorElement>("[data-browse-type]")
-    .forEach((link) =>
-      link.addEventListener(
-        "click",
-        (event) => {
-          event.preventDefault();
-          if (field("type").value === link.dataset.browseType) return;
-          field("type").value = link.dataset.browseType!;
-          (field('cinema') as HTMLInputElement).checked=false;
-          find<HTMLElement>('[data-browse-cinema]').hidden=field('type').value!=='movie';
-          root
-            .querySelectorAll("[data-browse-type]")
-            .forEach((a) => a.removeAttribute("aria-current"));
-          link.setAttribute("aria-current", "page");
-          field("genres").value = "";
-          syncGenresAfterType();
-          field("status").value = "";
-          const statuses =
-            field("type").value === "movie"
-              ? [
-                  ["released", "Released"],
-                  ["upcoming", "Upcoming"],
-                ]
-              : [
-                  ["airing", "Airing"],
-                  ["returning", "Returning Series"],
-                  ["finished", "Finished"],
-                  ["cancelled", "Cancelled"],
-                  ["upcoming", "Upcoming"],
-                ];
-          (field("status") as HTMLSelectElement).replaceChildren(
-            new Option("Any status", ""),
-            ...statuses.map(([id, name]) => new Option(name, id)),
-          );
-          refreshSelect(field("status"));
-          void loadFacets();
-          changed();
-        },
-        { signal },
-      ),
-    );
-  function syncGenresAfterType() {
-    form
-      .querySelectorAll<HTMLInputElement>("[name=genre]")
-      .forEach((input) => (input.checked = false));
-    syncGenres();
-  }
-  for (const menu of form.querySelectorAll<HTMLDetailsElement>(
-    "[data-filter-menu]",
-  )) {
-    menu.querySelector("summary")!.addEventListener(
-      "click",
-      (event) => {
-        event.preventDefault();
-        const panel = menu.querySelector<HTMLElement>(".browse-options")!;
-        if (menu.open && !panel.inert) void closeFilter(menu);
-        else {
-          closeMenus(menu);
-          menu.open = true;
-          showMenu(panel);
-        }
-      },
-      { signal },
-    );
-  }
-  document.addEventListener(
-    "click",
-    (event) => {
-      if (!(event.target as Element).closest("[data-filter-menu]"))
-        closeMenus();
-      // Inline phone filters behave like the list-page section, not a popover.
-      if (!form.hasAttribute('data-mobile-filters') && !advancedFilters.contains(event.target as Node) &&
-          !(event.target as Element).closest(".browse-select-options"))
-        void closeAdvancedFilters();
-    },
-    { signal },
-  );
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && !(event.target as Element).closest('[role="listbox"]'))
-      void closeAdvancedFilters(true);
-  }, { signal });
-  form.addEventListener(
-    "keydown",
-    (event) => {
-      if (event.key === "Escape") {
-        const menu = (event.target as Element).closest<HTMLDetailsElement>(
-          "[data-filter-menu]",
-        );
-        if (menu?.open) {
-          event.stopPropagation();
-          void closeFilter(menu, true);
-        }
-      }
-    },
-    { signal },
-  );
-  root
     .querySelectorAll("[data-browse-clear]")
     .forEach((button) => button.addEventListener("click", clear, { signal }));
   more.addEventListener(
@@ -894,7 +734,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   let sentinelNearEnd = false;
   let paginationFrame = 0;
   let predictionScrollY=scrollY;
-  const canAutoLoad = () => !signal.aborted && !displayedCategories &&
+  const canAutoLoad = () => browsePanelActive(root) && !signal.aborted && !displayedCategories &&
     !loading && !suspended && payload.has_more;
   const autoLoadMore = () => {
     if (sentinelNearEnd && canAutoLoad() && paginationDemand.consume())
@@ -909,6 +749,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   );
   observer.observe(sentinel);
   window.addEventListener("scroll", () => {
+    if(!browsePanelActive(root))return;
     const down=scrollY>predictionScrollY;predictionScrollY=scrollY;
     paginationDemand.advance(scrollY, canAutoLoad());
     if (!paginationFrame) paginationFrame = requestAnimationFrame(() => {
@@ -925,7 +766,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   paintChips();
   updateFooter();
   const savedRegion = streamingRegionPreference(document.cookie.split(';').map(part => part.trim()).find(part => part.startsWith(`${STREAMING_REGION_COOKIE}=`))?.slice(STREAMING_REGION_COOKIE.length + 1));
-  if (!new URLSearchParams(location.search).has('region') && !savedRegion?.manual) {
+  if (!new URL(root.dataset.browseUrl||location.href,location.origin).searchParams.has('region') && !savedRegion?.manual) {
     const detected = deviceStreamingCountry();
     if (detected) {
       document.cookie = `${STREAMING_REGION_COOKIE}=auto.${detected}; Path=/; Max-Age=31536000; SameSite=Lax${location.protocol === 'https:' ? '; Secure' : ''}`;
@@ -963,4 +804,29 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     },
     { once: true },
   );
+  return (values: URLSearchParams, moreOpen?: boolean) => {
+    if (moreOpen !== undefined) find<HTMLDetailsElement>('.browse-more').open = moreOpen;
+    let changedValues = false;
+    const facetSelection = () => [field('region').value,...field('genres').value.split(',').filter(value=>value.startsWith('name:'))].join(',');
+    const oldFacets = facetSelection();
+    for (const [name, value] of values) {
+      const control = field(name);
+      if (!control) continue;
+      const next = value || (name==='view' ? 'grid' : name==='min_score' ? '0' : '');
+      if (control.value === next) continue;
+      if (control instanceof HTMLSelectElement && next && ![...control.options].some(option=>option.value===next)) {
+        control.add(new Option(name==='provider' ? 'Selected service' : next, next));
+      }
+      control.value = next;
+      if (control instanceof HTMLSelectElement) refreshSelect(control);
+      changedValues = true;
+    }
+    if (!changedValues) return;
+    const genres = field('genres').value.split(',');
+    form.querySelectorAll<HTMLInputElement>('[name=genre]').forEach(input=>input.checked=genres.includes(input.value));
+    find('#browse-genres-value').textContent = genreSelectionLabel(field('genres').value, facets.genres);
+    searchClear.hidden = !field('q').value;
+    if (oldFacets !== facetSelection()) void loadFacets();
+    void load();
+  };
 }
