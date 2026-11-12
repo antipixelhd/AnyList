@@ -123,6 +123,8 @@ export function mountListFilterControls(root:HTMLElement,signal:AbortSignal) {
     function selectedYear(){const position=Number(yearSlider.value);return position>0?availableYears[position-1]:'';}
     function syncYear(){
       const year=selectedYear();yearField.value=year;
+      const fill = availableYears.length ? Number(yearSlider.value) / availableYears.length * 100 : 0;
+      yearSlider.style.setProperty('--year-fill', `${fill}%`);
       yearOutput.value=year||'Any year';yearOutput.textContent=year||'Any year';
       yearSlider.setAttribute('aria-valuetext',year||'Any year');
     }
