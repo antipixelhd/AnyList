@@ -225,27 +225,18 @@
 .filters h2 {
   margin:10px 0 0
 }
-.list-shell .filters {
-  z-index:3;
-  font-family:var(--font-body);
-  font-size:13px;
-  font-weight:400
-}
-.list-shell .filters :is(h2,.filter-control,.filter-year-heading output) {
-  font:inherit
-}
-.list-shell .filters .filter-search input {
-  height:40px;
+.filters .filter-search input,.filters .filter-control select {
   min-height:40px;
-  padding:0 15px 0 35px;
-  border:0;
-  border-radius:4px;
-  font:400 14px var(--font-body)
+  padding:8px 12px
 }
-.list-shell .filter-search > .ui-icon { font-size:14px }
+.filters .filter-search input {
+  padding-left:34px
+}
 .list-shell .filter-search input:focus {
-  outline:none;
-  background:color-mix(in srgb,var(--blue) 9%,var(--panel))
+  outline:none
+}
+.list-shell .filters {
+  z-index:3
 }
 .filter-select-native {
   display:none!important
@@ -259,17 +250,15 @@
   justify-content:space-between;
   gap:10px;
   width:100%;
-  min-height:32px;
-  padding:0 12px 0 15px;
+  min-height:40px;
+  padding:8px 12px;
   border:1px solid transparent;
   border-radius:4px;
   background:#151f2e;
   color:var(--text);
   text-align:left;
   font:inherit;
-  font-family:var(--font-body);
-  font-size:13px;
-  font-weight:400;
+  font-size:var(--type-control-size);
   cursor:pointer
 }
 .filter-dropdown-trigger:focus-visible {
@@ -325,9 +314,7 @@
   background:transparent;
   color:var(--text);
   text-align:left;
-  font-family:var(--font-body);
-  font-size:13px;
-  font-weight:400;
+  font-size:var(--type-control-size);
   cursor:pointer
 }
 .filter-dropdown-options button:hover,.filter-dropdown-options button:focus-visible {
@@ -346,7 +333,10 @@
   align-items:center;
   justify-content:space-between
 }
-.filter-year-heading output { color:var(--muted) }
+.filter-year-heading output {
+  color:var(--muted);
+  font-size:var(--type-caption-size)
+}
 .filter-year input[type="range"] {
   width:100%;
   height:28px;
@@ -357,43 +347,30 @@
   cursor:pointer
 }
 .filter-year input[type="range"]::-webkit-slider-runnable-track {
-  height:6px;
-  border-radius:3px;
-  background:linear-gradient(to right,var(--blue) var(--year-fill,0%),var(--panel) var(--year-fill,0%))
-}
-.filter-year input[type="range"]::-moz-range-track {
-  height:6px;
-  border-radius:3px;
+  height:8px;
+  border-radius:4px;
   background:var(--panel)
 }
-.filter-year input[type="range"]::-moz-range-progress {
-  height:6px;
-  border-radius:3px;
-  background:var(--blue)
+.filter-year input[type="range"]::-moz-range-track {
+  height:8px;
+  border-radius:4px;
+  background:var(--panel)
 }
 .filter-year input[type="range"]::-webkit-slider-thumb {
-  width:16px;
-  height:16px;
-  margin-top:-5px;
+  width:20px;
+  height:20px;
+  margin-top:-6px;
   appearance:none;
   border:2px solid var(--blue);
   border-radius:50%;
-  background:var(--bg);
-  transition:transform .2s ease,background-color .2s ease
+  background:var(--bg)
 }
 .filter-year input[type="range"]::-moz-range-thumb {
-  width:12px;
-  height:12px;
+  width:16px;
+  height:16px;
   border:2px solid var(--blue);
   border-radius:50%;
-  background:var(--bg);
-  transition:transform .2s ease,background-color .2s ease
-}
-.filter-year input[type="range"]:enabled:is(:hover,:active,:focus-visible)::-webkit-slider-thumb { transform:scale(1.2) }
-.filter-year input[type="range"]:enabled:is(:hover,:active,:focus-visible)::-moz-range-thumb { transform:scale(1.2) }
-@media (prefers-reduced-motion:reduce) {
-  .filter-year input[type="range"]::-webkit-slider-thumb { transition:none }
-  .filter-year input[type="range"]::-moz-range-thumb { transition:none }
+  background:var(--bg)
 }
 .filter-year input[type="range"]:focus-visible {
   outline:none
@@ -408,19 +385,9 @@
   cursor:not-allowed;
   opacity:.55
 }
-.list-shell .status-filters button {
+.status-filters button {
   padding:5px 10px;
-  border-radius:3px;
-  font:400 14px/1.2 var(--font-body);
-  color:var(--muted)
-}
-.list-shell .status-filters button.selected {
-  background:color-mix(in srgb,var(--panel) 80%,transparent);
-  color:var(--text);
-  font-weight:500
-}
-@media (min-width:651px) {
-  .list-shell .status-filters { gap:8px }
+  line-height:1.35
 }
 .status-section {
   margin-bottom:30px
@@ -499,7 +466,7 @@
   .mobile-filter-toggle {
     display:flex
   }
-  .list-shell .filters :is(.filter-search input,.filter-dropdown-trigger) {
+  .filters .filter-search input {
     min-height:44px
   }
   .list-filter-panel {
@@ -527,7 +494,7 @@
   .filter-year input[type="range"] {
     height:44px
   }
-  .list-shell .status-filters button {
+  .status-filters button {
     min-height:44px;
     padding:9px 12px
   }
