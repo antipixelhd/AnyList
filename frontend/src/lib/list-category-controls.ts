@@ -17,7 +17,7 @@ export function mountCategoryControls(root: HTMLElement, initial: CategoryPresen
   const error = editor.querySelector<HTMLElement>('[role=alert]')!;
   const save = actions.querySelector<HTMLButtonElement>('[data-category-save]')!;
 
-  function finish() {
+  function finish(restoreFocus = true) {
     if(busy)return;
     const previousMode = mode;
     mode = '';
@@ -26,7 +26,7 @@ export function mountCategoryControls(root: HTMLElement, initial: CategoryPresen
     controls.hidden = false;
     actions.hidden = true;
     controls.querySelectorAll('[aria-pressed]').forEach(button => button.setAttribute('aria-pressed', 'false'));
-    controls.querySelector<HTMLButtonElement>(`[data-category-mode="${previousMode}"]`)?.focus({preventScroll:true});
+    if (restoreFocus) controls.querySelector<HTMLButtonElement>(`[data-category-mode="${previousMode}"]`)?.focus({preventScroll:true});
   }
   function move(id: string, delta: number) {
     const index = draft.categories.findIndex(category => category.id === id);
@@ -134,7 +134,8 @@ export function mountCategoryControls(root: HTMLElement, initial: CategoryPresen
     if (mode === 'reorder') rows.querySelector<HTMLElement>('button')?.focus({preventScroll:true});
     else actions.querySelector<HTMLButtonElement>('[data-category-save]')?.focus({preventScroll:true});
   }, {signal});
-  actions.querySelector('[data-category-cancel]')!.addEventListener('click', finish, {signal});
+  actions.querySelector('[data-category-cancel]')!.addEventListener('click', () => finish(), {signal});
+  document.addEventListener('anylist:profile-tab-changed', () => {if (mode) finish(false);}, {signal});
   section.addEventListener('keydown', event => {
     if (event.key === 'Escape' && !busy) {event.preventDefault(); finish();}
     if (event.key === 'Enter' && event.target instanceof HTMLInputElement) {event.preventDefault(); save.click();}
