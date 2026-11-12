@@ -1,4 +1,5 @@
 import {boundedAnimation} from './bounded-animation.ts';
+import {cancelUiMotion} from './ui-motion';
 
 export function createAnchoredFieldReveal(dialog:HTMLDialogElement,wrapper:HTMLElement,content:HTMLElement,signal:AbortSignal) {
   const view=dialog.ownerDocument.defaultView!;
@@ -13,6 +14,7 @@ export function createAnchoredFieldReveal(dialog:HTMLDialogElement,wrapper:HTMLE
   };
   const pin=()=>{
     if(anchor)return;
+    cancelUiMotion(dialog);
     const top=Math.max(0,dialog.getBoundingClientRect().top),max=view.getComputedStyle(dialog).maxHeight;
     anchor={top:dialog.style.marginTop,bottom:dialog.style.marginBottom,max:dialog.style.maxHeight};
     dialog.style.marginTop=`${top}px`;dialog.style.marginBottom='0px';
@@ -35,6 +37,7 @@ export function createAnchoredFieldReveal(dialog:HTMLDialogElement,wrapper:HTMLE
   });
   resize.observe(content);
   dialog.addEventListener('close',reset,{signal});
+  dialog.addEventListener('beforetoggle',event=>{if((event as ToggleEvent).newState==='closed')reset();},{signal});
   view.addEventListener('resize',reset,{signal,passive:true});
   reduced.addEventListener('change',()=>{if(reduced.matches)stop();},{signal});
   signal.addEventListener('abort',()=>{resize.disconnect();reset();},{once:true});

@@ -19,8 +19,7 @@ const arrows = createDropdownArrowMotion((arrow, values, timing) => animate(arro
 
 function stop(element: HTMLElement) {
   const control = running.get(element);
-  if (element.getClientRects().length) control?.stop();
-  else control?.cancel();
+  control?.cancel();
   running.delete(element);
   element.style.removeProperty('opacity');
   element.style.removeProperty('transform');

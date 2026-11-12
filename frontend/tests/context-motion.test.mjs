@@ -29,10 +29,12 @@ test('adaptive fields pin once, replace interrupted height motion and restore na
  const content={hidden:true,getBoundingClientRect:()=>({height:content.hidden?0:content.height}),height:80};
  const wrapper={hidden:true,style:f.style(),getBoundingClientRect:()=>({height:wrapper.hidden?0:parseFloat(wrapper.style.height)||content.height})};
  let resized;
- const context={boundedAnimation:f.play,ResizeObserver:class{constructor(cb){resized=cb;}observe(){}disconnect(){}},...{AbortController}};
+ let stopped=false;
+ const context={boundedAnimation:f.play,cancelUiMotion(){stopped=true;},ResizeObserver:class{constructor(cb){resized=cb;}observe(){}disconnect(){}},...{AbortController}};
  runInNewContext(source('anchored-field-reveal')+';globalThis.create=createAnchoredFieldReveal;',context);
  const signal=new AbortController();const reveal=context.create(dialog,wrapper,content,signal.signal);
  reveal.change(()=>{content.hidden=false;},true);
+ assert.equal(stopped,true);
  assert.equal(dialog.style.marginTop,'120px');assert.equal(wrapper.hidden,false);assert.equal(f.calls[0].frames.height[1],'80px');
  content.height=150;resized();assert.equal(f.calls[0].cancelled,true);assert.equal(f.calls.at(-1).frames.height[1],'150px');
  reveal.change(()=>{content.hidden=true;},true);const closing=f.calls.at(-1);closing.finish();await Promise.resolve();
