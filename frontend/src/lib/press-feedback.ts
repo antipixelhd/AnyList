@@ -1,11 +1,9 @@
-import { animate } from 'motion/mini';
-
 const navigation = '.status-filters button, .profile-section-selector__option, .overview-metrics button, [role="tablist"] > button';
 const controls = 'button, input[type="button"], input[type="submit"], input[type="reset"], a.button-primary, a.button-secondary, a.button-quiet, a.button-danger, [data-motion-press]';
 
 export function mountPressFeedback(doc: Document, view: Window) {
   const reduced = view.matchMedia('(prefers-reduced-motion: reduce)');
-  const active = new Map<HTMLElement, ReturnType<typeof animate>>();
+  const active = new Map<HTMLElement, Animation>();
   let held: {element: HTMLElement; pointer?: number; x?: number; y?: number; key?: string} | undefined;
 
   const usable = (element: HTMLElement) => element.isConnected && element.getClientRects().length > 0 &&
@@ -24,14 +22,16 @@ export function mountPressFeedback(doc: Document, view: Window) {
   }
   function play(element: HTMLElement, scale: number) {
     if (reduced.matches || !usable(element)) { cancel(element); return; }
-    active.get(element)?.stop();
-    const animation = animate(element, {scale}, {
-      duration: scale === 1 ? .18 : .07,
-      ease: scale === 1 ? [.2,.7,.2,1] : 'easeOut',
+    const current = view.getComputedStyle(element).scale;
+    cancel(element);
+    const animation = element.animate([{scale:current === 'none' ? '1' : current}, {scale:String(scale)}], {
+      duration: scale === 1 ? 180 : 70,
+      easing: scale === 1 ? 'cubic-bezier(.2,.7,.2,1)' : 'ease-out',
+      fill: scale === 1 ? 'none' : 'forwards',
     });
     const startTime = doc.timeline.currentTime;
     if (startTime !== null) {
-      for (const control of animation.animations) control.startTime = Number(startTime);
+      animation.startTime = startTime;
     }
     active.set(element, animation);
     if (scale === 1) {

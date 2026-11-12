@@ -9,6 +9,7 @@ function fixture() {
   document.timeline = {currentTime:100};
   const reduced = Object.assign(new EventTarget(), {matches:false});
   window.matchMedia = () => reduced;
+  window.getComputedStyle = () => ({scale:'1'});
   const calls = [];
   let mutation;
   class Element {
@@ -31,6 +32,7 @@ function fixture() {
       return false;
     }
     hasAttribute() { return false; }
+    animate(frames,timing) { return context.animate(this,frames,timing); }
   }
   class Anchor extends Element {}
   const source = readFileSync(new URL('../src/lib/press-feedback.ts', import.meta.url), 'utf8')
@@ -38,10 +40,10 @@ function fixture() {
   const context = {
     document, window, Element, HTMLElement:Element, HTMLAnchorElement:Anchor, Node:Element,
     MutationObserver:class {constructor(callback){mutation=callback;}observe(){}},
-    animate(element, values, timing) {
+    animate(element, frames, timing) {
       let finish;
-      const control = {animations:[{}],finished:new Promise(resolve=>finish=resolve),finish:()=>finish(),stop(){this.stopped=true;},cancel(){this.cancelled=true;}};
-      calls.push({element,values,timing,control});
+      const control = {finished:new Promise(resolve=>finish=resolve),finish:()=>finish(),cancel(){this.cancelled=true;}};
+      calls.push({element,values:{scale:Number(frames.at(-1).scale)},timing,control});
       return control;
     },
   };
@@ -62,7 +64,7 @@ test('navigation presses work inside static regions and release to their native 
   assert.equal(f.calls.length,0);
   f.send('pointerdown',button);
   assert.equal(f.calls[0].values.scale,.985);
-  assert.equal(f.calls[0].control.animations[0].startTime,100);
+  assert.equal(f.calls[0].control.startTime,100);
   f.send('pointerup',button,{},f.window);
   assert.equal(f.calls[1].values.scale,1);
   f.calls[1].control.finish();await Promise.resolve();await Promise.resolve();
@@ -84,7 +86,7 @@ test('touch panning, pointer cancellation and navigation cannot strand a compres
   button.isConnected=false;f.mutation();
   assert.equal(f.calls.at(-1).control.cancelled,true);
   f.document.dispatchEvent(new Event('astro:before-swap'));
-  assert(f.calls.every(call=>call.control.stopped||call.control.cancelled));
+  assert(f.calls.every(call=>call.control.cancelled));
 });
 
 test('keyboard presses, disabled controls and reduced motion respect input state',()=>{
