@@ -234,12 +234,12 @@
     let clearPreview:(()=>void)|undefined;
     let clearNavigationFeedback:(()=>void)|undefined;
     let pageEntrance:AbortSignal|undefined;
-    let profileTabPosition:{top:number;left:number}|undefined;
+    let profileTabPosition:{left:number}|undefined;
     document.addEventListener('astro:before-swap',event=>{
       const sourceTabs=event.sourceElement?.closest<HTMLElement>('.profile-tabs[data-profile-base]');
       const incomingTabs=sourceTabs&&event.newDocument.querySelector<HTMLElement>('.profile-tabs[data-profile-base]');
       if(pageEntrance&&!pageEntrance.aborted&&!event.to.hash&&sourceTabs&&incomingTabs?.dataset.profileBase===sourceTabs.dataset.profileBase){
-        profileTabPosition={top:sourceTabs.getBoundingClientRect().top,left:sourceTabs.scrollLeft};
+        profileTabPosition={left:sourceTabs.scrollLeft};
       }
       prepareDetailResolution(event.newDocument,event.to,currentUser());
       clearPreview?.();clearPreview=undefined;
@@ -419,9 +419,8 @@
       const listLanding=state.alignListLanding&&document.body.hasAttribute('data-list-landing');
       const tabs=(listLanding||profileTabPosition)&&document.querySelector<HTMLElement>('.profile-tabs');
       if(tabs){
-        const top=profileTabPosition?.top??0;
         if(profileTabPosition)tabs.scrollLeft=profileTabPosition.left;
-        window.scrollTo(0,window.scrollY+tabs.getBoundingClientRect().top-(listLanding?0:top));
+        window.scrollTo(0,listLanding?window.scrollY+tabs.getBoundingClientRect().top:0);
       }
       if(pageEntrance&&!pageEntrance.aborted){
         if(profileTabPosition&&tabs&&!listLanding){

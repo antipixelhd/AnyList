@@ -65,9 +65,9 @@ for(const destination of ['games','stats','stats/games'])test(`a cold ${destinat
   const sourceText=readFileSync(new URL('../src/lib/profile-shell.ts',import.meta.url),'utf8');
   const start=sourceText.indexOf('  function select(');
   const snippet=sourceText.slice(start,sourceText.indexOf('  const target=',start));
-  const source={dataset:{},matches:()=>false,dispatchEvent(){}},preview={kind:'games',dataset:{},prepend(){}},waiting=[],positions=new Map();let rejectRead;
+  const source={dataset:{},matches:()=>false,dispatchEvent(){}},preview={kind:'games',dataset:{},prepend(){}},waiting=[];let rejectRead;
   const events=[];
-  const context={URL,changeStatistics:{cancel(){}},stopProgress(){},progressRunning:false,signal:new AbortController().signal,wanted:'movies',active:'movies',shown:source,positions,scrollY:780,
+  const context={URL,changeStatistics:{cancel(){}},stopProgress(){},progressRunning:false,signal:new AbortController().signal,wanted:'movies',active:'movies',shown:source,scrollY:780,
     panels:new Map([['movies',{root:source,ready:true}]]),loadingTemplates:new Map(),profileLoadingFrame:()=>preview,
     createLoadingReveal:()=>({begin(){},finish(){}}),
     read:()=>new Promise((resolve,reject)=>rejectRead=reject),setPanelWaiting:(root,on)=>waiting.push([root,on]),update(){},
@@ -76,7 +76,7 @@ for(const destination of ['games','stats','stats/games'])test(`a cold ${destinat
     document:{dispatchEvent:event=>events.push(event.type),createElement:()=>({dataset:{},setAttribute(){},addEventListener(){},append(){}})},Event,
   };
   runInNewContext(stripTypeScriptTypes(snippet)+';this.select=select;',context);
-  context.select(destination);assert.equal(context.shown,preview);assert(events.includes('anylist:route-progress-start'));assert.equal(context.wanted,destination);assert.equal(positions.get('movies'),780);
+  context.select(destination);assert.equal(context.shown,preview);assert(events.includes('anylist:route-progress-start'));assert.equal(context.wanted,destination);
   assert.deepEqual(waiting,[[source,true]]);
   rejectRead(new Error('unavailable'));await new Promise(setImmediate);
   assert.equal(context.shown,preview);assert.equal(context.wanted,destination);assert.deepEqual(waiting.at(-1),[source,false]);

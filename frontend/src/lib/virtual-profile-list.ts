@@ -45,7 +45,6 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
   let epoch=0,frame=0,searchTimer:ReturnType<typeof setTimeout>|undefined,retryTimer:ReturnType<typeof setTimeout>|undefined;
   let previousY=scrollY,previousTime=performance.now(),ahead=3200,dirty=false,refreshing=false;
   let resetOnReturn=false;
-  let alignCategoryOnRender=false;
   let requests=new AbortController();
   const template=panel.querySelector<HTMLTemplateElement>('[data-list-row-template]')!;
   const index=new ProfileListIndex(adapter.statuses),states=new Map<number,ListState>(),rowCache=new Map<number,HTMLElement>();
@@ -209,12 +208,6 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
       if(anchor.row.isConnected){const shift=anchor.row.getBoundingClientRect().top-anchor.top;if(Math.abs(shift)>.5)window.scrollBy(0,shift);}
       anchor=undefined;
     }
-    if(alignCategoryOnRender){
-      alignCategoryOnRender=false;
-      const tabs=root.closest('#content')?.querySelector('.profile-tabs');
-      const top=tabs?.getBoundingClientRect().top ?? 0;
-      if(top>1)window.scrollBy(0,top);
-    }
     // Prefetch adjacent ranges, but put visible demand first after large jumps.
     const primary=[...wanted];primary.forEach(offset=>{if(offset+profileListPageSize<total)wanted.add(offset+profileListPageSize);if(offset>0)wanted.add(offset-profileListPageSize);});
     const nearbyIds=new Set<number>();
@@ -269,8 +262,7 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
     if(local){geometry({...local,offset:0,results:[]});refreshing=false;schedule();}
     else if(panelActive(panel))void acquire(0);else dirty=true;
   }
-  function submit(alignCategory=false){
-    alignCategoryOnRender=alignCategory;
+  function submit(){
     clearTimeout(searchTimer);searchTimer=undefined;preview.hide();
     const values=new URLSearchParams();for(const [key,value] of new FormData(form))if(typeof value==='string')values.set(key,value);
     query=profileListQuery(values,adapter.statuses,defaultSort);controls.sync(query.get('status')||'all',defaultSort);
@@ -329,12 +321,9 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
     }
   }, {signal});
   form.addEventListener('submit',event=>{event.preventDefault();submit();},{signal});
-  filters.querySelectorAll<HTMLButtonElement>('[data-status]').forEach(button=>button.addEventListener('click',()=>{
-    field('status').value=button.dataset.status==='all'?'':button.dataset.status!;
-    submit(root.dataset.listDomain==='game');
-  },{signal}));
+  filters.querySelectorAll<HTMLButtonElement>('[data-status]').forEach(button=>button.addEventListener('click',()=>{field('status').value=button.dataset.status==='all'?'':button.dataset.status!;submit();},{signal}));
   form.addEventListener('input',event=>{if((event.target as Element).closest('[data-category-editor]'))return;const input=event.target as HTMLInputElement;if(input.id==='year-filter')return;clearTimeout(searchTimer);if(input.name==='q')searchTimer=setTimeout(submit,250);else submit();},{signal});
-  filters.querySelector('#year-filter')!.addEventListener('change',()=>submit(),{signal});
+  filters.querySelector('#year-filter')!.addEventListener('change',submit,{signal});
   window.addEventListener('scroll',()=>{const now=performance.now();ahead=Math.min(16000,Math.max(3200,Math.abs(scrollY-previousY)/Math.max(1,now-previousTime)*700));previousY=scrollY;previousTime=now;schedule();},{signal,passive:true});
   window.addEventListener('resize',schedule,{signal});
   panel.addEventListener('anylist:panel-active',()=>{
@@ -345,7 +334,6 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
     schedule();queueWarm();
   },{signal});
   panel.addEventListener('anylist:panel-inactive',()=>{
-    alignCategoryOnRender=false;
     resetOnReturn=true;
     controls.close();preview?.hide();dirty=dirty||refreshing;
     clearTimeout(searchTimer);searchTimer=undefined;clearTimeout(retryTimer);retryTimer=undefined;

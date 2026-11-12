@@ -136,7 +136,7 @@ test('list landing does not override hard reload or back/forward positions', () 
   }
 });
 
-test('routed profile tabs preserve the shared tab strip position and fade the panel in place', () => {
+test('routed non-list profile tabs land at the top and preserve horizontal tab position', () => {
   const runtime = readFileSync(new URL('../src/components/NavigationRuntime.astro', import.meta.url), 'utf8');
   const before = runtime.slice(runtime.indexOf("    document.addEventListener('astro:before-swap'"), runtime.indexOf("    document.addEventListener('click',event=>{"));
   const after = runtime.slice(runtime.indexOf("    document.addEventListener('astro:after-swap'"), runtime.indexOf("    document.addEventListener('astro:page-load'"));
@@ -165,7 +165,7 @@ test('routed profile tabs preserve the shared tab strip position and fade the pa
   runInNewContext(stripTypeScriptTypes(before + after), context);
   handlers.get('astro:before-swap')({sourceElement: {closest: () => source}, newDocument: {querySelector: () => incoming}, to: new URL('https://anylist.test/user/alex/favorites')});
   handlers.get('astro:after-swap')();
-  assert.deepEqual(scrolls, [[0, 225]]);
+  assert.deepEqual(scrolls, [[0, 0]]);
   assert.equal(incoming.scrollLeft, 46);
   assert.deepEqual(reveals, [[content, 'tab', undefined]]);
 

@@ -33,15 +33,15 @@ function setup(){
   const viewer=document.body.dataset.cacheUser,approved=document.body.dataset.gamesApproved;
   const header=host.querySelector<HTMLElement>('.profile-hero')!,nav=host.querySelector<HTMLElement>('.profile-tabs')!;
   let generation=0;
-  const panels=new Map<string,Panel>(),flights=new Map<string,Promise<Panel>>(),positions=new Map<string,number>();
+  const panels=new Map<string,Panel>(),flights=new Map<string,Promise<Panel>>();
   const invalidate=()=>{generation++;for(const [key,panel] of panels)if(!panel.ready)panels.delete(key);};
   document.addEventListener('anylist:editor-state',invalidate,{signal});
   document.addEventListener('anylist:cache-invalidated',invalidate,{signal});
-  document.addEventListener('anylist:game-categories',()=>{generation++;for(const [key,panel] of panels)if(panel.root!==shown){panels.delete(key);positions.delete(key);}},{signal});
+  document.addEventListener('anylist:game-categories',()=>{generation++;for(const [key,panel] of panels)if(panel.root!==shown)panels.delete(key);},{signal});
   document.addEventListener('anylist:screen-categories',()=>{
     generation++;
     for(const [key,panel] of panels)if(panel.root!==shown&&key!==active&&['movies','series','list'].includes(key)){
-      panels.delete(key);positions.delete(key);
+      panels.delete(key);
     }
   },{signal});
   const first=document.createElement('div');first.dataset.profileUrl=location.href;
@@ -89,10 +89,14 @@ function setup(){
   const stopProgress=()=>{if(progressRunning){progressRunning=false;document.dispatchEvent(new Event('anylist:route-progress-end'));}};
   signal.addEventListener('abort',stopProgress,{once:true});
   function select(key:string,url:string,retry=false){
-    if(key===wanted&&!retry)return;
+    const land = () => window.scrollTo(0,key.startsWith('stats')?0:scrollY+nav.getBoundingClientRect().top);
+    if(key===wanted&&!retry){
+      if(key===active&&shown===panels.get(active)?.root)land();
+      return;
+    }
     stopProgress();
     document.dispatchEvent(new Event('anylist:profile-tab-changed'));
-    if(shown===panels.get(active)?.root){positions.set(active,scrollY);shown.dataset.profileUrl=location.href;shown.dispatchEvent(new Event('anylist:panel-inactive'));}
+    if(shown===panels.get(active)?.root){shown.dataset.profileUrl=location.href;shown.dispatchEvent(new Event('anylist:panel-inactive'));}
     wanted=key;update();
     host!.querySelector('[data-profile-switch-error]')?.remove();
     const source=panels.get(active)!.root;
@@ -148,7 +152,7 @@ function setup(){
         const statistics=panel.root.querySelector<HTMLElement>('[data-integrated-statistics]');
         if(statistics&&panel.root.dataset.profileUrl!==url)statistics.dispatchEvent(new CustomEvent('anylist:statistics-open',{detail:{url}}));
         nav.removeAttribute('aria-busy');update();
-        window.scrollTo(0,positions.get(key)??scrollY);
+        land();
         if (changedPanel) {
           const rows = Array.from(panel.root.querySelectorAll<HTMLElement>('.entry-table [data-list-window]'));
           if (rows.length) rows.forEach(row => settleNavigationContent(row,'tab',signal,4));
