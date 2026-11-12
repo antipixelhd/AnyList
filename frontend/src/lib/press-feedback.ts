@@ -29,6 +29,10 @@ export function mountPressFeedback(doc: Document, view: Window) {
       duration: scale === 1 ? .18 : .07,
       ease: scale === 1 ? [.2,.7,.2,1] : 'easeOut',
     });
+    const startTime = doc.timeline.currentTime;
+    if (startTime !== null) {
+      for (const control of animation.animations) control.startTime = Number(startTime);
+    }
     active.set(element, animation);
     if (scale === 1) {
       void animation.finished.then(() => {

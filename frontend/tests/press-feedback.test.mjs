@@ -6,6 +6,7 @@ import test from 'node:test';
 
 function fixture() {
   const document = new EventTarget(), window = new EventTarget();
+  document.timeline = {currentTime:100};
   const reduced = Object.assign(new EventTarget(), {matches:false});
   window.matchMedia = () => reduced;
   const calls = [];
@@ -39,7 +40,7 @@ function fixture() {
     MutationObserver:class {constructor(callback){mutation=callback;}observe(){}},
     animate(element, values, timing) {
       let finish;
-      const control = {finished:new Promise(resolve=>finish=resolve),finish:()=>finish(),stop(){this.stopped=true;},cancel(){this.cancelled=true;}};
+      const control = {animations:[{}],finished:new Promise(resolve=>finish=resolve),finish:()=>finish(),stop(){this.stopped=true;},cancel(){this.cancelled=true;}};
       calls.push({element,values,timing,control});
       return control;
     },
@@ -61,6 +62,7 @@ test('navigation presses work inside static regions and release to their native 
   assert.equal(f.calls.length,0);
   f.send('pointerdown',button);
   assert.equal(f.calls[0].values.scale,.985);
+  assert.equal(f.calls[0].control.animations[0].startTime,100);
   f.send('pointerup',button,{},f.window);
   assert.equal(f.calls[1].values.scale,1);
   f.calls[1].control.finish();await Promise.resolve();await Promise.resolve();
