@@ -1,6 +1,6 @@
 @media (prefers-reduced-motion: no-preference) {
   :where(
-    .browse-loading-view .skeleton-block,
+    .browse-skeleton .skeleton-block,
     .browse-page .browse-cover[data-poster-loading] .browse-poster-link,
     .stats-loading-content :is(.overview-total-icon,.stats-loading-title,.stats-loading-label,.stats-loading-value,.stats-loading-rank,.stats-loading-control,.stats-loading-plot,.stats-genre-poster,.stats-actor-portrait),
     .media-detail :is(.detail-synopsis-skeleton,.media-person-art[data-cast-loading],.detail-person-skeleton > *, .detail-value-skeleton,.media-episode-loading > span,.game-section-skeleton span),
@@ -18,11 +18,11 @@
       inset:0;
       border-radius:inherit;
       pointer-events:none;
-      background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--text) 15%,transparent),transparent);
+      background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--text, currentColor) 23%,transparent),transparent);
       animation:
         skeleton-soft-sweep var(--sweep-pass) ease-in-out var(--sweep-start),
         skeleton-soft-sweep var(--sweep-pass) ease-in-out calc(var(--sweep-start) + var(--sweep-pass) + var(--sweep-pause));
-      transform:translateX(-100%);
+      opacity:0;
     }
   }
 
@@ -42,6 +42,7 @@
 }
 
 @keyframes skeleton-soft-sweep {
-  from { transform:translateX(-100%); }
-  to { transform:translateX(100%); }
+  from { transform:translateX(-50%); opacity:0; }
+  12%, 88% { opacity:1; }
+  to { transform:translateX(50%); opacity:0; }
 }
