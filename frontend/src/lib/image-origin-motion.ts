@@ -70,6 +70,7 @@ export function createImageOriginMotion(dialog:HTMLDialogElement,track:HTMLEleme
   },signal);
   const interrupt=()=>{if(!dialog.hasAttribute('data-motion-closing'))clear();};
   track.addEventListener('pointerdown',interrupt,{signal,passive:true});track.addEventListener('wheel',interrupt,{signal,passive:true});
+  dialog.querySelector<HTMLElement>('[data-image-viewer-slots]')?.addEventListener('click',interrupt,{signal,capture:true});
   dialog.addEventListener('keydown',event=>{if(event.key==='ArrowLeft'||event.key==='ArrowRight')interrupt();},{signal});
   dialog.querySelectorAll('[data-image-viewer-step]').forEach(button=>button.addEventListener('click',interrupt,{signal}));
   dialog.addEventListener('close',()=>{clear();const button=origin?.button;if(button?.isConnected)button.focus({preventScroll:true});},{signal});

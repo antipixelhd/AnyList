@@ -25,12 +25,13 @@ test('native animation completion is bounded and interruption cancels immediatel
 });
 
 test('adaptive fields pin once, replace interrupted height motion and restore native layout on close',async()=>{
- const f=motionFixture(),dialog=Object.assign(new EventTarget(),{open:true,style:f.style(),ownerDocument:{defaultView:f.view},getBoundingClientRect:()=>({top:120})});
+ let visualTop=120;
+ const f=motionFixture(),dialog=Object.assign(new EventTarget(),{open:true,style:f.style(),ownerDocument:{defaultView:f.view},getBoundingClientRect:()=>({top:visualTop})});
  const content={hidden:true,getBoundingClientRect:()=>({height:content.hidden?0:content.height}),height:80};
  const wrapper={hidden:true,style:f.style(),getBoundingClientRect:()=>({height:wrapper.hidden?0:parseFloat(wrapper.style.height)||content.height})};
  let resized;
  let stopped=false;
- const context={boundedAnimation:f.play,cancelUiMotion(){stopped=true;},ResizeObserver:class{constructor(cb){resized=cb;}observe(){}disconnect(){}},...{AbortController}};
+ const context={boundedAnimation:f.play,cancelUiMotion(){stopped=true;visualTop=90;},ResizeObserver:class{constructor(cb){resized=cb;}observe(){}disconnect(){}},...{AbortController}};
  runInNewContext(source('anchored-field-reveal')+';globalThis.create=createAnchoredFieldReveal;',context);
  const signal=new AbortController();const reveal=context.create(dialog,wrapper,content,signal.signal);
  reveal.change(()=>{content.hidden=false;},true);
@@ -40,12 +41,15 @@ test('adaptive fields pin once, replace interrupted height motion and restore na
  reveal.change(()=>{content.hidden=true;},true);const closing=f.calls.at(-1);closing.finish();await Promise.resolve();
  assert.equal(wrapper.hidden,true);assert.equal(wrapper.style.height,'');
  dialog.dispatchEvent(new Event('close'));assert.equal(dialog.style.marginTop,'');assert.equal(dialog.style.maxHeight,'');
+ const count=f.calls.length;f.reduced.matches=true;
+ reveal.change(()=>{content.hidden=false;},true);
+ assert.equal(f.calls.length,count);assert.equal(wrapper.hidden,false);assert.equal(wrapper.style.height,'');
  signal.abort();
 });
 
 function galleryFixture(){
  const f=motionFixture();const doc={defaultView:f.view,createElement(){return {className:'',style:f.style(),setAttribute(){},remove(){this.removed=true;},getBoundingClientRect(){return {left:20,top:30,width:100,height:150};}};}};
- const dialog=Object.assign(new EventTarget(),{open:true,style:f.style(),dataset:{},ownerDocument:doc,querySelectorAll:()=>[],append(node){this.bridge=node;},hasAttribute(name){return name==='data-motion-closing'?false:false;}});
+ const dialog=Object.assign(new EventTarget(),{open:true,style:f.style(),dataset:{},ownerDocument:doc,querySelectorAll:()=>[],querySelector:()=>null,append(node){this.bridge=node;},hasAttribute(name){return name==='data-motion-closing'?false:false;}});
  const track=Object.assign(new EventTarget(),{style:f.style()});
  const image={complete:true,naturalWidth:200,naturalHeight:300,currentSrc:'https://cdn.example/existing.jpg',src:'',isConnected:true,getBoundingClientRect:()=>({left:20,top:30,width:100,height:150})};
  const selected={...image,getBoundingClientRect:()=>({left:300,top:50,width:400,height:700})};

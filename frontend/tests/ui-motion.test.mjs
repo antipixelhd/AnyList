@@ -14,8 +14,8 @@ function fixture() {
     matchMedia: () => ({ matches: false }),
     createDropdownArrowMotion: () => ({ play: (...args) => rotations.push(args), cancel() {} }),
     animate: (element, values, timing) => {
-      const control = { stop() {}, cancel() {}, finished: new Promise(() => {}) };
-      animations.push({ element, values, timing });
+      const control = { stop() {this.stopped=true;}, cancel() {this.cancelled=true;}, finished: new Promise(() => {}) };
+      animations.push({ element, values, timing, control });
       return control;
     },
   };
@@ -37,6 +37,12 @@ test('initial menu visibility settles without scheduling an entrance animation',
   assert.equal(f.panel.inert, false);
   assert.equal(f.animations.length, 0);
   assert.equal(f.rotations[0][2].duration, 0);
+});
+
+test('replacing an entrance cancels it without committing an intermediate transform',()=>{
+  const f=fixture();f.showMenu(f.panel);f.showMenu(f.panel);
+  assert.equal(f.animations[0].control.cancelled,true);
+  assert.equal(f.animations[0].control.stopped,undefined);
 });
 
 test('user dropdown interactions share their slower duration with the arrow', () => {
