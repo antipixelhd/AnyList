@@ -1,8 +1,6 @@
-import {statuses} from './tracking-statuses.ts';
+import {categoryChoices,defaultGameCategories} from './list-categories.ts';
 
-/** Keep list groups and editor options in the same order across media domains. */
-export const gameStatuses = statuses.map(([value,label]):readonly [string,string] =>
-  value==='watching'?['playing','Playing']:value==='planning'?['planning','Planned']:[value,label]);
+export const gameStatuses = categoryChoices(defaultGameCategories());
 
 export function hoursInput(seconds:number|null|undefined):string {
   return seconds==null?'':Number((seconds/3600).toFixed(6)).toString();
@@ -43,7 +41,7 @@ export function gameDatePatch(current:Record<string,any>,status:string,dates:Rec
     if(dates[name]!== (current[name]||'')||touched.has(name))patch[name]=dates[name]||null;
   }
   if(status!==current.status) {
-    if(status==='playing'&&!current.start_date&&!('start_date' in patch))patch.start_date=today;
+    if(['playing','played'].includes(status)&&!current.start_date&&!('start_date' in patch))patch.start_date=today;
     if(status==='completed'&&!current.finish_date&&!('finish_date' in patch))patch.finish_date=today;
   }
   return patch;

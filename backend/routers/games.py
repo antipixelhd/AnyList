@@ -7,6 +7,7 @@ from sqlalchemy import case, func, literal, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core import game_tracking as tracking
+from core import list_categories
 from core.game_types import capabilities
 from core.game_access import approved_games_viewer
 from core.tracking_access import profile_access, profile_header
@@ -111,7 +112,8 @@ async def game_statistics(username:str,response:Response,db:DB,viewer:Reader,sec
     try:result=await read(db,user.id,section,sort=sort,page=page,generation=generation)
     except GameStatisticsChanged:raise HTTPException(409,'Game statistics changed. Refresh to continue.') from None
     return GameStatsResponse.model_validate({'profile':header,'owner':owner,'following':header['following'],
-        'follows_you':header['follows_you'],'combine_lists':header['combine_lists'],**result})
+        'follows_you':header['follows_you'],'combine_lists':header['combine_lists'],
+        'category_presentation':await list_categories.read(db,user.id),**result})
 
 
 @router.get('/works/{work_id}/offers')
@@ -638,13 +640,13 @@ async def game_list_index(username: str, db: DB, viewer: Viewer, response: Respo
         CatalogueEntity.attributes['genres'], favorite, members.c.base_work_id, title_order)
         .join(CatalogueEntity, CatalogueEntity.id == members.c.work_id).order_by(members.c.work_id).limit(limit + 1))).all()
     if len(rows) > limit:
-        return GameListIndexOut(complete=False)
+        return GameListIndexOut(complete=False, category_presentation=await list_categories.read(db,user.id))
     results=[]
     for id, title, status, score, seconds, updated, year, genres, fav, base, rank in rows:
         results.append((id, title, status, score, seconds, updated.isoformat() if updated else None,
             year if year and len(year)==4 and year.isdigit() else None,
             [genre for genre in genres if isinstance(genre,str)] if isinstance(genres,list) else [], bool(fav), base, rank))
-    return GameListIndexOut(complete=True, results=results)
+    return GameListIndexOut(complete=True, results=results, category_presentation=await list_categories.read(db,user.id))
 
 
 @router.get('/users/{username}/rows')
@@ -703,11 +705,12 @@ async def user_list(username: str, db: DB, viewer: Viewer,
     if grouped:
         filtered = query.with_only_columns(memberships.c.status).subquery()
         group_counts = dict((await db.execute(select(filtered.c.status, func.count()).group_by(filtered.c.status))).all())
-    group_order = case({name: index for index, name in enumerate(('playing','completed','paused','dropped','planning'))}, value=memberships.c.status, else_=5)
+    presentation = await list_categories.read(db, user.id, counts=status_counts)
+    group_order = case({category.id: index for index, category in enumerate(presentation.categories)}, value=memberships.c.status, else_=6)
     ordered = query.order_by(*([group_order] if grouped else []), ordering, memberships.c.work_id)
     ids = list((await db.scalars(ordered if complete else ordered.offset(offset).limit(limit))).all())
     rows = {r.subject.catalogue_id: r for r in await tracking.states(db, user.id, ids, owner=owner)}
-    return GameListOut(results=[rows[i] for i in ids], total=total, offset=0 if complete else offset, limit=total if complete else limit,
+    return GameListOut(category_presentation=presentation, results=[rows[i] for i in ids], total=total, offset=0 if complete else offset, limit=total if complete else limit,
         profile=GameListProfile.model_validate(await profile_header(db, user, owner, viewer)),
         status_counts=status_counts, group_counts=group_counts, genres=genres, years=years)
 

@@ -236,7 +236,7 @@ async def apply_games(db, state, library, selected, *, initial=False, add_apps=N
             if status_game['app_id'] in (ratings or {}):
                 entry.score = ratings[status_game['app_id']]
             status_games = [game for game in games if (statuses or {}).get(game['app_id'], initial_status) == entry.status]
-            if entry.status=='playing':
+            if entry.status in {'playing', 'played'}:
                 dates=[value for game in status_games if (value:=(start_dates or {}).get(game['app_id'])) is not None]
                 entry.start_date=min(dates) if dates else None
             if entry.status == 'completed':
@@ -293,6 +293,8 @@ async def apply_games(db, state, library, selected, *, initial=False, add_apps=N
                 **({'achievement_count': game['achievement_count']} if state.sync_achievements and game.get('achievement_count') is not None else {}),
                 **({'achievement_checked_at': game['achievement_checked_at']} if game.get('achievement_checked_at') else {})}
     state.checkpoints = checkpoints
+    from core.list_categories import restore_populated
+    await restore_populated(db, state.user_id)
     return changed
 
 
@@ -301,7 +303,6 @@ def achievement_due(row, prior, stamp):
     return (row['playtime_minutes'] != prior.get('observed_playtime_minutes')
             or row.get('last_played') is not None and row['last_played'] != prior.get('last_played')
             or not checked or datetime.fromisoformat(checked) <= stamp - timedelta(days=1))
-
 
 async def run_steam_sync(user_id, job_id, _a=0, _b=0, connection_id=None):
     from db import AsyncSessionLocal

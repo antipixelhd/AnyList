@@ -37,6 +37,7 @@ function setup(){
   const invalidate=()=>{generation++;for(const [key,panel] of panels)if(!panel.ready)panels.delete(key);};
   document.addEventListener('anylist:editor-state',invalidate,{signal});
   document.addEventListener('anylist:cache-invalidated',invalidate,{signal});
+  document.addEventListener('anylist:game-categories',()=>{generation++;for(const [key,panel] of panels)if(panel.root!==shown){panels.delete(key);positions.delete(key);}},{signal});
   const first=document.createElement('div');first.dataset.profileUrl=location.href;
   for(const child of [...host.childNodes])if(child!==header&&child!==nav)first.append(child);
   const stage=document.createElement('div');stage.dataset.profilePanels='';host.append(stage);stage.append(first);

@@ -24,12 +24,29 @@ from models import Media, User, UserSettings, UserProfileData, Follow, Rating, S
 from models.base import MediaType, PrivacyLevel
 from models.tracking import MediaFavorite, TrackedEntry, TrackingActivity, TrackingDeliveryJob, TrackingDeletion, TrackingPreferences, SyncReview, StreamBaseline, ProviderIgnore, ProviderMatch, StreamAction, CloudAction
 from models.sync import SyncJob, SyncStatus
+from schemas_list_categories import CategoryPatch, CategoryPresentation
 from schemas_statistics import MediaScope, OverviewResponse, StudioDetail, PersonDetail, StatisticsRefresh
 from schemas_contributors import ContributorKind, ContributorMediaScope, ContributorPage, ContributorImages, ContributorAvailability, ListScope
 
 from core.tracking_access import catalog_access, profile_access, anime_is_visible
 
 router = APIRouter()
+CategoryDB = Annotated[AsyncSession, Depends(get_db)]
+CategoryViewer = Annotated[User, Depends(get_current_user)]
+
+
+@router.get('/list-categories/game')
+async def game_categories(db: CategoryDB, viewer: CategoryViewer, response: Response) -> CategoryPresentation:
+    from core import list_categories
+    response.headers['Cache-Control'] = 'private, no-store'
+    return await list_categories.read(db, viewer.id, counts=await list_categories.membership_counts(db, viewer.id))
+
+
+@router.patch('/list-categories/game')
+async def update_game_categories(body: CategoryPatch, db: CategoryDB, viewer: CategoryViewer, response: Response) -> CategoryPresentation:
+    from core import list_categories
+    response.headers['Cache-Control'] = 'private, no-store'
+    return await list_categories.save(db, viewer.id, body)
 
 
 @router.delete('/entry/{media_id}')
@@ -124,11 +141,13 @@ class PreferencePatch(BaseModel):
 
 @router.get('/preferences')
 async def preferences(db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
+    from core.list_categories import resolve
     from core.game_browse_policy import preferences as game_preferences
     row=await db.get(TrackingPreferences,viewer.id)
     from models.users import UserSettings
     settings=await db.scalar(select(UserSettings).where(UserSettings.user_id == viewer.id))
     return {
+        'list_categories': {'game': resolve(preferences=settings.preferences if settings else None)},
         **game_preferences(settings.preferences if settings else None),
         'minimum_popularity': (settings.preferences or {}).get('minimum_popularity', 25) if settings else 25,
         'include_rereleases': bool(settings and (settings.preferences or {}).get('include_rereleases', False)),
@@ -1002,7 +1021,7 @@ async def contributor_details(
     viewer: Annotated[User, Depends(get_current_user_or_api_key)],
     media_type: ContributorMediaScope = 'all',
     list_scope: ListScope = 'all',
-    status: Literal['', 'watching', 'playing', 'completed', 'planning', 'paused', 'dropped'] = '',
+    status: Literal['', 'watching', 'playing', 'played', 'completed', 'planning', 'paused', 'dropped'] = '',
     page: Annotated[int, Query(ge=1, le=500)] = 1,
     cursor: Annotated[str | None, Query(max_length=400)] = None,
     source: Literal['', 'local', 'provider'] = '',

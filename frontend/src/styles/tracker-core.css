@@ -206,7 +206,8 @@ button:disabled {
   background:var(--panel);
   color:var(--bright)
 }
-.status-filters button span {
+.status-filters button [data-list-status-count],
+.status-filters button .pending-list-count {
   float:right;
   color:var(--muted);
   font-size:var(--type-meta-size)

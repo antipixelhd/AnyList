@@ -1,8 +1,8 @@
+import {gameCategoryName} from './game-category-store.ts';
 import {editorStore,type EditorTitle} from './editor-store';
 import {mountDetailsMotion} from './content-motion';
 import {responsiveArtwork} from './responsive-artwork';
 import {formatDate} from './date-time';
-import {gameStatuses} from './game-editor-data';
 import {scoreLabel} from './tracker';
 
 export function mountDetailDlc(root:HTMLElement,id:number,signal:AbortSignal){
@@ -18,7 +18,7 @@ export function mountDetailDlc(root:HTMLElement,id:number,signal:AbortSignal){
     card.title=title;
     const state=title.entry||(title.game_class==='expansion'?null:title.game_state);
     const adding=title.game_class==='expansion'&&!state;
-    card.button.textContent=adding?'Add to list':state?.status?gameStatuses.find(([value])=>value===state.status)?.[1]||'Edit':'Edit';
+    card.button.textContent=adding?'Add to list':state?.status?gameCategoryName(state.status)||'Edit':'Edit';
     card.button.setAttribute('aria-label',`${adding?'Add to list:':'Edit'} ${title.title}`);
     card.score.hidden=!state;
     card.score.textContent=scoreLabel(state?.score??null);

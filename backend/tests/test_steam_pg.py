@@ -767,3 +767,21 @@ class SteamDatabaseTests(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as db:
             state = (await game_tracking.states(db, self.user.id, [self.base]))[0]
             self.assertEqual((state.achievements.count, state.achievements.total, state.achievements.percentage), (1, 2, 50))
+
+    async def test_played_import_restores_hidden_category_without_completion_date(self):
+        from core import list_categories
+        from schemas_list_categories import CategoryPatch
+        await self.connect()
+        async with self.Session() as db:
+            await list_categories.save(db,self.user.id,CategoryPatch(revision=0,hidden=['played']))
+        response=await self.client.post(f'/connections/steam/{self.id}/import',json={
+            'generation':1,'selected_apps':['1245620'],'statuses':{'1245620':'played'},
+            'start_dates':{'1245620':'2020-01-01'}})
+        self.assertEqual(response.status_code,200,response.text)
+        async with self.Session() as db:
+            entry=await db.scalar(select(GameEntry).where(GameEntry.user_id==self.user.id))
+            self.assertEqual(entry.status,'played')
+            self.assertEqual(entry.start_date,date(2020,1,1))
+            self.assertIsNone(entry.finish_date)
+            presentation=await list_categories.read(db,self.user.id)
+            self.assertFalse(next(row for row in presentation.categories if row.id=='played').hidden)

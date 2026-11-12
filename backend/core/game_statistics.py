@@ -11,7 +11,7 @@ from sqlalchemy.orm import defer
 from core.game_statistics_facts import load_facts,build_statistics
 from models.game_statistics import GameStatsState
 
-CONTRACT=4
+CONTRACT=5
 SECTIONS=('overview','genres','developers','publishers','actors','staff')
 log=logging.getLogger(__name__)
 

@@ -1,3 +1,4 @@
+import type {CategoryPresentation} from './list-categories.ts';
 import type {ProfileStats} from './profile-stats-data';
 import type {MetricGroup,StudioGroup,StaffGroup} from './stats-overview-data';
 import {displayNumber} from './stats-overview-data.ts';
@@ -22,6 +23,7 @@ export interface GameOverview {
   coverage:Record<string,number>;
 }
 export interface GameStatsResponse {
+  category_presentation?:CategoryPresentation;
   profile:ProfileStats['profile'];owner:boolean;following:boolean;follows_you:boolean;combine_lists:boolean;domain:'game';
   section:GameStatsSection;status:'ready'|'pending'|'error';generation:number|null;computed_at:string|null;refreshing:boolean;
   data:GameOverview|GameStatsGroup[]|null;page:number;total:number|null;has_more:boolean;retry_after?:number;
