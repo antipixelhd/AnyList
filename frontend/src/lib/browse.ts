@@ -436,9 +436,9 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       root.dataset.browseView = view;
       grid.className = view === 'timeline' ? 'browse-timeline' : 'browse-grid';
       notice.textContent = "";
-      loadingView.show(false, categoryView, field('view').value==='timeline');
-    } else if (!field('q').value.trim()) {
-      loadingView.show(true, false, field('view').value==='timeline');
+      loadingView.show("replace", categoryView, field('view').value==='timeline');
+    } else {
+      loadingView.show("append", false, field('view').value==='timeline');
     }
     paintChips();
     try {

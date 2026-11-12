@@ -282,7 +282,7 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
       setBrowsePanelUrl(root,gameBrowseHref(current));
       grid.hidden=!(payload.verification_pending&&activeValues===current.toString());sections.hidden=true;
       if(config.category){sections.hidden=false;loadingView.finish();}
-      else loadingView.show(false,false,config.timeline);
+      else if(grid.hidden) loadingView.show("replace",false,config.timeline);
     }
     region.setAttribute('aria-busy',String(!config.category));footer();
     if(delay){await new Promise<void>(resolve=>{const finish=()=>{clearTimeout(timer);currentRequest.signal.removeEventListener('abort',finish);resolve();};timer=setTimeout(finish,delay);currentRequest.signal.addEventListener('abort',finish,{once:true});});}

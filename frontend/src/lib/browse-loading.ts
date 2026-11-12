@@ -135,10 +135,8 @@ export function createBrowseLoading(region: HTMLElement, skeleton: HTMLElement) 
   let active = [grid, sections, timeline].find(view => !view.hidden) ?? grid;
   let timing = skeleton.hidden ? undefined : trackBrowseSkeleton(active);
   return {
-    show(append = false, categories = false, timelineView = false) {
-      const hasCards = [...region.querySelectorAll<HTMLElement>("[data-browse-card]")]
-        .some((card) => card.getClientRects().length > 0);
-      if (!append && hasCards) return;
+    show(mode: "replace" | "append", categories = false, timelineView = false) {
+      const append = mode === "append";
       const destination = timelineView ? timeline : categories && !append ? sections : grid;
       if (active !== destination) this.finish();
       active = destination;

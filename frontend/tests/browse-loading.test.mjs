@@ -17,34 +17,29 @@ function view(visibleCards) {
 test('timeline loading and pagination use timeline slots, and switching views restores grid slots',()=>{
   const v=view([]);
   for(const append of [false,true]){
-    v.loading.show(append,false,true);
+    v.loading.show(append ? "append" : "replace",false,true);
     assert.equal(v.skeletonTimeline.hidden,false);
     assert.equal(v.skeletonGrid.hidden,true);
     assert.equal(v.skeletonSections.hidden,true);
     v.loading.finish();
   }
-  v.loading.show();
+  v.loading.show("replace");
   assert.equal(v.skeletonTimeline.hidden,true);
   assert.equal(v.skeletonGrid.hidden,false);
 });
 
-test("category and grid refreshes keep existing cards visible without skeletons", () => {
-  for (const count of [24, 30]) {
-    const v = view(Array(count).fill(true));
-    const cards = v.region.querySelectorAll();
-    v.loading.show();
-    assert.equal(v.region.dataset.browseLoading, undefined);
-    assert.equal(v.skeleton.hidden, true);
-    assert.equal(v.region.querySelectorAll(), cards);
-    v.loading.finish();
-    assert.equal(v.region.dataset.browseLoading, undefined);
-    assert.equal(v.skeleton.hidden, true);
-  }
+test("a replacement always opens its skeleton even if old cards still have layout boxes", () => {
+  const v = view([true]);
+  v.loading.show("replace");
+  assert.equal(v.region.dataset.browseLoading, "empty");
+  assert.equal(v.skeleton.hidden, false);
+  v.loading.finish();
+  assert.equal(v.skeleton.hidden, true);
 });
 
 test("replacing a pending view releases its skeleton synchronously", () => {
   const v = view([]);
-  v.loading.show();
+  v.loading.show("replace");
   assert.equal(v.skeleton.hidden, false);
   v.loading.finish();
   assert.equal(v.skeleton.hidden, true);
@@ -52,14 +47,14 @@ test("replacing a pending view releases its skeleton synchronously", () => {
 });
 test("category discovery uses section slots; filtered results and pagination use grid slots", () => {
   const v = view([]);
-  v.loading.show(false, true);
+  v.loading.show("replace", true);
   assert.equal(v.skeletonGrid.hidden, true);
   assert.equal(v.skeletonSections.hidden, false);
-  v.loading.show(false, false);
+  v.loading.show("replace", false);
   assert.equal(v.skeletonGrid.hidden, false);
   assert.equal(v.skeletonSections.hidden, true);
   v.loading.finish();
-  v.loading.show(true, true);
+  v.loading.show("append", true);
   assert.equal(v.skeletonGrid.hidden, false);
   assert.equal(v.skeletonSections.hidden, true);
 });
@@ -207,7 +202,7 @@ test("loaded posters reveal immediately and stalled posters recover", t => {
 
 test("loading more keeps existing cards readable and shows the appended skeleton grid", () => {
   const v = view([true]);
-  v.loading.show(true);
+  v.loading.show("append");
   assert.equal(v.region.dataset.browseLoading, "append");
   assert.equal(v.skeleton.hidden, false);
   v.loading.finish();
@@ -229,7 +224,7 @@ test("navigation removes pending artwork state and prevents a late poster fade",
 test("empty results use fallback skeletons without counting hidden cards from the other view", () => {
   for (const visible of [[], [false, false]]) {
     const v = view(visible);
-    v.loading.show();
+    v.loading.show("replace");
     assert.equal(v.region.dataset.browseLoading, "empty");
     assert.equal(v.skeleton.hidden, false);
     v.loading.finish();
