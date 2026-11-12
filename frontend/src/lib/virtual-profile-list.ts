@@ -1,3 +1,5 @@
+import {type CategoryPresentation} from './list-categories.ts';
+import {acceptGameCategories} from './game-category-store.ts';
 import {initializeEntryAnnotations} from './entry-annotations';
 import {editorStore,type EditorTitle} from './editor-store';
 import {ProfileListIndex,entryId,type ListIndexResponse,type ListState} from './profile-list-index';
@@ -8,7 +10,7 @@ import {profileListPageSize,profileListPages,ProfileListGeometry} from './profil
 import {panelActive,panelUrl,setPanelUrl} from './profile-panel';
 import {listEditorArtwork} from './list-editor-artwork';
 
-type Page={offset:number;total:number;results:Record<string,any>[];group_counts:Record<string,number>;status_counts:Record<string,number>;genres:string[];years:string[]};
+type Page={category_presentation?:CategoryPresentation;offset:number;total:number;results:Record<string,any>[];group_counts:Record<string,number>;status_counts:Record<string,number>;genres:string[];years:string[]};
 const stateLimit=10_000;
 const stateTextBudget=4*1024*1024;
 const rowNodeLimit=450;
@@ -36,7 +38,7 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
   const form=filters.querySelector<HTMLFormElement>('[data-list-filter-form]')!;
   const field=(name:string)=>form.elements.namedItem(name) as HTMLInputElement;
   const defaultSort=filters.querySelector<HTMLButtonElement>('#reset-filters')!.dataset.defaultSort||'title';
-  const groups=[...root.querySelectorAll<HTMLElement>('[data-list-window]')];
+  let groups=[...root.querySelectorAll<HTMLElement>('[data-list-window]')];
   let total=Number(root.dataset.listTotal),counts=JSON.parse(root.dataset.listCounts||'{}') as Record<string,number>;
   let query=profileListQuery(new URL(panelUrl(panel)).searchParams,adapter.statuses,defaultSort);
   let epoch=0,frame=0,searchTimer:ReturnType<typeof setTimeout>|undefined,retryTimer:ReturnType<typeof setTimeout>|undefined;
@@ -143,6 +145,7 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
         if(!response.ok){recoverable=![401,403].includes(response.status);throw new Error('List read failed');}
         const data:Page=await response.json();
         if(signal.aborted||version!==epoch)return;
+        if(data.category_presentation&&data.category_presentation.revision!==presentationRevision){applyPresentation(data.category_presentation);return;}
         if(data.offset!==offset)throw new Error('Unexpected list page');
         data.results.forEach(rememberRead);
         pages.set(offset,data.results.map(state=>entryId(state)));
@@ -244,6 +247,7 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
       const snapshot:ListIndexResponse=await response.json();
       if(signal.aborted||controller.signal.aborted||version!==writeVersion||editorStore.hasPendingWrites())return;
       if(!snapshot.complete){indexDisabled=true;return;}
+      if(snapshot.category_presentation&&snapshot.category_presentation.revision!==presentationRevision){applyPresentation(snapshot.category_presentation);return;}
       index.publish(snapshot);if(index.select(query))reset(true);
     }catch{/* Optional warming never blocks the usable server-backed list. */}
     finally{if(warming===controller)warming=undefined;queueWarm();}
@@ -263,9 +267,51 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
     root.dataset.status=query.get('status')||'';root.dataset.sort=query.get('sort')||'title';root.dataset.favorites=String(query.has('favorites'));
     const url=new URL(panelUrl(panel));url.search=query.toString();setPanelUrl(panel,url);reset();
   }
+  let presentationRevision = Number(JSON.parse(root.dataset.categoryPresentation || 'null')?.revision || 0);
+  function applyPresentation(presentation: CategoryPresentation) {
+    if (presentation.revision <= presentationRevision) return;
+    const visibleAnchor = [...root.querySelectorAll<HTMLElement>('[data-list-entry]')]
+      .find(row => row.getBoundingClientRect().bottom > 0);
+    const anchorTop = visibleAnchor?.getBoundingClientRect().top;
+    presentationRevision = presentation.revision;
+    root.dataset.categoryPresentation = JSON.stringify(presentation);
+    adapter.statuses = presentation.categories.map(category => [category.id, category.label] as const);
+    index.setOrder(adapter.statuses);
+    const statusFilters = root.querySelector('.status-filters')!;
+    const sections = root.querySelector('[data-game-groups]');
+    for (const category of presentation.categories) {
+      const button = statusFilters.querySelector<HTMLElement>(`[data-status="${category.id}"]`);
+      if (button) {
+        button.hidden = category.hidden;
+        button.querySelector('[data-category-filter-label]')!.textContent = category.label;
+        statusFilters.append(button);
+      }
+      const section = sections?.querySelector<HTMLElement>(`[data-list-group="${category.id}"]`);
+      if (section) {
+        section.querySelector('h2')!.textContent = category.label;
+        sections!.append(section);
+      }
+    }
+    groups = [...root.querySelectorAll<HTMLElement>('[data-list-window]')];
+    if (owner) acceptGameCategories(presentation);
+    if (presentation.categories.some(category => category.hidden && category.id === field('status').value)) {
+      field('status').value = '';
+      submit();
+    } else reset(true);
+    requestAnimationFrame(() => {
+      if (visibleAnchor?.isConnected && anchorTop !== undefined) {
+        window.scrollBy(0, visibleAnchor.getBoundingClientRect().top - anchorTop);
+      }
+    });
+  }
+  document.addEventListener('anylist:game-categories', event => {
+    if (owner && root.dataset.listDomain === 'game') {
+      applyPresentation((event as CustomEvent<CategoryPresentation>).detail);
+    }
+  }, {signal});
   form.addEventListener('submit',event=>{event.preventDefault();submit();},{signal});
   filters.querySelectorAll<HTMLButtonElement>('[data-status]').forEach(button=>button.addEventListener('click',()=>{field('status').value=button.dataset.status==='all'?'':button.dataset.status!;submit();},{signal}));
-  form.addEventListener('input',event=>{const input=event.target as HTMLInputElement;if(input.id==='year-filter')return;clearTimeout(searchTimer);if(input.name==='q')searchTimer=setTimeout(submit,250);else submit();},{signal});
+  form.addEventListener('input',event=>{if((event.target as Element).closest('[data-category-editor]'))return;const input=event.target as HTMLInputElement;if(input.id==='year-filter')return;clearTimeout(searchTimer);if(input.name==='q')searchTimer=setTimeout(submit,250);else submit();},{signal});
   filters.querySelector('#year-filter')!.addEventListener('change',submit,{signal});
   filters.querySelector('#reset-filters')!.addEventListener('click',()=>{for(const name of ['q','genre','favorites','status','year'])field(name).value='';filters.querySelector<HTMLInputElement>('#year-filter')!.value='0';field('sort').value=defaultSort;submit();},{signal});
   window.addEventListener('scroll',()=>{const now=performance.now();ahead=Math.min(16000,Math.max(3200,Math.abs(scrollY-previousY)/Math.max(1,now-previousTime)*700));previousY=scrollY;previousTime=now;schedule();},{signal,passive:true});

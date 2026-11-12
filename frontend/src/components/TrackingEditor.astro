@@ -20,7 +20,7 @@ import EditorSelect from './EditorSelect.astro';
   </div>
   <form id="tracking-form">
     <div class="editor-fields">
-      <div class="editor-status-field"><label id="editor-status-label" for="editor-status-trigger">Status</label><EditorSelect id="editor-status" name="status" label="Status" labelledBy="editor-status-label" options={statuses} value="watching"/></div>
+      <div class="editor-status-field"><div class="game-field-heading"><label id="editor-status-label" for="editor-status-trigger">Status</label><button type="button" class="editor-icon-button" data-game-category-info data-game-only hidden aria-label="Game category meanings"><Icon name="info"/></button></div><EditorSelect id="editor-status" name="status" label="Status" labelledBy="editor-status-label" options={statuses} value="watching"/></div>
       <div class="editor-score-field"><label for="editor-manual-score">Score</label><NumberStepper id="editor-manual-score" name="manual_score" label="Score" min={0} max={10} step={0.1} value={0} score/></div>
       <div id="progress-field" class="editor-number-field"><label for="editor-progress">Episode progress</label><NumberStepper id="editor-progress" name="progress" label="Episode progress"/></div>
       <div class="editor-number-field" data-game-only data-game-main hidden><div class="game-field-heading"><label for="game-total-hours">Total time (hours)</label><button type="button" class="game-steam-sync" data-game-steam-playtime hidden><Icon name="shuffle" /></button></div><NumberStepper id="game-total-hours" name="game_total_hours" label="Total time in hours" step="any"/>
@@ -72,7 +72,8 @@ import {showActionFailure} from '../lib/action-failure';
 import {markFailureHandled} from '../lib/handled-failures';
 import {createGameEditor} from '../lib/game-editor';
 import {setupEditorSelect} from '../lib/editor-select';
-import {gameDatePatch,gameStatuses} from '../lib/game-editor-data';
+import {gameDatePatch} from '../lib/game-editor-data';
+import {gameCategoryChoices,showCategoryInfo} from '../lib/game-category-store.ts';
 import {localToday} from '../lib/date-time';
 import {dismissPosterControls} from '../lib/poster-controls';
 import {confirmEntryAction as confirmAction,watchRollbackWarning} from '../lib/entry-confirmation';
@@ -116,12 +117,14 @@ document.addEventListener('astro:page-load', () => {
   const originalStatuses=[...statusSelect.options].map(option=>({value:option.value,label:option.text}));
   const statusControl=setupEditorSelect(statusSelect.closest<HTMLElement>('[data-editor-select]')!,sessionSignal);
   const statusDomain=(game:boolean)=>{
-    [...statusSelect.options].forEach((option,index)=>{
-      const original=originalStatuses[index];option.value=game&&original.value==='watching'?'playing':original.value;
-      option.textContent=game?gameStatuses.find(([id])=>id===option.value)?.[1]||original.label:original.label;
-    });
+    const currentValue=statusSelect.value;
+    const choices=game?gameCategoryChoices(current?.revision!=null?current.status:undefined):originalStatuses.map(option=>[option.value,option.label]);
+    statusSelect.replaceChildren(...choices.map(([value,label])=>new Option(label,value)));
+    statusSelect.value=game&&currentValue==='watching'?'playing':currentValue;
     statusControl.sync();
   };
+  dialog.querySelector<HTMLElement>('[data-game-category-info]')!.addEventListener('click',event=>showCategoryInfo(event.currentTarget as HTMLElement),{signal:sessionSignal});
+  document.addEventListener('anylist:game-categories',()=>{if(currentTitle?.type==='game')statusDomain(true);},{signal:sessionSignal});
   const closeStatus = statusControl.close;
   const syncStatus = () => {
     statusControl.sync();
@@ -145,10 +148,10 @@ document.addEventListener('astro:page-load', () => {
     const entry = title.entry;
     const game=title.type==='game',child=game&&['expansion','dlc'].includes(title.game_class||'');
     dialog.dataset.editorDomain=game?'game':'movies-series';
-    statusDomain(game);
     currentTitle = title;
     current = {id:title.id, type:title.type, status:'planning', ...(game?title.game_state||entry:entry)||{progress:0,rating_mode:'manual',manual_score:null}};
     current.status ||= 'planning';
+    statusDomain(game);
     document.querySelector<HTMLButtonElement>('#delete-tracked-entry')!.hidden = game?!current.listed:!entry;
     document.querySelector<HTMLButtonElement>('#delete-tracked-entry')!.disabled = false;
     document.querySelector('#editor-title')!.textContent = title.title;
@@ -371,6 +374,12 @@ document.addEventListener('astro:page-load', () => {
     event.preventDefault(); if (!current) return;
     error.hidden = true;
     const status = field('status').value;
+    if(currentTitle?.type==='game'&&!status){
+      error.textContent='Choose a status.';
+      error.hidden=false;
+      document.querySelector<HTMLButtonElement>('#editor-status-trigger')!.focus();
+      return;
+    }
     if(currentTitle?.type==='game') {
       const editing=currentTitle,child=['expansion','dlc'].includes(editing.game_class||'');
       const previous=structuredClone(editing),previousOpener=opener,restoreGameFields=gameFields.snapshot();

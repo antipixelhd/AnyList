@@ -4,7 +4,8 @@ import Tracker from '../../../layouts/Tracker.astro';
 import ProfileHeader from '../../../components/ProfileHeader.astro';
 import ProfileListFilters from '../../../components/ProfileListFilters.astro';
 import {tracker,trackerFailure} from '../../../lib/tracker';
-import {gameStatuses} from '../../../lib/game-editor-data';
+import {categoryChoices,defaultGameCategories} from '../../../lib/list-categories.ts';
+const gameStatuses=categoryChoices(defaultGameCategories());
 import {gameListQuery} from '../../../lib/game-list-data';
 import {viewerMediaPreferences} from '../../../lib/viewer-media-preferences';
 import '../../../styles/game-list.css';
@@ -16,18 +17,21 @@ let data:any=null,error='';
 try{data=await tracker(`games/users/${encodeURIComponent(Astro.params.username!)}/list?${request}`,Astro.locals.token);}
 catch(cause){const failure=trackerFailure(cause);error=failure.message;Astro.response.status=failure.status;}
 const entries=data?.results||[],owner=data?.profile?.owner===true;
+const categoryPresentation=data?.category_presentation||defaultGameCategories();
+const categories=categoryPresentation.categories;
+const resolvedStatuses=categories.map((category:any)=>[category.id,category.label] as const);
 const showAchievements=preferences.show_game_achievements;
 ---
 <Tracker title={`${data?.profile?.display_name||Astro.params.username}'s Games List`} listLanding={!!data} ownerProfileColor={data?.profile?.profile_color} ownerIsViewer={owner}>
   {data?<>
     <ProfileHeader profile={data.profile} active="games"/>
-    <div class="list-shell game-list-shell" data-virtual-list data-list-domain="game" data-list-endpoint={`games/users/${encodeURIComponent(Astro.params.username!)}`} data-list-total={data.total} data-list-counts={JSON.stringify(data.group_counts)} data-owner={String(owner)} data-show-achievements={String(showAchievements)} data-status={query.get('status')||''} data-favorites={String(query.has('favorites'))} data-sort={query.get('sort')} data-status-counts={JSON.stringify(data.status_counts)}>
-      <ProfileListFilters statuses={gameStatuses} counts={data.status_counts} genres={data.genres} years={data.years} status={query.get('status')||'all'} sort={query.get('sort')||'title'} defaultSort={preferences.default_sort} query={query.get('q')||''} genre={query.get('genre')||''} year={query.get('year')||''} favorites={query.has('favorites')} progressLabel="Hours"/>
+    <div class="list-shell game-list-shell" data-category-presentation={JSON.stringify(categoryPresentation)} data-virtual-list data-list-domain="game" data-list-endpoint={`games/users/${encodeURIComponent(Astro.params.username!)}`} data-list-total={data.total} data-list-counts={JSON.stringify(data.group_counts)} data-owner={String(owner)} data-show-achievements={String(showAchievements)} data-status={query.get('status')||''} data-favorites={String(query.has('favorites'))} data-sort={query.get('sort')} data-status-counts={JSON.stringify(data.status_counts)}>
+      <ProfileListFilters categoryPresentation={categoryPresentation} categoryOwner={owner} statuses={resolvedStatuses} counts={data.status_counts} genres={data.genres} years={data.years} status={query.get('status')||'all'} sort={query.get('sort')||'title'} defaultSort={preferences.default_sort} query={query.get('q')||''} genre={query.get('genre')||''} year={query.get('year')||''} favorites={query.has('favorites')} progressLabel="Hours"/>
 
       <div class="list-content">
         <div class="list-toolbar"><span class="sr-only" aria-live="polite">{`${data.total} entries`}</span></div>
         <div id="entry-groups" class="game-entry-groups" data-game-groups>
-          {gameStatuses.map(([status,label])=>{const rows=entries.filter((entry:any)=>entry.status===status);return <section class="status-section" data-list-group={status} hidden={!data.group_counts[status]}><h2>{label}</h2><div class="entry-table">
+          {resolvedStatuses.map(([status,label]:readonly [string,string])=>{const rows=entries.filter((entry:any)=>entry.status===status);return <section class="status-section" data-list-group={status} hidden={!data.group_counts[status]}><h2>{label}</h2><div class="entry-table">
             <div class="entry-head"><span class="entry-cover-column" aria-hidden="true"></span><span class="entry-title-column">Title</span><span>Score</span><span class="game-hours-column">Hours</span>{showAchievements&&<span class="game-achievements-column">Achievements</span>}</div>
             <div data-list-window={status} style={`--list-rows:${data.group_counts[status]||0}`}><GameListRows entries={rows} {owner} {showAchievements}/></div>
           </div></section>})}

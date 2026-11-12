@@ -1,3 +1,5 @@
+import {gameStatisticsView} from './unified-statistics-data';
+import type {CategoryPresentation} from './list-categories.ts';
 import {gameHeadlines,signedNumber,type GameOverview,type GameStatsResponse} from './game-statistics-data';
 import {statisticsSection,statisticsPanel,type StatisticsDomain,type UnifiedStatistics} from './unified-statistics-data';
 import {createStatisticsReader,type StatisticsSelection} from './unified-statistics-request';
@@ -79,7 +81,7 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
     return result;
   };
   const categoryColor = (key: string) => {
-    const fixed: Record<string, string> = { movie: color('--stats-cyan'), series: '#b77bdc', watching: color('--stats-cyan'), completed: '#45a987', paused: '#ed984e', dropped: '#d94d5b', planning: '#65788e', Unknown: '#65788e', US: color('--stats-cyan'), JP: '#b77bdc', GB: '#45a987' };
+    const fixed: Record<string, string> = { movie: color('--stats-cyan'), series: '#b77bdc', watching: color('--stats-cyan'), completed: '#45a987', played: '#b77bdc', playing: color('--stats-cyan'), paused: '#ed984e', dropped: '#d94d5b', planning: '#65788e', Unknown: '#65788e', US: color('--stats-cyan'), JP: '#b77bdc', GB: '#45a987' };
     const palette = ['#3b8ebf', '#b77bdc', '#45a987', '#ed984e', '#d94d5b', '#5986cb', '#b48d42', '#679e9d'];
     return fixed[key] || palette[([...key].reduce((sum, letter) => sum * 31 + letter.charCodeAt(0), 0) >>> 0) % palette.length];
   };
@@ -172,7 +174,7 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
     viewport.update(`${data.media_type}:${rows.map(row=>row.key).join(',')}`);
   }
   function drawDistribution(data: Overview, key: 'statuses' | 'formats' | 'countries', initial = false) {
-    const rows = distributionRows(data, key);
+    const rows = distributionRows(data, key).map(row=>domain==='game'&&key==='statuses'?{...row,label:data.statuses.find(status=>status.key===row.key)?.label||row.label}:row);
     const labels = rows.map(row => row.label);
     const values = rows.map(row => row.share ?? row.titles);
     const colors = rows.map(row => categoryColor(row.key));
@@ -458,6 +460,12 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
   // saved choices restored during client-side navigation. Repaint canvases too.
   observer.observe(document.body, { attributes: true, attributeFilter: ['style'] });
   let dirty=false;
+  document.addEventListener('anylist:game-categories',event=>{
+    const game=rawGame();if(!game||!game.owner)return;
+    game.category_presentation=(event as CustomEvent<CategoryPresentation>).detail;
+    const updated=gameStatisticsView(game);
+    if(domain==='game'&&updated.overview&&section==='overview'){response=updated;drawDistribution(updated.overview,'statuses',true);}
+  },{signal:events.signal});
   root.closest('[data-profile-url]')?.addEventListener('anylist:panel-inactive',()=>clearTimeout(timer),{signal:events.signal});
   const refresh=()=>{page=1;loader.clear();if(panelActive(root)){dirty=false;void loader.load(media);}else dirty=true;};
   root.closest('[data-profile-url]')?.addEventListener('anylist:panel-active',()=>{if(dirty||response.status!=='ready')refresh();else if(response.overview)render(response,true);},{signal:events.signal});

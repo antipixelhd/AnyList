@@ -185,7 +185,7 @@ def apply_common(row, patch, previous_status):
             setattr(row, name, getattr(patch, name))
     # Explicit null dates denote unknown historical dates and suppress defaults.
     if row.status != previous_status:
-        if row.status == 'playing' and row.start_date is None and 'start_date' not in fields:
+        if row.status in {'playing', 'played'} and row.start_date is None and 'start_date' not in fields:
             row.start_date = date.today()
         if row.status == 'completed' and row.finish_date is None and 'finish_date' not in fields:
             row.finish_date = date.today()
@@ -310,6 +310,8 @@ async def save_entry(db, user_id, work_id, patch):
             raise HTTPException(422, 'favorite cannot be null')
         await set_favorite(db, user_id, work_id, patch.favorite)
     await game_activity.record(db, row, before, await game_activity.snapshot(db, entity, row, achievements=progress_changed))
+    from core.list_categories import restore_populated
+    await restore_populated(db, user_id)
     await db.commit()
     return (await states(db, user_id, [work_id]))[0]
 
@@ -341,6 +343,8 @@ async def save_child(db, user_id, work_id, patch, *, listed):
     row.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
     if listed:
         await game_activity.record(db, row, before, await game_activity.snapshot(db, entity, row))
+    from core.list_categories import restore_populated
+    await restore_populated(db, user_id)
     await db.commit()
     return (await states(db, user_id, [work_id]))[0]
 

@@ -13,7 +13,7 @@ export type SteamDraft = {
   wishlist_overrides: Record<string, boolean>;
   ratings: Record<string, number | null>;
   statuses: Record<string, SteamDraft['import_status']>;
-  import_status: 'completed' | 'playing' | 'planning' | 'paused' | 'dropped';
+  import_status: 'completed' | 'playing' | 'played' | 'planning' | 'paused' | 'dropped';
   completion_dates: Record<string, string | null>;
   start_dates: Record<string, string | null>;
   minimum_playtime: number; minimum_achievements: number;

@@ -1,7 +1,10 @@
 ---
 import Icon from './Icon.astro';
 import ListFilterSelect from './ListFilterSelect.astro';
+import type {CategoryPresentation} from '../lib/list-categories.ts';
 interface Props {
+  categoryPresentation?: CategoryPresentation;
+  categoryOwner?: boolean;
   statuses: ReadonlyArray<readonly [string,string]>;
   counts: Record<string,number>;
   genres: string[];
@@ -16,6 +19,7 @@ interface Props {
   progressLabel?: string;
 }
 const {statuses,counts,genres,years,status='all',sort='title',defaultSort='title',query='',genre='',year='',favorites=false,progressLabel='Progress'}=Astro.props;
+const {categoryPresentation,categoryOwner=false}=Astro.props;
 const availableYears=[...years].sort();
 const yearPosition=year?availableYears.indexOf(year)+1:0;
 ---
@@ -28,8 +32,9 @@ const yearPosition=year?availableYears.indexOf(year)+1:0;
       <button type="button" class="mobile-filter-toggle" aria-label="Filters and sorting" aria-expanded="false" aria-controls="list-filter-panel"><Icon name="ellipsis"/></button>
     </div>
     <div class="list-filter-panel" id="list-filter-panel">
-      <h2>Lists</h2>
-      <div class="status-filters"><button type="button" data-status="all" class:list={{selected:status==='all'}} aria-pressed={status==='all'}>All <span data-list-status-count="all">{Object.values(counts).reduce((sum,count)=>sum+count,0)}</span></button>{statuses.map(([value,label])=><button type="button" data-status={value} class:list={{selected:status===value}} aria-pressed={status===value}>{label}<span data-list-status-count={value}>{counts[value]||0}</span></button>)}</div>
+      <div class="category-heading"><h2>Lists</h2>{categoryPresentation&&<div data-category-controls>{categoryOwner&&<><button type="button" class="category-icon" data-category-mode="reorder" aria-label="Reorder categories" title="Reorder categories" aria-pressed="false"><Icon name="sort"/></button><button type="button" class="category-icon" data-category-mode="edit" aria-label="Edit categories" title="Edit categories" aria-pressed="false"><Icon name="edit"/></button></>}<button type="button" class="category-icon" data-category-mode="info" aria-label="Category meanings" title="Category meanings"><Icon name="info"/></button></div>}</div>
+      {categoryPresentation&&<div data-category-editor hidden><template data-category-restore-icon><Icon name="undo"/></template><div data-category-edit-rows></div><div class="category-edit-actions"><button type="button" class="lab-text-button" data-category-save>Save</button><button type="button" class="lab-text-button" data-category-cancel>Cancel</button></div><p class="error-message" role="alert" hidden></p></div>}
+      <div class="status-filters"><button type="button" data-status="all" class:list={{selected:status==='all'}} aria-pressed={status==='all'}>All <span data-list-status-count="all">{Object.values(counts).reduce((sum,count)=>sum+count,0)}</span></button>{statuses.map(([value,label])=><button type="button" data-status={value} class:list={{selected:status===value}} aria-pressed={status===value} hidden={categoryPresentation?.categories.find(category=>category.id===value)?.hidden}><span data-category-filter-label>{label}</span><span data-list-status-count={value}>{counts[value]||0}</span></button>)}</div>
       <h2>Filters</h2>
       <ListFilterSelect id="genre-filter" name="genre" label="Genre" value={genre} options={[["","All genres"],...genres.map((value):[string,string]=>[value,value])]}/>
       <label class="filter-year filter-control"><span class="filter-year-heading"><span>Year</span><output id="year-value" for="year-filter">{year||'Any year'}</output></span><input id="year-filter" type="range" min="0" max={availableYears.length} step="1" value={yearPosition} data-years={JSON.stringify(availableYears)} aria-label="Release year" aria-valuetext={year||'Any year'} disabled={!availableYears.length}/></label>

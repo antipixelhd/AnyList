@@ -1,6 +1,7 @@
 // Compact wire projection: no notes, artwork, achievements or editor revisions.
 export type ListIndexRow=[number,string,string,number|null,number|null,string|null,string|null,string[],boolean,number|null,number];
-export type ListIndexResponse={complete:boolean;results:ListIndexRow[]};
+import type {CategoryPresentation} from './list-categories.ts';
+export type ListIndexResponse={category_presentation?:CategoryPresentation;complete:boolean;results:ListIndexRow[]};
 export type ListState=Record<string,any>;
 export const entryId=(state:ListState):number=>state.subject?.catalogue_id??state.id;
 type Member={id:number;title:string;status:string;score:number|null;progress:number|null;updated:string;year:string|null;genres:string[];favorite:boolean;base:number|null;rank:number;listed:boolean};
@@ -13,6 +14,9 @@ export class ProfileListIndex {
   private complete=false;
   private order:Map<string,number>;
   constructor(statuses:ReadonlyArray<readonly [string,string]>){
+    this.order=new Map(statuses.map(([status],index)=>[status,index]));
+  }
+  setOrder(statuses:ReadonlyArray<readonly [string,string]>){
     this.order=new Map(statuses.map(([status],index)=>[status,index]));
   }
   get ready(){return this.complete;}

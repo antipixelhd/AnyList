@@ -49,9 +49,9 @@ class Connect(Options):
 class Draft(BaseModel):
     wishlist_overrides: dict[str, bool] = Field(default_factory=dict, max_length=100000)
     ratings: dict[str, Annotated[float, Field(ge=0.5, le=10, allow_inf_nan=False)] | None] = Field(default_factory=dict, max_length=100000)
-    statuses: dict[str, Literal['completed', 'playing', 'planning', 'paused', 'dropped']] = Field(default_factory=dict, max_length=100000)
+    statuses: dict[str, Literal['completed', 'playing', 'played', 'planning', 'paused', 'dropped']] = Field(default_factory=dict, max_length=100000)
     start_dates: dict[str, date | None] = Field(default_factory=dict, max_length=100000)
-    import_status: Literal['completed', 'playing', 'planning', 'paused', 'dropped'] = 'completed'
+    import_status: Literal['completed', 'playing', 'played', 'planning', 'paused', 'dropped'] = 'completed'
     completion_dates: dict[str, date | None] = Field(default_factory=dict, max_length=100000)
     generation: int = Field(ge=1)
     minimum_playtime: int = Field(default=30, ge=0, le=10000000)

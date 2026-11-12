@@ -247,7 +247,7 @@ export class EditorStore {
       }
       if ('manual_score' in operation.patch) entry.score = operation.patch.manual_score || null;
       const today = localToday();
-      if (entry.status !== previous && entry.status === (record.title.type==='game'?'playing':'watching') && !entry.start_date && !('start_date' in operation.patch)) entry.start_date = today;
+      if (entry.status !== previous && (record.title.type==='game'?['playing','played'].includes(entry.status):entry.status==='watching') && !entry.start_date && !('start_date' in operation.patch)) entry.start_date = today;
       if (entry.status !== previous && entry.status === 'completed' && !entry.finish_date && !('finish_date' in operation.patch)) entry.finish_date = today;
     }
     if(entry)entry={...entry,favorite};

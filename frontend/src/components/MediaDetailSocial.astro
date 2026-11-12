@@ -32,7 +32,7 @@ const followingSelected=type==='game'&&!data.activities.length&&!!followingActiv
     {data.people.length?<div class:list={['media-social-list',{'media-social-games':showPlaytime}]}>{data.people.map(person=><a class="lab-friend media-social-person" href={`/user/${encodeURIComponent(person.username)}/${type==='game'?'games':type==='movie'?'movies':'series'}`}>
       <span class="lab-friend-avatar" aria-hidden="true">{person.has_avatar?<img src={`/api/proxy/profile/avatar/${person.id}`} alt="" loading="lazy"/>:(person.display_name||person.username).slice(0,1).toUpperCase()}</span>
       <strong class="media-social-person-name">{person.display_name||person.username}</strong>
-      <span class="media-social-person-status">{choices.find(([id])=>id===person.status)?.[1]||person.status}</span>
+      <span class="media-social-person-status">{person.status_label||choices.find(([id])=>id===person.status)?.[1]||person.status}</span>
       {showPlaytime&&<span class="media-social-playtime" aria-label={`Playtime: ${gameProgress(person).hours||'Unknown'}`}>{gameProgress(person).hours||'—'}</span>}
       <span class="media-social-score">{scoreLabel(person.score)} <small>/ 10</small></span>
     </a>)}</div>:<p class="section-empty">No one has added this title yet.</p>}

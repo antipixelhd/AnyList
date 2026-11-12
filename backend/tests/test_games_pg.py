@@ -209,6 +209,7 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 importlib.import_module('migrations.versions.mt073_game_episode_credits').upgrade()
                 importlib.import_module('migrations.versions.mt080_game_background_runner').upgrade()
                 importlib.import_module("migrations.versions.mt081_game_statistics_totals").upgrade()
+                importlib.import_module("migrations.versions.mt086_game_categories").upgrade()
 
         async with self.engine.begin() as conn:
             await conn.run_sync(setup)
@@ -682,7 +683,8 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([row[0] for row in sorted(data['results'],key=lambda row:row[10])],
             [row['subject']['catalogue_id'] for row in server['results']])
         capped=(await self.client.get('/tracking/games/users/player/index?limit=1')).json()
-        self.assertEqual(capped,{'complete':False,'results':[]})
+        self.assertEqual(capped,{'complete':False,'results':[],
+            'category_presentation':data['category_presentation']})
         self.viewer=self.other
         public=(await self.client.get('/tracking/games/users/player/index')).json()
         self.assertEqual(public,data)

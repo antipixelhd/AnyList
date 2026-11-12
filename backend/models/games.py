@@ -15,7 +15,7 @@ class GameEntry(Base):
     __table_args__ = (
         UniqueConstraint('user_id', 'work_id', name='uq_game_entry_owner_work'),
         UniqueConstraint('id', 'user_id', 'work_id', name='uq_game_entry_reference'),
-        CheckConstraint("status IN ('planning','playing','paused','completed','dropped')", name='ck_game_entry_status'),
+        CheckConstraint("status IN ('planning','playing','played','paused','completed','dropped')", name='ck_game_entry_status'),
         CheckConstraint('score IS NULL OR (score >= 0.5 AND score <= 10)', name='ck_game_entry_score'),
         CheckConstraint('total_seconds IS NULL OR total_seconds >= 0', name='ck_game_entry_total'),
         CheckConstraint('completion_seconds IS NULL OR completion_seconds >= 0', name='ck_game_entry_completion'),
@@ -64,7 +64,7 @@ class GameChildState(Base):
                              ['game_entries.id', 'game_entries.user_id', 'game_entries.work_id'],
                              name='fk_game_child_owner_base', deferrable=True, initially='DEFERRED'),
         CheckConstraint('work_id <> base_work_id', name='ck_game_child_distinct'),
-        CheckConstraint("status IN ('planning','playing','paused','completed','dropped')", name='ck_game_child_status'),
+        CheckConstraint("status IN ('planning','playing','played','paused','completed','dropped')", name='ck_game_child_status'),
         CheckConstraint('score IS NULL OR (score >= 0.5 AND score <= 10)', name='ck_game_child_score'),
         CheckConstraint('revision >= 1', name='ck_game_child_revision'),
     )

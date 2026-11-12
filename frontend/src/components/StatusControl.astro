@@ -1,17 +1,17 @@
 ---
 import {statuses} from '../lib/tracker';
-import {gameStatuses} from '../lib/game-editor-data';
+import {categoryChoices,defaultGameCategories} from '../lib/list-categories.ts';
+import {viewerMediaPreferences} from '../lib/viewer-media-preferences';
 const {mediaId,status,subject,gameClass}=Astro.props;
 const game=subject?.kind==='game',child=game&&gameClass==='expansion';
-const choices=game?gameStatuses:statuses;
+const presentation=(await viewerMediaPreferences(Astro.locals)).list_categories?.game||defaultGameCategories();
+const choices=game?categoryChoices(presentation,status):statuses;
 const editorAction=game?{'data-edit-game':mediaId}:{'data-edit-entry':mediaId};
 ---
 <div class="status-control" data-status-control data-media={mediaId} data-game={game?'true':undefined}>
   <div class="status-split"><button class="button-primary" data-status-label {...editorAction}>{choices.find(([s])=>s===status)?.[1]||'Add to list'}</button><button class="button-primary status-arrow" hidden={child} aria-label="Quick status actions" aria-haspopup="menu" aria-expanded="false" aria-controls={`quick-status-options-${mediaId}`}><span class="ui-icon" aria-hidden="true"><svg data-dropdown-arrow viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m5 9 7 7 7-7" /></svg></span></button></div>
   <div class="status-options tracker-dropdown-menu" id={`quick-status-options-${mediaId}`} role="menu" hidden>
-    <button role="menuitem" data-quick-status="completed" aria-current={status === 'completed' ? 'true' : undefined}>Set as Completed</button>
-    <button role="menuitem" data-quick-status={game?'playing':'watching'} aria-current={status === (game?'playing':'watching') ? 'true' : undefined}>Set as {game?'Playing':'Watching'}</button>
-    <button role="menuitem" data-quick-status="planning" aria-current={status === 'planning' ? 'true' : undefined}>Set as {game?'Planned':'Planning'}</button>
+    {game?choices.map(([value,label])=><button role="menuitem" data-quick-status={value} aria-current={status===value?'true':undefined}>Set as {label}</button>):<><button role="menuitem" data-quick-status="completed">Set as Completed</button><button role="menuitem" data-quick-status="watching">Set as Watching</button><button role="menuitem" data-quick-status="planning">Set as Planning</button></>}
     <button role="menuitem" {...editorAction}>Open List Editor</button>
   </div>
 </div>
@@ -19,7 +19,8 @@ const editorAction=game?{'data-edit-game':mediaId}:{'data-edit-entry':mediaId};
 import { showMenu, hideMenu } from '../lib/ui-motion';
 import {editorStore,seedEditorPage} from '../lib/editor-store';
 import {statuses} from '../lib/tracker';
-import {gameStatuses,gameDatePatch} from '../lib/game-editor-data';
+import {gameDatePatch} from '../lib/game-editor-data';
+import {gameCategoryChoices,gameCategoryName,refreshGameCategories} from '../lib/game-category-store.ts';
 import {localToday} from '../lib/date-time';
 import {showActionFailure} from '../lib/action-failure';
 let pageListeners: AbortController;
@@ -44,7 +45,8 @@ document.querySelectorAll<HTMLElement>('[data-status-control]').forEach(control=
   control.addEventListener('focusout',event=>{if(!control.contains(event.relatedTarget as Node))close();});
   document.addEventListener('click',event=>{if(!control.contains(event.target as Node))close();},{signal:pageListeners.signal});
   options.querySelector('[data-edit-entry],[data-edit-game]')?.addEventListener('click',close);
-  options.querySelectorAll<HTMLButtonElement>('[data-quick-status]').forEach(button=>button.addEventListener('click',async()=>{
+  options.addEventListener('click',async event=>{
+    const button=(event.target as Element).closest<HTMLButtonElement>('[data-quick-status]');if(!button)return;
     close();
     const status=button.dataset.quickStatus;
     const buttons=control.querySelectorAll<HTMLButtonElement>('.status-split button,.status-options button');
@@ -61,13 +63,21 @@ document.querySelectorAll<HTMLElement>('[data-status-control]').forEach(control=
         else if(status==='completed'&&current.status!=='completed'&&current.completion_seconds==null)patch.completion_seconds=null;
       }
       await editorStore.write(title,patch);
+      if(game)void refreshGameCategories(pageListeners.signal).catch(()=>{});
     }catch(e){showActionFailure('status',editorStore.find(Number(control.dataset.media))?.title,e);arrow.focus();}
     finally{buttons.forEach(b=>b.disabled=false);}
-  }));
+  });
+  document.addEventListener('anylist:game-categories',()=>{
+    if(!game)return;const current=editorStore.find(Number(control.dataset.media))?.entry?.status;
+    options.querySelectorAll('[data-quick-status]').forEach(button=>button.remove());
+    const last=options.querySelector('[data-edit-game]');
+    for(const [value,label] of gameCategoryChoices(current)){const button=document.createElement('button');button.type='button';button.setAttribute('role','menuitem');button.dataset.quickStatus=value;button.textContent=`Set as ${label}`;options.insertBefore(button,last);}
+    if(current)control.querySelector('[data-status-label]')!.textContent=gameCategoryName(current);
+  },{signal:pageListeners.signal});
   document.addEventListener('anylist:editor-state',event=>{
     const title=(event as CustomEvent).detail;
     if((title.type==='game')!==game||title.id!==Number(control.dataset.media))return;
-    control.querySelector('[data-status-label]')!.textContent=(game?gameStatuses:statuses).find(([s])=>s===title.entry?.status)?.[1]||'Add to list';
+    control.querySelector('[data-status-label]')!.textContent=(game?gameCategoryName(title.entry?.status||''):statuses.find(([s])=>s===title.entry?.status)?.[1])||'Add to list';
     options.querySelectorAll<HTMLElement>('[data-quick-status]').forEach(button=>button.setAttribute('aria-current',String(button.dataset.quickStatus===title.entry?.status)));
   },{signal:pageListeners.signal});
 });
