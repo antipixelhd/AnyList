@@ -89,7 +89,11 @@ function setup(){
   const stopProgress=()=>{if(progressRunning){progressRunning=false;document.dispatchEvent(new Event('anylist:route-progress-end'));}};
   signal.addEventListener('abort',stopProgress,{once:true});
   function select(key:string,url:string,retry=false){
-    const land = () => window.scrollTo(0,key.startsWith('stats')?0:scrollY+nav.getBoundingClientRect().top);
+    const land = () => {
+      const list = !key.startsWith('stats');
+      window.scrollTo(0,list?scrollY+nav.getBoundingClientRect().top:0);
+      document.dispatchEvent(new CustomEvent('anylist:profile-tab-landed',{detail:{list}}));
+    };
     if(key===wanted&&!retry){
       if(key===active&&shown===panels.get(active)?.root)land();
       return;
