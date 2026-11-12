@@ -91,7 +91,7 @@ html:has(.steam-workflow[open]) { scrollbar-gutter:stable; }
 .steam-card-stats { display:block; align-self:start; color:var(--steam-muted); font-size:13px; line-height:1.6; }
 .steam-card-achievements { display:block; min-height:20px; }
 .steam-card-achievements[data-loading] { display:flex; align-items:center; height:1lh; }
-.steam-card-achievements[data-loading]::before { content:''; display:block; width:9em; max-width:100%; height:.75em; border-radius:4px; background:color-mix(in srgb,var(--steam-muted) 25%,var(--steam-panel)); animation:steam-pulse 1.4s ease-in-out infinite; }
+.steam-card-achievements[data-loading]::before { content:''; display:block; width:9em; max-width:100%; height:.75em; border-radius:4px; background-color:color-mix(in srgb,var(--steam-muted) 25%,var(--steam-panel)); }
 .steam-card-check { position:absolute; top:3px; right:0; display:grid; place-items:center; width:18px; height:18px; border-radius:50%; background:color-mix(in srgb,var(--steam-muted) 45%,var(--steam-field)); color:transparent; font-size:11px; }
 .steam-card[aria-pressed=true] .steam-card-check { background:var(--steam-accent); color:var(--steam-on-accent,#0b1622); }
 .steam-game-controls { display:flex; flex-direction:column; gap:4px; margin:10px 0 0 86px; }
@@ -124,7 +124,6 @@ html:has(.steam-workflow[open]) { scrollbar-gutter:stable; }
 .steam-settings .steam-date-dialog [data-date-picker]:is(:hover,:focus-visible) { color:var(--steam-accent); background:transparent; }
 .steam-date-actions { display:flex; align-items:center; justify-content:flex-end; gap:20px; margin-top:28px; }
 .steam-date-actions > :first-child { margin-right:auto; }
-@keyframes steam-pulse { 50% { opacity:.35; } }
 @media (hover:hover) and (pointer:fine) {
   .steam-library { --steam-scroll-thumb:transparent; scrollbar-gutter:stable; scrollbar-width:auto; scrollbar-color:auto; }
   .steam-library::-webkit-scrollbar { width:8px; }

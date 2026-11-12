@@ -899,7 +899,8 @@
   }
 }
 
-.browse-skeleton .skeleton-block { background-color:var(--panel); }
+.browse-skeleton .skeleton-block,
+[data-skeleton-timeline] :is(h2,h3) > .skeleton-block { background-color:var(--panel); }
 
 .browse-page .browse-cover[data-poster-revealing] img {
   animation: browse-poster-arrival 180ms ease-out;

@@ -14,5 +14,5 @@
 .media-detail [data-game-primary-facts]{display:grid;gap:15px}
 .media-detail [data-game-primary-facts]>span{height:18px;width:75%}
 .media-detail .lab-genres[aria-busy=true]{min-height:28px}
-.media-detail .lab-genres[aria-busy=true]::before{content:'';width:180px;height:20px;border-radius:4px;background:var(--field)}
+.media-detail .lab-genres[aria-busy=true]::before{content:'';width:180px;height:20px;border-radius:4px;background-color:var(--field)}
 @media(max-width:650px){.game-section-skeleton-requirements{grid-template-columns:minmax(0,1fr)}}

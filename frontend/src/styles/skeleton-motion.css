@@ -1,5 +1,5 @@
 @media (prefers-reduced-motion: no-preference) {
-  .browse-skeleton,.browse-cover[data-poster-loading] {
+  .browse-skeleton,[data-skeleton-timeline],.browse-cover[data-poster-loading] {
     --skeleton-base:var(--panel);
     --skeleton-highlight:#243449;
     --skeleton-tile-scale:2.2;
@@ -11,15 +11,41 @@
     --skeleton-highlight:color-mix(in srgb,var(--text) 12%,transparent);
   }
 
+  .detail-loading-frame,.profile-loading-frame:has([data-pending-list-shell]) {
+    --skeleton-base:transparent;
+    --skeleton-highlight:color-mix(in srgb,var(--text) 12%,transparent);
+    --skeleton-delay:120ms;
+  }
+
+  [data-work-credit][data-character-pending] {
+    --skeleton-base:transparent;
+    --skeleton-highlight:color-mix(in srgb,var(--muted) 15%,transparent);
+  }
+
+  .steam-card-achievements[data-loading] {
+    --skeleton-base:transparent;
+    --skeleton-highlight:color-mix(in srgb,var(--steam-muted) 18%,transparent);
+  }
+
   .browse-skeleton .skeleton-block,
+  [data-skeleton-timeline] :is(h2,h3) > .skeleton-block,
   .browse-page .browse-cover[data-poster-loading] .browse-poster-link,
   .stats-loading-content :is(.overview-total-icon,.stats-loading-title,.stats-loading-label,.stats-loading-value,.stats-loading-rank,.stats-loading-control,.stats-loading-plot,.stats-genre-poster,.stats-actor-portrait),
   .media-detail :is(.detail-synopsis-skeleton,.media-person-art[data-cast-loading],.detail-person-skeleton > *, .detail-value-skeleton,.media-episode-loading > span,.game-section-skeleton span),
-  .media-detail .lab-poster-button.detail-image-skeleton {
+  .media-detail .lab-poster-button.detail-image-skeleton,
+  .media-detail .lab-genres[aria-busy=true]::before,
+  .detail-loading-frame:not([data-loading-error]) :is(
+    .loading-surface:not(.loading-detail-poster:has(> img:not([hidden]))),
+    .loading-lines > span,
+    .loading-facts > span
+  ),
+  .profile-loading-frame :is(.entry-cover.loading-surface,.pending-entry-title,.pending-group-title),
+  [data-work-credit][data-character-pending]::after,
+  .steam-card-achievements[data-loading]::before {
     background-image:linear-gradient(100deg,var(--skeleton-base,var(--field)) 20%,var(--skeleton-highlight,var(--panel)) 45%,var(--skeleton-base,var(--field)) 70%);
     background-size:calc(100% * var(--skeleton-tile-scale,2.4)) 100%;
     background-repeat:repeat-x;
-    animation:skeleton-shimmer var(--skeleton-duration,1.8s) linear infinite;
+    animation:skeleton-shimmer var(--skeleton-duration,1.8s) linear var(--skeleton-delay,0s) infinite;
   }
 }
 

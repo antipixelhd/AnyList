@@ -1,5 +1,5 @@
 /* Shared pending geometry follows the existing Marquee detail and profile layouts. */
-.loading-surface,.loading-lines>span,.loading-facts>span{display:block;background:color-mix(in srgb,var(--border) 65%,var(--panel));border-radius:4px}
+.loading-surface,.loading-lines>span,.loading-facts>span{display:block;background-color:color-mix(in srgb,var(--border) 65%,var(--panel));border-radius:4px}
 .artwork-skeleton-pulse{position:absolute;inset:0;z-index:1;pointer-events:none;border-radius:inherit;background:var(--text);opacity:0}
 button:has(> .artwork-skeleton-pulse){position:relative}
 .detail-loading-frame [hidden],.profile-loading-frame [hidden]{display:none!important}

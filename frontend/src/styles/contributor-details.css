@@ -164,9 +164,7 @@ html.light .contributor-banner.is-logo img { filter:brightness(0); }
 .contributor-works-progress { display:inline-flex; align-items:baseline; gap:4px; margin-left:8px; color:var(--text-muted); font-size:12px; font-weight:500; }
 .contributor-works-progress[hidden],.contributor-works-progress [hidden] { display:none; }
 .contributor-works-progress [data-works-current],.contributor-works-progress [data-works-total] { display:inline-block; font-variant-numeric:tabular-nums; }
-[data-work-credit][data-character-pending]::after { content:''; display:inline-block; width:76px; height:10px; margin-left:6px; border-radius:5px; vertical-align:middle; background:linear-gradient(90deg,color-mix(in srgb,var(--text-muted) 12%,transparent),color-mix(in srgb,var(--text-muted) 25%,transparent),color-mix(in srgb,var(--text-muted) 12%,transparent)); background-size:200% 100%; animation:contributor-character-shimmer 1.5s ease-in-out infinite; }
-@keyframes contributor-character-shimmer { to { background-position:-200% 0; } }
-@media(prefers-reduced-motion:reduce) { [data-work-credit][data-character-pending]::after { animation:none; } }
+[data-work-credit][data-character-pending]::after { content:''; display:inline-block; width:76px; height:10px; margin-left:6px; border-radius:5px; vertical-align:middle; background-color:color-mix(in srgb,var(--muted) 12%,transparent); }
 
 .browse-credit:empty[data-character-pending] { display:block; }
 
