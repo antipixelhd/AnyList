@@ -4,6 +4,7 @@ import Icon from './Icon.astro';
 import CalendarDateInput from './CalendarDateInput.astro';
 import NumberStepper from './NumberStepper.astro';
 import EditorSelect from './EditorSelect.astro';
+import SeriesEditorPanel from './SeriesEditorPanel.astro';
 ---
 <dialog class="editor" id="tracking-editor" aria-labelledby="editor-title" data-motion-static>
   <div class="editor-hero">
@@ -22,7 +23,7 @@ import EditorSelect from './EditorSelect.astro';
     <div class="editor-fields">
       <div class="editor-status-field"><div class="game-field-heading"><label id="editor-status-label" for="editor-status-trigger">Status</label><button type="button" class="editor-category-info" data-game-category-info data-game-only hidden aria-label="Game category meanings"><Icon name="info"/></button></div><EditorSelect id="editor-status" name="status" label="Status" labelledBy="editor-status-label" options={statuses} value="watching"/></div>
       <div class="editor-score-field"><div class="game-field-heading"><label for="editor-manual-score">Score</label></div><NumberStepper id="editor-manual-score" name="manual_score" label="Score" min={0} max={10} step={0.1} value={0} score/></div>
-      <div id="progress-field" class="editor-number-field"><label for="editor-progress">Episode progress</label><NumberStepper id="editor-progress" name="progress" label="Episode progress"/></div>
+      <SeriesEditorPanel/>
       <div class="editor-number-field" data-game-only data-game-main hidden><div class="game-field-heading"><label for="game-total-hours">Total time (hours)</label><button type="button" class="game-steam-sync" data-game-steam-playtime hidden><Icon name="shuffle" /></button></div><NumberStepper id="game-total-hours" name="game_total_hours" label="Total time in hours" step="any"/>
         <div class="game-first-completion" data-game-first hidden><div class="game-field-heading"><label for="game-first-hours">First completion</label><button type="button" class="game-value-button" data-game-first-edit>Add</button></div><div class="editor-number-field" data-game-first-input hidden><NumberStepper id="game-first-hours" name="game_first_hours" label="First completion time in hours" step="any"/></div></div>
       </div>
@@ -37,12 +38,24 @@ import EditorSelect from './EditorSelect.astro';
         </div></div>
       </section>
       <div class="editor-start-date"><label for="editor-start-date">Start date</label><CalendarDateInput id="editor-start-date" name="start_date" label="Start date"/></div><div class="editor-finish-date"><label for="editor-finish-date">Finish date</label><CalendarDateInput id="editor-finish-date" name="finish_date" label="Finish date"/></div>
+      <details class="series-editor-details" data-series-details hidden><summary>Series details</summary></details>
       <label class="editor-rewatches editor-number-field" for="editor-rewatches">Total rewatches<NumberStepper id="editor-rewatches" name="rewatch_count" label="Total rewatches" max={10000}/></label>
       <label class="wide editor-notes">Notes<textarea name="notes" rows="2"></textarea></label>
     </div>
     <p id="editor-error" role="alert" class="error-message" hidden></p>
     <div class="editor-actions">
       <button type="button" class="editor-delete-button" id="delete-tracked-entry"><Icon name="trash" />Delete entry</button>
+    </div>
+  </form>
+</dialog>
+<dialog class="editor-confirmation series-airing-dialog" data-series-airing aria-labelledby="series-airing-title" aria-describedby="series-airing-info">
+  <form method="dialog">
+    <header><h2 id="series-airing-title">Season still airing</h2><button type="submit" value="cancel" class="editor-confirmation-close" aria-label="Cancel"><Icon name="close"/></button></header>
+    <p id="series-airing-info"></p>
+    <div class="editor-confirmation-actions">
+      <button type="submit" value="cancel" autofocus>Cancel</button>
+      <button type="submit" value="complete_previous"></button>
+      <button type="submit" value="catch_up"></button>
     </div>
   </form>
 </dialog>
@@ -62,9 +75,19 @@ import EditorSelect from './EditorSelect.astro';
     <div class="season-mode-actions"><button class="button-primary" value="confirm">Use manual score</button><button class="button-secondary" value="cancel">Keep season average</button></div>
   </form>
 </dialog>
+<dialog class="editor-confirmation" id="editor-season-score-mode" aria-labelledby="editor-season-score-mode-title">
+  <form method="dialog">
+    <header><h2 id="editor-season-score-mode-title">Series score</h2><button type="submit" class="editor-confirmation-close" value="cancel" aria-label="Cancel"><Icon name="close"/></button></header>
+    <div class="editor-confirmation-actions">
+      <button type="submit" value="cancel" autofocus>Cancel</button>
+      <button type="submit" value="manual">Keep a separate score</button>
+      <button type="submit" value="average">Average season scores</button>
+    </div>
+  </form>
+</dialog>
 <script>
 import { setupScoreSteppers } from '../lib/scoreStepper';
-import { editorProgressMaximum } from '../lib/editor-progress';
+import {createSeriesEditor} from '../lib/series-editor';
 import { setupCalendarDateInputs } from '../lib/calendar-date-input';
 import { editorStore, seedEditorPage, type EditorTitle, type WorkSubject } from '../lib/editor-store';
 import { showDialog, closeDialog, showMenu, hideMenu } from '../lib/ui-motion';
@@ -112,6 +135,10 @@ document.addEventListener('astro:page-load', () => {
   }, {signal:pageListeners.signal});
   const field = (name: string) => form.elements.namedItem(name) as HTMLInputElement;
   const error = document.querySelector<HTMLElement>('#editor-error')!;
+  const seriesFields = createSeriesEditor(dialog,form,sessionSignal,refreshDateInputs,message=>{
+    error.textContent=message;
+    error.hidden=false;
+  });
   const saveButton = dialog.querySelector<HTMLButtonElement>('.editor-save')!;
   const statusSelect=field('status') as unknown as HTMLSelectElement;
   const originalStatuses=[...statusSelect.options].map(option=>({value:option.value,label:option.text}));
@@ -129,6 +156,7 @@ document.addEventListener('astro:page-load', () => {
   const syncStatus = () => {
     statusControl.sync();
     gameFields.statusChanged(statusSelect.value);
+    seriesFields.statusChanged();
   };
   statusSelect.addEventListener('change',syncStatus,{signal:sessionSignal});
   const closeEditor = () => {
@@ -170,7 +198,7 @@ document.addEventListener('astro:page-load', () => {
       poster.removeAttribute('src'); poster.removeAttribute('srcset'); poster.removeAttribute('sizes'); poster.alt = '';
     }
     poster.hidden = !title.poster;
-    for (const name of ['status','progress','start_date','finish_date','rewatch_count','notes']) field(name).value = current[name] ?? '';
+    for (const name of ['status','start_date','finish_date','rewatch_count','notes']) field(name).value = current[name] ?? '';
     gameFields.populate(title);
     refreshDateInputs();
     syncStatus(); closeStatus();
@@ -179,9 +207,7 @@ document.addEventListener('astro:page-load', () => {
     displayedScore = field('manual_score').value;
     field('favorite').checked = Boolean(current.favorite);
     loadLibraryState(title);
-    field('progress').disabled = title.type !== 'series';
-    field('progress').max = String(editorProgressMaximum(title) ?? '');
-    document.querySelector<HTMLElement>('#progress-field')!.hidden = title.type !== 'series';
+    seriesFields.open(title);
     saveButton.disabled = false;
   }
   function paintBackdrop(title:EditorTitle){
@@ -234,7 +260,7 @@ document.addEventListener('astro:page-load', () => {
         for (const name of ['status','progress','start_date','finish_date']) {
           if (!(name in title.entry)) continue;
           const previous = current[name] ?? (name === 'progress' ? 0 : '');
-          if (field(name).value === String(previous)) field(name).value = String(title.entry[name] ?? '');
+          if (name!=='progress' && field(name).value === String(previous)) field(name).value = String(title.entry[name] ?? '');
           current[name] = title.entry[name];
         }
         syncStatus(); refreshDateInputs();
@@ -262,6 +288,7 @@ document.addEventListener('astro:page-load', () => {
     if(supplied?.type==='game'&&!baseChecked&&supplied.subject)return openGame(supplied.subject,button,supplied);
     if (!supplied && (!mediaId || !Number.isSafeInteger(mediaId) || mediaId <= 0)) return;
     error.hidden = true;
+    seriesFields.reset();
     form.reset();
     syncStatus(); closeStatus();
     current = null;
@@ -319,6 +346,24 @@ document.addEventListener('astro:page-load', () => {
   const confirmation = document.querySelector<HTMLDialogElement>('#editor-score-override')!;
   confirmation.addEventListener('click', event => { if (event.target === confirmation) void closeDialog(confirmation, 'cancel'); });
   confirmation.addEventListener('cancel', () => { confirmation.returnValue = 'cancel'; });
+  const seasonScoreMode = document.querySelector<HTMLDialogElement>('#editor-season-score-mode')!;
+  seasonScoreMode.addEventListener('click',event=>{
+    if (event.target===seasonScoreMode) void closeDialog(seasonScoreMode,'cancel');
+  },{signal:sessionSignal});
+  function chooseSeasonScoreMode() {
+    return new Promise<'average'|'manual'|null>(resolve=>{
+      const abort=()=>seasonScoreMode.close('cancel');
+      const close=()=>{
+        sessionSignal.removeEventListener('abort',abort);
+        const value=seasonScoreMode.returnValue;
+        resolve(value==='average'||value==='manual'?value:null);
+      };
+      sessionSignal.addEventListener('abort',abort,{once:true});
+      seasonScoreMode.addEventListener('close',close,{once:true});
+      seasonScoreMode.returnValue='cancel';
+      showDialog(seasonScoreMode);
+    });
+  }
   dialog.querySelectorAll('.editor-close').forEach(button => button.addEventListener('click', closeEditor));
   dialog.addEventListener('click', event => { if (event.target === dialog) closeEditor(); });
   dialog.addEventListener('close', () => {
@@ -326,7 +371,7 @@ document.addEventListener('astro:page-load', () => {
     if (dialog.open) return;
     clearTimeout(artworkTimer);
     dismissPosterControls(opener, pageListeners.signal);
-    resumeExpansion=null;gameFields.reset();
+    resumeExpansion=null;gameFields.reset();seriesFields.reset();
     loadController?.abort(); loadController = null; libraryButton.hidden = true; current = null; currentTitle = null; displayedScore = ''; form.reset();
     const listRow = opener?.closest<HTMLElement>('.entry-row');
     if (listRow) {
@@ -371,7 +416,7 @@ document.addEventListener('astro:page-load', () => {
     event.target.blur();
   }, {signal:sessionSignal});
   form.addEventListener('submit', async event => {
-    event.preventDefault(); if (!current) return;
+    event.preventDefault(); if (!current || saveButton.disabled || seriesFields.busy()) return;
     error.hidden = true;
     const status = field('status').value;
     if(currentTitle?.type==='game'&&!status){
@@ -431,14 +476,46 @@ document.addEventListener('astro:page-load', () => {
       // An untouched empty date must not suppress a transition's automatic date.
       if (field(name).value !== (current[name] || '')) body[name] = field(name).value || null;
     }
-    if (!field('progress').disabled && Number(field('progress').value) !== current.progress) {
-      body.progress = Number(field('progress').value);
-      if (body.progress < current.progress) {
-        if (!await confirmEntryAction(watchRollbackWarning) || sessionSignal.aborted || !current) return;
-        body.confirm_rollback = true;
-      }
-    }
     const editing = currentTitle!;
+    if (editing.type==='series') {
+      if (seriesFields.tracked()) delete body.finish_date;
+      const explicitStatus = !editing.entry || status!==current.status;
+      if (!explicitStatus) delete body.status;
+      saveButton.disabled=true;
+      try {
+        const patch=await seriesFields.patch(explicitStatus && status==='completed');
+        if (!patch || currentTitle!==editing || !dialog.open || sessionSignal.aborted) return;
+        if (seriesFields.rollbackNeeded(patch)) {
+          if (!await confirmEntryAction(watchRollbackWarning) || sessionSignal.aborted || currentTitle!==editing) return;
+          body.confirm_rollback=true;
+        }
+        if (patch.order==='tmdb:aired' && !ratedSeasonScores().length && patch.seasons.some(season=>Number(season.score)>0)) {
+          const ratingMode=scoreChanged?'manual':current.rating_mode==='average'?'average':await chooseSeasonScoreMode();
+          if (!ratingMode || currentTitle!==editing || sessionSignal.aborted) return;
+          body.rating_mode=ratingMode;
+        }
+        if (patch.action==='catch_up') {
+          body.status='watching';
+          delete body.finish_date;
+        }
+        body.series_editor=patch;
+        const saved=await editorStore.write(editing,body,seriesFields.optimisticProgress(patch));
+        if (sessionSignal.aborted) return;
+        document.dispatchEvent(new CustomEvent('anylist:entry-saved',{detail:saved}));
+        if (currentTitle===editing && dialog.open) await finishEditing();
+      } catch (cause) {
+        if (currentTitle!==editing || sessionSignal.aborted) return;
+        const code=(cause as any).detail?.code;
+        error.textContent=code==='series_editor_changed'||code==='series_editor_airing'
+          ? 'Episode availability or progress changed. Review the updated progress and save again.'
+          : (cause as Error).message;
+        error.hidden=false;
+        if (code==='series_editor_changed'||code==='series_editor_airing') void seriesFields.refresh();
+      } finally {
+        if (currentTitle===editing) saveButton.disabled=false;
+      }
+      return;
+    }
     const wasNew = !editing.entry;
     const previous = {...current};
     const previousScore = displayedScore;

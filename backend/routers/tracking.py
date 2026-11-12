@@ -20,6 +20,8 @@ from db import get_db
 from dependencies import get_current_user, get_current_user_or_api_key, get_tracking_write_user, get_optional_user, get_optional_user_or_api_key
 from core.tracking_rules import TrackingStatus, normalize_score, effective_score, default_dates
 from core.status_provenance import mark_status_change
+from core.series_editor import SeriesEditorContext, SeriesEditorPatch, editor_context as series_editor_context, editor_summary
+from core.season_completion import membership_key
 from models import Media, User, UserSettings, UserProfileData, Follow, Rating, Show, WatchEvent, Collection, CollectionFile, PlaybackProgress, PlaybackSession, MediaServerConnection, List, ListItem, ShowRewatch
 from models.base import MediaType, PrivacyLevel
 from models.tracking import MediaFavorite, TrackedEntry, TrackingActivity, TrackingDeliveryJob, TrackingDeletion, TrackingPreferences, SyncReview, StreamBaseline, ProviderIgnore, ProviderMatch, StreamAction, CloudAction
@@ -916,6 +918,7 @@ async def retry_library_delivery(media_id: int, db: AsyncSession = Depends(get_d
 
 
 class EntryPatch(BaseModel):
+    series_editor: SeriesEditorPatch | None = None
     status: TrackingStatus | None = None
     manual_score: float | None = None
     rating_mode: Literal["manual", "average"] | None = None
@@ -1938,7 +1941,7 @@ async def save_episode_progress(media_id: Annotated[int, Path(gt=0)], episode_id
         body: EpisodeProgressPatch, background_tasks: BackgroundTasks,
         db: Annotated[AsyncSession, Depends(get_db)], viewer: Annotated[User, Depends(get_current_user)]) -> dict:
     return await _save_entry(media_id, EntryPatch(confirm_rollback=body.confirm_rollback), background_tasks, db, viewer,
-        episode_change=(episode_id, body.watched), preserve_status=True)
+        episode_change=(episode_id, body.watched), preserve_status=True, direct_episode=True)
 
 
 @router.patch('/entry/{media_id}/season/{season_number}')
@@ -1963,7 +1966,7 @@ async def save_entry(media_id: int, body: EntryPatch, background_tasks: Backgrou
                      db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
     media = await db.get(Media, media_id)
     needs_episodes = body.progress is not None or body.mark_released_watched or body.status == 'completed'
-    if (media and media.media_type == MediaType.series and needs_episodes
+    if (not body.series_editor and media and media.media_type == MediaType.series and needs_episodes
             and (media.tmdb_id or media.tvdb_id) and not (media.tmdb_data or {}).get('tracking_catalogue_refreshed_at')):
         # A genuinely uncached title may be edited before its background read
         # finishes. Join that public acquisition before taking any account lock.
@@ -1987,7 +1990,7 @@ async def save_entry(media_id: int, body: EntryPatch, background_tasks: Backgrou
 
 async def _save_entry(media_id: int, body: EntryPatch, background_tasks: BackgroundTasks,
                      db: AsyncSession, viewer: User, *, episode_change: tuple[int, bool] | None = None,
-                     preserve_status: bool = False):
+                     preserve_status: bool = False, direct_episode: bool = False):
     media = await db.get(Media, media_id)
     if not media or media.media_type not in (MediaType.movie, MediaType.series):
         raise HTTPException(404, "Title not found")
@@ -1995,7 +1998,8 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
         raise HTTPException(404, 'Series not found')
     # Serialize edits for this user, including first insertion of a title.
     await db.execute(select(User.id).where(User.id == viewer.id).with_for_update())
-    entry = (await db.execute(select(TrackedEntry).where(TrackedEntry.user_id == viewer.id, TrackedEntry.media_id == media_id))).scalar_one_or_none()
+    entry = await db.scalar(select(TrackedEntry).where(
+        TrackedEntry.user_id == viewer.id, TrackedEntry.media_id == media_id).with_for_update())
     favorite_row = await db.get(MediaFavorite, (viewer.id, media_id))
     if entry and favorite_row is not None:
         entry.favorite = True
@@ -2025,6 +2029,48 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
     old_progress = entry.progress if entry else 0
     old_score = effective_score(entry.rating_mode, entry.manual_score, entry.season_scores) if entry else None
     old_season_scores = dict(entry.season_scores or {}) if entry else {}
+    series_patch = body.series_editor
+    series_context = None
+    desired_editor = None
+    observed_endpoint = None
+    alternate_scores = {}
+    if series_patch and (media.media_type != MediaType.series or
+                         (tracking_projection.is_anime(media) and not await anime_is_visible(db))):
+        raise HTTPException(404, 'Series not found')
+    if series_patch and (series_patch.action or series_patch.seasons or body.status == 'completed'):
+        series_context = await series_editor_context(db, media, viewer.id)
+        if series_patch.seasons and series_patch.order != series_context.order:
+            raise HTTPException(409, {'code': 'series_editor_changed', 'airing': series_context.airing()})
+        selected_status = body.status.value if body.status else previous
+        completes_series = selected_status == 'completed' and body.status is not None
+        if completes_series or series_patch.action:
+            if not (media.tmdb_data or {}).get('tracking_catalogue_refreshed_at'):
+                raise HTTPException(409, 'Episode metadata is still loading. Try again shortly.')
+            desired_editor, observed_endpoint = series_context.resolve(series_patch, selected_status, completes_series)
+        valid_groups = {(n, membership_key(episodes)) for n, episodes, _ in series_context.groups}
+        seen = set()
+        scores = {}
+        for edit in series_patch.seasons:
+            key = edit.season_number, edit.membership
+            if key not in valid_groups or key in seen:
+                raise HTTPException(409, 'The season grouping changed. Reopen the editor and try again.')
+            seen.add(key)
+            if 'score' in edit.model_fields_set:
+                try:
+                    scores[edit.season_number] = normalize_score(edit.score, 0.1)
+                except ValueError as exc:
+                    raise HTTPException(422, str(exc)) from exc
+        if series_context.order == 'tmdb:aired' and scores:
+            body.season_scores = {**(body.season_scores or {}), **{str(n): score for n, score in scores.items()}}
+        else:
+            alternate_scores = scores
+        if series_patch.action == 'catch_up':
+            body.status = TrackingStatus('watching')
+            body.model_fields_set.discard('finish_date')
+        elif series_patch.action == 'complete_previous':
+            body.status = TrackingStatus('completed')
+        if series_patch.watch_date and series_patch.watch_date > date.today() + timedelta(days=1):
+            raise HTTPException(422, 'Watch date cannot be in the future')
     added_watched_ids: set[int] = set()
     removed_watched_ids: set[int] = set()
     if entry is None:
@@ -2052,15 +2098,27 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
             if value is None and name in ("rating_mode", "favorite", "rewatch_count"):
                 raise HTTPException(422, f"{name} cannot be null")
             setattr(entry, name, value)
+    if series_patch and old_progress == 0 and 'finish_date' in fields:
+        entry.finish_date_source = 'series' if entry.finish_date else None
     if body.season_scores is not None:
         entry.season_scores = {**entry.season_scores, **body.season_scores}
     episodes = []
     completing_series = media.media_type == MediaType.series and status == 'completed' and previous != 'completed'
+    if (series_patch and completing_series and old_progress == 0 and not old_finish_date
+            and 'finish_date' not in fields and series_patch.watch_date):
+        entry.finish_date = series_patch.watch_date
     status_driven_movie = media.media_type == MediaType.movie and 'status' in fields
-    if body.progress is not None or body.mark_released_watched or completing_series or status_driven_movie or episode_change:
+    if body.progress is not None or body.mark_released_watched or completing_series or status_driven_movie or episode_change or desired_editor is not None:
         if media.media_type == MediaType.series and not (media.tmdb_data or {}).get('tracking_catalogue_refreshed_at'):
             raise HTTPException(409, 'Refresh episode metadata on the title page before changing progress')
-        episodes = [media] if status_driven_movie else await released_episodes(db, media)
+        episodes = series_context.released if desired_editor is not None else (
+            [media] if status_driven_movie else await released_episodes(db, media))
+        unmapped = set()
+        if desired_editor is not None and series_context.order != 'tmdb:aired':
+            selected_ids = {episode.id for episode in episodes}
+            extras = [episode for episode in await released_episodes(db, media) if episode.id not in selected_ids]
+            episodes = [*episodes, *extras]
+            unmapped = {episode.id for episode in extras}
         target = (1 if status == 'completed' else 0) if status_driven_movie else len(episodes) if body.mark_released_watched or completing_series else body.progress
         if not episodes or (target is not None and target > len(episodes)):
             raise HTTPException(409, "Released episode metadata is needed before changing progress")
@@ -2073,9 +2131,21 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
             target = ids.index(episode_id) + int(episode_watched)
             if episode_watched:
                 target = max(target, max((index + 1 for index, mid in enumerate(ids) if mid in watched), default=0))
-        desired = set(ids[:target])
-        marking = [ep for ep in episodes[:target] if not preserve_status or ep.id not in watched]
-        removing = watched.intersection(ids[target:]) if not status_driven_movie else set()
+        if desired_editor is not None:
+            desired = desired_editor.intersection(ids)
+            if unmapped:
+                desired |= unmapped if completes_series and series_patch.action is None else watched & unmapped
+            target = len(desired)
+            marking = [ep for ep in episodes if ep.id in desired and ep.id not in watched]
+            removing = watched - desired
+        else:
+            desired = set(ids[:target])
+            marking = [ep for ep in episodes[:target] if not preserve_status or ep.id not in watched]
+            removing = watched.intersection(ids[target:]) if not status_driven_movie else set()
+            if media.media_type == MediaType.series and target and (
+                    (direct_episode and episode_change and episode_change[1])
+                    or (body.progress is not None and target == old_progress + 1)):
+                observed_endpoint = ids[target - 1] if not episode_change else episode_change[0]
         from core.watch_dates import inferred_watch_datetime
         completion_evidence_date = entry.finish_date if entry.status == 'completed' and not preserve_status else None
         inferred_watched_at = inferred_watch_datetime(completion_evidence_date)
@@ -2099,12 +2169,15 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
             raise HTTPException(409, "Confirm marking later episodes unwatched")
         for episode in marking:
             if episode.id not in watched or (media.media_type == MediaType.movie and old_progress == 0 and previous != 'completed'):
+                observed = episode.id == observed_endpoint
                 db.add(WatchEvent(user_id=viewer.id, media_id=episode.id, completed=True,
-                    watched_at=inferred_watched_at, date_inferred=True))
+                    watched_at=inferred_watch_datetime(series_patch.watch_date if series_patch else None) if observed else inferred_watched_at,
+                    date_inferred=not observed))
                 added_watched_ids.add(episode.id)
         if rollback:
             removed_watched_ids = removing
-            await db.execute(delete(WatchEvent).where(WatchEvent.user_id == viewer.id, WatchEvent.media_id.in_(ids[target:])))
+            await db.execute(delete(WatchEvent).where(WatchEvent.user_id == viewer.id,
+                WatchEvent.media_id.in_(removing if desired_editor is not None else ids[target:])))
             from core.activity import reconcile_unwatched_activity
             await reconcile_unwatched_activity(db, user_id=viewer.id, media=media,
                                                episodes=episodes, watched_ids=desired, removed_ids=removing)
@@ -2114,7 +2187,8 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
             # completed title remains completed even when correcting history.
             from core.tracking_rules import observed_status
             complete = target == len(episodes)
-            entry.status = observed_status(previous, complete, True)
+            entry.status = ('watching' if previous in (None, 'planning', 'paused', 'dropped') else previous
+                            ) if series_patch else observed_status(previous, complete, True)
             entry.start_date, entry.finish_date = default_dates(previous, entry.status, entry.start_date, entry.finish_date, today)
             local_status_decision = entry.status != previous
     if local_status_decision:
@@ -2139,6 +2213,18 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
                 row.rating, row.rated_at = value, datetime.now(timezone.utc).replace(tzinfo=None)
         else:
             db.add(Rating(user_id=viewer.id, media_id=media_id, season_number=season, rating=value))
+    for number, value in alternate_scores.items():
+        row = await db.scalar(select(Rating).where(Rating.user_id == viewer.id, Rating.media_id == media_id,
+            Rating.season_number == number, Rating.episode_order == series_context.order))
+        if value is None:
+            if row:
+                await db.delete(row)
+        elif row:
+            if row.rating != value:
+                row.rating, row.rated_at = value, datetime.now(timezone.utc).replace(tzinfo=None)
+        else:
+            db.add(Rating(user_id=viewer.id, media_id=media_id, season_number=number, rating=value,
+                          episode_order=series_context.order))
     changed_dates = {name for name, before, after in (
         ('start_date', old_start_date, entry.start_date), ('finish_date', old_finish_date, entry.finish_date),
     ) if name in fields and before != after}
@@ -2146,7 +2232,7 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
         from core.streaming_activity import reschedule_date_activity
         await reschedule_date_activity(db, viewer.id, media_id, start_date=entry.start_date,
                                        finish_date=entry.finish_date, changed=changed_dates, status=entry.status)
-    progress_changed = entry.progress != old_progress
+    progress_changed = entry.progress != old_progress or bool(added_watched_ids or removed_watched_ids)
     if old_score != score and score is None:
         from core.activity import clear_recent_rating_activity
         await clear_recent_rating_activity(db, user_id=viewer.id, media_id=media_id)
@@ -2156,19 +2242,33 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
         if status_changed:
             entry.initial_import_completed_at = None
         rating_changed = old_score != score and (status_changed or not suppress_initial_import_rating(entry))
+        activity_status_changed = status_changed and (not series_patch or series_patch.action != 'complete_previous')
         if media.media_type == MediaType.series and progress_changed:
             await record_progress_activity(db, user_id=viewer.id, media=media,
                 previous_progress=old_progress, progress=entry.progress, status=entry.status, score=score,
-                status_changed=status_changed and 'status' in fields, rating_changed=rating_changed,
+                status_changed=activity_status_changed and 'status' in fields, rating_changed=rating_changed,
                 previous_status=previous, first_watching=old_start_date is None and previous != 'watching',
                 previous_score=old_score, previous_watched_ids=watched, watched_ids=desired)
         elif status_changed or not suppress_initial_import_rating(entry):
             position, finished = await series_activity_details(db, media, entry.progress, user_id=viewer.id)
             await record_daily_activity(db, user_id=viewer.id, media_id=media_id, status=entry.status, score=score,
                 progress=entry.progress if media.media_type == MediaType.series else None,
-                position=position, status_changed=status_changed, rating_changed=rating_changed,
+                position=position, status_changed=activity_status_changed, rating_changed=rating_changed,
                 previous_status=previous, first_watching=old_start_date is None and previous != 'watching',
                 previous_score=old_score)
+    if series_context:
+        date_edits = [edit for edit in series_patch.seasons
+                      if {'start_date', 'completion_date'} & edit.model_fields_set]
+        await db.flush()
+        if desired_editor is not None or date_edits:
+            hint = None
+            if entry.status == 'completed' and old_progress == 0 and entry.finish_date:
+                hint = (entry.finish_date, 'series' if entry.finish_date_source == 'series' else 'inferred')
+            from core.season_completion import reconcile
+            await reconcile(db, viewer.id, media_id, groups_data=series_context.data, edits=date_edits, series_hint=hint)
+        if desired_editor is not None:
+            series_context = SeriesEditorContext(series_context.data, series_context.positions, desired_editor)
+        series_summary = await editor_summary(db, media, viewer.id, series_context)
     changed_ratings = {}
     removed_ratings = set()
     before_scores = {None: old_score, **{int(k): v for k, v in old_season_scores.items()}}
@@ -2243,6 +2343,13 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
         result["released_episodes"] = len(episodes)
         result.update(tracking_projection.release_annotations(episodes, desired, entry.status))
     result["delivery_job_id"] = job.id
+    if series_context:
+        result['series_editor'] = series_summary
+        result['finish_date_source'] = entry.finish_date_source
+        latest = next((episode for episode in reversed(series_context.released) if episode.id in series_context.watched), None)
+        if latest:
+            season_number, episode_number = series_context.positions[latest.id]
+            result['season_position'] = f'S{season_number}E{episode_number}'
     return result
 
 

@@ -1,0 +1,91 @@
+---
+import CalendarDateInput from './CalendarDateInput.astro';
+import NumberStepper from './NumberStepper.astro';
+import Icon from './Icon.astro';
+---
+<section class="wide series-editor-panel" data-series-editor hidden aria-label="Series progress">
+  <div class="series-editor-toolbar">
+    <div class="series-editor-modes" role="group" aria-label="Progress view">
+      <button type="button" data-series-mode="episode" aria-pressed="false">Episode</button>
+      <button type="button" data-series-mode="season" aria-pressed="true">Season</button>
+    </div>
+    <button type="button" class="series-editor-text" data-series-expand aria-expanded="false" aria-controls="editor-season-list">All seasons <Icon name="chevron-down"/></button>
+  </div>
+  <div id="editor-season-list" class="series-editor-seasons" hidden></div>
+  <p data-series-loading role="status">Loading progress…</p>
+  <button type="button" class="series-editor-text" data-series-retry hidden>Retry loading progress</button>
+  <div class="series-editor-card" data-series-card hidden>
+    <div class="series-editor-art" data-series-art hidden><span data-series-image-placeholder hidden aria-hidden="true"></span></div>
+    <div class="series-editor-card-info">
+      <span data-series-position></span>
+      <strong data-series-title></strong>
+      <small data-series-meta></small>
+    </div>
+    <button type="button" class="button-primary series-editor-watch" data-series-watch>Mark watched</button>
+  </div>
+  <div class="series-editor-nav" data-series-nav hidden>
+    <button type="button" class="series-editor-arrow" data-series-navigate="-1" aria-label="Previous season"><Icon name="chevron-down" rotate={90}/></button>
+    <span data-series-count-label></span>
+    <button type="button" class="series-editor-arrow" data-series-navigate="1" aria-label="Next season"><Icon name="chevron-down" rotate={270}/></button>
+  </div>
+  <div class="series-editor-fields" data-series-fields hidden>
+    <div>
+      <label for="editor-season-count">Episodes watched</label>
+      <span class="score-stepper" data-season-count>
+        <input id="editor-season-count" name="series_count" type="number" min="0" step="1" inputmode="numeric"/>
+        <span class="score-stepper-controls">
+          <button type="button" data-series-step="1" aria-label="Increase episode progress"><Icon name="chevron-down" rotate={180}/></button>
+          <button type="button" data-series-step="-1" aria-label="Decrease episode progress"><Icon name="chevron-down"/></button>
+        </span>
+      </span>
+    </div>
+    <div data-series-score>
+      <label for="editor-season-score">Season score</label>
+      <NumberStepper id="editor-season-score" name="series_score" label="Season score" min={0} max={10} step={0.1} score/>
+    </div>
+    <div><label for="editor-season-start">Season start</label><CalendarDateInput id="editor-season-start" name="series_start" label="Season start"/></div>
+    <div data-series-finish><label for="editor-season-finish">Season finish</label><CalendarDateInput id="editor-season-finish" name="series_finish" label="Season finish"/></div>
+  </div>
+  <span class="sr-only" data-series-announcement role="status" aria-live="polite"></span>
+</section>
+<style is:global>
+  .editor .editor-fields[data-series-tracked] { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .editor-fields > .series-editor-panel,
+  .editor-fields > .series-editor-details { grid-column: 1 / -1; }
+  .editor-fields[data-series-tracked] > .editor-rewatches { grid-column:auto; grid-row:auto; }
+  .editor-fields[data-series-tracked] > .editor-notes { max-width:none; }
+  .series-editor-panel { display:grid; gap:12px; padding:14px; background:var(--field); border-radius:10px; min-width:0; }
+  .series-editor-toolbar,.series-editor-nav { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .series-editor-modes { display:flex; gap:3px; }
+  .series-editor-modes button,.series-editor-text,.series-editor-arrow,.series-editor-seasons button { border:0; background:none; color:var(--muted); cursor:pointer; }
+  .series-editor-modes button,.series-editor-seasons button { padding:7px 11px; border-radius:7px; }
+  .series-editor-modes button[aria-pressed=true],.series-editor-seasons button[aria-current=true] { background:var(--surface-hover,#21394a); color:var(--bright); }
+  .series-editor-panel button:focus-visible,.series-editor-details summary:focus-visible { outline:none; color:var(--bright); }
+  .series-editor-text:hover,.series-editor-arrow:hover,.series-editor-arrow:focus-visible,.series-editor-modes button:hover { color:var(--bright); }
+  .series-editor-arrow:disabled,.series-editor-text:disabled { opacity:.35; cursor:default; }
+  .series-editor-seasons { display:flex; flex-wrap:wrap; gap:4px; }
+  .series-editor-card { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:12px; min-height:60px; }
+  .series-editor-card-info { grid-column:2; display:grid; gap:2px; min-width:0; }
+  .series-editor-card[data-mode=episode] .series-editor-card-info { min-block-size:max(76px,calc(3lh + 4px)); align-content:center; }
+  .series-editor-card-info span,.series-editor-card-info small,.series-editor-nav { color:var(--muted); }
+  .series-editor-card-info > :is(span,strong,small) { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .series-editor-art { width:92px; aspect-ratio:16 / 9; position:relative; background:var(--surface,#17222a); border-radius:5px; overflow:hidden; }
+  .series-editor-art img,.series-editor-art span { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+  .series-editor-art span { background:linear-gradient(110deg,transparent 18%,#ffffff16 42%,transparent 65%) 200% 0 / 250% 100%; animation:series-editor-shimmer 1.6s linear infinite; }
+  @keyframes series-editor-shimmer { to { background-position:-150% 0; } }
+  .series-editor-watch { grid-column:3; white-space:nowrap; }
+  .series-editor-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px 16px; }
+  .series-editor-fields input { min-width:0; }
+  .series-editor-fields .score-stepper,.series-editor-fields [data-date-display] { background:var(--surface,#14202b); }
+  .series-editor-details summary { cursor:pointer; color:var(--muted); }
+  .series-editor-details .editor-start-date { max-width:270px; margin-top:10px; }
+  .series-airing-dialog .editor-confirmation-actions { flex-wrap:wrap; }
+  .series-editor-panel [hidden],.series-editor-panel[hidden],.series-editor-details[hidden] { display:none!important; }
+  @media (max-width:650px) {
+    .series-editor-card { grid-template-columns:auto minmax(0,1fr); }
+    .series-editor-watch { grid-column:1 / -1; justify-self:start; }
+    .series-editor-art { width:76px; }
+  }
+  @media (max-width:420px) { .editor .editor-fields[data-series-tracked] { grid-template-columns:minmax(0,1fr); } }
+  @media (prefers-reduced-motion:reduce) { .series-editor-art span { animation:none; } }
+</style>

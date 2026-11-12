@@ -27,6 +27,8 @@ class TrackedEntry(Base):
     notes: Mapped[str | None] = mapped_column(Text)
     start_date: Mapped[date | None] = mapped_column(Date)
     finish_date: Mapped[date | None] = mapped_column(Date)
+    finish_date_source: Mapped[str | None] = mapped_column(String(16))
+    season_release_check_on: Mapped[date | None] = mapped_column(Date)
     rewatch_count: Mapped[int] = mapped_column(Integer, default=0)
     # Provenance for ordering provider observations against an explicit local
     # status decision.  ``updated_at`` also changes for notes, scores and

@@ -1,20 +1,20 @@
 """Season dates, transactional receipts and distinct historical cards."""
 import importlib
 import unittest
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 from sqlalchemy import delete, select, text, update
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 import test_statistics_pg as fixture
-from core.season_completion import completion_evidence, reconcile, run_batch
+from core.season_completion import check_release_boundaries, completion_evidence, reconcile, run_batch
 from models import Media, Show, TrackedEntry, TrackingActivity, WatchEvent, ShowEpisodePosition, UserShowEpisodeOrder
 from models.base import MediaType
 from models.seasons import SeriesSeason, SeasonTracking, SeasonReconcileJob
 from core.tracking_projection import activity_data
 from routers.season_tracking import router
-from dependencies import get_tracking_write_user
-from unittest.mock import patch
+from dependencies import get_current_user, get_tracking_write_user
+from unittest.mock import AsyncMock, patch
 
 
 class EvidenceTests(unittest.TestCase):
@@ -38,18 +38,22 @@ class SeasonDatabaseTests(unittest.IsolatedAsyncioTestCase):
         await fixture.StatisticsDatabaseTests.asyncSetUp(self)
         self.app.include_router(router)
         self.app.dependency_overrides[get_tracking_write_user] = lambda: self.viewer
+        self.app.dependency_overrides[get_current_user] = lambda: self.viewer
         def migration(conn):
             # The fixture creates model tables; exercise the real upgrade too.
             for table in ('season_reconcile_jobs', 'season_tracking', 'series_seasons'):
                 conn.execute(text(f'DROP TABLE {table}'))
+            conn.execute(text('ALTER TABLE tracked_entries DROP COLUMN finish_date_source, DROP COLUMN season_release_check_on'))
             with Operations.context(MigrationContext.configure(conn)):
                 importlib.import_module('migrations.versions.mt086_season_completion').upgrade()
+                importlib.import_module('migrations.versions.mt088_series_editor').upgrade()
         async with self.engine.begin() as conn:
             await conn.run_sync(migration)
         async with self.Session() as db:
             show = Show(title='Two seasons', tmdb_id=923000)
             series = Media(title='Two seasons', tmdb_id=923000, media_type=MediaType.series,
-                tmdb_data={'seasons': [{'season_number': n, 'episode_count': 2} for n in (1, 2)]})
+                tmdb_data={'seasons': [{'season_number': n, 'episode_count': 2} for n in (1, 2)],
+                           'tracking_catalogue_refreshed_at': '2024-01-01'})
             db.add_all([show, series])
             await db.flush()
             self.series_id = series.id
@@ -247,3 +251,87 @@ class SeasonDatabaseTests(unittest.IsolatedAsyncioTestCase):
             cards = await self.rows(db)
             self.assertEqual(len(cards),1)
             self.assertEqual(cards[0].payload['episode_order'],'tmdb:group:test')
+
+    async def test_editor_initial_completion_dates_only_latest_and_preserves_manual_season_dates(self):
+        async with self.Session() as db:
+            await db.execute(delete(WatchEvent).where(WatchEvent.media_id.in_(self.episode_ids)))
+            await db.execute(update(TrackedEntry).where(TrackedEntry.media_id==self.series_id).values(status='planning',progress=0))
+            await db.commit()
+        root=f'/tracking/entry/{self.series_id}'
+        initial=(await self.client.get(f'{root}/series-editor')).json()
+        with patch('core.local_outbound.dispatch_local_tracking_delta', new_callable=AsyncMock):
+            response=await self.client.patch(root,json={'status':'completed','finish_date':'2024-06-01',
+                'series_editor':{'revision':initial['revision']}})
+        self.assertEqual(response.status_code,200,response.text)
+        saved=response.json()
+        first,last=saved['series_editor']['seasons']
+        self.assertIsNone(first['completion_date'])
+        self.assertEqual(last['completion_date'],'2024-06-01')
+        self.assertEqual(saved['finish_date_source'],'series')
+        with patch('core.local_outbound.dispatch_local_tracking_delta', new_callable=AsyncMock):
+            response=await self.client.patch(root,json={'rating_mode':'average','series_editor':{
+                'order':saved['series_editor']['order'],'seasons':[{
+                'season_number':2,'membership':last['membership'],'start_date':'2024-05-01',
+                'completion_date':'2024-06-02','score':8.5}]}})
+        self.assertEqual(response.status_code,200,response.text)
+        edited=response.json()
+        last=edited['series_editor']['seasons'][-1]
+        self.assertEqual((last['start_date'],last['completion_date'],last['score']),('2024-05-01','2024-06-02',8.5))
+        self.assertEqual(edited['finish_date'],'2024-06-02')
+        self.assertEqual(edited['score'],8.5)
+
+    async def test_editor_airing_guard_and_catch_up_use_released_episodes(self):
+        async with self.Session() as db:
+            await db.execute(delete(WatchEvent).where(WatchEvent.media_id.in_(self.episode_ids[2:])))
+            await db.execute(update(TrackedEntry).where(TrackedEntry.media_id==self.series_id).values(status='watching',progress=2))
+            await db.execute(update(Media).where(Media.id==self.episode_ids[-1]).values(
+                release_date=(date.today()+timedelta(days=7)).isoformat()))
+            await db.commit()
+        root=f'/tracking/entry/{self.series_id}'
+        initial=(await self.client.get(f'{root}/series-editor')).json()
+        self.assertEqual(initial['airing']['previous_season'],1)
+        self.assertFalse(initial['airing']['watched'])
+        revision=initial['revision']
+        blocked=await self.client.patch(root,json={'status':'completed','series_editor':{'revision':revision}})
+        self.assertEqual(blocked.status_code,409,blocked.text)
+        self.assertEqual(blocked.json()['detail']['code'],'series_editor_airing')
+        with patch('core.local_outbound.dispatch_local_tracking_delta', new_callable=AsyncMock):
+            previous=await self.client.patch(root,json={'status':'completed','series_editor':{
+                'revision':revision,'action':'complete_previous'}})
+        self.assertEqual(previous.status_code,200,previous.text)
+        self.assertEqual((previous.json()['status'],previous.json()['progress']),('completed',2))
+        self.assertIsNone(previous.json()['series_editor']['seasons'][-1]['completion_date'])
+        with patch('core.local_outbound.dispatch_local_tracking_delta', new_callable=AsyncMock):
+            response=await self.client.patch(root,json={'status':'completed','series_editor':{
+                'revision':revision,'action':'catch_up','watch_date':date.today().isoformat()}})
+        self.assertEqual(response.status_code,200,response.text)
+        saved=response.json()
+        self.assertEqual((saved['status'],saved['progress']),('watching',3))
+        last=saved['series_editor']['seasons'][-1]
+        self.assertTrue(saved['series_editor']['airing']['watched'])
+        self.assertEqual(last['start_source'],'episode')
+        self.assertIsNone(last['completion_date'])
+        rejected=await self.client.patch(root,json={'status':'completed','series_editor':{
+            'revision':saved['series_editor']['revision'],'action':'complete_previous'}})
+        self.assertEqual(rejected.status_code,409,rejected.text)
+        self.assertTrue(rejected.json()['detail']['airing']['watched'])
+
+    async def test_release_boundary_clears_compatibility_date_without_touching_previous_season(self):
+        future=date.today()+timedelta(days=7)
+        async with self.Session() as db:
+            await db.execute(delete(WatchEvent).where(WatchEvent.media_id.in_(self.episode_ids[2:])))
+            await db.execute(update(Media).where(Media.id.in_(self.episode_ids[2:])).values(release_date=future.isoformat()))
+            await db.commit()
+        await run_batch(self.Session)
+        async with self.Session() as db:
+            entry=await db.scalar(select(TrackedEntry).where(TrackedEntry.media_id==self.series_id))
+            self.assertEqual(entry.finish_date,date(2024,1,1))
+            self.assertEqual(entry.season_release_check_on,future)
+            entry.season_release_check_on=date.today()
+            await db.execute(update(Media).where(Media.id==self.episode_ids[2]).values(release_date=date.today().isoformat()))
+            await db.commit()
+        await check_release_boundaries(self.Session)
+        async with self.Session() as db:
+            entry=await db.scalar(select(TrackedEntry).where(TrackedEntry.media_id==self.series_id))
+            self.assertIsNone(entry.finish_date)
+            self.assertEqual(len(await self.rows(db)),1)
