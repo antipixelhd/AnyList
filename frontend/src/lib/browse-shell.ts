@@ -23,6 +23,7 @@ function setup(){
   const region=(first.querySelector('[name=region]') as HTMLInputElement)?.value||new URL(location.href).searchParams.get('region');
   const context=createBrowseTabContext(region||'');
   const applyContext=new WeakMap<HTMLElement,ApplyBrowseTabContext>();
+  const posterMotion = new WeakMap<HTMLElement, NonNullable<ReturnType<typeof initializeScrollMotion>>>();
   const positions=new Map<BrowseTab,number>();
   let active=initial,wanted=initial,shown=first,loading:HTMLElement|undefined;
 
@@ -46,10 +47,11 @@ function setup(){
     const slot=document.createElement('span');slot.dataset.browseTabSlot='';oldNav.replaceWith(slot);
     if (root===first) slot.append(nav);
     applyContext.set(root,tab==='game'?initializeGameBrowse(root,panelSignal):initializeBrowse(root,panelSignal));
-    initializeScrollMotion(root, panelSignal, '.browse-card-body', 'browse-scroll-reveal', {
+    const motion = initializeScrollMotion(root, panelSignal, '.browse-card-body', 'browse-scroll-reveal', {
       animateInitial: !restoring, deferHidden: true, downwardOnly: true, scaleEntrance: true,
       once: true, appearedAttribute: 'data-browse-appeared',
     });
+    if (motion) posterMotion.set(root, motion);
     return root;
   }
   function updateNav(tab:BrowseTab){
@@ -115,6 +117,7 @@ function setup(){
       history.replaceState(history.state,'',root.dataset.browseUrl||target(tab));
       loading?.remove();loading=undefined;
       window.scrollTo(0,positions.get(tab)||0);
+      posterMotion.get(root)?.replayVisible();
       root.dispatchEvent(new Event('anylist:browse-active'));
     };
     const ready=tabs.peek(tab);if(ready){activate(ready);return;}

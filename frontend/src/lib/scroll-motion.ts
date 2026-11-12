@@ -16,7 +16,7 @@ export function initializeScrollMotion(
   if (reduced.matches || signal.aborted) return;
   const mobile = matchMedia("(max-width: 650px), (pointer: coarse)");
   const pending = new Map<HTMLElement, Animation | null>();
-  const entrances = new Set<Animation>();
+  const entrances = new Map<HTMLElement, Animation>();
   let modules: HTMLElement[] = [];
   const registered = new WeakSet<HTMLElement>();
   const appeared = new WeakSet<HTMLElement>();
@@ -65,10 +65,33 @@ export function initializeScrollMotion(
     pending.set(element, null);
   };
 
-  const register = () => {
+  const cancelEntrance = (element: HTMLElement) => {
+    entrances.get(element)?.cancel();
+    entrances.delete(element);
+  };
+  const enter = (element: HTMLElement) => {
+    const animation = element.animate(
+      options.scaleEntrance ? scaleFrames : [
+        { opacity: 0, transform: "translateY(7px)" },
+        { opacity: 1, transform: "translateY(0)" },
+      ],
+      options.scaleEntrance ? scaleTiming : { duration: 260, easing: "ease" },
+    );
+    if (options.deferHidden) {
+      const startTime = element.ownerDocument.timeline.currentTime;
+      if (startTime !== null) animation.startTime = startTime;
+    }
+    entrances.set(element, animation);
+    animation.addEventListener("finish", () => {
+      if (entrances.get(element) === animation) entrances.delete(element);
+    }, { once: true });
+  };
+
+  const register = (animateArrivals = true) => {
     modules = modules.filter((element) => {
       if (element.isConnected) return true;
       complete(element);
+      cancelEntrance(element);
       registered.delete(element);
       return false;
     });
@@ -86,25 +109,8 @@ export function initializeScrollMotion(
       if (!visible && options.animateVisibleArrivals === false) return;
       if (visible && bounds.top < viewport().bottom) {
         markAppeared(element);
-        if (bounds.bottom > 0 && (initialRegistration ? options.animateInitial !== false : options.animateVisibleArrivals !== false)) {
-          const entrance = element.animate(
-            options.scaleEntrance ? scaleFrames : [
-              { opacity: 0, transform: "translateY(7px)" },
-              { opacity: 1, transform: "translateY(0)" },
-            ],
-            options.scaleEntrance ? scaleTiming : { duration: 260, easing: "ease" },
-          );
-          if (options.deferHidden) {
-            const startTime = element.ownerDocument.timeline.currentTime;
-            if (startTime !== null) entrance.startTime = startTime;
-          }
-          entrances.add(entrance);
-          entrance.addEventListener(
-            "finish",
-            () => entrances.delete(entrance),
-            { once: true },
-          );
-        }
+        const animate = initialRegistration ? options.animateInitial !== false : options.animateVisibleArrivals !== false;
+        if (animateArrivals && animate && bounds.bottom > 0) enter(element);
         return;
       }
       // Set the starting appearance BEFORE entry, rather than resetting an
@@ -151,6 +157,7 @@ export function initializeScrollMotion(
     } of positions) {
       if (!visible) {
         if (animation) complete(element);
+        cancelEntrance(element);
         continue;
       }
       // Browse entrances come from the lower edge only. Returning through the
@@ -197,7 +204,7 @@ export function initializeScrollMotion(
     cancelAnimationFrame(frame);
     frame = 0;
     for (const element of pending.keys()) complete(element);
-    entrances.forEach((animation) => animation.cancel());
+    for (const element of entrances.keys()) cancelEntrance(element);
   };
   update();
   window.addEventListener("scroll", schedule, { passive: true, signal });
@@ -248,9 +255,26 @@ export function initializeScrollMotion(
     },
     { once: true },
   );
-  return (element: HTMLElement) => {
+  const settle = (element: HTMLElement) => {
     if (!registered.has(element)) return;
     markAppeared(element);
     complete(element);
+    cancelEntrance(element);
   };
+  return Object.assign(settle, {
+    replayVisible() {
+      if (reduced.matches || signal.aborted) return;
+      register(false);
+      const { top, bottom } = viewport();
+      const visible = modules.filter((element) => {
+        if (!element.getClientRects().length) return false;
+        const bounds = (element.parentElement ?? element).getBoundingClientRect();
+        return bounds.top < bottom && bounds.bottom > top;
+      });
+      for (const element of visible) {
+        settle(element);
+        enter(element);
+      }
+    },
+  });
 }

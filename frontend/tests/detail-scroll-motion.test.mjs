@@ -59,6 +59,7 @@ function preview(t, {mobile = false, reduced = false, loading = false, initialY 
   const flush = () => {for (const [id, callback] of frames) {frames.delete(id);callback();}};
   return {
     classes, animations, observers, controller, settle: () => settle(element),
+    replayVisible: () => settle?.replayVisible(),
     append(alreadyAppeared = false) {
       const added={...element, attributes: new Set()};
       if (alreadyAppeared) added.setAttribute(appearedAttribute, '');
@@ -68,7 +69,7 @@ function preview(t, {mobile = false, reduced = false, loading = false, initialY 
     scroll(to, elapsed = 100) {y = to;now += elapsed;viewport.dispatchEvent(new Event('scroll'));flush();},
     ready() {loading = false;observers[0].callback();flush();},
     hide() {hidden = true;observers[0].callback();flush();},
-    show() {hidden = false;observers[0].callback();flush();},
+    show(replay = false) {hidden = false;if (replay) settle?.replayVisible();observers[0].callback();flush();},
     focus() {focused = true;const event = new Event('focusin');Object.defineProperty(event, 'target', {value: {closest: () => element}});root.dispatchEvent(event);},
     reduce() {motion.matches = true;motion.dispatchEvent(new Event('change'));},
     changeInput() {input.matches = !input.matches;input.dispatchEvent(new Event('change'));},
@@ -98,17 +99,26 @@ test('Browse keeps initially visible cards painted but still animates new cards 
   assert.equal(p.animations.length, 3);
 });
 
-test('a warmed Browse tab reveals its visible cards once, on display', t => {
+test('Browse tab switches replay the same entrance for new and retained cards', t => {
   const p = preview(t, {initialY:600, initiallyHidden:true, deferHidden:true, downwardOnly:true, scaleEntrance:true, once:true});
   assert.equal(p.animations.length, 0);
   assert.equal(p.classes.size, 0);
-  p.show();
+  p.show(true);
   assert.equal(p.animations.length, 1);
   assert.equal(p.animations[0].keyframes[0].scale, '0.92');
   assert.equal(p.animations[0].startTime, 100);
   p.hide();
-  p.show();
-  assert.equal(p.animations.length, 1);
+  assert.equal(p.animations[0].cancelled, true);
+  p.show(true);
+  assert.equal(p.animations.length, 2);
+  assert.deepEqual(p.animations[1].keyframes, p.animations[0].keyframes);
+  assert.deepEqual(p.animations[1].options, p.animations[0].options);
+  p.replayVisible();
+  assert.equal(p.animations[1].cancelled, true);
+  assert.equal(p.animations.length, 3);
+  p.scroll(0);
+  p.replayVisible();
+  assert.equal(p.animations.length, 3);
 });
 
 test('visible arrivals stay painted while offscreen modules retain their scroll entrance', t => {
