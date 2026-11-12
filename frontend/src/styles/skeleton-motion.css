@@ -18,7 +18,7 @@
       inset:0;
       border-radius:inherit;
       pointer-events:none;
-      background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--text, currentColor) 23%,transparent),transparent);
+      background:linear-gradient(105deg,transparent,color-mix(in srgb,var(--text, currentColor) 23%,transparent),transparent);
       animation:
         skeleton-soft-sweep var(--sweep-pass) ease-in-out var(--sweep-start),
         skeleton-soft-sweep var(--sweep-pass) ease-in-out calc(var(--sweep-start) + var(--sweep-pass) + var(--sweep-pause));
