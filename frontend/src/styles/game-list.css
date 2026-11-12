@@ -132,7 +132,11 @@
 .category-save:hover,
 .category-save:focus-visible { color: var(--bright); }
 .category-heading .category-icon { font-size: inherit; }
-.category-heading .category-icon .ui-icon { width: 1em; height: 1em; font-size: inherit; }
+.category-heading .category-icon .ui-icon {
+  width: 1em;
+  height: 1em;
+  font-size: .75em;
+}
 .category-restore { color: var(--blue); opacity: 1; }
 .category-restore .ui-icon { width: 14px; font-size: 14px; }
 .category-restore:hover,
