@@ -33,15 +33,19 @@ export function setFeedbackText(element: Element | null, value: string, acknowle
   const previous = element.textContent;
   element.textContent = value;
   if (acknowledge && previous) play(element as HTMLElement, false, false, signal);
+  else active.get(element as HTMLElement)?.();
 }
 
 export function setFeedbackPressed(button: HTMLElement | null, selected: boolean, acknowledge = false, signal?: AbortSignal) {
   if (!button) return;
   const previous = button.getAttribute('aria-pressed');
   button.setAttribute('aria-pressed', String(selected));
-  if (acknowledge && previous !== null && previous !== String(selected)) {
+  if (previous !== null && previous !== String(selected)) {
     const icon = button.querySelector<HTMLElement>('.ui-icon');
-    if (icon) play(icon, true, selected, signal);
+    if (icon) {
+      if (acknowledge) play(icon, true, selected, signal);
+      else active.get(icon)?.();
+    }
   }
 }
 

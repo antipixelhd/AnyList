@@ -74,3 +74,12 @@ test('view disposal and global cancellation release animations without changing 
   setFeedbackText(f.element,'9',true);cancelStateFeedback();
   assert.equal(f.calls[1].cancelled,true);assert.equal(f.element.textContent,'9');
 });
+
+test('a rollback cancels the acknowledgement and restores state without another animation',()=>{
+  const text=fixture(),icon=fixture();
+  setFeedbackText(text.element,'9',true);setFeedbackPressed(icon.button,true,true);
+  setFeedbackText(text.element,'8');setFeedbackPressed(icon.button,false);
+  assert.equal(text.calls.length,1);assert.equal(icon.calls.length,1);
+  assert.equal(text.calls[0].cancelled,true);assert.equal(icon.calls[0].cancelled,true);
+  assert.equal(text.element.textContent,'8');assert.equal(icon.button.getAttribute('aria-pressed'),'false');
+});
