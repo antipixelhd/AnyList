@@ -146,6 +146,7 @@ test('routed profile tabs preserve the shared tab strip position and fade the pa
   const content = {};
   const main = { querySelector: () => null };
   const scrolls = [], reveals = [];
+  let detail = null;
   const context = {
     pageEntrance: new AbortController().signal, profileTabPosition: undefined, detailLayoutTop: undefined,
     clearPreview: undefined, clearNavigationFeedback: undefined, prepareDetailResolution() {}, currentUser: () => 'alex',
@@ -155,6 +156,7 @@ test('routed profile tabs preserve the shared tab strip position and fade the pa
       addEventListener: (name, callback) => handlers.set(name, callback),
       querySelector: selector => new Map([
         ['.profile-tabs', incoming], ['#content > [data-profile-tab-content]', content], ['#content, #settings-content', main],
+        ['.media-detail [data-detail-panels]', detail],
       ]).get(selector) ?? null,
     },
     window: { scrollY: 0, scrollTo: (...coordinates) => scrolls.push(coordinates) },
@@ -176,6 +178,12 @@ test('routed profile tabs preserve the shared tab strip position and fade the pa
   handlers.get('astro:before-swap')({newDocument: {}, to: new URL('https://anylist.test/browse')});
   handlers.get('astro:after-swap')();
   assert.deepEqual(reveals[1], [main, 'page', 0], 'a main page settles without moving the whole surface');
+
+  detail = { querySelector: () => null };
+  context.pageEntrance = new AbortController().signal;
+  handlers.get('astro:before-swap')({newDocument: {}, to: new URL('https://anylist.test/title/1')});
+  handlers.get('astro:after-swap')();
+  assert.deepEqual(reveals[2], [detail, 'page', undefined], 'detail entrances settle the panels while the sidebar and tabs stay fixed');
 });
 
 test('router scrollend saves finish before idle restoration without overriding a pending traversal', () => {

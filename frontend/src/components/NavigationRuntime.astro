@@ -234,10 +234,8 @@
     let clearPreview:(()=>void)|undefined;
     let clearNavigationFeedback:(()=>void)|undefined;
     let pageEntrance:AbortSignal|undefined;
-    let detailLayoutTop:number|undefined;
     let profileTabPosition:{top:number;left:number}|undefined;
     document.addEventListener('astro:before-swap',event=>{
-      detailLayoutTop=document.querySelector('.route-detail-preview .loading-detail-layout')?.getBoundingClientRect().top;
       const sourceTabs=event.sourceElement?.closest<HTMLElement>('.profile-tabs[data-profile-base]');
       const incomingTabs=sourceTabs&&event.newDocument.querySelector<HTMLElement>('.profile-tabs[data-profile-base]');
       if(pageEntrance&&!pageEntrance.aborted&&!event.to.hash&&sourceTabs&&incomingTabs?.dataset.profileBase===sourceTabs.dataset.profileBase){
@@ -359,7 +357,6 @@
       clearNavigationFeedback?.();
       cancelLoadingReveals();
       pageEntrance=undefined;
-      detailLayoutTop=undefined;
       profileTabPosition=undefined;
       clearPreview?.();clearPreview=undefined;
       if(!document.querySelector('[data-browse-shell]')&&document.querySelector('[data-game-browse]')){
@@ -431,17 +428,14 @@
           const content=document.querySelector<HTMLElement>('#content > [data-profile-tab-content]');
           if(content)settleNavigationContent(content,'tab',pageEntrance);
         }else{
-          const detail=document.querySelector<HTMLElement>('.media-detail .lab-layout');
+          const detail=document.querySelector<HTMLElement>('.media-detail [data-detail-panels]');
           const content=detail??document.querySelector<HTMLElement>('#content, #settings-content');
           if(content&&!content.querySelector('#resolve-title, [data-resolve-game]')){
-            let offset=detail||listLanding?undefined:0;
-            if(detail&&detailLayoutTop!==undefined)offset=detailLayoutTop-detail.getBoundingClientRect().top;
-            settleNavigationContent(content,'page',pageEntrance,offset);
+            settleNavigationContent(content,'page',pageEntrance,detail||listLanding?undefined:0);
           }
         }
       }
       pageEntrance=undefined;
-      detailLayoutTop=undefined;
       profileTabPosition=undefined;
     });
     document.addEventListener('astro:page-load', () => {
