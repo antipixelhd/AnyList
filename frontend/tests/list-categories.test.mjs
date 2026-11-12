@@ -9,6 +9,8 @@ test('game categories have stable identities, protected completion and distinct 
   assert.deepEqual(categoryChoices(categories).map(row=>row[1]),['In Progress','Completed','Played','Paused','Dropped','Planning']);
   const completed=categories.categories.find(row=>row.id==='completed');
   assert.equal(completed.can_rename,false);assert.equal(completed.can_hide,false);
+  const planning=categories.categories.find(row=>row.id==='planning');
+  assert.equal(planning.can_hide,false);assert.equal(planning.can_rename,true);
   categories.categories.find(row=>row.id==='played').hidden=true;
   assert.equal(categoryChoices(categories).some(([id])=>id==='played'),false);
   assert.equal(categoryChoices(categories,'played').some(([id])=>id==='played'),true);

@@ -25,9 +25,14 @@ class ListCategoriesTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_defaults_and_protected_completed_and_invalid_names(self):
         defaults = await self.categories()
+        legacy = list_categories.resolve(preferences={'list_categories': {'game': {'hidden': ['planning']}}})
+        planning = next(row for row in legacy.categories if row.id == 'planning')
+        self.assertFalse(planning.hidden)
+        self.assertFalse(planning.can_hide)
+        self.assertTrue(planning.can_rename)
         self.assertEqual([row['label'] for row in defaults['categories']],
             ['In Progress', 'Completed', 'Played', 'Paused', 'Dropped', 'Planning'])
-        for changes in ({'labels': {'completed': 'Finished'}}, {'hidden': ['completed']},
+        for changes in ({'labels': {'completed': 'Finished'}}, {'hidden': ['completed']}, {'hidden': ['planning']},
                         {'labels': {'played': ' completed '}}, {'labels': {'played': ' '}},
                         {'order': ['played']}, {'labels': {'played': 'x' * 33}}):
             result = await self.client.patch('/tracking/list-categories/game', json={'revision': 0, **changes})

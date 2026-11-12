@@ -34,8 +34,8 @@ def resolve(domain='game', preferences=None, counts=None):
     return CategoryPresentation(revision=stored.get('revision', 0), categories=[
         ListCategory(id=key, label=definitions[key][1] if key == 'completed' else labels.get(key) or definitions[key][1],
             default_label=definitions[key][1], description=definitions[key][2],
-            hidden=key != 'completed' and key in hidden and not (counts or {}).get(key),
-            can_rename=key != 'completed', can_hide=key != 'completed')
+            hidden=key not in {'completed', 'planning'} and key in hidden and not (counts or {}).get(key),
+            can_rename=key != 'completed', can_hide=key not in {'completed', 'planning'})
         for key in order
     ])
 
@@ -88,8 +88,8 @@ async def save(db, user_id, patch):
         raise HTTPException(422, 'Category names must be unique.')
     counts = await membership_counts(db, user_id)
     if patch.hidden is not None:
-        if len(set(patch.hidden)) != len(patch.hidden) or set(patch.hidden) - ids or 'completed' in patch.hidden:
-            raise HTTPException(422, 'Completed cannot be hidden.')
+        if len(set(patch.hidden)) != len(patch.hidden) or set(patch.hidden) - ids or {'completed', 'planning'} & set(patch.hidden):
+            raise HTTPException(422, 'Completed and Planning cannot be hidden.')
         if any(counts.get(key) for key in patch.hidden):
             raise HTTPException(409, 'Only empty categories can be hidden.')
         for category in categories.values():

@@ -21,7 +21,7 @@ const definitions = [
 export function defaultGameCategories(): CategoryPresentation {
   return {revision: 0, categories: definitions.map(([id, label, description]) => ({
     id, label, default_label: label, description, hidden: false,
-    can_rename: id !== 'completed', can_hide: id !== 'completed',
+    can_rename: id !== 'completed', can_hide: !['completed', 'planning'].includes(id),
   }))};
 }
 
