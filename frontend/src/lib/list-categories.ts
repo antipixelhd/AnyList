@@ -13,9 +13,9 @@ const definitions = [
   ['playing', 'In Progress', 'Currently playing, usually toward a main objective.'],
   ['completed', 'Completed', 'Achieved your main objective.'],
   ['played', 'Played', 'Played without marking as completed, including endless games and one-off tries.'],
-  ['paused', 'Shelved', 'Set aside with the intention of returning.'],
-  ['dropped', 'Abandoned', 'Stopped with no intention of returning.'],
-  ['planning', 'Planned', 'Wishlist or backlog games.'],
+  ['paused', 'Paused', 'Set aside with the intention of returning.'],
+  ['dropped', 'Dropped', 'Stopped with no intention of returning.'],
+  ['planning', 'Planning', 'Wishlist or backlog games.'],
 ];
 
 export function defaultGameCategories(): CategoryPresentation {

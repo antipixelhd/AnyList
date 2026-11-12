@@ -6,7 +6,7 @@ import {ProfileListIndex} from '../src/lib/profile-list-index.ts';
 
 test('game categories have stable identities, protected completion and distinct defaults',()=>{
   const categories=defaultGameCategories();
-  assert.deepEqual(categoryChoices(categories).map(row=>row[1]),['In Progress','Completed','Played','Shelved','Abandoned','Planned']);
+  assert.deepEqual(categoryChoices(categories).map(row=>row[1]),['In Progress','Completed','Played','Paused','Dropped','Planning']);
   const completed=categories.categories.find(row=>row.id==='completed');
   assert.equal(completed.can_rename,false);assert.equal(completed.can_hide,false);
   categories.categories.find(row=>row.id==='played').hidden=true;

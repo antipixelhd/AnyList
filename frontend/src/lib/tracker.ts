@@ -71,7 +71,7 @@ export function activityAction(activity: any) {
   const details = activity.payload || {};
   if(activity.media?.type==='game'){
     if(details.status_changed&&activity.status_label)return `Marked ${activity.status_label}`;
-    if(details.status_changed)return ({planning:'Plans to play',playing:'Started playing',played:'Played',completed:'Completed',paused:'Shelved',dropped:'Abandoned'} as Record<string,string>)[activity.status]||'Updated';
+    if(details.status_changed)return ({planning:'Plans to play',playing:'Started playing',played:'Played',completed:'Completed',paused:'Paused',dropped:'Dropped'} as Record<string,string>)[activity.status]||'Updated';
     if(details.rating_changed)return activity.score==null?'Removed rating for':details.rating_first?'Rated':'Changed rating for';
     if(details.hours_changed)return 'Updated playtime for';
     if(details.achievements_changed)return 'Updated achievement progress for';

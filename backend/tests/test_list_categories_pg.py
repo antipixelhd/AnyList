@@ -26,7 +26,7 @@ class ListCategoriesTests(unittest.IsolatedAsyncioTestCase):
     async def test_defaults_and_protected_completed_and_invalid_names(self):
         defaults = await self.categories()
         self.assertEqual([row['label'] for row in defaults['categories']],
-            ['In Progress', 'Completed', 'Played', 'Shelved', 'Abandoned', 'Planned'])
+            ['In Progress', 'Completed', 'Played', 'Paused', 'Dropped', 'Planning'])
         for changes in ({'labels': {'completed': 'Finished'}}, {'hidden': ['completed']},
                         {'labels': {'played': ' completed '}}, {'labels': {'played': ' '}},
                         {'order': ['played']}, {'labels': {'played': 'x' * 33}}):
