@@ -32,7 +32,7 @@ export function createDetailImageCarousel(track:HTMLElement,signal:AbortSignal,s
     if(frame)return;
     frame=requestAnimationFrame(()=>{
       frame=0;
-      if(navigating||!track.clientWidth||!count)return;
+      if(navigating||!track.clientWidth||!count||track.clientWidth!==width)return;
       if(track.closest('[data-viewer-zoom-frame]'))return;
       // Prepare the incoming image as soon as the gesture exposes it, before
       // it crosses the selection boundary. Programmatic jumps skip this.

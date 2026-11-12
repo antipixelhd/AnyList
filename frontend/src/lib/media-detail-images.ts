@@ -483,10 +483,18 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
       info[active]=[url];
     }
     const gridIndex=[...root.querySelectorAll('[data-detail-artwork-grid] button')].indexOf(button);
+    const openingIndex=gridIndex>=0?gridIndex:Math.max(0,galleries[active].findIndex(value=>imageKey(value)===imageKey(url)));
+    const cachedSlide=track.children[openingIndex] as HTMLElement|undefined;
+    const cachedImage=cachedSlide?.dataset.imageKey===`${active}:${imageKey(url)}`?carousel.slide(openingIndex)?.image:undefined;
+    const source=button.querySelector<HTMLImageElement>('img')||(active==='hero'?root.querySelector<HTMLImageElement>('.lab-hero-image'):null);
+    const selectedURL=responsiveArtwork(url,{size:active==='posters'?'w780':'original',route:'auto'})?.src;
+    const fullSource=source&&(source.currentSrc||source.src)===selectedURL;
+    const scale=!fullSource&&source?.naturalWidth&&source.naturalHeight?Math.max(1,1920/source.naturalWidth,1080/source.naturalHeight):1;
+    const seed=source?.naturalWidth?{naturalWidth:source.naturalWidth*scale,naturalHeight:source.naturalHeight*scale}:undefined;
     followedSlot=undefined;
     prepareViewer();
-    fitViewer(undefined,viewerGroup(),active==='hero'?root.querySelector<HTMLImageElement>('.lab-hero-image')||undefined:undefined);
-    showDialog(lightbox);previews.reveal();showImage(gridIndex>=0?gridIndex:Math.max(0,galleries[active].findIndex(value=>imageKey(value)===imageKey(url))));
+    fitViewer(cachedImage,viewerGroup(),seed);
+    showDialog(lightbox);previews.reveal();showImage(openingIndex);
     if(active==='hero')void gameBannerSettings?.load();else void loadImages();
   },{signal});
   // The hero is critical: start its small metadata read immediately. Full
