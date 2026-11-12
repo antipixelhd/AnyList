@@ -14,6 +14,7 @@
   .game-list-shell .game-hours-column,.game-list-shell .game-achievements-column{display:none}
 }
 
+.game-list-shell .list-categories { display: block; }
 .category-heading {
   display: flex;
   align-items: center;
@@ -21,20 +22,24 @@
   gap: 8px;
 }
 .category-heading h2 { flex: 1; }
-.category-heading [data-category-controls] { display: flex; gap: 6px; }
+.category-heading [data-category-controls],
+.category-edit-actions { display: flex; gap: 2px; }
+.category-heading [data-category-controls] { opacity: 0; pointer-events: none; }
+.list-categories:hover [data-category-controls],
+.list-categories:focus-within [data-category-controls] { opacity: 1; pointer-events: auto; }
 .category-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 28px;
-  min-height: 32px;
+  min-width: 22px;
+  min-height: 24px;
   padding: 0;
   border: 0;
   background: none;
   color: var(--muted);
   cursor: pointer;
   font: inherit;
-  font-size: 18px;
+  font-size: 16px;
   transition: color 140ms;
 }
 .category-icon:hover,
@@ -47,7 +52,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  min-height: 38px;
+  min-height: 34px;
 }
 .category-edit-row > span,
 .category-edit-row > input { min-width: 0; flex: 1; }
@@ -66,30 +71,43 @@
   background: var(--hover);
   color: var(--bright);
 }
+.category-edit-row input:disabled { opacity: 1; color: var(--muted); cursor: default; }
 .category-hidden > input,
-.category-hidden > span { opacity: .45; }
+.category-hidden > span,
+.category-hidden > .category-drag { opacity: .45; }
 .category-hide { color: #ef6679; }
-.category-drag { touch-action: none; cursor: grab; }
-.category-dragging { color: var(--blue); background: var(--hover); }
-.category-edit-actions { display: flex; gap: 14px; margin: 10px 0; }
-.category-edit-actions button {
-  min-height: 36px;
-  padding: 4px 0;
-  border: 0;
-  background: none;
-  color: var(--blue);
-  cursor: pointer;
+.category-drag {
+  flex: 1;
+  min-width: 0;
+  min-height: 32px;
+  justify-content: flex-start;
+  padding: 5px 10px;
+  touch-action: none;
+  cursor: grab;
+  text-align: left;
+  color: var(--text);
   font-family: var(--font-navigation);
-  font-size: var(--type-label-size);
-  font-weight: var(--type-label-weight);
+  font-size: var(--type-sidebar-size);
+  font-weight: var(--type-sidebar-weight);
 }
-.category-edit-actions button:hover,
-.category-edit-actions button:focus-visible { color: var(--bright); outline: 0; }
-.category-heading .ui-icon { width: 14px; font-size: 14px; }
+.category-dragging > .category-drag { color: var(--blue); cursor: grabbing; }
+.category-move { display: none; }
+.category-save { color: var(--blue); }
+.category-save:hover,
+.category-save:focus-visible { color: var(--bright); }
+.category-heading .ui-icon { width: 12px; font-size: 12px; }
 .category-restore { color: var(--blue); opacity: 1; }
-.category-restore .ui-icon { width: 18px; font-size: 18px; }
+.category-restore .ui-icon { width: 14px; font-size: 14px; }
 .category-restore:hover,
 .category-restore:focus-visible { color: var(--bright); }
+@media (max-width: 650px), (hover: none), (pointer: coarse) {
+  .category-heading [data-category-controls] { opacity: 1; pointer-events: auto; }
+  .category-icon { min-width: 36px; min-height: 40px; }
+  .category-move { display: inline-flex; }
+  .category-drag { min-height: 40px; }
+  .category-heading .ui-icon { width: 14px; font-size: 14px; }
+  .category-restore .ui-icon { width: 16px; font-size: 16px; }
+}
 @media (prefers-reduced-motion: reduce) {
   .category-icon { transition: none; }
 }

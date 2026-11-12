@@ -9,18 +9,24 @@ export function mountCategoryControls(root: HTMLElement, initial: CategoryPresen
   const candidate = root.querySelector<HTMLElement>('[data-category-controls]');
   if (!candidate) return;
   const controls: HTMLElement = candidate;
+  const section = root.querySelector<HTMLElement>('[data-list-categories]')!;
+  const actions = root.querySelector<HTMLElement>('[data-category-edit-actions]')!;
   const editor = root.querySelector<HTMLElement>('[data-category-editor]')!;
   const filters = root.querySelector<HTMLElement>('.status-filters')!;
   const rows = editor.querySelector<HTMLElement>('[data-category-edit-rows]')!;
   const error = editor.querySelector<HTMLElement>('[role=alert]')!;
-  const save = editor.querySelector<HTMLButtonElement>('[data-category-save]')!;
+  const save = actions.querySelector<HTMLButtonElement>('[data-category-save]')!;
 
   function finish() {
     if(busy)return;
+    const previousMode = mode;
     mode = '';
     editor.hidden = true;
     filters.hidden = false;
+    controls.hidden = false;
+    actions.hidden = true;
     controls.querySelectorAll('[aria-pressed]').forEach(button => button.setAttribute('aria-pressed', 'false'));
+    controls.querySelector<HTMLButtonElement>(`[data-category-mode="${previousMode}"]`)?.focus({preventScroll:true});
   }
   function move(id: string, delta: number) {
     const index = draft.categories.findIndex(category => category.id === id);
@@ -40,10 +46,12 @@ export function mountCategoryControls(root: HTMLElement, initial: CategoryPresen
       row.className = 'category-edit-row';
       row.dataset.categoryRow = category.id;
       row.classList.toggle('category-hidden', category.hidden);
-      const name = document.createElement(mode === 'edit' && category.can_rename ? 'input' : 'span');
+      const name = document.createElement(mode === 'edit' ? 'input' : 'span');
       if (name instanceof HTMLInputElement) {
         name.value = category.label;
         name.maxLength = 32;
+        name.disabled = !category.can_rename;
+        if (!category.can_rename) name.dataset.categoryFixed = '';
         name.setAttribute('aria-label', `Name for ${category.default_label}`);
         name.addEventListener('input', () => {category.label = name.value;});
       } else name.textContent = category.label;
@@ -58,8 +66,9 @@ export function mountCategoryControls(root: HTMLElement, initial: CategoryPresen
         return control;
       };
       if (mode === 'reorder') {
-        const handle = button('↕', `Drag ${category.label}; use arrow keys to move`, () => {});
+        const handle = button('', `Drag ${category.label}; use arrow keys to move`, () => {});
         handle.classList.add('category-drag');
+        handle.append(name);
         handle.addEventListener('keydown', event => {
           if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
             event.preventDefault(); move(category.id, event.key === 'ArrowUp' ? -1 : 1); handle.focus();
@@ -84,9 +93,10 @@ export function mountCategoryControls(root: HTMLElement, initial: CategoryPresen
         handle.addEventListener('pointerup', release);
         handle.addEventListener('pointercancel', release);
         handle.addEventListener('lostpointercapture', release);
-        row.append(handle, name,
-          button('↑', `Move ${category.label} up`, () => move(category.id, -1)),
-          button('↓', `Move ${category.label} down`, () => move(category.id, 1)));
+        const up = button('↑', `Move ${category.label} up`, () => move(category.id, -1));
+        const down = button('↓', `Move ${category.label} down`, () => move(category.id, 1));
+        up.classList.add('category-move'); down.classList.add('category-move');
+        row.append(handle, up, down);
       } else {
         row.append(name);
         if (category.can_hide && !counts[category.id]) {
@@ -118,17 +128,22 @@ export function mountCategoryControls(root: HTMLElement, initial: CategoryPresen
     controls.querySelectorAll('[aria-pressed]').forEach(control => control.setAttribute('aria-pressed', String(control === button)));
     filters.hidden = true;
     editor.hidden = false;
+    controls.hidden = true;
+    actions.hidden = false;
     render();
+    rows.querySelector<HTMLElement>('input:not(:disabled),button')?.focus({preventScroll:true});
   }, {signal});
-  editor.querySelector('[data-category-cancel]')!.addEventListener('click', finish, {signal});
-  editor.addEventListener('keydown', event => {
+  actions.querySelector('[data-category-cancel]')!.addEventListener('click', finish, {signal});
+  section.addEventListener('keydown', event => {
     if (event.key === 'Escape' && !busy) {event.preventDefault(); finish();}
     if (event.key === 'Enter' && event.target instanceof HTMLInputElement) {event.preventDefault(); save.click();}
   }, {signal});
   save.addEventListener('click', async () => {
     if (busy) return;
     busy = true; error.hidden = true;
-    editor.querySelectorAll<HTMLInputElement|HTMLButtonElement>('input,button').forEach(control=>control.disabled=true);
+    const fields = [...editor.querySelectorAll<HTMLInputElement|HTMLButtonElement>('input,button'),
+      ...actions.querySelectorAll<HTMLButtonElement>('button')];
+    fields.forEach(control=>control.disabled=true);
     try {
       const response = await fetch('/api/proxy/tracking/list-categories/game', {
         method: 'PATCH', signal, headers: {'Content-Type': 'application/json'},
@@ -153,7 +168,7 @@ export function mountCategoryControls(root: HTMLElement, initial: CategoryPresen
       if (!signal.aborted) {error.textContent = (cause as Error).message; error.hidden = false;}
     } finally {
       busy = false;
-      editor.querySelectorAll<HTMLInputElement|HTMLButtonElement>('input,button').forEach(control=>control.disabled=false);
+      fields.forEach(control=>control.disabled=control.hasAttribute('data-category-fixed'));
     }
   }, {signal});
   document.addEventListener('anylist:game-categories', event => {

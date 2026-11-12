@@ -206,6 +206,7 @@ button:disabled {
   background:var(--panel);
   color:var(--bright)
 }
+.list-categories { display: contents; }
 .status-filters button [data-list-status-count],
 .status-filters button .pending-list-count {
   float:right;
