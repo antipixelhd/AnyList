@@ -14,7 +14,11 @@
   .game-list-shell .game-hours-column,.game-list-shell .game-achievements-column{display:none}
 }
 
-.game-list-shell .list-categories { display: block; }
+.game-list-shell .list-categories {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
 .category-heading {
   display: flex;
   align-items: center;
