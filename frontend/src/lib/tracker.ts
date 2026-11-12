@@ -77,12 +77,12 @@ export function activityAction(activity: any) {
     return details.added_to_list?'Added to list':'Updated';
   }
   const finished = details.finished_seasons || [];
-  if (details.status_changed && ['completed', 'dropped', 'paused', 'planning'].includes(activity.status)) {
+  if (!details.season_completion_id && details.status_changed && ['completed', 'dropped', 'paused', 'planning'].includes(activity.status)) {
     return activity.status === 'planning' ? 'Plans to watch' : statuses.find(([status]) => status === activity.status)?.[1] || 'Updated';
   }
   if (activity.media?.type === 'series' && finished.length) {
     const seasons = finished.join(finished.length > 1 ? ' and ' : '');
-    return `Watched ${finished.length === 1 ? 'season' : 'seasons'} ${seasons} of`;
+    return `Completed ${finished.length === 1 ? 'Season' : 'Seasons'} ${seasons} of`;
   }
   const startPosition = details.position_start || (details.episodes_watched === 1 ? details.position : null);
   if (activity.media?.type === 'series' && details.episodes_watched && startPosition && details.position) {

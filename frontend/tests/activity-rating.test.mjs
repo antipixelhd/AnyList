@@ -57,9 +57,11 @@ test('season completion takes priority over episode ranges in the combined card'
   const activity = {status: 'watching', media: {type: 'series'}, payload: {
     episodes_watched: 2, position_start: 'S3E7', position: 'S3E8', finished_seasons: [3],
   }};
-  assert.equal(activityAction(activity), 'Watched season 3 of');
-  assert.equal(activityAction({...activity, payload: {...activity.payload, finished_seasons: [2, 3]}}), 'Watched seasons 2 and 3 of');
+  assert.equal(activityAction(activity), 'Completed Season 3 of');
+  assert.equal(activityAction({...activity, payload: {...activity.payload, finished_seasons: [2, 3]}}), 'Completed Seasons 2 and 3 of');
   assert.equal(activityAction({...activity, status: 'completed', payload: {...activity.payload, status_changed: true}}), 'Completed');
+  assert.equal(activityAction({...activity, status: 'completed', payload: {...activity.payload,
+    status_changed: true, season_completion_id: 42}}), 'Completed Season 3 of');
 });
 
 test('feed refresh updates scores without changing timestamps or order and removes deleted cards', () => {

@@ -51,6 +51,7 @@ def _rebuild(row):
 async def record_streaming_activity(db, user_id, media_id, events, *, score=None, previous_score=None):
     rows = list((await db.execute(select(TrackingActivity).where(
         TrackingActivity.user_id == user_id, TrackingActivity.media_id == media_id,
+        TrackingActivity.payload['season_completion_id'].as_integer().is_(None),
     ).order_by(TrackingActivity.created_at, TrackingActivity.id))).scalars().all())
     touched = []
     for event in events:
@@ -97,6 +98,7 @@ async def reschedule_date_activity(db, user_id, media_id, *, start_date, finish_
     """Move date actions and their attached rating, preserving unrelated history."""
     rows = list((await db.execute(select(TrackingActivity).where(
         TrackingActivity.user_id == user_id, TrackingActivity.media_id == media_id,
+        TrackingActivity.payload['season_completion_id'].as_integer().is_(None),
     ).order_by(TrackingActivity.created_at.desc(), TrackingActivity.id.desc()))).scalars().all())
     moved = []
     ratings = []

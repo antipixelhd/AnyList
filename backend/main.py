@@ -98,6 +98,8 @@ app.add_middleware(
 )
 
 from routers import tracking
+from routers import season_tracking
+app.include_router(season_tracking.router)
 from routers import games
 from routers import admin_game_runner
 app.include_router(admin_game_runner.router)

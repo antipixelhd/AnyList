@@ -78,6 +78,7 @@ async def clear_recent_rating_activity(db, *, user_id: int, media_id: int,
         TrackingActivity.user_id == user_id, TrackingActivity.media_id == media_id,
         TrackingActivity.created_at >= now - timedelta(days=7),
         TrackingActivity.created_at <= now,
+        TrackingActivity.payload['season_completion_id'].as_integer().is_(None),
     ))).scalars().all()
     for row in rows:
         details = {key: value for key, value in (row.payload or {}).items()
@@ -240,6 +241,7 @@ async def _active_activity_card(db, *, user_id: int, media_id: int, now: datetim
         TrackingActivity.user_id == user_id, TrackingActivity.media_id == media_id,
         TrackingActivity.created_at > now - timedelta(hours=24),
         TrackingActivity.created_at <= now,
+        TrackingActivity.payload['season_completion_id'].as_integer().is_(None),
     ).order_by(TrackingActivity.created_at.desc(), TrackingActivity.id.desc()).limit(1))).scalar_one_or_none()
     if row and activity_window_start(row) <= now < activity_window_start(row) + timedelta(hours=24):
         return row
@@ -316,6 +318,8 @@ async def reconcile_unwatched_activity(db, *, user_id, media, episodes, watched_
 
     for row in rows:
         details = dict(row.payload or {})
+        if details.get('season_completion_id'):
+            continue  # Durable seasons are reconciled from the surviving watches.
         if 'streaming_events' in details:
             details['streaming_base'] = trim(details.get('streaming_base', {}), details.get('streaming_base_status', row.status))
             details['streaming_events'] = {
