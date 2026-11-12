@@ -1,17 +1,41 @@
 .game-list-shell :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) :is(.entry-head,.entry-row){grid-template-columns:60px minmax(0,5fr) minmax(56px,1fr) minmax(84px,1fr) minmax(84px,1fr)}
 .game-list-shell[data-show-achievements=false] :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) :is(.entry-head,.entry-row){grid-template-columns:60px minmax(0,5fr) minmax(56px,1fr) minmax(84px,1fr)}
 .game-list-shell .game-list-achievements{text-align:center;color:var(--text-data);font-size:var(--type-row-size)}
-.game-inline-achievements{display:none}
+.game-achievements-label{display:none}
 .game-list-shell [hidden]{display:none!important}
 .game-list-shell .row-menu:focus-visible{outline:none;background:var(--blue);color:var(--bright)}
-@media(max-width:650px){
-  .game-list-shell :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) :is(.entry-head,.entry-row),.game-list-shell[data-show-achievements=false] :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) :is(.entry-head,.entry-row){grid-template-columns:44px minmax(0,3fr) minmax(44px,1fr)}
-  .game-list-shell :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-row{grid-template-areas:"cover title score" "cover progress score";grid-template-rows:minmax(22px,auto) minmax(22px,auto)}
-  .game-list-shell :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .game-hours{grid-area:progress;justify-content:flex-start;padding:0;color:var(--muted)}
-  .game-list-shell .game-list-achievements{display:none}
-  .game-list-shell .game-inline-achievements[data-known=true]{display:inline}
-  .game-inline-achievements::before{content:'Â·';margin-right:4px}
-  .game-list-shell .game-hours-column,.game-list-shell .game-achievements-column{display:none}
+@media (max-width: 650px) {
+  .game-list-shell :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) :is(.entry-head,.entry-row),
+  .game-list-shell[data-show-achievements=false] :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) :is(.entry-head,.entry-row) {
+    grid-template-columns: 44px minmax(0,3fr) minmax(44px,1fr) minmax(48px,1fr);
+    column-gap: 8px;
+  }
+  .game-list-shell :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-row {
+    grid-template-areas: "cover title score hours" "cover achievements score hours";
+    grid-template-rows: minmax(22px,auto) minmax(22px,auto);
+  }
+  .game-list-shell :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-row .game-hours {
+    grid-area: hours;
+    align-self: center;
+    justify-content: center;
+    padding: 0;
+    color: var(--text-data);
+    white-space: nowrap;
+  }
+  .game-list-shell .game-list-achievements {
+    grid-area: achievements;
+    color: var(--muted);
+    font-size: var(--type-compact-row-size);
+    line-height: 18px;
+    text-align: left;
+    overflow-wrap: anywhere;
+  }
+  .game-achievements-label { display: inline; }
+  .game-list-shell .game-achievements-column { display: none; }
+  .game-list-shell[data-show-achievements=false] :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-title {
+    grid-row: 1 / -1;
+    align-self: center;
+  }
 }
 
 .game-list-shell .list-categories {

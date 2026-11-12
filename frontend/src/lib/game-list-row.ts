@@ -20,10 +20,8 @@ export function paintGameListRow(row:HTMLElement,state:ListState,template:HTMLTe
   if(rate){rate.dataset.gameListRate=String(id);rate.setAttribute('aria-label',`Rate ${state.title}`);}
   const score=row.querySelector('[data-score-label]')||row.querySelector('.entry-score');setFeedbackText(score,scoreLabel(state.score),acknowledge);
   const progress=gameProgress(state);row.querySelector('[data-game-list-hours]')!.textContent=progress.hours||'—';
-  row.querySelectorAll<HTMLElement>('[data-game-list-achievements]').forEach(node=>{
-    node.textContent=progress.achievement||'—';node.dataset.known=String(progress.achievement!=null);
-    if(node.classList.contains('game-inline-achievements'))node.setAttribute('aria-label',`Achievements ${progress.achievement||'unknown'}`);
-  });
+  const achievements=row.querySelector('[data-game-list-achievements]');
+  if(achievements)achievements.textContent=progress.achievement||'—';
   const holder=row.querySelector<HTMLElement>('.entry-thumbnail')!;
   let artwork=holder.querySelector<HTMLElement>('.entry-cover')!;
   if(holder.dataset.artworkPath!==(state.image_url||'')||artwork.tagName!==(state.image_url?'IMG':'SPAN')){
