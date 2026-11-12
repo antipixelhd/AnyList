@@ -131,7 +131,8 @@ export function mountCategoryControls(root: HTMLElement, initial: CategoryPresen
     controls.hidden = true;
     actions.hidden = false;
     render();
-    rows.querySelector<HTMLElement>('input:not(:disabled),button')?.focus({preventScroll:true});
+    if (mode === 'reorder') rows.querySelector<HTMLElement>('button')?.focus({preventScroll:true});
+    else actions.querySelector<HTMLButtonElement>('[data-category-save]')?.focus({preventScroll:true});
   }, {signal});
   actions.querySelector('[data-category-cancel]')!.addEventListener('click', finish, {signal});
   section.addEventListener('keydown', event => {
