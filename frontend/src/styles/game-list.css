@@ -43,6 +43,9 @@
   flex-direction: column;
   gap: 12px;
 }
+@media (min-width: 651px) {
+  .game-list-shell .list-categories { gap: 10px; }
+}
 .category-heading {
   display: flex;
   align-items: center;

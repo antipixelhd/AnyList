@@ -27,7 +27,10 @@ export function mountListFilterControls(root:HTMLElement,signal:AbortSignal) {
     }),{once:true});
     function syncDropdown(dropdown:FilterDropdown) {
       const selected=dropdown.options.find(option=>option.dataset.filterValue===dropdown.select.value) || dropdown.options[0];
-      dropdown.value.textContent=selected?.textContent||'';
+      const label = dropdown.select.dataset.filterLabel || '';
+      const value = dropdown.select.value === dropdown.select.dataset.filterDefault ? label : selected?.textContent || label;
+      dropdown.value.textContent = value;
+      dropdown.trigger.setAttribute('aria-label', value === label ? label : `${label}: ${value}`);
       dropdown.options.forEach(option=>option.setAttribute('aria-selected',String(option===selected)));
     }
     function closeDropdown(dropdown:FilterDropdown,restoreFocus=false) {
@@ -123,6 +126,8 @@ export function mountListFilterControls(root:HTMLElement,signal:AbortSignal) {
     function selectedYear(){const position=Number(yearSlider.value);return position>0?availableYears[position-1]:'';}
     function syncYear(){
       const year=selectedYear();yearField.value=year;
+      const fill = availableYears.length ? Number(yearSlider.value) / availableYears.length * 100 : 0;
+      yearSlider.style.setProperty('--year-fill', `${fill}%`);
       yearOutput.value=year||'Any year';yearOutput.textContent=year||'Any year';
       yearSlider.setAttribute('aria-valuetext',year||'Any year');
     }

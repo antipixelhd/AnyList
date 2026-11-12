@@ -7,18 +7,19 @@ interface Props {
   options: ReadonlyArray<readonly [string, string]>;
   value?: string;
   name?: string;
+  defaultValue?: string;
 }
 
-const { id, label, options, value = '', name } = Astro.props;
-const selectedLabel = options.find(([optionValue]) => optionValue === value)?.[1] ?? options[0]?.[1] ?? '';
+const { id, label, options, value = '', name, defaultValue = '' } = Astro.props;
+const selectedLabel = value === defaultValue ? label : options.find(([optionValue]) => optionValue === value)?.[1] ?? label;
 ---
 <div class="filter-control filter-dropdown-field">
-  <span id={`${id}-label`}>{label}</span>
-  <select id={id} name={name} class="filter-select-native" tabindex="-1" aria-hidden="true">
+  <span id={`${id}-label`} class="sr-only">{label}</span>
+  <select id={id} name={name} class="filter-select-native" tabindex="-1" aria-hidden="true" data-filter-label={label} data-filter-default={defaultValue}>
     {options.map(([optionValue, optionLabel]) => <option value={optionValue} selected={optionValue === value}>{optionLabel}</option>)}
   </select>
   <div class="filter-dropdown" data-filter-dropdown data-motion-static>
-    <button type="button" class="filter-dropdown-trigger tracker-dropdown-trigger" id={`${id}-trigger`} aria-labelledby={`${id}-label ${id}-value`} aria-haspopup="listbox" aria-expanded="false" aria-controls={`${id}-options`}>
+    <button type="button" class="filter-dropdown-trigger tracker-dropdown-trigger" id={`${id}-trigger`} aria-label={selectedLabel === label ? label : `${label}: ${selectedLabel}`} aria-haspopup="listbox" aria-expanded="false" aria-controls={`${id}-options`}>
       <span id={`${id}-value`}>{selectedLabel}</span><Icon name="chevron-down" />
     </button>
     <div class="filter-dropdown-options tracker-dropdown-menu" id={`${id}-options`} role="listbox" aria-labelledby={`${id}-label`} hidden>

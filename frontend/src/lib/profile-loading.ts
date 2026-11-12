@@ -67,9 +67,9 @@ export function profileLoadingFrame(kind: string, url: URL, nav: HTMLElement) {
   if (genre) frame.querySelector('#pending-genre-filter-value')!.textContent = genre;
   for (const [name, id] of [['sort', 'sort'], ['favorites', 'favorite']]) {
     const select = frame.querySelector<HTMLSelectElement>(`select[name="${name}"]`)!;
-    select.value = query.get(name) || '';
+    select.value = query.get(name) || select.dataset.filterDefault || '';
     frame.querySelector(`#pending-${id}-filter-value`)!.textContent =
-      select.selectedOptions[0]?.textContent || '';
+      select.value === select.dataset.filterDefault ? select.dataset.filterLabel || '' : select.selectedOptions[0]?.textContent || '';
   }
   return frame;
 }
