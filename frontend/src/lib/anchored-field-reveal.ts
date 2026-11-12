@@ -37,7 +37,7 @@ export function createAnchoredFieldReveal(dialog:HTMLDialogElement,wrapper:HTMLE
     if(Math.abs(next-target)>.5)settle(motion?wrapper.getBoundingClientRect().height:target);
   });
   resize.observe(content);
-  dialog.addEventListener('close',reset,{signal});
+  dialog.addEventListener('close',()=>{if(!dialog.open)reset();},{signal});
   dialog.addEventListener('beforetoggle',event=>{if((event as ToggleEvent).newState==='closed')reset();},{signal});
   view.addEventListener('resize',reset,{signal,passive:true});
   reduced.addEventListener('change',()=>{if(reduced.matches)stop();},{signal});

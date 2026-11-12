@@ -40,7 +40,7 @@ test('adaptive fields pin once, replace interrupted height motion and restore na
  content.height=150;resized();assert.equal(f.calls[0].cancelled,true);assert.equal(f.calls.at(-1).frames.height[1],'150px');
  reveal.change(()=>{content.hidden=true;},true);const closing=f.calls.at(-1);closing.finish();await Promise.resolve();
  assert.equal(wrapper.hidden,true);assert.equal(wrapper.style.height,'');
- dialog.dispatchEvent(new Event('close'));assert.equal(dialog.style.marginTop,'');assert.equal(dialog.style.maxHeight,'');
+ dialog.open=false;dialog.dispatchEvent(new Event('close'));assert.equal(dialog.style.marginTop,'');assert.equal(dialog.style.maxHeight,'');dialog.open=true;
  const count=f.calls.length;f.reduced.matches=true;
  reveal.change(()=>{content.hidden=false;},true);
  assert.equal(f.calls.length,count);assert.equal(wrapper.hidden,false);assert.equal(wrapper.style.height,'');
@@ -81,6 +81,13 @@ test('reduced motion, resize and close clear the bridge and return focus without
  const f=galleryFixture();f.prepare(f.button,f.image,'same');f.reduced.matches=true;f.motion.enter();await Promise.resolve();assert.equal(f.calls.length,0);
  f.reduced.matches=false;f.motion.enter();await Promise.resolve();f.view.dispatchEvent(new Event('resize'));
  assert.equal(f.dialog.bridge.removed,true);assert.equal(f.track.style.opacity,'');
- f.dialog.dispatchEvent(new Event('close'));assert.equal(f.button.focused,true);
+ f.dialog.open=false;f.dialog.dispatchEvent(new Event('close'));assert.equal(f.button.focused,true);
  f.controller.abort();
+});
+
+test('closing during expansion cleans the bridge synchronously without waiting for a native close event',async()=>{
+ const f=galleryFixture();f.prepare(f.button,f.image,'same');f.motion.enter();await Promise.resolve();
+ const close=f.motion.exit();f.calls.at(-1).finish();await close;
+ f.dialog.open=false;f.motion.closed();
+ assert.equal(f.track.style.opacity,'');assert.equal(f.dialog.bridge.removed,true);assert.equal(f.button.focused,true);
 });

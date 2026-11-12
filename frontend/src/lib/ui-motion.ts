@@ -5,7 +5,7 @@ type MotionControl = ReturnType<typeof animate>;
 const running = new Map<HTMLElement, MotionControl>();
 const closing = new WeakMap<HTMLElement, number>();
 const boundDialogs = new WeakSet<HTMLDialogElement>();
-type DialogMotion={enter():void;exit():Promise<void>;cancel():void};
+type DialogMotion={enter():void;exit():Promise<void>;cancel():void;closed?():void};
 const dialogMotions=new Map<HTMLDialogElement,DialogMotion>();
 export function registerDialogMotion(dialog:HTMLDialogElement,motion:DialogMotion,signal:AbortSignal){
   if(signal.aborted)return;
@@ -87,6 +87,7 @@ export async function closeDialog(dialog: HTMLDialogElement, returnValue?: strin
   stop(dialog);
   dialog.style.removeProperty('pointer-events');
   dialog.close(returnValue);
+  motion?.closed?.();
   dialog.removeAttribute('data-motion-closing');
 }
 

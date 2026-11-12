@@ -23,6 +23,7 @@ export function createImageOriginMotion(dialog:HTMLDialogElement,track:HTMLEleme
     for(const [element,opacity] of faded)element.style.opacity=opacity;faded.clear();
     dialog.style.removeProperty('opacity');delete dialog.dataset.viewerOrigin;
   };
+  const closed=()=>{clear();const button=origin?.button;if(button?.isConnected)button.focus({preventScroll:true});};
   const fade=(entering:boolean)=>{
     if(reduced.matches)return Promise.resolve();
     if(!entering)dialog.style.opacity='0';
@@ -66,14 +67,15 @@ export function createImageOriginMotion(dialog:HTMLDialogElement,track:HTMLEleme
       if(opening&&bridge){const final=bridge.style.transform;controls[0]?.cancel();const motion=boundedAnimation(bridge,{transform:[imageOriginTransform(opening,{left:parseFloat(bridge.style.left),top:parseFloat(bridge.style.top),width:parseFloat(bridge.style.width),height:parseFloat(bridge.style.height)}),final]},270);controls.push(motion);await motion.finished;}
       else await pending;
       if(version!==current)return;
-    },cancel:clear,
+    },cancel:clear,closed,
   },signal);
   const interrupt=()=>{if(!dialog.hasAttribute('data-motion-closing'))clear();};
   track.addEventListener('pointerdown',interrupt,{signal,passive:true});track.addEventListener('wheel',interrupt,{signal,passive:true});
   dialog.querySelector<HTMLElement>('[data-image-viewer-slots]')?.addEventListener('click',interrupt,{signal,capture:true});
   dialog.addEventListener('keydown',event=>{if(event.key==='ArrowLeft'||event.key==='ArrowRight')interrupt();},{signal});
   dialog.querySelectorAll('[data-image-viewer-step]').forEach(button=>button.addEventListener('click',interrupt,{signal}));
-  dialog.addEventListener('close',()=>{clear();const button=origin?.button;if(button?.isConnected)button.focus({preventScroll:true});},{signal});
+  dialog.addEventListener('beforetoggle',event=>{if((event as ToggleEvent).newState==='closed')clear();},{signal});
+  dialog.addEventListener('close',()=>{if(!dialog.open)closed();},{signal});
   view.addEventListener('resize',clear,{signal,passive:true});view.addEventListener('pagehide',clear,{signal});
   reduced.addEventListener('change',()=>{if(reduced.matches)clear();},{signal});
   signal.addEventListener('abort',clear,{once:true});
