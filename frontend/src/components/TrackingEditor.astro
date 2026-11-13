@@ -575,6 +575,7 @@ document.addEventListener('astro:page-load', () => {
 </script>
 <style>
   :global([data-edit-entry][aria-busy=true]) { color:var(--blue); cursor:progress; }
+  .editor-actions { min-height:36px; }
   .editor-delete-button { display:inline-flex; align-items:center; justify-content:center; gap:8px; min-height:36px; border:0; border-radius:3px; padding:7px 12px; background:#0b1622; color:var(--muted,#a2b5c7); font-size:var(--type-meta-size,13px); cursor:pointer; transition:background-color .16s,color .16s; }
   .editor-delete-button:focus-visible { outline:none; background:#ed577a; color:#fff; }
   @media (hover:hover) { .editor-delete-button:hover { background:#ed577a; color:#fff; } }
