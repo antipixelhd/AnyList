@@ -128,6 +128,7 @@ class PreferencePatch(BaseModel):
     low_priority_notifications: bool | None = None
     low_priority_retention_days: int | None = Field(None, ge=1, le=90)
     show_new_ratings_popup: bool | None = None
+    show_season_rating_popup: bool | None = None
     new_season_release_dates: bool | None = None
     new_season_releases: bool | None = None
     remove_specials_seasons: bool | None = None
@@ -166,6 +167,7 @@ async def preferences(db: AsyncSession = Depends(get_db), viewer: User = Depends
         'low_priority_notifications': True if row is None else row.low_priority_notifications,
         'low_priority_retention_days': 7 if row is None else row.low_priority_retention_days,
         'show_new_ratings_popup': True if row is None else row.show_new_ratings_popup,
+        'show_season_rating_popup': True if row is None else row.show_season_rating_popup,
         'new_season_release_dates': True if row is None else row.new_season_release_dates,
         'new_season_releases': True if row is None else row.new_season_releases,
         'remove_specials_seasons': True if row is None else row.remove_specials_seasons,
@@ -2353,6 +2355,14 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
         season_changes = {int(number): (old_season_scores.get(str(number)) or None, value or None)
                           for number, value in entry.season_scores.items()
                           if (old_season_scores.get(str(number)) or None) != (value or None)}
+        from core.web_push import resolve_rating_prompts
+        for number, (_, value) in season_changes.items():
+            if value:
+                await resolve_rating_prompts(db, user_id=viewer.id, media_id=media_id, season_number=number)
+        for number, value in alternate_scores.items():
+            if value:
+                await resolve_rating_prompts(db, user_id=viewer.id, media_id=media_id,
+                    season_number=number, episode_order=series_context.order)
         season_changes.update({int(number): (value, None) for number, value in old_season_scores.items()
                                if str(number) not in entry.season_scores and value})
         if series_context and series_context.order != 'tmdb:aired':

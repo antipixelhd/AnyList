@@ -20,6 +20,9 @@ def suppress_initial_import_rating(entry: TrackedEntry, now: datetime | None = N
 async def record_synced_rating_activity(db, *, user_id, media, entry, season_number,
                                        previous_score, score, now):
     """Accepted ongoing ratings use the editor's windows and frozen snapshots."""
+    if score is not None and score > 0:
+        from core.web_push import resolve_rating_prompts
+        await resolve_rating_prompts(db, user_id=user_id, media_id=media.id, season_number=season_number)
     if entry is None or suppress_initial_import_rating(entry, now):
         return
     if media.media_type == MediaType.series:

@@ -67,6 +67,7 @@
   overflow:hidden;
   text-overflow:ellipsis
 }
+#quick-rating-metadata:not([hidden]),.rating-notification-metadata {display:block;color:var(--muted);font-size:var(--type-meta-size);line-height:1.45;margin-top:4px}
 .quick-rating-body {
   padding:24px 20px 20px;
   text-align:center

@@ -191,6 +191,11 @@ async def submit_rating(
                 score=current_score, rating_changed=True, previous_score=previous_score,
             )
 
+    if media_type == MediaType.series and effective_season is not None and body.rating:
+        from core.web_push import resolve_rating_prompts
+        await resolve_rating_prompts(db, user_id=current_user.id, media_id=media.id,
+            season_number=effective_season, episode_order=effective_episode_order or 'tmdb:aired')
+
     if media_type == MediaType.series and effective_season is not None and rating_changed:
         from models.tracking import TrackedEntry
         from core.activity import suppress_initial_import_rating

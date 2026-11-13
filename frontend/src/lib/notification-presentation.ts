@@ -10,6 +10,39 @@ export type NotificationSnapshot = {
 export const isNewSeasonReleaseDate = (event: any) => event.kind === 'new_season_release_date';
 export const isNewSeasonRelease = (event: any) => event.kind === 'new_season_release';
 export const isSeasonReleaseNotification = (event: any) => isNewSeasonReleaseDate(event) || isNewSeasonRelease(event);
+export const isSeasonRating = (event:any) => event.kind==='rating_needed' && Number(event.season_number)>0;
+// Keep each request independently actionable while presenting a final season
+// and its series as one card. Other seasons retain their own cards.
+export function groupRatingNotifications(events:any[]) {
+  const pairs=new Map<any,any>();
+  const grouped=new Set<any>();
+  for(const series of events.filter(event=>event.kind==='rating_needed' && event.media?.type==='series' && !isSeasonRating(event))) {
+    const season=events.filter(event=>isSeasonRating(event) && event.media?.id===series.media.id)
+      .sort((a,b)=>String(b.created_at||'').localeCompare(String(a.created_at||'')) || b.season_number-a.season_number)[0];
+    if(season){pairs.set(season,series);grouped.add(series);}
+  }
+  return events.filter(event=>!grouped.has(event)).map(event=>pairs.has(event)?{...event,series_rating_request:pairs.get(event)}:event);
+}
+export const ratingTargets = (event:any) => [event,...(event.series_rating_request?[event.series_rating_request]:[])];
+export const ratingActionLabel = (event:any) => isSeasonRating(event)?'Rate season':event.media?.type==='series'?'Rate series':'Rate now';
+export const ratingPopupEnabled = (event:any, preferences:any) => isSeasonRating(event)
+  ? preferences.show_season_rating_popup!==false : preferences.show_new_ratings_popup!==false;
+export const ratingMetadata = (event:any) => {
+  if(event.kind!=='rating_needed')return '';
+  const media=event.media||{},data=event.payload?.rating_metadata||{};
+  const facts:string[]=[];
+  const count=(value:any,singular:string)=>Number(value)>0?`${Number(value)} ${singular}${Number(value)===1?'':'s'}`:'';
+  if(media.type==='movie') {
+    const minutes=Number(data.runtime_minutes??media.runtime);
+    if(minutes>0)facts.push([Math.floor(minutes/60)?`${Math.floor(minutes/60)}h`:'',minutes%60?`${minutes%60}m`:''].filter(Boolean).join(' '));
+  } else {
+    if(!isSeasonRating(event))facts.push(count(data.season_count??media.season_count,'season'));
+    facts.push(count(data.episode_count??(isSeasonRating(event)?undefined:media.episode_count),'episode'));
+  }
+  const year=String(data.year??(isSeasonRating(event)?'':media.year)??'');
+  if(/^\d{4}$/.test(year))facts.push(year);
+  return facts.filter(Boolean).join(' · ');
+};
 
 function seasonLabel(event: any) {
   const season = event.payload?.season_number ?? event.season_number;
@@ -25,7 +58,7 @@ function seasonReleaseDate(event: any) {
 export const eventTitle = (event: any) => {
   const title = event.media?.title || event.payload?.title || 'Connection reconciliation';
   const season = seasonLabel(event);
-  return isSeasonReleaseNotification(event) && season ? `${title} : ${season}` : title;
+  return (isSeasonReleaseNotification(event) || isSeasonRating(event)) && season ? `${title} : ${season}` : title;
 };
 export const eventSource = (event: any) => isSeasonReleaseNotification(event) ? undefined
   : event.provider ? `${event.provider} sync` : event.kind?.startsWith('initial_') ? 'First import' : 'Connection sync';
@@ -92,8 +125,9 @@ export function notificationVersion(value: any, kind: 'event' | 'outbound') {
         id: value.id, kind: value.kind, state: value.state, provider: value.provider,
         message: value.message, previous_status: value.previous_status, proposed_status: value.proposed_status,
         previous_score: value.previous_score, proposed_score: value.proposed_score, season_number: value.season_number,
-        priority: value.priority, dismissible: value.dismissible, payload: value.payload,
-        media: value.media && { id: value.media.id, title: value.media.title, type: value.media.type, poster: value.media.poster },
+        priority: value.priority, dismissible: value.dismissible, payload: value.payload, series_rating_request:value.series_rating_request,
+        media: value.media && { id: value.media.id, title: value.media.title, type: value.media.type, poster: value.media.poster,
+          runtime:value.media.runtime,year:value.media.year,season_count:value.media.season_count,episode_count:value.media.episode_count },
       }
     : {
         media_id: value.media_id, title: value.title, poster: value.poster, state: value.state,

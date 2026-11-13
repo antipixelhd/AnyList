@@ -1,11 +1,11 @@
 ---
 import Icon from './Icon.astro';
 ---
-<dialog id="quick-rating" class="quick-rating-dialog" aria-labelledby="quick-rating-title">
+<dialog id="quick-rating" class="quick-rating-dialog" aria-labelledby="quick-rating-title" aria-describedby="quick-rating-scope quick-rating-metadata">
   <div class="quick-rating-head">
     <div class="quick-rating-media">
       <img id="quick-rating-poster" alt="" hidden />
-      <div><span class="eyebrow">Quick rate</span><h2 id="quick-rating-title">Rate title</h2></div>
+      <div><span class="eyebrow" id="quick-rating-scope">Quick rate</span><h2 id="quick-rating-title">Rate title</h2><small id="quick-rating-metadata" hidden></small></div>
     </div>
     <button type="button" class="quick-rating-close" id="quick-rating-close" aria-label="Close rating"><Icon name="close" /></button>
   </div>
@@ -37,7 +37,7 @@ document.addEventListener('astro:page-load', () => {
     delete (window as any).anyListQuickRate;
     return;
   }
-  type QuickRateDetail = { id?: number; title: string; poster?: string; posterSrc?: string; score?: number | null; ratingMode?: 'manual' | 'average'; onScore?: (score: number | null) => void | Promise<void> };
+  type QuickRateDetail = { id?: number; title: string; poster?: string; posterSrc?: string; score?: number | null; ratingMode?: 'manual' | 'average'; seasonNumber?:number; episodeOrder?:string; metadata?:string; onScore?: (score: number | null) => void | Promise<void> };
   const dialog = document.querySelector<HTMLDialogElement>('#quick-rating')!;
   const stars = document.querySelector<HTMLElement>('#quick-rating-stars')!;
   const value = document.querySelector<HTMLOutputElement>('#quick-rating-value')!;
@@ -138,13 +138,27 @@ document.addEventListener('astro:page-load', () => {
     stars.classList.add('saving');
     try {
       if (current.id == null) throw new Error('This title cannot be rated yet.');
+      if(current.seasonNumber!=null) {
+        const response=await fetch('/api/proxy/ratings',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({media_id:current.id,media_type:'series',season_number:current.seasonNumber,
+            episode_order:current.episodeOrder||'tmdb:aired',rating:score??0}),signal});
+        if(!response.ok)throw new Error('Unable to save this season rating. Try again.');
+        const saved=await response.json();
+        if(active!==current || signal.aborted)return;
+        savedScore=saved.rating||null;paint(savedScore);
+        editorStore.invalidate(current.id);
+        document.dispatchEvent(new CustomEvent('media-tracker:rating-changed',{detail:{id:current.id,
+          season_number:current.seasonNumber,episode_order:current.episodeOrder||'tmdb:aired',score:savedScore}}));
+        void closeDialog(dialog);
+        return;
+      }
       const context=editorStore.find(current.id)||await editorStore.load(current.id);
       const saved=await editorStore.write(context,{...(changeToManual ? {rating_mode:'manual'} : {}),manual_score:score??0});
       if(active!==current || signal.aborted)return;
       savedScore = saved.score == null ? null : Number(saved.score);
       const ratingMode = saved.rating_mode === 'average' ? 'average' : 'manual';
       active.ratingMode = ratingMode;
-      document.querySelectorAll<HTMLElement>(`[data-quick-rate-id="${active.id}"]`).forEach(control => {
+      document.querySelectorAll<HTMLElement>(`[data-quick-rate-id="${active.id}"]:not([data-quick-rate-season])`).forEach(control => {
         control.dataset.quickRateScore = savedScore == null ? '' : String(savedScore);
         control.dataset.quickRateMode = ratingMode;
         const row = control.closest<HTMLElement>('.entry-row');
@@ -177,6 +191,9 @@ document.addEventListener('astro:page-load', () => {
     savedScore = detail.score || null;
     pendingScore = null;
     title.textContent = detail.title;
+    dialog.querySelector<HTMLElement>('#quick-rating-scope')!.textContent=detail.seasonNumber!=null?`Rate Season ${detail.seasonNumber}`:'Quick rate';
+    const metadata=dialog.querySelector<HTMLElement>('#quick-rating-metadata')!;
+    metadata.textContent=detail.metadata||'';metadata.hidden=!detail.metadata;
     if (detail.posterSrc) { poster.removeAttribute('srcset'); poster.removeAttribute('sizes'); poster.src = detail.posterSrc; }
     else if (detail.poster) applyResponsiveArtwork(poster,detail.poster,{size:'w185',sizes:'42px',route:'auto'});
     else { poster.removeAttribute('src'); poster.removeAttribute('srcset'); poster.removeAttribute('sizes'); }
@@ -232,12 +249,17 @@ document.addEventListener('astro:page-load', () => {
     const button = (event.target as HTMLElement).closest<HTMLElement>('[data-quick-rate-id]');
     if (!button) return;
     event.preventDefault();
+    const visiblePoster=button.closest('[data-attention-prompt],[data-notification-key]')?.querySelector<HTMLImageElement>('img');
     open({
       id: Number(button.dataset.quickRateId),
       title: button.dataset.quickRateTitle || 'Rate title',
       poster: button.dataset.quickRatePoster || undefined,
+      posterSrc:button.dataset.quickRateUseVisiblePoster!=='false' && visiblePoster?.complete && visiblePoster.naturalWidth?visiblePoster.currentSrc:undefined,
       score: Number(button.dataset.quickRateScore) || null,
       ratingMode: button.dataset.quickRateMode === 'average' ? 'average' : 'manual',
+      seasonNumber:button.dataset.quickRateSeason?Number(button.dataset.quickRateSeason):undefined,
+      episodeOrder:button.dataset.quickRateOrder,
+      metadata:button.dataset.quickRateMetadata,
     });
   }, { signal: pageListeners.signal });
   (window as any).anyListQuickRate = open;

@@ -16,6 +16,7 @@ from sqlalchemy import select
 from core.config import settings
 from core.tracking_rules import effective_score
 from models import Media
+from models import Rating
 from models.tracking import SyncReview, TrackedEntry, WebPushSubscription
 
 _KEY_FILE = Path(settings.data_dir) / "web-push-vapid-private.pem"
@@ -56,18 +57,31 @@ def _poster_url(path: str | None) -> str | None:
     return None
 
 
-async def queue_sync_completion_rating(db, *, user_id: int, media: Media, entry: TrackedEntry, source: str) -> None:
+async def queue_sync_completion_rating(db, *, user_id: int, media: Media, entry: TrackedEntry, source: str,
+                                       new_episode_ids=(), positions=()) -> None:
     """Create one in-app/native rating prompt for a newly synced completion."""
+    if media.media_type.value == 'series':
+        from core.season_rating_prompts import queue_season_rating_prompts
+        await queue_season_rating_prompts(db, user_id=user_id, media=media, entry=entry, source=source,
+            new_episode_ids=new_episode_ids, positions=positions)
     if entry.status != "completed" or effective_score(entry.rating_mode, entry.manual_score, entry.season_scores) is not None:
         return
     existing = (await db.execute(select(SyncReview.id).where(
         SyncReview.user_id == user_id,
         SyncReview.media_id == media.id,
         SyncReview.kind == "rating_needed",
+        SyncReview.season_number.is_(None),
         SyncReview.dismissed_at.is_(None),
     ).limit(1))).first()
     if existing:
         return
+    data = media.tmdb_data or {}
+    regular = [season for season in data.get('seasons', []) if isinstance(season, dict) and (season.get('season_number') or 0) > 0]
+    metadata = {'year': str(media.release_date or '')[:4], 'runtime_minutes': media.runtime or data.get('runtime')}
+    if media.media_type.value == 'series':
+        metadata.update(season_count=data.get('number_of_seasons') or len(regular),
+            episode_count=data.get('number_of_episodes') or (sum(season['episode_count'] for season in regular)
+                if regular and all(season.get('episode_count') for season in regular) else None))
     db.add(SyncReview(
         user_id=user_id,
         media_id=media.id,
@@ -76,20 +90,23 @@ async def queue_sync_completion_rating(db, *, user_id: int, media: Media, entry:
         state="confirmed",
         proposed_status="completed",
         priority="low",
-        payload={"push_state": "pending", "delivered_subscription_ids": []},
+        payload={"push_state": "pending", "delivered_subscription_ids": [], 'rating_metadata': metadata, 'rating_mode': entry.rating_mode},
         message=f"{media.title} completed. Rate now!",
     ))
 
 
-async def resolve_rating_prompts(db, *, user_id: int, media_id: int) -> None:
+async def resolve_rating_prompts(db, *, user_id: int, media_id: int, season_number=None, episode_order='tmdb:aired') -> None:
     prompts = (await db.execute(select(SyncReview).where(
         SyncReview.user_id == user_id,
         SyncReview.media_id == media_id,
         SyncReview.kind == "rating_needed",
+        SyncReview.season_number == season_number,
         SyncReview.dismissed_at.is_(None),
     ))).scalars()
     now = datetime.utcnow()
     for prompt in prompts:
+        if season_number is not None and (prompt.payload or {}).get('episode_order', 'tmdb:aired') != episode_order:
+            continue
         prompt.dismissed_at = now
         prompt.payload = {**(prompt.payload or {}), "push_state": "rated"}
 
@@ -121,11 +138,19 @@ async def dispatch_rating_pushes(db) -> dict[str, int]:
         .order_by(SyncReview.created_at)
         .limit(100)
     )).all()
+    season_scores = {(row.user_id, row.media_id, row.season_number, row.episode_order or 'tmdb:aired'): row.rating
+        for row in await db.scalars(select(Rating).where(Rating.user_id.in_({review.user_id for review, _, _ in rows}),
+            Rating.media_id.in_({media.id for _, media, _ in rows}), Rating.season_number.is_not(None)))} if any(review.season_number is not None for review, _, _ in rows) else {}
     for review, media, entry in rows:
-        if (review.payload or {}).get("push_state") == "sent":
+        order = (review.payload or {}).get('episode_order', 'tmdb:aired')
+        rated = season_scores.get((review.user_id, media.id, review.season_number, order)) if review.season_number is not None else effective_score(entry.rating_mode, entry.manual_score, entry.season_scores)
+        if review.season_number is not None and order == 'tmdb:aired' and not rated:
+            rated = (entry.season_scores or {}).get(str(review.season_number))
+        if rated is not None and rated > 0:
+            await resolve_rating_prompts(db, user_id=review.user_id, media_id=media.id,
+                season_number=review.season_number, episode_order=order)
             continue
-        if effective_score(entry.rating_mode, entry.manual_score, entry.season_scores) is not None:
-            await resolve_rating_prompts(db, user_id=review.user_id, media_id=media.id)
+        if (review.payload or {}).get("push_state") == "sent":
             continue
         subscriptions = list((await db.execute(select(WebPushSubscription).where(
             WebPushSubscription.user_id == review.user_id,
@@ -136,13 +161,13 @@ async def dispatch_rating_pushes(db) -> dict[str, int]:
         delivered = {int(value) for value in data.get("delivered_subscription_ids", [])}
         expired: set[int] = set()
         payload = {
-            "title": media.title,
-            "body": f"{media.title} completed. Rate now!",
-            "icon": _poster_url(media.poster_path) or f"{settings.server_url.rstrip('/')}/web-app-manifest-192x192.png",
-            "image": _poster_url(media.backdrop_path or media.poster_path),
+            "title": f'{media.title} · Season {review.season_number}' if review.season_number is not None else media.title,
+            "body": review.message,
+            "icon": _poster_url(data.get('season_poster_path') or media.poster_path) or f"{settings.server_url.rstrip('/')}/web-app-manifest-192x192.png",
+            "image": _poster_url(data.get('season_poster_path') or media.backdrop_path or media.poster_path),
             "badge": f"{settings.server_url.rstrip('/')}/favicon-96x96.png",
             "tag": f"rating-needed-{review.id}",
-            "url": f"/title/{media.id}?rate=1",
+            "url": f'/recent-events?rate={review.id}' if review.season_number is not None else f"/title/{media.id}?rate=1",
         }
         for subscription in subscriptions:
             if subscription.id in delivered:

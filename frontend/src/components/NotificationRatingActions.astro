@@ -1,0 +1,7 @@
+---
+import Icon from './Icon.astro';
+import {eventImage,isSeasonRating,ratingMetadata,ratingTargets,ratingActionLabel} from '../lib/notification-presentation';
+import {responsiveArtwork} from '../lib/responsive-artwork';
+const {event}=Astro.props;
+---
+{ratingTargets(event).map((target:any,index:number)=><button data-notification-action={index?'rate-series':'rate'} class={index?'button-secondary button-rate':'button-primary button-rate'} data-rating-request={target.id} data-quick-rate-id={target.media.id} data-quick-rate-title={target.media.title} data-quick-rate-poster={responsiveArtwork(eventImage(target),{size:'w185',sizes:'42px',route:'auto'})?.src||''} data-quick-rate-use-visible-poster={String(index===0)} data-quick-rate-season={isSeasonRating(target)?target.season_number:undefined} data-quick-rate-order={isSeasonRating(target)?target.payload?.episode_order||'tmdb:aired':undefined} data-quick-rate-metadata={ratingMetadata(target)} data-quick-rate-mode={isSeasonRating(target)?'manual':target.payload?.rating_mode||'manual'} data-quick-rate-score=""><Icon name="star"/>{ratingActionLabel(target)}</button>)}

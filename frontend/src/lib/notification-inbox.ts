@@ -1,5 +1,6 @@
 import {cancelImportNotification} from './import-cancel';
 import {
+  refreshNotifications,
   subscribeNotifications,
   type NotificationSnapshot,
 } from "./notification-store";
@@ -8,6 +9,8 @@ import {
   responsiveArtwork,
 } from "./responsive-artwork";
 import {
+  groupRatingNotifications,
+  ratingActionLabel,
   eventBadge,
   eventCanChooseStatus,
   eventCanKeepPrevious,
@@ -20,6 +23,8 @@ import {
   eventMessage,
   eventSource,
   eventTitle,
+  isSeasonRating,
+  ratingMetadata,
   eventVariant,
   historyChanges,
   historyLabel,
@@ -238,11 +243,16 @@ function mountInbox(
     parent.append(cloneIcon("arrow-right"));
   }
   function updateEventDetail(card: HTMLElement, event: any) {
+    const metadata=ratingMetadata(event);
     const detail = card.querySelector<HTMLElement>(
       "[data-notification-detail]",
     );
     if (!detail) return;
     detail.replaceChildren();
+    if(metadata) {
+      const line=document.createElement('small');line.className='rating-notification-metadata';
+      line.textContent=metadata;detail.append(line);
+    }
     const choices = resumeChoices(event);
     if (choices.length) {
       const list = document.createElement('ul');
@@ -349,11 +359,38 @@ function mountInbox(
     if (cancelImport) { cancelImport.dataset.cancelImport = event.payload?.import_id || ''; cancelImport.dataset.connectionImport = String(event.payload?.connection_id != null); }
     visible("rate", event.kind === "rating_needed" && Boolean(event.media));
     const rate = action("rate") as HTMLButtonElement | null;
+    action('rate-series')?.remove();
+    if(rate && event.series_rating_request) {
+      const series=event.series_rating_request;
+      const extra=rate.cloneNode(true) as HTMLButtonElement;
+      extra.dataset.notificationAction='rate-series';
+      extra.className='button-secondary button-rate';
+      extra.textContent='Rate series';
+      extra.hidden=false;
+      extra.dataset.ratingRequest=String(series.id);
+      extra.dataset.quickRateId=String(series.media.id);
+      extra.dataset.quickRateTitle=series.media.title;
+      extra.dataset.quickRatePoster=responsiveArtwork(eventImage(series),{size:'w185',sizes:'42px',route:'auto'})?.src||'';
+      extra.dataset.quickRateUseVisiblePoster='false';
+      extra.dataset.quickRateMetadata=ratingMetadata(series);
+      extra.dataset.quickRateMode=series.payload?.rating_mode||'manual';
+      delete extra.dataset.quickRateSeason;delete extra.dataset.quickRateOrder;
+      rate.after(extra);
+    }
     if (rate && event.media) {
+      rate.textContent=ratingActionLabel(event);
+      rate.dataset.ratingRequest=String(event.id);
+      rate.dataset.quickRateUseVisiblePoster='true';
       rate.dataset.quickRateId = String(event.media.id);
-      rate.dataset.quickRateTitle = event.media.title || "";
+      rate.dataset.quickRateTitle = event.media.title || '';
+      rate.dataset.quickRateMetadata=ratingMetadata(event);
+      rate.dataset.quickRateMode=isSeasonRating(event)?'manual':event.payload?.rating_mode||'manual';
+      if(isSeasonRating(event)) {
+        rate.dataset.quickRateSeason=String(event.season_number);
+        rate.dataset.quickRateOrder=event.payload?.episode_order||'tmdb:aired';
+      } else {delete rate.dataset.quickRateSeason;delete rate.dataset.quickRateOrder;}
       rate.dataset.quickRatePoster =
-        responsiveArtwork(event.media.poster, {
+        responsiveArtwork(eventImage(event), {
           size: "w185",
           sizes: "42px",
           route:'auto',
@@ -416,7 +453,11 @@ function mountInbox(
     }
     visible("dismiss", Boolean(event.dismissible));
     const dismiss = action("dismiss");
-    if (dismiss) dismiss.dataset.dismiss = String(event.id);
+    if (dismiss) {
+      dismiss.dataset.dismiss = String(event.id);
+      if(event.series_rating_request)dismiss.dataset.dismissAlso=String(event.series_rating_request.id);
+      else delete dismiss.dataset.dismissAlso;
+    }
   }
   function populateEvent(card: HTMLElement, event: any) {
     const key = eventKey(event);
@@ -535,6 +576,7 @@ function mountInbox(
     });
   }
   function reconcileEvents(snapshot: NotificationSnapshot) {
+    snapshot={...snapshot,results:groupRatingNotifications(snapshot.results||[])};
     const incoming = new Map(
       (snapshot.results || []).map((event: any) => [eventKey(event), event]),
     );
@@ -841,6 +883,7 @@ function mountInbox(
             {},
             "DELETE",
           );
+          if(button.dataset.dismissAlso)await request(`recent-events/${button.dataset.dismissAlso}`,{},'DELETE');
           button.blur();
           flushDeferred();
         } catch (exception) {
@@ -878,10 +921,10 @@ function mountInbox(
         input instanceof HTMLInputElement ? input.checked : Number(input.value);
       try {
         await request("preferences", { [input.dataset.pref!]: value }, "PATCH");
-        if (input.dataset.pref === "show_new_ratings_popup")
+        if (["show_new_ratings_popup","show_season_rating_popup"].includes(input.dataset.pref!))
           document.dispatchEvent(
             new CustomEvent("anylist:rating-popup-preference", {
-              detail: { enabled: value },
+              detail: { enabled: value, name:input.dataset.pref },
             }),
           );
       } catch (exception) {
@@ -913,10 +956,34 @@ function mountInbox(
     () => {
       root
         .querySelectorAll<HTMLElement>("[data-quick-rating-active]")
-        .forEach((card) => delete card.dataset.quickRatingActive);
+        .forEach((card) => {
+          delete card.dataset.quickRatingActive;
+          // The dialog restores focus to its opener. After a successful save,
+          // that must not keep an obsolete request visible indefinitely.
+          if(card.dataset.quickRatingSaved==='true' && card.contains(document.activeElement))
+            (document.activeElement as HTMLElement).blur();
+          delete card.dataset.quickRatingSaved;
+        });
       flushDeferred();
     },
     { signal: listeners.signal },
   );
-  subscribeNotifications(applySnapshot, { signal: listeners.signal });
+  document.addEventListener('media-tracker:rating-changed',event=>{
+    const detail=(event as CustomEvent).detail;
+    root.querySelectorAll<HTMLElement>('[data-quick-rating-active]').forEach(card=>{
+      const matching=Array.from(card.querySelectorAll<HTMLElement>('[data-quick-rate-id]')).some(button=>
+        Number(button.dataset.quickRateId)===Number(detail?.id) &&
+        Number(button.dataset.quickRateSeason||0)===Number(detail?.season_number||0));
+      if(matching)card.dataset.quickRatingSaved='true';
+    });
+    void refreshNotifications({force:true});
+  },{signal:listeners.signal});
+  let requestedRating=new URLSearchParams(location.search).get('rate');
+  subscribeNotifications(snapshot=>{
+    applySnapshot(snapshot);
+    if(requestedRating && /^\d+$/.test(requestedRating)) {
+      const button=root.querySelector<HTMLButtonElement>(`[data-rating-request="${requestedRating}"]`);
+      if(button){requestedRating=null;button.click();}
+    }
+  }, { signal: listeners.signal });
 }

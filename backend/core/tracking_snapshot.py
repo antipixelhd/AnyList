@@ -751,9 +751,11 @@ async def observe_stream_snapshot(
             if row in changed_active and baseline.approved:
                 from core.stream_actions import queue_progress_update
                 await queue_progress_update(db, conn, media, row)
-            if entry.status == 'completed' and (entry.status != previous_status or newly_tracked):
+            season_completions = {(item.get('season'), item.get('episode')) for item in observation_rows
+                if not first and baseline.approved and item in new_completed and item.get('season') and item.get('episode')}
+            if media.media_type == MediaType.series and season_completions or entry.status == 'completed' and (entry.status != previous_status or newly_tracked):
                 await queue_sync_completion_rating(
-                    db, user_id=conn.user_id, media=media, entry=entry, source=conn.type,
+                    db, user_id=conn.user_id, media=media, entry=entry, source=conn.type, positions=season_completions,
                 )
     if not first and conn.type == 'nuvio' and (sync_playback or sync_watched):
         # Watched episode history commonly remains for an unfinished series;

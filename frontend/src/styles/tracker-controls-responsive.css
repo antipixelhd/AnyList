@@ -102,6 +102,7 @@
   justify-content:center;
   min-width:0
 }
+.attention-prompt [data-attention-metadata] {order:2;color:var(--muted);font-size:var(--type-meta-size);line-height:1.4}
 .attention-prompt:has([data-attention-rate]:not([hidden])) .attention-prompt-copy {
   gap:2px;
   min-width:0
