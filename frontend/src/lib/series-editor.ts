@@ -30,12 +30,15 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
   const rows = find('rows');
   const rowTemplate = find<HTMLTemplateElement>('row-template');
   const expand = find<HTMLButtonElement>('expand');
+  const toolbar = find('toolbar');
+  const smallScreen = matchMedia('(max-width:650px)');
   const selector = panel.querySelector<HTMLSelectElement>('#series-season')!;
   const selectControl = setupEditorSelect(selector.closest<HTMLElement>('[data-editor-select]')!,page);
   const countInput = find<HTMLInputElement>('count');
   const card = find('card');
-  const art = find('art');
-  const placeholder = find('image-placeholder');
+  const selection = find('selection');
+  const content = find('content');
+  const focusSeason = () => (allSeasons?expand:selector.closest('[data-editor-select]')!.querySelector<HTMLButtonElement>('button')!).focus({preventScroll:true});
   const watch = find<HTMLButtonElement>('watch');
   const prompt = document.querySelector<HTMLDialogElement>('[data-series-airing]')!;
   const drafts = new Map<number,Draft>();
@@ -48,16 +51,10 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
   const rowControls = new Map<number, () => void>();
   let stagedPosition:{id:number|null; count:number; season:number}|undefined;
   let active:AbortController|undefined;
-  let mediaRead:AbortController|undefined;
   let timer:ReturnType<typeof setTimeout>|undefined;
-  let imageTimer:ReturnType<typeof setTimeout>|undefined;
   let request:Promise<void>|undefined;
   let busy = false;
   let loadFailed = false;
-  let cardKey = '';
-  let imageKey = '';
-  let imageMotion:ReturnType<typeof animate>|undefined;
-  let cardMotion:ReturnType<typeof animate>|undefined;
   let generation = 0;
   const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
   const seasons = () => summary?.seasons ?? [];
@@ -95,55 +92,9 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     const current = list.slice(Math.max(latest,0)).find(s=>s.episodes.some(ep=>!ep.watched)) ?? list.at(-1) ?? seasons()[0];
     selected = current?.season_number;
   };
-  const resetImage = () => {
-    mediaRead?.abort();
-    mediaRead = undefined;
-    clearTimeout(imageTimer);
-    imageMotion?.cancel();
-    art.querySelector('img')?.remove();
-    placeholder.hidden = true;
-    imageKey = '';
-  };
-  const paintImage = (path:string|null|undefined, key:string) => {
-    const artwork = responsiveArtwork(path,{size:'w300',sizes:'(max-width:650px) 76px, 92px',route:'direct'});
-    if (!artwork || imageKey!==key) return;
-    const img = new Image();
-    img.alt = '';
-    img.decoding = 'async';
-    if (artwork.sizes) img.sizes = artwork.sizes;
-    if (artwork.srcset) img.srcset = artwork.srcset;
-    img.src = artwork.src;
-    void img.decode().then(()=>{
-      if (key!==imageKey || mediaRead?.signal.aborted || !active || active.signal.aborted) return;
-      clearTimeout(imageTimer);
-      placeholder.hidden = true;
-      art.append(img);
-      if (!reduced()) imageMotion = animate(img,{opacity:[0,1]},{duration:.18,ease:'easeOut'});
-    }).catch(()=>{
-      if (key===imageKey) {clearTimeout(imageTimer);placeholder.hidden=true;}
-    });
-  };
-  const episodeDetails = (episode:Episode, key:string) => {
-    if (!title?.id || imageKey===key) return;
-    resetImage();
-    imageKey = key;
-    const controller = new AbortController();
-    mediaRead = controller;
-    const cached = title.seasons?.find(s=>s.episodes?.some(ep=>ep.id===episode.id))?.episodes?.find(ep=>ep.id===episode.id);
-    const metadata = cached ? Promise.resolve(cached) : editorStore.readSeriesEpisode(title.id,episode.id,controller.signal);
-    imageTimer = setTimeout(()=>{if (key===imageKey) placeholder.hidden=false;},160);
-    void metadata.then(data=>{
-      if (controller.signal.aborted || key!==imageKey) return;
-      find('title').textContent = data.title || '';
-
-      if (data.image) paintImage(data.image,key);
-      else {clearTimeout(imageTimer);placeholder.hidden=true;}
-    }).catch(()=>{
-      if (!controller.signal.aborted && key===imageKey) {clearTimeout(imageTimer);placeholder.hidden=true;}
-    });
-  };
   const layout = () => {
     const isTracked = tracked();
+    form.querySelector('.editor-score-field label')!.textContent=isTracked?'Series score':'Score';
     panel.hidden = !isTracked;
     overallStart.hidden = isTracked;
     overallFinish.hidden = isTracked;
@@ -182,10 +133,15 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
         setupScoreSteppers(row,active!.signal);
       }
       row.hidden=!allSeasons && number!==selected;
-      row.querySelector<HTMLElement>('[data-season-heading]')!.hidden=!allSeasons;
+      if (!allSeasons && number===selected) {
+        if (selection.parentElement!==row) row.insertBefore(selection,row.querySelector('.series-editor-fields'));
+        selection.hidden=false;
+        if (!smallScreen.matches && expand.parentElement!==row) row.append(expand);
+      }
+      if (allSeasons && s===seasons()[0] && !smallScreen.matches && expand.parentElement!==row) row.append(expand);
       row.querySelector('[data-season-label]')!.textContent=`Season ${number}`;
       row.querySelector('[data-season-progress]')!.textContent=`${previewCount(s)}/${s.total} episodes`;
-      if (!row.hidden) poster(row.querySelector('[data-season-poster]')!,s);
+      if (allSeasons && !row.hidden) poster(row.querySelector('[data-season-poster]')!,s);
       const draft=drafts.get(number);
       const score=row.querySelector<HTMLInputElement>('[name=series_score]')!;
       const start=row.querySelector<HTMLInputElement>('[name=series_start]')!;
@@ -204,13 +160,18 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
   };
   const render = () => {
     if (!title) return;
+    const focused=document.activeElement instanceof HTMLElement && panel.contains(document.activeElement) ? document.activeElement : undefined;
+    const restoreFocus=()=>{
+      if (focused && document.activeElement!==focused && focused.isConnected && !focused.closest('[hidden]') &&
+          !('disabled' in focused && focused.disabled)) focused.focus({preventScroll:true});
+    };
     layout();
     const current=season();
     if (panel.hidden || !current) {
       countInput.disabled=true;
       for (const input of rows.querySelectorAll<HTMLInputElement|HTMLButtonElement>('input,button')) input.disabled=true;
     }
-    if (panel.hidden) {resetImage();cardKey='';return;}
+    if (panel.hidden) {return;}
     find('loading').hidden=!!current;
     find('loading').textContent=loadFailed?'Progress is unavailable.':summary&&!summary.pending?'No seasons available.':'Loading progress…';
     find('retry').hidden=!loadFailed;
@@ -223,42 +184,32 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     }
     selector.value=String(current.season_number);
     selectControl.sync();
-    const index=seasons().indexOf(current);
-    for (const [name,disabled] of [['prev',index===0],['next',index===seasons().length-1]] as const) {
-      const button=find<HTMLButtonElement>(name);
-      if (disabled && document.activeElement===button) {
-        selector.closest('[data-editor-select]')?.querySelector<HTMLButtonElement>('button')?.focus({preventScroll:true});
-      }
-      button.disabled=disabled;
-    }
-    poster(find('poster'),current);
     countInput.max=String(current.episodes.length);
-    countInput.disabled=!current.episodes.length;
+    countInput.disabled=allSeasons||!current.episodes.length;
     if (document.activeElement!==countInput) countInput.value=String(previewCount(current));
     find('total').textContent=`/ ${current.total}`;
     expand.hidden=seasons().length<2;
     expand.setAttribute('aria-expanded',String(allSeasons));
-    find('expand-label').textContent=allSeasons?'Selected season':'All seasons';
+    find('expand-label').textContent=allSeasons?'Current season':'All seasons';
+    panel.toggleAttribute('data-all-seasons',allSeasons);
+    if (allSeasons) {selection.hidden=true;if (selection.parentElement!==content) content.prepend(selection);}
     paintList();
+    if (smallScreen.matches && expand.parentElement!==toolbar) toolbar.append(expand);
+    countInput.disabled=allSeasons||!current.episodes.length;
+    selector.disabled=allSeasons;
+    selectControl.sync();
     // This shortcut always follows actual saved watches; typed progress is saved with the form.
     const next=nextEpisode();
-    if (!next && card.contains(document.activeElement)) selector.closest('[data-editor-select]')?.querySelector<HTMLButtonElement>('button')?.focus({preventScroll:true});
-    card.hidden=!next||!!stagedPosition;
-    if (card.hidden || !next) {resetImage();cardKey='';return;}
+    if (!next && card.contains(document.activeElement)) focusSeason();
+    card.hidden=!next||!!stagedPosition||allSeasons;
+    if (card.hidden || !next) {restoreFocus();return;}
     const {episode,season:s}=next;
-    const key=String(episode.id);
-    if (cardKey!==key) {
-      const advance=Boolean(cardKey); cardKey=key; find('title').textContent='';
-      cardMotion?.cancel();
-      if (advance&&!reduced()&&dialog.open) cardMotion=animate(card.querySelector('.series-editor-card-info')!,
-        {opacity:[.6,1],transform:['translateX(3px)','translateX(0)']},{duration:.18,ease:'easeOut'});
-    }
-    find('position').textContent=`Next · S${s.season_number} E${episode.number}`;
-    episodeDetails(episode,key);
+    find('position').textContent=`Next episode · S${s.season_number} E${episode.number}`;
     watch.disabled=!!stagedPosition;
     watch.setAttribute('aria-busy',String(busy));
     watch.setAttribute('aria-disabled',String(busy||watch.disabled));
     watch.title=stagedPosition?'Save progress before marking the next episode watched':'';
+    restoreFocus();
   };
   function read() {
     if (!title || !active || active.signal.aborted) return Promise.resolve();
@@ -329,6 +280,7 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
       summary=previous; failure(errorMessage(cause)); void read();
     } finally {if (opened===active) {busy=false;render();}}
   };
+  smallScreen.addEventListener('change',()=>{if(title)render();},{signal:page});
   panel.addEventListener('click',event=>{
     const button=(event.target as HTMLElement).closest<HTMLButtonElement>('button');
     if (!button) return;
@@ -337,10 +289,6 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
       allSeasons=!allSeasons; render();
       viewMotion?.cancel();
       if (!reduced()) viewMotion=animate(rows,{opacity:[.7,1]},{duration:.16,ease:'easeOut'});
-    } else if (button.hasAttribute('data-series-prev')||button.hasAttribute('data-series-next')) {
-      const current=season(); if (!current) return;
-      selected=seasons()[seasons().indexOf(current)+(button.hasAttribute('data-series-next')?1:-1)]?.season_number??selected;
-      render();
     } else if (button.dataset.seriesStep) step(Number(button.dataset.seriesStep));
     else if (button.hasAttribute('data-series-retry')) {loadFailed=false;render();void read();}
   },{signal:page});
@@ -396,9 +344,7 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     active?.abort();
     active=undefined;
     clearTimeout(timer);
-    cardMotion?.cancel();
     viewMotion?.cancel();
-    resetImage();
     drafts.clear();
     stagedPosition=undefined;
     summary=undefined;
@@ -407,9 +353,11 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     title=null;
     busy=false;
     loadFailed=false;
-    cardKey='';
     request=undefined;
     generation++;
+    selection.hidden=true;content.prepend(selection);toolbar.append(expand);
+    panel.removeAttribute('data-all-seasons');
+    selector.disabled=true;selectControl.sync();
     rows.replaceChildren();
     countInput.disabled=true;
     countInput.value='';
