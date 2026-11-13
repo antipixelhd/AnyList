@@ -38,7 +38,6 @@ import SeriesEditorPanel from './SeriesEditorPanel.astro';
         </div></div>
       </section>
       <div class="editor-start-date"><label for="editor-start-date">Start date</label><CalendarDateInput id="editor-start-date" name="start_date" label="Start date"/></div><div class="editor-finish-date"><label for="editor-finish-date">Finish date</label><CalendarDateInput id="editor-finish-date" name="finish_date" label="Finish date"/></div>
-      <details class="series-editor-details" data-series-details hidden><summary>Series details</summary></details>
       <label class="editor-rewatches editor-number-field" for="editor-rewatches">Total rewatches<NumberStepper id="editor-rewatches" name="rewatch_count" label="Total rewatches" max={10000}/></label>
       <label class="wide editor-notes">Notes<textarea name="notes" rows="2"></textarea></label>
     </div>
@@ -135,7 +134,7 @@ document.addEventListener('astro:page-load', () => {
   }, {signal:pageListeners.signal});
   const field = (name: string) => form.elements.namedItem(name) as HTMLInputElement;
   const error = document.querySelector<HTMLElement>('#editor-error')!;
-  const seriesFields = createSeriesEditor(dialog,form,sessionSignal,refreshDateInputs,message=>{
+  const seriesFields = createSeriesEditor(dialog,form,sessionSignal,message=>{
     error.textContent=message;
     error.hidden=false;
   });
@@ -478,7 +477,10 @@ document.addEventListener('astro:page-load', () => {
     }
     const editing = currentTitle!;
     if (editing.type==='series') {
-      if (seriesFields.tracked()) delete body.finish_date;
+      if (seriesFields.tracked()) {
+        delete body.start_date;
+        delete body.finish_date;
+      }
       const explicitStatus = !editing.entry || status!==current.status;
       if (!explicitStatus) delete body.status;
       saveButton.disabled=true;

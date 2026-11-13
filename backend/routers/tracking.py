@@ -2100,6 +2100,10 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
             setattr(entry, name, value)
     if series_patch and old_progress == 0 and 'finish_date' in fields:
         entry.finish_date_source = 'series' if entry.finish_date else None
+    series_start_override = None
+    if media.media_type == MediaType.series and 'start_date' in fields:
+        series_start_override = (entry.start_date,)
+        entry.start_date_source = 'manual'
     if body.season_scores is not None:
         entry.season_scores = {**entry.season_scores, **body.season_scores}
     episodes = []
@@ -2260,15 +2264,24 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
         date_edits = [edit for edit in series_patch.seasons
                       if {'start_date', 'completion_date'} & edit.model_fields_set]
         await db.flush()
-        if desired_editor is not None or date_edits:
+        if desired_editor is not None or date_edits or series_start_override is not None:
             hint = None
             if entry.status == 'completed' and old_progress == 0 and entry.finish_date:
                 hint = (entry.finish_date, 'series' if entry.finish_date_source == 'series' else 'inferred')
             from core.season_completion import reconcile
-            await reconcile(db, viewer.id, media_id, groups_data=series_context.data, edits=date_edits, series_hint=hint)
+            await reconcile(db, viewer.id, media_id, groups_data=series_context.data, edits=date_edits,
+                            series_hint=hint, series_start_override=series_start_override)
+            if 'start_date' not in fields and any('start_date' in edit.model_fields_set for edit in date_edits) and old_start_date != entry.start_date:
+                from core.streaming_activity import reschedule_date_activity
+                await reschedule_date_activity(db, viewer.id, media_id, start_date=entry.start_date,
+                    finish_date=entry.finish_date, changed={'start_date'}, status=entry.status)
         if desired_editor is not None:
             series_context = SeriesEditorContext(series_context.data, series_context.positions, desired_editor)
         series_summary = await editor_summary(db, media, viewer.id, series_context)
+    elif series_start_override is not None:
+        from core.season_completion import reconcile
+        await db.flush()
+        await reconcile(db, viewer.id, media_id, series_start_override=series_start_override)
     changed_ratings = {}
     removed_ratings = set()
     before_scores = {None: old_score, **{int(k): v for k, v in old_season_scores.items()}}

@@ -43,10 +43,12 @@ class SeasonDatabaseTests(unittest.IsolatedAsyncioTestCase):
             # The fixture creates model tables; exercise the real upgrade too.
             for table in ('season_reconcile_jobs', 'season_tracking', 'series_seasons'):
                 conn.execute(text(f'DROP TABLE {table}'))
-            conn.execute(text('ALTER TABLE tracked_entries DROP COLUMN finish_date_source, DROP COLUMN season_release_check_on'))
+            conn.execute(text('ALTER TABLE tracked_entries DROP COLUMN finish_date_source, '
+                              'DROP COLUMN season_release_check_on, DROP COLUMN start_date_source'))
             with Operations.context(MigrationContext.configure(conn)):
                 importlib.import_module('migrations.versions.mt086_season_completion').upgrade()
                 importlib.import_module('migrations.versions.mt088_series_editor').upgrade()
+                importlib.import_module('migrations.versions.mt089_link_series_start').upgrade()
         async with self.engine.begin() as conn:
             await conn.run_sync(migration)
         async with self.Session() as db:
@@ -315,6 +317,28 @@ class SeasonDatabaseTests(unittest.IsolatedAsyncioTestCase):
             'revision':saved['series_editor']['revision'],'action':'complete_previous'}})
         self.assertEqual(rejected.status_code,409,rejected.text)
         self.assertTrue(rejected.json()['detail']['airing']['watched'])
+
+    async def test_series_and_first_season_share_the_start_date(self):
+        root=f'/tracking/entry/{self.series_id}'
+        await run_batch(self.Session)
+        first=(await self.client.get(f'{root}/series-editor')).json()['seasons'][0]
+        self.assertEqual(first['start_date'],'2024-01-01')
+        response=await self.client.patch(root,json={'start_date':'2024-02-01','series_editor':{}})
+        self.assertEqual(response.status_code,200,response.text)
+        summary=(await self.client.get(f'{root}/series-editor')).json()
+        first,second=summary['seasons']
+        self.assertEqual(first['start_date'],'2024-02-01')
+        self.assertEqual(second['start_date'],'2024-01-01')
+        response=await self.client.patch(root,json={'series_editor':{'order':summary['order'],'seasons':[
+            {'season_number':1,'membership':first['membership'],'start_date':None}]}})
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertIsNone(response.json()['start_date'])
+        self.assertIsNone(response.json()['series_editor']['seasons'][0]['start_date'])
+        async with self.Session() as db:
+            await reconcile(db,self.user_id,self.series_id)
+            entry=await db.scalar(select(TrackedEntry).where(TrackedEntry.media_id==self.series_id))
+            self.assertIsNone(entry.start_date)
+            self.assertEqual(entry.start_date_source,'manual')
 
     async def test_release_boundary_clears_compatibility_date_without_touching_previous_season(self):
         future=date.today()+timedelta(days=7)

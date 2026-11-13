@@ -126,7 +126,8 @@ async def season_groups(db, media, user_id, *, display_positions=None):
                    for number, values in sorted(groups.items())], metadata
 
 
-async def reconcile(db, user_id, media_id, *, groups_data=None, edits=(), series_hint=None, worker=False):
+async def reconcile(db, user_id, media_id, *, groups_data=None, edits=(), series_hint=None,
+                    series_start_override=None, worker=False):
     entry = await db.scalar(select(TrackedEntry).where(TrackedEntry.user_id == user_id,
         TrackedEntry.media_id == media_id).with_for_update(nowait=worker))
     await db.execute(select(func.pg_advisory_xact_lock(user_id, media_id)))
@@ -139,6 +140,8 @@ async def reconcile(db, user_id, media_id, *, groups_data=None, edits=(), series
     await db.execute(update(SeasonTracking).where(SeasonTracking.user_id == user_id,
         SeasonTracking.season_id.in_(select(SeriesSeason.id).where(SeriesSeason.media_id == media_id))).values(current=False))
     order, groups, metadata = groups_data or await season_groups(db, media, user_id)
+    first_season = groups[0][0] if groups else None
+    legacy_start = entry.start_date if entry.start_date_source is None else None
     ids = {ep.id for _, episodes, _ in groups for ep in episodes}
     events = list(await db.scalars(select(WatchEvent).where(WatchEvent.user_id == user_id,
         WatchEvent.media_id.in_(ids), WatchEvent.completed.is_(True)))) if ids else []
@@ -179,9 +182,20 @@ async def reconcile(db, user_id, media_id, *, groups_data=None, edits=(), series
         reliable = reliable_watches(history)
         if not tracking.start_manual:
             first = min(reliable, key=reliable.get, default=None)
-            tracking.start_date = reliable[first].date() if first is not None else None
-            tracking.start_source = ('episode' if episodes[0].id in reliable else 'inferred') if first is not None else None
-            tracking.start_evidence = {'rule': 'first_season_watch', 'episode_id': first} if first is not None else {}
+            if first is not None:
+                tracking.start_date = reliable[first].date()
+                tracking.start_source = 'episode' if episodes[0].id in reliable else 'inferred'
+                tracking.start_evidence = {'rule': 'first_season_watch', 'episode_id': first}
+            elif number == first_season and legacy_start:
+                tracking.start_date, tracking.start_source = legacy_start, 'inferred'
+                tracking.start_evidence = {'rule': 'legacy_series_start'}
+            elif tracking.start_evidence.get('rule') != 'legacy_series_start':
+                tracking.start_date, tracking.start_source, tracking.start_evidence = None, None, {}
+        if number == first_season and (series_start_override is not None or
+                (entry.start_date_source == 'manual' and not tracking.start_manual)):
+            start = series_start_override[0] if series_start_override is not None else entry.start_date
+            tracking.start_date, tracking.start_source, tracking.start_manual = start, 'manual', True
+            tracking.start_evidence = {'rule': 'manual'}
         if order_changed:
             # Suppress only history already complete under the newly selected
             # order. Future first completions still deserve their own cards.
@@ -230,6 +244,9 @@ async def reconcile(db, user_id, media_id, *, groups_data=None, edits=(), series
                 tracking.completion_date, tracking.date_source, tracking.date_manual = edit.completion_date, 'manual', True
                 tracking.evidence = {'rule': 'manual'}
         result.append((season, tracking))
+        if number == first_season:
+            entry.start_date = tracking.start_date
+            entry.start_date_source = 'manual' if tracking.start_manual else 'season'
         card = next((c for c in cards if (c.payload or {}).get('season_completion_id') == season.id), None)
         if not complete or not tracking.completion_date:
             if card:

@@ -33,6 +33,7 @@
   .stats-loading-content :is(.overview-total-icon,.stats-loading-title,.stats-loading-label,.stats-loading-value,.stats-loading-rank,.stats-loading-control,.stats-loading-plot,.stats-genre-poster,.stats-actor-portrait),
   .media-detail :is(.detail-synopsis-skeleton,.media-person-art[data-cast-loading],.detail-person-skeleton > *, .detail-value-skeleton,.media-episode-loading > span,.game-section-skeleton span),
   .media-detail .lab-poster-button.detail-image-skeleton,
+  .series-editor-art [data-series-image-placeholder],
   .media-detail .lab-genres[aria-busy=true]::before,
   .detail-loading-frame:not([data-loading-error]) :is(
     .loading-surface:not(.loading-detail-poster:has(> img:not([hidden]))),

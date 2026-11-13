@@ -26,6 +26,7 @@ class TrackedEntry(Base):
     favorite: Mapped[bool] = mapped_column(Boolean, default=False)
     notes: Mapped[str | None] = mapped_column(Text)
     start_date: Mapped[date | None] = mapped_column(Date)
+    start_date_source: Mapped[str | None] = mapped_column(String(16))
     finish_date: Mapped[date | None] = mapped_column(Date)
     finish_date_source: Mapped[str | None] = mapped_column(String(16))
     season_release_check_on: Mapped[date | None] = mapped_column(Date)

@@ -125,7 +125,9 @@ async def editor_summary(db, media, user_id, context):
         season = {'season_number': number, 'membership': key,
             'name': metadata.get('name'), 'total': expected or len(members), 'score': ratings.get(number),
             'episodes': [{'id': ep.id, 'number': context.positions[ep.id][1], 'watched': ep.id in context.watched}
-                for ep in members if ep.id in released]}
+                for ep in members if ep.id in released],
+            'upcoming': [{'id': ep.id, 'number': context.positions[ep.id][1]}
+                for ep in members if ep.id not in released]}
         season.update(saved.get((number, key), {}))
         seasons.append(season)
     return {'order': context.order, 'revision': context.revision, 'seasons': seasons,
