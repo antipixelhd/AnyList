@@ -61,6 +61,7 @@ async def clear_all_ratings(
     from models.tracking import TrackedEntry, TrackingActivity
     from core.activity import clear_recent_rating_activity
 
+    await db.execute(select(User.id).where(User.id==current_user.id).with_for_update())
     entries = (await db.execute(select(TrackedEntry).where(TrackedEntry.user_id == current_user.id))).scalars().all()
     media_ids = set((await db.execute(select(TrackingActivity.media_id).where(
         TrackingActivity.user_id == current_user.id))).scalars().all())
@@ -68,7 +69,7 @@ async def clear_all_ratings(
         entry.manual_score, entry.season_scores = None, {}
         media_ids.add(entry.media_id)
     for media_id in media_ids:
-        await clear_recent_rating_activity(db, user_id=current_user.id, media_id=media_id)
+        await clear_recent_rating_activity(db, user_id=current_user.id, media_id=media_id,include_seasons=True)
     await db.execute(delete(Rating).where(Rating.user_id == current_user.id))
     await db.commit()
     return {"status": "ok"}

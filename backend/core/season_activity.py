@@ -55,16 +55,24 @@ def put_rating(row, number, score, *, source, previous=None, now=None, event=Tru
     details = dict(row.payload or {})
     values = rating_values(row)
     key = str(number)
+    baselines = dict(details.get('season_rating_baselines') or {})
+    if details.get('rating_changed'):
+        for sn in values:
+            baselines.setdefault(sn,details.get('previous_score') if len(values) == 1 else None)
     if score is None:
         values.pop(key, None)
+        baselines.pop(key, None)
     else:
         values[key] = score
+        if event:
+            baselines.setdefault(key,previous)
     sources = dict(details.get('season_rating_sources') or {})
     sources[key] = source
-    details.update(season_ratings=values, season_rating_sources=sources,
-                   rating_changed=bool(values) and (event or bool(details.get('rating_changed'))),
+    details.update(season_ratings=values, season_rating_sources=sources,season_rating_baselines=baselines,
+                   rating_changed=any(sn in baselines and baselines[sn] != value for sn,value in values.items()),
                    rating_snapshot=bool(values))
-    if previous is not None and len(values) == 1:
+    previous = baselines.get(next(iter(values))) if len(values) == 1 else None
+    if previous is not None and len(values) == 1 and previous != next(iter(values.values())):
         details.update(previous_score=previous, rating_first=False)
     else:
         details.pop('previous_score', None)
@@ -73,6 +81,38 @@ def put_rating(row, number, score, *, source, previous=None, now=None, event=Tru
         details['first_rated_at'] = now.isoformat()
     row.score = sum(values.values()) / len(values) if values else None
     row.payload = details
+
+
+async def remove_season_milestone(db, card, *, target=None):
+    """Remove only the dated action; an actual rating remains independent."""
+    from core.activity import has_activity_event
+    details = dict(card.payload or {})
+    if target is not None:
+        if details.get('rating_changed') and not (target.payload or {}).get('rating_changed'):
+            for number,score in rating_values(card).items():
+                put_rating(target,int(number),score,
+                    source=details.get('season_rating_sources',{}).get(number,'season'),
+                    previous=details.get('season_rating_baselines',{}).get(number,details.get('previous_score')),
+                    now=datetime.fromisoformat(details.get('first_rated_at') or card.created_at.isoformat()))
+            if details.get('first_rated_at'):
+                target.payload = {**target.payload,'first_rated_at':details['first_rated_at']}
+        await db.delete(card)
+        return
+    for key in ('season_start_id','season_completion_id','series_completed','finished_seasons','completion_date_source',
+                'started_watching','continued_watching'):
+        details.pop(key,None)
+    if card.status == 'watching':
+        details['status_changed'] = False
+        details.pop('season_status',None)
+    if details.get('rating_changed') and rating_values(card):
+        if not details.get('status_changed'):
+            details['season_rating_group'] = True
+            card.created_at = datetime.fromisoformat(details.get('first_rated_at') or card.created_at.isoformat())
+            details['window_started_at'] = card.created_at.isoformat()
+            details['window_key'] = f'season-rating:detached:{card.id}'
+    card.payload = details
+    if not has_activity_event(card.status,details):
+        await db.delete(card)
 
 
 async def absorb_season_actions(db, cards, milestones):
@@ -84,18 +124,27 @@ async def absorb_season_actions(db, cards, milestones):
         if details.get('season_completion_id'):
             continue
         for target in milestones:
+            if card is target:
+                continue
             payload = target.payload
             number = payload['season_number']
             at = datetime.fromisoformat(payload['window_started_at'])
-            if details.get('episode_order') != payload['episode_order'] or not in_window(card, at):
+            start_target = bool(payload.get('season_start_id'))
+            if start_target and not details.get('season_rating_group'):
+                continue
+            if details.get('episode_order') != payload['episode_order'] or not (
+                    in_window(card, at) or (start_target and in_window(target,card.created_at))):
                 continue
             values = rating_values(card)
             if str(number) in values:
+                had_rating = target.payload.get('rating_changed')
                 put_rating(target, number, values[str(number)],
                     source=details.get('season_rating_sources',{}).get(str(number),'season'),
-                    previous=details.get('previous_score'),
+                    previous=details.get('season_rating_baselines',{}).get(str(number),details.get('previous_score')),
                     now=datetime.fromisoformat(details.get('first_rated_at') or at.isoformat()),
                     event=bool(details.get('rating_changed')))
+                if details.get('rating_changed') and not had_rating and details.get('first_rated_at'):
+                    target.payload = {**target.payload,'first_rated_at':details['first_rated_at']}
             if details.get('season_rating_group') and str(number) in values:
                 put_rating(card,number,None,source='season')
             elif details.get('season_status') and details.get('season_number') == number:
@@ -156,6 +205,8 @@ async def record_season_activity(db, *, user_id, media, status, score,
             db.add(status_card)
             scoped.insert(0, status_card)
         details = dict(status_card.payload)
+        if status != 'watching':
+            details.pop('season_start_id',None)
         details.update(status_changed=details.get('status_start') != status,
                        started_watching=status == 'watching',
                        continued_watching=status == 'watching' and previous_status in ('paused', 'dropped') and partial)
@@ -216,10 +267,19 @@ async def record_season_activity(db, *, user_id, media, status, score,
                 scoped.insert(0, target_card)
         if target_card is None:
             continue
-        previous = None if correction or original is None or before is None else rating_values(original).get(str(sn), before)
+        if correction:
+            previous = original.payload.get('season_rating_baselines',{}).get(str(sn),original.payload.get('previous_score'))
+        else:
+            previous = None if original is None or before is None else rating_values(original).get(str(sn), before)
         put_rating(target_card, sn, after, source=source, previous=previous, now=now)
         if not has_activity_event(target_card.status, target_card.payload):
-            await db.delete(target_card)
+            if target_card in db.new:
+                db.expunge(target_card)
+            else:
+                await db.delete(target_card)
+            scoped.remove(target_card)
+            if target_card is status_card:
+                status_card = None
     # A status can display a snapshot even when the user didn't change a score.
     if status_card is not None and status_card.score is None:
         explicit = await db.scalar(select(Rating.rating).where(Rating.user_id == user_id,

@@ -2245,6 +2245,7 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
         await reschedule_date_activity(db, viewer.id, media_id, start_date=entry.start_date,
                                        finish_date=entry.finish_date, changed=changed_dates, status=entry.status)
     progress_changed = entry.progress != old_progress or bool(added_watched_ids or removed_watched_ids)
+    introductory_completion = media.media_type == MediaType.series and old_progress == 0 and entry.status == 'completed'
     if old_score != score and score is None:
         from core.activity import clear_recent_rating_activity
         await clear_recent_rating_activity(db, user_id=viewer.id, media_id=media_id)
@@ -2255,13 +2256,13 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
             entry.initial_import_completed_at = None
         rating_changed = old_score != score and (status_changed or not suppress_initial_import_rating(entry))
         activity_status_changed = status_changed and (not series_patch or series_patch.action != 'complete_previous')
-        if media.media_type == MediaType.series and progress_changed:
+        if media.media_type == MediaType.series and progress_changed and not introductory_completion:
             await record_progress_activity(db, user_id=viewer.id, media=media,
                 previous_progress=old_progress, progress=entry.progress, status=entry.status, score=score,
                 status_changed=activity_status_changed and 'status' in fields, rating_changed=rating_changed,
                 previous_status=previous, first_watching=old_start_date is None and previous != 'watching',
                 previous_score=old_score, previous_watched_ids=watched, watched_ids=desired, season_actions=False)
-        elif status_changed or not suppress_initial_import_rating(entry):
+        elif not introductory_completion and (status_changed or not suppress_initial_import_rating(entry)):
             position, finished = await series_activity_details(db, media, entry.progress, user_id=viewer.id)
             await record_daily_activity(db, user_id=viewer.id, media_id=media_id, media=media, status=entry.status, score=score,
                 progress=entry.progress if media.media_type == MediaType.series else None,

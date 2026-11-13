@@ -71,22 +71,26 @@ RATING_ACTIVITY_FIELDS = {
 
 
 async def clear_recent_rating_activity(db, *, user_id: int, media_id: int,
+                                      include_seasons: bool = False,
                                       now: datetime | None = None) -> None:
     """Erase rating evidence only from cards displayed in the preceding week."""
     now = now or datetime.now(timezone.utc).replace(tzinfo=None)
-    rows = (await db.execute(select(TrackingActivity).where(
+    query = select(TrackingActivity).where(
         TrackingActivity.user_id == user_id, TrackingActivity.media_id == media_id,
         TrackingActivity.created_at >= now - timedelta(days=7),
         TrackingActivity.created_at <= now,
-        TrackingActivity.payload['season_completion_id'].as_integer().is_(None),
-        TrackingActivity.payload['episode_order'].as_string().is_(None),
-    ))).scalars().all()
+    )
+    if not include_seasons:
+        query = query.where(TrackingActivity.payload['season_completion_id'].as_integer().is_(None),
+                            TrackingActivity.payload['episode_order'].as_string().is_(None))
+    rows = (await db.execute(query)).scalars().all()
+    fields = RATING_ACTIVITY_FIELDS | {'rating_snapshot','season_ratings','season_rating_sources','season_rating_baselines'}
     for row in rows:
         details = {key: value for key, value in (row.payload or {}).items()
-                   if key not in RATING_ACTIVITY_FIELDS}
+                   if key not in fields}
         if 'streaming_base' in details:
             details['streaming_base'] = {key: value for key, value in details['streaming_base'].items()
-                                         if key not in RATING_ACTIVITY_FIELDS}
+                                         if key not in fields}
         row.score, row.payload = None, details
         if not has_activity_event(row.status, details):
             await db.delete(row)
