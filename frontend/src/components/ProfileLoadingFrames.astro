@@ -9,9 +9,10 @@ import { gameStatuses } from '../lib/game-editor-data';
 import { statisticsSections, statisticsSectionLabel } from '../lib/unified-statistics-data';
 import '../styles/game-list.css';
 import '../styles/virtual-profile-list.css';
-const { showGames=false, showScreen=true } = Astro.props;
+import '../styles/stats-loading.css';
+const { gamesApproved=false } = Astro.props;
 ---
-{[false,...(showGames?[true]:[])].map(game=><template data-profile-list-loading={game?'game':'screen'}>
+{[false,...(gamesApproved?[true]:[])].map(game=><template data-profile-list-loading={game?'game':'screen'}>
   <section class="profile-loading-frame" data-profile-loading aria-busy="true" aria-label="Loading list">
     <div class:list={['list-shell',{'game-list-shell':game}]} data-pending-list-shell inert>
       <ProfileListFilters statuses={game?gameStatuses:statuses} genres={[]} years={[]} progressLabel={game?'Hours':'Progress'} pending/>
@@ -43,7 +44,7 @@ const { showGames=false, showScreen=true } = Astro.props;
     <aside class="overview-sidebar" inert aria-hidden="true">
       <div class="overview-menu-toggle"><span>Statistics</span><Icon name="ellipsis" /></div>
       <div data-loading-statistics-navigation>
-        {(['screen','game'] as const).map(domain=><div data-statistics-domain={domain} hidden={domain==='game'?!showGames:!showScreen}>
+        {(['screen',...(gamesApproved?['game' as const]:[])] as const).map(domain=><div data-statistics-domain={domain} hidden>
           <ProfileSectionSelector heading={domain==='screen'?'Movies & Series':'Games'} options={statisticsSections[domain].map(id=>({id,label:statisticsSectionLabel(id)}))} active="" width="100%" />
         </div>)}
       </div>

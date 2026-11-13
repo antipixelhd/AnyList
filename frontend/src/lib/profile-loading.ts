@@ -42,15 +42,19 @@ export function profileLoadingFrame(kind: string, url: URL, nav: HTMLElement) {
   }
   if (statistics) {
     const domain = kind === 'stats/games' ? 'game' : 'screen';
+    const preferences = mediaDomains(JSON.parse(nav.dataset.mediaDomains || '{}'));
     const section = statisticsSection(domain, url.searchParams.get('section') || 'overview');
     const media = url.searchParams.get('media');
     frame.dataset.domain = domain;
     frame.dataset.section = section;
     frame.dataset.media = media === 'movie' || media === 'series' ? media : 'all';
     frame.querySelector<HTMLElement>('[data-loading-stats-heading]')!.textContent = statisticsSectionLabel(section);
-    const group = frame.querySelector<HTMLElement>(`[data-statistics-domain="${domain}"]`)!;
-    group.hidden = false;
-    const selected = group.querySelector<HTMLButtonElement>(`[data-section="${section}"]`);
+    const gameGroup = frame.querySelector<HTMLElement>('[data-statistics-domain="game"]');
+    const screenGroup = frame.querySelector<HTMLElement>('[data-statistics-domain="screen"]');
+    if (gameGroup) gameGroup.hidden = domain !== 'game' && !preferences.show_games;
+    if (screenGroup) screenGroup.hidden = domain !== 'screen' && !preferences.show_movies_series;
+    const group = domain === 'game' ? gameGroup : screenGroup;
+    const selected = group?.querySelector<HTMLButtonElement>(`[data-section="${section}"]`);
     selected?.classList.add('is-selected');
     selected?.setAttribute('aria-pressed', 'true');
     return frame;

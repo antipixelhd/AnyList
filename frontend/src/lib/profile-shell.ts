@@ -9,7 +9,7 @@ import {editorStore} from './editor-store';
 import {returnViews,returnViewIdentity,returnViewKey,type CaptureReturnView} from './return-view-cache';
 
 const summaryBudget = 512 * 1024;
-type Panel={root:HTMLElement;url:string;title:string;ready:boolean;kind:string;lifetime:AbortController;styles?:DocumentFragment;templates?:HTMLTemplateElement[];initializing?:Promise<void>;preparing?:Promise<void>;summary?:string;checkedAt:number;visibilityCheckedAt:number;revision:number};
+type Panel={root:HTMLElement;url:string;title:string;ready:boolean;kind:string;lifetime:AbortController;styles?:DocumentFragment;initializing?:Promise<void>;preparing?:Promise<void>;summary?:string;checkedAt:number;visibilityCheckedAt:number;revision:number};
 let session:AbortController|undefined;
 let currentHost:HTMLElement|undefined;
 const summaryHtml=(panel:Panel)=>panel.root.querySelector('[data-profile-tab-content]')?.outerHTML;
@@ -98,7 +98,7 @@ function setup(){
     if(doc.body.dataset.cacheUser!==viewer||doc.body.dataset.gamesApproved!==approved)throw new ProfileAccessChanged();
     const content=doc.querySelector('#content'),tabs=content?.querySelector<HTMLElement>('.profile-tabs');
     if(!content||!tabs||tabs.dataset.profileBase!==nav.dataset.profileBase)throw new ProfileAccessChanged();
-    return {doc,content,tabs};
+    return {doc,content};
   }
   async function read(key:string,url:string):Promise<Panel>{
     const lookup=key.startsWith('stats')?'stats':key;
@@ -113,7 +113,7 @@ function setup(){
       const savedTabs=savedContent?.querySelector<HTMLElement>('.profile-tabs');
       const restore=savedDoc&&savedContent&&savedTabs&&savedTabs.dataset.profileBase===nav.dataset.profileBase&&
         returnViewIdentity(savedDoc.body)===returnViewIdentity(document.body);
-      const {doc,content,tabs}=restore?{doc:savedDoc,content:savedContent,tabs:savedTabs}:await readPage(url,signal);
+      const {doc,content}=restore?{doc:savedDoc,content:savedContent}:await readPage(url,signal);
       if(signal.aborted||revision!==generation)throw new DOMException('Preview invalidated','AbortError');
       const root=document.createElement('div');root.dataset.profileUrl=url;
       for(const child of [...content.childNodes])if(!(child instanceof Element)||!child.matches('.profile-hero,.profile-tabs,script:not([type="application/json"])'))root.append(child);
@@ -125,7 +125,6 @@ function setup(){
         panel.checkedAt=saved?.dirty?0:Number(doc.body.dataset.profileReturnCheckedAt)||panel.checkedAt;
         if(saved?.dirty)root.dataset.returnListDirty='';
       }
-      if(!nav.querySelector('[data-profile-list-loading]'))panel.templates=[...tabs.querySelectorAll<HTMLTemplateElement>('template[data-profile-list-loading],template[data-profile-stats-loading]')];
       if(!isProfileSummary(key)||panel.summary!==undefined||wanted===key)panels.set(key,panel);
       if(root.querySelector('[data-integrated-statistics]')){panels.set('stats',panel);panels.set('stats/games',panel);}
       return panel;
@@ -311,8 +310,6 @@ function setup(){
         if(!isCurrent())return;
         const changedPanel=shown!==panel.root;
         stopProgress();setPanelWaiting(source,false);show(panel.root);active=key;document.body.toggleAttribute('data-list-landing',isProfileList(key));
-        if(panel.templates?.length&&!nav.querySelector('[data-profile-list-loading]'))nav.append(...panel.templates);
-        panel.templates=undefined;
         if(outgoing!==panel&&isProfileSummary(outgoing.kind)&&outgoing.summary===undefined)forget(outgoing);
         pruneLists(panel);
         history.replaceState(history.state,'',panel.root.dataset.profileUrl||panel.url);

@@ -10,7 +10,6 @@ import {viewerMediaPreferences} from '../../../lib/viewer-media-preferences';
 import {profileListPageSize} from '../../../lib/profile-list-window';
 import {categoryChoices,type CategoryPresentation} from '../../../lib/list-categories.ts';
 import '../../../styles/virtual-profile-list.css';
-import '../../../styles/stats-loading.css';
 const {username,section}=Astro.params;
 if(!['movies','series','list'].includes(section!))return Astro.redirect('/404');
 const isCombined=section==='list',mediaType=isCombined?'all':section==='movies'?'movie':'series';
