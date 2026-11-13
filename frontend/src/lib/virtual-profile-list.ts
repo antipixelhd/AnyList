@@ -7,7 +7,7 @@ import {mountListCoverPreview} from './list-cover-preview';
 import {mountListFilterControls} from './list-filter-controls';
 import {profileListQuery} from './profile-list-query';
 import {profileListPageSize,profileListPages,ProfileListGeometry} from './profile-list-window';
-import {panelActive,panelUrl} from './profile-panel';
+import {panelActive,panelUrl,profileRefreshAge} from './profile-panel';
 import {listEditorArtwork} from './list-editor-artwork';
 
 type Page={category_presentation?:CategoryPresentation;offset:number;total:number;results:Record<string,any>[];group_counts:Record<string,number>;status_counts:Record<string,number>;genres:string[];years:string[]};
@@ -45,6 +45,8 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
   let epoch=0,frame=0,searchTimer:ReturnType<typeof setTimeout>|undefined,retryTimer:ReturnType<typeof setTimeout>|undefined;
   let previousY=scrollY,previousTime=performance.now(),ahead=3200,dirty=false,refreshing=false;
   let resetOnReturn=false;
+  let checkedAt=Date.now(),checking=false;
+  const staleRows=new Set<number>();
   let requests=new AbortController();
   const template=panel.querySelector<HTMLTemplateElement>('[data-list-row-template]')!;
   const index=new ProfileListIndex(adapter.statuses),states=new Map<number,ListState>(),rowCache=new Map<number,HTMLElement>();
@@ -102,11 +104,20 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
   function rememberRead(state:ListState){
     const pending=owner&&editorStore.hasPendingSubject(subjectFor(state))&&editorStore.findSubject(subjectFor(state));
     remember(pending?fromTitle(pending):state);
+    staleRows.delete(entryId(state));
   }
   function pageIds(offset:number){
     return local?local.ids.slice(offset,offset+profileListPageSize):pages.get(offset);
   }
-  const initial=JSON.parse(panel.querySelector('#virtual-list-page')!.textContent!) as Page;
+  const seed=panel.querySelector('#virtual-list-page')!;
+  const initial=JSON.parse(seed.textContent!) as Page;
+  seed.remove();
+  type SavedPage=Omit<Page,'results'>&{ids:number[]};
+  function saveDefault(data:Page):SavedPage {
+    const {results,...facets}=data;
+    return {...facets,ids:results.map(entryId)};
+  }
+  let defaultPage:SavedPage|undefined=query.toString()===defaultQuery?saveDefault(initial):undefined;
   for(const row of root.querySelectorAll<HTMLElement>('[data-list-entry]'))rowCache.set(Number(row.dataset.listEntry),row);
   initial.results.forEach(rememberRead);
   pages.set(initial.offset,initial.results.map(state=>entryId(state)));
@@ -130,7 +141,7 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
     try{
       const readSignal=AbortSignal.any([requests.signal,AbortSignal.timeout(15_000)]);
       if(local){
-        const missing=pageIds(offset)!.filter(id=>!states.has(id));
+        const missing=pageIds(offset)!.filter(id=>!states.has(id)||staleRows.has(id));
         if(!missing.length)return;
         const params=new URLSearchParams();missing.forEach(id=>params.append('ids',String(id)));
         const response=await fetch(`${endpoint}/rows?${params}`,{signal:readSignal,cache:'no-store'});
@@ -151,7 +162,10 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
         if(data.offset!==offset)throw new Error('Unexpected list page');
         data.results.forEach(rememberRead);
         pages.set(offset,data.results.map(state=>entryId(state)));
-        if(offset===0){geometry(data);refreshing=false;queueWarm();}
+        if(offset===0){
+          if(query.toString()===defaultQuery)defaultPage=saveDefault(data);
+          geometry(data);refreshing=false;queueWarm();
+        }
       }
       blocked.delete(offset);error.hidden=blocked.size===0;
     }catch{
@@ -214,7 +228,7 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
     for(const offset of wanted){
       const ids=pageIds(offset);
       ids?.forEach(id=>nearbyIds.add(id));
-      if(flights.size<2&&!ids?.every(id=>states.has(id))&&!flights.has(offset)&&!blocked.has(offset)&&retryTimer===undefined)void acquire(offset);
+      if(flights.size<2&&!ids?.every(id=>states.has(id)&&!staleRows.has(id))&&!flights.has(offset)&&!blocked.has(offset)&&retryTimer===undefined)void acquire(offset);
     }
     const mounted=new Set([...root!.querySelectorAll<HTMLElement>('[data-list-entry]')].map(row=>Number(row.dataset.listEntry)));
     for(const id of rowCache.keys()){
@@ -223,12 +237,13 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
     }
     if(states.size>stateLimit||stateTextSize>stateTextBudget){
       // Keep the active window resident when row data reaches its own budget.
+      const defaultIds=new Set(defaultPage?.ids);
       for(const id of nearbyIds){const state=states.get(id);if(state){states.delete(id);states.set(id,state);}}
       for(const id of states.keys()){
         if(states.size<=stateLimit&&stateTextSize<=stateTextBudget)break;
-        if(mounted.has(id)||nearbyIds.has(id)||(owner&&editorStore.hasPendingSubject(subjectFor(states.get(id)!))))continue;
+        if(mounted.has(id)||nearbyIds.has(id)||defaultIds.has(id)||(owner&&editorStore.hasPendingSubject(subjectFor(states.get(id)!))))continue;
         stateTextSize-=stateSizes.get(id)!;
-        stateSizes.delete(id);states.delete(id);rowCache.delete(id);
+        stateSizes.delete(id);states.delete(id);rowCache.delete(id);staleRows.delete(id);
       }
       for(const [offset,ids] of pages)if(!ids.some(id=>states.has(id)))pages.delete(offset);
     }
@@ -245,29 +260,95 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
     const version=writeVersion,controller=new AbortController();warming=controller;warmAttempts++;
     try{
       const response=await fetch(`${endpoint}/index`,{signal:AbortSignal.any([controller.signal,AbortSignal.timeout(15_000)]),cache:'no-store'});
-      if(!response.ok){if([401,403].includes(response.status))indexDisabled=true;throw new Error('Index read failed');}
+      if(!response.ok){
+        if([401,403,404].includes(response.status)){
+          indexDisabled=true;
+          panel.dispatchEvent(new Event('anylist:profile-access-changed',{bubbles:true}));
+        }
+        throw new Error('Index read failed');
+      }
       const snapshot:ListIndexResponse=await response.json();
       if(signal.aborted||controller.signal.aborted||version!==writeVersion||editorStore.hasPendingWrites())return;
       if(!snapshot.complete){indexDisabled=true;return;}
       if(snapshot.category_presentation&&snapshot.category_presentation.revision!==presentationRevision){applyPresentation(snapshot.category_presentation);return;}
-      index.publish(snapshot);if(index.select(query))reset(true);
+      checkedAt=Date.now();
+      index.publish(snapshot);
+      local=index.select(query);
+      root.dataset.listIndex=local?'ready':'server';
+      if(local){geometry({...local,offset:0,results:[]});schedule();}
     }catch{/* Optional warming never blocks the usable server-backed list. */}
     finally{if(warming===controller)warming=undefined;queueWarm();}
   }
 
-  function reset(preserveGeometry=false){
+  async function revalidate(){
+    if(checking||warming||refreshing||!panelActive(panel)||Date.now()-checkedAt<profileRefreshAge||editorStore.hasPendingWrites())return;
+    checking=true;
+    const version=epoch,write=writeVersion,readSignal=requests.signal;
+    const params=new URLSearchParams(query);
+    params.set('offset','0');params.set('limit',String(profileListPageSize));params.set('grouped','true');
+    try{
+      const useIndex=index.ready;
+      const path=useIndex?'index':`list?${params}`;
+      const response=await fetch(`${endpoint}/${path}`,{signal:AbortSignal.any([readSignal,AbortSignal.timeout(15_000)]),cache:'no-store'});
+      const canApply=()=>!readSignal.aborted&&version===epoch&&write===writeVersion&&panelActive(panel)&&!editorStore.hasPendingWrites();
+      if(!canApply())return;
+      checkedAt=Date.now();
+      if([401,403,404].includes(response.status)){panel.dispatchEvent(new Event('anylist:profile-access-changed',{bubbles:true}));return;}
+      if(!response.ok)return;
+      if(useIndex){
+        const snapshot:ListIndexResponse=await response.json();
+        if(!canApply())return;
+        if(!snapshot.complete){indexDisabled=true;index.invalidate();reset();return;}
+        const changes=index.changedRows(snapshot);
+        if(!changes.length&&(snapshot.category_presentation?.revision??presentationRevision)===presentationRevision)return;
+        for(const id of changes)if(states.has(id))staleRows.add(id);
+        index.publish(snapshot);
+        defaultPage=undefined;
+        if(snapshot.category_presentation&&snapshot.category_presentation.revision!==presentationRevision)applyPresentation(snapshot.category_presentation);
+        else reset(true);
+        return;
+      }
+      const data:Page=await response.json();
+      if(!canApply())return;
+      const ids=data.results.map(entryId),before=pageIds(0);
+      const changed=data.total!==total||Object.keys({...counts,...data.group_counts}).some(key=>counts[key]!==data.group_counts[key])||
+        JSON.stringify(ids)!==JSON.stringify(before)||
+        data.results.some(item=>item.updated_at!==states.get(entryId(item))?.updated_at);
+      if(data.category_presentation&&data.category_presentation.revision!==presentationRevision){
+        applyPresentation(data.category_presentation);
+      }else if(changed){
+        epoch++;requests.abort();requests=new AbortController();flights.clear();blocked.clear();
+        clearTimeout(retryTimer);retryTimer=undefined;layouts.clear();
+        index.invalidate();local=null;root.dataset.listIndex='server';
+        pages.clear();data.results.forEach(rememberRead);pages.set(0,ids);
+        defaultPage=query.toString()===defaultQuery?saveDefault(data):undefined;
+        geometry(data);schedule();
+        warmAttempts=0;queueWarm();
+      }else{
+        // Server-only lists can still contain changes in a later visible page.
+        for(const offset of wanted)if(offset!==0&&pages.has(offset))pages.delete(offset);
+        schedule();
+      }
+    }catch{if(!readSignal.aborted)checkedAt=Date.now();}
+    finally{checking=false;}
+  }
+
+  function reset(preserveGeometry=false, fallback?:SavedPage){
     epoch++;requests.abort();requests=new AbortController();flights.clear();blocked.clear();pages.clear();if(!preserveGeometry)layouts.clear();anchor=undefined;clearTimeout(retryTimer);retryTimer=undefined;
     local=index.select(query);root.dataset.listIndex=local?'ready':'server';
     error.hidden=true;wanted.clear();refreshing=true;
     if(local){geometry({...local,offset:0,results:[]});refreshing=false;schedule();}
+    else if(fallback?.ids.every(id=>states.has(id))){
+      pages.set(0,fallback.ids);geometry({...fallback,results:[]});refreshing=false;schedule();queueWarm();
+    }
     else if(panelActive(panel))void acquire(0);else dirty=true;
   }
-  function submit(){
+  function submit(fallback?:SavedPage){
     clearTimeout(searchTimer);searchTimer=undefined;preview.hide();
     const values=new URLSearchParams();for(const [key,value] of new FormData(form))if(typeof value==='string')values.set(key,value);
     query=profileListQuery(values,adapter.statuses,defaultSort);controls.sync(query.get('status')||'all',defaultSort);
     root.dataset.status=query.get('status')||'';root.dataset.sort=query.get('sort')||'title';root.dataset.favorites=String(query.has('favorites'));
-    reset();
+    reset(false,fallback);
   }
   function resetFiltersOnReturn(){
     for(const name of ['q','genre','favorites','status','year'])field(name).value='';
@@ -275,7 +356,7 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
     field('sort').value=defaultSort;
     const reload=dirty||refreshing||query.toString()!==defaultQuery;
     dirty=false;
-    if(reload)submit();
+    if(reload)submit(defaultPage);
     else controls.sync('all',defaultSort);
   }
   let presentationRevision = Number(JSON.parse(root.dataset.categoryPresentation || 'null')?.revision || 0);
@@ -285,6 +366,7 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
       .find(row => row.getBoundingClientRect().bottom > 0);
     const anchorTop = visibleAnchor?.getBoundingClientRect().top;
     presentationRevision = presentation.revision;
+    defaultPage=undefined;
     root.dataset.categoryPresentation = JSON.stringify(presentation);
     adapter.statuses = presentation.categories.map(category => [category.id, category.label] as const);
     index.setOrder(adapter.statuses);
@@ -323,7 +405,7 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
   form.addEventListener('submit',event=>{event.preventDefault();submit();},{signal});
   filters.querySelectorAll<HTMLButtonElement>('[data-status]').forEach(button=>button.addEventListener('click',()=>{field('status').value=button.dataset.status==='all'?'':button.dataset.status!;submit();},{signal}));
   form.addEventListener('input',event=>{if((event.target as Element).closest('[data-category-editor]'))return;const input=event.target as HTMLInputElement;if(input.id==='year-filter')return;clearTimeout(searchTimer);if(input.name==='q')searchTimer=setTimeout(submit,250);else submit();},{signal});
-  filters.querySelector('#year-filter')!.addEventListener('change',submit,{signal});
+  filters.querySelector('#year-filter')!.addEventListener('change',()=>submit(),{signal});
   window.addEventListener('scroll',()=>{const now=performance.now();ahead=Math.min(16000,Math.max(3200,Math.abs(scrollY-previousY)/Math.max(1,now-previousTime)*700));previousY=scrollY;previousTime=now;schedule();},{signal,passive:true});
   window.addEventListener('resize',schedule,{signal});
   panel.addEventListener('anylist:panel-active',()=>{
@@ -333,11 +415,14 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
     else if(dirty){dirty=false;submit();}
     schedule();queueWarm();
   },{signal});
+  panel.addEventListener('anylist:panel-revalidate',()=>void revalidate(),{signal});
   panel.addEventListener('anylist:panel-inactive',()=>{
     resetOnReturn=true;
     controls.close();preview?.hide();dirty=dirty||refreshing;
     clearTimeout(searchTimer);searchTimer=undefined;clearTimeout(retryTimer);retryTimer=undefined;
     requests.abort();epoch++;flights.clear();warming?.abort();clearTimeout(warmTimer);warmTimer=undefined;
+    rowSizes.disconnect();
+    for(const row of root.querySelectorAll<HTMLElement>('[data-list-row-key]'))delete row.dataset.listRowKey;
   },{signal});
   window.addEventListener('pageshow',event=>{
     if(event.persisted&&panelActive(panel))resetFiltersOnReturn();
@@ -353,6 +438,7 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
   document.addEventListener('anylist:editor-committed',event=>{
     const title=(event as CustomEvent<{title:EditorTitle}>).detail.title;if(!owner||!adapter.accepts(title))return;
     writeVersion++;warming?.abort();warmAttempts=0;
+    defaultPage=undefined;
     const state=fromTitle(title);remember(state);index.update(state);
     if(adapter.removeChildren&&!title.entry)for(const child of [...states.values()])if(child.base_work_id===title.id){
       const removed={...child,listed:false};remember(removed);index.update(removed);
@@ -372,6 +458,6 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
     if(event.type==='click')adapter.onClick?.(target,title);
   }
   for(const event of ['pointerover','focusin','click'])root.addEventListener(event,seedEditor,{signal});
-  signal.addEventListener('abort',()=>{warming?.abort();clearTimeout(warmTimer);states.clear();stateSizes.clear();rowCache.clear();index.invalidate();requests.abort();rowSizes.disconnect();clearTimeout(searchTimer);clearTimeout(retryTimer);cancelAnimationFrame(frame);pages.clear();layouts.clear();},{once:true});
+  signal.addEventListener('abort',()=>{warming?.abort();clearTimeout(warmTimer);states.clear();stateSizes.clear();rowCache.clear();staleRows.clear();index.invalidate();requests.abort();rowSizes.disconnect();clearTimeout(searchTimer);clearTimeout(retryTimer);cancelAnimationFrame(frame);pages.clear();layouts.clear();},{once:true});
   controls.sync(query.get('status')||'all',defaultSort);schedule();queueWarm();
 }

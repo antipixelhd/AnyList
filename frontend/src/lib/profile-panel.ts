@@ -1,8 +1,13 @@
 /** Route-local state for retained profile panels, including detached panels. */
 export function profilePanelKey(url:URL){
-  const match=url.pathname.match(/^\/user\/([^/]+)\/(movies|series|list|games|stats(?:\/games)?)\/?$/);
-  return match?{username:decodeURIComponent(match[1]),key:match[2]}:undefined;
+  const match=url.pathname.match(/^\/user\/([^/]+)(?:\/(movies|series|list|games|stats(?:\/games)?|favorites|social|library))?\/?$/);
+  if(!match)return;
+  try{return {username:decodeURIComponent(match[1]),key:match[2]||'overview'};}
+  catch{return;}
 }
+export const isProfileList = (key:string) => ['movies','series','list','games'].includes(key);
+export const isProfileSummary = (key:string) => ['overview','favorites','social','library'].includes(key);
+export const profileRefreshAge = 120_000;
 export function panelActive(root:HTMLElement){return root.isConnected&&!root.closest('[hidden],[inert],[data-profile-waiting]');}
 export function panelUrl(root:HTMLElement){if(panelActive(root))return location.href;return root.closest<HTMLElement>('[data-profile-url]')?.dataset.profileUrl||location.href;}
 export function setPanelUrl(root:HTMLElement,url:string|URL,push=false){

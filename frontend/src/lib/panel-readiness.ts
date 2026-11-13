@@ -1,5 +1,5 @@
 /** Install a fetched route's CSS before exposing its DOM, in dev and production. */
-export async function preparePanelStyles(source:Document,base:string,signal:AbortSignal,document:Document=globalThis.document){
+export async function preparePanelStyles(source:ParentNode,base:string,signal:AbortSignal,document:Document=globalThis.document){
   if(signal.aborted)throw new DOMException('Aborted','AbortError');
   for(const style of source.querySelectorAll<HTMLStyleElement>('style')){
     // DOMParser exposes fallback markup that a scripted navigation skips.

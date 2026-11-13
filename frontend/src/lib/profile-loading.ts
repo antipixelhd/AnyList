@@ -3,15 +3,31 @@ import { mediaDomains } from './media-domains.ts';
 import { profileListQuery } from './profile-list-query.ts';
 import { statuses } from './tracking-statuses.ts';
 import { statisticsSection, statisticsSectionLabel } from './unified-statistics-data.ts';
+import { isProfileList, isProfileSummary } from './profile-panel.ts';
 
 export function profileLoadingFrame(kind: string, url: URL, nav: HTMLElement) {
   const game = kind === 'games';
   const statistics = kind.startsWith('stats');
-  const template = nav.querySelector<HTMLTemplateElement>(statistics
+  const summary=isProfileSummary(kind);
+  const template = !summary&&nav.querySelector<HTMLTemplateElement>(statistics
     ? '[data-profile-stats-loading]'
     : `[data-profile-list-loading="${game ? 'game' : 'screen'}"]`);
-  const frame = template?.content.firstElementChild?.cloneNode(true) as HTMLElement | undefined;
-  if (!frame) return;
+  const frame = template ? template.content.firstElementChild?.cloneNode(true) as HTMLElement | undefined : undefined;
+  if (!frame) {
+    const fallback=document.createElement('section');
+    fallback.className='page-width profile-loading-frame profile-summary-loading';
+    fallback.dataset.profileLoading='';
+    fallback.toggleAttribute('data-list-loading',isProfileList(kind));
+    fallback.setAttribute('aria-busy','true');
+    fallback.setAttribute('aria-label',summary?`Loading ${kind}`:statistics?'Loading statistics':'Loading list');
+    for(const name of ['pending-group-title','profile-summary-placeholder']){
+      const surface=document.createElement('div');
+      surface.className=`loading-surface ${name}`;
+      surface.setAttribute('aria-hidden','true');
+      fallback.append(surface);
+    }
+    return fallback;
+  }
   if (!statistics) {
     // Pending controls are inert; track the surrounding frame so an early
     // mouse hover can still reveal count placeholders without enabling them.

@@ -17,6 +17,7 @@ const loadPanels=['movies','series','list','games','stats'].includes(active);
 </div></section>
 <nav class="profile-tabs" aria-label="Profile" data-profile-owner={profile.owner?'yes':'no'} data-profile-base={base} data-media-domains={JSON.stringify(domains)}><a href={base} class:list={{active:active==='overview'}} aria-current={active==='overview'?'page':undefined}>Overview</a>{domainListLinks(base,domains).map(item=><a href={item.href} class:list={{active:Astro.url.pathname===item.href}} aria-current={Astro.url.pathname===item.href?'page':undefined}>{item.label}</a>)}<a href={`${base}/favorites`} class:list={{active:active==='favorites'}} aria-current={active==='favorites'?'page':undefined}>Favorites</a>{showLibrary&&<a href={`${base}/library`} class:list={{active:active==='library'}} aria-current={active==='library'?'page':undefined}>Library</a>}<a data-profile-stats href={`${base}/stats${!domains.show_movies_series&&domains.show_games?"/games":""}`} class:list={{active:active==='stats'}} aria-current={active==='stats'?'page':undefined}>Stats</a><a href={`${base}/social`} class:list={{active:active==='social'}} aria-current={active==='social'?'page':undefined}>Social</a>{loadPanels&&<ProfileLoadingFrames showGames={domains.show_games} showScreen={domains.show_movies_series}/>}</nav>
 <script>
+import '../lib/profile-shell';
 import {mediaDomains,domainListLinks,type MediaDomains} from '../lib/media-domains';
 import {showActionFailure} from '../lib/action-failure';
 document.addEventListener('astro:page-load', () => {
