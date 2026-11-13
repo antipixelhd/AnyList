@@ -8,6 +8,7 @@ import {startVisibleRefresh} from './visible-refresh';
 import {editorStore} from './editor-store';
 import {returnViews,returnViewIdentity,returnViewKey,type CaptureReturnView} from './return-view-cache';
 import {profileSessionCache} from './profile-session-cache';
+import {profilePanelHeader} from './profile-panel-request';
 
 const summaryBudget = 512 * 1024;
 type Panel={root:HTMLElement;url:string;title:string;ready:boolean;kind:string;lifetime:AbortController;styles?:DocumentFragment;initializing?:Promise<void>;preparing?:Promise<void>;summary?:string;checkedAt:number;visibilityCheckedAt:number;revision:number;saved?:boolean};
@@ -103,7 +104,7 @@ function setup(){
     }
   }
   async function readPage(url:string,readSignal:AbortSignal,background=false){
-    const response=await fetch(url,{signal:AbortSignal.any([readSignal,AbortSignal.timeout(15_000)]),credentials:'same-origin',cache:'no-store',priority:background?'low':'auto',headers:{Accept:'text/html'}});
+    const response=await fetch(url,{signal:AbortSignal.any([readSignal,AbortSignal.timeout(15_000)]),credentials:'same-origin',cache:'no-store',priority:background?'low':'auto',headers:{Accept:'text/html',[profilePanelHeader]:'1'}});
     if([401,403,404].includes(response.status)||response.redirected)throw new ProfileAccessChanged();
     if(!response.ok)throw new Error('Unable to load this section.');
     const html=await response.text();

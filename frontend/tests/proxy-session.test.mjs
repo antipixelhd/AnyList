@@ -4,6 +4,7 @@ import {readFileSync} from 'node:fs';
 import {stripTypeScriptTypes} from 'node:module';
 import {runInNewContext} from 'node:vm';
 import {isSameOrigin,requiresSameOrigin} from '../src/lib/request-security.ts';
+import {profilePanelRequest,profilePanelHeader,profilePagePath} from '../src/lib/profile-panel-request.ts';
 import {GET,POST} from '../src/pages/api/proxy/[...path].ts';
 
 function middleware(){
@@ -13,6 +14,7 @@ function middleware(){
     defineMiddleware:fn=>fn,sessionCookieName:()=> 'selected_token',
     crawlerShareResponse:async()=>null,publicLegalPage:()=>false,
     isSameOrigin,requiresSameOrigin,Response,URL,process:{env:{}},
+    profilePanelRequest,profilePanelHeader,profilePagePath,
     api:{auth:{me:()=>{throw new Error('Redundant auth preflight');}}},
   });
 }

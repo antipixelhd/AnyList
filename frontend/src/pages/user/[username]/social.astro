@@ -13,7 +13,7 @@ const section = Astro.url.searchParams.get('section');
 const initialSection = query || section === 'search' ? 'search' : section === 'followers' ? 'followers' : 'following';
 let profile: any = null, error = '';
 try {
-  profile = await tracker(`people/${encodeURIComponent(username)}`, Astro.locals.token);
+  profile = await tracker(`people/${encodeURIComponent(username)}/social`, Astro.locals.token);
 } catch (cause) {
   const failure=trackerFailure(cause);
   error=failure.message;

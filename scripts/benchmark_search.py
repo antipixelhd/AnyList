@@ -806,6 +806,8 @@ async def main(args):
             ('game_activity_profile', f'games/users/{viewer.username}/activity', {'limit': 12}),
             *([('screen_activity_profile',f'people/{viewer.username}',{})]
                 if args.case and 'screen_activity_profile' in args.case else []),
+            *([('profile_social',f'people/{viewer.username}/social',{})]
+                if args.case and 'profile_social' in args.case else []),
             ('movie_exact', 'catalog', {'q': 'Benchmark title', 'media_type': 'movie'}),
             ('movie_typo', 'catalog', {'q': 'benchnark titl', 'media_type': 'movie'}),
             ('series_exact', 'catalog', {'q': 'Benchmark title', 'media_type': 'series'}),

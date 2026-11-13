@@ -3,6 +3,7 @@
 
 declare namespace App {
   interface Locals {
+    profilePanel?: boolean;
     user: import('./lib/api').UserProfile | null;
     token: string | undefined;
     settings?: import('./lib/api').UserSettings;

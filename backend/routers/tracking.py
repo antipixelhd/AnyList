@@ -719,6 +719,38 @@ async def person_header(username: str, db: AsyncSession = Depends(get_db), viewe
     return await profile_header(db, user, owner, viewer)
 
 
+@router.get('/people/{username}/social')
+async def person_social(
+    username: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    viewer: Annotated[User | None, Depends(get_optional_user_or_api_key)],
+    response: Response,
+):
+    from core.tracking_access import profile_header
+
+    response.headers['Cache-Control'] = 'private, no-store'
+    user, owner = await profile_access(db, username, viewer)
+    profile = await profile_header(db, user, owner, viewer)
+    following = select(Follow.id).where(Follow.follower_id == user.id, Follow.following_id == User.id).exists()
+    follower = select(Follow.id).where(Follow.following_id == user.id, Follow.follower_id == User.id).exists()
+    followed_ids = select(Follow.following_id).where(Follow.follower_id == user.id)
+    follower_ids = select(Follow.follower_id).where(Follow.following_id == user.id)
+    people = (await db.execute(
+        select(User.id, User.username, (func.coalesce(UserProfileData.avatar_path, '') != '').label('has_avatar'),
+               following.label('following'), follower.label('follower'))
+        .join(UserProfileData, UserProfileData.user_id == User.id)
+        .where(UserProfileData.privacy_level == PrivacyLevel.public,
+               User.id.in_(followed_ids.union(follower_ids)))
+        .order_by(User.id)
+    )).all()
+    profile['people'] = [
+        dict(id=person.id, username=person.username, display_name=person.username,
+             has_avatar=person.has_avatar, following=person.following, follower=person.follower)
+        for person in people
+    ]
+    return profile
+
+
 @router.get('/people/{username}/favorites')
 async def people_favorites(
     username: str,

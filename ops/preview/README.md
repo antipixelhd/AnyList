@@ -43,7 +43,9 @@ beta-to-main process.
 Each slot has `/srv/anylist-preview/<branch>/checkout`, `.venv`, `data`, its
 checkout's frontend `node_modules`, a separate Unix user and PostgreSQL login/DB,
 and `/etc/anylist-preview/<branch>.env`. Backend/frontend systemd services execute
-Uvicorn/Astro source directly and are explicitly restarted. PostgreSQL is shared
+Uvicorn and are explicitly restarted. Beta builds the frontend during deployment
+and runs `node scripts/serve.mjs` with HTTP compression and `NODE_ENV=production`.
+Development slots run `astro dev` with automatic reloads. PostgreSQL is shared
 and is never restarted by deployment. Public URLs are
 `https://<machine>.<tailnet>.ts.net:8001` (or 8002/8003).
 

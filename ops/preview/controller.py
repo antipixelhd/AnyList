@@ -179,6 +179,30 @@ class Preview:
                 self.app(command, directory=component)
                 stamp.write_text(digest)
 
+    def build_frontend(self):
+        if self.branch == "beta":
+            self.app(["npm", "run", "build"], directory="frontend",
+                     env={**self.env(), "NODE_ENV": "production"})
+
+    def configure_services(self):
+        for part in ("frontend", "backend"):
+            template = (INSTALL / (part + ".service.in")).read_text()
+            substitutions = {
+                "@BRANCH@": self.branch, "@USER@": self.user,
+                "@FRONTEND_PORT@": str(self.slot["frontend_port"]),
+                "@BACKEND_PORT@": str(self.slot["backend_port"]),
+                "@NODE_ENV@": "production" if self.branch == "beta" else "development",
+                "@FRONTEND_COMMAND@": (
+                    "/usr/bin/node scripts/serve.mjs" if self.branch == "beta" else
+                    "/usr/bin/node node_modules/astro/bin/astro.mjs dev --host 127.0.0.1 --port "
+                    + str(self.slot["frontend_port"])
+                ),
+            }
+            for key, value in substitutions.items():
+                template = template.replace(key, value)
+            (Path("/etc/systemd/system") / f"anylist-preview-{self.branch}-{part}.service").write_text(template)
+        run(["systemctl", "daemon-reload"])
+
     def migration_state(self):
         # Root-owned helper, imported app modules run only with slot privileges.
         output = self.app([self.home / ".venv/bin/python", "-c",
@@ -259,6 +283,7 @@ class Preview:
         # Remove deleted source left untracked without touching venv/node_modules/data.
         self.git("clean", "-fd")
         self.dependencies(force=recreate)
+        self.build_frontend()
         if self.slot["persistent"]:
             with lock("beta-database"):
                 state = self.migration_state()
@@ -274,6 +299,7 @@ class Preview:
                 self.reset_database()
             else:
                 self.migrate()
+        self.configure_services()
         self.restart()
         marker.write_text(sha + "\n")
         print(f"DEPLOYED {self.branch} {sha}; forced={forced}; non-fast-forward={non_ff}", flush=True)
@@ -379,15 +405,7 @@ class Preview:
             run(["/usr/sbin/runuser", "-u", self.user, "--", "git", "clone", "--no-checkout", REPOSITORY,
                  self.checkout], env={"PATH": "/usr/bin:/bin", "HOME": str(self.home)})
         run(["/usr/sbin/runuser", "-u", self.user, "--", "mkdir", "-p", self.home / "data"])
-        for part in ("frontend", "backend"):
-            template = (INSTALL / (part + ".service.in")).read_text()
-            substitutions = {"@BRANCH@": self.branch, "@USER@": self.user,
-                             "@FRONTEND_PORT@": str(self.slot["frontend_port"]),
-                             "@BACKEND_PORT@": str(self.slot["backend_port"])}
-            for key, value in substitutions.items():
-                template = template.replace(key, value)
-            (Path("/etc/systemd/system") / f"anylist-preview-{self.branch}-{part}.service").write_text(template)
-        run(["systemctl", "daemon-reload"])
+        self.configure_services()
         self.deploy(recreate=recreate)
         run(["tailscale", "serve", "--bg", f"--https={self.slot['frontend_port']}",
              f"http://127.0.0.1:{self.slot['frontend_port']}"])

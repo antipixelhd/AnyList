@@ -9,6 +9,7 @@ import { publicLegalPage } from './lib/legal-routes';
 import {anonymousGameDiscoveryRoute,approvedGamesPage} from './lib/game-public-routes';
 import {viewerMediaPreferences} from './lib/viewer-media-preferences';
 import {viewerProfilePreferences} from './lib/viewer-profile-preferences';
+import {profilePanelRequest,profilePanelHeader,profilePagePath} from './lib/profile-panel-request';
 
 const PUBLIC_ROUTES = ["/login", "/register", "/logout", "/oidc-callback", "/oidc-start", "/link", "/site.webmanifest", "/favicon-96x96.png", "/apple-touch-icon.png", "/sw.js", "/offline.html"];
 // /api/proxy/auth/device/code and /device/token are the RFC 8628 endpoints a
@@ -26,6 +27,7 @@ const PUBLIC_LEGACY_STATS_PAGE_RE = /^\/stats\/\d+\/?$/;
 // extension, so it doesn't fall under isStaticAsset below like TMDB poster
 // URLs do, and needs the same admin-gated anonymous allowance as the page itself.
 const PUBLIC_AVATAR_PROXY_RE = /^\/api\/proxy\/profile\/(?:avatar|background)\/\d+$/;
+const PUBLIC_PROFILE_SOCIAL_RE = /^\/api\/proxy\/tracking\/people\/[^/]+\/social\/?$/;
 // Matches /list/{id} (someone else's public/friends-only list page). The list
 // itself still enforces its own privacy_level server-side; this only decides
 // whether a logged-out visitor gets past the gate at all.
@@ -78,6 +80,7 @@ const SECURITY_HEADERS: Record<string, string> = {
 export const onRequest = defineMiddleware(async (context, next) => {
   const token = context.cookies.get(sessionCookieName("token"))?.value;
   const { pathname } = context.url;
+  context.locals.profilePanel = profilePanelRequest(context.request);
 
   if (context.request.method === 'GET' || context.request.method === 'HEAD') {
     const preview = await crawlerShareResponse(context.url, context.request.headers.get('User-Agent') || '', process.env.SERVER_URL || context.url.origin);
@@ -147,6 +150,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
       PUBLIC_PROFILE_PAGE_RE.test(pathname) ||
       PUBLIC_LEGACY_STATS_PAGE_RE.test(pathname) ||
       PUBLIC_AVATAR_PROXY_RE.test(pathname) ||
+      (context.request.method === 'GET' && PUBLIC_PROFILE_SOCIAL_RE.test(pathname)) ||
       PUBLIC_LIST_PAGE_RE.test(pathname) ||
       PUBLIC_TOP_RATED_PAGE_RE.test(pathname) ||
       PUBLIC_RECENTLY_WATCHED_PAGE_RE.test(pathname) ||
@@ -230,6 +234,10 @@ export const onRequest = defineMiddleware(async (context, next) => {
   }
 
   const response = await next();
+  if(profilePagePath.test(pathname)){
+    response.headers.append('Vary',profilePanelHeader);
+    response.headers.set('Cache-Control','private, no-store');
+  }
   for (const [header, value] of Object.entries(SECURITY_HEADERS)) {
     response.headers.set(header, value);
   }
