@@ -138,7 +138,7 @@ test('list landing does not override hard reload or back/forward positions', () 
 
 test('routed non-list profile tabs land at the top and preserve horizontal tab position', () => {
   const runtime = readFileSync(new URL('../src/components/NavigationRuntime.astro', import.meta.url), 'utf8');
-  const before = runtime.slice(runtime.indexOf("    document.addEventListener('astro:before-swap'"), runtime.indexOf("    document.addEventListener('click',event=>{"));
+  const before = runtime.slice(runtime.indexOf("    document.addEventListener('astro:before-swap'"), runtime.indexOf("    document.addEventListener('astro:after-swap'"));
   const after = runtime.slice(runtime.indexOf("    document.addEventListener('astro:after-swap'"), runtime.indexOf("    document.addEventListener('astro:page-load'"));
   const handlers = new Map();
   const source = { dataset: { profileBase: '/user/alex' }, getBoundingClientRect: () => ({ top: 105 }), scrollLeft: 46 };
@@ -163,25 +163,26 @@ test('routed non-list profile tabs land at the top and preserve horizontal tab p
     settleNavigationContent: (element, kind, _signal, offset) => reveals.push([element, kind, offset]),
   };
   runInNewContext(stripTypeScriptTypes(before + after), context);
-  handlers.get('astro:before-swap')({sourceElement: {closest: () => source}, newDocument: {querySelector: () => incoming}, to: new URL('https://anylist.test/user/alex/favorites')});
+  const beforeSwap = (event) => handlers.get('astro:before-swap')({...event, signal:{aborted:true}});
+  beforeSwap({sourceElement: {closest: () => source}, newDocument: {querySelector: () => incoming}, to: new URL('https://anylist.test/user/alex/favorites')});
   handlers.get('astro:after-swap')();
   assert.deepEqual(scrolls, [[0, 0]]);
   assert.equal(incoming.scrollLeft, 46);
   assert.deepEqual(reveals, [[content, 'tab', undefined]]);
 
-  handlers.get('astro:before-swap')({sourceElement: {closest: () => source}, newDocument: {querySelector: () => incoming}, to: new URL('https://anylist.test/user/alex')});
+  beforeSwap({sourceElement: {closest: () => source}, newDocument: {querySelector: () => incoming}, to: new URL('https://anylist.test/user/alex')});
   handlers.get('astro:after-swap')();
   assert.equal(scrolls.length, 1, 'a history traversal keeps the router position');
   assert.equal(reveals.length, 1, 'a history traversal does not replay the fade');
 
   context.pageEntrance = new AbortController().signal;
-  handlers.get('astro:before-swap')({newDocument: {}, to: new URL('https://anylist.test/browse')});
+  beforeSwap({newDocument: {}, to: new URL('https://anylist.test/browse')});
   handlers.get('astro:after-swap')();
   assert.deepEqual(reveals[1], [main, 'page', 0], 'a main page settles without moving the whole surface');
 
   detail = { querySelector: () => null };
   context.pageEntrance = new AbortController().signal;
-  handlers.get('astro:before-swap')({newDocument: {}, to: new URL('https://anylist.test/title/1')});
+  beforeSwap({newDocument: {}, to: new URL('https://anylist.test/title/1')});
   handlers.get('astro:after-swap')();
   assert.deepEqual(reveals[2], [detail, 'page', undefined], 'detail entrances settle the panels while the sidebar and tabs stay fixed');
 });

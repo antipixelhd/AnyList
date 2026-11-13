@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {stripTypeScriptTypes} from 'node:module';
+import {runInNewContext} from 'node:vm';
 import {mountRoutePreview,detailHints,detailLinkTitle,prepareDetailResolution} from '../src/lib/detail-loading.ts';
 import {mountDetailResolution} from '../src/lib/detail-resolution.ts';
 
@@ -33,6 +36,44 @@ test('an already cancelled route cannot hide the current page',t=>{
   const f=fixture(t),controller=new AbortController();controller.abort();
   mountRoutePreview(f.host,{kind:'game'},new URL('https://local.test/games/2'),controller.signal)();
   assert.equal(f.host.preview,undefined);assert.equal(f.host.inert,false);assert.equal(f.doc.documentElement.style.overflow,'auto');
+});
+
+test('Browse and profile snapshots are captured after the detail preview is cleared',t=>{
+  const f=fixture(t),controller=new AbortController();
+  const runtime=readFileSync(new URL('../src/components/NavigationRuntime.astro',import.meta.url),'utf8');
+  const start=runtime.indexOf("    document.addEventListener('astro:before-swap', event=>");
+  const end=runtime.indexOf("    document.addEventListener('astro:after-swap'",start);
+  const incoming={body:f.doc.body};
+  let captureListener;
+  let captured=0;
+  for(const path of ['/browse','/user/test/games']){
+    const clearPreview=mountRoutePreview(f.host,{kind:'game'},new URL('https://local.test/games/8'),controller.signal);
+    runInNewContext(stripTypeScriptTypes(runtime.slice(start,end)),{
+      document:{
+        body:f.doc.body,
+        addEventListener(name,fn,options){
+          assert.equal(name,'astro:before-swap');
+          assert.equal(options.capture,true);
+          captureListener=fn;
+        },
+        dispatchEvent(event){
+          assert.equal(event.type,'anylist:capture-return-view');
+          assert.equal(event.detail.source.pathname,path);
+          assert.equal(f.frame.removed,true);
+          assert.equal(f.host.inert,false);
+          assert.equal(f.host.style.visibility,'visible');
+          assert.equal(f.doc.documentElement.style.overflow,'auto');
+          captured++;
+        },
+      },
+      clearPreview,clearNavigationFeedback:undefined,pageEntrance:undefined,
+      prepareDetailResolution(){},currentUser(){},returnViewIdentity(){return 'viewer';},
+      CustomEvent,URL,location:{href:`https://local.test${path}`},
+    });
+    f.frame.removed=false;
+    captureListener({newDocument:incoming,signal:controller.signal,navigationType:'push'});
+  }
+  assert.equal(captured,2);
 });
 
 test('a related card preview uses its heading without its genre and year',()=>{

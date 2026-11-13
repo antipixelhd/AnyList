@@ -14,6 +14,7 @@
   import {clearStoredBrowseCache} from '../lib/browse-cache';
   import {createGameIntent,gameIntentTarget} from '../lib/game-intent';
   import {instantPageTransitions} from '../lib/instant-page-transitions';
+  import {bindDialogBack} from '../lib/dialog-back';
   import {detailDestination,detailHints,detailLinkTitle,mountRoutePreview,prepareDetailResolution,type DetailHint} from '../lib/detail-loading';
   import {settleNavigationContent,cancelLoadingReveals} from '../lib/loading-reveal';
   import {browseReturnTarget,isReturnViewTrackingWrite,returnViews,returnViewKey,returnViewIdentity,type CaptureReturnView} from '../lib/return-view-cache';
@@ -251,20 +252,11 @@
   if (!state.initialized) {
     state.initialized = true;
     instantPageTransitions(document);
+    bindDialogBack(document);
     let clearPreview:(()=>void)|undefined;
     let clearNavigationFeedback:(()=>void)|undefined;
     let pageEntrance:AbortSignal|undefined;
     let profileTabPosition:{left:number}|undefined;
-    document.addEventListener('astro:before-swap',event=>{
-      const sourceTabs=event.sourceElement?.closest<HTMLElement>('.profile-tabs[data-profile-base]');
-      const incomingTabs=sourceTabs&&event.newDocument.querySelector<HTMLElement>('.profile-tabs[data-profile-base]');
-      if(pageEntrance&&!pageEntrance.aborted&&!event.to.hash&&sourceTabs&&incomingTabs?.dataset.profileBase===sourceTabs.dataset.profileBase){
-        profileTabPosition={left:sourceTabs.scrollLeft};
-      }
-      prepareDetailResolution(event.newDocument,event.to,currentUser());
-      clearPreview?.();clearPreview=undefined;
-      clearNavigationFeedback?.();
-    });
     document.addEventListener('click',event=>{
       const link=(event.target as Element)?.closest<HTMLAnchorElement>('a[href]');if(!link)return;
       const url=new URL(link.href);if(url.origin!==location.origin||!detailDestination(url))return;
@@ -462,6 +454,16 @@
     });
     document.addEventListener('astro:after-preparation', finishProgress);
     document.addEventListener('astro:before-swap', event=>{
+      // Restore the outgoing page before cloning it, and capture before panel
+      // controllers tear down the live results in their before-swap listeners.
+      clearPreview?.();clearPreview=undefined;
+      clearNavigationFeedback?.();
+      const sourceTabs=event.sourceElement?.closest<HTMLElement>('.profile-tabs[data-profile-base]');
+      const incomingTabs=sourceTabs&&event.newDocument.querySelector<HTMLElement>('.profile-tabs[data-profile-base]');
+      if(pageEntrance&&!pageEntrance.aborted&&!event.to.hash&&sourceTabs&&incomingTabs?.dataset.profileBase===sourceTabs.dataset.profileBase){
+        profileTabPosition={left:sourceTabs.scrollLeft};
+      }
+      prepareDetailResolution(event.newDocument,event.to,currentUser());
       if(event.signal.aborted||returnViewIdentity(event.newDocument.body)!==returnViewIdentity(document.body))return;
       const source=event.navigationType==='traverse'?event.from:new URL(location.href);
       const capture:CaptureReturnView={source,save(url,apply){
