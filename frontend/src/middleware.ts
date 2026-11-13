@@ -118,7 +118,8 @@ export const onRequest = defineMiddleware(async (context, next) => {
   // The proxy prefers the cookie over an API key, so a query key cannot exempt
   // a cookie-authenticated write. Explicit Bearer headers override the cookie.
   if (requiresSameOrigin(context.request.method, pathname, !!token, hasProxyBearer) &&
-      !isSameOrigin(context.request, context.url, process.env.SERVER_URL)) {
+      !isSameOrigin(context.request, context.url, process.env.SERVER_URL,
+        (process.env.ADDITIONAL_PUBLIC_ORIGINS || '').split(',').map(value => value.trim()).filter(Boolean))) {
     return new Response('Cross-site form submissions are forbidden', { status: 403, headers: SECURITY_HEADERS });
   }
 

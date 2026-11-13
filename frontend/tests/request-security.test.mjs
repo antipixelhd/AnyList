@@ -40,6 +40,27 @@ test('browser writes require an origin check and independently authenticated API
   }
 });
 
+test('multiple deployment origins accept only the origin matching the request host', () => {
+  const publicUrl = 'https://beta.anylist.win';
+  const privateUrl = 'https://preview.example.ts.net:8001';
+  const url = new URL('http://localhost:8001/login');
+  function request(host, origin, forwardedHost) {
+    return new Request(url, {method:'POST', headers:{Host:host, Origin:origin,
+      ...(forwardedHost ? {'X-Forwarded-Host':forwardedHost} : {})}});
+  }
+  for (const target of [publicUrl, privateUrl]) {
+    const host = new URL(target).host;
+    assert.equal(isSameOrigin(request(host, target), url, publicUrl, [privateUrl]), true);
+    assert.equal(isSameOrigin(request(host, 'https://evil.test'), url, publicUrl, [privateUrl]), false);
+    assert.equal(isSameOrigin(request(host, target.replace('https:', 'http:')), url, publicUrl, [privateUrl]), false);
+  }
+  assert.equal(isSameOrigin(request(new URL(privateUrl).host, publicUrl), url, publicUrl, [privateUrl]), false);
+  assert.equal(isSameOrigin(request(new URL(privateUrl).host, publicUrl, new URL(publicUrl).host), url, publicUrl, [privateUrl]), false);
+  assert.equal(isSameOrigin(request('internal:8001', privateUrl, new URL(privateUrl).host), url, publicUrl, [privateUrl]), true);
+  assert.equal(isSameOrigin(request('internal:8001', 'https://evil.test', 'evil.test'), url, publicUrl, [privateUrl]), false);
+  assert.equal(isSameOrigin(request('preview.example.ts.net:8002', privateUrl), url, publicUrl, [privateUrl]), false);
+});
+
 test('anonymous catalog imports require same-origin validation', () => {
   for (const type of ['catalog/movie','catalog/series','games/resolve']) {
     const path=`/api/proxy/tracking/${type}/123`;

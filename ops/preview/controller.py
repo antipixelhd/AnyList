@@ -23,7 +23,8 @@ ROOT = Path("/srv/anylist-preview")
 ETC = Path("/etc/anylist-preview")
 STATE = Path("/var/lib/anylist-preview")
 REPOSITORY = "https://github.com/antipixelhd/AnyList.git"
-OPERATIONS = {"status", "restart", "redeploy", "reset-db-from-beta", "recreate-preview", "provision", "sync-config"}
+OPERATIONS = {"status", "restart", "redeploy", "reset-db-from-beta", "recreate-preview", "provision", "sync-config",
+              "public-beta-on", "public-beta-off", "public-beta-status"}
 DEPENDENCIES = {"backend": ["backend/pyproject.toml", "backend/uv.lock"],
                 "frontend": ["frontend/package.json", "frontend/package-lock.json"]}
 BACKUP_KEEP = 20
@@ -64,6 +65,8 @@ def validate(slots, branch, operation, sha=None, forced="false"):
         raise Refused("REFUSED: beta database reset is forbidden")
     if operation == "sync-config" and branch != "beta":
         raise Refused("Configuration additions must come from beta")
+    if operation.startswith("public-beta-") and branch != "beta":
+        raise Refused("Public access controls are only available for beta")
     if operation == "deploy" and not re.fullmatch(r"[0-9a-f]{40}", sha or ""):
         raise Refused("An exact 40-character commit SHA is required")
     if forced not in {"true", "false"}:
@@ -383,6 +386,7 @@ class Preview:
                 "DATABASE_URL": f"postgresql+asyncpg://{self.role}:{password}@127.0.0.1:5432/{self.role}",
                 "SERVER_URL": f"https://{host}:{self.slot['frontend_port']}",
                 "PREVIEW_HOSTNAME": host, "PREVIEW_SLOT": self.branch,
+                "NEW_ACCOUNTS_GAMES_ACCESS": "true" if self.branch == "beta" else "false",
                 "BACKEND_PORT": str(self.slot["backend_port"]),
                 "OIDC_REDIRECT_URL": f"https://{host}:{self.slot['frontend_port']}/oidc-callback",
                 "DATA_DIR": str(self.home / "data"),
@@ -427,7 +431,14 @@ def main(args=None):
     os.umask(0o077)
     with lock(branch):
         preview = Preview(branch, slots)
-        if operation == "status":
+        if operation.startswith("public-beta-"):
+            sys.path.insert(0, str(INSTALL))
+            import public_beta
+            if operation == "public-beta-status":
+                print("Public beta.anylist " + public_beta.configured_mode())
+            else:
+                public_beta.set_public(operation == "public-beta-on")
+        elif operation == "status":
             if not preview.status():
                 raise Refused("Status detected errors")
         elif operation == "restart":

@@ -12,21 +12,20 @@ export function requiresSameOrigin(method: string, pathname: string, hasSession:
   return !pathname.startsWith('/api/proxy/') || (hasSession && !hasBearerAuth);
 }
 
-export function isSameOrigin(request: Request, url: URL, publicUrl?: string): boolean {
+export function isSameOrigin(request: Request, url: URL, publicUrl?: string, additionalPublicUrls: readonly string[] = []): boolean {
   const origin = request.headers.get('Origin');
   if (!origin) return false;
   try {
     const host = request.headers.get('Host');
     const expected = new URL(url.origin);
     // Astro can rewrite an unconfigured Host to localhost. Keep the actual
-    // request host for direct access; trust proxy forwarding only for SERVER_URL.
+    // request host for direct access; trust proxy forwarding only for explicitly
+    // configured public origins, matched against the incoming request host.
     if (host) expected.host = host;
-    if (publicUrl) {
-      const configured = new URL(publicUrl);
-      if ([host, request.headers.get('X-Forwarded-Host')].includes(configured.host)) {
-        return origin === configured.origin;
-      }
-    }
+    const configuredUrls = [publicUrl, ...additionalPublicUrls].filter(Boolean).map(candidate => new URL(candidate!));
+    const configured = configuredUrls.find(candidate => candidate.host === host) ||
+      configuredUrls.find(candidate => candidate.host === request.headers.get('X-Forwarded-Host'));
+    if (configured) return origin === configured.origin;
     return origin === expected.origin;
   } catch {
     return false;

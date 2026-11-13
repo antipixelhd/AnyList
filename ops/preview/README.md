@@ -1,5 +1,8 @@
 # AnyList private source previews
 
+Beta also supports a switchable public hostname. See [public beta access](PUBLIC-BETA.md)
+for the **Public beta.anylist ON/OFF** manual actions and gateway setup.
+
 **Normal development must not require VPS SSH.** GitHub is the control plane;
 the VPS executes installed preview commands. Local PCs, local Codex, future
 Codex Cloud, and other machines all deploy by pushing the same GitHub branches.

@@ -1,0 +1,12 @@
+[Unit]
+Description=Private socket from public gateway to AnyList beta
+Requires=docker.service
+After=docker.service
+
+[Socket]
+ListenStream=/var/lib/docker/volumes/public-gateway_caddy_config/_data/anylist-beta.sock
+SocketMode=0600
+RemoveOnStop=true
+Service=anylist-public-beta.service
+
+# Deliberately not enabled at boot. The gateway gate service restores its state.
