@@ -6,6 +6,7 @@ import {profileLoadingFrame} from './profile-loading';
 import {settleNavigationContent,cancelLoadingReveals} from './loading-reveal';
 import {startVisibleRefresh} from './visible-refresh';
 import {editorStore} from './editor-store';
+import {returnViews,returnViewIdentity,returnViewKey,type CaptureReturnView} from './return-view-cache';
 
 const summaryBudget = 512 * 1024;
 type Panel={root:HTMLElement;url:string;title:string;ready:boolean;kind:string;lifetime:AbortController;styles?:DocumentFragment;templates?:HTMLTemplateElement[];initializing?:Promise<void>;preparing?:Promise<void>;summary?:string;checkedAt:number;visibilityCheckedAt:number;revision:number};
@@ -48,6 +49,8 @@ function setup(){
   const viewer=document.body.dataset.cacheUser,approved=document.body.dataset.gamesApproved;
   const header=host.querySelector<HTMLElement>('.profile-hero')!,nav=host.querySelector<HTMLElement>('.profile-tabs')!;
   const owner=nav.dataset.profileOwner==='yes';
+  const restored=document.body.hasAttribute('data-return-view');
+  const restoredDirty=document.body.dataset.returnView==='dirty';
   const visibilityPath=`/api/proxy/tracking/people/${encodeURIComponent(route.username)}/header`;
   let generation=0;
   let summaryRevision=0;
@@ -104,7 +107,13 @@ function setup(){
     const revision=generation;
     const dataRevision=summaryRevision;
     const pending:Promise<Panel>=(async()=>{
-      const {doc,content,tabs}=await readPage(url,signal);
+      const saved=owner?returnViews.get(returnViewKey(new URL(url))):undefined;
+      const savedDoc=saved?new DOMParser().parseFromString(saved.html,'text/html'):undefined;
+      const savedContent=savedDoc?.querySelector('#content');
+      const savedTabs=savedContent?.querySelector<HTMLElement>('.profile-tabs');
+      const restore=savedDoc&&savedContent&&savedTabs&&savedTabs.dataset.profileBase===nav.dataset.profileBase&&
+        returnViewIdentity(savedDoc.body)===returnViewIdentity(document.body);
+      const {doc,content,tabs}=restore?{doc:savedDoc,content:savedContent,tabs:savedTabs}:await readPage(url,signal);
       if(signal.aborted||revision!==generation)throw new DOMException('Preview invalidated','AbortError');
       const root=document.createElement('div');root.dataset.profileUrl=url;
       for(const child of [...content.childNodes])if(!(child instanceof Element)||!child.matches('.profile-hero,.profile-tabs,script:not([type="application/json"])'))root.append(child);
@@ -112,6 +121,10 @@ function setup(){
       for(const style of doc.querySelectorAll('style,link[rel=stylesheet][href]'))if(!style.closest('noscript'))styles.append(style);
       const panel=createPanel(root,url,doc.title,key,styles);
       panel.revision=dataRevision;
+      if(restore){
+        panel.checkedAt=saved?.dirty?0:Number(doc.body.dataset.profileReturnCheckedAt)||panel.checkedAt;
+        if(saved?.dirty)root.dataset.returnListDirty='';
+      }
       if(!nav.querySelector('[data-profile-list-loading]'))panel.templates=[...tabs.querySelectorAll<HTMLTemplateElement>('template[data-profile-list-loading],template[data-profile-stats-loading]')];
       if(!isProfileSummary(key)||panel.summary!==undefined||wanted===key)panels.set(key,panel);
       if(root.querySelector('[data-integrated-statistics]')){panels.set('stats',panel);panels.set('stats/games',panel);}
@@ -199,8 +212,13 @@ function setup(){
       if(refreshFlight===request)refreshFlight=undefined;
     }
   }
-  const visibleRefresh=startVisibleRefresh({intervalMs:30_000,wakeIntervalMs:30_000,refresh});
-  signal.addEventListener('abort',visibleRefresh.stop,{once:true});
+  if(!owner){
+    const visibleRefresh=startVisibleRefresh({intervalMs:30_000,wakeIntervalMs:30_000,refresh});
+    signal.addEventListener('abort',visibleRefresh.stop,{once:true});
+  }else{
+    window.addEventListener('focus',scheduleRefresh,{signal});
+    document.addEventListener('visibilitychange',()=>{if(!document.hidden)scheduleRefresh();},{signal});
+  }
   document.addEventListener('anylist:cache-invalidated',()=>{
     generation++;
     for(const panel of new Set(panels.values()))if(!panel.ready&&!panel.initializing&&!panel.preparing&&panel.root!==shown)forget(panel);
@@ -311,7 +329,7 @@ function setup(){
       };
       commit();
       if(isCurrent()&&shown===panel.root)panel.root.dispatchEvent(new Event('anylist:panel-active'));
-      if(cached?.ready||(isProfileSummary(key)&&panel.revision!==summaryRevision))scheduleRefresh();
+      if(cached?.ready||Date.now()-panel.checkedAt>=profileRefreshAge||(isProfileSummary(key)&&panel.revision!==summaryRevision))scheduleRefresh();
     };
     const failed=(cause?:unknown)=>{
       if(!isCurrent())return;
@@ -346,7 +364,50 @@ function setup(){
     event.preventDefault();event.stopImmediatePropagation();select(next.key,next.url,false,!!link.closest('.profile-tabs'));
   },{signal,capture:true});
   bindPredictionIntent(host,signal,link=>{const next=target(link);if(owner&&next&&next.key!==wanted)void read(next.key,next.url).catch(()=>{});});
-  void initialize(initial,signal).catch(()=>{currentHost=undefined;});
+  document.addEventListener('anylist:capture-return-view',event=>{
+    if(!owner||viewer==='anonymous'||editorStore.hasPendingWrites()||shown!==panels.get(active)?.root)return;
+    const {source,save}=(event as CustomEvent<CaptureReturnView>).detail;
+    const match=profilePanelKey(source);
+    if(match?.username!==route.username)return;
+    const activeUrl=match.key===active?source:new URL(shown.dataset.profileUrl||source.href);
+    // Save siblings first so the view being left has priority under pressure.
+    const candidates=[...new Set(panels.values())].filter(panel=>panel.ready&&(isProfileList(panel.kind)||isProfileSummary(panel.kind)));
+    candidates.sort((a,b)=>Number(a.root===shown)-Number(b.root===shown));
+    for(const panel of candidates){
+      if(panel.root.querySelector('[data-profile-writing],[data-reordering="true"]'))continue;
+      const url=panel.root===shown?activeUrl:new URL(panel.root.dataset.profileUrl||panel.url);
+      save(url,(content,body,title)=>{
+        const document=content.ownerDocument;
+        const tabs=document.importNode(nav,true);
+        tabs.removeAttribute('aria-busy');
+        for(const link of tabs.querySelectorAll<HTMLAnchorElement>('a[href]')){
+          const selected=profilePanelKey(new URL(link.getAttribute('href')!,url))?.key===panel.kind;
+          link.classList.toggle('active',selected);
+          if(selected)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');
+        }
+        const copy=document.importNode(panel.root,true);
+        copy.querySelectorAll('[data-list-row-key]').forEach(row=>row.removeAttribute('data-list-row-key'));
+        if(isProfileList(panel.kind)){
+          const detail={target:copy,saved:false};
+          panel.root.dispatchEvent(new CustomEvent('anylist:capture-list-return',{detail}));
+          if(!detail.saved)return false;
+        }else if(!panel.summary||panel.kind==='social'&&panel.root.querySelector('[data-social-panel="search"]:not([hidden])'))return false;
+        copy.querySelectorAll('.virtual-list-error,[data-profile-switch-error]').forEach(error=>error.remove());
+        copy.querySelectorAll('dialog[open]').forEach(dialog=>dialog.removeAttribute('open'));
+        content.append(document.importNode(header,true),tabs,...copy.childNodes);
+        if(title)title.textContent=panel.title;
+        body.toggleAttribute('data-list-landing',isProfileList(panel.kind));
+        body.dataset.profileReturnCheckedAt=String(panel.checkedAt);
+        return true;
+      });
+    }
+  },{signal});
+  void initialize(initial,signal).then(()=>{
+    if(restored&&!signal.aborted){
+      initial.checkedAt=restoredDirty?0:Number(document.body.dataset.profileReturnCheckedAt)||initial.checkedAt;
+      scheduleRefresh();
+    }
+  }).catch(()=>{currentHost=undefined;});
 }
 class ProfileAccessChanged extends Error {}
 document.addEventListener('astro:page-load',setup);

@@ -16,6 +16,7 @@
   import {instantPageTransitions} from '../lib/instant-page-transitions';
   import {detailDestination,detailHints,detailLinkTitle,mountRoutePreview,prepareDetailResolution,type DetailHint} from '../lib/detail-loading';
   import {settleNavigationContent,cancelLoadingReveals} from '../lib/loading-reveal';
+  import {browseReturnTarget,isReturnViewTrackingWrite,returnViews,returnViewKey,returnViewIdentity,type CaptureReturnView} from '../lib/return-view-cache';
   wirePasswordToggles();
 
   type CachedPage = { html: string; bytes: number; storedAt: number; predicted?:boolean; requiresGamesAccess?:boolean };
@@ -45,6 +46,8 @@
   }
 
   const currentUser = () => document.body.dataset.cacheUser || 'anonymous';
+  let lastBrowseView:string|undefined;
+  let returnIdentity='';
   const cacheable = (url: URL) => url.origin === location.origin && (!approvedGamesPage(url)||reusableGamesPage(url)) && (
     ['/home','/browse','/browse/games','/recent-events','/connections'].includes(url.pathname)
     || predictivePage(url,location.origin)
@@ -67,6 +70,8 @@
 
   function resetForIdentity() {
     const user = currentUser();
+    const identity=returnViewIdentity(document.body);
+    if(identity!==returnIdentity){lastBrowseView=undefined;returnIdentity=identity;returnViews.scope(identity);}
     detailHints.scope(user);
     if (state.user === user) return;
     state.user = user;
@@ -128,11 +133,25 @@
     return true;
   }
 
-  function sanitizedHtml(doc: Document, url: URL) {
+  function sanitizedHtml(doc: Document, url: URL, apply?: Parameters<CaptureReturnView['save']>[1]) {
     // Copy into an inert template document: cloning into the live document can
     // start image/preload requests before their media/source attributes exist.
     const inert = document.createElement('template').content.ownerDocument;
-    const clone = inert.importNode(doc.documentElement, true) as HTMLElement;
+    const clone = inert.importNode(doc.documentElement, !apply) as HTMLElement;
+    if(apply){
+      clone.append(inert.importNode(doc.head,true));
+      const body=inert.importNode(doc.body,false);
+      clone.append(body);
+      for(const node of doc.body.childNodes){
+        if(node instanceof HTMLElement&&node.id==='content'){
+          const content=inert.importNode(node,false);
+          body.append(content);
+          if(!apply(content,body,clone.querySelector('title')))return null;
+        }else body.append(inert.importNode(node,true));
+      }
+      // Astro installs the saved route and its styles before restoring scroll.
+      clone.querySelectorAll('link[rel="stylesheet"]').forEach(link=>link.removeAttribute('data-astro-transition-persist'));
+    }
     if (url.pathname === '/connections' && !redactedConnections(doc, clone)) return null;
     clone.querySelectorAll('[data-token]').forEach(element => element.removeAttribute('data-token'));
     // An open attribute copied into cached HTML restores a non-modal dialog:
@@ -145,6 +164,7 @@
     clone.querySelectorAll('[data-route-progress]').forEach(element => element.classList.remove('visible','finishing'));
     clone.querySelectorAll('[data-route-pending]').forEach(element => element.removeAttribute('data-route-pending'));
     clone.querySelectorAll('[data-toast-host]').forEach(element => element.replaceChildren());
+    clone.querySelectorAll('[data-return-view]').forEach(element=>element.removeAttribute('data-return-view'));
     return '<!doctype html>' + clone.outerHTML;
   }
 
@@ -338,8 +358,10 @@
       }
       return state.originalFetch!(input,init);
     };
-    window.fetch = mutationFetch(navigationFetch, location.href, () => {
+    window.fetch = mutationFetch(navigationFetch, location.href, url => {
       clearPages();
+      if(isReturnViewTrackingWrite(url))returnViews.markDirty();
+      else if(url.pathname!=='/api/proxy/tracking/recent-events/seen'){returnViews.clear();lastBrowseView=undefined;}
       document.dispatchEvent(new Event('anylist:data-changed'));
     }, error => {
       // Give the initiating control time to show its more useful, action-specific error.
@@ -350,6 +372,8 @@
       const form = event.target as HTMLFormElement;
       if (new URL(form.action, location.href).pathname === '/logout') {
         clearPages();
+        returnViews.clear();
+        lastBrowseView=undefined;
       }
     }, true);
 
@@ -379,6 +403,28 @@
       state.alignListLanding = event.navigationType !== 'traverse';
       const key = keyFor(event.to);
       state.predictionNavigation=undefined;
+      const lastBrowse=event.navigationType!=='traverse'&&event.to.origin===location.origin?browseReturnTarget(event.to,lastBrowseView):undefined;
+      const destinationKey=returnViewKey(event.to);
+      const browseKey=lastBrowse&&returnViewKey(lastBrowse);
+      const retainedKey=browseKey&&returnViews.get(browseKey)?browseKey:destinationKey;
+      const retained=event.to.origin===location.origin&&!event.formData&&returnViews.get(retainedKey);
+      if(retained){
+        state.prediction?.cancel();
+        pageEntrance=undefined;
+        const identity=returnViewIdentity(document.body);
+        const defaultLoader=event.loader;
+        event.loader=async()=>{
+          if(event.signal.aborted)return;
+          if(identity!==returnViewIdentity(document.body)||returnViews.get(retainedKey)!==retained){
+            await defaultLoader();return;
+          }
+          const next=new DOMParser().parseFromString(retained.html,'text/html');
+          next.body.dataset.returnView=retained.dirty?'dirty':event.navigationType==='traverse'?'history':'ready';
+          if(lastBrowse&&retainedKey===browseKey)event.to=lastBrowse;
+          event.newDocument=next;
+        };
+        return;
+      }
       let predicted=state.pages.get(key);
       if(predicted?.predicted&&Date.now()-predicted.storedAt>=30_000){state.pages.delete(key);state.bytes-=predicted.bytes;predicted=undefined;}
       const destination=detailDestination(event.to),host=document.querySelector<HTMLElement>('#content');
@@ -415,6 +461,18 @@
       };
     });
     document.addEventListener('astro:after-preparation', finishProgress);
+    document.addEventListener('astro:before-swap', event=>{
+      if(event.signal.aborted||returnViewIdentity(event.newDocument.body)!==returnViewIdentity(document.body))return;
+      const source=event.navigationType==='traverse'?event.from:new URL(location.href);
+      const capture:CaptureReturnView={source,save(url,apply){
+        try{
+          const html=sanitizedHtml(document,url,apply);
+          if(!html)return;
+          if(returnViews.set(returnViewKey(url),html)&&/^\/browse(?:\/games)?\/?$/.test(url.pathname))lastBrowseView=url.href;
+        }catch(error){console.debug('Unable to save return view.',error);}
+      }};
+      document.dispatchEvent(new CustomEvent('anylist:capture-return-view',{detail:capture}));
+    },{capture:true});
     document.addEventListener('astro:after-swap', () => {
       const listLanding=state.alignListLanding&&document.body.hasAttribute('data-list-landing');
       const tabs=(listLanding||profileTabPosition)&&document.querySelector<HTMLElement>('.profile-tabs');
@@ -442,6 +500,7 @@
       state.predictionBudget=0;state.predictionNavigation=undefined;
       state.gameIntent?.reset();
       resetForIdentity();
+      returnViews.prune();
       const url = new URL(location.href);
       const key = keyFor(url);
       if (state.usedCached.has(key)) void validate(url, key);

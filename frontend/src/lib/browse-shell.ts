@@ -4,6 +4,8 @@ import {initializeGameBrowse} from './game-browse';
 import {initializeScrollMotion} from './scroll-motion';
 import {bindPredictionIntent,predictionAllowed,predictionManifest} from './predictive-loading';
 import {browseTab,browseTabHref,createBrowseTabContext,createBrowseTabs,scopeBrowseIds,type ApplyBrowseTabContext,type BrowseTab} from './browse-tabs';
+import {copyReturnForm,returnViewFreshness,type CaptureReturnView} from './return-view-cache';
+import {resetSavedBrowseFilterPositions} from './browse-mobile-filters';
 
 let session:AbortController|undefined;
 let mounted:HTMLElement|undefined;
@@ -23,6 +25,7 @@ function setup(){
   const region=(first.querySelector('[name=region]') as HTMLInputElement)?.value||new URL(location.href).searchParams.get('region');
   const context=createBrowseTabContext(region||'');
   const applyContext=new WeakMap<HTMLElement,ApplyBrowseTabContext>();
+  const captures=new WeakMap<HTMLElement,(target:HTMLElement)=>boolean>();
   const posterMotion = new WeakMap<HTMLElement, NonNullable<ReturnType<typeof initializeScrollMotion>>>();
   const positions=new Map<BrowseTab,number>();
   let active=initial,wanted=initial,shown=first,loading:HTMLElement|undefined;
@@ -46,7 +49,9 @@ function setup(){
     const oldNav=root.querySelector('.browse-types')!;
     const slot=document.createElement('span');slot.dataset.browseTabSlot='';oldNav.replaceWith(slot);
     if (root===first) slot.append(nav);
-    applyContext.set(root,tab==='game'?initializeGameBrowse(root,panelSignal):initializeBrowse(root,panelSignal));
+    const view=tab==='game'?initializeGameBrowse(root,panelSignal):initializeBrowse(root,panelSignal);
+    applyContext.set(root,view.applyContext);
+    captures.set(root,view.capture);
     const motion = initializeScrollMotion(root, panelSignal, '.browse-card-body, .browse-skeleton-body', 'browse-scroll-reveal', {
       animateInitial: !restoring, deferHidden: true, downwardOnly: true, scaleEntrance: true,
       once: true, appearedAttribute: 'data-browse-appeared',
@@ -102,6 +107,32 @@ function setup(){
   // The first panel already passed middleware and owns the current document.
   prepare(first,initial,location.pathname+location.search);tabs.set(initial,first);
   capture();updateNav(initial);
+  if(document.body.dataset.returnView&&!restoring&&!location.hash&&first.dataset.returnScroll){
+    window.scrollTo(0,Number(first.dataset.returnScroll)||0);
+  }
+  const returnedAt=Number(first.dataset.returnCheckedAt);
+  if(returnedAt&&(document.body.dataset.returnView==='dirty'||Date.now()-returnedAt>=returnViewFreshness)){
+    first.dispatchEvent(new CustomEvent('anylist:browse-active',{detail:{restored:true}}));
+  }
+  document.addEventListener('anylist:capture-return-view',event=>{
+    const {source,save}=(event as CustomEvent<CaptureReturnView>).detail;
+    if(!browseTab(source)||shown!==tabs.peek(active)||wanted!==active)return;
+    const url=new URL(shown.dataset.browseUrl||source.href,source);
+    // Save the displayed view and its continuation under its exact URL.
+    save(url,content=>{
+      const root=content.ownerDocument.importNode(shown,true);
+      if(!captures.get(shown)?.(root))return false;
+      copyReturnForm(shown,root);
+      root.dataset.returnScroll=String(scrollY);
+      root.querySelector('[data-browse-tab-slot]')!.replaceWith(content.ownerDocument.importNode(nav,true));
+      root.querySelectorAll('dialog[open]').forEach(dialog=>dialog.removeAttribute('open'));
+      root.querySelectorAll('.browse-scroll-reveal').forEach(card=>card.classList.remove('browse-scroll-reveal'));
+      // The live mobile controls have been moved away from their form slots.
+      resetSavedBrowseFilterPositions(root);
+      content.append(root);
+      return true;
+    });
+  },{signal});
 
   function select(tab:BrowseTab){
     if(tab===wanted)return;

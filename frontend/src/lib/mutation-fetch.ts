@@ -2,7 +2,7 @@
 export function mutationFetch(
   fetcher: typeof fetch,
   origin: string,
-  onSuccess: () => void,
+  onSuccess: (url: URL) => void,
   onFailure: (error: unknown) => void,
 ): typeof fetch {
   return async (input, init) => {
@@ -25,7 +25,7 @@ export function mutationFetch(
       if (mutation && !(error instanceof Error && error.name === 'AbortError')) onFailure(error);
       throw error;
     }
-    if (mutation && response.ok) onSuccess();
+    if (mutation && response.ok) onSuccess(url);
     return response;
   };
 }

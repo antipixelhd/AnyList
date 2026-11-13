@@ -9,8 +9,11 @@ import {profileListQuery} from './profile-list-query';
 import {profileListPageSize,profileListPages,ProfileListGeometry} from './profile-list-window';
 import {panelActive,panelUrl,profileRefreshAge} from './profile-panel';
 import {listEditorArtwork} from './list-editor-artwork';
+import {copyReturnForm,writeReturnSeed} from './return-view-cache';
 
 type Page={category_presentation?:CategoryPresentation;offset:number;total:number;results:Record<string,any>[];group_counts:Record<string,number>;status_counts:Record<string,number>;genres:string[];years:string[]};
+type SavedPage=Omit<Page,'results'>&{ids:number[]};
+type ReturnList={query:string;checkedAt:number;index?:ListIndexResponse;pages:[number,number[]][];defaultPage?:SavedPage;staleRows:number[];ahead:number};
 const stateLimit=10_000;
 const stateTextBudget=4*1024*1024;
 const rowNodeLimit=450;
@@ -110,17 +113,39 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
     return local?local.ids.slice(offset,offset+profileListPageSize):pages.get(offset);
   }
   const seed=panel.querySelector('#virtual-list-page')!;
-  const initial=JSON.parse(seed.textContent!) as Page;
+  const {returnList:retained,...initial}=JSON.parse(seed.textContent!) as Page & {returnList?:ReturnList};
   seed.remove();
-  type SavedPage=Omit<Page,'results'>&{ids:number[]};
+  if(retained){
+    query=new URLSearchParams(retained.query);
+    ahead=retained.ahead;
+    checkedAt=panel.hasAttribute('data-return-list-dirty')||document.body.dataset.returnView==='dirty'?0:retained.checkedAt;
+    panel.removeAttribute('data-return-list-dirty');
+    if(retained.index){index.publish(retained.index);local=index.select(query);}
+    retained.pages.forEach(([offset,ids])=>pages.set(offset,ids));
+    retained.staleRows.forEach(id=>staleRows.add(id));
+    root.dataset.listIndex=local?'ready':'server';
+  }
   function saveDefault(data:Page):SavedPage {
     const {results,...facets}=data;
     return {...facets,ids:results.map(entryId)};
   }
-  let defaultPage:SavedPage|undefined=query.toString()===defaultQuery?saveDefault(initial):undefined;
+  let defaultPage:SavedPage|undefined=retained?.defaultPage||(!retained&&query.toString()===defaultQuery?saveDefault(initial):undefined);
   for(const row of root.querySelectorAll<HTMLElement>('[data-list-entry]'))rowCache.set(Number(row.dataset.listEntry),row);
   initial.results.forEach(rememberRead);
-  pages.set(initial.offset,initial.results.map(state=>entryId(state)));
+  if(!retained)pages.set(initial.offset,initial.results.map(state=>entryId(state)));
+  else {
+    retained.staleRows.forEach(id=>staleRows.add(id));
+    if(!checkedAt){
+      for(const state of initial.results){
+        const current=editorStore.findSubject(subjectFor(state));
+        if(!current||!adapter.accepts(current))continue;
+        const id=entryId(state),updated=fromTitle(current);
+        // Keep the restored order until the refresh can reconcile membership.
+        remember({...state,...updated,status:state.status,listed:state.listed});
+        if(!current.entry)staleRows.add(id);
+      }
+    }
+  }
   function geometry(data:Page){
     total=data.total;counts=data.group_counts;
     const facets=document.createElement('div'),genres=document.createElement('select'),years=document.createElement('input');
@@ -406,7 +431,12 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
   filters.querySelectorAll<HTMLButtonElement>('[data-status]').forEach(button=>button.addEventListener('click',()=>{field('status').value=button.dataset.status==='all'?'':button.dataset.status!;submit();},{signal}));
   form.addEventListener('input',event=>{if((event.target as Element).closest('[data-category-editor]'))return;const input=event.target as HTMLInputElement;if(input.id==='year-filter')return;clearTimeout(searchTimer);if(input.name==='q')searchTimer=setTimeout(submit,250);else submit();},{signal});
   filters.querySelector('#year-filter')!.addEventListener('change',()=>submit(),{signal});
-  window.addEventListener('scroll',()=>{const now=performance.now();ahead=Math.min(16000,Math.max(3200,Math.abs(scrollY-previousY)/Math.max(1,now-previousTime)*700));previousY=scrollY;previousTime=now;schedule();},{signal,passive:true});
+  window.addEventListener('scroll',()=>{
+    if(!panelActive(panel))return;
+    const now=performance.now();
+    if(scrollY!==previousY)ahead=Math.min(16000,Math.max(3200,Math.abs(scrollY-previousY)/Math.max(1,now-previousTime)*700));
+    previousY=scrollY;previousTime=now;schedule();
+  },{signal,passive:true});
   window.addEventListener('resize',schedule,{signal});
   panel.addEventListener('anylist:panel-active',()=>{
     if(requests.signal.aborted)requests=new AbortController();
@@ -416,6 +446,30 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
     schedule();queueWarm();
   },{signal});
   panel.addEventListener('anylist:panel-revalidate',()=>void revalidate(),{signal});
+  panel.addEventListener('anylist:capture-list-return',event=>{
+    const capture=(event as CustomEvent<{target:HTMLElement; saved:boolean}>).detail;
+    if(refreshing||dirty||searchTimer||!error.hidden)return;
+    const mountedIds=[...root.querySelectorAll<HTMLElement>('[data-list-entry]')].map(row=>Number(row.dataset.listEntry));
+    const visibleOffsets=[...wanted].slice(0,6);
+    const savedPages=[...pages].filter(([offset])=>offset===0||visibleOffsets.includes(offset));
+    const ids=new Set([...mountedIds,...(defaultPage?.ids||[]),...savedPages.flatMap(([,values])=>values),
+      ...visibleOffsets.flatMap(offset=>pageIds(offset)||[])]);
+    const rows=[...ids].map(id=>states.get(id)).filter((row):row is ListState=>!!row);
+    const target=capture.target;
+    copyReturnForm(root,target.querySelector('[data-virtual-list]')!);
+    const script=target.ownerDocument.createElement('script');
+    script.id='virtual-list-page';script.type='application/json';target.append(script);
+    const {results:_initialRows,...facets}=initial;
+    writeReturnSeed(target,'#virtual-list-page',{
+      ...facets,offset:0,total,group_counts:counts,
+      status_counts:JSON.parse(root.dataset.statusCounts||'{}'),
+      genres:[...root.querySelectorAll<HTMLOptionElement>('#genre-filter option')].map(option=>option.value).filter(Boolean),
+      years:JSON.parse(root.querySelector<HTMLInputElement>('#year-filter')?.dataset.years||'[]'),
+      results:rows,returnList:{query:query.toString(),checkedAt,ahead,index:index.snapshot(),pages:savedPages,
+        defaultPage,staleRows:[...staleRows].filter(id=>ids.has(id))},
+    });
+    capture.saved=true;
+  },{signal});
   panel.addEventListener('anylist:panel-inactive',()=>{
     resetOnReturn=true;
     controls.close();preview?.hide();dirty=dirty||refreshing;
