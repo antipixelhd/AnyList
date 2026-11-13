@@ -30,16 +30,11 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
   const rows = find('rows');
   const rowTemplate = find<HTMLTemplateElement>('row-template');
   const expand = find<HTMLButtonElement>('expand');
-  const toolbar = find('toolbar');
-  const smallScreen = matchMedia('(max-width:650px)');
   const selector = panel.querySelector<HTMLSelectElement>('#series-season')!;
   const selectControl = setupEditorSelect(selector.closest<HTMLElement>('[data-editor-select]')!,page);
   const countInput = find<HTMLInputElement>('count');
-  const card = find('card');
   const selection = find('selection');
   const content = find('content');
-  const focusSeason = () => (allSeasons?expand:selector.closest('[data-editor-select]')!.querySelector<HTMLButtonElement>('button')!).focus({preventScroll:true});
-  const watch = find<HTMLButtonElement>('watch');
   const prompt = document.querySelector<HTMLDialogElement>('[data-series-airing]')!;
   const drafts = new Map<number,Draft>();
   let title:EditorTitle|null = null;
@@ -53,7 +48,6 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
   let active:AbortController|undefined;
   let timer:ReturnType<typeof setTimeout>|undefined;
   let request:Promise<void>|undefined;
-  let busy = false;
   let loadFailed = false;
   let generation = 0;
   const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -61,7 +55,6 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
   const season = () => seasons().find(item => item.season_number === selected);
   const released = () => seasons().filter(item=>item.episodes.length);
   const watchedCount = (s:Season) => s.episodes.filter(ep=>ep.watched).length;
-  const nextEpisode = () => seasons().flatMap(s=>s.episodes.map(ep=>({season:s,episode:ep}))).find(item=>!item.episode.watched);
   const full = (s:Season) => s.completed || (s.episodes.length > 0 && s.episodes.length === s.total &&
     s.episodes.every(ep=>ep.watched));
   const canFinishSeason = (s:Season) => {
@@ -77,7 +70,6 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
   const status = () => field('status').value;
   const tracked = () => Boolean(title && (status()!=='completed' || (Number(title.entry?.progress)>0)
     || summary?.seasons.some(s=>watchedCount(s)>0)));
-  const errorMessage = (cause:unknown) => (cause as Error)?.message || 'Unable to save progress.';
   const membershipDraft = (s:Season) => {
     let draft = drafts.get(s.season_number);
     if (!draft) {
@@ -136,9 +128,7 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
       if (!allSeasons && number===selected) {
         if (selection.parentElement!==row) row.insertBefore(selection,row.querySelector('.series-editor-fields'));
         selection.hidden=false;
-        if (!smallScreen.matches && expand.parentElement!==row) row.append(expand);
       }
-      if (allSeasons && s===seasons()[0] && !smallScreen.matches && expand.parentElement!==row) row.append(expand);
       row.querySelector('[data-season-label]')!.textContent=`Season ${number}`;
       row.querySelector('[data-season-progress]')!.textContent=`${previewCount(s)}/${s.total} episodes`;
       if (allSeasons && !row.hidden) poster(row.querySelector('[data-season-poster]')!,s);
@@ -194,21 +184,9 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     panel.toggleAttribute('data-all-seasons',allSeasons);
     if (allSeasons) {selection.hidden=true;if (selection.parentElement!==content) content.prepend(selection);}
     paintList();
-    if (smallScreen.matches && expand.parentElement!==toolbar) toolbar.append(expand);
     countInput.disabled=allSeasons||!current.episodes.length;
     selector.disabled=allSeasons;
     selectControl.sync();
-    // This shortcut always follows actual saved watches; typed progress is saved with the form.
-    const next=nextEpisode();
-    if (!next && card.contains(document.activeElement)) focusSeason();
-    card.hidden=!next||!!stagedPosition||allSeasons;
-    if (card.hidden || !next) {restoreFocus();return;}
-    const {episode,season:s}=next;
-    find('position').textContent=`Next episode · S${s.season_number} E${episode.number}`;
-    watch.disabled=!!stagedPosition;
-    watch.setAttribute('aria-busy',String(busy));
-    watch.setAttribute('aria-disabled',String(busy||watch.disabled));
-    watch.title=stagedPosition?'Save progress before marking the next episode watched':'';
     restoreFocus();
   };
   function read() {
@@ -227,7 +205,7 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
         if (signal.aborted || version!==generation) return;
         loadFailed=false;
         if (next.ready || !summary?.ready) summary=next;
-        if (!season() || (next.ready && !busy && !stagedPosition && !drafts.size)) selectCurrent();
+        if (!season() || (next.ready && !stagedPosition && !drafts.size)) selectCurrent();
         if (!next.ready && next.pending) timer=setTimeout(()=>void read(), Math.max(1,next.retry_after||2)*1000);
       } catch (cause) {
         if (!signal.aborted && version===generation) loadFailed=true;
@@ -257,35 +235,10 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     countInput.value=String(stagedPosition?.count??count);
     render();
   };
-  const markWatched = async () => {
-    const nextEpisodeValue=nextEpisode();
-    if (!summary || !title || busy || stagedPosition || !nextEpisodeValue) return;
-    const {episode}=nextEpisodeValue;
-    const editing=title,opened=active,previous=summary;
-    const next=structuredClone(previous);
-    for (const s of next.seasons) for (const ep of s.episodes) if (ep.id===episode.id) ep.watched=true;
-    summary=next;
-    if (!drafts.size) selectCurrent();
-    clearTimeout(timer); generation++; request=undefined; busy=true; render();
-    try {
-      const progress=next.seasons.reduce((sum,s)=>sum+watchedCount(s),0);
-      const saved=await editorStore.write(editing,{series_editor:{revision:previous.revision,action:'episode',episode_id:episode.id,
-        watch_date:localToday()}},{progress,status:editing.entry?.status==='completed'?'completed':'watching'});
-      if (opened!==active||opened?.signal.aborted) return;
-      summary=saved.series_editor;
-      find('announcement').textContent='Episode marked watched.';
-      document.dispatchEvent(new CustomEvent('anylist:entry-saved',{detail:saved}));
-    } catch (cause) {
-      if (opened!==active||opened?.signal.aborted) return;
-      summary=previous; failure(errorMessage(cause)); void read();
-    } finally {if (opened===active) {busy=false;render();}}
-  };
-  smallScreen.addEventListener('change',()=>{if(title)render();},{signal:page});
   panel.addEventListener('click',event=>{
     const button=(event.target as HTMLElement).closest<HTMLButtonElement>('button');
     if (!button) return;
-    if (button===watch) void markWatched();
-    else if (button===expand) {
+    if (button===expand) {
       allSeasons=!allSeasons; render();
       viewMotion?.cancel();
       if (!reduced()) viewMotion=animate(rows,{opacity:[.7,1]},{duration:.16,ease:'easeOut'});
@@ -351,11 +304,10 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     selected=undefined;
     allSeasons=false;
     title=null;
-    busy=false;
     loadFailed=false;
     request=undefined;
     generation++;
-    selection.hidden=true;content.prepend(selection);toolbar.append(expand);
+    selection.hidden=true;content.prepend(selection);
     panel.removeAttribute('data-all-seasons');
     selector.disabled=true;selectControl.sync();
     rows.replaceChildren();
@@ -364,7 +316,6 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     selector.replaceChildren(); delete selector.dataset.signature;
     renderedRows.clear();
     rowControls.clear();
-    find('announcement').textContent='';
     if (wasSeries) layout();
   };
   page.addEventListener('abort',reset,{once:true});
@@ -381,10 +332,9 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
       void read();
     },
     statusChanged() { if (title) {render();if (!summary?.ready) void read();} },
-    busy:()=>busy,
+    busy:()=>false,
     tracked,
     async patch(completing:boolean) {
-      if (busy) return false;
       if ((completing || stagedPosition) && !summary?.ready) {
         failure('Episode progress is still loading. Try again shortly.');
         void read();
