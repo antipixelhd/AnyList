@@ -1,6 +1,6 @@
 import {browseElement,browsePanelActive,setBrowsePanelUrl} from './browse-tabs';
 import {editorStore,type EditorTitle} from './editor-store';
-import {bindBrowseCardActions,bindBrowseCardTouch,paintBrowseCardState,type BrowseItem} from './browse-card-actions';
+import {bindBrowseCardActions,bindBrowseCardTouch,paintBrowseCardState,restoreBrowseItemState,type BrowseItem} from './browse-card-actions';
 import {browseCardKey,browseCardHref} from './browse-card-data';
 import {createBrowseCard} from './browse-card-render';
 import {prepareBrowsePoster,createBrowseLoading,handoffBrowseSkeletons,trackBrowseSkeleton} from './browse-loading';
@@ -16,6 +16,7 @@ import {genreSelectionLabel} from './browse-view';
 import {formatDate} from './date-time';
 import {gameBrowseValues,gameBrowseIsCategories,gameBrowseHasFilters,gameBrowseCategory,gameBrowseSnapshot,gameBrowseRequest,gameBrowseHref,gamePlatformSelection,gameSourceContext,type GamePlatformGroup} from './game-browse-data';
 import {createBrowseFacetLoader} from './browse-facet-loading';
+import {writeReturnSeed} from './return-view-cache';
 
 type Payload=GameVerificationPage&{results:BrowseItem[];has_more:boolean;cursor?:string|null;source?:string;source_at?:number|null;fetched_at?:string|null;partial?:boolean;stale?:boolean;coverage_limited?:boolean};
 type Shelf={key:string;title:string;payload:Payload|null};
@@ -66,11 +67,15 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
       const href=browseCardHref(item);if(href)card.querySelectorAll<HTMLAnchorElement>('a').forEach(link=>link.href=href);
     }
   };
-  let contextAt=Date.now();
-  root.addEventListener('anylist:browse-active',()=>{
-    if(loading||Date.now()-contextAt<60_000||document.body.dataset.cacheUser==='anonymous')return;
+  let contextAt=Number(root.dataset.returnCheckedAt)||Date.now();
+  root.dataset.returnCheckedAt=String(contextAt);
+  root.addEventListener('anylist:browse-active',event=>{
+    const returned=(event as CustomEvent<{restored?:boolean}>).detail?.restored;
+    if(loading||!returned&&Date.now()-contextAt<60_000||document.body.dataset.cacheUser==='anonymous')return;
     contextAt=Date.now();const started=writeVersion;
-    const ids=[...new Set([...items.values()].map(item=>item.id).filter((id):id is number=>!!id))];
+    root.dataset.returnCheckedAt=String(contextAt);
+    const candidates=returned?[...items].filter(([card])=>{const rect=card.getBoundingClientRect();return rect.bottom>0&&rect.top<innerHeight;}).map(([,item])=>item):[...items.values()];
+    const ids=[...new Set(candidates.map(item=>item.id).filter((id):id is number=>!!id))];
     void(async()=>{
       for(let offset=0;offset<ids.length&&!signal.aborted;offset+=80){
         try{
@@ -150,10 +155,15 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
     host.querySelectorAll<HTMLElement>('[data-game-view-all]').forEach(link=>{link.title=context;link.setAttribute('aria-description',context);});
   };
   for(const shelf of shelves.values())if(shelf.payload){
-    reconcile(shelf.payload,-1);if(gameBrowseCacheable(shelf.payload))cache.set(gameBrowseRequest(new URLSearchParams({sort:shelf.key}),6),shelf.payload);
+    if(initial.restored)shelf.payload.results.forEach(restoreBrowseItemState);else reconcile(shelf.payload,-1);
+    if(gameBrowseCacheable(shelf.payload))cache.set(gameBrowseRequest(new URLSearchParams({sort:shelf.key}),6),shelf.payload);
     register(find(`[data-game-shelf="${shelf.key}"]`),shelf.payload.results);paintSource(shelf);
   }
-  if(!initial.categories){reconcile(payload,-1);register(grid,payload.results);if(!initial.pending&&!initial.error&&gameBrowseCacheable(payload))cache.set(gameBrowseRequest(initialValues),payload);}
+  if(!initial.categories){
+    if(initial.restored)payload.results.forEach(restoreBrowseItemState);else reconcile(payload,-1);
+    register(grid,payload.results);
+    if(!initial.restored&&!initial.pending&&!initial.error&&gameBrowseCacheable(payload))cache.set(gameBrowseRequest(initialValues),payload);
+  }
   bindBrowseCardActions(region,items,signal,syncItem,message=>{notice.textContent=message;notice.hidden=false;});bindBrowseCardTouch(region,signal);
   function updateControls(){
     syncing=true;
@@ -392,9 +402,9 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
   signal.addEventListener('abort',()=>{request?.abort();clearTimeout(timer);observer.disconnect();cancelAnimationFrame(frame);},{once:true});
   if(facetsReady)syncGenres();syncPlatforms();updateControls();footer();
   if(!facetsReady)void facetLoader.load();
-  if(initial.categories){request=new AbortController();void loadShelves(generation,request.signal);}
+  if(initial.categories&&!initial.restored){request=new AbortController();void loadShelves(generation,request.signal);}
   else if(initial.pending||payload.verification_pending)void load(false);
-  return (values: URLSearchParams) => {
+  const applyContext = (values: URLSearchParams) => {
     const q = values.get('q') || '', view = values.get('view')==='timeline' ? 'timeline' : 'grid';
     if (field('q').value===q && field('view').value===view) return;
     field('q').value=q;
@@ -402,4 +412,14 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
     if (q) field('unfiltered').value='';
     changed();
   };
+  return {applyContext,capture(target:HTMLElement){
+    const loadedShelves=[...shelves.values()];
+    if(!facetsReady||presentedCategories&&loadedShelves.some(shelf=>!shelf.payload))return false;
+    const snapshot=gameBrowseSnapshot({loading,failed:!error.hidden,activeValues,categories:presentedCategories,
+      values:values().toString(),sections:loadedShelves,payload,
+      rows:[...grid.querySelectorAll<HTMLElement>('[data-browse-card]')].map(card=>items.get(card)).filter(Boolean)});
+    if(!snapshot)return false;
+    writeReturnSeed(target,'[data-browse-id="game-browse-data"]',{...initial,...snapshot,pending:false,facets_pending:false,restored:true});
+    return true;
+  }};
 }

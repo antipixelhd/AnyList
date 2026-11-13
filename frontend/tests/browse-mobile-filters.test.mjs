@@ -14,7 +14,7 @@ test('mobile uses the same filters and restores desktop order across resize and 
   });
   Object.defineProperty(globalThis, 'matchMedia', {configurable: true, value: () => media});
   class Node {
-    constructor(name) { this.name = name; this.children = []; }
+    constructor(name) { this.name = name; this.children = []; this.dataset = {}; }
     insert(index, child) {
       child.remove();
       child.parent = this;

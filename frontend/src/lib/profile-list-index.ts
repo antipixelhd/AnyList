@@ -20,6 +20,12 @@ export class ProfileListIndex {
     this.order=new Map(statuses.map(([status],index)=>[status,index]));
   }
   get ready(){return this.complete;}
+  snapshot():ListIndexResponse|undefined{
+    if(!this.complete)return;
+    return {complete:true,results:[...this.members.values()].filter(row=>row.listed).map(row=>[
+      row.id,row.title,row.status,row.score,row.progress,row.updated,row.year,row.genres,row.favorite,row.base,row.rank,
+    ])};
+  }
   changedRows(snapshot:ListIndexResponse){
     const removed=new Set(this.members.keys()),changed:number[]=[];
     for(const [id,title,status,score,progress,updated,year,genres,favorite,base,rank] of snapshot.results){

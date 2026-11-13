@@ -20,6 +20,16 @@ export type BrowseItem = {
 export const sameBrowseTitle = (a: BrowseItem, b: Pick<EditorTitle, 'id' | 'tmdb_id' | 'type'>) =>
   a.type === b.type && (!!(b.id && a.id === b.id) || !!(b.tmdb_id && a.tmdb_id === b.tmdb_id));
 
+export function restoreBrowseItemState(item:BrowseItem){
+  if(!item.id)return;
+  if(item.type!=='movie'&&item.type!=='series'&&item.type!=='game')return;
+  const title=editorStore.findSubject(item.type==='game'
+    ?{kind:'game',catalogue_id:item.id}:{kind:item.type,media_id:item.id});
+  if(!title)return;
+  Object.assign(item,{entry:title.entry,list_status:title.entry?.status??null,score:title.entry?.score??null,
+    rating_mode:title.entry?.rating_mode,favorite:title.favorite,editor_library:title.editor_library});
+}
+
 export function paintBrowseCardState(card: HTMLElement, item: BrowseItem) {
   const actions=card.querySelector<HTMLElement>('.browse-actions');if(actions)actions.hidden=!browseCardCanEdit(item);
   card.querySelector('[data-browse-action=edit]')?.setAttribute('aria-label',`Open list editor for ${item.title}`);

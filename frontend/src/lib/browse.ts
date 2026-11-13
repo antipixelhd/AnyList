@@ -1,5 +1,5 @@
 import {browseElement,browsePanelActive,setBrowsePanelUrl} from './browse-tabs';
-import { bindBrowseCardActions, bindBrowseCardTouch, paintBrowseCardState, type BrowseItem } from './browse-card-actions';
+import { bindBrowseCardActions, bindBrowseCardTouch, paintBrowseCardState, restoreBrowseItemState, type BrowseItem } from './browse-card-actions';
 import { formatDate } from './date-time';
 import { wireSearchWordCapitalization } from './search-word-capitalization';
 import { STREAMING_REGION_COOKIE, deviceStreamingCountry, streamingRegionPreference } from './streaming-region';
@@ -26,6 +26,7 @@ import { editorStore, type EditorTitle } from "./editor-store";
 import { cancelUiMotion } from "./ui-motion";
 import {readBrowseSections} from './browse-sections';
 import {initializeBrowseMenus} from "./browse-menus";
+import {writeReturnSeed} from './return-view-cache';
 
 type Item = BrowseItem & {search_rank?: number};
 type Payload = {
@@ -79,6 +80,9 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   const initial = JSON.parse(
     find<HTMLElement>("#browse-data").textContent || "{}",
   );
+  const restored = initial.restored === true;
+  resultOverride.set(initial.manualOverride === true);
+  let completedSections: Section[] = initial.sections || [];
   let payload: Payload = initial.payload;
   let displayedCategories = initial.pending ? initial.categories : !sections.hidden;
   let facets: { genres: Facet[]; providers: Facet[] } = initial.facets;
@@ -145,7 +149,8 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     : `browse?${browseRequestParams(values)}`;
   const initialValues = params();
   initialValues.set('page', '1');
-  if (!initial.pending && error.hidden) responseCache.set(requestPath(initialValues), displayedCategories
+  let completedPath = !initial.pending && error.hidden ? requestPath(initialValues) : undefined;
+  if (!restored && !initial.pending && error.hidden) responseCache.set(requestPath(initialValues), displayedCategories
     ? {sections: initial.sections, notice: payload.notice} : payload);
   if (!initial.pending) facetCache.set(`${field('type').value}:${field('region').value}:${field('genres').value}`, facets);
   const updateUrl = () => {
@@ -191,6 +196,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     if (poster) prepareBrowsePoster(poster, signal, readyPosters);
     const item = initialItems.get(card.dataset.key!);
     if (!item) return;
+    if(restored)restoreBrowseItemState(item);
     items.set(card, item);
     if ('entry' in item) editorStore.seed(item as EditorTitle);
     if (grid.contains(card)) seen.add(key(item));
@@ -239,11 +245,15 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       }
     }, () => !current.signal.aborted && !signal.aborted && request === current && revision === contextRevision);
   };
-  let contextAt=Date.now();
-  root.addEventListener('anylist:browse-active',()=>{
-    if(loading||Date.now()-contextAt<60_000)return;
+  let contextAt=Number(root.dataset.returnCheckedAt)||Date.now();
+  root.dataset.returnCheckedAt=String(contextAt);
+  root.addEventListener('anylist:browse-active',event=>{
+    const returned=(event as CustomEvent<{restored?:boolean}>).detail?.restored;
+    if(loading||!returned&&Date.now()-contextAt<60_000)return;
     if(!items.size)return;
-    contextAt=Date.now();request??=new AbortController();void refreshViewerContext([...items.values()],request);
+    contextAt=Date.now();root.dataset.returnCheckedAt=String(contextAt);request??=new AbortController();
+    const candidates=returned?[...items].filter(([card])=>{const rect=card.getBoundingClientRect();return rect.bottom>0&&rect.top<innerHeight;}).map(([,item])=>item):[...items.values()];
+    void refreshViewerContext(candidates,request);
   },{signal});
   const render = (results: Item[], destination = grid, deduplicate = true) => {
     const fragment = document.createDocumentFragment();
@@ -525,6 +535,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
       }
       displayedCategories = categoryView;
       if ("sections" in response) {
+        completedSections=response.sections;
         if(!streamed) {
           renderSections(response.sections);
           loadingView.handoff(sections.querySelectorAll<HTMLElement>('.browse-card-body'));
@@ -536,6 +547,8 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
         payload = response;
       }
       notice.textContent = response.notice || "";
+      const complete=new URLSearchParams(params());complete.set('page','1');
+      completedPath=requestPath(complete);
       if (cached) void refreshViewerContext([...items.values()], current);
 
     } catch (cause) {
@@ -798,7 +811,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
   if (initial.pending) {
     void loadFacets();
     void load();
-  } else if (!displayedCategories && payload.has_more && error.hidden && sentinel.getBoundingClientRect().top < innerHeight + 260) void load(false);
+  } else if (!restored && !displayedCategories && payload.has_more && error.hidden && sentinel.getBoundingClientRect().top < innerHeight + 260) void load(false);
   if (error.hidden === false) suspended = true;
   if (
     field("start").value ||
@@ -817,7 +830,7 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     },
     { once: true },
   );
-  return (values: URLSearchParams, moreOpen?: boolean) => {
+  const applyContext = (values: URLSearchParams, moreOpen?: boolean) => {
     if (moreOpen !== undefined) find<HTMLDetailsElement>('.browse-more').open = moreOpen;
     let changedValues = false;
     const facetSelection = () => [field('region').value,...field('genres').value.split(',').filter(value=>value.startsWith('name:'))].join(',');
@@ -842,4 +855,16 @@ export function initializeBrowse(root: HTMLElement, signal: AbortSignal) {
     if (oldFacets !== facetSelection()) void loadFacets();
     void load();
   };
+  return {applyContext, capture(target:HTMLElement) {
+    const values=params();values.set('page','1');
+    if(loading||!error.hidden||requestPath(values)!==completedPath)return false;
+    const rows=Array.from(grid.querySelectorAll<HTMLElement>('[data-browse-card]'),card=>items.get(card));
+    if(rows.some(row=>!row))return false;
+    writeReturnSeed(target,'[data-browse-id="browse-data"]',{
+      payload:{...payload,results:rows,curation_expanded:automaticExpansion.forSearch(values)},
+      facets,sections:displayedCategories?completedSections:[],pending:false,categories:displayedCategories,
+      manualOverride:resultOverride.forQuery(field('q').value),restored:true,
+    });
+    return true;
+  }};
 }
