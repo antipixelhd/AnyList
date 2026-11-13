@@ -1,6 +1,7 @@
 ---
 import ActivityCover from './ActivityCover.astro';
 import Icon from './Icon.astro';
+import ActivityRating from './ActivityRating.astro';
 import {activityAction,activityCompletionSuffix,activityRating,activityTime,scoreLabel,trackedWorkHref} from '../lib/tracker';
 import '../styles/activity-card-rating.css';
 const {activity,showUser=false}=Astro.props;
@@ -26,6 +27,6 @@ const completion=game&&activity.status==='completed'&&activity.payload?.status_c
           {activity.has_avatar?<img src={`/api/proxy/profile/avatar/${activity.user_id}`} alt="" loading="lazy"/>:<span aria-hidden="true">{initial}</span>}
         </a>
       </div> : <p class="event-action"><span>{activityAction(activity)}</span> <a href={trackedWorkHref(activity.media)}>{activity.media.title}</a><span data-activity-completion>{activityCompletionSuffix(activity)}</span></p>}
-    <div class="event-footer" hidden={!rating}><span class="score-pill" aria-label={rating?.label}><Icon name="star"/> <span data-rating-previous hidden={rating?.previous==null}><span data-rating-previous-value>{scoreLabel(rating?.previous??null)}</span><span class="score-transition" aria-hidden="true">→</span></span><span data-rating-current>{scoreLabel(rating?.current??null)}</span><small>/10</small></span></div>
+    <ActivityRating activity={activity}/>
   </div>
 </article>

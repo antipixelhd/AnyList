@@ -12,7 +12,7 @@ export function mergeActivityFeeds(feeds:any[][],limit=60){
 
 /** Only fields used by shared activity cards enter the private browser seed. */
 export function activityPresentation(row:any){
-  const fields=['status_changed','started_watching','rating_changed','rating_first','previous_score','finished_seasons','season_completion_id','completion_date_source','episode_order','episodes_watched','position_start','position','progress','hours_changed','achievements_changed','added_to_list','completion_seconds'];
+  const fields=['status_changed','started_watching','continued_watching','season_status','season_number','series_completed','season_ratings','season_rating_group','rating_snapshot','rating_changed','rating_first','previous_score','finished_seasons','season_completion_id','completion_date_source','episode_order','episodes_watched','position_start','position','progress','hours_changed','achievements_changed','added_to_list','completion_seconds'];
   return {key:row.key,user_id:row.user_id,username:row.username,display_name:row.display_name,has_avatar:row.has_avatar,
     status:row.status,score:row.score,created_at:row.created_at,
     payload:Object.fromEntries(fields.filter(key=>key in (row.payload||{})).map(key=>[key,row.payload[key]])),

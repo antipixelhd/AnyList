@@ -1,5 +1,11 @@
 # Benchmark selection and interpretation
 
+Season activity presentation uses `--case screen_activity_profile`, which reads
+the real screen profile activity projection with twelve season milestones. Pair
+it with `screen_list_complete_series` and `screen_list_window_series` when the
+list editor write path changes. Compare SQL/provider counts and response bytes;
+the season pointers and rating snapshots intentionally change presentation.
+
 ## Live actor portfolio baseline, 10 November 2026
 
 Pinned baseline `c58cb540` and the retained connection/write/retry changes ran

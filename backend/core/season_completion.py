@@ -13,7 +13,7 @@ from sqlalchemy import or_, select, update, func, tuple_
 from fastapi import HTTPException
 from sqlalchemy.dialects.postgresql import insert
 
-from models import Media, Show, WatchEvent, UserShowEpisodeOrder, ShowEpisodePosition
+from models import Media, Show, WatchEvent, UserShowEpisodeOrder, ShowEpisodePosition, Rating
 from models.base import MediaType
 from models.seasons import SeriesSeason, SeasonTracking, SeasonReconcileJob
 from models.tracking import TrackedEntry, TrackingActivity
@@ -150,6 +150,12 @@ async def reconcile(db, user_id, media_id, *, groups_data=None, edits=(), series
         events_by_id[event.media_id].append(event)
     cards = list(await db.scalars(select(TrackingActivity).where(
         TrackingActivity.user_id == user_id, TrackingActivity.media_id == media_id)))
+    ratings = dict((await db.execute(select(Rating.season_number, Rating.rating).where(
+        Rating.user_id == user_id, Rating.media_id == media_id,
+        Rating.episode_order == (None if order == 'tmdb:aired' else order)))).all())
+    from core.tracking_rules import effective_score
+    from core.season_activity import put_rating, absorb_season_actions
+    fallback_score = effective_score(entry.rating_mode, entry.manual_score, entry.season_scores or {})
     previous_orders = {s.episode_order for s, t in previous}
     order_changed = bool(previous_orders and order not in previous_orders)
     edits_by_key = {(edit.season_number, edit.membership): edit for edit in edits}
@@ -252,6 +258,30 @@ async def reconcile(db, user_id, media_id, *, groups_data=None, edits=(), series
             entry.start_date = tracking.start_date
             entry.start_date_source = 'manual' if tracking.start_manual else 'season'
         card = next((c for c in cards if (c.payload or {}).get('season_completion_id') == season.id), None)
+        start_card = next((c for c in cards if (c.payload or {}).get('season_start_id') == season.id), None)
+        if tracking.start_manual and tracking.start_date and tracking.start_date != tracking.completion_date:
+            if start_card is None:
+                starts = [c for c in cards if (c.payload or {}).get('episode_order') == order
+                    and c.payload.get('season_number') == number and c.payload.get('season_status')
+                    and c.payload.get('started_watching') and not c.payload.get('continued_watching')
+                    and c.status == 'watching']
+                start_card = min(starts,key=lambda c:c.created_at,default=None)
+            if start_card is None:
+                start_card = TrackingActivity(user_id=user_id, media_id=media_id, status='watching')
+                db.add(start_card)
+                cards.append(start_card)
+                initial_score = ratings.get(number, fallback_score)
+                if initial_score is not None:
+                    put_rating(start_card, number, initial_score, source='season' if number in ratings else 'series',
+                        now=datetime.combine(tracking.start_date,time.min),event=False)
+            start_card.created_at = datetime.combine(tracking.start_date, time.min)
+            start_card.payload = {**(start_card.payload or {}), 'window_key': f'season-start:{season.id}',
+                'window_started_at': start_card.created_at.isoformat(),
+                'episode_order': order, 'season_number': number, 'season_start_id': season.id,
+                'season_status': True, 'status_changed': True, 'started_watching': True}
+        elif start_card is not None:
+            await db.delete(start_card)
+            cards.remove(start_card)
         if not complete or not tracking.completion_date:
             if card:
                 await db.delete(card)
@@ -261,8 +291,20 @@ async def reconcile(db, user_id, media_id, *, groups_data=None, edits=(), series
         if card is None:
             card = TrackingActivity(user_id=user_id, media_id=media_id, status='watching')
             db.add(card)
+            cards.append(card)
+            initial_score = ratings.get(number, fallback_score)
+            if initial_score is not None:
+                put_rating(card, number, initial_score, source='season' if number in ratings else 'series',
+                           now=max(reliable.values()) if tracking.date_source == 'episode' and reliable else
+                               datetime.combine(tracking.completion_date, time.min), event=False)
+        activity_at = max(reliable.values()) if tracking.date_source == 'episode' and reliable else datetime.combine(tracking.completion_date,time.min)
+        window_start = (card.payload or {}).get('window_started_at')
+        if card.created_at is not None and card.created_at.date() != tracking.completion_date:
+            window_start = None
         card.created_at = datetime.combine(tracking.completion_date, time.min)
-        card.payload = {'window_key': f'season:{season.id}', 'season_completion_id': season.id,
+        card.payload = {**(card.payload or {}), 'window_key': f'season:{season.id}', 'season_completion_id': season.id,
+                        'window_started_at': window_start or activity_at.isoformat(),
+                        'season_number': number,
                         'episode_order': order, 'finished_seasons': [number],
                         'completion_date_source': tracking.date_source}
     if edits_by_key:
@@ -274,24 +316,48 @@ async def reconcile(db, user_id, media_id, *, groups_data=None, edits=(), series
     # Remove old bundled milestone actions. Preserve episodes, ratings and status
     # actions; absorb a title completion into its final season's card.
     completed = [(s, t) for s, t in result if t.completed and t.completion_date]
+    milestones = [card for card in cards if (card.payload or {}).get('season_completion_id')
+                  and card not in db.deleted and card.payload.get('episode_order') == order]
+    absorbed = await absorb_season_actions(db, cards, milestones)
+    latest_complete = latest_started is not None and all(t.completed for s, t in result if s.season_number <= latest_started)
     for card in cards:
+        if card in absorbed or card in db.deleted:
+            continue
         details = dict(card.payload or {})
         if details.get('season_completion_id'):
             if details.get('episode_order') != order:
                 await db.delete(card)
+            else:
+                details['series_completed'] = bool(latest_complete and details.get('season_number') == latest_started
+                    and any(s.id == details['season_completion_id'] for s, _ in result))
+                card.payload = details
             continue
+        if details.get('season_status') or details.get('season_rating_group'):
+            continue
+        manual_starts = {t.start_date for _, t in result if t.start_manual and t.start_date}
+        if details.get('started_watching') and card.created_at.date() in manual_starts:
+            details['started_watching'] = False
+            if card.status == 'watching':
+                details['status_changed'] = False
+            if 'streaming_base' in details:
+                details['streaming_base'] = {**details['streaming_base'], 'started_watching':False,
+                    'status_changed':False if card.status == 'watching' else details['streaming_base'].get('status_changed',False)}
+            if 'streaming_events' in details:
+                details['streaming_events'] = {k:v for k,v in details['streaming_events'].items() if k != 'start'}
         details.pop('finished_seasons', None)
         for key in ('streaming_base',):
             if key in details:
                 details[key] = {k: v for k, v in details[key].items() if k != 'finished_seasons'}
         if 'streaming_events' in details:
             details['streaming_events'] = {k: v for k, v in details['streaming_events'].items() if not k.startswith('season:')}
-        if (entry.status == 'completed' and completed and completed[-1][0].id == result[-1][0].id
-                and card.status == 'completed' and details.get('status_changed')):
-            last, track = completed[-1]
-            if card.created_at.date() in {track.completion_date, date.today()}:
-                details['status_changed'] = False
-                details['streaming_events'] = {k: v for k, v in details.get('streaming_events', {}).items() if k != 'finish'}
+        if card.status == 'completed' and details.get('status_changed'):
+            # A historical title completion always remembers its season. The
+            # current canonical milestone alone may claim series completion.
+            known = [s.season_number for s, t in completed if t.completion_date <= card.created_at.date()]
+            details.update(status_changed=False, finished_seasons=[max(known or [first_season or 1])])
+            details['streaming_events'] = {k: v for k, v in details.get('streaming_events', {}).items() if k != 'finish'}
+            if any(t.completion_date == card.created_at.date() for _, t in completed):
+                details['finished_seasons'] = []
         card.payload = details
         from core.activity import has_activity_event
         if not has_activity_event(card.status, details):

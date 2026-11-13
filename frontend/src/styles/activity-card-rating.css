@@ -13,3 +13,17 @@
   margin: 0 5px;
 }
 .tracker .activity-stream .event-footer[hidden],.tracker .activity-stream [data-rating-previous][hidden]{display:none!important}
+.activity-rating{position:relative;width:fit-content}
+.activity-stream .visual-event:has([data-season-breakdown="multiple"]){overflow:visible}
+.activity-stream .visual-event:has([data-season-breakdown="multiple"]) .event-cover{border-radius:6px 0 0 6px;overflow:hidden}
+.activity-rating .score-pill{padding:0;border:0;font:inherit;cursor:default;outline:none}
+.activity-rating .score-pill:disabled{opacity:1}
+.activity-rating[data-season-breakdown="multiple"] .score-pill{cursor:pointer}
+.activity-rating[data-season-breakdown="multiple"] .score-pill:focus-visible{color:var(--blue)}
+.season-score-breakdown{position:absolute;right:0;bottom:calc(100% + 8px);z-index:5;min-width:160px;padding:12px 14px;background:var(--panel);border-radius:8px;box-shadow:0 8px 24px #0005;visibility:hidden;opacity:0;transform:translateY(3px);transition:opacity .14s ease,transform .14s ease,visibility .14s}
+.season-score-breakdown>div{display:flex;align-items:baseline;justify-content:space-between;gap:24px;font-size:var(--type-meta-size,13px);line-height:1.8}
+.season-score-breakdown strong{color:var(--bright);font-weight:500}
+.season-score-breakdown small{color:var(--muted);font-weight:400;margin-left:3px}
+.activity-rating[data-season-breakdown="multiple"]:has([aria-expanded="true"]) .season-score-breakdown{visibility:visible;opacity:1;transform:none}
+@media(hover:hover){.activity-rating[data-season-breakdown="multiple"]:not([data-rating-dismissed]):hover .season-score-breakdown{visibility:visible;opacity:1;transform:none}}
+@media(prefers-reduced-motion:reduce){.season-score-breakdown{transition:none}}

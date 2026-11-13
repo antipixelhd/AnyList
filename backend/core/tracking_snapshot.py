@@ -538,7 +538,7 @@ async def observe_stream_snapshot(
             await queue_dismissals(db, conn, media)
             if auto_confirm:
                 from core.activity import record_daily_activity
-                await record_daily_activity(db,user_id=conn.user_id,media_id=media.id,status=proposed,
+                await record_daily_activity(db,user_id=conn.user_id,media_id=media.id,media=media,status=proposed,
                     score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores),
                     status_changed=True,previous_status=prior_status)
     # Only changed observations advance an existing tracked entry. Repeated
@@ -744,7 +744,7 @@ async def observe_stream_snapshot(
                         previous_status=None if newly_tracked else previous_status,
                         first_watching=newly_tracked or (previous_start_date is None and previous_status != 'watching'))
                 else:
-                    await record_daily_activity(db,user_id=conn.user_id,media_id=media.id,status=entry.status,
+                    await record_daily_activity(db,user_id=conn.user_id,media_id=media.id,media=media,status=entry.status,
                         score=activity_score,status_changed=entry.status != previous_status or newly_tracked,
                         previous_status=None if newly_tracked else previous_status,
                         first_watching=newly_tracked or (previous_start_date is None and previous_status != 'watching'))
@@ -811,7 +811,7 @@ async def observe_stream_snapshot(
             await queue_dismissals(db, conn, media)
             if auto_confirm:
                 from core.activity import record_daily_activity
-                await record_daily_activity(db, user_id=conn.user_id, media_id=media.id,
+                await record_daily_activity(db, user_id=conn.user_id, media_id=media.id, media=media,
                     status=proposed,
                     score=effective_score(entry.rating_mode, entry.manual_score, entry.season_scores),
                     status_changed=True, previous_status=prior_status)

@@ -111,6 +111,7 @@ async def submit_rating(
         except Exception as e:
             raise HTTPException(status_code=404, detail=f"TMDB Media not found: {e}")
 
+    await db.execute(select(User.id).where(User.id==current_user.id).with_for_update())
     effective_season = None if media_type == MediaType.episode else body.season_number
     # A season rating carries the ordering it was made under (#174) so
     # "Season 3" of DVD order and of aired order stay distinct. NULL = aired.
@@ -131,6 +132,7 @@ async def submit_rating(
         )
     )
     rating = result2.scalar_one_or_none()
+    previous_season_score = rating.rating if rating else None
     rating_changed = rating is None or rating.rating != body.rating
 
     if rating:
@@ -184,10 +186,25 @@ async def submit_rating(
         current_score = effective_score(entry.rating_mode, entry.manual_score, entry.season_scores)
         if previous_score != current_score and (current_score is None or not suppress_initial_import_rating(entry)):
             await record_daily_activity(
-                db, user_id=current_user.id, media_id=media.id, status=entry.status,
+                db, user_id=current_user.id, media_id=media.id, media=media, status=entry.status,
                 score=current_score, rating_changed=True, previous_score=previous_score,
             )
 
+    if media_type == MediaType.series and effective_season is not None and rating_changed:
+        from models.tracking import TrackedEntry
+        from core.activity import suppress_initial_import_rating
+        from core.season_activity import record_season_activity
+        from core.tracking_rules import effective_score
+        entry = await db.scalar(select(TrackedEntry).where(TrackedEntry.user_id == current_user.id,
+            TrackedEntry.media_id == media.id))
+        if entry and effective_episode_order is None:
+            entry.season_scores = {**(entry.season_scores or {}), str(effective_season): body.rating or None}
+        if entry is None or not suppress_initial_import_rating(entry):
+            await record_season_activity(db, user_id=current_user.id, media=media,
+                status=entry.status if entry else 'planning',
+                score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores) if entry else None,
+                episode_order=effective_episode_order or 'tmdb:aired',
+                season_changes={effective_season:(previous_season_score,body.rating or None)})
     await db.commit()
     await db.refresh(rating)
     # A rating made under a non-aired ordering isn't pushed to external
@@ -259,6 +276,7 @@ async def delete_rating(
     if not media:
         raise HTTPException(status_code=404, detail="Media not found")
 
+    await db.execute(select(User.id).where(User.id==current_user.id).with_for_update())
     effective_season = None if mt == MediaType.episode else season_number
     effective_episode_order = None
     if mt == MediaType.series and effective_season is not None and episode_order:
@@ -276,6 +294,11 @@ async def delete_rating(
     rating = result.scalar_one_or_none()
     if not rating:
         raise HTTPException(status_code=404, detail="Rating not found")
+    removed_score = rating.rating
+    await db.delete(rating)
+    await db.flush()
+    entry = None
+    score = None
     if mt in (MediaType.movie, MediaType.series) and effective_episode_order is None:
         from models.tracking import TrackedEntry
         from core.tracking_rules import effective_score
@@ -292,14 +315,25 @@ async def delete_rating(
                 entry.season_scores = {key: value for key, value in (entry.season_scores or {}).items()
                                        if int(key) != effective_season}
             score = effective_score(entry.rating_mode, entry.manual_score, entry.season_scores)
-            if score != previous_score:
-                await record_daily_activity(db, user_id=current_user.id, media_id=media.id,
+            if score != previous_score and effective_season is None:
+                await record_daily_activity(db, user_id=current_user.id, media_id=media.id, media=media,
                                             status=entry.status, score=score, previous_score=previous_score,
                                             rating_changed=True)
         elif effective_season is None:
             from core.activity import clear_recent_rating_activity
             await clear_recent_rating_activity(db, user_id=current_user.id, media_id=media.id)
-    await db.delete(rating)
+    if mt == MediaType.series and effective_season is not None:
+        from models.tracking import TrackedEntry
+        from core.tracking_rules import effective_score
+        from core.season_activity import record_season_activity
+        if entry is None:
+            entry = await db.scalar(select(TrackedEntry).where(TrackedEntry.user_id == current_user.id,
+                TrackedEntry.media_id == media.id))
+        await record_season_activity(db,user_id=current_user.id,media=media,
+            status=entry.status if entry else 'planning',
+            score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores) if entry else None,
+            episode_order=effective_episode_order or 'tmdb:aired',
+            season_changes={effective_season:(removed_score,None)})
     await db.commit()
     if effective_episode_order is not None:
         return {"status": "deleted"}

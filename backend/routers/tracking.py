@@ -574,7 +574,7 @@ async def resolve_event(event_id:int,body:ReviewResolution,background_tasks:Back
                 from core.activity import record_daily_activity, suppress_initial_import_rating
                 new_score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores)
                 if old_score != new_score and not suppress_initial_import_rating(entry):
-                    await record_daily_activity(db,user_id=viewer.id,media_id=entry.media_id,status=entry.status,
+                    await record_daily_activity(db,user_id=viewer.id,media_id=entry.media_id,media=await db.get(Media,entry.media_id),status=entry.status,
                         score=new_score,rating_changed=True,previous_score=old_score)
             rating_query=select(Rating).where(Rating.user_id==viewer.id,Rating.media_id==event.media_id,
                 Rating.episode_order.is_(None))
@@ -641,7 +641,7 @@ async def resolve_event(event_id:int,body:ReviewResolution,background_tasks:Back
                 dispatch_hidden_status = True
             from core.activity import record_daily_activity, series_activity_details
             position, finished = await series_activity_details(db, media, entry.progress, user_id=viewer.id)
-            await record_daily_activity(db,user_id=viewer.id,media_id=entry.media_id,status=entry.status,
+            await record_daily_activity(db,user_id=viewer.id,media_id=entry.media_id,media=media,explicit_status=True,status=entry.status,
                 score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores),
                 progress=entry.progress,position=position,finished_seasons=finished,status_changed=status_changed,
                 previous_status=prior_status,first_watching=prior_start_date is None and prior_status!='watching')
@@ -681,7 +681,7 @@ async def resolve_event(event_id:int,body:ReviewResolution,background_tasks:Back
             await queue_restorations(db,viewer.id,await db.get(Media,entry.media_id))
             dispatch_hidden_status = True
         from core.activity import record_daily_activity
-        await record_daily_activity(db,user_id=viewer.id,media_id=entry.media_id,status=status,
+        await record_daily_activity(db,user_id=viewer.id,media_id=entry.media_id,media=media,explicit_status=True,status=status,
             score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores),status_changed=True,
             previous_status=prior_status,first_watching=prior_start_date is None and prior_status!='watching')
         if (event.kind in {'playback_removed','conflict'} and body.action in {'confirm','change'}
@@ -2034,6 +2034,7 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
     desired_editor = None
     observed_endpoint = None
     alternate_scores = {}
+    old_alternate_scores = {}
     if series_patch and (media.media_type != MediaType.series or
                          (tracking_projection.is_anime(media) and not await anime_is_visible(db))):
         raise HTTPException(404, 'Series not found')
@@ -2220,6 +2221,7 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
     for number, value in alternate_scores.items():
         row = await db.scalar(select(Rating).where(Rating.user_id == viewer.id, Rating.media_id == media_id,
             Rating.season_number == number, Rating.episode_order == series_context.order))
+        old_alternate_scores[number] = row.rating if row else None
         if value is None:
             if row:
                 await db.delete(row)
@@ -2252,14 +2254,14 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
                 previous_progress=old_progress, progress=entry.progress, status=entry.status, score=score,
                 status_changed=activity_status_changed and 'status' in fields, rating_changed=rating_changed,
                 previous_status=previous, first_watching=old_start_date is None and previous != 'watching',
-                previous_score=old_score, previous_watched_ids=watched, watched_ids=desired)
+                previous_score=old_score, previous_watched_ids=watched, watched_ids=desired, season_actions=False)
         elif status_changed or not suppress_initial_import_rating(entry):
             position, finished = await series_activity_details(db, media, entry.progress, user_id=viewer.id)
-            await record_daily_activity(db, user_id=viewer.id, media_id=media_id, status=entry.status, score=score,
+            await record_daily_activity(db, user_id=viewer.id, media_id=media_id, media=media, status=entry.status, score=score,
                 progress=entry.progress if media.media_type == MediaType.series else None,
                 position=position, status_changed=activity_status_changed, rating_changed=rating_changed,
                 previous_status=previous, first_watching=old_start_date is None and previous != 'watching',
-                previous_score=old_score)
+                previous_score=old_score, season_actions=media.media_type != MediaType.series)
     if series_context:
         date_edits = [edit for edit in series_patch.seasons
                       if {'start_date', 'completion_date'} & edit.model_fields_set]
@@ -2278,10 +2280,34 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
         if desired_editor is not None:
             series_context = SeriesEditorContext(series_context.data, series_context.positions, desired_editor)
         series_summary = await editor_summary(db, media, viewer.id, series_context)
-    elif series_start_override is not None:
+    elif media.media_type == MediaType.series and (series_start_override is not None or progress_changed or entry.status == 'completed'):
         from core.season_completion import reconcile
         await db.flush()
         await reconcile(db, viewer.id, media_id, series_start_override=series_start_override)
+    if media.media_type == MediaType.series:
+        from core.activity import suppress_initial_import_rating
+        from core.season_activity import record_season_activity
+        season_changes = {int(number): (old_season_scores.get(str(number)) or None, value or None)
+                          for number, value in entry.season_scores.items()
+                          if (old_season_scores.get(str(number)) or None) != (value or None)}
+        season_changes.update({int(number): (value, None) for number, value in old_season_scores.items()
+                               if str(number) not in entry.season_scores and value})
+        if series_context and series_context.order != 'tmdb:aired':
+            season_changes = {number: (old_alternate_scores.get(number), value)
+                              for number, value in alternate_scores.items()
+                              if old_alternate_scores.get(number) != value}
+        quiet_rating = previous == entry.status and suppress_initial_import_rating(entry)
+        handled = await record_season_activity(db, user_id=viewer.id, media=media, status=entry.status, score=score,
+            status_changed=previous != entry.status and (not series_patch or series_patch.action != 'complete_previous'),
+            explicit_status='status' in fields, previous_status=previous,
+            rating_changed=old_score != score and not quiet_rating and not (season_changes and entry.rating_mode == 'average'), previous_score=old_score,
+            season_changes={} if quiet_rating else season_changes, context=series_context, new_entry=was_new_entry)
+        if not handled:
+            from core.activity import record_daily_activity
+            await record_daily_activity(db, user_id=viewer.id, media_id=media_id, status=entry.status, score=score,
+                status_changed=previous != entry.status, previous_status=previous,
+                first_watching='status' in fields and previous != 'watching',
+                rating_changed=old_score != score and not quiet_rating, previous_score=old_score)
     changed_ratings = {}
     removed_ratings = set()
     before_scores = {None: old_score, **{int(k): v for k, v in old_season_scores.items()}}

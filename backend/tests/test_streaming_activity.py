@@ -3,6 +3,7 @@ from datetime import datetime
 from types import SimpleNamespace
 from core.streaming_evidence import choose_viewing, completion_evidence, activity_plan
 from core.streaming_activity import record_streaming_activity, reschedule_date_activity
+from models.base import MediaType
 
 
 def viewing(day, seconds=None, completed=False):
@@ -278,8 +279,9 @@ class ActivityTests(unittest.IsolatedAsyncioTestCase):
         original = db.rows[0]
         episodes = [SimpleNamespace(id=i, season_number=1, episode_number=i) for i in (1, 2, 3)]
         with (patch('core.activity._active_activity_card', new=AsyncMock(return_value=original)),
+              patch('core.season_activity.record_season_activity', new=AsyncMock(return_value=False)),
               patch('core.activity._series_activity_catalog', new=AsyncMock(return_value=(episodes, {1: 3})))):
-            await record_progress_activity(db, user_id=1, media=SimpleNamespace(id=2), previous_progress=1,
+            await record_progress_activity(db, user_id=1, media=SimpleNamespace(id=2,media_type=MediaType.series), previous_progress=1,
                                            progress=2, status='watching', score=8, rating_changed=True,
                                            watched_ids={1, 2}, previous_watched_ids={1}, now=datetime(2020, 1, 1, 12))
         await clear_recent_rating_activity(db, user_id=1, media_id=2, now=datetime(2020, 1, 1, 13))

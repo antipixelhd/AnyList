@@ -59,7 +59,7 @@ from models.catalogue import (
     SteamPriceSnapshot,
 )
 from models.games import GameActivity, GameEntry, GameFavorite
-from models.tracking import TrackedEntry
+from models.tracking import TrackedEntry, TrackingActivity
 from models.users import UserSettings
 from routers.games import router as games_router
 from sqlalchemy import delete, event, or_, select
@@ -98,7 +98,7 @@ async def main(args):
         # Execute trusted repository source in this process only; never switch
         # branches or overwrite the user's checkout to compare revisions.
         for name in ('game_candidate_queries','game_browse_sources','game_title_candidates','game_imdb_discovery_source','game_imdb_discovery','game_credit_projection','media_details','game_statistics_facts','game_statistics','tmdb', 'discovery_policy', 'catalog_search', 'release_browse', 'browse',
-                     'tracking_metadata', 'person_identities', 'game_imdb_person', 'game_contributor_works', 'game_person_images', 'contributor_evidence', 'studio_discovery', 'contributor_details', 'contributor_search'):
+                     'tracking_metadata', 'tracking_projection', 'activity', 'person_identities', 'game_imdb_person', 'game_contributor_works', 'game_person_images', 'contributor_evidence', 'studio_discovery', 'contributor_details', 'contributor_search'):
             module = importlib.import_module('core.' + name)
             process = await asyncio.to_thread(subprocess.run, ['git', 'show', f'{args.baseline_ref}:backend/core/{name}.py'],
                 cwd=ROOT, check=False, capture_output=True, text=True, encoding='utf-8')
@@ -149,7 +149,7 @@ async def main(args):
                     tmdb_id=900000 + index, runtime=100, release_date='2026-10-01',
                     tmdb_data=title(900000 + index)))
             screen_ids=[]
-            if args.case and any(name.startswith('screen_list_') for name in args.case):
+            if args.case and any(name.startswith(('screen_list_', 'screen_activity_')) for name in args.case):
                 screen=[Media(title=f'Library {i:05}',media_type=MediaType.series if i%2 else MediaType.movie,
                     tmdb_id=500000+i,poster_path='/fixture.jpg',release_date=f'{2000+i%26}-01-01',
                     tmdb_data={'genres':[{'name':'Adventure' if i%2 else 'Comedy'}]}) for i in range(args.local_titles)]
@@ -160,6 +160,12 @@ async def main(args):
                     status=('watching','completed','paused','dropped','planning')[i%5],
                     manual_score=8 if i%3 else None,progress=i%20 if i%2 else 0)
                     for i,identifier in enumerate(screen_ids)])
+                if 'screen_activity_profile' in args.case:
+                    db.add_all([TrackingActivity(user_id=viewer.id,media_id=screen[i].id,
+                        status='watching',score=7,created_at=datetime(2026,10,1+i),
+                        payload={'window_key':f'season:{i}','season_completion_id':i,
+                                 'episode_order':'tmdb:aired','season_number':1,'finished_seasons':[1],
+                                 'rating_changed':True,'rating_first':True}) for i in range(1,min(len(screen),25),2)])
             first_game=None
             role_work_ids=[]
             children_base=None
@@ -798,6 +804,8 @@ async def main(args):
             ('game_favorites', f'games/users/{viewer.username}/favorites', {'limit': 50}),
             ('game_favorites_page_two', f'games/users/{viewer.username}/favorites', {'limit': 50, 'offset': 50}),
             ('game_activity_profile', f'games/users/{viewer.username}/activity', {'limit': 12}),
+            *([('screen_activity_profile',f'people/{viewer.username}',{})]
+                if args.case and 'screen_activity_profile' in args.case else []),
             ('movie_exact', 'catalog', {'q': 'Benchmark title', 'media_type': 'movie'}),
             ('movie_typo', 'catalog', {'q': 'benchnark titl', 'media_type': 'movie'}),
             ('series_exact', 'catalog', {'q': 'Benchmark title', 'media_type': 'series'}),

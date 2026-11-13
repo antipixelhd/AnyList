@@ -49,6 +49,7 @@ class SeasonDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 importlib.import_module('migrations.versions.mt086_season_completion').upgrade()
                 importlib.import_module('migrations.versions.mt088_series_editor').upgrade()
                 importlib.import_module('migrations.versions.mt089_link_series_start').upgrade()
+                importlib.import_module('migrations.versions.mt090_season_activity_context').upgrade()
         async with self.engine.begin() as conn:
             await conn.run_sync(migration)
         async with self.Session() as db:
@@ -380,3 +381,207 @@ class SeasonDatabaseTests(unittest.IsolatedAsyncioTestCase):
             entry=await db.scalar(select(TrackedEntry).where(TrackedEntry.media_id==self.series_id))
             self.assertIsNone(entry.finish_date)
             self.assertEqual(len(await self.rows(db)),1)
+
+    async def test_one_series_completion_downgrades_at_release_and_old_scores_are_snapshots(self):
+        async with self.Session() as db:
+            entry = await db.scalar(select(TrackedEntry).where(TrackedEntry.media_id == self.series_id))
+            entry.manual_score = 7
+            await reconcile(db, self.user_id, self.series_id)
+            cards = await self.rows(db)
+            self.assertEqual([c.payload['series_completed'] for c in cards], [False, True])
+            entry.manual_score = 8
+            await reconcile(db, self.user_id, self.series_id)
+            self.assertEqual([c.score for c in await self.rows(db)], [7, 7])
+            media = await db.get(Media, self.series_id)
+            show = await db.scalar(select(Show).where(Show.tmdb_id == media.tmdb_id))
+            db.add(Media(title='New season', show_id=show.id, media_type=MediaType.episode,
+                season_number=3, episode_number=1, release_date=date.today().isoformat()))
+            media.tmdb_data = {**media.tmdb_data, 'seasons': [*media.tmdb_data['seasons'],
+                {'season_number':3,'episode_count':1,'air_date':date.today().isoformat()}]}
+            await db.flush()
+            # Feed compatibility uses joined metadata even before the receipt runs.
+            projected = activity_data([(card,media) for card in cards])
+            self.assertFalse(any(c['payload'].get('series_completed') for c in projected))
+            await reconcile(db, self.user_id, self.series_id)
+            self.assertFalse(any(c.payload['series_completed'] for c in await self.rows(db)))
+            self.assertEqual([c.score for c in await self.rows(db)], [7,7])
+
+    async def test_explicit_season_status_resume_and_provider_progress_do_not_create_starts(self):
+        from core.season_activity import record_season_activity
+        from core.series_editor import editor_context
+        from core.activity import record_progress_activity
+        async with self.Session() as db:
+            await db.execute(delete(WatchEvent).where(WatchEvent.media_id.in_(self.episode_ids[3:])))
+            await db.flush()
+            media = await db.get(Media,self.series_id)
+            now = datetime(2026,11,1,12)
+            await record_season_activity(db,user_id=self.user_id,media=media,status='watching',score=None,
+                status_changed=True,explicit_status=True,previous_status='paused',now=now)
+            card = await db.scalar(select(TrackingActivity).where(TrackingActivity.media_id==self.series_id))
+            self.assertEqual(card.payload['season_number'],2)
+            self.assertTrue(card.payload['continued_watching'])
+            self.assertNotIn('position',card.payload)
+            await record_progress_activity(db,user_id=self.user_id,media=media,previous_progress=2,
+                progress=3,status='watching',score=None,status_changed=True,previous_status='paused',
+                previous_watched_ids=set(self.episode_ids[:2]),watched_ids=set(self.episode_ids[:3]),now=now+timedelta(days=2))
+            cards = list(await db.scalars(select(TrackingActivity).where(TrackingActivity.media_id==self.series_id)))
+            self.assertEqual(sum(bool(c.payload.get('started_watching')) for c in cards),1)
+            # No partial progress in the next season means "Started", not "Continued".
+            await db.execute(delete(WatchEvent).where(WatchEvent.media_id==self.episode_ids[2]))
+            await record_season_activity(db,user_id=self.user_id,media=media,status='watching',score=None,
+                status_changed=True,explicit_status=True,previous_status='dropped',now=now+timedelta(days=4))
+            latest = await db.scalar(select(TrackingActivity).where(TrackingActivity.media_id==self.series_id)
+                                    .order_by(TrackingActivity.created_at.desc()).limit(1))
+            self.assertEqual(latest.payload['season_number'],2)
+            self.assertFalse(latest.payload['continued_watching'])
+
+    async def test_grouped_ratings_correct_in_place_then_change_only_in_that_season(self):
+        from core.season_activity import record_season_activity
+        async with self.Session() as db:
+            media=await db.get(Media,self.series_id)
+            now=datetime(2026,11,1,12)
+            async def rate(changes,at,status='completed'):
+                await record_season_activity(db,user_id=self.user_id,media=media,status=status,score=7,
+                    season_changes=changes,now=at)
+            await rate({1:(None,6),2:(None,8)},now)
+            cards=list(await db.scalars(select(TrackingActivity).where(TrackingActivity.media_id==self.series_id)))
+            self.assertEqual(len(cards),1)
+            group=cards[0]
+            self.assertEqual(group.payload['season_ratings'],{'1':6,'2':8})
+            self.assertEqual(group.score,7)
+            await rate({1:(6,8)},now+timedelta(hours=48))
+            self.assertEqual(group.created_at,now)
+            self.assertEqual(group.score,8)
+            await rate({1:(8,9)},now+timedelta(hours=73))
+            cards=list(await db.scalars(select(TrackingActivity).where(TrackingActivity.media_id==self.series_id)
+                                       .order_by(TrackingActivity.created_at)))
+            self.assertEqual(len(cards),2)
+            self.assertEqual(cards[0].payload['season_ratings'],{'1':8,'2':8})
+            self.assertEqual(cards[1].payload['previous_score'],8)
+            self.assertEqual(cards[1].score,9)
+
+    async def test_series_rating_in_a_new_season_preserves_the_previous_season_score(self):
+        from core.season_activity import record_season_activity
+        async with self.Session() as db:
+            await db.execute(delete(WatchEvent).where(WatchEvent.media_id.in_(self.episode_ids[2:])))
+            media=await db.get(Media,self.series_id)
+            now=datetime(2026,11,1,12)
+            await record_season_activity(db,user_id=self.user_id,media=media,status='watching',score=7,
+                rating_changed=True,previous_score=None,now=now)
+            db.add(WatchEvent(user_id=self.user_id,media_id=self.episode_ids[2],completed=True,watched_at=now))
+            await db.flush()
+            await record_season_activity(db,user_id=self.user_id,media=media,status='watching',score=8,
+                rating_changed=True,previous_score=7,now=now+timedelta(days=3))
+            cards=list(await db.scalars(select(TrackingActivity).where(TrackingActivity.media_id==self.series_id)
+                                       .order_by(TrackingActivity.created_at)))
+            self.assertEqual([c.payload['season_ratings'] for c in cards],[{'1':7},{'2':8}])
+            self.assertNotIn('previous_score',cards[-1].payload)
+
+    async def test_editor_season_scores_without_series_score_changes_create_one_group(self):
+        await run_batch(self.Session)
+        response=await self.client.patch(f'/tracking/entry/{self.series_id}',json={
+            'rating_mode':'manual','season_scores':{'1':6,'2':8}})
+        self.assertEqual(response.status_code,200,response.text)
+        async with self.Session() as db:
+            groups=list(await db.scalars(select(TrackingActivity).where(TrackingActivity.media_id==self.series_id,
+                TrackingActivity.payload['season_rating_group'].as_boolean().is_(True))))
+            self.assertEqual(len(groups),1)
+            self.assertEqual(groups[0].score,7)
+            self.assertEqual(groups[0].payload['season_ratings'],{'1':6,'2':8})
+
+    async def test_completion_absorbs_only_its_season_and_manual_start_has_one_card(self):
+        async with self.Session() as db:
+            await db.execute(update(WatchEvent).where(WatchEvent.media_id.in_(self.episode_ids[2:]))
+                             .values(watched_at=datetime(2024,1,5)))
+            entry=await db.scalar(select(TrackedEntry).where(TrackedEntry.media_id==self.series_id))
+            entry.start_date,entry.start_date_source=date(2023,12,31),'manual'
+            db.add_all([
+                TrackingActivity(user_id=self.user_id,media_id=self.series_id,status='watching',created_at=datetime(2023,12,31),
+                    payload={'status_changed':True,'started_watching':True}),
+                TrackingActivity(user_id=self.user_id,media_id=self.series_id,status='watching',created_at=datetime(2024,1,1),
+                    payload={'window_key':'status:1','window_started_at':'2024-01-01T00:00:00',
+                        'episode_order':'tmdb:aired','season_number':1,'season_status':True,
+                        'status_changed':True,'started_watching':True}),
+                TrackingActivity(user_id=self.user_id,media_id=self.series_id,status='watching',created_at=datetime(2024,1,1),score=7,
+                    payload={'window_key':'rating:1','window_started_at':'2024-01-01T00:00:00',
+                        'episode_order':'tmdb:aired','season_rating_group':True,'season_ratings':{'1':6,'2':8},
+                        'rating_changed':True,'rating_first':True})])
+            await db.flush()
+            await reconcile(db,self.user_id,self.series_id)
+            cards=list(await db.scalars(select(TrackingActivity).where(TrackingActivity.media_id==self.series_id)))
+            self.assertEqual(sum(bool(c.payload.get('started_watching')) for c in cards),1)
+            self.assertTrue(next(c for c in cards if c.payload.get('started_watching')).payload.get('season_start_id'))
+            first=next(c for c in cards if c.payload.get('finished_seasons')==[1])
+            self.assertEqual(first.score,6)
+            group=next(c for c in cards if c.payload.get('season_rating_group'))
+            self.assertEqual(group.payload['season_ratings'],{'2':8})
+            self.assertEqual(group.score,8)
+            second=next(c for c in cards if c.payload.get('finished_seasons')==[2])
+            self.assertIsNone(second.score)
+
+    async def test_parallel_rating_requests_share_one_group_and_keep_both_scores(self):
+        import asyncio
+        from routers.ratings import router as ratings_router
+        self.app.include_router(ratings_router,prefix='/ratings')
+        with patch('core.local_outbound.dispatch_local_tracking_delta',new=AsyncMock()):
+            responses=await asyncio.gather(*[self.client.post('/ratings',json={
+                'media_id':self.series_id,'media_type':'series','season_number':sn,'rating':value})
+                for sn,value in ((1,6),(2,8))])
+        for response in responses:
+            self.assertEqual(response.status_code,200,response.text)
+        async with self.Session() as db:
+            groups=list(await db.scalars(select(TrackingActivity).where(TrackingActivity.media_id==self.series_id,
+                TrackingActivity.payload['season_rating_group'].as_boolean().is_(True))))
+            self.assertEqual(len(groups),1)
+            self.assertEqual(groups[0].payload['season_ratings'],{'1':6,'2':8})
+            self.assertEqual(groups[0].score,7)
+            entry=await db.scalar(select(TrackedEntry).where(TrackedEntry.media_id==self.series_id))
+            self.assertEqual(entry.season_scores,{'1':6,'2':8})
+
+    async def test_deleting_recent_season_ratings_corrects_their_cards_in_every_order(self):
+        from routers.ratings import router as ratings_router
+        self.app.include_router(ratings_router,prefix='/ratings')
+        with patch('core.local_outbound.dispatch_local_tracking_delta',new=AsyncMock()):
+            for mode,order,tracked in (('manual',None,True),('average',None,True),
+                                      ('manual','tvdb:dvd',True),('manual',None,False)):
+                async with self.Session() as db:
+                    await db.execute(delete(TrackingActivity).where(TrackingActivity.media_id==self.series_id))
+                    entry=await db.scalar(select(TrackedEntry).where(TrackedEntry.media_id==self.series_id))
+                    if tracked:
+                        entry.rating_mode,entry.manual_score,entry.season_scores=mode,None,{}
+                    elif entry:
+                        await db.delete(entry)
+                    await db.commit()
+                body={'media_id':self.series_id,'media_type':'series','season_number':1,'rating':8}
+                if order:body['episode_order']=order
+                response=await self.client.post('/ratings',json=body)
+                self.assertEqual(response.status_code,200,response.text)
+                params={'media_id':self.series_id,'media_type':'series','season_number':1}
+                if order:params['episode_order']=order
+                response=await self.client.delete('/ratings',params=params)
+                self.assertEqual(response.status_code,200,response.text)
+                async with self.Session() as db:
+                    cards=list(await db.scalars(select(TrackingActivity).where(TrackingActivity.media_id==self.series_id)))
+                    self.assertFalse(any((c.payload or {}).get('rating_changed') for c in cards),(mode,order,tracked))
+
+    async def test_manual_start_reuses_explicit_start_before_season_completion(self):
+        async with self.Session() as db:
+            await db.execute(delete(WatchEvent).where(WatchEvent.media_id.in_(self.episode_ids)))
+            entry=await db.scalar(select(TrackedEntry).where(TrackedEntry.media_id==self.series_id))
+            entry.status,entry.progress,entry.start_date,entry.finish_date='planning',0,None,None
+            await db.commit()
+        response=await self.client.patch(f'/tracking/entry/{self.series_id}',json={'status':'watching'})
+        self.assertEqual(response.status_code,200,response.text)
+        async with self.Session() as db:
+            original=await db.scalar(select(TrackingActivity).where(TrackingActivity.media_id==self.series_id))
+            original_id=original.id
+        manual=(date.today()-timedelta(days=2)).isoformat()
+        response=await self.client.patch(f'/tracking/entry/{self.series_id}',json={'start_date':manual})
+        self.assertEqual(response.status_code,200,response.text)
+        async with self.Session() as db:
+            cards=list(await db.scalars(select(TrackingActivity).where(TrackingActivity.media_id==self.series_id)))
+            starts=[c for c in cards if c.payload.get('started_watching')]
+            self.assertEqual(len(starts),1)
+            self.assertEqual(starts[0].id,original_id)
+            self.assertEqual(starts[0].created_at.date().isoformat(),manual)
+            self.assertTrue(starts[0].payload.get('season_start_id'))

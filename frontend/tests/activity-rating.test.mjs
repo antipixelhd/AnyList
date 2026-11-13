@@ -64,6 +64,26 @@ test('season completion takes priority over episode ranges in the combined card'
     status_changed: true, season_completion_id: 42}}), 'Completed Season 3 of');
 });
 
+test('season status cards describe the season without episode clutter',()=>{
+  const activity={media:{type:'series'},status:'watching',payload:{season_status:true,season_number:3,status_changed:true,started_watching:true,position:'S3E5'}};
+  assert.equal(activityAction(activity),'Started watching Season 3 of');
+  assert.equal(activityAction({...activity,payload:{...activity.payload,continued_watching:true}}),'Continued watching Season 3 of');
+  assert.equal(activityAction({...activity,status:'paused'}),'Paused Season 3 of');
+  assert.equal(activityAction({...activity,status:'dropped'}),'Dropped Season 3 of');
+  assert.equal(activityAction({...activity,status:'planning'}),'Plans to watch Season 3 of');
+});
+
+test('grouped ratings use ranges, average and per-season accessible scores',()=>{
+  const activity={media:{type:'series'},score:7,payload:{season_rating_group:true,rating_changed:true,season_ratings:{1:6,2:8,3:7,5:7,8:7}}};
+  assert.equal(activityAction(activity),'Rated Seasons 1–3, 5, 8 of');
+  const rating=activityRating(activity);
+  assert.equal(rating.current,7);
+  assert.equal(rating.seasons.length,5);
+  assert.match(rating.label,/Average 7 out of 10.*Season 1: 6, Season 2: 8/);
+  assert.equal(activityAction({...activity,payload:{...activity.payload,series_completed:true}}),'Completed');
+  assert.equal(activityRating({...activity,payload:{rating_snapshot:true,season_ratings:{2:7}}}).current,7);
+});
+
 test('feed refresh updates scores without changing timestamps or order and removes deleted cards', () => {
   const source = readFileSync(new URL('../src/pages/home.astro', import.meta.url), 'utf8');
   const reconcileSource = source.slice(source.indexOf('  const reconcile='), source.indexOf('  const refresh=async'));
