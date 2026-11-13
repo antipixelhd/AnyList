@@ -18,6 +18,7 @@
   import {detailDestination,detailHints,detailLinkTitle,mountRoutePreview,prepareDetailResolution,type DetailHint} from '../lib/detail-loading';
   import {settleNavigationContent,cancelLoadingReveals} from '../lib/loading-reveal';
   import {browseReturnTarget,isReturnViewTrackingWrite,returnViews,returnViewKey,returnViewIdentity,type CaptureReturnView} from '../lib/return-view-cache';
+  import {clearProfileSessionCache} from '../lib/profile-session-cache';
   wirePasswordToggles();
 
   type CachedPage = { html: string; bytes: number; storedAt: number; predicted?:boolean; requiresGamesAccess?:boolean };
@@ -75,6 +76,7 @@
     if(identity!==returnIdentity){lastBrowseView=undefined;returnIdentity=identity;returnViews.scope(identity);}
     detailHints.scope(user);
     if (state.user === user) return;
+    clearProfileSessionCache();
     state.user = user;
     clearPages();
   }
@@ -351,6 +353,7 @@
       return state.originalFetch!(input,init);
     };
     window.fetch = mutationFetch(navigationFetch, location.href, url => {
+      if(url.pathname!=='/api/proxy/tracking/recent-events/seen')clearProfileSessionCache();
       clearPages();
       if(isReturnViewTrackingWrite(url))returnViews.markDirty();
       else if(url.pathname!=='/api/proxy/tracking/recent-events/seen'){returnViews.clear();lastBrowseView=undefined;}
@@ -363,6 +366,7 @@
     document.addEventListener('submit', event => {
       const form = event.target as HTMLFormElement;
       if (new URL(form.action, location.href).pathname === '/logout') {
+        clearProfileSessionCache();
         clearPages();
         returnViews.clear();
         lastBrowseView=undefined;

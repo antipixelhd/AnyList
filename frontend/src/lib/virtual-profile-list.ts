@@ -447,7 +447,7 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
   },{signal});
   panel.addEventListener('anylist:panel-revalidate',()=>void revalidate(),{signal});
   panel.addEventListener('anylist:capture-list-return',event=>{
-    const capture=(event as CustomEvent<{target:HTMLElement; saved:boolean}>).detail;
+    const capture=(event as CustomEvent<{target:HTMLElement; saved:boolean; compact?:boolean}>).detail;
     if(refreshing||dirty||searchTimer||!error.hidden)return;
     const mountedIds=[...root.querySelectorAll<HTMLElement>('[data-list-entry]')].map(row=>Number(row.dataset.listEntry));
     const visibleOffsets=[...wanted].slice(0,6);
@@ -465,7 +465,7 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
       status_counts:JSON.parse(root.dataset.statusCounts||'{}'),
       genres:[...root.querySelectorAll<HTMLOptionElement>('#genre-filter option')].map(option=>option.value).filter(Boolean),
       years:JSON.parse(root.querySelector<HTMLInputElement>('#year-filter')?.dataset.years||'[]'),
-      results:rows,returnList:{query:query.toString(),checkedAt,ahead,index:index.snapshot(),pages:savedPages,
+      results:rows,returnList:{query:query.toString(),checkedAt,ahead,index:capture.compact?undefined:index.snapshot(),pages:savedPages,
         defaultPage,staleRows:[...staleRows].filter(id=>ids.has(id))},
     });
     capture.saved=true;

@@ -6,7 +6,7 @@ import {createStatisticsReader,type StatisticsSelection} from './unified-statist
 import {statisticValue} from './statistic-value';
 import {bindPredictionIntent,predictionAllowed} from './predictive-loading';
 import {initializeProfileSections} from './profile-section-selector';
-import {panelActive,panelUrl,setPanelUrl} from './profile-panel';
+import {panelActive,panelUrl,setPanelUrl,profileRefreshAge} from './profile-panel';
 import Chart from 'chart.js/auto';
 import type { ChartOptions } from 'chart.js';
 import type { ChartMetric, MediaScope, MetricGroup, Overview, OverviewResponse } from './stats-overview-data';
@@ -476,6 +476,17 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
   // saved choices restored during client-side navigation. Repaint canvases too.
   observer.observe(document.body, { attributes: true, attributeFilter: ['style'] });
   let dirty=false;
+  const profilePanel=root.closest<HTMLElement>('[data-profile-url]');
+  let checkedAt=Number(profilePanel?.dataset.profileStatsCheckedAt??Date.now());
+  let checking=false;
+  const revalidate=async()=>{
+    if(checking||root.getAttribute('aria-busy')==='true'||!panelActive(root)||Date.now()-checkedAt<profileRefreshAge)return;
+    checking=true;checkedAt=Date.now();
+    loader.clear();
+    try{await loader.load(media,true,true);}
+    finally{checking=false;}
+  };
+  profilePanel?.addEventListener('anylist:panel-revalidate',()=>void revalidate(),{signal:events.signal});
   document.addEventListener('anylist:game-categories',event=>{
     const game=rawGame();if(!game||!game.owner)return;
     game.category_presentation=(event as CustomEvent<CategoryPresentation>).detail;
@@ -483,7 +494,7 @@ export function initializeStatistics(root:HTMLElement,lifetime:AbortSignal) {
     if(domain==='game'&&updated.overview&&section==='overview'){response=updated;drawDistribution(updated.overview,'statuses',true);}
   },{signal:events.signal});
   root.closest('[data-profile-url]')?.addEventListener('anylist:panel-inactive',()=>{clearTimeout(timer);cancelPanelReveal();},{signal:events.signal});
-  const refresh=()=>{page=1;loader.clear();if(panelActive(root)){dirty=false;void loader.load(media);}else dirty=true;};
+  const refresh=()=>{page=1;loader.clear();if(panelActive(root)){dirty=false;checkedAt=Date.now();void loader.load(media);}else dirty=true;};
   root.closest('[data-profile-url]')?.addEventListener('anylist:panel-active',()=>{if(dirty||response.status!=='ready')refresh();else if(response.overview)render(response,true);},{signal:events.signal});
   document.addEventListener('anylist:editor-committed', () => { if (response.owner) refresh(); }, {signal:events.signal});
   lifetime.addEventListener('abort', () => { stopped = true; clearTimeout(timer); loader.stop(); events.abort(); genres.stop(); actors.stop(); studios.stop(); staff.stop(); observer.disconnect(); charts.forEach(chart => chart.destroy()); pies.forEach(chart => chart.destroy()); }, { once: true, signal: events.signal });
