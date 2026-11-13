@@ -661,6 +661,31 @@ test('a completed editor status projects released series progress immediately',a
   assert.equal(store.hasPendingEntryWrites(title),false);assert.equal(title.entry.season_position,'S1E3');
 });
 
+test('finish-date progress preserves a paused series status before the server responds',async()=>{
+  const pending=deferred();const store=new EditorStore(()=>pending.promise);
+  const title=store.seed({...draft(),id:1,type:'series',entry:{status:'paused',progress:2,released_episodes:4}});
+  const write=store.write(title,{series_editor:{seasons:[{season_number:2,completion_date:'2026-11-13'}]}},{progress:4});
+  assert.equal(title.entry.status,'paused');assert.equal(title.entry.progress,4);
+  await turn();pending.resolve({id:1,status:'paused',progress:4});await write;
+});
+
+test('a movie finish date projects watched progress without projecting Completed status',async()=>{
+  const pending=deferred();const store=new EditorStore(()=>pending.promise);
+  const title=store.seed({...draft(),id:1,entry:{status:'dropped',progress:0}});
+  const write=store.write(title,{status:'dropped',finish_date:'2026-11-13'});
+  assert.equal(title.entry.status,'dropped');assert.equal(title.entry.progress,1);
+  await turn();pending.resolve({id:1,status:'dropped',progress:1});await write;
+});
+
+test('starting a later season does not optimistically invent the overall first-season start',async()=>{
+  const pending=deferred();const store=new EditorStore(()=>pending.promise);
+  const title=store.seed({...draft(),id:1,type:'series',entry:{status:'planning',progress:0,start_date:null}});
+  const write=store.write(title,{status:'watching',series_editor:{action:'position',season_number:3,episode_count:0,
+    seasons:[{season_number:3,start_date:'2026-11-13'}]}},{progress:4});
+  assert.equal(title.entry.start_date,null);assert.equal(title.entry.status,'watching');
+  await turn();pending.resolve({id:1,status:'watching',progress:4,start_date:null});await write;
+});
+
 test('movie progress and status changes project a completed watch immediately',async()=>{
   const pending=deferred();const store=new EditorStore(()=>pending.promise);
   const title=store.seed({...draft(),id:1,entry:{status:'planning',progress:0}});

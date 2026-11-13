@@ -233,6 +233,8 @@ export class EditorStore {
         : {status:'planning', progress:0, rating_mode:'manual', manual_score:null,
           season_scores:{}, favorite:false, rewatch_count:0, notes:'', start_date:null, finish_date:null};
       entry = {...(entry || defaults), ...operation.patch};
+      const finishIntent=operation.patch.finish_date!=null || operation.patch.series_editor?.seasons?.some(
+        (season:{completion_date?:string|null})=>season.completion_date!=null);
       if(record.title.type==='game'&&'achievement_mode' in operation.patch){
         const achievements={...(entry.achievements||record.title.game_state?.achievements||{})};
         const mode=operation.patch.achievement_mode;achievements.mode=mode;
@@ -259,10 +261,11 @@ export class EditorStore {
           ? regular.reduce((sum, season) => sum + season.released_count!, 0) : null);
         if (released != null && released > 0) entry.progress = released;
       }
+      if(finishIntent && record.title.type==='movie')entry.progress=1;
       if (entry.progress !== previousProgress) {
         // The ordered released catalogue allows exact optimistic positions across seasons.
         entry.season_position = entry.progress > 0 ? record.title.progress_positions?.[entry.progress - 1] ?? null : null;
-        if ('progress' in operation.patch && !('status' in operation.patch) && entry.progress > 0) {
+        if ('progress' in operation.patch && !('status' in operation.patch) && !finishIntent && entry.progress > 0) {
           const released = entry.released_episodes ?? (record.title.type === 'movie' ? 1 : null);
           entry.status = previous === 'completed' || (released != null && released > 0 && entry.progress >= released)
             ? 'completed' : 'watching';
@@ -270,7 +273,8 @@ export class EditorStore {
       }
       if ('manual_score' in operation.patch) entry.score = operation.patch.manual_score || null;
       const today = localToday();
-      if (entry.status !== previous && (record.title.type==='game'?['playing','played'].includes(entry.status):entry.status==='watching') && !entry.start_date && !('start_date' in operation.patch)) entry.start_date = today;
+      if (entry.status !== previous && (record.title.type==='game'?['playing','played'].includes(entry.status):entry.status==='watching') && !entry.start_date && !('start_date' in operation.patch)
+          && !(record.title.type==='series' && operation.patch.series_editor)) entry.start_date = today;
       if (entry.status !== previous && entry.status === 'completed' && !entry.finish_date && !('finish_date' in operation.patch)) entry.finish_date = today;
     }
     if(entry)entry={...entry,favorite};

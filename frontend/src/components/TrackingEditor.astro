@@ -116,6 +116,7 @@ document.addEventListener('astro:page-load', () => {
   const gameFields=createGameEditor(dialog,form,sessionSignal,confirmEntryAction);
   let current: any = null;
   let currentTitle: EditorTitle | null = null;
+  const movieDatePresets=new Map<string,string>();
   let opener: HTMLElement | null = null;
   let loadController: AbortController | null = null;
   let artworkTimer:ReturnType<typeof setTimeout>|undefined;
@@ -157,9 +158,23 @@ document.addEventListener('astro:page-load', () => {
   const syncStatus = () => {
     statusControl.sync();
     gameFields.statusChanged(statusSelect.value);
+    if(currentTitle?.type==='movie') {
+      for(const [name,value] of movieDatePresets)if(field(name).value===value)field(name).value=current?.[name]??'';
+      movieDatePresets.clear();
+      const name=statusSelect.value==='watching'?'start_date':statusSelect.value==='completed'?'finish_date':null;
+      if(name && statusSelect.value!==current?.status && !field(name).value) {
+        field(name).value=localToday();movieDatePresets.set(name,field(name).value);
+      }
+      refreshDateInputs();
+    }
     seriesFields.statusChanged();
   };
   statusSelect.addEventListener('change',syncStatus,{signal:sessionSignal});
+  form.addEventListener('change',event=>{
+    if(currentTitle?.type!=='movie' || !(event.target instanceof HTMLInputElement))return;
+    const name=event.target.closest('[data-calendar-input]')?.querySelector<HTMLInputElement>('[data-date-iso]')?.name;
+    if(name)movieDatePresets.delete(name);
+  },{signal:sessionSignal});
   const closeEditor = () => {
     resumeExpansion=null;
     if (!dialog.open) return;
@@ -174,6 +189,7 @@ document.addEventListener('astro:page-load', () => {
     ]);
   }
   function populateEditor(title: any, seriesSummary?:SeriesEditorSummary) {
+    movieDatePresets.clear();
     const entry = title.entry;
     const game=title.type==='game',child=game&&['expansion','dlc'].includes(title.game_class||'');
     dialog.dataset.editorDomain=game?'game':'movies-series';

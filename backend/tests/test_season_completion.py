@@ -10,7 +10,7 @@ import test_statistics_pg as fixture
 from core.season_completion import check_release_boundaries, completion_evidence, reconcile, run_batch
 from models import Media, Show, TrackedEntry, TrackingActivity, WatchEvent, ShowEpisodePosition, UserShowEpisodeOrder
 from models.base import MediaType
-from models.seasons import SeriesSeason, SeasonTracking, SeasonReconcileJob
+from models.seasons import SeasonTracking, SeasonReconcileJob
 from core.tracking_projection import activity_data
 from routers.season_tracking import router
 from dependencies import get_current_user, get_tracking_write_user
@@ -419,7 +419,6 @@ class SeasonDatabaseTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_explicit_season_status_resume_and_provider_progress_do_not_create_starts(self):
         from core.season_activity import record_season_activity
-        from core.series_editor import editor_context
         from core.activity import record_progress_activity
         async with self.Session() as db:
             await db.execute(delete(WatchEvent).where(WatchEvent.media_id.in_(self.episode_ids[3:])))
@@ -622,6 +621,7 @@ class SeasonDatabaseTests(unittest.IsolatedAsyncioTestCase):
         advanced=await position(2,0)
         self.assertEqual(advanced.status_code,200,advanced.text)
         self.assertEqual(advanced.json()['progress'],2)
+        self.assertEqual(advanced.json()['series_editor']['seasons'][1]['start_date'],date.today().isoformat())
         self.assertNotEqual(first.json()['series_editor']['revision'],advanced.json()['series_editor']['revision'])
         saved=(await self.client.get(root+'/series-editor')).json()['selected_position']
         self.assertEqual((saved['season_number'],saved['episode_count']),(2,0))

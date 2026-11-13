@@ -19,6 +19,8 @@ class SeasonEdit(BaseModel):
     membership: str = Field(min_length=64, max_length=64)
     start_date: date | None = None
     completion_date: date | None = None
+    start_preset: bool = False
+    completion_preset: bool = False
     score: float | None = None
 
 
@@ -132,6 +134,15 @@ class SeriesEditorContext:
             return set(ids) | self.watched, ids[-1] if self.watched else None
         return self.watched, None
 
+    def finish_targets(self, edits, series_finish=None):
+        """Dates imply watched coverage, independently of the list status."""
+        dates = {edit.season_number: edit.completion_date for edit in edits
+                 if 'completion_date' in edit.model_fields_set and edit.completion_date is not None}
+        if series_finish is not None and self.released:
+            dates.setdefault(self.positions[self.released[-1].id][0], series_finish)
+        return {members[-1].id: dates[number] for number, _, _ in self.groups
+                if number in dates and (members := [ep for ep in self.released if self.positions[ep.id][0] == number])}
+
 
 async def editor_context(db, media, user_id):
     positions = {}
@@ -142,6 +153,31 @@ async def editor_context(db, media, user_id):
     cursor = await db.scalar(select(TrackedEntry.season_cursor).where(TrackedEntry.user_id==user_id,
         TrackedEntry.media_id==media.id))
     return SeriesEditorContext(data, positions, watched, cursor)
+
+
+async def intent_date_edits(db, media_id, user_id, context, edits, *, number, start, finish, day):
+    """Preset only the season explicitly acted on; earlier coverage is undated."""
+    edits = list(edits)
+    if number is None or not (start or finish):
+        return edits
+    members = next((eps for sn, eps, _ in context.groups if sn == number), [])
+    if not members:
+        return edits
+    saved = (await db.execute(select(SeasonTracking).join(SeriesSeason).where(
+        SeriesSeason.media_id == media_id, SeriesSeason.episode_order == context.order,
+        SeriesSeason.season_number == number, SeriesSeason.membership_key == membership_key(members),
+        SeasonTracking.user_id == user_id))).scalar_one_or_none()
+    edit = next((edit for edit in edits if edit.season_number == number), None)
+    values = edit.model_dump(exclude_unset=True) if edit else {'season_number': number, 'membership': membership_key(members)}
+    for field, wanted, manual in (('start_date', start, 'start_manual'), ('completion_date', finish, 'date_manual')):
+        if field in values or not wanted:
+            continue
+        previous = getattr(saved, field) if saved else None
+        if previous is not None or not (saved and getattr(saved, manual)):
+            values[field] = previous or day
+            values['start_preset' if field == 'start_date' else 'completion_preset'] = True
+    replacement = SeasonEdit(**values)
+    return [replacement if item is edit else item for item in edits] if edit else [*edits, replacement]
 
 
 async def editor_summary(db, media, user_id, context):

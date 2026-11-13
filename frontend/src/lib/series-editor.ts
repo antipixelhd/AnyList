@@ -6,12 +6,13 @@ import {closeDialog, showDialog} from './ui-motion';
 import {setupCalendarDateInputs} from './calendar-date-input';
 import {setupScoreSteppers} from './scoreStepper';
 import {responsiveArtwork} from './responsive-artwork';
+import {presetSeasonDates} from './series-date-intent';
 
 type Episode = {id:number; number:number; watched:boolean};
 type Season = {season_number:number; membership:string; name?:string|null; poster?:string|null; total:number; episodes:Episode[];
   upcoming?:Pick<Episode,'id'|'number'>[];
   score?:number|null; start_date?:string|null; completion_date?:string|null;
-  start_source?:string|null; date_source?:string|null; completed?:boolean};
+  start_source?:string|null; date_source?:string|null; start_manual?:boolean; date_manual?:boolean; completed?:boolean};
 type Airing = {season_number:number; latest_episode:number; next_date?:string|null; final_date?:string|null;
   latest_episode_id:number; watched:boolean; previous_season?:number|null; previous_episode_id?:number|null};
 export type SeriesEditorSummary = {ready:boolean; pending?:boolean; retry_after?:number; revision?:string;
@@ -56,13 +57,11 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
   const season = () => seasons().find(item => item.season_number === selected);
   const released = () => seasons().filter(item=>item.episodes.length);
   const watchedCount = (s:Season) => s.episodes.filter(ep=>ep.watched).length;
-  const full = (s:Season) => s.completed || (s.episodes.length > 0 && s.episodes.length === s.total &&
-    s.episodes.every(ep=>ep.watched));
-  const canFinishSeason = (s:Season) => {
-    if (!stagedPosition) return full(s);
-    return s.episodes.length>0 && s.episodes.length===s.total &&
-      (stagedPosition.season>s.season_number ||
-       (stagedPosition.season===s.season_number && stagedPosition.count===s.total));
+  const presets = () => presetSeasonDates(seasons(),status(),title?.entry?.status??'planning',selected,
+    stagedPosition,localToday(),drafts);
+  const dateValue = (s:Season,name:'start_date'|'completion_date') => {
+    const draft=drafts.get(s.season_number);
+    return (draft && name in draft?draft[name]:s[name]??presets().get(s.season_number)?.[name])??'';
   };
   const fromRow = (node:Element) => {
     const number=Number(node.closest<HTMLElement>('[data-season-number]')?.dataset.seasonNumber);
@@ -93,10 +92,8 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
   const sharedDates = () => {
     if(!title || !seasons().length) return;
     const first=seasons()[0],last=seasons().filter(s=>s.episodes.length).at(-1);
-    const start=drafts.get(first.season_number);
-    const finish=last && drafts.get(last.season_number);
-    if(start && 'start_date' in start) field('start_date').value=start.start_date??'';
-    if(finish && 'completion_date' in finish) field('finish_date').value=finish.completion_date??'';
+    field('start_date').value=dateValue(first,'start_date');
+    if(last)field('finish_date').value=dateValue(last,'completion_date');
     form.dispatchEvent(new CustomEvent('anylist:series-dates-sync',{bubbles:true}));
   };
   const layout = () => {
@@ -160,18 +157,17 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
       const finish=row.querySelector<HTMLInputElement>('[name=series_finish]')!;
       if (document.activeElement!==score) score.value=String((draft && 'score' in draft?draft.score:s.score)??'');
       // Preserve visible invalid text; hidden controls cannot block the form.
-      if (!row.contains(document.activeElement)) {
-        start.value=(draft && 'start_date' in draft?draft.start_date:s.start_date)??'';
-        finish.value=(draft && 'completion_date' in draft?draft.completion_date:s.completion_date)??'';
+      if (!row.querySelector('[data-calendar-input]:focus-within')) {
+        start.value=dateValue(s,'start_date');
+        finish.value=dateValue(s,'completion_date');
         rowControls.get(number)?.();
       }
       for (const input of row.querySelectorAll<HTMLInputElement|HTMLButtonElement>('input,button')) input.disabled=row.hidden;
-      for (const input of finish.closest('[data-calendar-input]')!.querySelectorAll<HTMLInputElement|HTMLButtonElement>('input,button[data-date-picker]')) input.disabled=row.hidden||!canFinishSeason(s);
-      row.querySelector<HTMLInputElement>('[data-season-date-label="finish"] + [data-calendar-input] [data-date-display]')!.title=canFinishSeason(s)?'':'Complete the season to set its finish date';
     }
   };
   const render = () => {
     if (!title) return;
+    sharedDates();
     const focused=document.activeElement instanceof HTMLElement && (panel.contains(document.activeElement)||document.activeElement===expand) ? document.activeElement : undefined;
     const restoreFocus=()=>{
       if (focused && document.activeElement!==focused && focused.isConnected && !focused.closest('[hidden]') &&
@@ -241,6 +237,14 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     const previous = released().filter(item=>item.season_number<s.season_number).at(-1)?.episodes.at(-1);
     stagedPosition={id:count?s.episodes[count-1].id:previous?.id??null,count,season:s.season_number};
   };
+  const advanceForFinish = (s:Season) => {
+    if(!s.episodes.length)return;
+    const list=seasons().flatMap(item=>item.episodes);
+    const requested=list.findIndex(ep=>ep.id===s.episodes.at(-1)!.id);
+    const boundary=stagedPosition?list.findIndex(ep=>ep.id===stagedPosition?.id)
+      :list.findLastIndex(ep=>ep.watched);
+    if(requested>boundary)setCount(s,s.episodes.length);
+  };
   const step = (direction:number) => {
     const current=season();
     if (!current || countInput.disabled) return;
@@ -262,7 +266,7 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
       const first=seasons()[0],last=seasons().filter(s=>s.episodes.length).at(-1);
       // Dates typed in the default Completed form enter the same season drafts.
       if(first && field('start_date').value!==(title.entry?.start_date??''))membershipDraft(first).start_date=field('start_date').value||null;
-      if(last && canFinishSeason(last) && field('finish_date').value!==(title.entry?.finish_date??''))membershipDraft(last).completion_date=field('finish_date').value||null;
+      if(last && field('finish_date').value!==(title.entry?.finish_date??''))membershipDraft(last).completion_date=field('finish_date').value||null;
     }
     allSeasons=!allSeasons;
     sharedDates();render();
@@ -300,8 +304,11 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
       if (event.type!=='change') return;
       const iso=node.closest('[data-calendar-input]')?.querySelector<HTMLInputElement>('[data-date-iso]');
       if (iso?.name==='series_start') membershipDraft(s).start_date=iso.value||null;
-      if (iso?.name==='series_finish') membershipDraft(s).completion_date=iso.value||null;
-      sharedDates();
+      if (iso?.name==='series_finish') {
+        membershipDraft(s).completion_date=iso.value||null;
+        if(iso.value)advanceForFinish(s);
+      }
+      render();
     }
   };
   panel.addEventListener('input',captureDraft,{signal:page});
@@ -312,7 +319,10 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     const dateInput=input.closest('[data-calendar-input]')?.querySelector<HTMLInputElement>('[data-date-iso]');
     if(dateInput===field('start_date') && seasons()[0])membershipDraft(seasons()[0]).start_date=dateInput.value||null;
     const latest=seasons().filter(s=>s.episodes.length).at(-1);
-    if(dateInput===field('finish_date') && latest && canFinishSeason(latest))membershipDraft(latest).completion_date=dateInput.value||null;
+    if(dateInput===field('finish_date') && latest) {
+      membershipDraft(latest).completion_date=dateInput.value||null;
+      if(dateInput.value)advanceForFinish(latest);
+    }
   },{signal:page});
   const chooseAiring = (airing:Airing) => new Promise<Choice|null>(resolve=>{
     const signal=active?.signal;
@@ -412,11 +422,12 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
         if (!choice) return false;
         action=choice;
       } else if (!completing && stagedPosition) action='position';
-      const edits=[...drafts.values()].map(edit=>{
-        const season=seasons().find(item=>item.season_number===edit.season_number);
-        if (action!=='position' || !season || canFinishSeason(season)) return edit;
-        const {completion_date:_, ...remaining}=edit;
-        return remaining;
+      const automatic=presets();
+      const edits=seasons().map(s=>{
+        const dates=automatic.get(s.season_number);
+        return {season_number:s.season_number,membership:s.membership,...dates,
+          ...(dates?.start_date?{start_preset:true}:{}),...(dates?.completion_date?{completion_preset:true}:{}),
+          ...drafts.get(s.season_number)};
       }).filter(edit=>Object.keys(edit).length>2);
       return {revision:current?.revision,order:current?.order,action,watch_date:localToday(),
         ...(action==='position'?{episode_id:stagedPosition?.id,season_number:stagedPosition?.season,episode_count:stagedPosition?.count}:{}),seasons:edits};

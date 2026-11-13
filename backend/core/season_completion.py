@@ -161,7 +161,8 @@ async def reconcile(db, user_id, media_id, *, groups_data=None, edits=(), series
     edits_by_key = {(edit.season_number, edit.membership): edit for edit in edits}
     today = date.today()
     latest_started = max((number for number, episodes, _ in groups if any(is_released(ep, today) for ep in episodes)), default=None)
-    maintains_finish = entry.status == 'completed' or bool(entry.progress and entry.finish_date)
+    maintains_finish = entry.status == 'completed' or entry.finish_date is not None or any(
+        edit.season_number == latest_started and 'completion_date' in edit.model_fields_set for edit in edits)
     entry.season_release_check_on = min(
         (day for number, episodes, _ in groups if latest_started is None or number >= latest_started
          for ep in episodes if (day := release_day(ep)) and day > today and not ep.imported_release), default=None
@@ -183,6 +184,8 @@ async def reconcile(db, user_id, media_id, *, groups_data=None, edits=(), series
             activity_suppressed=order_changed or any(s.season_number == number and t.completed
                 and s.membership_key != fingerprint for s, t in previous)).on_conflict_do_nothing())
         tracking = await db.get(SeasonTracking, (user_id, season.id))
+        previous_start = (tracking.start_date, tracking.start_source, tracking.start_manual, tracking.start_evidence)
+        previous_finish = (tracking.completion_date, tracking.date_source, tracking.date_manual, tracking.evidence)
         tracking.current = True
         history = [event for ep in episodes for event in events_by_id[ep.id]]
         complete, watched, day, source, evidence = completion_evidence(episodes, history, expected)
@@ -247,13 +250,17 @@ async def reconcile(db, user_id, media_id, *, groups_data=None, edits=(), series
         edit = edits_by_key.pop((number, fingerprint), None)
         if edit is not None:
             if 'start_date' in edit.model_fields_set:
-                tracking.start_date, tracking.start_source, tracking.start_manual = edit.start_date, 'manual', True
-                tracking.start_evidence = {'rule': 'manual'}
+                if edit.start_preset and (previous_start[0] is not None or previous_start[2]):
+                    tracking.start_date, tracking.start_source, tracking.start_manual, tracking.start_evidence = previous_start
+                elif not edit.start_preset or tracking.start_date is None:
+                    tracking.start_date, tracking.start_source, tracking.start_manual = edit.start_date, 'manual', True
+                    tracking.start_evidence = {'rule': 'manual'}
             if 'completion_date' in edit.model_fields_set:
-                if not complete:
-                    raise HTTPException(409, 'Complete the season before setting its finish date')
-                tracking.completion_date, tracking.date_source, tracking.date_manual = edit.completion_date, 'manual', True
-                tracking.evidence = {'rule': 'manual'}
+                if edit.completion_preset and (previous_finish[0] is not None or previous_finish[2]):
+                    tracking.completion_date, tracking.date_source, tracking.date_manual, tracking.evidence = previous_finish
+                elif not edit.completion_preset or tracking.completion_date is None:
+                    tracking.completion_date, tracking.date_source, tracking.date_manual = edit.completion_date, 'manual', True
+                    tracking.evidence = {'rule': 'manual'}
         result.append((season, tracking))
         if number == first_season:
             entry.start_date = tracking.start_date
@@ -322,8 +329,8 @@ async def reconcile(db, user_id, media_id, *, groups_data=None, edits=(), series
         raise HTTPException(409, 'The season grouping changed. Reopen the editor and try again.')
     if maintains_finish and latest_started is not None:
         latest = next((t for s, t in result if s.season_number == latest_started), None)
-        entry.finish_date = latest.completion_date if latest and latest.completed else None
-        entry.finish_date_source = latest.date_source if latest and latest.completed else None
+        entry.finish_date = latest.completion_date if latest else None
+        entry.finish_date_source = latest.date_source if latest else None
     # Remove old bundled milestone actions. Preserve episodes, ratings and status
     # actions; absorb a title completion into its final season's card.
     completed = [(s, t) for s, t in result if t.completed and t.completion_date]
@@ -343,7 +350,7 @@ async def reconcile(db, user_id, media_id, *, groups_data=None, edits=(), series
             if details.get('episode_order') != order:
                 await db.delete(card)
             else:
-                details['series_completed'] = bool(latest_complete and details.get('season_number') == latest_started
+                details['series_completed'] = bool(entry.status == 'completed' and latest_complete and details.get('season_number') == latest_started
                     and any(s.id == details['season_completion_id'] for s, _ in result))
                 card.payload = details
             continue
