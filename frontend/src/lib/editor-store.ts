@@ -88,6 +88,13 @@ export class EditorStore {
     }
     if (existing) {
       if (!existing.pending.length && !existing.libraryPending.length && !existing.importing) {
+        if(title.type==='series'&&title.id&&title.entry!==undefined&&
+            (title.entry===null ? existing.committed!==null :
+              ['updated_at','progress','status','season_scores','start_date','finish_date'].some(key=>
+                key in title.entry! && JSON.stringify(title.entry![key])!==JSON.stringify(existing.committed?.[key])))) {
+          this.seriesCacheRevision++;
+          this.seriesCache.delete(title.id);
+        }
         const displayed=existing.displayedHero;
         if(title.type!=='game'&&displayed&&title.backdrop===displayed.primary){
           title={...title,backdrop:displayed.path};
@@ -181,14 +188,20 @@ export class EditorStore {
   invalidate(id: number) {
     const record = [...this.records.values()].find(r => r.title.id === id && r.title.type!=='game');
     if (record) record.stale = true;
+    if(record?.title.type==='series') {this.seriesCacheRevision++;this.seriesCache.delete(id);}
   }
   acceptSaved(saved: Record<string, any>) {
     const record = saved.subject?.kind==='game'
       ? [...this.records.values()].find(r=>r.title.type==='game'&&r.title.id===saved.subject.catalogue_id)
       : [...this.records.values()].find(r => r.title.id === saved.id && r.title.type!=='game');
     if (!record || record.pending.length) return;
+    if (record.title.type==='series') {
+      this.seriesCacheRevision++;
+      this.seriesCache.delete(saved.id);
+    }
     this.seed({...record.title, ...(record.title.type==='game'?{game_state:saved,favorite:saved.favorite}:{}),
       entry:(record.title.type==='game'?saved.listed:saved.status) ? saved : null});
+    if(record.title.type==='series')this.rememberSeries(saved.id,saved.series_editor);
     this.changed(record.title);
   }
   async resolveId(title: EditorTitle): Promise<number> {
@@ -294,6 +307,20 @@ export class EditorStore {
     if (revision === this.seriesCacheRevision) this.rememberSeries(id, value);
     return value;
   }
+  async prepareSeries(id:number, signal:AbortSignal):Promise<SeriesEditorSummary> {
+    const viewer=this.viewer;
+    const record=[...this.records.values()].find(row=>row.title.type==='series'&&row.title.id===id);
+    if (record?.pending.length) await record.tail.catch(()=>{});
+    if (signal.aborted || viewer!==this.viewer) throw new DOMException('Editor closed','AbortError');
+    const cached=this.cachedSeries(id);
+    if (cached) return cached;
+    const revision=this.seriesCacheRevision;
+    const value=await this.readSeries(id,signal);
+    if (signal.aborted || viewer!==this.viewer) throw new DOMException('Editor closed','AbortError');
+    // A write may finish while the intent-prefetch is in flight.
+    if (revision!==this.seriesCacheRevision) return this.prepareSeries(id,signal);
+    return value;
+  }
   async readSeriesEpisode(id:number, episode:number, signal:AbortSignal):Promise<EditorEpisodeMetadata> {
     const path = `entry/${id}/series-editor/episodes/${episode}`;
     const cached = this.episodeCache.get(path);
@@ -307,7 +334,7 @@ export class EditorStore {
     const viewer = this.viewer;
     const record = this.record(title)!;
     const operation = {patch: {...patch, ...optimistic}};
-    if (title.type==='series') this.seriesCacheRevision++;
+    if (title.type==='series') {this.seriesCacheRevision++;if(title.id)this.seriesCache.delete(title.id);}
     record.pending.push(operation);
     this.paint(record);
     const task = record.tail.catch(() => {}).then(async () => {
@@ -353,6 +380,7 @@ export class EditorStore {
   remove(title: EditorTitle) {
     const viewer = this.viewer;
     const record = this.record(title)!;
+    if (title.type==='series') {this.seriesCacheRevision++;if(title.id)this.seriesCache.delete(title.id);}
     const operation = {patch:null};
     record.pending.push(operation);
     this.paint(record);

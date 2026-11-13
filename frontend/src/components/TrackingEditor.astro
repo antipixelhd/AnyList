@@ -86,7 +86,7 @@ import SeriesEditorPanel from './SeriesEditorPanel.astro';
 </dialog>
 <script>
 import { setupScoreSteppers } from '../lib/scoreStepper';
-import {createSeriesEditor} from '../lib/series-editor';
+import {createSeriesEditor, type SeriesEditorSummary} from '../lib/series-editor';
 import { setupCalendarDateInputs } from '../lib/calendar-date-input';
 import { editorStore, seedEditorPage, type EditorTitle, type WorkSubject } from '../lib/editor-store';
 import { showDialog, closeDialog, showMenu, hideMenu } from '../lib/ui-motion';
@@ -117,7 +117,7 @@ document.addEventListener('astro:page-load', () => {
   let opener: HTMLElement | null = null;
   let loadController: AbortController | null = null;
   let artworkTimer:ReturnType<typeof setTimeout>|undefined;
-  sessionSignal.addEventListener('abort',()=>clearTimeout(artworkTimer),{once:true});
+  sessionSignal.addEventListener('abort',()=>{clearTimeout(artworkTimer);loadController?.abort();},{once:true});
   let displayedScore = '';
   let resumeExpansion:{subject:WorkSubject;button:HTMLElement}|null=null;
   const libraryButton = dialog.querySelector<HTMLButtonElement>('[data-editor-library]')!;
@@ -171,7 +171,7 @@ document.addEventListener('astro:page-load', () => {
       search?.open ? closeDialog(search) : Promise.resolve(),
     ]);
   }
-  function populateEditor(title: any) {
+  function populateEditor(title: any, seriesSummary?:SeriesEditorSummary) {
     const entry = title.entry;
     const game=title.type==='game',child=game&&['expansion','dlc'].includes(title.game_class||'');
     dialog.dataset.editorDomain=game?'game':'movies-series';
@@ -206,7 +206,7 @@ document.addEventListener('astro:page-load', () => {
     displayedScore = field('manual_score').value;
     field('favorite').checked = Boolean(current.favorite);
     loadLibraryState(title);
-    seriesFields.open(title);
+    seriesFields.open(title,seriesSummary);
     saveButton.disabled = false;
   }
   function paintBackdrop(title:EditorTitle){
@@ -292,6 +292,7 @@ document.addEventListener('astro:page-load', () => {
     syncStatus(); closeStatus();
     current = null;
     libraryButton.hidden = true;
+    opener?.removeAttribute('aria-busy');
     opener = button;
     const listRow = button.closest<HTMLElement>('.entry-row');
     if (listRow) {
@@ -304,8 +305,11 @@ document.addEventListener('astro:page-load', () => {
     const controller = new AbortController();
     loadController = controller;
     const cached = supplied ? editorStore.get(supplied) : editorStore.find(mediaId!);
+    button.setAttribute('aria-busy','true');
     try {
       const title = cached || await editorStore.load(mediaId!);
+      if(loadController!==controller||opener!==button||sessionSignal.aborted)return;
+      const seriesSummary=await seriesFields.prepare(title,controller.signal);
       if(loadController!==controller||opener!==button||sessionSignal.aborted)return;
       const image = button.closest('.browse-card, .entry-row, .quick-search-result, .game-progress-card')?.querySelector<HTMLImageElement>('img') || document.querySelector<HTMLImageElement>('.media-cover img');
       const posterSource=image?.currentSrc||image?.src;
@@ -317,11 +321,12 @@ document.addEventListener('astro:page-load', () => {
         if(!editorStore.artwork(title).backdropImage||state==='pending'||state==='deferred')
           artworkTimer=setTimeout(()=>void prepareArtwork(),Math.max(30,title.background_status?.retry_after||0)*1000);
       };
-      void prepareArtwork();
       if (loadController !== controller || opener !== button || sessionSignal.aborted) return;
-      populateEditor(title);
+      populateEditor(title,seriesSummary);
       showDialog(dialog);
+      void prepareArtwork();
     } catch(e) { if ((e as Error).name !== 'AbortError') showActionFailure('open', supplied?.title, e); }
+    finally {if(loadController===controller||opener!==button)button.removeAttribute('aria-busy');}
   }
   document.addEventListener('click', event => {
     const gameButton=(event.target as HTMLElement).closest<HTMLElement>('[data-edit-game]');
@@ -546,22 +551,31 @@ document.addEventListener('astro:page-load', () => {
   const prepare = (event: Event) => {
     const button = (event.target as Element).closest<HTMLElement>('[data-edit-entry],[data-edit-game]');
     if (!button) return;
+    if (event instanceof PointerEvent && button.contains(event.relatedTarget as Node|null)) return;
     const game=button.dataset.editGame!=null;
     const id = Number(game?button.dataset.editGame:button.dataset.editEntry);
     const image = button.closest('.entry-row')?.querySelector<HTMLImageElement>('img') || document.querySelector<HTMLImageElement>('.media-cover img');
     const title = game?editorStore.findSubject({kind:'game',catalogue_id:id}):editorStore.find(id);
     const warm=(title:EditorTitle)=>{
       const poster=image?.currentSrc||image?.src,hero=document.querySelector<HTMLImageElement>('.lab-hero-image')?.currentSrc;
-      if(!sessionSignal.aborted)void editorStore.warmArtwork(title,poster,hero,true);
+      if(!sessionSignal.aborted){
+        void editorStore.warmArtwork(title,poster,hero,true);
+        if(title.type==='series'&&title.id)void editorStore.prepareSeries(title.id,sessionSignal).catch(()=>{});
+      }
     };
     if (title) warm(title);
     else void (game?editorStore.loadSubject({kind:'game',catalogue_id:id}):editorStore.load(id)).then(warm).catch(() => {});
   };
   document.addEventListener('pointerover', prepare, {signal:pageListeners.signal});
+  document.addEventListener('pointerdown', prepare, {signal:pageListeners.signal});
   document.addEventListener('focusin', prepare, {signal:pageListeners.signal});
+  const primary=JSON.parse(document.querySelector('#title-editor-data')?.textContent||'null');
+  if(primary?.type==='series'&&primary.id&&document.body.dataset.cacheUser&&document.body.dataset.cacheUser!=='anonymous')
+    void editorStore.prepareSeries(primary.id,sessionSignal).catch(()=>{});
 });
 </script>
 <style>
+  :global([data-edit-entry][aria-busy=true]) { color:var(--blue); cursor:progress; }
   .editor-delete-button { display:inline-flex; align-items:center; justify-content:center; gap:8px; min-height:36px; border:0; border-radius:3px; padding:7px 12px; background:#0b1622; color:var(--muted,#a2b5c7); font-size:var(--type-meta-size,13px); cursor:pointer; transition:background-color .16s,color .16s; }
   .editor-delete-button:focus-visible { outline:none; background:#ed577a; color:#fff; }
   @media (hover:hover) { .editor-delete-button:hover { background:#ed577a; color:#fff; } }

@@ -16,6 +16,69 @@ const turn = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => { let resolve, reject; const promise = new Promise((yes,no) => {resolve=yes;reject=no;}); return {promise,resolve,reject}; };
 const draft = () => ({id:null,tmdb_id:123,type:'movie',title:'Film',poster:'/poster.jpg',backdrop:'/backdrop.jpg',entry:null,editor_library:{available:true,desired:false}});
 
+test('series intent preparation shares a cold read and reuses its ready cache',async()=>{
+  const pending=deferred(),calls=[];
+  const store=new EditorStore((path)=>{calls.push(path);return pending.promise;});
+  const signal=new AbortController().signal;
+  const one=store.prepareSeries(42,signal),two=store.prepareSeries(42,signal);
+  const summary={ready:true,revision:'first',seasons:[{season_number:1,episodes:[]}]};
+  pending.resolve(summary);
+  assert.equal(await one,summary);assert.equal(await two,summary);
+  assert.equal(await store.prepareSeries(42,signal),summary);
+  assert.deepEqual(calls,['entry/42/series-editor']);
+});
+
+test('an intent read cannot overwrite the series summary returned by a newer write',async()=>{
+  const cold=deferred(),current={ready:true,revision:'new',seasons:[]};
+  const store=new EditorStore((path,options)=>options?.method==='PATCH'
+    ?Promise.resolve({id:42,status:'watching',progress:2,series_editor:current}):cold.promise);
+  const title=store.seed({...draft(),id:42,type:'series',entry:{status:'watching',progress:1}});
+  const warming=store.prepareSeries(42,new AbortController().signal);
+  await store.write(title,{progress:2});
+  cold.resolve({ready:true,revision:'old',seasons:[]});
+  assert.equal(await warming,current);
+  assert.equal(store.cachedSeries(42),current);
+});
+
+test('series preparation waits for a pending write instead of issuing a stale read',async()=>{
+  const write=deferred(),calls=[];
+  const summary={ready:true,revision:'saved',seasons:[]};
+  const store=new EditorStore((path,options)=>{calls.push([path,options?.method]);return write.promise;});
+  store.scope('one');
+  const title=store.seed({...draft(),id:42,type:'series',entry:{status:'watching',progress:1}});
+  const saving=store.write(title,{progress:2});
+  const prepared=store.prepareSeries(42,new AbortController().signal);
+  await turn();assert.equal(calls.length,1);
+  write.resolve({id:42,status:'watching',progress:2,series_editor:summary});
+  await saving;assert.equal(await prepared,summary);assert.equal(calls.length,1);
+  store.scope('two');assert.equal(store.cachedSeries(42),undefined);
+});
+
+test('series preparation cannot publish an in-flight private summary after account changes',async()=>{
+  const pending=deferred();
+  const store=new EditorStore(()=>pending.promise);
+  store.scope('one');
+  const prepared=store.prepareSeries(42,new AbortController().signal);
+  store.scope('two');
+  pending.resolve({ready:true,revision:'private-one',seasons:[]});
+  await assert.rejects(prepared,{name:'AbortError'});
+  assert.equal(store.cachedSeries(42),undefined);
+});
+
+test('external saves and changed page seeds invalidate prepared series state',async()=>{
+  let revision=0;
+  const store=new EditorStore(async()=>({ready:true,revision:String(++revision),seasons:[]}));
+  store.seed({...draft(),id:42,type:'series',entry:{status:'watching',progress:1}});
+  const signal=new AbortController().signal;
+  await store.prepareSeries(42,signal);
+  store.acceptSaved({id:42,status:'watching',progress:2});
+  assert.equal(store.cachedSeries(42),undefined);
+  await store.prepareSeries(42,signal);
+  store.seed({...draft(),id:42,type:'series',entry:{status:'watching',progress:3}});
+  assert.equal(store.cachedSeries(42),undefined);
+  assert.equal((await store.prepareSeries(42,signal)).revision,'3');
+});
+
 const gameState = (id=7, extra={}) => ({subject:{kind:'game',catalogue_id:id},title:'Game',image_url:'/game.jpg',
   game_class:'game',listed:false,status:null,revision:null,favorite:false,...extra});
 const gameTitle = state => ({id:state.subject.catalogue_id,subject:state.subject,type:'game',title:state.title,

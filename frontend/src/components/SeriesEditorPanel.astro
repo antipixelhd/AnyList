@@ -13,12 +13,13 @@ import Icon from './Icon.astro';
         <label id="series-season-label" class="sr-only">Choose season</label>
         <div class="series-editor-season-navigation">
           <EditorSelect id="series-season" name="series_season" label="Season" labelledBy="series-season-label"/>
+          <button type="button" class="series-editor-text series-editor-expand" data-series-expand aria-expanded="false" aria-controls="editor-season-list" aria-label="Show all seasons" title="Show all seasons"><Icon name="list"/></button>
         </div>
       </div>
       <div class="series-editor-count">
-        <label for="series-episode-count">Episodes <span data-series-total></span></label>
+        <label for="series-episode-count">Episode</label>
         <span class="score-stepper">
-          <input id="series-episode-count" data-series-count type="number" min="0" step="1" inputmode="numeric" aria-label="Episodes watched" required disabled/>
+          <input id="series-episode-count" data-series-count type="number" min="0" step="1" inputmode="numeric" aria-label="Episode" required disabled/>
           <span class="score-stepper-controls">
             <button type="button" data-series-step="1" aria-label="Increase episode progress"><Icon name="chevron-down" rotate={180}/></button>
             <button type="button" data-series-step="-1" aria-label="Decrease episode progress"><Icon name="chevron-down"/></button>
@@ -26,12 +27,11 @@ import Icon from './Icon.astro';
         </span>
       </div>
     </div>
-    <div class="series-editor-toolbar" data-series-toolbar><button type="button" class="series-editor-text series-editor-expand" data-series-expand aria-expanded="false" aria-controls="editor-season-list"><span data-series-expand-label>All seasons</span><Icon name="chevron-down"/></button></div>
     <ul id="editor-season-list" class="series-editor-list" data-series-rows aria-label="Season dates and scores"></ul>
   </div>
   <template data-series-row-template>
     <li class="series-editor-row">
-      <div class="series-editor-row-heading" data-season-heading><div class="series-editor-poster" data-season-poster aria-hidden="true"></div><div class="series-editor-season-identity"><strong data-season-label></strong><small data-season-progress></small></div></div>
+      <div class="series-editor-row-heading" data-season-heading><div class="series-editor-poster" data-season-poster aria-hidden="true"></div><div class="series-editor-season-identity"><div class="series-editor-season-name"><strong data-season-label></strong></div><small data-season-progress></small></div></div>
       <div class="series-editor-fields">
         <div class="series-editor-score"><label data-season-score-label>Score</label><NumberStepper id="season-score" name="series_score" label="Season score" min={0} max={10} step={0.1} score/></div>
         <div class="series-editor-dates">
@@ -44,32 +44,32 @@ import Icon from './Icon.astro';
   </template>
 </section>
 <style is:global>
-  .editor .editor-fields[data-series-tracked] { grid-template-columns:repeat(3,minmax(0,1fr)); gap:18px 24px; }
+  .editor .editor-fields[data-series-tracked] { grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px 24px; }
   .editor:has([data-series-tracked]) { width:min(980px,calc(100vw - 32px)); }
   .editor-fields > .series-editor-panel { grid-column:1 / -1; }
   .editor-fields[data-series-tracked] > .editor-notes { grid-column:1 / 3; grid-row:3; max-width:none; }
   .editor-fields[data-series-tracked] > .editor-rewatches { grid-column:3; grid-row:3; }
   .editor-fields[data-series-tracked] > .editor-notes textarea { min-height:46px; height:46px; }
   .series-editor-panel { min-width:0; }
-  .series-editor-toolbar { display:flex; align-items:center; justify-content:flex-end; gap:12px; margin-bottom:0; }
-  .series-editor-toolbar:empty { display:none; }
   .series-editor-text { border:0; background:none; color:var(--text); cursor:pointer; padding:0; }
-  .series-editor-expand { white-space:nowrap; display:flex; align-items:center; gap:7px; min-height:36px; font-size:var(--type-label-size); }
-  .series-editor-expand svg { width:10px; transition:transform .18s ease; }
-  .series-editor-expand[aria-expanded=true] svg { transform:rotate(180deg); }
+  .series-editor-expand { flex:none; display:grid; place-items:center; width:44px; min-height:40px; color:var(--muted); }
+  .series-editor-expand svg { width:12px; }
+  .series-editor-expand[aria-expanded=true],.series-editor-expand:focus-visible { color:var(--blue); }
+  .series-editor-expand:focus-visible { filter:drop-shadow(0 0 2px currentColor); }
   .series-editor-list { list-style:none; margin:0; padding:0; display:grid; gap:8px; }
-  .series-editor-row { display:grid; grid-template-columns:minmax(150px,1fr) 76px 80px 128px 128px; gap:12px; align-items:center; padding:12px 0; }
+  .series-editor-row { display:grid; grid-template-columns:148px 72px 76px 128px 128px; gap:10px; align-items:center; padding:4px 0; }
   .series-editor-row:not([hidden]) ~ .series-editor-row:not([hidden]) { border-top:1px solid var(--field); }
   .series-editor-fields,.series-editor-selection,.series-editor-dates { display:contents; }
   .series-editor-row-heading { display:none; }
   .series-editor-row-heading .series-editor-poster { grid-column:1; grid-row:1; }
-  .series-editor-poster { width:44px; height:66px; border-radius:4px; overflow:hidden; background:var(--field); color:var(--muted); display:grid; place-items:center; font-size:18px; }
+  .series-editor-poster { width:32px; height:48px; border-radius:4px; overflow:hidden; background:var(--field); color:var(--muted); display:grid; place-items:center; font-size:18px; }
   .series-editor-poster img { width:100%; height:100%; object-fit:cover; }
   .series-editor-season-identity { display:none; }
   .series-editor-season-picker { grid-column:1; grid-row:1; min-width:0; align-self:end; }
-  .series-editor-season-navigation { display:flex; align-items:flex-end; margin-top:0; }
+  .series-editor-season-navigation { display:flex; align-items:flex-end; margin-top:0; background:var(--field); border-radius:4px; }
   .series-editor-season-navigation .editor-status-dropdown { flex:1; min-width:0; }
-  .series-editor-season-navigation .editor-status-trigger { margin-top:0; min-height:40px; height:40px; }
+  .series-editor-season-navigation [data-editor-select-value] { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .series-editor-season-navigation .editor-status-trigger { margin-top:0; min-height:40px; height:40px; padding-inline:8px; background:transparent; }
   .series-editor-count { grid-column:2; grid-row:1; min-width:0; }
   .series-editor-count label { white-space:nowrap; }
   .series-editor-count label span { color:var(--muted); }
@@ -88,6 +88,7 @@ import Icon from './Icon.astro';
 
   .series-editor-panel[data-all-seasons] .series-editor-row-heading { grid-column:1 / 3; grid-row:1; display:flex; align-items:center; gap:12px; }
   .series-editor-panel[data-all-seasons] .series-editor-season-identity { display:grid; gap:4px; }
+  .series-editor-season-name { display:flex; align-items:center; gap:8px; }
   .series-editor-season-identity strong { font-size:14px; color:var(--bright); }
   .series-editor-season-identity small { color:var(--text); font-size:12px; font-variant-numeric:tabular-nums; }
   .series-editor-panel[data-all-seasons] .series-editor-score { grid-column:3; }
@@ -96,16 +97,16 @@ import Icon from './Icon.astro';
   .series-editor-message { padding:12px 0; color:var(--muted); }
   .series-editor-panel [hidden],.series-editor-panel[hidden] { display:none!important; }
   .series-airing-dialog .editor-confirmation-actions { flex-wrap:wrap; }
-  @media (min-width:651px) and (max-width:900px) {
-    .series-editor-panel .series-editor-row { grid-template-columns:minmax(160px,1fr) 76px 80px; }
+  @media (min-width:651px) and (max-width:800px) {
+    .series-editor-panel .series-editor-row { grid-template-columns:minmax(120px,148px) 72px 76px; }
     .series-editor-panel .series-editor-dates { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; grid-column:1 / -1; grid-row:2; }
     .series-editor-panel :is(.series-editor-start,.series-editor-finish),.series-editor-panel[data-all-seasons] :is(.series-editor-start,.series-editor-finish) { grid-column:auto; grid-row:auto; }
   }
   @media (max-width:650px) {
-    .editor .editor-fields[data-series-tracked] { grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
+    .editor .editor-fields[data-series-tracked] { grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px 14px; }
     .editor-fields[data-series-tracked] > .editor-notes { grid-column:1 / -1; grid-row:auto; }
     .editor-fields[data-series-tracked] > .editor-rewatches { grid-column:1; grid-row:auto; }
-    .series-editor-row { grid-template-columns:minmax(0,1fr) 76px 76px; gap:12px 8px; padding:12px 0; }
+    .series-editor-row { grid-template-columns:minmax(0,1fr) 68px 68px; gap:10px 8px; padding:4px 0; }
     .series-editor-panel[data-all-seasons] .series-editor-row-heading { grid-column:1 / 3; }
     .series-editor-poster { width:32px; height:48px; }
     .series-editor-season-picker { grid-column:1; }
@@ -120,9 +121,12 @@ import Icon from './Icon.astro';
     .editor:has([data-series-tracked]) { width:calc(100vw - 18px); }
 
   }
-  @media (prefers-reduced-motion:reduce) { .series-editor-expand svg { transition:none; } }
   @media (max-width:360px) {
     .series-editor-row { grid-template-columns:minmax(0,1fr) 68px 68px; }
     .series-editor-season-navigation .editor-status-trigger { padding-inline:6px; font-size:12px; }
+    .series-editor-panel:not([data-all-seasons]) .series-editor-season-picker { grid-column:1 / 3; }
+    .series-editor-panel:not([data-all-seasons]) .series-editor-count { grid-column:3; }
+    .series-editor-panel:not([data-all-seasons]) .series-editor-score { grid-row:2; }
+    .series-editor-panel:not([data-all-seasons]) .series-editor-dates { grid-column:1 / 3; grid-template-columns:1fr; }
   }
 </style>

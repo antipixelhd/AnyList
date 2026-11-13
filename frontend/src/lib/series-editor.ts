@@ -30,6 +30,7 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
   const rows = find('rows');
   const rowTemplate = find<HTMLTemplateElement>('row-template');
   const expand = find<HTMLButtonElement>('expand');
+  const navigation = panel.querySelector<HTMLElement>('.series-editor-season-navigation')!;
   const selector = panel.querySelector<HTMLSelectElement>('#series-season')!;
   const selectControl = setupEditorSelect(selector.closest<HTMLElement>('[data-editor-select]')!,page);
   const countInput = find<HTMLInputElement>('count');
@@ -128,6 +129,11 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
       if (!allSeasons && number===selected) {
         if (selection.parentElement!==row) row.insertBefore(selection,row.querySelector('.series-editor-fields'));
         selection.hidden=false;
+        if (expand.parentElement!==navigation) navigation.append(expand);
+      }
+      if (allSeasons && s===seasons()[0]) {
+        const name=row.querySelector<HTMLElement>('.series-editor-season-name')!;
+        if(expand.parentElement!==name)name.append(expand);
       }
       row.querySelector('[data-season-label]')!.textContent=`Season ${number}`;
       row.querySelector('[data-season-progress]')!.textContent=`${previewCount(s)}/${s.total} episodes`;
@@ -177,10 +183,11 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     countInput.max=String(current.episodes.length);
     countInput.disabled=allSeasons||!current.episodes.length;
     if (document.activeElement!==countInput) countInput.value=String(previewCount(current));
-    find('total').textContent=`/ ${current.total}`;
     expand.hidden=seasons().length<2;
     expand.setAttribute('aria-expanded',String(allSeasons));
-    find('expand-label').textContent=allSeasons?'Current season':'All seasons';
+    const viewLabel=allSeasons?'Show current season':'Show all seasons';
+    expand.setAttribute('aria-label',viewLabel);
+    expand.title=viewLabel;
     panel.toggleAttribute('data-all-seasons',allSeasons);
     if (allSeasons) {selection.hidden=true;if (selection.parentElement!==content) content.prepend(selection);}
     paintList();
@@ -307,7 +314,7 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     loadFailed=false;
     request=undefined;
     generation++;
-    selection.hidden=true;content.prepend(selection);
+    selection.hidden=true;content.prepend(selection);navigation.append(expand);
     panel.removeAttribute('data-all-seasons');
     selector.disabled=true;selectControl.sync();
     rows.replaceChildren();
@@ -321,15 +328,35 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
   page.addEventListener('abort',reset,{once:true});
   return {
     reset,
-    open(editing:EditorTitle) {
+    async prepare(editing:EditorTitle, signal:AbortSignal) {
+      if(editing.type!=='series') return undefined;
+      const id=editing.id ?? await editorStore.resolveId(editing);
+      const cancelled=()=>{if(signal.aborted||page.aborted)throw new DOMException('Editor closed','AbortError');};
+      cancelled();
+      let prepared=await editorStore.prepareSeries(id,page);
+      while(!prepared.ready && prepared.pending) {
+        cancelled();
+        await new Promise<void>((resolve,reject)=>{
+          const abort=()=>{clearTimeout(timer);reject(new DOMException('Editor closed','AbortError'));};
+          const timer=setTimeout(()=>{signal.removeEventListener('abort',abort);resolve();},Math.min(10,Math.max(1,prepared.retry_after||2))*1000);
+          signal.addEventListener('abort',abort,{once:true});
+          if(signal.aborted)abort();
+        });
+        cancelled();
+        prepared=await editorStore.prepareSeries(id,page);
+      }
+      cancelled();
+      return prepared;
+    },
+    open(editing:EditorTitle, prepared?:SeriesEditorSummary) {
       reset();
       if (editing.type!=='series') return;
       title=editing;
       active=new AbortController();
-      summary=editorStore.cachedSeries(editing.id);
+      summary=prepared ?? editorStore.cachedSeries(editing.id);
       if (summary) selectCurrent();
       render();
-      void read();
+      if (!prepared) void read();
     },
     statusChanged() { if (title) {render();if (!summary?.ready) void read();} },
     busy:()=>false,
