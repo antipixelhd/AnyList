@@ -2151,7 +2151,12 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
             extras = [episode for episode in await released_episodes(db, media) if episode.id not in selected_ids]
             episodes = [*episodes, *extras]
             unmapped = {episode.id for episode in extras}
-        target = 1 if date_driven_movie else (1 if status == 'completed' else 0) if status_driven_movie else len(episodes) if body.mark_released_watched or completing_series else body.progress
+        if date_driven_movie:
+            target = 1
+        elif status_driven_movie:
+            target = 1 if status == 'completed' else old_progress if status == previous else 0
+        else:
+            target = len(episodes) if body.mark_released_watched or completing_series else body.progress
         if not episodes or (target is not None and target > len(episodes)):
             raise HTTPException(409, "Released episode metadata is needed before changing progress")
         ids = [m.id for m in episodes]

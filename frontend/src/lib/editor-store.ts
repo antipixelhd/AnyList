@@ -252,7 +252,7 @@ export class EditorStore {
         entry.achievements=achievements;
       }
       if ('status' in operation.patch && record.title.type === 'movie') {
-        entry.progress = entry.status === 'completed' ? 1 : 0;
+        entry.progress = entry.status === 'completed' ? 1 : entry.status === previous ? previousProgress : 0;
       } else if (entry.status === 'completed' && previous !== 'completed' && record.title.type === 'series'
           && !('progress' in operation.patch)) {
         const seasons = (record.title as EditorTitle & {seasons?: {season_number:number;released_count:number|null}[]}).seasons;

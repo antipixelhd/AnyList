@@ -196,3 +196,10 @@ class EditorDateIntentTests(unittest.IsolatedAsyncioTestCase):
             (response.json()["status"], response.json()["progress"]), ("paused", 1)
         )
         self.assertEqual(response.json()["finish_date"], "2024-02-05")
+        response = await self.client.patch(
+            f"/tracking/entry/{movie_id}",
+            json={"status": "paused", "notes": "Keep this progress"},
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["progress"], 1)
+        self.assertEqual(response.json()["finish_date"], "2024-02-05")

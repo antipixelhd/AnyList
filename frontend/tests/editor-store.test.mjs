@@ -677,6 +677,14 @@ test('a movie finish date projects watched progress without projecting Completed
   await turn();pending.resolve({id:1,status:'dropped',progress:1});await write;
 });
 
+test('resaving an unchanged paused movie status preserves date-driven watched progress',async()=>{
+  const pending=deferred();const store=new EditorStore(()=>pending.promise);
+  const title=store.seed({...draft(),id:1,entry:{status:'paused',progress:1,finish_date:'2026-11-13'}});
+  const write=store.write(title,{status:'paused',notes:'Keep this progress'});
+  assert.equal(title.entry.status,'paused');assert.equal(title.entry.progress,1);
+  await turn();pending.resolve({id:1,status:'paused',progress:1,finish_date:'2026-11-13'});await write;
+});
+
 test('starting a later season does not optimistically invent the overall first-season start',async()=>{
   const pending=deferred();const store=new EditorStore(()=>pending.promise);
   const title=store.seed({...draft(),id:1,type:'series',entry:{status:'planning',progress:0,start_date:null}});
