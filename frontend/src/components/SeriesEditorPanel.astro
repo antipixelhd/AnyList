@@ -1,154 +1,135 @@
 ---
 import CalendarDateInput from './CalendarDateInput.astro';
 import NumberStepper from './NumberStepper.astro';
+import EditorSelect from './EditorSelect.astro';
 import Icon from './Icon.astro';
 ---
 <section class="wide series-editor-panel" data-series-editor hidden aria-label="Series progress">
-  <div class="series-editor-toolbar">
-    <div class="series-editor-modes" role="group" aria-label="Progress view">
-      <button type="button" data-series-mode="episode" aria-controls="editor-episode-view editor-episode-list" aria-pressed="false">Episodes</button>
-      <button type="button" data-series-mode="season" aria-controls="editor-season-list" aria-pressed="true">Seasons</button>
-    </div>
-    <button type="button" class="series-editor-text series-editor-expand" data-series-expand aria-expanded="false" hidden></button>
-  </div>
   <p class="series-editor-message" data-series-loading role="status">Loading progress…</p>
   <button type="button" class="series-editor-text" data-series-retry hidden>Retry</button>
-  <div id="editor-episode-view" class="series-editor-card" data-series-card hidden>
-    <div class="series-editor-art" data-series-art aria-hidden="true">
-      <span class="series-editor-art-icon"><Icon name="play"/></span>
-      <span data-series-image-placeholder hidden></span>
-    </div>
-    <div class="series-editor-card-info">
-      <span data-series-position></span>
-      <strong data-series-title></strong>
-      <small data-series-meta></small>
-    </div>
-    <button type="button" class="button-primary series-editor-watch" data-series-watch>Mark watched</button>
-  </div>
-  <ul id="editor-episode-list" class="series-editor-episode-list" data-series-episodes hidden></ul>
-  <div id="editor-season-list" class="series-editor-list" data-series-list hidden>
-    <ul data-series-rows aria-label="Seasons"></ul>
-  </div>
-  <template data-series-episode-template>
-    <li class="series-editor-episode-row">
-      <span data-episode-label></span>
-      <button type="button" class="series-editor-text" data-episode-watch>Mark watched</button>
-      <span class="series-editor-season-state" data-episode-watched hidden><Icon name="check"/><span class="sr-only">Watched</span></span>
-      <span class="series-editor-season-state" data-episode-upcoming hidden>Unreleased</span>
-    </li>
-  </template>
-  <template data-series-row-template>
-    <li class="series-editor-row">
-      <div class="series-editor-row-heading">
-        <button type="button" class="series-editor-season-toggle" data-season-toggle aria-expanded="false">
-          <Icon name="chevron-down"/>
-          <span data-season-label></span>
-        </button>
-        <strong class="series-editor-season-title" data-season-title hidden></strong>
-        <small data-season-progress></small>
-        <span class="series-editor-row-action">
-          <button type="button" class="series-editor-text" data-season-watch>Mark watched</button>
-          <span class="series-editor-season-state" data-season-state hidden></span>
+  <div data-series-content hidden>
+    <div class="series-editor-progress">
+      <div class="series-editor-poster" data-series-poster aria-hidden="true"></div>
+      <div class="series-editor-season-picker">
+        <label id="series-season-label">Season</label>
+        <div class="series-editor-season-navigation">
+          <button type="button" class="series-editor-cycle" data-series-prev aria-label="Previous season"><Icon name="chevron-down" rotate={90}/></button>
+          <EditorSelect id="series-season" name="series_season" label="Season" labelledBy="series-season-label"/>
+          <button type="button" class="series-editor-cycle" data-series-next aria-label="Next season"><Icon name="chevron-down" rotate={270}/></button>
+        </div>
+      </div>
+      <div class="series-editor-count">
+        <label for="series-episode-count">Episodes <span data-series-total></span></label>
+        <span class="score-stepper">
+          <input id="series-episode-count" data-series-count type="number" min="0" step="1" inputmode="numeric" aria-label="Episodes watched" required disabled/>
+          <span class="score-stepper-controls">
+            <button type="button" data-series-step="1" aria-label="Increase episode progress"><Icon name="chevron-down" rotate={180}/></button>
+            <button type="button" data-series-step="-1" aria-label="Decrease episode progress"><Icon name="chevron-down"/></button>
+          </span>
         </span>
       </div>
-      <div class="series-editor-row-reveal" data-season-reveal inert><div class="series-editor-row-clip"></div></div>
-    </li>
-  </template>
-  <template data-series-fields-template>
-    <div class="series-editor-fields">
-      <div class="series-editor-date-pair">
+    </div>
+    <div class="series-editor-toolbar"><h3>Season details</h3><button type="button" class="series-editor-text series-editor-expand" data-series-expand aria-expanded="false" aria-controls="editor-season-list"><span data-series-expand-label>All seasons</span><Icon name="chevron-down"/></button></div>
+    <ul id="editor-season-list" class="series-editor-list" data-series-rows aria-label="Season dates and scores"></ul>
+    <div class="series-editor-card" data-series-card hidden>
+      <div class="series-editor-art" data-series-art aria-hidden="true"><span class="series-editor-art-icon"><Icon name="play"/></span><span data-series-image-placeholder hidden></span></div>
+      <div class="series-editor-card-info"><span data-series-position></span><strong data-series-title></strong></div>
+      <button type="button" class="button-primary series-editor-watch" data-series-watch>Mark watched</button>
+    </div>
+  </div>
+  <template data-series-row-template>
+    <li class="series-editor-row">
+      <div class="series-editor-row-heading" data-season-heading><div class="series-editor-poster" data-season-poster aria-hidden="true"></div><strong data-season-label></strong><small data-season-progress></small></div>
+      <div class="series-editor-fields">
         <div><label data-season-date-label="start">Start date</label><CalendarDateInput id="season-start" name="series_start" label="Start date"/></div>
         <div><label data-season-date-label="finish">Finish date</label><CalendarDateInput id="season-finish" name="series_finish" label="Finish date"/></div>
+        <div><label data-season-score-label>Score</label><NumberStepper id="season-score" name="series_score" label="Season score" min={0} max={10} step={0.1} score/></div>
       </div>
-      <div class="series-editor-score">
-        <label data-season-score-label>Score</label>
-        <NumberStepper id="season-score" name="series_score" label="Season score" min={0} max={10} step={0.1} score/>
-      </div>
-      <details class="series-editor-adjust" data-season-adjust>
-        <summary>Adjust progress</summary>
-        <div class="series-editor-count">
-          <label data-season-count-label>Episodes watched</label>
-          <span class="score-stepper">
-            <input id="season-count" type="number" min="0" step="1" inputmode="numeric"/>
-            <span class="score-stepper-controls">
-              <button type="button" data-series-step="1" aria-label="Increase episode progress"><Icon name="chevron-down" rotate={180}/></button>
-              <button type="button" data-series-step="-1" aria-label="Decrease episode progress"><Icon name="chevron-down"/></button>
-            </span>
-          </span>
-        </div>
-      </details>
-    </div>
+    </li>
   </template>
   <span class="sr-only" data-series-announcement role="status" aria-live="polite"></span>
 </section>
 <style is:global>
   .editor .editor-fields[data-series-tracked] { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .editor:has([data-series-tracked]) { width:min(760px,calc(100vw - 32px)); max-height:min(calc(100dvh - 24px),820px); }
+  .editor:has([data-series-tracked]) .editor-hero { position:sticky; top:0; z-index:2; }
+  .editor:has([data-series-tracked]) .editor-hero:has(.editor-poster[hidden]) { height:100px; }
+  .editor:has([data-series-tracked]) .editor-hero:has(.editor-poster[hidden]) .editor-heading { left:36px; }
+  .editor:has([data-series-tracked]) .editor-hero:has(.editor-poster[hidden]) + form { padding-top:22px; }
   .editor-fields > .series-editor-panel { grid-column:1 / -1; }
   .editor-fields[data-series-tracked] > .editor-rewatches { grid-column:auto; grid-row:auto; }
   .editor-fields[data-series-tracked] > .editor-notes { max-width:none; }
   .series-editor-panel { min-width:0; }
-  .series-editor-toolbar { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px; }
-  .series-editor-expand { padding:6px 0 6px 6px; font-size:var(--type-label-size); white-space:nowrap; }
-  .series-editor-modes { display:inline-flex; gap:2px; padding:3px; border-radius:9px; background:var(--field); }
-  .series-editor-modes button,.series-editor-text,.series-editor-season-toggle { border:0; background:none; color:var(--muted); cursor:pointer; }
-  .series-editor-modes button { padding:5px 13px; min-height:30px; border-radius:6px; }
-  .series-editor-modes button[aria-pressed=true] { background:var(--surface-hover,#21394a); color:var(--bright); }
-  .series-editor-panel :is(button,summary):focus-visible { outline:none; color:var(--bright); }
-  .series-editor-panel :is(button,summary):hover { color:var(--bright); }
-  .series-editor-modes button:focus-visible { background:var(--surface-hover,#21394a); }
-  .series-editor-panel button:disabled { cursor:default; }
-  .series-editor-message { padding:12px 0; color:var(--muted); }
-  .series-editor-card { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:12px; padding:12px; background:var(--field); border-radius:9px; }
-  .series-editor-card-info { display:grid; grid-template-rows:1.15rem 1.35rem 1.1rem; gap:2px; align-content:center; min-width:0; }
-  .series-editor-card-info :is(span,small),.series-editor-row-heading small { color:var(--muted); }
-  .series-editor-card-info > :is(span,strong,small) { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .series-editor-art { width:92px; aspect-ratio:16 / 9; position:relative; background:var(--panel); border-radius:5px; overflow:hidden; }
+
+  .series-editor-progress { display:grid; grid-template-columns:44px minmax(0,1fr) minmax(140px,.7fr); gap:14px; align-items:center; }
+  .series-editor-poster { width:44px; height:66px; border-radius:4px; overflow:hidden; background:var(--field); color:var(--muted); display:grid; place-items:center; font-size:18px; }
+  .series-editor-poster img { width:100%; height:100%; object-fit:cover; }
+  .series-editor-season-navigation { display:flex; align-items:center; gap:5px; margin-top:6px; }
+  .series-editor-season-navigation .editor-status-dropdown { flex:1; min-width:0; }
+  .series-editor-cycle { flex:none; width:44px; min-height:44px; padding:0; display:grid; place-items:center; background:none; border:0; color:var(--text); cursor:pointer; }
+  .series-editor-cycle svg { width:12px; }
+  .series-editor-cycle:disabled { opacity:.3; cursor:default; }
+  .series-editor-panel .score-stepper { display:flex; width:100%; margin-top:6px; min-width:0; }
+  .series-editor-panel .score-stepper input { width:100%; min-width:0; height:42px; min-height:42px; }
+  .series-editor-count label span { color:var(--muted); }
+  .series-editor-toolbar { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:12px; }
+  .series-editor-toolbar h3 { font-size:var(--type-label-size); font-weight:600; margin:0; color:var(--text); }
+  .series-editor-text { border:0; background:none; color:var(--text); cursor:pointer; padding:0; }
+  .series-editor-expand { display:flex; align-items:center; gap:6px; min-height:40px; font-size:var(--type-label-size); }
+  .series-editor-expand svg { width:10px; transition:transform .18s ease; }
+  .series-editor-expand[aria-expanded=true] svg { transform:rotate(180deg); }
+  .series-editor-panel :is(button,input):focus-visible { outline:none; color:var(--bright); }
+  .series-editor-panel input:focus-visible { background:var(--surface-hover,#21394a); }
+  .series-editor-panel button:hover:not(:disabled),.series-editor-cycle:focus-visible { color:var(--bright); }
+  .series-editor-list { list-style:none; margin:0; padding:0; }
+  .series-editor-row:not([hidden]) ~ .series-editor-row:not([hidden]) { padding-top:14px; margin-top:14px; border-top:1px solid color-mix(in srgb,var(--muted) 16%,transparent); }
+  .series-editor-row-heading { display:flex; gap:10px; align-items:center; padding-bottom:8px; }
+  .series-editor-row-heading .series-editor-poster { width:28px; height:42px; font-size:14px; }
+  .series-editor-row-heading strong { font-size:14px; color:var(--bright); }
+  .series-editor-row-heading small { color:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; }
+  .series-editor-fields { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(75px,.5fr); gap:10px; }
+  .series-editor-fields > div { min-width:0; }
+  .series-editor-fields label { white-space:nowrap; }
+  .series-editor-card { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:12px; padding:12px; margin-top:18px; background:var(--field); border-radius:8px; }
+  .series-editor-card-info { display:grid; gap:3px; min-width:0; }
+  .series-editor-card-info span { font-size:12px; line-height:18px; color:var(--text); }
+  .series-editor-card-info strong { font-size:14px; line-height:21px; color:var(--bright); }
+  .series-editor-card-info > * { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .series-editor-art { width:76px; aspect-ratio:16 / 9; position:relative; background:var(--panel); border-radius:4px; overflow:hidden; }
   .series-editor-art img,.series-editor-art span { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
   .series-editor-art-icon { display:grid; place-items:center; color:var(--muted); opacity:.55; }
-  .series-editor-art [data-series-image-placeholder] { background-color:var(--panel); }
-  .series-editor-watch { white-space:nowrap; }
-  .series-editor-watch:disabled { color:var(--muted); background:transparent; }
-  .series-editor-list ul,.series-editor-episode-list { list-style:none; padding:0; margin:0; }
-  .series-editor-episode-row { display:flex; align-items:center; justify-content:space-between; gap:12px; min-height:42px; border-bottom:1px solid color-mix(in srgb,var(--muted) 16%,transparent); }
-  .series-editor-episode-row button { min-height:40px; padding:0; color:var(--accent-bright,var(--bright)); font-size:var(--type-caption-size); }
-  .series-editor-row { border-bottom:1px solid color-mix(in srgb,var(--muted) 16%,transparent); }
-  .series-editor-row-heading { min-height:44px; display:grid; grid-template-columns:minmax(0,1fr) 4ch minmax(6.8em,auto); align-items:center; column-gap:14px; }
-  .series-editor-row-heading small { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
-  .series-editor-season-toggle { display:flex; align-items:center; gap:8px; min-width:0; min-height:44px; padding:0; text-align:left; color:var(--text); font-weight:600; }
-  .series-editor-season-toggle span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .series-editor-season-title { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .series-editor-list[data-current-only] .series-editor-fields { padding-left:0; }
-  .series-editor-season-toggle svg { width:11px; flex:none; color:var(--muted); transform:rotate(-90deg); transition:transform .18s ease; }
-  .series-editor-season-toggle[aria-expanded=true] svg { transform:rotate(0); color:var(--bright); }
-  .series-editor-season-toggle:focus-visible svg,.series-editor-season-toggle:hover svg { color:var(--bright); }
-  .series-editor-row-action { display:grid; justify-items:end; min-width:6.8em; white-space:nowrap; font-size:var(--type-caption-size); }
-  .series-editor-row-action button { min-height:40px; padding:0; color:var(--accent-bright,var(--bright)); }
-  .series-editor-season-state { color:var(--muted); }
-  .series-editor-row-reveal { display:grid; grid-template-rows:0fr; opacity:0; transition:grid-template-rows .2s ease,opacity .16s ease; }
-  .series-editor-row[data-open] .series-editor-row-reveal { grid-template-rows:1fr; opacity:1; }
-  .series-editor-row-clip { min-height:0; overflow:hidden; }
-  .series-editor-fields { display:grid; grid-template-columns:minmax(0,1fr) minmax(5.5rem,.42fr); gap:8px 12px; padding:4px 0 14px 19px; }
-  .series-editor-date-pair { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
-  .series-editor-fields :is(input,.score-stepper) { min-width:0; width:100%; }
-  .series-editor-fields .score-stepper { margin-top:6px; }
-  .series-editor-adjust { grid-column:1 / -1; }
-  .series-editor-adjust summary { cursor:pointer; color:var(--muted); padding-block:5px; }
-  .series-editor-count { max-width:10rem; }
-  .series-editor-count label { display:block; margin-top:4px; }
-  .series-airing-dialog .editor-confirmation-actions { flex-wrap:wrap; }
+  .series-editor-watch { white-space:nowrap; font-size:13px; }
+  .series-editor-message { padding:12px 0; color:var(--muted); }
   .series-editor-panel [hidden],.series-editor-panel[hidden] { display:none!important; }
-  @media (max-width:650px) {
-    .series-editor-card { grid-template-columns:auto minmax(0,1fr); gap:8px 10px; }
-    .series-editor-watch { grid-column:2; justify-self:start; }
-    .series-editor-art { width:76px; }
-    .series-editor-row-heading { column-gap:8px; }
-  }
+  .series-airing-dialog .editor-confirmation-actions { flex-wrap:wrap; }
   @media (max-width:460px) {
-    .series-editor-fields { grid-template-columns:minmax(0,1fr); padding-left:0; }
-    .series-editor-score { max-width:8rem; }
+    .editor:has([data-series-tracked]) { width:calc(100vw - 18px); }
+    .editor:has([data-series-tracked]) .editor-hero,
+    .editor:has([data-series-tracked]) .editor-hero:has(.editor-poster[hidden]) {
+      height:auto; min-height:0; padding:32px 16px 12px; gap:8px 10px;
+      grid-template-columns:auto minmax(0,1fr); grid-template-rows:auto auto;
+    }
+    .editor:has([data-series-tracked]) .editor-hero .editor-poster { width:40px; height:58px; }
+    .editor:has([data-series-tracked]) .editor-hero .editor-heading { grid-row:1; }
+    .editor:has([data-series-tracked]) .editor-hero:has(.editor-poster[hidden]) .editor-heading { left:auto; grid-column:1 / -1; }
+    .editor:has([data-series-tracked]) .editor-hero .editor-hero-actions { grid-row:2; }
+    .editor:has([data-series-tracked]) #tracking-form { padding-top:16px; }
+    .editor:has([data-series-tracked]) .editor-fields[data-series-tracked] { grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+
+    .series-editor-progress { grid-template-columns:32px minmax(0,1fr); gap:8px 10px; }
+    .series-editor-progress > .series-editor-poster { width:32px; height:48px; }
+    .series-editor-season-navigation { gap:0; }
+    .series-editor-count { grid-column:1 / -1; display:grid; grid-template-columns:minmax(0,1fr) 104px; align-items:center; }
+    .series-editor-count .score-stepper { margin-top:0; }
+    .series-editor-season-navigation .editor-status-trigger { padding-inline:8px; gap:5px; }
+    .series-editor-count label { font-size:var(--type-label-size); }
+    .series-editor-fields { gap:6px; grid-template-columns:minmax(0,1fr) minmax(0,1fr) 70px; }
+    .series-editor-fields [data-date-display] { padding-left:8px; padding-right:26px; font-size:12px; }
+    .series-editor-fields [data-date-picker] { right:0; width:24px; }
+    .series-editor-fields label { font-size:12px; }
+    .series-editor-card { grid-template-columns:auto minmax(0,1fr); gap:7px 10px; padding:10px; }
+    .series-editor-art { grid-row:1 / 3; width:64px; }
+    .series-editor-watch { grid-column:2; justify-self:start; min-height:36px; }
   }
-  @media (max-width:420px) { .editor .editor-fields[data-series-tracked] { grid-template-columns:minmax(0,1fr); } }
-  @media (prefers-reduced-motion:reduce) {
-    .series-editor-row-reveal,.series-editor-season-toggle svg { transition:none; }
-  }
+  @media (prefers-reduced-motion:reduce) { .series-editor-expand svg { transition:none; } }
 </style>

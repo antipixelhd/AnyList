@@ -123,7 +123,8 @@ async def editor_summary(db, media, user_id, context):
         key = membership_key(members)
         metadata = context.metadata.get(number, {})
         season = {'season_number': number, 'membership': key,
-            'name': metadata.get('name'), 'total': expected or len(members), 'score': ratings.get(number),
+            'name': metadata.get('name'), 'poster': metadata.get('poster_path'),
+            'total': expected or len(members), 'score': ratings.get(number),
             'episodes': [{'id': ep.id, 'number': context.positions[ep.id][1], 'watched': ep.id in context.watched}
                 for ep in members if ep.id in released],
             'upcoming': [{'id': ep.id, 'number': context.positions[ep.id][1]}

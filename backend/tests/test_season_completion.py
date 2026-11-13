@@ -340,6 +340,27 @@ class SeasonDatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(entry.start_date)
             self.assertEqual(entry.start_date_source,'manual')
 
+    async def test_legacy_series_start_survives_reliable_watches_and_repeated_reconciliation(self):
+        async with self.Session() as db:
+            entry=await db.scalar(select(TrackedEntry).where(TrackedEntry.media_id==self.series_id))
+            entry.start_date=date(2023,12,20)
+            entry.start_date_source=None
+            await db.commit()
+        for _ in range(2):
+            async with self.Session() as db:
+                await reconcile(db,self.user_id,self.series_id)
+                await db.commit()
+            summary=(await self.client.get(f'/tracking/entry/{self.series_id}/series-editor')).json()
+            self.assertEqual(summary['seasons'][0]['start_date'],'2023-12-20')
+        async with self.Session() as db:
+            entry=await db.scalar(select(TrackedEntry).where(TrackedEntry.media_id==self.series_id))
+            self.assertEqual(entry.start_date,date(2023,12,20))
+        first=summary['seasons'][0]
+        changed=await self.client.patch(f'/tracking/entry/{self.series_id}',json={'series_editor':{'order':summary['order'],'seasons':[
+            {'season_number':1,'membership':first['membership'],'start_date':'2024-03-01'}]}})
+        self.assertEqual(changed.status_code,200,changed.text)
+        self.assertEqual(changed.json()['start_date'],'2024-03-01')
+
     async def test_release_boundary_clears_compatibility_date_without_touching_previous_season(self):
         future=date.today()+timedelta(days=7)
         async with self.Session() as db:

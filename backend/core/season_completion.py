@@ -182,13 +182,17 @@ async def reconcile(db, user_id, media_id, *, groups_data=None, edits=(), series
         reliable = reliable_watches(history)
         if not tracking.start_manual:
             first = min(reliable, key=reliable.get, default=None)
-            if first is not None:
+            if number == first_season and legacy_start:
+                # Older entries have no provenance. Preserve their saved date
+                # instead of replacing a possible manual date with watch history.
+                tracking.start_date, tracking.start_source = legacy_start, 'inferred'
+                tracking.start_evidence = {'rule': 'legacy_series_start'}
+            elif tracking.start_evidence.get('rule') == 'legacy_series_start':
+                pass
+            elif first is not None:
                 tracking.start_date = reliable[first].date()
                 tracking.start_source = 'episode' if episodes[0].id in reliable else 'inferred'
                 tracking.start_evidence = {'rule': 'first_season_watch', 'episode_id': first}
-            elif number == first_season and legacy_start:
-                tracking.start_date, tracking.start_source = legacy_start, 'inferred'
-                tracking.start_evidence = {'rule': 'legacy_series_start'}
             elif tracking.start_evidence.get('rule') != 'legacy_series_start':
                 tracking.start_date, tracking.start_source, tracking.start_evidence = None, None, {}
         if number == first_season and (series_start_override is not None or
