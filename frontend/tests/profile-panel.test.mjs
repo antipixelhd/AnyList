@@ -3,11 +3,12 @@ import {stripTypeScriptTypes} from 'node:module';
 import {runInNewContext} from 'node:vm';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {profilePanelKey,panelActive,panelUrl,setPanelUrl,setPanelWaiting} from '../src/lib/profile-panel.ts';
+import {isProfileList,profilePanelKey,panelActive,panelUrl,setPanelUrl,setPanelWaiting} from '../src/lib/profile-panel.ts';
 
-test('profile panels are limited to lists and statistics of an exact profile',()=>{
-  for(const key of ['movies','series','list','games','stats','stats/games'])assert.deepEqual(profilePanelKey(new URL(`https://example.test/user/alex%20one/${key}/?section=genres`)),{username:'alex one',key});
-  for(const path of ['/user/alex','/user/alex/favorites','/user/alex/social','/settings','/games/1','/user/alex/stats/games/other'])assert.equal(profilePanelKey(new URL(path,'https://example.test')),undefined);
+test('the profile shell recognizes every profile tab and rejects unrelated or malformed routes',()=>{
+  for(const key of ['movies','series','list','games','stats','stats/games','favorites','social','library'])assert.deepEqual(profilePanelKey(new URL(`https://example.test/user/alex%20one/${key}/?section=genres`)),{username:'alex one',key});
+  assert.deepEqual(profilePanelKey(new URL('https://example.test/user/alex/')),{username:'alex',key:'overview'});
+  for(const path of ['/settings','/games/1','/user/alex/stats/games/other','/user/%ff'])assert.equal(profilePanelKey(new URL(path,'https://example.test')),undefined);
 });
 test('inactive completions update their own URL without changing the active page or history',t=>{
   const before=Object.getOwnPropertyDescriptor(globalThis,'history'),calls=[];
@@ -49,10 +50,10 @@ test('reclicking a selected or pending profile tab cannot escape into full-page 
 
 test('a failed statistics load keeps its destination frame and leaves the retained source usable',()=>{
   const sourceText=readFileSync(new URL('../src/lib/profile-shell.ts',import.meta.url),'utf8');
-  const start=sourceText.indexOf('    const failed=()=>{');
+  const start=sourceText.indexOf('    const failed=');
   const snippet=sourceText.slice(start,sourceText.indexOf('    if(cached?.ready)',start));
   const source={dispatchEvent(){}},preview={prepend(){}},scrolls=[],states=[];
-  const context={stopProgress(){},signal:new AbortController().signal,wanted:'stats',key:'stats',active:'movies',source,shown:preview,
+  const context={isCurrent:()=>true,ProfileAccessChanged:class extends Error{},fromTab:true,restore:undefined,stopProgress(){},signal:new AbortController().signal,wanted:'stats',key:'stats',active:'movies',source,shown:preview,
     positions:new Map([['movies',1250]]),scrollY:150,window:{scrollTo:(x,y)=>scrolls.push(y)},
     setPanelWaiting:(root,on)=>states.push([root,on]),show:root=>context.shown=root,nav:{removeAttribute(){}},update(){},
     document:{createElement:()=>({dataset:{},setAttribute(){},addEventListener(){},append(){}})},host:{append(){}},Event,select(){},url:'/user/alex/stats',
@@ -61,19 +62,19 @@ test('a failed statistics load keeps its destination frame and leaves the retain
   assert.equal(context.shown,preview);assert.equal(context.wanted,'stats');assert.deepEqual(scrolls,[]);assert.deepEqual(states,[[source,false]]);
 });
 
-for(const destination of ['games','stats','stats/games'])test(`a cold ${destination} selection shows its frame and keeps shared page progress`,async()=>{
+for(const destination of ['games','stats','stats/games','favorites','social','overview'])test(`a cold ${destination} selection shows its frame and keeps shared page progress`,async()=>{
   const sourceText=readFileSync(new URL('../src/lib/profile-shell.ts',import.meta.url),'utf8');
   const start=sourceText.indexOf('  function select(');
   const snippet=sourceText.slice(start,sourceText.indexOf('  const target=',start));
   const source={dataset:{},matches:()=>false,dispatchEvent(){}},preview={kind:'games',dataset:{},prepend(){}},waiting=[],scrolls=[];let rejectRead;
   const events=[];
-  const context={URL,changeStatistics:{cancel(){}},stopProgress(){},progressRunning:false,signal:new AbortController().signal,wanted:'movies',active:'movies',shown:source,scrollY:780,
+  const context={URL,isProfileList,isProfileSummary:()=>false,owner:true,selection:0,refreshFlight:undefined,ProfileAccessChanged:class extends Error{},viewer:'1',stopProgress(){},progressRunning:false,signal:new AbortController().signal,wanted:'movies',active:'movies',shown:source,scrollX:0,scrollY:780,
     panels:new Map([['movies',{root:source,ready:true}]]),loadingTemplates:new Map(),profileLoadingFrame:()=>preview,
     createLoadingReveal:()=>({begin(){},finish(){}}),
     read:()=>new Promise((resolve,reject)=>rejectRead=reject),setPanelWaiting:(root,on)=>waiting.push([root,on]),update(){},
     show:root=>context.shown=root,nav:{setAttribute(){},removeAttribute(){},getBoundingClientRect:()=>({top:-600})},
     host:{querySelector:()=>null,append(){}},window:{scrollTo:(_x,y)=>scrolls.push(y)},location:{href:'https://example.test/user/alex/movies'},
-    document:{dispatchEvent:event=>events.push(event.type),createElement:()=>({dataset:{},setAttribute(){},addEventListener(){},append(){}})},Event,CustomEvent,
+    document:{body:{dataset:{cacheUser:'1'}},dispatchEvent:event=>events.push(event.type),createElement:()=>({dataset:{},setAttribute(){},addEventListener(){},append(){}})},Event,CustomEvent,
   };
   runInNewContext(stripTypeScriptTypes(snippet)+';this.select=select;',context);
   context.select(destination);assert.equal(context.shown,preview);assert(events.includes('anylist:route-progress-start'));assert.equal(context.wanted,destination);
@@ -97,7 +98,7 @@ test('the statistics controller owns its media filter even when the shell entere
 test('profile prediction retains destination styles without applying them until selection',()=>{
   const source=readFileSync(new URL('../src/lib/profile-shell.ts',import.meta.url),'utf8');
   const read=source.slice(source.indexOf('  async function read('),source.indexOf('  function show('));
-  assert.doesNotMatch(read,/preparePanelStyles/);assert.match(read,/styles:doc/);
+  assert.doesNotMatch(read,/preparePanelStyles/);assert.match(read,/createPanel\(root,url,doc.title,key,styles\)/);
   const activate=source.slice(source.indexOf('    const activate='),source.indexOf('    const failed='));
   assert(activate.indexOf('await preparePanelStyles')<activate.indexOf('stage.append(root)'));
   assert.match(activate,/await document\.fonts\.ready/);
@@ -131,8 +132,8 @@ test('failed component loading waits for staged styles before its cleanup can ru
   const moduleRead=Promise.reject(failure);
   let finishStyles;
   const styles=new Promise(resolve=>{finishStyles=resolve;});
-  const snippet=source.slice(start,end).replaceAll(/import\('\.\/[^']+'\)/g,'moduleRead');
-  const initialize=runInNewContext(stripTypeScriptTypes(snippet)+';initialize;',{moduleRead});
+  const snippet=source.slice(start,end);
+  const initialize=runInNewContext(stripTypeScriptTypes(snippet)+';initialize;',{panelInitializer:()=>moduleRead});
   const panel={root:{isConnected:true,querySelector:()=>null},kind:'games',ready:false};
   const pending=initialize(panel,new AbortController().signal,styles);
   let settled=false;

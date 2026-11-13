@@ -1,26 +1,41 @@
 import {statisticsDomainUrl} from './statistics-domains';
 import {preparePanelStyles,panelLayoutFrame} from './panel-readiness';
-import {profilePanelKey,setPanelWaiting} from './profile-panel';
+import {isProfileList,isProfileSummary,profilePanelKey,profileRefreshAge,setPanelWaiting} from './profile-panel';
 import {bindPredictionIntent,predictionManifest} from './predictive-loading';
 import {profileLoadingFrame} from './profile-loading';
 import {settleNavigationContent,cancelLoadingReveals} from './loading-reveal';
+import {startVisibleRefresh} from './visible-refresh';
+import {editorStore} from './editor-store';
 
-type Panel={root:HTMLElement;url:string;title:string;ready:boolean;kind:string;styles?:Document;initializing?:Promise<void>;preparing?:Promise<void>};
+const summaryBudget = 512 * 1024;
+type Panel={root:HTMLElement;url:string;title:string;ready:boolean;kind:string;lifetime:AbortController;styles?:DocumentFragment;templates?:HTMLTemplateElement[];initializing?:Promise<void>;preparing?:Promise<void>;summary?:string;checkedAt:number;visibilityCheckedAt:number;revision:number};
 let session:AbortController|undefined;
 let currentHost:HTMLElement|undefined;
-async function initialize(panel:Panel,signal:AbortSignal,styles?:Promise<void>){
+const summaryHtml=(panel:Panel)=>panel.root.querySelector('[data-profile-tab-content]')?.outerHTML;
+
+function panelInitializer(kind:string){
+  switch(kind){
+    case 'overview': return Promise.resolve(undefined);
+    case 'favorites': return import('./profile-favorites-panel').then(module=>module.initializeFavorites);
+    case 'social': return import('./profile-social-panel').then(module=>module.initializeSocial);
+    case 'library': return import('./profile-library-panel').then(module=>module.initializeLibrary);
+    case 'stats':
+    case 'stats/games': return import('./stats-overview').then(module=>module.initializeStatistics);
+    case 'games': return import('./game-list').then(module=>module.initializeGameList);
+    default: return import('./profile-list').then(module=>module.initializeProfileList);
+  }
+}
+
+async function initialize(panel:Panel,signal:AbortSignal,styles?:Promise<void>,component=panelInitializer(panel.kind)){
   if(panel.ready)return;
   if(panel.initializing)return panel.initializing;
   const pending=(async()=>{
     const statistics=panel.root.querySelector<HTMLElement>('[data-integrated-statistics]');
-    const component=statistics?import('./stats-overview').then(module=>module.initializeStatistics)
-      :panel.kind==='games'?import('./game-list').then(module=>module.initializeGameList)
-      :import('./profile-list').then(module=>module.initializeProfileList);
     const [loaded,layout]=await Promise.allSettled([component,styles]);
     if(loaded.status==='rejected')throw loaded.reason;
     if(layout.status==='rejected')throw layout.reason;
     if(signal.aborted||!panel.root.isConnected)return;
-    loaded.value(statistics??panel.root,signal);panel.ready=true;
+    loaded.value?.(statistics??panel.root,AbortSignal.any([signal,panel.lifetime.signal]));panel.ready=true;
   })().finally(()=>{panel.initializing=undefined;});
   panel.initializing=pending;return pending;
 }
@@ -32,65 +47,175 @@ function setup(){
   currentHost=host;host.dataset.profileShell='';
   const viewer=document.body.dataset.cacheUser,approved=document.body.dataset.gamesApproved;
   const header=host.querySelector<HTMLElement>('.profile-hero')!,nav=host.querySelector<HTMLElement>('.profile-tabs')!;
+  const owner=nav.dataset.profileOwner==='yes';
+  const visibilityPath=`/api/proxy/tracking/people/${encodeURIComponent(route.username)}/header`;
   let generation=0;
+  let summaryRevision=0;
   const panels=new Map<string,Panel>(),flights=new Map<string,Promise<Panel>>();
-  const invalidate=()=>{generation++;for(const [key,panel] of panels)if(!panel.ready)panels.delete(key);};
-  document.addEventListener('anylist:editor-state',invalidate,{signal});
-  document.addEventListener('anylist:cache-invalidated',invalidate,{signal});
-  document.addEventListener('anylist:game-categories',()=>{generation++;for(const [key,panel] of panels)if(panel.root!==shown)panels.delete(key);},{signal});
-  document.addEventListener('anylist:screen-categories',()=>{
-    generation++;
-    for(const [key,panel] of panels)if(panel.root!==shown&&key!==active&&['movies','series','list'].includes(key)){
-      panels.delete(key);
-    }
-  },{signal});
+  const forget=(panel:Panel)=>{panel.lifetime.abort();for(const [key,value] of panels)if(value===panel)panels.delete(key);};
+  signal.addEventListener('abort',()=>{panels.clear();flights.clear();},{once:true});
   const first=document.createElement('div');first.dataset.profileUrl=location.href;
   for(const child of [...host.childNodes])if(child!==header&&child!==nav)first.append(child);
   const stage=document.createElement('div');stage.dataset.profilePanels='';host.append(stage);stage.append(first);
 
   let active=route.key,wanted=active,shown:HTMLElement=first;
-  const initial:Panel={root:first,url:location.href,title:document.title,ready:false,kind:active};panels.set(active,initial);
+  let selection=0;
+  const createPanel=(root:HTMLElement,url:string,title:string,kind:string,styles?:DocumentFragment):Panel=>{
+    const now=Date.now();
+    const panel:Panel={root,url,title,kind,styles,ready:false,lifetime:new AbortController(),checkedAt:now,visibilityCheckedAt:now,revision:summaryRevision};
+    if(isProfileSummary(kind)){
+      const html=summaryHtml(panel);
+      if(html&&new Blob([html]).size<=summaryBudget)panel.summary=html;
+    }
+    return panel;
+  };
+  const initial=createPanel(first,location.href,document.title,active);panels.set(active,initial);
   if(first.querySelector('[data-integrated-statistics]')){panels.set('stats',initial);panels.set('stats/games',initial);}
-  const targets=new Map<string,string>();
-  nav.querySelectorAll<HTMLAnchorElement>('a[href]').forEach(link=>{const url=new URL(link.href),match=profilePanelKey(url);if(match?.username===route.username)targets.set(match.key,url.href);});
-  const stats=`/user/${encodeURIComponent(route.username)}/stats`;
-  targets.set('stats',new URL(stats,location.origin).href);
-  if(approved==='true')targets.set('stats/games',new URL(stats+'/games',location.origin).href);
   function update(){
     for(const link of nav.querySelectorAll<HTMLAnchorElement>('a[href]')){
       const match=profilePanelKey(new URL(link.href));if(!match)continue;
       const selected=match.key===wanted||match.key==='stats'&&wanted==='stats/games';
       link.classList.toggle('active',selected);if(selected)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');
-      const panel=panels.get(match.key);if(panel)link.href=panel.root.dataset.profileUrl||panel.url;
     }
   }
+  function pruneLists(keep:Panel){
+    const hasCombined=!!nav.querySelector('a[href$="/list"]');
+    for(const [key,panel] of panels){
+      if(panel===keep||!isProfileList(key)||key==='games')continue;
+      if(hasCombined?key!=='list':key==='list')forget(panel);
+    }
+  }
+  async function readPage(url:string,readSignal:AbortSignal){
+    const response=await fetch(url,{signal:AbortSignal.any([readSignal,AbortSignal.timeout(15_000)]),credentials:'same-origin',cache:'no-store',headers:{Accept:'text/html'}});
+    if([401,403,404].includes(response.status)||response.redirected)throw new ProfileAccessChanged();
+    if(!response.ok)throw new Error('Unable to load this section.');
+    const html=await response.text();
+    if(!predictionManifest(html,viewer||'anonymous',approved==='true'))throw new ProfileAccessChanged();
+    const doc=new DOMParser().parseFromString(html,'text/html');
+    if(doc.body.dataset.cacheUser!==viewer||doc.body.dataset.gamesApproved!==approved)throw new ProfileAccessChanged();
+    const content=doc.querySelector('#content'),tabs=content?.querySelector<HTMLElement>('.profile-tabs');
+    if(!content||!tabs||tabs.dataset.profileBase!==nav.dataset.profileBase)throw new ProfileAccessChanged();
+    return {doc,content,tabs};
+  }
   async function read(key:string,url:string):Promise<Panel>{
-    const existing=panels.get(key);if(existing)return existing;
-    const flight=flights.get(key);if(flight)return flight;
+    const lookup=key.startsWith('stats')?'stats':key;
+    const existing=panels.get(lookup);if(existing)return existing;
+    const flight=flights.get(lookup);if(flight)return flight;
     const revision=generation;
+    const dataRevision=summaryRevision;
     const pending:Promise<Panel>=(async()=>{
-      const response=await fetch(url,{signal,credentials:'same-origin',headers:{Accept:'text/html'}});
-      if(!response.ok||response.redirected)throw new Error('Unable to load this section.');
-      const html=await response.text();
-      if(signal.aborted||!predictionManifest(html,viewer||'anonymous',approved==='true'))throw new Error('Account changed.');
-      const doc=new DOMParser().parseFromString(html,'text/html');
-      if(doc.body.dataset.cacheUser!==viewer)throw new Error('Account changed.');
-      if((key==='games'||key==='stats/games')&&doc.body.dataset.gamesApproved!=='true')throw new Error('Games access requires approval.');
-      const content=doc.querySelector('#content');if(!content?.querySelector('.profile-tabs'))throw new Error('Unable to load this section.');
+      const {doc,content,tabs}=await readPage(url,signal);
       if(signal.aborted||revision!==generation)throw new DOMException('Preview invalidated','AbortError');
       const root=document.createElement('div');root.dataset.profileUrl=url;
-      for(const child of [...content.childNodes])if(!(child instanceof Element)||!child.matches('.profile-hero,.profile-tabs'))root.append(child);
-      const panel:Panel={root,url,title:doc.title,ready:false,kind:key,styles:doc};panels.set(key,panel);if(root.querySelector('[data-integrated-statistics]')){panels.set('stats',panel);panels.set('stats/games',panel);}return panel;
-    })().finally(()=>flights.delete(key)).catch(error=>{if(!signal.aborted&&error instanceof DOMException&&error.name==='AbortError')return read(key,url);throw error;});
-    flights.set(key,pending);return pending;
+      for(const child of [...content.childNodes])if(!(child instanceof Element)||!child.matches('.profile-hero,.profile-tabs,script:not([type="application/json"])'))root.append(child);
+      const styles=document.createDocumentFragment();
+      for(const style of doc.querySelectorAll('style,link[rel=stylesheet][href]'))if(!style.closest('noscript'))styles.append(style);
+      const panel=createPanel(root,url,doc.title,key,styles);
+      panel.revision=dataRevision;
+      if(!nav.querySelector('[data-profile-list-loading]'))panel.templates=[...tabs.querySelectorAll<HTMLTemplateElement>('template[data-profile-list-loading],template[data-profile-stats-loading]')];
+      if(!isProfileSummary(key)||panel.summary!==undefined||wanted===key)panels.set(key,panel);
+      if(root.querySelector('[data-integrated-statistics]')){panels.set('stats',panel);panels.set('stats/games',panel);}
+      return panel;
+    })().finally(()=>flights.delete(lookup)).catch(error=>{
+      if(!signal.aborted&&wanted===key&&error instanceof DOMException&&error.name==='AbortError')return read(key,url);
+      throw error;
+    });
+    flights.set(lookup,pending);return pending;
   }
+  async function checkVisibility(){
+    const response=await fetch(visibilityPath,{
+      signal:AbortSignal.any([signal,AbortSignal.timeout(5_000)]),credentials:'same-origin',cache:'no-store',
+    });
+    if([401,403,404].includes(response.status)||response.redirected)throw new ProfileAccessChanged();
+    if(!response.ok)throw new Error('Unable to check profile visibility.');
+  }
+  let refreshFlight:AbortController|undefined;
+  function invalidateSummaries(){
+    summaryRevision++;
+    refreshFlight?.abort();refreshFlight=undefined;
+    if(isProfileSummary(active))scheduleRefresh();
+  }
+  let refreshFrame=0;
+  function scheduleRefresh(){
+    if(!refreshFrame)refreshFrame=requestAnimationFrame(()=>{refreshFrame=0;void refresh();});
+  }
+  signal.addEventListener('abort',()=>cancelAnimationFrame(refreshFrame),{once:true});
+  const canRefreshSummary=(panel:Panel)=>!editorStore.hasPendingWrites()&&
+    !panel.root.querySelector('[data-profile-writing],[data-reordering="true"],[data-social-panel="search"]:not([hidden])')&&
+    !panel.root.contains(document.activeElement);
+  async function refresh(){
+    if(signal.aborted)return;
+    const panel=panels.get(active);
+    if(!panel?.ready||wanted!==active||panel.root!==shown||document.hidden||!navigator.onLine)return;
+    if(isProfileList(active)){panel.root.dispatchEvent(new Event('anylist:panel-revalidate'));return;}
+    const canUpdate=isProfileSummary(active)&&canRefreshSummary(panel);
+    const needsContent=panel.revision!==summaryRevision||Date.now()-panel.checkedAt>=profileRefreshAge;
+    if(!owner&&(!canUpdate||!needsContent)&&Date.now()-panel.visibilityCheckedAt>=profileRefreshAge){
+      panel.visibilityCheckedAt=Date.now();
+      try{await checkVisibility();}
+      catch(error){if(!signal.aborted&&panel.root===shown&&error instanceof ProfileAccessChanged)location.replace(location.href);}
+      return;
+    }
+    if(!canUpdate||!needsContent||refreshFlight)return;
+    const request=refreshFlight=new AbortController(),revision=summaryRevision;
+    const readSignal=AbortSignal.any([signal,request.signal]);
+    try{
+      const {content}=await readPage(panel.url,readSignal);
+      panel.visibilityCheckedAt=Date.now();
+      const next=content.querySelector<HTMLElement>('[data-profile-tab-content]');
+      if(!next||readSignal.aborted||revision!==summaryRevision||!canRefreshSummary(panel))return;
+      const html=next.outerHTML;
+      if(html===panel.summary){panel.checkedAt=Date.now();panel.revision=revision;return;}
+      const init=await panelInitializer(panel.kind);
+      if(readSignal.aborted||revision!==summaryRevision||!canRefreshSummary(panel))return;
+      const previous=panel.root.querySelector<HTMLElement>('[data-profile-tab-content]')!;
+      if(panel.kind==='favorites')next.dataset.favoritesVisible=JSON.stringify(Object.fromEntries(
+        [...previous.querySelectorAll<HTMLElement>('[data-favorites-group]')].map(group=>[
+          group.dataset.favoritesGroup,group.querySelector('.favorites-grid')!.childElementCount,
+        ])));
+      if(panel.kind==='social'){
+        const selected=previous.querySelector<HTMLElement>('[data-social-panel]:not([hidden])')?.dataset.socialPanel;
+        if(selected){
+          next.querySelectorAll<HTMLElement>('[data-social-panel]').forEach(section=>{section.hidden=section.dataset.socialPanel!==selected;});
+          next.querySelectorAll<HTMLElement>('.profile-section-selector [data-section]').forEach(button=>{
+            const active=button.dataset.section===selected;
+            button.classList.toggle('is-selected',active);button.setAttribute('aria-pressed',String(active));
+          });
+        }
+      }
+      const top=scrollY;
+      panel.lifetime.abort();panel.lifetime=new AbortController();
+      previous.replaceWith(next);
+      panel.summary=new Blob([html]).size<=summaryBudget?html:undefined;
+      init?.(panel.root,AbortSignal.any([signal,panel.lifetime.signal]));
+      panel.checkedAt=Date.now();panel.revision=revision;
+      window.scrollTo(0,top);
+    }catch(error){
+      if(!readSignal.aborted){
+        if(error instanceof ProfileAccessChanged)location.replace(panel.url);
+        panel.checkedAt=Date.now();panel.revision=revision;
+      }
+    }finally{
+      if(refreshFlight===request)refreshFlight=undefined;
+    }
+  }
+  const visibleRefresh=startVisibleRefresh({intervalMs:30_000,wakeIntervalMs:30_000,refresh});
+  signal.addEventListener('abort',visibleRefresh.stop,{once:true});
+  document.addEventListener('anylist:cache-invalidated',()=>{
+    generation++;
+    for(const panel of new Set(panels.values()))if(!panel.ready&&!panel.initializing&&!panel.preparing&&panel.root!==shown)forget(panel);
+    invalidateSummaries();
+  },{signal});
+  document.addEventListener('anylist:editor-committed',invalidateSummaries,{signal});
+  stage.addEventListener('anylist:profile-refresh',()=>void refresh(),{signal});
+  stage.addEventListener('anylist:profile-access-changed',()=>location.replace(location.href),{signal});
   function show(root:HTMLElement){cancelLoadingReveals(shown);shown.remove();shown=root;stage.append(root);}
   let progressRunning=false;
   const stopProgress=()=>{if(progressRunning){progressRunning=false;document.dispatchEvent(new Event('anylist:route-progress-end'));}};
   signal.addEventListener('abort',stopProgress,{once:true});
-  function select(key:string,url:string,retry=false){
+  function select(key:string,url:string,retry=false,fromTab=false){
     const land = () => {
-      const list = !key.startsWith('stats');
+      const list = isProfileList(key);
       window.scrollTo(0,list?scrollY+nav.getBoundingClientRect().top:0);
       document.dispatchEvent(new CustomEvent('anylist:profile-tab-landed',{detail:{list}}));
     };
@@ -98,16 +223,22 @@ function setup(){
       if(key===active&&shown===panels.get(active)?.root)land();
       return;
     }
+    const attempt=++selection;
     stopProgress();
+    refreshFlight?.abort();refreshFlight=undefined;
     document.dispatchEvent(new Event('anylist:profile-tab-changed'));
-    if(shown===panels.get(active)?.root){shown.dataset.profileUrl=location.href;shown.dispatchEvent(new Event('anylist:panel-inactive'));}
+    const outgoing=panels.get(active)!;
+    if(shown===outgoing.root){
+      shown.dataset.profileUrl=location.href;
+      shown.dispatchEvent(new Event('anylist:panel-inactive'));
+    }
     wanted=key;update();
     host!.querySelector('[data-profile-switch-error]')?.remove();
-    const source=panels.get(active)!.root;
+    const source=outgoing.root;
     nav.setAttribute('aria-busy','true');setPanelWaiting(source,true);
     const cached=panels.get(key);
     let loading:HTMLElement|undefined;
-    if (!cached?.ready) {
+    if (!cached?.ready||!owner) {
       loading = profileLoadingFrame(key, new URL(url, location.href), nav);
       if (loading) {
         loading.dataset.profileUrl = url;
@@ -115,9 +246,16 @@ function setup(){
         land();
       }
     }
-    if(!cached?.ready){progressRunning=true;document.dispatchEvent(new Event('anylist:route-progress-start'));}
+    if(loading){progressRunning=true;document.dispatchEvent(new Event('anylist:route-progress-start'));}
+    const isCurrent=()=>!signal.aborted&&attempt===selection&&document.body.dataset.cacheUser===viewer;
     const activate=async(panel:Panel)=>{
-      if(signal.aborted||wanted!==key||document.body.dataset.cacheUser!==viewer)return;
+      if(!isCurrent())return;
+      // A cold visitor read goes straight to the authorized page endpoint.
+      if(cached&&!owner){
+        await checkVisibility();
+        if(!isCurrent())return;
+        panel.visibilityCheckedAt=Date.now();
+      }
       if(panel.preparing)await panel.preparing;
       else if(!panel.ready&&panel.root===shown)await initialize(panel,signal);
       else if(!panel.ready){
@@ -148,47 +286,69 @@ function setup(){
         })().finally(()=>{panel.preparing=undefined;});
         await panel.preparing;
       }
-      if(signal.aborted||wanted!==key)return;
+      if(!isCurrent())return;
+      // A speculative read may have completed before an oversized panel was selected.
+      panels.set(key,panel);
       const commit=()=>{
-        if(signal.aborted||wanted!==key)return;
+        if(!isCurrent())return;
         const changedPanel=shown!==panel.root;
-        stopProgress();setPanelWaiting(source,false);show(panel.root);active=key;document.body.toggleAttribute('data-list-landing',!key.startsWith('stats'));
-        history.replaceState(history.state,'',panel.root.dataset.profileUrl||panel.url);document.title=panel.title;
+        stopProgress();setPanelWaiting(source,false);show(panel.root);active=key;document.body.toggleAttribute('data-list-landing',isProfileList(key));
+        if(panel.templates?.length&&!nav.querySelector('[data-profile-list-loading]'))nav.append(...panel.templates);
+        panel.templates=undefined;
+        if(outgoing!==panel&&isProfileSummary(outgoing.kind)&&outgoing.summary===undefined)forget(outgoing);
+        pruneLists(panel);
+        history.replaceState(history.state,'',panel.root.dataset.profileUrl||panel.url);
+        document.title=panel.title;
         const statistics=panel.root.querySelector<HTMLElement>('[data-integrated-statistics]');
-        if(statistics&&panel.root.dataset.profileUrl!==url)statistics.dispatchEvent(new CustomEvent('anylist:statistics-open',{detail:{url}}));
+        if(statistics&&(!cached?.ready||!fromTab)&&panel.root.dataset.profileUrl!==url)statistics.dispatchEvent(new CustomEvent('anylist:statistics-open',{detail:{url}}));
         nav.removeAttribute('aria-busy');update();
         if(!loading)land();
-        if (changedPanel) {
+        if (changedPanel&&loading&&!cached?.ready) {
           const rows = Array.from(panel.root.querySelectorAll<HTMLElement>('.entry-table [data-list-window]'));
           if (rows.length) rows.forEach(row => settleNavigationContent(row,'tab',signal,4));
           else settleNavigationContent(panel.root,'tab',signal);
         }
       };
       commit();
-      if(!signal.aborted&&wanted===key&&shown===panel.root)panel.root.dispatchEvent(new Event('anylist:panel-active'));
+      if(isCurrent()&&shown===panel.root)panel.root.dispatchEvent(new Event('anylist:panel-active'));
+      if(cached?.ready||(isProfileSummary(key)&&panel.revision!==summaryRevision))scheduleRefresh();
     };
-    const failed=()=>{
-      if(signal.aborted||wanted!==key)return;
+    const failed=(cause?:unknown)=>{
+      if(!isCurrent())return;
+      if(cause instanceof ProfileAccessChanged){location.assign(url);return;}
       stopProgress();setPanelWaiting(source,false);nav.removeAttribute('aria-busy');update();
       const error=document.createElement('div');error.dataset.profileSwitchError='';error.className='page-width error-message';error.setAttribute('role','alert');
       const retry=document.createElement('button');retry.className='button-secondary';retry.textContent='Try again';
-      retry.addEventListener('click',()=>select(key,url,true),{signal});error.append('Unable to load this section. ',retry);shown.prepend(error);
+      retry.addEventListener('click',()=>select(key,url,true,fromTab),{signal});error.append('Unable to load this section. ',retry);shown.prepend(error);
     };
     if(cached?.ready){void activate(cached).catch(failed);return;}
     void read(key,url).then(activate).catch(failed);
   }
 
-  const target=(link:HTMLAnchorElement)=>{const url=statisticsDomainUrl(new URL(location.href),new URL(link.href)),match=profilePanelKey(url);return url.origin===location.origin&&match?.username===route.username&&targets.has(match.key)?{key:match.key,url:url.href}:undefined;};
+  const target=(link:HTMLAnchorElement)=>{
+    const tab=link.closest('.profile-tabs')===nav;
+    const url=statisticsDomainUrl(new URL(location.href),new URL(link.href)),match=profilePanelKey(url);
+    if(url.origin!==location.origin||url.hash||match?.username!==route.username)return;
+    if(!tab&&!(match.key.startsWith('stats')&&link.closest('[data-integrated-statistics]')))return;
+    if((match.key==='games'||match.key==='stats/games')&&approved!=='true')return;
+    if(tab&&match.key.startsWith('stats')){
+      const retained=panels.get('stats')?.root.dataset.profileUrl;
+      const selected=retained&&profilePanelKey(new URL(retained));
+      if(retained&&selected)return {key:selected.key,url:retained};
+    }
+    return {key:match.key,url:url.href};
+  };
   host.addEventListener('click',event=>{
-    const link=(event.target as Element).closest<HTMLAnchorElement>('a[href]');if(!link||event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey||link.hasAttribute('download')||link.target)return;
+    const link=(event.target as Element).closest<HTMLAnchorElement>('a[href]');if(!link||event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey||link.hasAttribute('download')||link.hasAttribute('data-astro-reload')||link.target)return;
     if(link.closest('[data-integrated-statistics] [data-screen-media]'))return;
     const next=target(link);if(!next)return;
     if(next.key===wanted&&!link.closest('.profile-tabs'))return;
-    event.preventDefault();event.stopImmediatePropagation();select(next.key,next.url);
+    event.preventDefault();event.stopImmediatePropagation();select(next.key,next.url,false,!!link.closest('.profile-tabs'));
   },{signal,capture:true});
-  bindPredictionIntent(host,signal,link=>{const next=target(link);if(next&&next.key!==wanted)void read(next.key,next.url).catch(()=>{});});
+  bindPredictionIntent(host,signal,link=>{const next=target(link);if(owner&&next&&next.key!==wanted)void read(next.key,next.url).catch(()=>{});});
   void initialize(initial,signal).catch(()=>{currentHost=undefined;});
 }
+class ProfileAccessChanged extends Error {}
 document.addEventListener('astro:page-load',setup);
 document.addEventListener('astro:before-swap',()=>{session?.abort();currentHost=undefined;});
 setup();

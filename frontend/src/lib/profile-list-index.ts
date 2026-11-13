@@ -20,6 +20,18 @@ export class ProfileListIndex {
     this.order=new Map(statuses.map(([status],index)=>[status,index]));
   }
   get ready(){return this.complete;}
+  changedRows(snapshot:ListIndexResponse){
+    const removed=new Set(this.members.keys()),changed:number[]=[];
+    for(const [id,title,status,score,progress,updated,year,genres,favorite,base,rank] of snapshot.results){
+      const old=this.members.get(id);
+      removed.delete(id);
+      if(!old||!old.listed||old.updated!==timestamp(updated)||old.title!==title||old.status!==status||
+        old.score!==score||old.progress!==progress||old.year!==year||old.favorite!==favorite||
+        old.base!==base||old.rank!==rank||old.genres.length!==genres.length||genres.some((value,index)=>old.genres[index]!==value))changed.push(id);
+    }
+    for(const id of removed)if(this.members.get(id)?.listed)changed.push(id);
+    return changed;
+  }
   publish(snapshot:ListIndexResponse){
     this.invalidate();
     if(!snapshot.complete)return false;

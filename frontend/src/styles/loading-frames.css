@@ -31,6 +31,10 @@ button:has(> .artwork-skeleton-pulse){position:relative}
 .loading-detail-feedback a{color:var(--blue);font-size:1.3rem}
 .route-detail-preview{position:fixed;inset:0;overflow:auto;scrollbar-width:none;background:var(--bg);z-index:40}
 .profile-loading-frame:has([data-pending-list-shell]){min-height:100dvh}
+.profile-summary-loading{min-height:45vh;padding-block:1.5rem}
+.profile-summary-loading[data-list-loading]{min-height:100dvh}
+.profile-summary-loading .pending-group-title{width:8rem;height:1.25rem;margin-bottom:1rem}
+.profile-summary-placeholder{width:min(100%,38rem);height:8rem}
 .pending-list-count{width:1.6em;height:.62em;align-self:center}
 .pending-group-title{display:inline-block;vertical-align:middle;width:6em;height:.72em}
 .pending-entry-title{width:min(65%,16em);height:.75em}
