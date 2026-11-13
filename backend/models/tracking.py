@@ -23,6 +23,7 @@ class TrackedEntry(Base):
     manual_score: Mapped[float | None] = mapped_column(Float)
     season_scores: Mapped[dict] = mapped_column(JSONB, default=dict)
     progress: Mapped[int] = mapped_column(Integer, default=0)
+    season_cursor: Mapped[dict | None] = mapped_column(JSONB)
     favorite: Mapped[bool] = mapped_column(Boolean, default=False)
     notes: Mapped[str | None] = mapped_column(Text)
     start_date: Mapped[date | None] = mapped_column(Date)

@@ -2035,11 +2035,15 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
     observed_endpoint = None
     alternate_scores = {}
     old_alternate_scores = {}
+    previous_season_number = None
     if series_patch and (media.media_type != MediaType.series or
                          (tracking_projection.is_anime(media) and not await anime_is_visible(db))):
         raise HTTPException(404, 'Series not found')
     if series_patch and (series_patch.action or series_patch.seasons or body.status == 'completed'):
         series_context = await series_editor_context(db, media, viewer.id)
+        saved_position = series_context.selected_position()
+        previous_season_number = saved_position['season_number'] if saved_position else max(
+            (series_context.positions[ep][0] for ep in series_context.watched),default=1)
         if series_patch.seasons and series_patch.order != series_context.order:
             raise HTTPException(409, {'code': 'series_editor_changed', 'airing': series_context.airing()})
         selected_status = body.status.value if body.status else previous
@@ -2198,6 +2202,8 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
             local_status_decision = entry.status != previous
     if local_status_decision:
         mark_status_change(entry, 'local')
+    if series_context and series_patch.action == 'position':
+        entry.season_cursor = series_context.cursor_for(series_patch)
     if entry.status in {'planning', 'paused', 'dropped', 'completed'} and (
             previous != entry.status or was_new_entry or body.status is not None):
         from core.stream_actions import queue_local_dismissals
@@ -2278,7 +2284,7 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
                 await reschedule_date_activity(db, viewer.id, media_id, start_date=entry.start_date,
                     finish_date=entry.finish_date, changed={'start_date'}, status=entry.status)
         if desired_editor is not None:
-            series_context = SeriesEditorContext(series_context.data, series_context.positions, desired_editor)
+            series_context = SeriesEditorContext(series_context.data, series_context.positions, desired_editor, entry.season_cursor)
         series_summary = await editor_summary(db, media, viewer.id, series_context)
     elif media.media_type == MediaType.series and (series_start_override is not None or progress_changed or entry.status == 'completed'):
         from core.season_completion import reconcile
@@ -2298,6 +2304,8 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
                               if old_alternate_scores.get(number) != value}
         quiet_rating = previous == entry.status and suppress_initial_import_rating(entry)
         handled = await record_season_activity(db, user_id=viewer.id, media=media, status=entry.status, score=score,
+            season_advanced=bool(series_context and series_patch.action == 'position' and entry.season_cursor
+                and entry.season_cursor['season_number'] > (previous_season_number or 1)),
             status_changed=previous != entry.status and (not series_patch or series_patch.action != 'complete_previous'),
             explicit_status='status' in fields, previous_status=previous,
             rating_changed=old_score != score and not quiet_rating and not (season_changes and entry.rating_mode == 'average'), previous_score=old_score,

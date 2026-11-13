@@ -15,6 +15,7 @@ type Season = {season_number:number; membership:string; name?:string|null; poste
 type Airing = {season_number:number; latest_episode:number; next_date?:string|null; final_date?:string|null;
   latest_episode_id:number; watched:boolean; previous_season?:number|null; previous_episode_id?:number|null};
 export type SeriesEditorSummary = {ready:boolean; pending?:boolean; retry_after?:number; revision?:string;
+  selected_position?:{season_number:number;episode_count:number;episode_id:number|null}|null;
   order?:string; seasons:Season[]; airing?:Airing|null};
 export type EditorEpisodeMetadata = {id:number; title:string; runtime?:number|null; air_date?:string|null; image?:string|null};
 type Draft = {season_number:number; membership:string; start_date?:string|null; completion_date?:string|null; score?:number|null};
@@ -68,7 +69,7 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     return seasons().find(item=>item.season_number===number);
   };
   const status = () => field('status').value;
-  const currentMode = () => Boolean(title && !allSeasons && ['watching','paused'].includes(status()));
+  const currentMode = () => Boolean(title && !allSeasons && ['watching','paused','dropped','planning'].includes(status()));
   const tracked = () => Boolean(title && (allSeasons || currentMode()));
   const membershipDraft = (s:Season) => {
     let draft = drafts.get(s.season_number);
@@ -79,6 +80,11 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     return draft;
   };
   const selectCurrent = () => {
+    const saved=summary?.selected_position;
+    if(saved && seasons().some(s=>s.season_number===saved.season_number)){
+      selected=saved.season_number;
+      return;
+    }
     const list = released();
     const latest = list.findLastIndex(s=>watchedCount(s)>0);
     const current = list.slice(Math.max(latest,0)).find(s=>s.episodes.some(ep=>!ep.watched)) ?? list.at(-1) ?? seasons()[0];
@@ -185,7 +191,10 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     if (!current) return;
     const signature=seasons().map(s=>s.season_number).join(',');
     if (selector.dataset.signature!==signature) {
-      selector.replaceChildren(...seasons().map(s=>new Option(`Season ${s.season_number}`,String(s.season_number))));
+      selector.replaceChildren(...seasons().map(s=>{
+        const option=new Option(`Season ${s.season_number}`,String(s.season_number));
+        option.disabled=!s.episodes.length;return option;
+      }));
       selector.dataset.signature=signature;
     }
     selector.value=String(current.season_number);
@@ -267,7 +276,11 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     if(button.dataset.seriesStep)step(Number(button.dataset.seriesStep));
     else if(button.hasAttribute('data-series-retry')){loadFailed=false;render();void read();}
   },{signal:page});
-  selector.addEventListener('change',()=>{selected=Number(selector.value);render();},{signal:page});
+  selector.addEventListener('change',()=>{
+    selected=Number(selector.value);
+    const current=season();if(current)setCount(current,watchedCount(current));
+    render();
+  },{signal:page});
   countInput.addEventListener('keydown',event=>{
     if (!['ArrowUp','ArrowDown'].includes(event.key)) return;
     event.preventDefault(); step(event.key==='ArrowUp'?1:-1);
@@ -406,7 +419,7 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
         return remaining;
       }).filter(edit=>Object.keys(edit).length>2);
       return {revision:current?.revision,order:current?.order,action,watch_date:localToday(),
-        ...(action==='position'?{episode_id:stagedPosition?.id}:{}),seasons:edits};
+        ...(action==='position'?{episode_id:stagedPosition?.id,season_number:stagedPosition?.season,episode_count:stagedPosition?.count}:{}),seasons:edits};
     },
     rollbackNeeded(patch:{action?:string;episode_id?:number|null}) {
       if (patch.action!=='position') return false;

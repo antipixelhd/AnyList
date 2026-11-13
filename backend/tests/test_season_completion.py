@@ -18,6 +18,16 @@ from unittest.mock import AsyncMock, patch
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_invalid_persisted_cursor_is_ignored(self):
+        from core.series_editor import SeriesEditorContext
+        episode=SimpleNamespace(id=1,release_date='2020-01-01',tmdb_data={})
+        data=('tmdb:aired',[(1,[episode],1)],{})
+        for cursor in (None,{},[],['tmdb:aired'],'tmdb:aired',1,{'order':'tmdb:aired'},
+                       {'order':'tmdb:aired','season_number':None,'episode_count':None,'episode_id':None}):
+            with self.subTest(cursor=cursor):
+                context=SeriesEditorContext(data,{1:(1,1)},{1},cursor)
+                self.assertIsNone(context.selected_position())
+
     def test_tail_requires_coverage_and_shared_or_import_clocks_cannot_date_a_season(self):
         episodes = [SimpleNamespace(id=n, release_date='2020-01-01', tmdb_data={}) for n in (1, 2, 3)]
         def event(n, **kw):
@@ -44,12 +54,13 @@ class SeasonDatabaseTests(unittest.IsolatedAsyncioTestCase):
             for table in ('season_reconcile_jobs', 'season_tracking', 'series_seasons'):
                 conn.execute(text(f'DROP TABLE {table}'))
             conn.execute(text('ALTER TABLE tracked_entries DROP COLUMN finish_date_source, '
-                              'DROP COLUMN season_release_check_on, DROP COLUMN start_date_source'))
+                              'DROP COLUMN season_release_check_on, DROP COLUMN start_date_source, DROP COLUMN season_cursor'))
             with Operations.context(MigrationContext.configure(conn)):
                 importlib.import_module('migrations.versions.mt086_season_completion').upgrade()
                 importlib.import_module('migrations.versions.mt088_series_editor').upgrade()
                 importlib.import_module('migrations.versions.mt089_link_series_start').upgrade()
                 importlib.import_module('migrations.versions.mt090_season_activity_context').upgrade()
+                importlib.import_module('migrations.versions.mt091_season_cursor').upgrade()
         async with self.engine.begin() as conn:
             await conn.run_sync(migration)
         async with self.Session() as db:
@@ -585,3 +596,72 @@ class SeasonDatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(starts[0].id,original_id)
             self.assertEqual(starts[0].created_at.date().isoformat(),manual)
             self.assertTrue(starts[0].payload.get('season_start_id'))
+
+    async def test_equal_progress_season_boundary_is_saved_and_only_advancing_starts_next_season(self):
+        async with self.Session() as db:
+            await db.execute(delete(WatchEvent).where(WatchEvent.media_id.in_(self.episode_ids)))
+            entry=await db.scalar(select(TrackedEntry).where(TrackedEntry.media_id==self.series_id))
+            entry.status,entry.progress,entry.start_date,entry.finish_date='planning',0,None,None
+            await db.commit()
+        root=f'/tracking/entry/{self.series_id}'
+        async def position(sn,count):
+            summary=(await self.client.get(root+'/series-editor')).json()
+            return await self.client.patch(root,json={'series_editor':{
+                'revision':summary['revision'],'order':summary['order'],'action':'position',
+                'episode_id':self.episode_ids[1],'season_number':sn,'episode_count':count}})
+        first=await position(1,2)
+        self.assertEqual(first.status_code,200,first.text)
+        self.assertEqual(first.json()['progress'],2)
+        self.assertEqual(first.json()['series_editor']['selected_position']['season_number'],1)
+        async with self.Session() as db:
+            cards=list(await db.scalars(select(TrackingActivity).where(TrackingActivity.media_id==self.series_id)))
+            self.assertFalse(any(c.payload.get('started_watching') for c in cards))
+            milestone=next(c for c in cards if c.payload.get('season_completion_id'))
+            milestone_id=milestone.id
+            watches=[(w.id,w.watched_at) for w in await db.scalars(select(WatchEvent).where(WatchEvent.media_id.in_(self.episode_ids)).order_by(WatchEvent.id))]
+        advanced=await position(2,0)
+        self.assertEqual(advanced.status_code,200,advanced.text)
+        self.assertEqual(advanced.json()['progress'],2)
+        self.assertNotEqual(first.json()['series_editor']['revision'],advanced.json()['series_editor']['revision'])
+        saved=(await self.client.get(root+'/series-editor')).json()['selected_position']
+        self.assertEqual((saved['season_number'],saved['episode_count']),(2,0))
+        self.assertEqual((await position(2,0)).status_code,200)
+        async with self.Session() as db:
+            cards=list(await db.scalars(select(TrackingActivity).where(TrackingActivity.media_id==self.series_id)))
+            self.assertEqual([c.id for c in cards if c.payload.get('season_completion_id')],[milestone_id])
+            starts=[c for c in cards if c.payload.get('started_watching')]
+            self.assertEqual(len(starts),1)
+            self.assertEqual(starts[0].payload['season_number'],2)
+            self.assertEqual(watches,[(w.id,w.watched_at) for w in await db.scalars(select(WatchEvent).where(WatchEvent.media_id.in_(self.episode_ids)).order_by(WatchEvent.id))])
+        for status in ('dropped','planning','paused'):
+            response=await self.client.patch(root,json={'status':status})
+            self.assertEqual(response.status_code,200,response.text)
+            async with self.Session() as db:
+                card=await db.scalar(select(TrackingActivity).where(TrackingActivity.media_id==self.series_id,
+                    TrackingActivity.payload['season_status'].as_boolean().is_(True)))
+                self.assertEqual((card.status,card.payload['season_number']),(status,2))
+
+    async def test_cursor_does_not_hide_provider_progress_and_rejects_mismatched_position(self):
+        root=f'/tracking/entry/{self.series_id}'
+        async with self.Session() as db:
+            await db.execute(delete(WatchEvent).where(WatchEvent.media_id.in_(self.episode_ids[2:])))
+            entry=await db.scalar(select(TrackedEntry).where(TrackedEntry.media_id==self.series_id))
+            entry.progress=2
+            entry.season_cursor={'order':'tmdb:aired','season_number':1,'episode_count':2,'episode_id':self.episode_ids[1]}
+            await db.commit()
+        summary=(await self.client.get(root+'/series-editor')).json()
+        invalid=await self.client.patch(root,json={'series_editor':{
+            'order':summary['order'],'revision':summary['revision'],'action':'position',
+            'season_number':2,'episode_count':0,'episode_id':self.episode_ids[2]}})
+        self.assertEqual(invalid.status_code,422,invalid.text)
+        async with self.Session() as db:
+            db.add(WatchEvent(user_id=self.user_id,media_id=self.episode_ids[2],completed=True,watched_at=datetime.now()))
+            await db.commit()
+        updated=(await self.client.get(root+'/series-editor')).json()
+        self.assertIsNone(updated['selected_position'])
+        response=await self.client.patch(root,json={'status':'paused'})
+        self.assertEqual(response.status_code,200,response.text)
+        async with self.Session() as db:
+            card=await db.scalar(select(TrackingActivity).where(TrackingActivity.media_id==self.series_id,
+                TrackingActivity.payload['season_status'].as_boolean().is_(True)))
+            self.assertEqual(card.payload['season_number'],2)

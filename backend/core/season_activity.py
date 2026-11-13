@@ -13,6 +13,11 @@ from models.tracking import TrackingActivity, TrackedEntry
 
 
 def season_target(context, *, rating=False, status=None):
+    selected = context.selected_position()
+    if selected:
+        number,count = selected['season_number'],selected['episode_count']
+        total = next(expected or len(members) for sn,members,expected in context.groups if sn == number)
+        return number, 0 < count < total
     released = {ep.id for ep in context.released}
     groups = [(number, [ep for ep in members if ep.id in released], expected)
               for number, members, expected in context.groups]
@@ -105,10 +110,10 @@ async def absorb_season_actions(db, cards, milestones):
 async def record_season_activity(db, *, user_id, media, status, score,
                                  status_changed=False, explicit_status=False, previous_status=None,
                                  rating_changed=False, previous_score=None, season_changes=None,
-                                 context=None, new_entry=False, episode_order=None, now=None):
+                                 context=None, new_entry=False, episode_order=None, season_advanced=False, now=None):
     from core.activity import has_activity_event
     from core.series_editor import editor_context
-    if not season_changes and not rating_changed and (not status_changed or status == 'completed'
+    if not season_advanced and not season_changes and not rating_changed and (not status_changed or status == 'completed'
             or (status == 'watching' and not explicit_status)):
         return True
     # The same lock order as completion reconciliation, including first rating
@@ -132,6 +137,13 @@ async def record_season_activity(db, *, user_id, media, status, score,
     scoped = [row for row in rows if (row.payload or {}).get('episode_order') == order
               and ((row.payload or {}).get('season_number') or (row.payload or {}).get('season_ratings'))]
     changed_status = status_changed and status != 'completed' and (status != 'watching' or explicit_status)
+    if status == 'watching':
+        changed_status = changed_status or season_advanced
+        selected = context.selected_position()
+        if selected:
+            total = next(expected or len(members) for sn,members,expected in context.groups if sn == number)
+            if selected['episode_count'] >= total:
+                changed_status = False
     status_card = None
     if changed_status:
         status_card = next((row for row in scoped if row.payload.get('season_number') == number
@@ -139,7 +151,7 @@ async def record_season_activity(db, *, user_id, media, status, score,
         if status_card is None:
             details = {'window_key': f'season-status:{order}:{number}:{now.isoformat()}',
                        'window_started_at': now.isoformat(), 'episode_order': order,
-                       'season_number': number, 'season_status': True, 'status_start': previous_status}
+                       'season_number': number, 'season_status': True, 'status_start': None if season_advanced else previous_status}
             status_card = TrackingActivity(user_id=user_id, media_id=media.id, created_at=now, payload=details)
             db.add(status_card)
             scoped.insert(0, status_card)

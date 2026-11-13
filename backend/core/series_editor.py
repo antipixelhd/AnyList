@@ -10,6 +10,7 @@ from sqlalchemy import select
 from core.season_completion import is_released, membership_key, release_day, season_groups
 from models import Rating, WatchEvent
 from models.seasons import SeasonTracking, SeriesSeason
+from models.tracking import TrackedEntry
 
 
 class SeasonEdit(BaseModel):
@@ -27,20 +28,54 @@ class SeriesEditorPatch(BaseModel):
     order: str | None = Field(default=None, max_length=40)
     action: Literal['episode', 'through_season', 'position', 'catch_up', 'complete_previous'] | None = None
     episode_id: int | None = Field(default=None, gt=0)
+    season_number: int | None = Field(default=None, gt=0)
+    episode_count: int | None = Field(default=None, ge=0)
     watch_date: date | None = None
     seasons: list[SeasonEdit] = Field(default_factory=list, max_length=250)
 
 
 class SeriesEditorContext:
-    def __init__(self, data, positions, watched):
+    def __init__(self, data, positions, watched, cursor=None):
         self.data = data
         self.order, self.groups, self.metadata = data
         self.positions = positions
         self.watched = watched
+        self.cursor = cursor
         self.today = date.today()
         self.released = [ep for _, members, _ in self.groups for ep in members if is_released(ep, self.today)]
         self.revision = hashlib.sha256(repr((self.order, [(n, [(ep.id, ep.release_date) for ep in episodes], expected)
-            for n, episodes, expected in self.groups], [ep.id for ep in self.released], sorted(watched))).encode()).hexdigest()
+            for n, episodes, expected in self.groups], [ep.id for ep in self.released], sorted(watched),
+            self.selected_position())).encode()).hexdigest()
+
+    def cursor_for(self, patch):
+        if patch.season_number is None and patch.episode_count is None:
+            return None
+        if patch.action != 'position' or patch.season_number is None or patch.episode_count is None:
+            raise HTTPException(422, 'Provide a season and episode count for the selected position')
+        members = [ep for ep in self.released if self.positions[ep.id][0] == patch.season_number]
+        if not members or patch.episode_count > len(members):
+            raise HTTPException(409, 'Choose a released season and episode')
+        previous = [ep for ep in self.released if self.positions[ep.id][0] < patch.season_number]
+        endpoint = members[patch.episode_count-1] if patch.episode_count else (previous[-1] if previous else None)
+        if patch.episode_id != (endpoint.id if endpoint else None):
+            raise HTTPException(422, 'The episode does not match the selected season position')
+        return {'order':self.order,'season_number':patch.season_number,'episode_count':patch.episode_count,
+                'episode_id':patch.episode_id}
+
+    def selected_position(self):
+        if not isinstance(self.cursor,dict) or self.cursor.get('order') != self.order:
+            return None
+        try:
+            patch = SeriesEditorPatch(action='position',**{k:self.cursor.get(k) for k in
+                ('season_number','episode_count','episode_id')})
+            cursor = self.cursor_for(patch)
+            if cursor is None:
+                return None
+        except (HTTPException, ValueError):
+            return None
+        ids = [ep.id for ep in self.released]
+        boundary = ids.index(cursor['episode_id'])+1 if cursor['episode_id'] in ids else 0
+        return cursor if self.watched == set(ids[:boundary]) else None
 
     def airing(self):
         released_ids = {ep.id for ep in self.released}
@@ -68,6 +103,7 @@ class SeriesEditorContext:
     def resolve(self, patch, status, needs_progress):
         """Translate editor intent to a canonical watch delta under the user lock."""
         airing = self.airing()
+        self.cursor_for(patch)
         if (patch.action or needs_progress) and (not self.released or patch.revision != self.revision):
             raise HTTPException(409, {'code': 'series_editor_changed', 'airing': airing})
         if needs_progress and status == 'completed' and airing and patch.action not in ('complete_previous', 'catch_up'):
@@ -103,7 +139,9 @@ async def editor_context(db, media, user_id):
     watched = set(await db.scalars(select(WatchEvent.media_id).where(
         WatchEvent.user_id == user_id, WatchEvent.media_id.in_(positions),
         WatchEvent.completed.is_(True)).distinct())) if positions else set()
-    return SeriesEditorContext(data, positions, watched)
+    cursor = await db.scalar(select(TrackedEntry.season_cursor).where(TrackedEntry.user_id==user_id,
+        TrackedEntry.media_id==media.id))
+    return SeriesEditorContext(data, positions, watched, cursor)
 
 
 async def editor_summary(db, media, user_id, context):
@@ -132,4 +170,5 @@ async def editor_summary(db, media, user_id, context):
         season.update(saved.get((number, key), {}))
         seasons.append(season)
     return {'order': context.order, 'revision': context.revision, 'seasons': seasons,
+            'selected_position': context.selected_position(),
             'airing': context.airing(), 'ready': bool(context.released)}
