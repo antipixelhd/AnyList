@@ -1,4 +1,5 @@
 import {showMenu, hideMenu} from './ui-motion';
+import {placeDropdown} from './dropdown-position';
 
 /** One interaction and motion contract for shared tracking-editor selects. */
 export function setupEditorSelect(root: HTMLElement, signal: AbortSignal) {
@@ -7,12 +8,20 @@ export function setupEditorSelect(root: HTMLElement, signal: AbortSignal) {
   const value = root.querySelector<HTMLElement>('[data-editor-select-value]')!;
   const menu = root.querySelector<HTMLElement>('[role="listbox"]')!;
   const scope = root.closest('dialog') || root;
+  const floating = menu.hasAttribute('popover') && typeof menu.showPopover === 'function';
+  const place = () => { if (floating) placeDropdown(trigger, menu, 180); };
+  const reposition = () => {
+    if (trigger.getAttribute('aria-expanded') === 'true') place();
+  };
   let signature = '';
   const buttons = () => [...menu.querySelectorAll<HTMLButtonElement>('[data-editor-option]')];
   const enabled = () => buttons().filter(button => !button.disabled);
-  const close = () => {
+  const close = (immediate = false) => {
+    if (trigger.getAttribute('aria-expanded') !== 'true' && !immediate) return;
     trigger.setAttribute('aria-expanded', 'false');
-    if (!menu.hidden) void hideMenu(menu);
+    void hideMenu(menu, immediate).then(() => {
+      if (floating && menu.hidden && menu.matches(':popover-open')) menu.hidePopover();
+    });
   };
   const sync = () => {
     const options = [...select.options];
@@ -39,6 +48,11 @@ export function setupEditorSelect(root: HTMLElement, signal: AbortSignal) {
   const open = (focus = false) => {
     sync();
     if (trigger.disabled || !enabled().length) return;
+    if (floating) {
+      menu.hidden = false;
+      if (!menu.matches(':popover-open')) menu.showPopover();
+      place();
+    }
     showMenu(menu);
     trigger.setAttribute('aria-expanded', 'true');
     if (focus) (enabled().find(button => button.dataset.editorOption === select.value) || enabled()[0])?.focus();
@@ -75,9 +89,15 @@ export function setupEditorSelect(root: HTMLElement, signal: AbortSignal) {
   }, {signal});
   scope.addEventListener('click', event => { if (!root.contains(event.target as Node)) close(); }, {signal});
   root.addEventListener('focusout', event => { if (!root.contains((event as FocusEvent).relatedTarget as Node)) close(); }, {signal});
-  scope.addEventListener('close', close, {signal});
+  if (floating) {
+    scope.addEventListener('scroll', event => { if (event.target !== menu) reposition(); }, {signal, capture:true, passive:true});
+    window.addEventListener('resize', reposition, {signal});
+    window.visualViewport?.addEventListener('resize', reposition, {signal});
+    window.visualViewport?.addEventListener('scroll', reposition, {signal});
+  }
+  scope.addEventListener('close', () => close(true), {signal});
   select.addEventListener('change', sync, {signal});
-  signal.addEventListener('abort', close, {once: true});
+  signal.addEventListener('abort', () => close(true), {once: true});
   sync();
   return {sync, close};
 }

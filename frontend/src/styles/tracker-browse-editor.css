@@ -127,6 +127,14 @@
   margin:0;
   accent-color:var(--blue)
 }
+html:has(#tracking-editor[open]),
+body:has(#tracking-editor[open]) {
+  overflow:hidden;
+  overscroll-behavior:none
+}
+#tracking-editor {
+  overscroll-behavior:contain
+}
 /* Quick editor: compact fields beneath a cover header, with the primary actions in the header. */
 .editor {
   position:fixed;
@@ -318,6 +326,11 @@
   box-shadow:0 12px 30px #020711b3;
   max-height:min(290px,50vh);
   overflow:auto
+}
+.editor-status-options[popover].tracker-floating-dropdown {
+  inset:auto;
+  min-width:0;
+  color:var(--text)
 }
 .editor-status-options button {
   display:block;
