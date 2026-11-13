@@ -29,8 +29,7 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
   const field = (name:string) => form.elements.namedItem(name) as HTMLInputElement;
   const rows = find('rows');
   const rowTemplate = find<HTMLTemplateElement>('row-template');
-  const expand = find<HTMLButtonElement>('expand');
-  const navigation = panel.querySelector<HTMLElement>('.series-editor-season-navigation')!;
+  const expand = dialog.querySelector<HTMLButtonElement>('[data-editor-seasons]')!;
   const selector = panel.querySelector<HTMLSelectElement>('#series-season')!;
   const selectControl = setupEditorSelect(selector.closest<HTMLElement>('[data-editor-select]')!,page);
   const countInput = find<HTMLInputElement>('count');
@@ -69,8 +68,8 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     return seasons().find(item=>item.season_number===number);
   };
   const status = () => field('status').value;
-  const tracked = () => Boolean(title && (status()!=='completed' || (Number(title.entry?.progress)>0)
-    || summary?.seasons.some(s=>watchedCount(s)>0)));
+  const currentMode = () => Boolean(title && !allSeasons && ['watching','paused'].includes(status()));
+  const tracked = () => Boolean(title && (allSeasons || currentMode()));
   const membershipDraft = (s:Season) => {
     let draft = drafts.get(s.season_number);
     if (!draft) {
@@ -85,13 +84,29 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     const current = list.slice(Math.max(latest,0)).find(s=>s.episodes.some(ep=>!ep.watched)) ?? list.at(-1) ?? seasons()[0];
     selected = current?.season_number;
   };
+  const sharedDates = () => {
+    if(!title || !seasons().length) return;
+    const first=seasons()[0],last=seasons().filter(s=>s.episodes.length).at(-1);
+    const start=drafts.get(first.season_number);
+    const finish=last && drafts.get(last.season_number);
+    if(start && 'start_date' in start) field('start_date').value=start.start_date??'';
+    if(finish && 'completion_date' in finish) field('finish_date').value=finish.completion_date??'';
+    form.dispatchEvent(new CustomEvent('anylist:series-dates-sync',{bubbles:true}));
+  };
   const layout = () => {
     const isTracked = tracked();
-    form.querySelector('.editor-score-field label')!.textContent=isTracked?'Series score':'Score';
+    const current=currentMode();
+    expand.hidden=!title;
+    expand.setAttribute('aria-expanded',String(allSeasons));
+    form.querySelector('.editor-score-field label')!.textContent=title?'Series score':'Score';
+    field('manual_score').setAttribute('aria-label',title?'Series score':'Score');
     panel.hidden = !isTracked;
     overallStart.hidden = isTracked;
     overallFinish.hidden = isTracked;
+    for(const region of [overallStart,overallFinish])for(const input of region.querySelectorAll<HTMLInputElement|HTMLButtonElement>('input,button'))input.disabled=isTracked;
     panel.parentElement?.toggleAttribute('data-series-tracked',isTracked);
+    panel.parentElement?.toggleAttribute('data-series-current',current);
+    panel.toggleAttribute('data-all-seasons',allSeasons);
   };
   const previewCount = (s:Season) => stagedPosition
     ? s.season_number<stagedPosition.season ? s.episodes.length : s.season_number===stagedPosition.season ? stagedPosition.count : 0
@@ -129,11 +144,6 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
       if (!allSeasons && number===selected) {
         if (selection.parentElement!==row) row.insertBefore(selection,row.querySelector('.series-editor-fields'));
         selection.hidden=false;
-        if (expand.parentElement!==navigation) navigation.append(expand);
-      }
-      if (allSeasons && s===seasons()[0]) {
-        const name=row.querySelector<HTMLElement>('.series-editor-season-name')!;
-        if(expand.parentElement!==name)name.append(expand);
       }
       row.querySelector('[data-season-label]')!.textContent=`Season ${number}`;
       row.querySelector('[data-season-progress]')!.textContent=`${previewCount(s)}/${s.total} episodes`;
@@ -156,7 +166,7 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
   };
   const render = () => {
     if (!title) return;
-    const focused=document.activeElement instanceof HTMLElement && panel.contains(document.activeElement) ? document.activeElement : undefined;
+    const focused=document.activeElement instanceof HTMLElement && (panel.contains(document.activeElement)||document.activeElement===expand) ? document.activeElement : undefined;
     const restoreFocus=()=>{
       if (focused && document.activeElement!==focused && focused.isConnected && !focused.closest('[hidden]') &&
           !('disabled' in focused && focused.disabled)) focused.focus({preventScroll:true});
@@ -183,11 +193,6 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     countInput.max=String(current.episodes.length);
     countInput.disabled=allSeasons||!current.episodes.length;
     if (document.activeElement!==countInput) countInput.value=String(previewCount(current));
-    expand.hidden=seasons().length<2;
-    expand.setAttribute('aria-expanded',String(allSeasons));
-    const viewLabel=allSeasons?'Show current season':'Show all seasons';
-    expand.setAttribute('aria-label',viewLabel);
-    expand.title=viewLabel;
     panel.toggleAttribute('data-all-seasons',allSeasons);
     if (allSeasons) {selection.hidden=true;if (selection.parentElement!==content) content.prepend(selection);}
     paintList();
@@ -242,15 +247,25 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     countInput.value=String(stagedPosition?.count??count);
     render();
   };
+  expand.addEventListener('click',()=>{
+    if(!title)return;
+    if(!tracked()) {
+      const first=seasons()[0],last=seasons().filter(s=>s.episodes.length).at(-1);
+      // Dates typed in the default Completed form enter the same season drafts.
+      if(first && field('start_date').value!==(title.entry?.start_date??''))membershipDraft(first).start_date=field('start_date').value||null;
+      if(last && canFinishSeason(last) && field('finish_date').value!==(title.entry?.finish_date??''))membershipDraft(last).completion_date=field('finish_date').value||null;
+    }
+    allSeasons=!allSeasons;
+    sharedDates();render();
+    viewMotion?.cancel();
+    if(!reduced())viewMotion=animate(allSeasons?rows:currentMode()?selection:overallStart,
+      {opacity:[.75,1],transform:['translateY(2px)','translateY(0)']},{duration:.16,ease:'easeOut'});
+  },{signal:page});
   panel.addEventListener('click',event=>{
     const button=(event.target as HTMLElement).closest<HTMLButtonElement>('button');
-    if (!button) return;
-    if (button===expand) {
-      allSeasons=!allSeasons; render();
-      viewMotion?.cancel();
-      if (!reduced()) viewMotion=animate(rows,{opacity:[.7,1]},{duration:.16,ease:'easeOut'});
-    } else if (button.dataset.seriesStep) step(Number(button.dataset.seriesStep));
-    else if (button.hasAttribute('data-series-retry')) {loadFailed=false;render();void read();}
+    if(!button)return;
+    if(button.dataset.seriesStep)step(Number(button.dataset.seriesStep));
+    else if(button.hasAttribute('data-series-retry')){loadFailed=false;render();void read();}
   },{signal:page});
   selector.addEventListener('change',()=>{selected=Number(selector.value);render();},{signal:page});
   countInput.addEventListener('keydown',event=>{
@@ -273,10 +288,19 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
       const iso=node.closest('[data-calendar-input]')?.querySelector<HTMLInputElement>('[data-date-iso]');
       if (iso?.name==='series_start') membershipDraft(s).start_date=iso.value||null;
       if (iso?.name==='series_finish') membershipDraft(s).completion_date=iso.value||null;
+      sharedDates();
     }
   };
   panel.addEventListener('input',captureDraft,{signal:page});
   panel.addEventListener('change',captureDraft,{signal:page});
+  form.addEventListener('change',event=>{
+    const input=event.target;
+    if(!title || tracked() || !(input instanceof HTMLInputElement) || !input.validity.valid)return;
+    const dateInput=input.closest('[data-calendar-input]')?.querySelector<HTMLInputElement>('[data-date-iso]');
+    if(dateInput===field('start_date') && seasons()[0])membershipDraft(seasons()[0]).start_date=dateInput.value||null;
+    const latest=seasons().filter(s=>s.episodes.length).at(-1);
+    if(dateInput===field('finish_date') && latest && canFinishSeason(latest))membershipDraft(latest).completion_date=dateInput.value||null;
+  },{signal:page});
   const chooseAiring = (airing:Airing) => new Promise<Choice|null>(resolve=>{
     const signal=active?.signal;
     if (!signal || signal.aborted) {resolve(null);return;}
@@ -314,7 +338,7 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     loadFailed=false;
     request=undefined;
     generation++;
-    selection.hidden=true;content.prepend(selection);navigation.append(expand);
+    selection.hidden=true;content.prepend(selection);
     panel.removeAttribute('data-all-seasons');
     selector.disabled=true;selectControl.sync();
     rows.replaceChildren();
@@ -323,6 +347,7 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     selector.replaceChildren(); delete selector.dataset.signature;
     renderedRows.clear();
     rowControls.clear();
+    expand.hidden=true;expand.setAttribute('aria-expanded','false');
     if (wasSeries) layout();
   };
   page.addEventListener('abort',reset,{once:true});

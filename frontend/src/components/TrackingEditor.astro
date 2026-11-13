@@ -15,6 +15,7 @@ import SeriesEditorPanel from './SeriesEditorPanel.astro';
     <div class="editor-hero-actions">
       <button type="button" class="editor-library editor-icon-button" data-editor-library hidden aria-label="Add to library" aria-pressed="false"><Icon name="list" /></button>
       <label class="editor-favorite" title="Favorite"><input name="favorite" type="checkbox" form="tracking-form" aria-label="Favorite"/><Icon name="heart" /></label>
+      <button type="button" class="editor-seasons-button" data-editor-seasons aria-expanded="false" aria-controls="editor-season-list" hidden>Seasons</button>
       <button type="submit" form="tracking-form" class="button-primary editor-save">Save</button>
     </div>
     <button type="button" class="editor-close editor-icon-button" aria-label="Close editor"><Icon name="close" /></button>
@@ -38,8 +39,8 @@ import SeriesEditorPanel from './SeriesEditorPanel.astro';
         </div></div>
       </section>
       <div class="editor-start-date"><label for="editor-start-date">Start date</label><CalendarDateInput id="editor-start-date" name="start_date" label="Start date"/></div><div class="editor-finish-date"><label for="editor-finish-date">Finish date</label><CalendarDateInput id="editor-finish-date" name="finish_date" label="Finish date"/></div>
-      <label class="editor-rewatches editor-number-field" for="editor-rewatches">Total rewatches<NumberStepper id="editor-rewatches" name="rewatch_count" label="Total rewatches" max={10000}/></label>
       <label class="wide editor-notes">Notes<textarea name="notes" rows="2"></textarea></label>
+      <label class="editor-rewatches editor-number-field" for="editor-rewatches">Total rewatches<NumberStepper id="editor-rewatches" name="rewatch_count" label="Total rewatches" max={10000}/></label>
     </div>
     <p id="editor-error" role="alert" class="error-message" hidden></p>
     <div class="editor-actions">
@@ -110,6 +111,7 @@ document.addEventListener('astro:page-load', () => {
   const confirmEntryAction = (message:string,options:{confirmLabel?:string}={}) => confirmAction(message,sessionSignal,options);
   setupScoreSteppers(dialog, sessionSignal);
   const refreshDateInputs = setupCalendarDateInputs(dialog, sessionSignal);
+  dialog.addEventListener('anylist:series-dates-sync',refreshDateInputs,{signal:sessionSignal});
   const form = document.querySelector<HTMLFormElement>('#tracking-form')!;
   const gameFields=createGameEditor(dialog,form,sessionSignal,confirmEntryAction);
   let current: any = null;
@@ -175,6 +177,7 @@ document.addEventListener('astro:page-load', () => {
     const entry = title.entry;
     const game=title.type==='game',child=game&&['expansion','dlc'].includes(title.game_class||'');
     dialog.dataset.editorDomain=game?'game':'movies-series';
+    dialog.dataset.editorType=title.type;
     currentTitle = title;
     current = {id:title.id, type:title.type, status:'planning', ...(game?title.game_state||entry:entry)||{progress:0,rating_mode:'manual',manual_score:null}};
     current.status ||= 'planning';
@@ -482,10 +485,6 @@ document.addEventListener('astro:page-load', () => {
     }
     const editing = currentTitle!;
     if (editing.type==='series') {
-      if (seriesFields.tracked()) {
-        delete body.start_date;
-        delete body.finish_date;
-      }
       const explicitStatus = !editing.entry || status!==current.status;
       if (!explicitStatus) delete body.status;
       saveButton.disabled=true;

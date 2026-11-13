@@ -10,10 +10,9 @@ import Icon from './Icon.astro';
   <div data-series-content hidden>
     <div data-series-selection class="series-editor-selection" hidden>
       <div class="series-editor-season-picker">
-        <label id="series-season-label" class="sr-only">Choose season</label>
+        <label id="series-season-label">Season</label>
         <div class="series-editor-season-navigation">
           <EditorSelect id="series-season" name="series_season" label="Season" labelledBy="series-season-label"/>
-          <button type="button" class="series-editor-text series-editor-expand" data-series-expand aria-expanded="false" aria-controls="editor-season-list" aria-label="Show all seasons" title="Show all seasons"><Icon name="list"/></button>
         </div>
       </div>
       <div class="series-editor-count">
@@ -33,7 +32,7 @@ import Icon from './Icon.astro';
     <li class="series-editor-row">
       <div class="series-editor-row-heading" data-season-heading><div class="series-editor-poster" data-season-poster aria-hidden="true"></div><div class="series-editor-season-identity"><div class="series-editor-season-name"><strong data-season-label></strong></div><small data-season-progress></small></div></div>
       <div class="series-editor-fields">
-        <div class="series-editor-score"><label data-season-score-label>Score</label><NumberStepper id="season-score" name="series_score" label="Season score" min={0} max={10} step={0.1} score/></div>
+        <div class="series-editor-score"><label data-season-score-label>Season score</label><NumberStepper id="season-score" name="series_score" label="Season score" min={0} max={10} step={0.1} score/></div>
         <div class="series-editor-dates">
         <div class="series-editor-start"><label data-season-date-label="start">Start date</label><CalendarDateInput id="season-start" name="series_start" label="Start date"/></div>
         <div class="series-editor-finish"><label data-season-date-label="finish">Finish date</label><CalendarDateInput id="season-finish" name="series_finish" label="Finish date"/></div>
@@ -44,89 +43,84 @@ import Icon from './Icon.astro';
   </template>
 </section>
 <style is:global>
-  .editor .editor-fields[data-series-tracked] { grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px 24px; }
-  .editor:has([data-series-tracked]) { width:min(980px,calc(100vw - 32px)); }
-  .editor-fields > .series-editor-panel { grid-column:1 / -1; }
-  .editor-fields[data-series-tracked] > .editor-notes { grid-column:1 / 3; grid-row:3; max-width:none; }
-  .editor-fields[data-series-tracked] > .editor-rewatches { grid-column:3; grid-row:3; }
-  .editor-fields[data-series-tracked] > .editor-notes textarea { min-height:46px; height:46px; }
-  .series-editor-panel { min-width:0; }
-  .series-editor-text { border:0; background:none; color:var(--text); cursor:pointer; padding:0; }
-  .series-editor-expand { flex:none; display:grid; place-items:center; width:44px; min-height:40px; color:var(--muted); }
-  .series-editor-expand svg { width:12px; }
-  .series-editor-expand[aria-expanded=true],.series-editor-expand:focus-visible { color:var(--blue); }
-  .series-editor-expand:focus-visible { filter:drop-shadow(0 0 2px currentColor); }
-  .series-editor-list { list-style:none; margin:0; padding:0; display:grid; gap:8px; }
-  .series-editor-row { display:grid; grid-template-columns:148px 72px 76px 128px 128px; gap:10px; align-items:center; padding:4px 0; }
-  .series-editor-row:not([hidden]) ~ .series-editor-row:not([hidden]) { border-top:1px solid var(--field); }
-  .series-editor-fields,.series-editor-selection,.series-editor-dates { display:contents; }
-  .series-editor-row-heading { display:none; }
-  .series-editor-row-heading .series-editor-poster { grid-column:1; grid-row:1; }
-  .series-editor-poster { width:32px; height:48px; border-radius:4px; overflow:hidden; background:var(--field); color:var(--muted); display:grid; place-items:center; font-size:18px; }
+  .editor .editor-seasons-button { background:none; border:0; padding:0 4px; min-height:40px; color:var(--muted); cursor:pointer; font-size:var(--type-label-size); }
+  .editor .editor-seasons-button[aria-expanded=true] { color:var(--blue); }
+  .editor .editor-seasons-button:is(:hover,:focus-visible) { outline:none; color:var(--bright); }
+  .editor .editor-seasons-button:focus-visible { filter:drop-shadow(0 0 2px currentColor); }
+  .editor .editor-seasons-button[hidden] { display:none; }
+  .editor[data-editor-type=series] .editor-heading { right:250px; }
+  .editor[data-editor-domain=movies-series] .editor-fields { gap:16px 24px; }
+  .editor[data-editor-domain=movies-series] .editor-fields > .editor-notes { grid-column:1 / 3; grid-row:3; max-width:none; }
+  .editor[data-editor-domain=movies-series] .editor-fields > .editor-rewatches { grid-column:3; grid-row:3; }
+  .editor[data-editor-domain=movies-series] .editor-notes textarea { min-height:46px; height:46px; }
+  .editor-fields > .series-editor-panel { grid-column:1 / -1; grid-row:2; min-width:0; }
+  .series-editor-panel [hidden],.series-editor-panel[hidden] { display:none!important; }
+  .series-editor-list { list-style:none; padding:0; margin:0; display:grid; gap:8px; }
+  .series-editor-row { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1fr); align-items:center; gap:24px; padding:4px 0; }
+  .series-editor-fields { display:contents; }
+  .series-editor-row-heading { display:flex; gap:10px; align-items:center; min-width:0; }
+  .series-editor-season-name { display:flex; align-items:center; }
+  .series-editor-season-identity strong { font-size:14px; color:var(--bright); }
+  .series-editor-season-identity small { display:block; color:var(--muted); font-size:12px; margin-top:4px; }
+  .series-editor-poster { width:32px; height:48px; flex:none; display:grid; place-items:center; border-radius:3px; background:var(--field); color:var(--muted); overflow:hidden; }
   .series-editor-poster img { width:100%; height:100%; object-fit:cover; }
-  .series-editor-season-identity { display:none; }
-  .series-editor-season-picker { grid-column:1; grid-row:1; min-width:0; align-self:end; }
-  .series-editor-season-navigation { display:flex; align-items:flex-end; margin-top:0; background:var(--field); border-radius:4px; }
-  .series-editor-season-navigation .editor-status-dropdown { flex:1; min-width:0; }
-  .series-editor-season-navigation [data-editor-select-value] { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .series-editor-season-navigation .editor-status-trigger { margin-top:0; min-height:40px; height:40px; padding-inline:8px; background:transparent; }
-  .series-editor-count { grid-column:2; grid-row:1; min-width:0; }
-  .series-editor-count label { white-space:nowrap; }
-  .series-editor-count label span { color:var(--muted); }
-  .series-editor-score { grid-column:3; grid-row:1; }
-  .series-editor-start { grid-column:4; grid-row:1; }
-  .series-editor-finish { grid-column:5; grid-row:1; }
-  .series-editor-fields > div { min-width:0; }
-  .series-editor-fields label { white-space:nowrap; }
+  .series-editor-score { grid-column:2; grid-row:1; min-width:0; }
+  .series-editor-dates { grid-column:3; grid-row:1; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; min-width:0; }
   .series-editor-panel .score-stepper { display:flex; width:100%; margin-top:6px; min-width:0; }
-  .series-editor-panel .score-stepper input { width:100%; min-width:0; height:40px; min-height:40px; }
-  .series-editor-panel [data-date-display] { min-height:40px; height:40px; padding:8px 29px 8px 9px; font-size:13px; }
-  .series-editor-panel [data-date-picker] { right:1px; width:26px; }
+  .series-editor-panel label { display:flex; align-items:center; min-height:28px; }
+  .series-editor-panel .score-stepper input { width:100%; min-width:0; height:42px; min-height:42px; }
+  .series-editor-panel [data-date-display] { width:100%; min-width:0; padding-left:8px; padding-right:26px; font-size:13px; }
+  .series-editor-panel [data-date-picker] { right:0; width:26px; }
   .series-editor-panel :is(button,input):focus-visible { outline:none; color:var(--bright); }
   .series-editor-panel input:focus-visible { background:var(--surface-hover,#21394a); }
   .series-editor-panel button:hover:not(:disabled) { color:var(--bright); }
-
-  .series-editor-panel[data-all-seasons] .series-editor-row-heading { grid-column:1 / 3; grid-row:1; display:flex; align-items:center; gap:12px; }
-  .series-editor-panel[data-all-seasons] .series-editor-season-identity { display:grid; gap:4px; }
-  .series-editor-season-name { display:flex; align-items:center; gap:8px; }
-  .series-editor-season-identity strong { font-size:14px; color:var(--bright); }
-  .series-editor-season-identity small { color:var(--text); font-size:12px; font-variant-numeric:tabular-nums; }
-  .series-editor-panel[data-all-seasons] .series-editor-score { grid-column:3; }
-  .series-editor-panel[data-all-seasons] .series-editor-start { grid-column:4; }
-  .series-editor-panel[data-all-seasons] .series-editor-finish { grid-column:5; }
-  .series-editor-message { padding:12px 0; color:var(--muted); }
-  .series-editor-panel [hidden],.series-editor-panel[hidden] { display:none!important; }
+  .series-editor-row:not([hidden]) ~ .series-editor-row:not([hidden]) { border-top:1px solid var(--field); padding-top:12px; }
+  .editor-fields[data-series-current] > .series-editor-panel,
+  [data-series-current] .series-editor-panel > [data-series-content],
+  [data-series-current] .series-editor-list,
+  [data-series-current] .series-editor-row,
+  [data-series-current] .series-editor-fields { display:contents; }
+  [data-series-current] .series-editor-row-heading { display:none; }
+  [data-series-current] .series-editor-selection { display:grid; grid-template-columns:minmax(0,1fr) 76px; gap:10px; align-items:end; grid-column:1; grid-row:2; }
+  .series-editor-season-picker { min-width:0; }
+  .series-editor-season-picker > label { display:block; }
+  .series-editor-season-navigation { margin-top:6px; }
+  .series-editor-season-navigation .editor-status-trigger { margin-top:0; }
+  .series-editor-season-navigation [data-editor-select-value] { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  [data-series-current] .series-editor-score { grid-column:2; grid-row:2; }
+  [data-series-current] .series-editor-dates { grid-column:3; grid-row:1 / 3; grid-template-columns:1fr; gap:16px; align-self:stretch; align-content:start; }
+  .series-editor-message { padding:8px 0; color:var(--muted); }
   .series-airing-dialog .editor-confirmation-actions { flex-wrap:wrap; }
-  @media (min-width:651px) and (max-width:800px) {
-    .series-editor-panel .series-editor-row { grid-template-columns:minmax(120px,148px) 72px 76px; }
-    .series-editor-panel .series-editor-dates { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; grid-column:1 / -1; grid-row:2; }
-    .series-editor-panel :is(.series-editor-start,.series-editor-finish),.series-editor-panel[data-all-seasons] :is(.series-editor-start,.series-editor-finish) { grid-column:auto; grid-row:auto; }
+  @media(max-width:760px) {
+    .editor[data-editor-type=series] .editor-heading { right:220px; }
+    .series-editor-row { gap:14px; }
+    .series-editor-dates { grid-column:1 / -1; grid-row:2; }
+    .series-editor-row-heading { grid-column:1; }
+    .editor .editor-fields[data-series-current] { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    [data-series-current] .series-editor-dates { grid-column:1 / -1; grid-row:3; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
+    .editor[data-editor-domain=movies-series] .editor-fields[data-series-current] > .editor-notes,
+    .editor[data-editor-domain=movies-series] .editor-fields[data-series-current] > .editor-rewatches { grid-row:4; }
+    .editor[data-editor-domain=movies-series] .editor-fields > .editor-notes { grid-column:1; }
+    .editor[data-editor-domain=movies-series] .editor-fields > .editor-rewatches { grid-column:2; }
+    .series-editor-row { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
   }
-  @media (max-width:650px) {
-    .editor .editor-fields[data-series-tracked] { grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px 14px; }
-    .editor-fields[data-series-tracked] > .editor-notes { grid-column:1 / -1; grid-row:auto; }
-    .editor-fields[data-series-tracked] > .editor-rewatches { grid-column:1; grid-row:auto; }
-    .series-editor-row { grid-template-columns:minmax(0,1fr) 68px 68px; gap:10px 8px; padding:4px 0; }
-    .series-editor-panel[data-all-seasons] .series-editor-row-heading { grid-column:1 / 3; }
-    .series-editor-poster { width:32px; height:48px; }
-    .series-editor-season-picker { grid-column:1; }
-    .series-editor-season-navigation .editor-status-trigger { padding:8px; gap:5px; }
-    .series-editor-count { grid-column:2; grid-row:1; }
-    .series-editor-score,.series-editor-panel[data-all-seasons] .series-editor-score { grid-column:3; grid-row:1; }
-    .series-editor-panel .series-editor-dates { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; grid-column:1 / -1; grid-row:2; }
-    .series-editor-panel :is(.series-editor-start,.series-editor-finish),.series-editor-panel[data-all-seasons] :is(.series-editor-start,.series-editor-finish) { grid-column:auto; grid-row:auto; }
-    .series-editor-panel [data-date-display] { font-size:12px; padding-left:6px; padding-right:24px; }
+  @media(max-width:460px) {
+    .editor[data-editor-type=series] .editor-heading { right:auto; }
+    .editor[data-editor-domain=movies-series] .editor-fields { grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
+    .editor[data-editor-domain=movies-series] .editor-fields > .editor-status-field { grid-column:1!important; }
+    .editor[data-editor-domain=movies-series] .editor-fields > .editor-score-field { grid-column:2!important; }
+    .editor[data-editor-domain=movies-series] .editor-fields > .editor-notes { grid-column:1!important; }
+    .editor[data-editor-domain=movies-series] .editor-fields > .editor-rewatches { grid-column:2!important; }
+    [data-series-current] .series-editor-selection { grid-template-columns:minmax(0,1fr) 48px; gap:6px; }
+    .series-editor-count input { padding-left:6px; padding-right:20px; }
+    .series-editor-count .score-stepper-controls { width:18px; }
+    .series-editor-season-navigation .editor-status-trigger { padding-inline:8px; gap:5px; }
+    .series-editor-season-navigation [data-editor-select-value] { font-size:12px; }
+    .series-editor-panel [data-date-display] { font-size:12px; }
   }
-  @media (max-width:460px) {
-    .editor:has([data-series-tracked]) { width:calc(100vw - 18px); }
-
-  }
-  @media (max-width:360px) {
-    .series-editor-row { grid-template-columns:minmax(0,1fr) 68px 68px; }
-    .series-editor-season-navigation .editor-status-trigger { padding-inline:6px; font-size:12px; }
-    .series-editor-panel:not([data-all-seasons]) .series-editor-season-picker { grid-column:1 / 3; }
-    .series-editor-panel:not([data-all-seasons]) .series-editor-count { grid-column:3; }
-    .series-editor-panel:not([data-all-seasons]) .series-editor-score { grid-row:2; }
-    .series-editor-panel:not([data-all-seasons]) .series-editor-dates { grid-column:1 / 3; grid-template-columns:1fr; }
+  @media(max-width:360px) {
+    [data-series-current] .series-editor-selection { grid-template-columns:minmax(0,1fr); }
+    [data-series-current] .series-editor-score { align-self:start; }
+    .series-editor-count { max-width:72px; }
   }
 </style>
