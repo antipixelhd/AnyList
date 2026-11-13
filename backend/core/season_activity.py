@@ -117,7 +117,7 @@ async def remove_season_milestone(db, card, *, target=None):
 
 async def absorb_season_actions(db, cards, milestones):
     """Completion wins inside its season's window without losing other seasons."""
-    from core.activity import has_activity_event
+    from core.activity import activity_window_start, has_activity_event
     removed = set()
     for card in cards:
         details = card.payload or {}
@@ -133,7 +133,7 @@ async def absorb_season_actions(db, cards, milestones):
             if start_target and not details.get('season_rating_group'):
                 continue
             if details.get('episode_order') != payload['episode_order'] or not (
-                    in_window(card, at) or (start_target and in_window(target,card.created_at))):
+                    in_window(card, at) or in_window(target, activity_window_start(card))):
                 continue
             values = rating_values(card)
             if str(number) in values:
@@ -154,6 +154,167 @@ async def absorb_season_actions(db, cards, milestones):
     for card in removed:
         await db.delete(card)
     return removed
+
+
+async def absorb_completed_progress(db, cards, milestones, groups, order):
+    """A completion replaces overlapping episode/start evidence for its members.
+
+    Resolve by canonical episode identity so alternate orders and windows that
+    cross a season boundary retain the other season's progress.
+    """
+    from core.activity import activity_window_start, has_activity_event
+    from core.streaming_activity import _rebuild
+    episodes = [ep for _, members, _ in groups for ep in members]
+    native = {f'S{ep.season_number}E{ep.episode_number}': ep.id for ep in episodes}
+    display = {f'S{sn}E{en}': ep.id for sn, members, _ in groups for en, ep in enumerate(members, 1)}
+    first_season = groups[0][0] if groups else 1
+    members = {sn: {ep.id for ep in eps} for sn, eps, _ in groups}
+
+    def overlaps(card, target):
+        a, b = activity_window_start(card), activity_window_start(target)
+        return a < b + timedelta(hours=24) and b < a + timedelta(hours=24)
+
+    def trim(payload, covered):
+        payload = dict(payload)
+        lookup = display if payload.get('progress_order') == order else native
+        labels = payload.get('episode_positions')
+        ids = payload.get('progress_episode_ids')
+        if ids is None:
+            if labels is None:
+                ordered = list(lookup)
+                start, end = payload.get('position_start'), payload.get('position')
+                labels = ordered[ordered.index(start):ordered.index(end)+1] if start in lookup and end in lookup else []
+            ids = [lookup.get(label) for label in labels]
+        labels = labels or [next((label for label, key in lookup.items() if key == ep_id), None) for ep_id in ids]
+        removed = {ep_id for ep_id in ids if ep_id in covered}
+        if not removed or not payload.get('episodes_watched'):
+            return payload
+        remaining = [(ep_id, label) for ep_id, label in zip(ids, labels) if ep_id not in removed]
+        payload.update(episodes_watched=max(0, int(payload['episodes_watched'])-len(removed)),
+            progress_episode_ids=[ep_id for ep_id, _ in remaining],
+            episode_positions=[label for _, label in remaining if label],
+            position_start=remaining[0][1] if remaining else None,
+            position=remaining[-1][1] if remaining else None)
+        # Retain the absorbed episodes in the window baseline, so a subsequent
+        # sync/edit cannot recreate them on a surviving cross-season card.
+        baseline = payload.get('watched_start_ids')
+        if baseline is not None:
+            payload['watched_start_ids'] = sorted(set(baseline) | removed)
+        payload['progress_start'] = int(payload.get('progress_start') or 0) + len(removed)
+        return payload
+
+    def retain(target, card, payload):
+        # Keep the encapsulated window, so undoing completion can reveal its
+        # still-watched episodes instead of losing the correction baseline.
+        lookup = display if payload.get('progress_order') == order else native
+        labels = payload.get('episode_positions')
+        if labels is None:
+            ordered = list(lookup)
+            start, end = payload.get('position_start'), payload.get('position')
+            labels = ordered[ordered.index(start):ordered.index(end)+1] if start in lookup and end in lookup else []
+        ids = payload.get('progress_episode_ids') or [lookup.get(label) for label in labels]
+        pairs = [(ep_id, label) for ep_id, label in zip(ids, labels)
+                 if ep_id in members.get(target.payload['season_number'], set())]
+        if not pairs or not payload.get('episodes_watched'):
+            return
+        snapshot = {key: payload[key] for key in ('window_key', 'window_started_at', 'progress_order',
+            'watched_start_ids', 'progress_start', 'progress') if key in payload}
+        snapshot.update(progress_episode_ids=[ep_id for ep_id, _ in pairs],
+                        episode_positions=[label for _, label in pairs], created_at=card.created_at.isoformat(),
+                        status=card.status, score=card.score)
+        snapshot.setdefault('window_started_at', activity_window_start(card).isoformat())
+        saved = [dict(item) for item in target.payload.get('absorbed_progress', [])]
+        previous = next((item for item in saved if item.get('window_started_at') == snapshot.get('window_started_at')), None)
+        if previous:
+            previous.update(snapshot)
+        else:
+            saved.append(snapshot)
+        target.payload = {**target.payload, 'absorbed_progress': saved}
+
+    for card in cards:
+        if card in db.deleted or (card.payload or {}).get('episode_order'):
+            continue
+        targets = [target for target in milestones if target.payload.get('season_completion_id') and overlaps(card, target)]
+        if not targets:
+            continue
+        numbers = {target.payload['season_number'] for target in targets}
+        covered = set().union(*(members.get(sn, set()) for sn in numbers))
+        def covers_start(payload):
+            if payload.get('start_position'):
+                return native.get(payload['start_position']) in covered
+            sn = payload.get('season_number') or first_season
+            return sn in numbers if order == 'tmdb:aired' else native.get(f'S{sn}E1') in covered
+        details = dict(card.payload or {})
+        for target in targets:
+            retain(target, card, details.get('streaming_base', details))
+        if 'streaming_base' in details:
+            details['streaming_base'] = trim(details['streaming_base'], covered)
+            events = {}
+            for key, event in details.get('streaming_events', {}).items():
+                if event.get('episodes_watched') and native.get(event.get('position')) in covered:
+                    continue
+                if key == 'start' and covers_start(event):
+                    continue
+                events[key] = event
+            details['streaming_events'] = events
+            card.payload = details
+            _rebuild(card)
+        else:
+            details = trim(details, covered)
+            card.payload = details
+        details = dict(card.payload)
+        start = details.get('streaming_events', {}).get('start') or details
+        if details.get('started_watching') and covers_start(start):
+            details['started_watching'] = False
+            if card.status == 'watching':
+                details['status_changed'] = False
+            if 'streaming_base' in details:
+                base = dict(details['streaming_base'])
+                base['started_watching'] = False
+                if details.get('streaming_base_status') == 'watching':
+                    base['status_changed'] = False
+                details['streaming_base'] = base
+        card.payload = details
+        if not has_activity_event(card.status, details):
+            await db.delete(card)
+
+
+def restore_absorbed_progress(db, cards, snapshots, *, user_id, media_id, watched_ids, completed_ids):
+    """Restore a corrected completion's net progress in its original window."""
+    for snapshot in snapshots:
+        pairs = [(ep_id, label) for ep_id, label in zip(snapshot['progress_episode_ids'], snapshot['episode_positions'])
+                 if ep_id in watched_ids and ep_id not in completed_ids]
+        if not pairs:
+            continue
+        row = next((card for card in cards if card not in db.deleted
+            and not (card.payload or {}).get('episode_order') and
+            (card.payload or {}).get('window_started_at') == snapshot.get('window_started_at')), None)
+        if row is None:
+            row = TrackingActivity(user_id=user_id, media_id=media_id, status=snapshot['status'], score=snapshot.get('score'),
+                created_at=datetime.fromisoformat(snapshot['created_at']), payload={})
+            db.add(row)
+            cards.append(row)
+        details = dict(row.payload or {})
+        pairs = dict(zip(details.get('progress_episode_ids', []), details.get('episode_positions', []))) | dict(pairs)
+        pairs = {key: label for key, label in pairs.items() if key in watched_ids and key not in completed_ids}
+        pairs = sorted(pairs.items(), key=lambda pair: tuple(map(int,pair[1][1:].split('E'))))
+        baseline = set(snapshot.get('watched_start_ids') or []) | completed_ids
+        if details.get('watched_start_ids') is not None:
+            baseline &= set(details['watched_start_ids']) | completed_ids
+        details.update({key: snapshot[key] for key in ('window_key', 'window_started_at', 'progress_order') if key in snapshot})
+        details.update(progress_episode_ids=[key for key, _ in pairs], episode_positions=[label for _, label in pairs],
+            episodes_watched=len(pairs), watched_start_ids=sorted(baseline), progress_start=len(baseline),
+            progress=len(baseline | set(dict(pairs))), position_start=pairs[0][1], position=pairs[-1][1])
+        if 'streaming_base' in details:
+            from core.streaming_activity import _rebuild
+            progress_keys = {'progress_episode_ids', 'episode_positions', 'episodes_watched', 'watched_start_ids',
+                             'progress_start', 'progress', 'position_start', 'position', 'progress_order'}
+            details['streaming_base'] = {**details['streaming_base'],
+                **{key: value for key, value in details.items() if key in progress_keys}}
+            row.payload = details
+            _rebuild(row)
+        else:
+            row.payload = details
 
 
 async def record_season_activity(db, *, user_id, media, status, score,

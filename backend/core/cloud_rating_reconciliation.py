@@ -168,4 +168,9 @@ async def reconcile_cloud_rating(
     if entry is not None:
         _set_entry_score(entry, season_number, remote_score)
     changed[key] = remote_score
+    from core.sync_reconciliation import approved_source
+    if await approved_source(db, user_id, provider):
+        from core.activity import record_synced_rating_activity
+        await record_synced_rating_activity(db, user_id=user_id, media=media, entry=entry,
+            season_number=season_number, previous_score=local_score, score=remote_score, now=rated_at)
     return "applied"

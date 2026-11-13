@@ -154,7 +154,7 @@ async def reconcile(db, user_id, media_id, *, groups_data=None, edits=(), series
         Rating.user_id == user_id, Rating.media_id == media_id,
         Rating.episode_order == (None if order == 'tmdb:aired' else order)))).all())
     from core.tracking_rules import effective_score
-    from core.season_activity import put_rating, absorb_season_actions, remove_season_milestone, in_window
+    from core.season_activity import put_rating, absorb_season_actions, absorb_completed_progress, restore_absorbed_progress, remove_season_milestone, in_window
     fallback_score = effective_score(entry.rating_mode, entry.manual_score, entry.season_scores or {})
     previous_orders = {s.episode_order for s, t in previous}
     order_changed = bool(previous_orders and order not in previous_orders)
@@ -167,6 +167,7 @@ async def reconcile(db, user_id, media_id, *, groups_data=None, edits=(), series
          for ep in episodes if (day := release_day(ep)) and day > today and not ep.imported_release), default=None
     ) if maintains_finish else None
     result = []
+    restored_progress = []
     for number, episodes, expected in groups:
         member_ids = sorted(ep.id for ep in episodes)
         fingerprint = membership_key(episodes)
@@ -292,6 +293,8 @@ async def reconcile(db, user_id, media_id, *, groups_data=None, edits=(), series
                 cards.remove(start_card)
         if not complete or not tracking.completion_date:
             if card:
+                restored_progress.extend((card.payload or {}).get('absorbed_progress', []))
+                card.payload = {key: value for key, value in card.payload.items() if key != 'absorbed_progress'}
                 await remove_season_milestone(db,card)
             continue
         if card is None and tracking.activity_suppressed:
@@ -324,9 +327,13 @@ async def reconcile(db, user_id, media_id, *, groups_data=None, edits=(), series
     # Remove old bundled milestone actions. Preserve episodes, ratings and status
     # actions; absorb a title completion into its final season's card.
     completed = [(s, t) for s, t in result if t.completed and t.completion_date]
+    completed_ids = {ep_id for s, _ in completed for ep_id in s.episode_ids}
+    restore_absorbed_progress(db, cards, restored_progress, user_id=user_id, media_id=media_id,
+        watched_ids={ep_id for ep_id, history in events_by_id.items() if history}, completed_ids=completed_ids)
     milestones = [card for card in cards if ((card.payload or {}).get('season_completion_id') or (card.payload or {}).get('season_start_id'))
                   and card not in db.deleted and card.payload.get('episode_order') == order]
     absorbed = await absorb_season_actions(db, cards, milestones)
+    await absorb_completed_progress(db, cards, milestones, groups, order)
     latest_complete = latest_started is not None and all(t.completed for s, t in result if s.season_number <= latest_started)
     for card in cards:
         if card in absorbed or card in db.deleted:
@@ -343,7 +350,9 @@ async def reconcile(db, user_id, media_id, *, groups_data=None, edits=(), series
         if details.get('season_status') or details.get('season_rating_group'):
             continue
         manual_starts = {t.start_date for _, t in result if t.start_manual and t.start_date}
-        if details.get('started_watching') and card.created_at.date() in manual_starts:
+        imported_manual_start = any(t.start_manual for s, t in result if s.season_number == first_season) and (
+            'start' in details.get('streaming_events', {}))
+        if details.get('started_watching') and (card.created_at.date() in manual_starts or imported_manual_start):
             details['started_watching'] = False
             if card.status == 'watching':
                 details['status_changed'] = False

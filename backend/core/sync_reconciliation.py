@@ -320,6 +320,12 @@ async def _ratings(db, state, cycle):
             if any([await approved_source(db, state.user_id, source) for source in decision.sources]):
                 cycle.new_ratings[key] = decision.value
                 cycle.rating_sources[key] = set(decision.sources)
+                from models import Media
+                from core.activity import record_synced_rating_activity
+                media = await db.get(Media, key[0])
+                if media is not None:
+                    await record_synced_rating_activity(db, user_id=state.user_id, media=media, entry=entry,
+                        season_number=key[1], previous_score=local, score=decision.value, now=row.rated_at)
         # Observe even rejected values. An unchanged pull-only source is context,
         # not a new edit on the next cycle. Pending reviews remain available.
         for observation in raw_observations:
