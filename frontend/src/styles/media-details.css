@@ -237,6 +237,7 @@ body.tracker .media-detail :is(.lab-public-score,.lab-game-offer,.game-newer-edi
 .media-scroll-reveal { translate:0 12px; opacity:.2; }
 @media (max-width:650px),(pointer:coarse) { .media-scroll-reveal { translate:0 8px; } }
 @media (max-width:900px) {
+  .media-detail .game-newer-editions { order:2; }
   .media-detail .lab-game-offer { order:2; grid-template-columns:minmax(0,1fr) auto; align-items:center; }
   .media-detail .lab-game-offer .lab-primary-button { grid-column:1/-1; }
 }
