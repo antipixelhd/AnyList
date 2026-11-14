@@ -4,6 +4,10 @@ import { defineConfig } from 'astro/config';
 import tailwindcss from '@tailwindcss/vite';
 
 import node from '@astrojs/node';
+import { randomUUID } from 'node:crypto';
+
+// Shared by all documents produced by this build or development server.
+const frontendBuild = randomUUID();
 
 const previewHostname = process.env.PREVIEW_HOSTNAME;
 const cloudHostname = process.env.CLOUD_PREVIEW_HOSTNAME;
@@ -37,6 +41,7 @@ export default defineConfig({
   },
 
   vite: {
+    define: { 'import.meta.env.ANYLIST_FRONTEND_BUILD': JSON.stringify(frontendBuild) },
     plugins: [tailwindcss()],
     // Astro routes and islands are loaded on demand. Bundle their client
     // dependencies at startup so visiting a new page does not invalidate

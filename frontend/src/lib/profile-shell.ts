@@ -9,6 +9,7 @@ import {editorStore} from './editor-store';
 import {returnViews,returnViewIdentity,returnViewKey,type CaptureReturnView} from './return-view-cache';
 import {profileSessionCache} from './profile-session-cache';
 import {profilePanelHeader} from './profile-panel-request';
+import {frontendBuild,frontendBuildChanged,FrontendBuildChanged,routeAssetUnavailable} from './frontend-build';
 
 const summaryBudget = 512 * 1024;
 type Panel={root:HTMLElement;url:string;title:string;ready:boolean;kind:string;lifetime:AbortController;styles?:DocumentFragment;initializing?:Promise<void>;preparing?:Promise<void>;summary?:string;checkedAt:number;visibilityCheckedAt:number;revision:number;saved?:boolean};
@@ -55,7 +56,9 @@ function setup(){
   const viewer=document.body.dataset.cacheUser,approved=document.body.dataset.gamesApproved;
   const header=host.querySelector<HTMLElement>('.profile-hero')!,nav=host.querySelector<HTMLElement>('.profile-tabs')!;
   const owner=nav.dataset.profileOwner==='yes';
-  const savedPanels=owner&&viewer&&viewer!=='anonymous'?profileSessionCache(returnViewIdentity(document.body)):undefined;
+  const build=frontendBuild(document);
+  const savedPanels=owner&&viewer&&viewer!=='anonymous'&&build
+    ?profileSessionCache(`${returnViewIdentity(document.body)}:${build}`):undefined;
   const restored=document.body.hasAttribute('data-return-view');
   const restoredDirty=document.body.dataset.returnView==='dirty';
   const visibilityPath=`/api/proxy/tracking/people/${encodeURIComponent(route.username)}/header`;
@@ -110,6 +113,7 @@ function setup(){
     const html=await response.text();
     if(!predictionManifest(html,viewer||'anonymous',approved==='true'))throw new ProfileAccessChanged();
     const doc=new DOMParser().parseFromString(html,'text/html');
+    if(frontendBuildChanged(document,doc))throw new FrontendBuildChanged();
     if(doc.body.dataset.cacheUser!==viewer||doc.body.dataset.gamesApproved!==approved)throw new ProfileAccessChanged();
     const content=doc.querySelector('#content'),tabs=content?.querySelector<HTMLElement>('.profile-tabs');
     if(!content||!tabs||tabs.dataset.profileBase!==nav.dataset.profileBase)throw new ProfileAccessChanged();
@@ -359,7 +363,11 @@ function setup(){
     };
     const failed=(cause?:unknown)=>{
       if(!isCurrent())return;
-      if(cause instanceof ProfileAccessChanged){location.assign(url);return;}
+      if(cause instanceof ProfileAccessChanged||cause instanceof FrontendBuildChanged||
+        routeAssetUnavailable(cause)&&navigator.onLine){
+        location.assign(url);
+        return;
+      }
       stopProgress();setPanelWaiting(source,false);nav.removeAttribute('aria-busy');update();
       const error=document.createElement('div');error.dataset.profileSwitchError='';error.className='page-width error-message';error.setAttribute('role','alert');
       const retry=document.createElement('button');retry.className='button-secondary';retry.textContent='Try again';

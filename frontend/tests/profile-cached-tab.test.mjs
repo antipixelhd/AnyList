@@ -4,6 +4,7 @@ import {runInNewContext} from 'node:vm';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {profilePanelHeader} from '../src/lib/profile-panel-request.ts';
+import {FrontendBuildChanged,routeAssetUnavailable} from '../src/lib/frontend-build.ts';
 
 const source=readFileSync(new URL('../src/lib/profile-shell.ts',import.meta.url),'utf8');
 const select=source.slice(source.indexOf('  function select('),source.indexOf('  const target='));
@@ -27,7 +28,7 @@ function fixture(owner=false){
     document:{body:{dataset:{cacheUser:'viewer'},toggleAttribute(){}},dispatchEvent:event=>events.push(event.type),title:'',
       createElement:()=>({dataset:{},setAttribute(){},addEventListener(){},append(){}})},
     fetch:(url,options)=>new Promise((resolve,reject)=>requests.push({url,options,resolve:(status=200,redirected=false)=>resolve({status,ok:status===200,redirected}),reject})),
-    show:node=>{context.shown=node;changes.push(node);},ProfileAccessChanged:class extends Error{},
+    show:node=>{context.shown=node;changes.push(node);},ProfileAccessChanged:class extends Error{},FrontendBuildChanged,routeAssetUnavailable,navigator:{onLine:true},
   };
   runInNewContext(stripTypeScriptTypes(select)+';this.select=select;',context);
   return {context,outgoing,frame,changes,requests,waiting,redirects,events,
@@ -68,3 +69,14 @@ test('ready owner tabs still switch immediately without a visibility request',()
   assert.equal(f.context.shown,f.context.panels.get('movies').root);
   assert.equal(f.requests.length,0);assert.equal(f.changes.includes(f.frame),false);
 });
+
+for(const cause of [new FrontendBuildChanged(),new TypeError('Failed to fetch dynamically imported module: /_astro/game-list.old.js')]){
+  test(`an unusable runtime opens the selected profile URL in a new document (${cause.constructor.name})`,async()=>{
+    const f=fixture(true);
+    f.context.panels.get('games').ready=false;
+    f.context.read=async()=>{throw cause;};
+    f.switchTab('games');
+    await settle();
+    assert.deepEqual(f.redirects,['https://example.test/user/other/games']);
+  });
+}

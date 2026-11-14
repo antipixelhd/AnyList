@@ -4,6 +4,7 @@ import {runInNewContext} from 'node:vm';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {isProfileList,profilePanelKey,panelActive,panelUrl,setPanelUrl,setPanelWaiting} from '../src/lib/profile-panel.ts';
+import {FrontendBuildChanged,routeAssetUnavailable} from '../src/lib/frontend-build.ts';
 
 test('the profile shell recognizes every profile tab and rejects unrelated or malformed routes',()=>{
   for(const key of ['movies','series','list','games','stats','stats/games','favorites','social','library'])assert.deepEqual(profilePanelKey(new URL(`https://example.test/user/alex%20one/${key}/?section=genres`)),{username:'alex one',key});
@@ -53,7 +54,7 @@ test('a failed statistics load keeps its destination frame and leaves the retain
   const start=sourceText.indexOf('    const failed=');
   const snippet=sourceText.slice(start,sourceText.indexOf('    if(cached?.ready)',start));
   const source={dispatchEvent(){}},preview={prepend(){}},scrolls=[],states=[];
-  const context={isCurrent:()=>true,ProfileAccessChanged:class extends Error{},fromTab:true,restore:undefined,stopProgress(){},signal:new AbortController().signal,wanted:'stats',key:'stats',active:'movies',source,shown:preview,
+  const context={isCurrent:()=>true,ProfileAccessChanged:class extends Error{},FrontendBuildChanged,routeAssetUnavailable,fromTab:true,restore:undefined,stopProgress(){},signal:new AbortController().signal,wanted:'stats',key:'stats',active:'movies',source,shown:preview,
     positions:new Map([['movies',1250]]),scrollY:150,window:{scrollTo:(x,y)=>scrolls.push(y)},
     setPanelWaiting:(root,on)=>states.push([root,on]),show:root=>context.shown=root,nav:{removeAttribute(){}},update(){},
     document:{createElement:()=>({dataset:{},setAttribute(){},addEventListener(){},append(){}})},host:{append(){}},Event,select(){},url:'/user/alex/stats',
@@ -68,7 +69,7 @@ for(const destination of ['games','stats','stats/games','favorites','social','ov
   const snippet=sourceText.slice(start,sourceText.indexOf('  const target=',start));
   const source={dataset:{},matches:()=>false,dispatchEvent(){}},preview={kind:'games',dataset:{},prepend(){}},waiting=[],scrolls=[];let rejectRead;
   const events=[];
-  const context={URL,isProfileList,isProfileSummary:()=>false,owner:true,selection:0,refreshFlight:undefined,ProfileAccessChanged:class extends Error{},viewer:'1',stopProgress(){},progressRunning:false,signal:new AbortController().signal,wanted:'movies',active:'movies',shown:source,scrollX:0,scrollY:780,
+  const context={URL,isProfileList,isProfileSummary:()=>false,owner:true,selection:0,refreshFlight:undefined,ProfileAccessChanged:class extends Error{},FrontendBuildChanged,routeAssetUnavailable,viewer:'1',stopProgress(){},progressRunning:false,signal:new AbortController().signal,wanted:'movies',active:'movies',shown:source,scrollX:0,scrollY:780,
     panels:new Map([['movies',{root:source,ready:true}]]),loadingTemplates:new Map(),profileLoadingFrame:()=>preview,
     createLoadingReveal:()=>({begin(){},finish(){}}),
     read:()=>new Promise((resolve,reject)=>rejectRead=reject),setPanelWaiting:(root,on)=>waiting.push([root,on]),update(){},

@@ -7,6 +7,7 @@
   import {createPrediction,bindPredictionIntent,predictionManifest,predictivePage,predictionAllowed,type PredictionArtwork} from '../lib/predictive-loading';
   import {approvedGamesPage,reusableGamesPage} from '../lib/game-public-routes';
   import {profilePanelKey} from '../lib/profile-panel';
+  import {guardFrontendBuild} from '../lib/frontend-build';
   import {snapshotHasGames,authorizeGameSnapshot} from '../lib/navigation-games-access';
   import {editorStore,type EditorTitle} from '../lib/editor-store';
   import {isFailureHandled} from '../lib/handled-failures';
@@ -516,6 +517,8 @@
     window.addEventListener('pageshow', event => {
       if (event.persisted) closeNavigationDialogs();
     });
+    // Run after the navigation loader is selected, including cached page restores.
+    document.addEventListener('astro:before-preparation', event => guardFrontendBuild(event, document));
   }
 
   function closeNavigationDialogs() {
