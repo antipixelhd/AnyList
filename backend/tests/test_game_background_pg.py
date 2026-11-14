@@ -3,7 +3,7 @@ import unittest
 from datetime import timedelta
 from unittest.mock import AsyncMock, patch
 
-from sqlalchemy import func, select, text
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.dml import Delete,Update
 
@@ -220,7 +220,7 @@ class BackgroundMappingTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(source.sources.api.http,'request',AsyncMock(return_value={'results':{'bindings':[]}})) as http:
             result=await source.items(['tt1','tt2'])
             self.assertEqual(result['data']['items'],{'tt1':[],'tt2':['Q2']})
-            self.assertEqual(result['support_snapshots'][0]['key'],'cover')
+            self.assertEqual(result['item_support']['tt1']['key'],'cover')
             self.assertEqual(result['fetched_at'],fetched.isoformat())
             http.assert_not_awaited()
             async with self.Session() as db:
@@ -230,6 +230,92 @@ class BackgroundMappingTests(unittest.IsolatedAsyncioTestCase):
             result=await source.items(['tt1','tt2'])
             self.assertEqual(result['data']['items'],{'tt1':[],'tt2':[]})
             http.assert_awaited_once()
+
+    async def test_reverse_identity_combines_fresh_statements_and_fetches_only_misses(self):
+        from core.game_imdb_discovery_source import GameIMDbDiscoverySource
+        from core.game_source_cache import utcnow
+        source=GameIMDbDiscoverySource(self.Session)
+        stamp=utcnow()
+        async with self.Session() as db:
+            for key,items,age,remaining,coverage in (
+                ('cover',{'tt1':['Q10'],'tt2':[]},3,4,'statements'),
+                ('newer',{'tt1':['Q1','Q2']},1,6,'statements'),
+                ('expired',{'tt3':[]},8,-1,'statements'),
+                ('index',{'tt3':[]},1,6,'search_index'),
+            ):
+                db.add(MetadataSnapshot(provider='wikidata',kind='game_imdb_reverse',external_id=f'v1:{key}',
+                    payload={'items':items,'coverage':coverage},fetched_at=stamp-timedelta(days=age),
+                    expires_at=stamp+timedelta(days=remaining)))
+            await db.commit()
+        payload={'results':{'bindings':[{'title':{'value':'tt3'},
+            'item':{'value':'http://www.wikidata.org/entity/Q3'}}]}}
+        with patch.object(source.sources.api.http,'request',AsyncMock(return_value=payload)) as http:
+            result=await source.items(['tt1','tt2','tt3'])
+            self.assertEqual(result['data']['items'],{'tt1':['Q1','Q2'],'tt2':[],'tt3':['Q3']})
+            self.assertEqual({native:result['item_support'][native]['key'] for native in ('tt1','tt2')},
+                {'tt1':'newer','tt2':'cover'})
+            self.assertEqual(result['fetched_at'],(stamp-timedelta(days=3)).isoformat())
+            self.assertIn('VALUES ?title { "tt3" }',http.await_args.kwargs['data']['query'])
+            repeated=await source.items(['tt3','tt2','tt1'])
+            for key in ('data','item_support','fetched_at'):
+                self.assertEqual(repeated[key],result[key])
+            http.assert_awaited_once()
+
+    async def test_reverse_identity_coalesces_concurrent_matching_misses(self):
+        from core.game_imdb_discovery_source import GameIMDbDiscoverySource
+        sources=[GameIMDbDiscoverySource(self.Session),GameIMDbDiscoverySource(self.Session)]
+        async with self.Session() as db:
+            db.add(MetadataSnapshot(provider='wikidata',kind='game_imdb_reverse',external_id='v1:overlap',
+                payload={'items':{'tt1':[],'tt2':[]},'coverage':'statements'},
+                fetched_at=now(),expires_at=now()+timedelta(days=1)))
+            await db.commit()
+        http=AsyncMock(return_value={'results':{'bindings':[]}})
+        for source in sources:source.sources.api.http.request=http
+        one,two=await asyncio.gather(sources[0].items(['tt1','tt3']),sources[1].items(['tt2','tt3']))
+        self.assertEqual(one['data']['items'],{'tt1':[],'tt3':[]})
+        self.assertEqual(two['data']['items'],{'tt2':[],'tt3':[]})
+        http.assert_awaited_once()
+        self.assertIn('VALUES ?title { "tt3" }',http.await_args.kwargs['data']['query'])
+
+    async def test_reverse_identity_proof_rejects_expired_or_evicted_original_snapshot(self):
+        from core.catalogue_providers import ProviderError
+        from core.game_imdb_bindings import GameIMDbBindings, validate_support, verified_bindings
+        from core.game_imdb_discovery_source import GameIMDbDiscoverySource
+        from core.game_source_cache import utcnow
+        from test_game_imdb_discovery_source import mapped, raw
+        source=GameIMDbDiscoverySource(self.Session)
+        stamp=utcnow()
+        async with self.Session() as db:
+            for key,native,items in (('one','tt1',[]),('two','tt2',['Q2'])):
+                db.add(MetadataSnapshot(provider='wikidata',kind='game_imdb_reverse',external_id=f'v1:{key}',
+                    payload={'items':{native:items},'coverage':'statements'},fetched_at=stamp,
+                    expires_at=stamp+timedelta(days=1)))
+            await db.commit()
+        with (patch.object(source,'entities',AsyncMock(return_value={
+            'data':{'entities':{'Q2':mapped('Q2','tt2',10)}},'stale':False})),
+            patch.object(source.sources,'igdb',AsyncMock(return_value=[raw(10)]))):
+            result=await source.explicit_page(['tt1','tt2'])
+        self.assertEqual([outcome['status'] for outcome in result['outcomes']],['unmapped','verified'])
+        proofs=[{'support':{'wiki_snapshots':result['title_support'][native]}} for native in ('tt1','tt2')]
+        binding=GameIMDbBindings(self.Session)
+        evidence={'title_type':'videoGame','igdb_id':'10','wikidata':result['outcomes'][1]['evidence']}
+        await binding.save(self.base,'tt2','wikidata',evidence,expected_igdb='10')
+        async with self.Session() as db:
+            for proof in proofs:await validate_support(db,proof)
+            await db.execute(update(MetadataSnapshot).where(MetadataSnapshot.external_id=='v1:one')
+                .values(expires_at=stamp-timedelta(seconds=1)))
+            await db.commit()
+            with self.assertRaisesRegex(ProviderError,'stale_mapping'):
+                await validate_support(db,proofs[0])
+            await validate_support(db,proofs[1])
+            await db.execute(delete(MetadataSnapshot).where(MetadataSnapshot.external_id=='v1:two'))
+            await db.commit()
+            with self.assertRaisesRegex(ProviderError,'stale_mapping'):
+                await validate_support(db,proofs[1])
+            rows=(await db.execute(verified_bindings(['tt2']))).all()
+            self.assertEqual([(row.imdb_id,row.work_id) for row in rows],[('tt2',self.base)])
+        with self.assertRaisesRegex(ProviderError,'stale_mapping'):
+            await binding.save(self.base,'tt2','wikidata',evidence,expected_igdb='10')
 
     async def asyncSetUp(self):
         await fixture.GamesDatabaseTests.asyncSetUp(self)

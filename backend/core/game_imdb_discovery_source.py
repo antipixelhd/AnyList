@@ -18,6 +18,7 @@ from core.game_release_dates import FIELDS as RELEASE_FIELDS
 from core.wikidata_claims import best_claims,qualified,snak_value
 
 SIZE=20
+REVERSE_KIND='game_imdb_reverse'
 _game_rows=ContextVar('discovery_game_rows',default=None)
 FIELDS=('id,name,slug,first_release_date,game_type.type,version_parent,parent_game.name,parent_game.game_type.type,'
     'cover.url,genres.name,platforms.name,platforms.platform_family.name,'
@@ -101,26 +102,38 @@ class GameIMDbDiscoverySource:
                         if native in claims:known[native].append(item['id'])
                 if all(known.values()):
                     return {'data':{'items':known},'stale':False,'fetched_at':records[0]['observed_at'].isoformat()}
-            # A deferred matching quantum requests a subset of the same identity
-            # group. Reuse its complete reverse evidence, including verified
-            # empty results, without renewing freshness or making another call.
-            from sqlalchemy import select
-            from sqlalchemy.dialects.postgresql import array
-            from core.game_source_cache import utcnow
+            from sqlalchemy import column, func, or_, select, true
+            from sqlalchemy.dialects.postgresql import JSONB, array
+            from core.game_source_cache import SCHEMA_VERSION, utcnow
             from models.catalogue import MetadataSnapshot
+            snapshot=MetadataSnapshot
+            prefix=f'{SCHEMA_VERSION}:'
+            members=snapshot.payload['items']
+            titles=array(ids)
+            items=func.jsonb_each(members).table_valued(column('key'),column('value',JSONB)).lateral()
+            # A verified empty array counts as coverage. Keep the existing
+            # covering-batch reuse for earlier or search-index responses;
+            # only complete statement lookups can contribute partial hits.
             async with self.sessions() as db:
-                covering=(await db.execute(select(MetadataSnapshot.payload,
-                    MetadataSnapshot.fetched_at,MetadataSnapshot.external_id).where(
-                        MetadataSnapshot.provider=='wikidata',MetadataSnapshot.kind=='game_imdb_reverse',
-                        MetadataSnapshot.external_id.startswith('v1:'),
-                        MetadataSnapshot.expires_at>utcnow(),
-                        MetadataSnapshot.payload['items'].has_all(array(list(ids))))
-                    .order_by(MetadataSnapshot.fetched_at.desc()).limit(1))).first()
-            if covering:
-                payload,fetched,key=covering
-                return {'data':{'items':{native:payload['items'][native] for native in ids}},
-                    'stale':False,'fetched_at':fetched.isoformat(),
-                    'support_snapshots':[{'kind':'game_imdb_reverse','key':key[3:],'fetched_at':fetched.isoformat()}]}
+                rows=(await db.execute(select(items.c.key,items.c.value,snapshot.fetched_at,snapshot.external_id)
+                    .select_from(snapshot).join(items,true()).where(
+                        snapshot.provider=='wikidata',snapshot.kind==REVERSE_KIND,
+                        snapshot.external_id.startswith(prefix),snapshot.expires_at>utcnow(),
+                        snapshot.fetched_at.is_not(None),members.has_any(titles),items.c.key.in_(ids),
+                        or_(snapshot.payload['coverage'].astext=='statements',members.has_all(titles)))
+                    .distinct(items.c.key).order_by(items.c.key,snapshot.fetched_at.desc(),snapshot.external_id))).all()
+            if rows:
+                known={native:values for native,values,_,_ in rows}
+                support={native:{'kind':REVERSE_KIND,'key':key.removeprefix(prefix),'fetched_at':fetched.isoformat()}
+                         for native,_,fetched,key in rows}
+                missing=[native for native in ids if native not in known]
+                result=await self.fetch_items(missing) if missing else {'stale':False}
+                support.update(result.get('item_support',{}))
+                return {**result,'data':{'items':{**known,**result.get('data',{}).get('items',{})}},
+                    'fetched_at':min(record['fetched_at'] for record in support.values()),'item_support':support}
+        return await self.fetch_items(ids)
+
+    async def fetch_items(self,ids):
         key=hashlib.sha256(json.dumps(sorted(ids)).encode()).hexdigest()
         async def load():
             values=' '.join(json.dumps(value) for value in sorted(ids))
@@ -146,11 +159,11 @@ class GameIMDbDiscoverySource:
                 if not isinstance(title,str) or title not in result or not match:raise ProviderError('bad_response')
                 item=match[1]
                 if item not in result[title]:result[title].append(item)
-            return {'items':result}
-        result=await self.sources.cache.get('wikidata','game_imdb_reverse',key,load,
+            return {'items':result,'coverage':'statements'}
+        result=await self.sources.cache.get('wikidata',REVERSE_KIND,key,load,
             ttl=timedelta(days=7),max_stale=timedelta(days=30))
-        return {**result,'support_snapshots':[{'kind':'game_imdb_reverse','key':key,'fetched_at':result['fetched_at']}]
-            if result.get('fetched_at') else []}
+        support={'kind':REVERSE_KIND,'key':key,'fetched_at':result.get('fetched_at')}
+        return {**result,'item_support':dict.fromkeys(ids,support) if support['fetched_at'] else {}}
 
     async def entities(self,ids):
         if self.sessions is None:return await self.wiki.entities(ids)
@@ -190,7 +203,7 @@ class GameIMDbDiscoverySource:
             claims={snak_value(row.get('mainsnak')) for row in best_claims(item,'P345')}
             for native in ids:
                 if native in claims:result[native].append(q)
-        return {'items':result}
+        return {'items':result,'coverage':'search_index'}
 
     async def games(self,ids=(),slugs=()):
         cached=_game_rows.get()
@@ -353,7 +366,7 @@ class GameIMDbDiscoverySource:
                     'candidate_key':data.get('scope_key'),'candidate_fingerprint':data.get('scope_fingerprint'),
                     'candidate_observations':data.get('scope_observations',{}),
                     'check_wikidata_generation':True,'wikidata_generation':wiki_generation,
-                    'wiki_snapshots':result.get('support_snapshots',[]),'snapshots':deeper}}
+                    'wiki_snapshots':result.get('title_support',{}).get(native,[]),'snapshots':deeper}}
             if proposal:
                 from core.game_credit_parents import automatic_parent_valid,VERSION as PARENT_VERSION
                 from core.game_title_candidates import IDENTITY_FIELDS
@@ -397,12 +410,18 @@ class GameIMDbDiscoverySource:
             and isinstance(value.get('parent_game'),dict) and positive(value['parent_game'].get('id'))}-set(games)
         if parents:games.update(await self.games(parents))
         version_references={}
+        entity_support=fetched.get('support_snapshots',[])
+        reverse_support=reverse.get('item_support',{})
+        title_support={native:[*([reverse_support[native]] if native in reverse_support else []),
+            *(entity_support if candidates[native] else [])] for native in ids}
         def resolve():
             for native,(item,reference) in references.items():
                 matches=[value for value in games.values() if value['id']==reference.get('id') or value.get('slug')==reference.get('slug') and 'slug' in reference]
                 outcomes[native]=project(native,item,matches[0],games) if len(matches)==1 else {
                     'id':native,'status':'unresolved','reason':'igdb_metadata'}
                 if len(matches)==1:outcomes[native]['game_class']=igdb_game_class(matches[0])
+                if outcomes[native]['status']=='verified' and title_support[native]:
+                    outcomes[native]['evidence']['support']={'wiki_snapshots':title_support[native]}
                 if len(matches)==1 and outcomes[native]['status']=='verified' and igdb_game_class(matches[0]) in ('remake','remaster'):
                     from core.game_version_scope import reference_game
                     version_references[native]=reference_game(matches[0])
@@ -410,4 +429,4 @@ class GameIMDbDiscoverySource:
         return {'outcomes':await asyncio.to_thread(resolve),'stale':reverse['stale'] or fetched['stale'],
             'version_references':version_references,
             'fetched_at':reverse.get('fetched_at'),'consulted':candidates,
-            'support_snapshots':[*reverse.get('support_snapshots',[]),*fetched.get('support_snapshots',[])]}
+            'title_support':title_support}

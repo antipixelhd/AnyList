@@ -177,6 +177,9 @@ class GamePersonDiscovery:
                         value['work_id']=work_id
                     except catalogue.IdentityConflict:
                         value={'id':value['id'],'status':'conflict'}
+                    except ProviderError as error:
+                        if error.code!='stale_mapping':raise
+                        value={'id':value['id'],'status':'unresolved','reason':error.code,'retry_after':60}
                 published[outcome['id']]=dict(value)
                 return value
 

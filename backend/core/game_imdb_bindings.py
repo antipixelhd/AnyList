@@ -100,9 +100,11 @@ async def validate_support(db,proof):
             .with_for_update(read=True))).one_or_none()
         if not row or row[0]!=snapshot['fingerprint'] or not row[1] or row[1]<=now():raise ProviderError('stale_mapping')
     for snapshot in support.get('wiki_snapshots',[]):
-        fetched=await db.scalar(GameSourceCache.query('wikidata',snapshot['kind'],snapshot['key'])
-            .with_only_columns(MetadataSnapshot.fetched_at).with_for_update(read=True))
-        if not fetched or fetched.isoformat()!=snapshot['fetched_at']:raise ProviderError('stale_mapping')
+        row=(await db.execute(GameSourceCache.query('wikidata',snapshot['kind'],snapshot['key'])
+            .with_only_columns(MetadataSnapshot.fetched_at,MetadataSnapshot.expires_at)
+            .with_for_update(read=True))).one_or_none()
+        if not row or not row[0] or row[0].isoformat()!=snapshot['fetched_at'] or not row[1] or row[1]<=now():
+            raise ProviderError('stale_mapping')
     if generation:=support.get('imdb_generation'):
         from models.game_mapping import GameMappingGeneration
         if not await db.scalar(select(GameMappingGeneration.id).where(GameMappingGeneration.id==generation,
@@ -330,6 +332,8 @@ class GameIMDbBindings:
             await catalogue.write_lock(db)
             if source=='matched':
                 await validate_support(db,proof)
+            elif source=='wikidata':
+                await validate_support(db,evidence.get('wikidata') or {})
             _,native,old,_=await context(db,work_id,participation=participation)
             if native!=expected_igdb:
                 raise catalogue.IdentityConflict('Game identity changed during verification')
