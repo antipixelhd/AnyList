@@ -1,0 +1,21 @@
+<script is:inline data-astro-rerun>
+  // Run before the hero is parsed on reload, and before incoming DOM is swapped
+  // on client navigation. Only cycling waits for a different first image.
+  (() => {
+    const prepare = (root) => {
+      if (!root?.dataset.gameBannerKey || root.dataset.gameBannerPinned === 'true') return;
+      try {
+        if (JSON.parse(localStorage.getItem(root.dataset.gameBannerKey) || '{}').cycle) {
+          root.dataset.gameBannerPending = 'true';
+        }
+      } catch {}
+    };
+    prepare(document.currentScript?.closest('[data-media-detail]'));
+    if (!window.__anyListGameBannerStartup) {
+      window.__anyListGameBannerStartup = true;
+      document.addEventListener('astro:before-swap', event => {
+        prepare(event.newDocument.querySelector('[data-media-detail]'));
+      });
+    }
+  })();
+</script>

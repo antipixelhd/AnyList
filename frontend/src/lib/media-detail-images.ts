@@ -336,9 +336,10 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
   const failedHeroes=new Set<string>();
   let fallback=info.backdropFallback as string|undefined;
   let heroRevision=0;
+  let gameBannerResolving=!!root.dataset.gameBannerPending;
   let gameBannerKnown=info.type==='game',gamePinnedBanner:string|null=info.pinnedBanner||null;
   const paintHero=(url:string|undefined)=>{
-    if(!url)return;
+    if(!url||gameBannerResolving)return;
     if(failedHeroes.has(imageKey(url)))return;
     const hero=root.querySelector<HTMLImageElement>('.lab-hero-image');
     const button=root.querySelector<HTMLButtonElement>('.lab-hero-art-button');
@@ -349,6 +350,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
     const commit=()=>{
       if(signal.aborted||revision!==heroRevision)return;
       commitDetailHero(hero,candidate,url,button,backdrop=>{
+        delete root.dataset.gameBannerPending;
         galleries.hero=uniqueDetailImages([backdrop,...galleries.hero],15);
         const backdropSrc=candidate.currentSrc||candidate.src;
         publishDetailArtwork(editorStore,info,{backdrop,backdropSrc,primaryBackdrop:initialHero,
@@ -366,6 +368,7 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
         const next=nextDetailHero([previewInfo?.image,fallback,...(info.backdropFallbacks||[])],failedHeroes);
         if(next){paintHero(next);return;}
         if(!hero.naturalWidth){hero.hidden=true;if(button)button.hidden=true;}
+        delete root.dataset.gameBannerPending;
       };
       if(info.type==='game'||previewInfo?.image||fallback)recover();else void loadPreview().then(recover);
     };
@@ -500,12 +503,14 @@ export function mountDetailImages(root:HTMLElement,info:any,signal:AbortSignal,s
   // The hero is critical: start its small metadata read immediately. Full
   // gallery curation and extra image downloads wait for a gallery interaction.
   if(info.type==='game'&&info.heroAvailable)gameBannerSettings=mountGameBannerSettings(root,info.id,String(info.bannerViewer||''),signal,data=>{
+    gameBannerResolving=false;
     gameBannerKnown=true;gamePinnedBanner=data.pinned_banner||null;
     gameBannerSelected=data.backdrop;
     artworkActions(data.pinned_banner||'');
     const selected=active==='hero'?galleries.hero[current]:undefined;
     galleries.hero=uniqueDetailImages([data.backdrop||initialHero,...(data.banners||[])],15);
     if(data.backdrop||initialHero)paintHero(data.backdrop||initialHero);
+    else delete root.dataset.gameBannerPending;
     if(lightbox.open&&active==='hero')showImage(Math.max(0,galleries.hero.findIndex(url=>imageKey(url)===imageKey(selected||''))));
   },mobileGameHero,{backdrop:initialHero,pinned_banner:info.pinnedBanner,background_status:info.backgroundStatus});
   if(info.heroAvailable&&info.type!=='game'){
