@@ -59,9 +59,8 @@ Optional references:
 - docs/agents/BACKEND.md: backend structure and important behavior.
 - docs/agents/FRONTEND-STYLES.md: shared styles and layout conventions.
 
-Treat docs/media-tracker/ as historical specifications and implementation records.
-Search a relevant section only when a requirement or past decision is unclear.
-Do not read the entire STATUS.md or phase plans by default.
+## VPS access
+- Can be found in the local .env variable if needed
 
 ## Testing
 Tests use a separate disposable database. Never point tests at a preview or
