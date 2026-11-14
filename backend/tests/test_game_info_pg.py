@@ -21,6 +21,23 @@ def info():return {'age_ratings':[{'board':'USK','region':'Germany','rating':'16
 
 @unittest.skipUnless(fixture.URL,'Requires explicit disposable Games PostgreSQL')
 class GameInfoTests(unittest.IsolatedAsyncioTestCase):
+    async def test_existing_info_request_publishes_release_without_extra_fetch_and_keeps_last_good(self):
+        from core.game_store_source import store_release
+        from core.catalogue import merge_fields
+        value=store_release({'release_date':{'date':'Nov 27, 2026'}})
+        self.source.fetch.return_value={**info(),**value}
+        self.assertEqual(await self.service.run(self.base),'ready')
+        data=(await self.request()).json()
+        self.assertEqual(data['release']['release_date'],'2026-11-27')
+        self.source.fetch.assert_awaited_once()
+        async with self.Session() as db:
+            work=await db.get(CatalogueEntity,self.base)
+            merge_fields(work,{'attributes':{**value,'release_date':'2026-11-13','release_date_evidence':'release_dates'}},'igdb')
+            await db.commit()
+        await self.due();self.source.fetch.side_effect=ProviderError('unavailable')
+        self.assertEqual(await self.service.run(self.base),'partial')
+        self.assertEqual((await self.request()).json()['release']['release_date'],'2026-11-27')
+
     cleanup=fixture.GamesDatabaseTests.cleanup
     async def asyncSetUp(self):
         await fixture.GamesDatabaseTests.asyncSetUp(self)

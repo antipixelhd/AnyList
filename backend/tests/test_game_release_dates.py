@@ -22,6 +22,29 @@ def game(form='YYYYMM', value='2027-03-01'):
 
 
 class GameReleasePrecisionTests(unittest.TestCase):
+    def test_store_date_overrides_igdb_atomically_and_survives_later_igdb_refresh(self):
+        from core.game_store_source import store_release
+        row=SimpleNamespace(kind='game',name='Delayed game',description=None,image_url=None,
+            attributes={},field_sources={},protected_fields=[])
+        old=normalize_igdb(game('YYYYMMDD','2026-11-13'))['work']
+        merge_fields(row,old,'igdb')
+        steam=store_release({'release_date':{'date':'Nov 27, 2026'}})
+        merge_fields(row,{'attributes':steam},'steam')
+        merge_fields(row,old,'igdb')
+        self.assertEqual(row.attributes['release_date'],'2026-11-27')
+        self.assertEqual(row.attributes['release_date_precision'],'day')
+        self.assertIsNone(row.attributes['release_quarter'])
+        self.assertEqual(row.field_sources['attributes.release_date'],'steam')
+        for protection in ('attributes.release_date','attributes.release_quarter'):
+            row.protected_fields=[protection]
+            merge_fields(row,{'attributes':{**steam,'release_date':'2026-12-04'}},'steam')
+            self.assertEqual(row.attributes['release_date'],'2026-11-27')
+        row.protected_fields=[]
+        for source in ('manual','reviewed','legacy'):
+            row.field_sources['attributes.release_date']=source
+            merge_fields(row,{'attributes':{**steam,'release_date':'2026-12-04'}},'steam')
+            self.assertEqual(row.attributes['release_date'],'2026-11-27')
+
     def test_primary_details_preserve_provider_quarter_for_information_display(self):
         from core.media_details import primary_details
         attrs=normalize_igdb(game('YYYYQ2','2027-06-30'))['work']['attributes']

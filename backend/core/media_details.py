@@ -269,8 +269,11 @@ async def game_releases(db, work):
             continue
         seen_platforms.add(platform)
         value=release.release_date
+        steam_pc=platform=='PC' and (work.field_sources or {}).get('attributes.release_date')=='steam'
+        if steam_pc:value=(work.attributes or {}).get('release_date')
         releases.append({'platform': platform, 'region': release.region, 'release_quarter':(attributes or {}).get('release_quarter'),
             'release_date':value[:4] if legacy_game_date and isinstance(value,str) else value})
+        if steam_pc:releases[-1]['release_quarter']=None
     return releases
 
 

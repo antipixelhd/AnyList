@@ -2,12 +2,32 @@
 import asyncio
 import re
 from collections import OrderedDict
+from datetime import date
 from html import unescape
 from html.parser import HTMLParser
 
 from core.catalogue_providers import ProviderError,ProviderHTTP
 
 _locks=OrderedDict()
+MONTHS={name:i for i,name in enumerate(('jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'),1)}
+
+
+def store_release(data):
+    """Parse the English Store calendar date without locale/time-zone guessing."""
+    raw=data.get('release_date')
+    if not isinstance(raw,dict) or not isinstance(raw.get('date'),str):return {}
+    # The Store date for Early Access is not evidence of a full release.
+    if any(isinstance(row,dict) and str(row.get('id'))=='70' for row in data.get('genres') or []):return {}
+    value=raw['date'].strip()
+    match=re.fullmatch(r'(?:(\d{1,2}) ([A-Za-z]+),?|([A-Za-z]+) (\d{1,2}),) (\d{4})',value)
+    if not match:return {}
+    first,month_a,month_b,last,year=match.groups()
+    month=MONTHS.get((month_a or month_b).lower()[:3])
+    try:released=date(int(year),month,int(first or last)).isoformat()
+    except (ValueError,TypeError):return {}
+    from core.game_release_dates import VERSION
+    return {'release_date':released,'release_date_precision':'day','release_quarter':None,
+        'release_date_evidence':'steam_store','release_date_projection':VERSION}
 BOARDS={
     'esrb':('ESRB','United States / Canada',{'e':'Everyone','e10':'Everyone 10+','e10+':'Everyone 10+','t':'Teen','m':'Mature 17+','ao':'Adults Only 18+','rp':'Rating Pending','ec':'Early Childhood'}),
     'pegi':('PEGI','Europe',{str(v):str(v) for v in (3,7,12,16,18)}),
@@ -115,5 +135,6 @@ class GameStoreSource:
         if not isinstance(requirements,dict):raise ProviderError('bad_response')
         minimum=text_rows(requirements.get('minimum'));recommended=text_rows(requirements.get('recommended'))
         return {'age_ratings':age_ratings(data.get('ratings')),
+            **store_release(data),
             'requirements':{'minimum':minimum,'recommended':recommended,'platform':'PC','source':'steam'} if minimum or recommended else None,
             'source':'steam','store_country':'US'}

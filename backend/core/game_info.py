@@ -40,7 +40,8 @@ async def view(db,work,*,enqueue=False,identities=None):
             MetadataSnapshot.next_attempt_at.is_(None),or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=now()))
             .values(expires_at=None).execution_options(synchronize_session=False))
     state=await (admit(db,work.id,kind=JOB,provider='steam') if enqueue else job_status(db,work.id,kind=JOB,provider='steam'))
-    return {'info':data,'status':state}
+    from core.game_release_dates import steam_release_projection
+    return {'info':data,'status':state,'release':steam_release_projection(work)}
 
 
 class GameInfo(GameRatings):
@@ -52,7 +53,9 @@ class GameInfo(GameRatings):
     def retention(self,part):return timedelta(days=7)
 
     def publish(self,work,app,part,value):
-        catalogue.merge_fields(work,{'attributes':{'game_info':{**value,'steam_app_id':app}}},'steam')
+        from core.game_release_dates import KEYS
+        catalogue.merge_fields(work,{'attributes':{'game_info':{**value,'steam_app_id':app},
+            **{key:value[key] for key in KEYS if key in value}}},'steam')
 
 
 async def scheduler():

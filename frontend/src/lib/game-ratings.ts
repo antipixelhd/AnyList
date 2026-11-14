@@ -2,10 +2,12 @@ import {detailBackground,type DetailLoadState} from './detail-background';
 import {gameRatingRows,type GameRatings} from './game-ratings-data';
 import {reveal} from './ui-motion';
 import {paintGameSection,bindGameSection,gameSectionFailure} from './game-section-loading';
+import {publishGameRelease,type GameRelease} from './game-primary';
 
 export function mountGameRatings(root:HTMLElement,id:number,signal:AbortSignal,initial?:DetailLoadState) {
   const section=root.querySelector<HTMLElement>('[data-game-ratings]');if(!section)return;
-  const resource=detailBackground<{ratings:GameRatings|null;status:DetailLoadState}>(`/api/proxy/tracking/games/works/${id}/ratings`,signal,data=>{
+  const resource=detailBackground<{ratings:GameRatings|null;status:DetailLoadState;release?:GameRelease|null}>(`/api/proxy/tracking/games/works/${id}/ratings`,signal,data=>{
+    publishGameRelease(root,data.release,signal);
     const rows=gameRatingRows(data.ratings),visible=section.hidden;
     for(const element of section.querySelectorAll<HTMLElement>('[data-game-rating-row]')){
       const row=rows.find(row=>row.field===element.dataset.gameRatingRow);element.hidden=!row;

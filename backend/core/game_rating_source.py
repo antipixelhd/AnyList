@@ -5,7 +5,7 @@ from datetime import timedelta
 from urllib.parse import urlsplit, urlunsplit
 
 from core.catalogue_providers import ProviderError,ProviderHTTP
-from core.game_store_source import store_data,store_request
+from core.game_store_source import store_data,store_request,store_release
 
 PARTS=('all_time','recent','critic')
 
@@ -57,7 +57,7 @@ class GameRatingSource:
     async def fetch(self,app,part,stamp):
         if part=='critic':
             raw=await store_request(self.http,app)
-            return {**critic(raw,app),'store_country':'US'}
+            return {**critic(raw,app),**store_release(store_data(raw,app)),'store_country':'US'}
         request=review_query(app,part,stamp)
         # Only this first-page summary is retained. No review paging, author
         # data, account linking or individual review text enters the cache.

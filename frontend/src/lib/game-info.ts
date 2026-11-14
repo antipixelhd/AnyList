@@ -3,8 +3,9 @@ import {gameAgeRating,requirementRows,type GameInfo} from './game-info-data';
 import {deviceStoreCountry} from './store-country';
 import {reveal} from './ui-motion';
 import {paintGameSection,bindGameSection,gameSectionFailure} from './game-section-loading';
+import {publishGameRelease,type GameRelease} from './game-primary';
 
-type InfoResponse={info:GameInfo|null;status:DetailLoadState;country:string;country_source:string};
+type InfoResponse={info:GameInfo|null;status:DetailLoadState;country:string;country_source:string;release?:GameRelease|null};
 export function mountGameInfo(root:HTMLElement,id:number,signal:AbortSignal,initial?:{info:GameInfo|null;country:string;country_source:string;status?:DetailLoadState}) {
   const section=root.querySelector<HTMLElement>('[data-game-requirements]');if(!section)return;
   const ages=[...root.querySelectorAll<HTMLElement>('[data-game-age-rating]')];
@@ -14,6 +15,7 @@ export function mountGameInfo(root:HTMLElement,id:number,signal:AbortSignal,init
   };
   if(initial)age(initial.info,initial.country_source==='account'?initial.country:deviceStoreCountry());
   const resource=detailBackground<InfoResponse>(`/api/proxy/tracking/games/works/${id}/info?country=${deviceStoreCountry()}`,signal,data=>{
+    publishGameRelease(root,data.release,signal);
     age(data.info,data.country);const entering=section.hidden;
     for(const part of ['minimum','recommended'] as const){
       const container=section.querySelector<HTMLElement>(`[data-requirements-part="${part}"]`)!,rows=requirementRows(data.info,part);

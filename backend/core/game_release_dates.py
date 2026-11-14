@@ -8,6 +8,12 @@ FORMATS = {0:'YYYYMMDD',1:'YYYYMM',2:'YYYY',3:'YYYYQ1',4:'YYYYQ2',5:'YYYYQ3',6:'
 KEYS = {'release_date','release_date_precision','release_quarter','release_date_evidence','release_date_projection'}
 
 
+def steam_release_projection(work):
+    if (work.field_sources or {}).get('attributes.release_date') != 'steam':return None
+    attrs=work.attributes or {}
+    return {key:attrs.get(key) for key in ('release_date','release_date_precision','release_quarter')}
+
+
 def public_release(row):
     status = row.get('status')
     name = status.get('name', '') if isinstance(status, dict) else row.get('release_status', '')
@@ -89,14 +95,20 @@ def game_release(raw):
 
 def merge_release(attrs, sources, protected, incoming, source, *, rank_allowed=True):
     """Keep a precise provider projection together; shallow stubs cannot erase it."""
-    if incoming.get('release_date_projection') != VERSION or source != 'igdb':
+    if incoming.get('release_date_projection') != VERSION or source not in ('igdb','steam'):
         return False
+    steam = source == 'steam' and incoming.get('release_date_evidence') == 'steam_store' and incoming.get('release_date')
+    if source == 'steam' and not steam:return True
     richer = attrs.get('release_date_evidence') == 'release_dates' and incoming.get('release_date_evidence') != 'release_dates'
     unavailable = incoming.get('release_date') is None and incoming.get('release_date_evidence') != 'release_dates'
     blocked = any('attributes.'+key in protected for key in KEYS)
     # A protected/manual source also guards the whole precision tuple.
     old_source = sources.get('attributes.release_date')
-    if not (richer or unavailable or blocked or not rank_allowed or old_source in ('manual','reviewed')):
+    # Store observations override IGDB dates, without raising Steam's priority
+    # for any other metadata. Keep the full precision tuple atomic.
+    preferred = bool(steam and old_source in (None,'igdb','rawg','steam'))
+    if not (richer and not steam or unavailable or blocked or not rank_allowed and not preferred
+            or old_source in ('manual','reviewed') or old_source == 'steam' and source != 'steam'):
         for key in KEYS:
             attrs[key] = incoming.get(key)
             sources['attributes.'+key] = source

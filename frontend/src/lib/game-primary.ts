@@ -3,6 +3,29 @@ import {mountContributorBiography,unmountContributorBiography} from './contribut
 import {publishDetailSources} from './detail-sources';
 import {formatDate} from './date-time';
 
+export type GameRelease={release_date:string;release_date_precision:string;release_quarter:number|null};
+/** Apply only the canonical release delta; leave artwork and editor state alone. */
+export function publishGameRelease(root:HTMLElement,release:GameRelease|null|undefined,signal:AbortSignal) {
+  if(signal.aborted||!release?.release_date)return;
+  root.dataset.gameRelease=JSON.stringify(release);
+  const title=prepareDetail({id:0,type:'game',...release});
+  const fact=detailFacts(title).find(row=>row.label==='Released'||row.label==='Releases');
+  if(!fact)return;
+  root.querySelectorAll<HTMLElement>('.lab-facts dl,.lab-inline-facts dl').forEach(list=>{
+    const row=[...list.children].find(child=>['Released','Releases'].includes(child.querySelector('dt')?.textContent||''));
+    if(row){row.querySelector('dt')!.textContent=fact.label;row.querySelector('dd')!.textContent=fact.value;}
+  });
+  const year=root.querySelector<HTMLElement>('[data-game-year]');
+  if(year){
+    year.hidden=false;const link=document.createElement('a');link.textContent=release.release_date.slice(0,4);
+    link.href=detailBrowseHref('game',{year:link.textContent})||'/browse/games';year.replaceChildren(link);
+  }
+  root.querySelectorAll<HTMLElement>('[data-game-releases] .media-releases p').forEach(row=>{
+    if(row.querySelector('strong')?.textContent!=='PC')return;
+    const time=row.querySelector('time');if(time){time.dateTime=release.release_date;time.textContent=formatDate(release.release_date);}
+  });
+}
+
 /** Publish public metadata into owned slots; never re-seed editor/private state. */
 export function publishGamePrimary(root:HTMLElement,data:Record<string,any>,id:number,signal:AbortSignal) {
   if(signal.aborted||data.id!==id||data.type!=='game')return false;
@@ -81,5 +104,6 @@ export function publishGamePrimary(root:HTMLElement,data:Record<string,any>,id:n
   // The existing image controller owns decoding, selected art, responsive URLs,
   // modal state and deferred gallery loading; this does not warm gallery extras.
   root.dispatchEvent(new CustomEvent('anylist:game-primary',{detail:data}));
+  if(root.dataset.gameRelease)publishGameRelease(root,JSON.parse(root.dataset.gameRelease),signal);
   return true;
 }

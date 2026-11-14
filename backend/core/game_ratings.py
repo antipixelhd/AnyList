@@ -59,7 +59,8 @@ async def view(db,work,*,enqueue=False,identities=None):
             MetadataSnapshot.next_attempt_at.is_(None),or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=now()))
             .values(expires_at=None).execution_options(synchronize_session=False))
     state=await (admit(db,work.id,kind=JOB,provider='steam',entity_id=work.id) if enqueue else job_status(db,work.id,kind=JOB,provider='steam'))
-    return {'ratings':values,'status':state}
+    from core.game_release_dates import steam_release_projection
+    return {'ratings':values,'status':state,'release':steam_release_projection(work)}
 
 
 class GameRatings:
@@ -75,8 +76,10 @@ class GameRatings:
     def retention(self,part):return timedelta(days=30) if part=='critic' else timedelta(hours=6)
 
     def publish(self,work,app,part,value):
+        from core.game_release_dates import KEYS
         previous=projection(work,app) or {'steam_app_id':app}
-        catalogue.merge_fields(work,{'attributes':{'game_ratings':{**previous,part:value}}},'steam')
+        catalogue.merge_fields(work,{'attributes':{'game_ratings':{**previous,part:value},
+            **{key:value[key] for key in KEYS if key in value}}},'steam')
 
     async def publish_component(self,db,work,app,part,value):
         self.publish(work,app,part,value)
