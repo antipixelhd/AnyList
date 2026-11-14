@@ -106,9 +106,6 @@ async def cached_evidence(db, jobs, viewer_id, *, enqueue=True, summaries=None):
     table = ContributorEvidence
     current = now()
     from core.search_demand import mark, current as search_context
-    await mark(db, [demand_scope(*key) for key in jobs])
-    if search_context.get() is not None:
-        await db.commit()
     statement = select(table).where(tuple_(table.kind, table.native_id, table.variant).in_(jobs))
     if summaries:
         statement = statement.options(defer(table.payload))
@@ -142,8 +139,12 @@ async def cached_evidence(db, jobs, viewer_id, *, enqueue=True, summaries=None):
            ((existing[key].expires_at is None or existing[key].expires_at <= current)
             and (existing[key].next_attempt_at is None or existing[key].next_attempt_at <= current)
             and (existing[key].lease_until is None or existing[key].lease_until <= current))]
-    pending = any(row.next_attempt_at is not None and row.next_attempt_at <= current + timedelta(seconds=8)
-                  for row in existing.values())
+    active = [key for key, row in existing.items()
+              if row.next_attempt_at is not None and row.next_attempt_at <= current + timedelta(seconds=8)]
+    pending = bool(active)
+    if enqueue and search_context.get() is not None and (active or due):
+        await mark(db, [demand_scope(*key) for key in active + due])
+        await db.commit()
     if enqueue and due:
         # A competing admission or a full queue is temporary. Let the bounded
         # client refresh retry rather than leaving a fresh query empty forever.

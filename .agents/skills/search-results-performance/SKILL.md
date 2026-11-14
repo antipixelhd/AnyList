@@ -100,3 +100,5 @@ When changing providers, routes, cases, cache semantics, budgets or benchmark in
 ### Active quick-search verification
 
 Quick Search uses expiring per-viewer/window/generation demand to promote shared canonical jobs and provider tickets. Replacing/cancelling one query must preserve other subscribers; late requests must not revive released generations. Preserve provider limits and user fairness. IMDb unknown candidates share bounded four-credit alias checks and identity caches; a complete zero excludes only Games. Positive samples need current verified game bindings and normal role/type/mobile exclusions. Full careers continue independently. Keep category pending states truthful, and do not count existing shared jobs again when enforcing admission capacity.
+
+Mark search demand for outstanding evidence and discovery work. Warm polls skip settled scopes. Renew an unchanged generation once the ten-second lease has five seconds left, while admitting new generations immediately and keeping existing scopes on renewal.

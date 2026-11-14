@@ -79,10 +79,6 @@ class GameSourceCache:
         async with self.sessions() as db:
             row = await db.scalar(self.query(provider, kind, key))
         now = utcnow()
-        from core.search_demand import mark
-        async with self.sessions() as db:
-            await mark(db, [f'cache:{provider}:{kind}:{key}'])
-            await db.commit()
         previous = self.view(row, now, max_stale, accept)
         if previous and not previous['stale']:
             return previous
@@ -90,7 +86,12 @@ class GameSourceCache:
             if previous:
                 return previous
             raise ProviderError('retry_pending')
+        from core.search_demand import current as search_context, mark
         if progressive and previous and row.lease_until and row.lease_until > now:
+            if search_context.get() is not None:
+                async with self.sessions() as db:
+                    await mark(db, [f'cache:{provider}:{kind}:{key}'])
+                    await db.commit()
             return previous
         flight_key = (id(self.sessions), SCHEMA_VERSION, provider, kind, key)
         from core.game_work import demand, work_context, current, Priority

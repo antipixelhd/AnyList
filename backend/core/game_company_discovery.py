@@ -85,22 +85,26 @@ class GameCompanyDiscovery:
         async with self.sessions() as db:
             # Resolve aliases and read compact job headers together. No credit
             # or portfolio payload is transferred on repeated search polls.
-            from core.search_demand import mark
-            from core.game_work import job_key
-            await mark(db, [job_key('igdb', JOB, native) for native in natives])
-            await db.commit()
             rows = (await db.execute(select(
                 func.coalesce(CatalogueEntity.canonical_company_id, CatalogueEntity.id),
                 MetadataSnapshot.next_attempt_at, MetadataSnapshot.lease_until,
-                MetadataSnapshot.id,
+                MetadataSnapshot.id, CatalogueIdentity.external_id,
             ).select_from(CatalogueEntity).join(CatalogueIdentity, CatalogueIdentity.entity_id == CatalogueEntity.id)
                 .outerjoin(MetadataSnapshot, and_(MetadataSnapshot.provider == 'igdb',
                     MetadataSnapshot.kind == JOB,
                     MetadataSnapshot.external_id == CatalogueIdentity.external_id))
                 .where(CatalogueIdentity.namespace == 'igdb.company',
                     CatalogueIdentity.external_id.in_(natives)))).all()
+        stamp = now()
+        pending = [row[4] for row in rows if row[3] is None or row[1] or row[2] and row[2] > stamp]
+        from core.search_demand import current as search_context, mark
+        if pending and search_context.get() is not None:
+            from core.game_work import job_key
+            async with self.sessions() as db:
+                await mark(db, [job_key('igdb', JOB, native) for native in pending])
+                await db.commit()
         return {'ids': list({row[0] for row in rows}),
-            'pending': any(row[3] is None or row[1] or row[2] and row[2] > now() for row in rows),
+            'pending': bool(pending),
             'partial': bool(cached.get('error')) or len(rows) != len(natives)}
 
 

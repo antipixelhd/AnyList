@@ -41,6 +41,24 @@ class SearchDemandTests(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as db:
             return bool(await db.scalar(select(demand.active(target))))
 
+    async def test_polls_renew_the_lease_only_when_needed_without_losing_targets(self):
+        started = demand.now()
+        with patch.object(demand, 'now', return_value=started):
+            context = await self.begin(1, 'lease-window', 1)
+            await self.mark(context, ['shared'])
+        halfway = started + demand.LEASE / 2
+        with patch.object(demand, 'now', return_value=halfway - timedelta(seconds=1)):
+            await self.begin(1, 'lease-window', 1)
+        async with self.Session() as db:
+            row = await db.get(SearchDemand, context[0])
+            self.assertEqual(row.expires_at, started + demand.LEASE)
+        with patch.object(demand, 'now', return_value=halfway):
+            await self.begin(1, 'lease-window', 1)
+        async with self.Session() as db:
+            row = await db.get(SearchDemand, context[0])
+            self.assertEqual(row.expires_at, halfway + demand.LEASE)
+            self.assertEqual(row.targets, ['shared'])
+
     async def test_query_replacement_cannot_demote_another_viewer_or_reactivate_late_work(self):
         a = await self.begin(1, 'window-a', 1)
         b = await self.begin(2, 'window-b', 1)

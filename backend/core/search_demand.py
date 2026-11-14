@@ -38,7 +38,8 @@ async def begin(db, viewer, client, generation, term, domain):
         'generation':generation, 'query':query, 'expires_at':stamp + LEASE,
         'targets':case((SearchDemand.generation == generation, SearchDemand.targets), else_=cast([], JSONB))},
         where=(SearchDemand.generation < generation) |
-              ((SearchDemand.generation == generation) & (SearchDemand.query == query))))
+              ((SearchDemand.generation == generation) & (SearchDemand.query == query)
+               & (SearchDemand.expires_at <= stamp + LEASE / 2))))
     # Keep a short tombstone after cancellation so late old requests cannot
     # re-admit demand. Bounded pruning never touches public verification jobs.
     expired = select(SearchDemand.subscriber).where(SearchDemand.expires_at < stamp - timedelta(days=1)).limit(100)

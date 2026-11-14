@@ -91,11 +91,6 @@ class GamePeopleDiscovery:
             return {'ids': [], 'pending': False, 'partial': bool(cached.get('error'))}
         source, discovery, component = (aliased(MetadataSnapshot) for _ in range(3))
         async with self.sessions() as db:
-            from core.search_demand import mark
-            from core.game_work import job_key
-            await mark(db, [job_key('imdb', kind, native) for native in natives
-                for kind in (JOB, DISCOVERY_JOB)])
-            await db.commit()
             rows = (await db.execute(select(
                 CatalogueIdentity.external_id.label('native'),
                 func.coalesce(CatalogueEntity.canonical_person_id, CatalogueEntity.id).label('entity_id'),
@@ -118,6 +113,20 @@ class GamePeopleDiscovery:
             return bool(due or lease and lease > stamp)
         pending = any(row.source_id is None or active(row.source_due, row.source_lease)
             or active(row.discovery_due, row.discovery_lease) for row in rows)
+        from core.search_demand import current as search_context, mark
+        if pending and search_context.get() is not None:
+            from core.game_work import job_key
+            targets = []
+            for row in rows:
+                source_pending = row.source_id is None or active(row.source_due, row.source_lease)
+                if source_pending:
+                    targets.append(job_key('imdb', JOB, row.native))
+                # Keep demand through the source-to-mapping handoff.
+                if source_pending or active(row.discovery_due, row.discovery_lease):
+                    targets.append(job_key('imdb', DISCOVERY_JOB, row.native))
+            async with self.sessions() as db:
+                await mark(db, targets)
+                await db.commit()
         from core.game_credit_roles import SOURCE_ACTING, source_role
         samples = cached['data'].get('samples', {}) if not cached.get('stale') and not cached.get('error') else {}
         def section_pending(section):
