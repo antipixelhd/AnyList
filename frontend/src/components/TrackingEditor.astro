@@ -129,6 +129,7 @@ document.addEventListener('astro:page-load', () => {
   document.addEventListener('media-tracker:rating-changed', event => {
     const saved = (event as CustomEvent).detail;
     if (saved.status) editorStore.acceptSaved(saved);
+    else if(saved.series_rating)editorStore.acceptSeasonRating(saved.id,saved.series_rating);
     else editorStore.invalidate(saved.id);
   }, {signal:pageListeners.signal});
   document.addEventListener('anylist:entry-saved', event => {

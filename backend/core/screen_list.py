@@ -7,10 +7,10 @@ from typing import Literal
 from sqlalchemy import Integer, any_, func, literal, or_, select
 from sqlalchemy.dialects.postgresql import ARRAY
 
-from core import list_categories, season_releases, tracking_projection
+from core import list_categories, season_completion, season_releases, tracking_projection
 from core.tracking_access import anime_is_visible
 from core.tracking_rules import effective_score
-from models import Media, WatchEvent
+from models import Media, Rating, WatchEvent
 from models.base import MediaType
 from models.tracking import MediaFavorite, TrackedEntry
 
@@ -132,6 +132,40 @@ def project_series(entry, media, episodes, today, owner):
     last_watched = next((row for row in reversed(released) if row.watched), None)
     entry['season_position'] = f'S{last_watched.season_number}E{last_watched.episode_number}' if last_watched else None
     entry.update(tracking_projection.release_annotations(released, watched, entry['status']))
+
+
+def visible_seasons(groups, metadata, watched_ids, scores, today, catalogue_complete):
+    by_number = {number: (episodes, expected) for number, episodes, expected in groups}
+    previous_completed = False
+    seasons = []
+    for number in sorted(by_number.keys() | metadata.keys()):
+        info = metadata.get(number, {})
+        episodes, expected = by_number.get(number, ([], info.get('episode_count') or 0))
+        released = [episode for episode in episodes if season_completion.is_released(episode, today)]
+        watched = sum(episode.id in watched_ids for episode in released)
+        total = max(expected, len(episodes))
+        completed = bool(total and (expected or catalogue_complete) and watched == total)
+        if watched or previous_completed:
+            dates = [day for episode in episodes if (day := season_completion.release_day(episode))]
+            air_date = info.get('air_date') or (min(dates).isoformat() if dates else None)
+            seasons.append(dict(number=number, name=info.get('name'), poster=info.get('poster_path'),
+                year=air_date[:4] if air_date else None, total=total or None, watched=watched,
+                score=scores.get(number) or None, completed=completed,
+                upcoming=not released and bool(air_date and air_date > today.isoformat())))
+        previous_completed = completed
+    return seasons
+
+
+async def series_seasons(db, media, user_id, aired_scores):
+    order, groups, metadata = await season_completion.season_groups(db, media, user_id)
+    watched = await season_completion.watched_episode_ids(db, user_id,
+        [episode.id for _, episodes, _ in groups for episode in episodes])
+    scores = {int(number): score for number, score in (aired_scores or {}).items()} if order == 'tmdb:aired' else {}
+    scores.update((await db.execute(select(Rating.season_number, Rating.rating).where(
+        Rating.user_id == user_id, Rating.media_id == media.id, Rating.season_number.is_not(None),
+        Rating.episode_order == (None if order == 'tmdb:aired' else order)))).all())
+    return {'order': order, 'seasons': visible_seasons(groups, metadata, watched, scores, date.today(),
+        bool((media.tmdb_data or {}).get('tracking_catalogue_refreshed_at')))}
 
 
 @dataclass(slots=True)

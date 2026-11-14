@@ -7,8 +7,8 @@ from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
-from core.season_completion import is_released, membership_key, release_day, season_groups
-from models import Rating, WatchEvent
+from core.season_completion import is_released, membership_key, release_day, season_groups, watched_episode_ids
+from models import Rating
 from models.seasons import SeasonTracking, SeriesSeason
 from models.tracking import TrackedEntry
 
@@ -147,9 +147,7 @@ class SeriesEditorContext:
 async def editor_context(db, media, user_id):
     positions = {}
     data = await season_groups(db, media, user_id, display_positions=positions)
-    watched = set(await db.scalars(select(WatchEvent.media_id).where(
-        WatchEvent.user_id == user_id, WatchEvent.media_id.in_(positions),
-        WatchEvent.completed.is_(True)).distinct())) if positions else set()
+    watched = await watched_episode_ids(db, user_id, list(positions))
     cursor = await db.scalar(select(TrackedEntry.season_cursor).where(TrackedEntry.user_id==user_id,
         TrackedEntry.media_id==media.id))
     return SeriesEditorContext(data, positions, watched, cursor)

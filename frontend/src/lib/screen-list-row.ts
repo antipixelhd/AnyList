@@ -21,10 +21,14 @@ export function screenListEditorTitle(state:ListState):EditorTitle{
   return {id,type,title,original_title,tagline,poster,backdrop,backdrop_fallbacks,background_status,year,genres,release_date,progress_positions,editor_library,favorite,entry};
 }
 
-export function paintScreenListRow(row:HTMLElement,state:ListState,template:HTMLTemplateElement,acknowledge=false){
+export function paintScreenListRow(container:HTMLElement,state:ListState,template:HTMLTemplateElement,acknowledge=false){
   const {id,type,title}=state;
-  Object.assign(row.dataset,{listEntry:String(id),title:title.toLowerCase(),score:String(state.score??-1),
+  container.dataset.listEntry=String(id);
+  const row=container.firstElementChild as HTMLElement;
+  Object.assign(row.dataset,{title:title.toLowerCase(),score:String(state.score??-1),
     progress:String(state.progress??0),mediaType:type,updated:state.updated_at||''});
+  const toggle=row.querySelector<HTMLButtonElement>('[data-season-toggle]');
+  if(toggle){toggle.hidden=type!=='series';toggle.setAttribute('aria-label',`Seasons of ${title}`);}
   const link=row.querySelector<HTMLAnchorElement>('.entry-title-link')!;
   const heart=link.querySelector<HTMLElement>('[data-list-favorite]')!;
   if(link.firstChild?.nodeType!==Node.TEXT_NODE||link.firstChild.textContent!==title)link.replaceChildren(document.createTextNode(title),heart);

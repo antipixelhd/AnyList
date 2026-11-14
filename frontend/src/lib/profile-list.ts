@@ -2,6 +2,7 @@ import {editorStore} from './editor-store';
 import {showActionFailure} from './action-failure';
 import {statuses} from './tracking-statuses';
 import {paintScreenListRow,screenListEditorTitle} from './screen-list-row';
+import {mountScreenListSeasons} from './screen-list-seasons';
 import {initializeVirtualList} from './virtual-profile-list';
 import {mountCategoryControls} from './list-category-controls';
 import {type CategoryPresentation} from './list-categories.ts';
@@ -20,6 +21,10 @@ export function initializeProfileList(panel:HTMLElement,lifetime:AbortSignal){
       title:title.title,favorite:!!title.favorite}),
     paint:(row,state,template)=>paintScreenListRow(row,state,template,editorStore.hasPendingSubject(state.subject||{kind:state.type,media_id:state.id})),
     editorControls:'[data-edit-entry],[data-quick-rate-id],[data-progress-increment]',
+    mountRows(list,signal){
+      const template=panel.querySelector<HTMLTemplateElement>('[data-list-season-template]');
+      return template?mountScreenListSeasons(list,panel,template,signal):undefined;
+    },
     onClick(target,title){
       const button=target.closest<HTMLButtonElement>('[data-progress-increment]');
       if(!button||button.disabled)return;

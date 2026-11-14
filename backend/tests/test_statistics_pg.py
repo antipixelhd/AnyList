@@ -6,7 +6,7 @@ import os
 import unittest
 import uuid
 from unittest.mock import AsyncMock, patch
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 os.environ.setdefault("SECRET_KEY", "statistics-test-only")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from core import statistics_snapshots as snapshots
 from db import get_db
 from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user
-from models import Base, GlobalSettings, Media, User, UserProfileData, WatchEvent
+from models import Base, GlobalSettings, Media, Rating, Show, User, UserProfileData, WatchEvent
 from models.base import MediaType, PrivacyLevel
 from models.catalogue import CatalogueEntity, CatalogueCredit, CatalogueLegacyLink, CatalogueIdentity
 from models.statistics import UserStatsSnapshot, UserStatsState
@@ -35,6 +35,49 @@ URL = os.getenv("STATISTICS_TEST_DATABASE_URL") or os.getenv("TRACKING_TEST_DATA
 
 @unittest.skipUnless(URL, "Requires explicit disposable statistics PostgreSQL")
 class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
+    async def test_profile_series_seasons_only_show_progress_and_the_next_season_after_completion(self):
+        from core.tracking_metadata import EPISODE_DETAILS_VERSION
+
+        async with self.Session() as db:
+            show = Show(title='Four seasons', tmdb_id=923000)
+            series = Media(title=show.title, tmdb_id=show.tmdb_id, media_type=MediaType.series, status='Returning Series',
+                tmdb_data={'seasons': [dict(season_number=n, episode_count=2, poster_path=f'/s{n}.jpg',
+                    air_date=f'202{n}-01-01') for n in range(5)], 'tracking_episode_details_version': EPISODE_DETAILS_VERSION,
+                    'tracking_catalogue_refreshed_at': datetime.now(timezone.utc).isoformat()})
+            db.add_all([show, series])
+            await db.flush()
+            episodes = {(season, number): Media(title=f'{season}.{number}', media_type=MediaType.episode,
+                show_id=show.id, season_number=season, episode_number=number,
+                release_date='2099-01-01' if (season, number) == (2, 2) else '2020-01-01')
+                for season in range(4) for number in (1, 2)}
+            db.add_all(episodes.values())
+            await db.flush()
+            media_id = series.id
+            db.add_all([TrackedEntry(user_id=self.user_id, media_id=media_id, status='watching', progress=3,
+                season_scores={'1': 8, '2': 3}), Rating(user_id=self.user_id, media_id=media_id, season_number=2, rating=0)])
+            db.add_all(WatchEvent(user_id=self.user_id, media_id=episodes[key].id, completed=True)
+                for key in ((0, 1), (1, 1), (1, 2)))
+            episode_two = episodes[2, 1].id
+            await db.commit()
+
+        url = f'/tracking/profile/{self.viewer.username}/series/{media_id}/seasons'
+        response = await self.client.get(url)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.headers['cache-control'], 'private, no-store')
+        self.assertEqual([(s['number'], s['watched'], s['score'], s['completed'], s['poster']) for s in response.json()['seasons']],
+            [(1, 2, 8, True, '/s1.jpg'), (2, 0, None, False, '/s2.jpg')])
+        async with self.Session() as db:
+            db.add(WatchEvent(user_id=self.user_id, media_id=episode_two, completed=True))
+            await db.commit()
+        self.viewer = None
+        seasons = (await self.client.get(url)).json()['seasons']
+        self.assertEqual([(s['number'], s['watched'], s['total']) for s in seasons], [(1, 2, 2), (2, 1, 2)])
+        async with self.Session() as db:
+            await db.execute(update(UserProfileData).where(UserProfileData.user_id == self.user_id)
+                .values(privacy_level=PrivacyLevel.private))
+            await db.commit()
+        self.assertEqual((await self.client.get(url)).status_code, 403)
+
     async def test_screen_profile_windows_match_complete_membership_and_project_released_progress(self):
         async with self.Session() as db:
             series = Media(title='Later % Series', original_title='Original series name',tagline='A different beginning.', media_type=MediaType.series, release_date='2024-01-01',
