@@ -76,7 +76,7 @@ Use `node scripts/modern-web-guidance.mjs <command> ...` from the repository roo
 - The first use checks npm's `latest` release tag; subsequent uses run that exact cached CLI directly for 24 hours. There is no background schedule or check on days the tool is unused.
 - CLI files and the last check time persist in the ignored `.npm-cache/modern-web-guidance/` directory. Concurrent chats share the update check.
 - A failed update check keeps the last working CLI and waits until the next daily check to retry. The first installation requires network access. If there is no usable cache, the runner reports the state file to remove for an explicit early retry.
-- This updates the CLI and its packaged guidance, not this checked-in skill or its bundled reference files.
+- The CLI package supplies the guides. This repository tracks the skill instructions and runner.
 
 ## Guidelines
 
