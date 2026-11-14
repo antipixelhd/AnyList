@@ -145,6 +145,7 @@ class ColdPeopleDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         self.source.people_candidates.side_effect = TimeoutError
         result = await self.query('Cold performer', 'people', 'game')
         self.assertTrue(result['partial'])
+        self.assertTrue(result['unavailable'])
         self.assertFalse(result['verification_pending'])
         self.assertFalse(result['results']['actor'])
         await self.query('Cold performer', 'people', 'game')
@@ -161,6 +162,7 @@ class ColdPeopleDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         result = await self.query('Cold performer', 'people', 'game')
         self.assertFalse(result['verification_pending'])
         self.assertTrue(result['partial'])
+        self.assertFalse(result['unavailable'])
         self.assertFalse(result['results']['actor'])
 
     async def test_long_provider_cooldown_is_returned_without_refetching_names(self):

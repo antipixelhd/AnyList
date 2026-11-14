@@ -89,10 +89,11 @@ class GamePeopleDiscovery:
             return bool(due or lease and lease > stamp)
         pending = any(row.source_id is None or active(row.source_due, row.source_lease)
             or active(row.discovery_due, row.discovery_lease) for row in rows)
-        partial = bool(cached.get('error')) or len(rows) != len(natives) or any(
-            row.source_error or row.discovery_error or (row.unmapped_games or 0) > 0
+        unavailable = bool(cached.get('error')) or len(rows) != len(natives) or any(
+            row.source_error or row.discovery_error
             or not row.source_complete and row.source_id is not None
                 and not active(row.source_due, row.source_lease) for row in rows)
+        unmapped = any((row.unmapped_games or 0) > 0 for row in rows)
         delays = []
         for row in rows:
             if row.source_id is None:
@@ -102,7 +103,8 @@ class GamePeopleDiscovery:
                     delays.append(2)
                 elif due:
                     delays.append(max(1, int((due - stamp).total_seconds()) + 1))
-        return {'ids': list({row.entity_id for row in rows}), 'pending': pending, 'partial': bool(partial),
+        return {'ids': list({row.entity_id for row in rows}), 'pending': pending, 'partial': unavailable or unmapped,
+            'unavailable': unavailable,
             **({'retry_after': min(3600, min(delays, default=2))} if pending else {})}
 
 

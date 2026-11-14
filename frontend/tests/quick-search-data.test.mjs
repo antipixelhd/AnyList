@@ -151,6 +151,29 @@ test('query cancellation aborts a scheduled verification deadline',async()=>{
   assert.equal(calls,1);
 });
 
+test('a transient verification poll failure keeps published results and resumes with backoff', async () => {
+  const updates = [], delays = [];
+  let calls = 0;
+  await readQuickSearch({kind:'contributors',url:'/people'},new AbortController().signal,data=>updates.push(data),async()=>{
+    calls++;
+    if (calls === 2) return {ok:false,status:503};
+    if (calls === 3) throw new TypeError('Failed to fetch');
+    return {ok:true,json:async()=>({results:{actor:['saved']},verification_pending:calls===1})};
+  },async (_signal, delay) => delays.push(delay));
+  assert.deepEqual(delays,[1500,1500,3000]);
+  assert.deepEqual(updates.map(update=>update.results.actor),[['saved'],['saved']]);
+  assert.equal(updates.at(-1).verification_pending,false);
+});
+
+test('repeated verification failures stop after two retries', async () => {
+  let calls = 0;
+  await assert.rejects(readQuickSearch({kind:'contributors',url:'/people'},new AbortController().signal,()=>{},async()=>{
+    if (++calls > 1) return {ok:false,status:503};
+    return {ok:true,json:async()=>({results:{actor:['saved']},verification_pending:true})};
+  },async()=>{}),/Search unavailable/);
+  assert.equal(calls,4);
+});
+
 test('desktop searches both media types and all contributors without duplicating people requests',()=>{
   const requests=quickSearchRequests('James & Co');
   assert.deepEqual(requests.map(row=>row.kind),['movie','series','game','contributors','contributors']);

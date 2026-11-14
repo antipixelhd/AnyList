@@ -51,6 +51,7 @@ export function mountQuickSearch() {
   const skeleton = dialog.querySelector<HTMLTemplateElement>('[data-search-skeleton]')!;
   const state = dialog?.querySelector<HTMLElement>('[data-search-state]');
   const announcement = dialog?.querySelector<HTMLElement>('[data-search-announcement]');
+  const progress = dialog.querySelector<HTMLProgressElement>('[data-search-progress]')!;
   const addIcon = document.querySelector<HTMLTemplateElement>('[data-search-add-icon]');
   const editorTitles = new WeakMap<HTMLButtonElement, EditorTitle>();
   const gameResults = new WeakMap<HTMLButtonElement, GameSearchResult>();
@@ -62,7 +63,8 @@ export function mountQuickSearch() {
   let revealed = false;
   let latest = { all: [] as MediaSearchResult[], movie: [] as MediaSearchResult[], series: [] as MediaSearchResult[], game: [] as GameSearchResult[] };
   let contributors:Record<'actor'|'staff'|'studio',ContributorResult[]>={actor:[],staff:[],studio:[]};
-  let failed=0;
+  let failed = false;
+  let partialCoverage = false;
   const pending = new Set<SearchSection>();
   const exits = new Map<HTMLElement, Animation>();
   const rendered = new Map<HTMLElement, string>();
@@ -197,6 +199,7 @@ export function mountQuickSearch() {
   }
   function render() {
     if (!revealed) return;
+    progress.hidden = !pending.size;
     const counts=resultCounts();
     const available=availableTabs();
     const wasStale = resultShell.inert;
@@ -220,7 +223,7 @@ export function mountQuickSearch() {
     });
     const message = pending.size || exits.size ? '' : failed
       ? available.length ? 'Some search results are unavailable.' : 'Search is unavailable. Try again.'
-      : available.length ? '' : 'No matching results.';
+      : available.length ? '' : partialCoverage ? 'Some matches could not be verified.' : 'No matching results.';
     showState(message);
     const summary = visible.filter(kind => counts[kind]).map(kind=>`${counts[kind]} ${kind==='all'?'movie and series':kind==='staff'?'crew':kind} results`).join(', ');
     if (announcement && announcement.textContent !== summary) announcement.textContent = summary;
@@ -245,6 +248,7 @@ export function mountQuickSearch() {
     controller = null;
     revealed = false;
     pending.clear();
+    progress.hidden = true;
     for (const [panel, exit] of exits) {
       exit.cancel();
       panel.hidden = true;
@@ -258,7 +262,8 @@ export function mountQuickSearch() {
     stopSearch();
     latest = {all: [], movie: [], series: [], game: []};
     contributors = {actor: [], staff: [], studio: []};
-    failed = 0;
+    failed = false;
+    partialCoverage = false;
     const query = input?.value.trim() || '';
     // Preserve the layout during debounce while disabling links from the previous query.
     const keepLayout = retainResults && query.length >= 2 && !resultShell.hidden;
@@ -299,9 +304,9 @@ export function mountQuickSearch() {
         latest.movie = unique(result.movie);
         latest.series = unique(result.series);
         latest.all = rankCombinedMedia(latest.movie, latest.series);
-        if (result.failed || result.incomplete) failed++;
+        if (result.failed || result.incomplete) failed = true;
       } catch {
-        if (isCurrent()) failed++;
+        if (isCurrent()) failed = true;
       } finally {
         if (isCurrent()) {
           titleSections.forEach(kind => pending.delete(kind));
@@ -312,11 +317,12 @@ export function mountQuickSearch() {
 
     await Promise.all([titles, ...requests.filter(request => request.kind === 'contributors' || request.kind === 'game').map(async request => {
       const sections: SearchSection[] = request.kind === 'game' ? ['game'] : request.scope === 'studio' ? ['studio'] : ['actor', 'staff'];
-      let incomplete = false;
+      let unavailable = false, incomplete = false;
       try {
         await searchReader.read(request, current.signal, data => {
           if (!isCurrent()) return;
-          incomplete = !!(data.partial || data.notice || data.verification_pending);
+          unavailable = !!(data.notice || (data.unavailable ?? data.partial));
+          incomplete = !!data.partial;
           if (request.kind === 'game') latest.game = unique(data.results || []) as GameSearchResult[];
           else {
             contributors = mergeContributorResults(contributors, data.results || {}, request.scope);
@@ -324,10 +330,11 @@ export function mountQuickSearch() {
           }
         });
       } catch {
-        incomplete = true;
+        unavailable = true;
       } finally {
         if (isCurrent()) {
-          if (incomplete) failed++;
+          failed ||= unavailable;
+          partialCoverage ||= incomplete;
           sections.forEach(kind => pending.delete(kind));
           render();
         }

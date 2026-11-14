@@ -135,6 +135,39 @@
   font-size:14px;
 }
 .quick-search-dialog .quick-search-bar .editor-icon-button:is(:hover,:focus-visible) { background:transparent; color:var(--blue); }
+.quick-search-loading-bar {
+  position:absolute;
+  inset:auto 0 0;
+  inline-size:100%;
+  block-size:2px;
+  appearance:none;
+  border:0;
+  background:transparent;
+  overflow:clip;
+  pointer-events:none;
+  container-type:inline-size;
+  --quick-search-progress-animation:quick-search-progress-slide 2.2s ease-in-out infinite;
+}
+.quick-search-loading-bar::-webkit-progress-bar { background:transparent; }
+.quick-search-loading-bar::-webkit-progress-value {
+  background:var(--blue);
+  animation:var(--quick-search-progress-animation);
+}
+.quick-search-loading-bar::-moz-progress-bar {
+  background:var(--blue);
+  animation:var(--quick-search-progress-animation);
+}
+@keyframes quick-search-progress-slide {
+  from,to { inline-size:36%; margin-right:auto; }
+  from { translate:-100%; }
+  to { translate:100cqi; }
+}
+@media(prefers-reduced-motion:reduce) {
+  .quick-search-loading-bar { --quick-search-progress-animation:quick-search-progress-still 1s linear infinite; }
+}
+@keyframes quick-search-progress-still {
+  from,to { inline-size:36%; margin-right:auto; }
+}
 .quick-search-dialog .quick-search-results,.quick-search-dialog .quick-search-results.combined {
   grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));
   justify-content:stretch;

@@ -9,12 +9,12 @@ test('places a short fourth panel under the shortest first-row panel', () => {
   ]);
 });
 
-test('starts a new row when a panel cannot fit below the height limit', () => {
-  const positions=quickSearchPanelPositions([510,490,480,100],3,32);
-  assert.deepEqual(positions[3],{column:1,top:542,height:100});
+test('full-height crew and studio panels use neighboring free columns instead of stacking', () => {
+  const positions=quickSearchPanelPositions([522,522,522,522,522],3,48);
+  assert.deepEqual(positions.slice(3),[{column:1,top:570,height:522},{column:2,top:570,height:522}]);
 });
 
-test('respects two columns and a panel taller than the default limit', () => {
+test('respects two columns with a tall first panel', () => {
   const positions=quickSearchPanelPositions([600,100,120],2,32);
   assert.deepEqual(positions[2],{column:2,top:132,height:120});
 });

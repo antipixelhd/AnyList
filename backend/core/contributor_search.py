@@ -298,6 +298,7 @@ async def search_contributors(db, viewer, term, kind='all', work_domain='all'):
         companies, people = await asyncio.gather(discover_companies(db, term, kind), discover_people(db, term, kind))
         groups = await game_matches(db, term, kind, candidate_ids=companies['ids'] + people['ids'])
         return {'results': ranked_results(groups, term), 'partial': companies['partial'] or people['partial'],
+            'unavailable': companies['partial'] or people.get('unavailable', people['partial']),
             'verification_pending': companies['pending'] or people['pending'], 'game_coverage': 'saved_credits',
             **({'retry_after': 2 if companies['pending'] else people.get('retry_after', 2)} if companies['pending'] or people['pending'] else {})}
     if not allowed(viewer):
@@ -317,6 +318,7 @@ async def search_contributors(db, viewer, term, kind='all', work_domain='all'):
     else:
         groups, failed, pending = await screen_matches(db, viewer, term, kind)
     return {'results': ranked_results(groups, term), 'partial': failed or companies['partial'] or people['partial'],
+            'unavailable': failed or companies['partial'] or people.get('unavailable', people['partial']),
             'verification_pending':pending or companies['pending'] or people['pending'],
             **({'retry_after': 2 if pending or companies['pending'] else people.get('retry_after', 2)} if pending or companies['pending'] or people['pending'] else {}),
             **({'game_coverage':'saved_credits'} if work_domain == 'all' else {})}

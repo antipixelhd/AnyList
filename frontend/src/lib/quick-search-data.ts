@@ -18,17 +18,27 @@ function verificationPause(signal:AbortSignal, delay=1500) {
 export async function readQuickSearch(request:SearchRequest,signal:AbortSignal,onResult:(data:any)=>void,
   fetcher:typeof fetch=fetch,pause=verificationPause) {
   let previous:string|undefined;
+  let verifying = false, retries = 0;
   while(!signal.aborted) {
-    const response=await fetcher(request.url,{signal});
-    if(!response.ok)throw new Error('Search unavailable');
+    const response=await fetcher(request.url,{signal}).catch(error => {
+      if (!verifying || !(error instanceof TypeError) || signal.aborted) throw error;
+      return null;
+    });
+    if (verifying && retries < 2 && (!response || [408, 502, 503, 504].includes(response.status))) {
+      await pause(signal, 1500 * 2 ** retries++);
+      continue;
+    }
+    if(!response?.ok)throw new Error('Search unavailable');
     const data=await response.json();
     if(signal.aborted)return;
     // A healthy cold career can take several worker turns. Pending evidence
     // is not a provider failure, and must not become one after a poll count.
-    const signature=JSON.stringify([data.results,data.partial,data.verification_pending]);
+    retries = 0;
+    const signature=JSON.stringify([data.results,data.partial,data.unavailable,data.verification_pending]);
     if(signature!==previous){onResult(data);previous=signature;}
     if(signal.aborted)return;
     if(request.kind!=='contributors'||!data.verification_pending)return;
+    verifying = true;
     const delay=typeof data.retry_after==='number'&&Number.isFinite(data.retry_after)
       ? Math.max(1500,Math.min(3600,data.retry_after)*1000) : 1500;
     await pause(signal,delay);

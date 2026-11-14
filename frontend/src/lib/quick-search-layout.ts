@@ -1,15 +1,9 @@
-/** Place short result panels beneath one another when they fit within a full panel's height. */
-export function quickSearchPanelPositions(heights: number[], columns: number, gap: number, minimumColumnHeight = 540) {
-  const ceiling = Math.max(minimumColumnHeight, ...heights);
+/** Keep the first row in reading order, then use the earliest free space. */
+export function quickSearchPanelPositions(heights: number[], columns: number, gap: number) {
   const ends = Array<number>(columns).fill(0);
   return heights.map((height, index) => {
-    let column = index < columns ? index : ends.indexOf(Math.min(...ends));
-    let top = ends[column];
-    if (top && top + height > ceiling) {
-      top = Math.max(...ends);
-      ends.fill(top);
-      column = 0;
-    }
+    const column = index < columns ? index : ends.indexOf(Math.min(...ends));
+    const top = ends[column];
     ends[column] = top + height + gap;
     return {column: column + 1, top, height};
   });
@@ -34,7 +28,7 @@ export function mountQuickSearchLayout(shell: HTMLElement, signal: AbortSignal) 
     if (visible.length <= columns) { clear(); return; }
     const heights = visible.map(card => card.offsetHeight);
     if (heights.some(height => !height)) { clear(); return; }
-    const positions = quickSearchPanelPositions(heights, columns, 32);
+    const positions = quickSearchPanelPositions(heights, columns, parseFloat(getComputedStyle(shell).columnGap));
     for (let i = 0; i < visible.length; i++) {
       const {column, top, height} = positions[i];
       visible[i].style.gridColumn = String(column);
