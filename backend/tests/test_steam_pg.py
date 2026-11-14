@@ -201,6 +201,10 @@ class SteamDatabaseTests(unittest.IsolatedAsyncioTestCase):
             job=await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.provider=='igdb',MetadataSnapshot.kind=='game',MetadataSnapshot.external_id=='900020'))
             self.assertTrue(job.coverage['primary_only'])
             self.assertIsNotNone(job.next_attempt_at)
+            from models.game_runner import GameWorkDemand
+            demand=await db.get(GameWorkDemand,'job:igdb:game:900020')
+            self.assertEqual(demand.priority,1)
+            self.assertEqual(demand.origin,2)
         provider=CatalogueProviders()
         provider.igdb=AsyncMock(return_value=[{'id':900020,'name':'Resolved title','game_type':{'id':0},'platforms':[{'id':6,'name':'PC'}]}])
         provider._igdb_pages=AsyncMock(side_effect=AssertionError('optional characters requested'))

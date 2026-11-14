@@ -211,7 +211,7 @@ async def apply_games(db, state, library, selected, *, initial=False, add_apps=N
                 catalogue.merge_fields(work,{'name':name},'steam')
             from core.game_work import work_context, Priority
             from core.game_metadata import request as request_primary
-            with work_context(Priority.CONNECTION,f'steam:{state.user_id}'):
+            with work_context(Priority.FIRST_WORKS,f'steam:{state.user_id}'):
                 native,primary=await request_primary(db,work)
             if native and not primary['primary_ready']:
                 from models.catalogue import MetadataSnapshot
