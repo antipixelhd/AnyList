@@ -190,7 +190,6 @@ const scopeLabel = scope === "write"
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            ...(token ? { } : {}),
           },
           body: JSON.stringify(payload),
         });
