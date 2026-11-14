@@ -20,7 +20,7 @@ STATUS_ORDER = {value: index for index, value in enumerate(SCREEN_STATUSES)}
 ROW_FIELDS = frozenset(('id', 'type', 'title', 'original_title', 'tagline', 'poster', 'backdrop', 'backdrop_fallbacks', 'background_status', 'year', 'genres', 'release_date',
     'status', 'rating_mode', 'score', 'progress', 'favorite', 'rewatch_count', 'updated_at', 'notes',
     'released_episodes', 'season_position', 'progress_positions', 'new_seasons', 'new_episodes',
-    'availability_dot', 'availability_reason', 'entry', 'editor_library'))
+    'availability_dot', 'availability_reason', 'entry', 'editor_library', 'has_season_ratings'))
 
 
 def membership(user_id, scope: ScreenScope, columns):
@@ -77,6 +77,10 @@ async def completed_movies(db, user_id, ids):
 
 async def rows_for_profile(db, user_id, viewer, owner, scope: ScreenScope, ids=None):
     query = membership(user_id, scope, (TrackedEntry, Media, MediaFavorite.media_id))
+    if not owner:
+        rated = select(Rating.id).where(Rating.user_id == user_id, Rating.media_id == Media.id,
+            Rating.season_number > 0, Rating.rating > 0).exists()
+        query = query.add_columns(rated.label('has_season_ratings'))
     if ids is not None:
         if not ids:
             return []
@@ -84,12 +88,19 @@ async def rows_for_profile(db, user_id, viewer, owner, scope: ScreenScope, ids=N
     loaded = (await db.execute(query.order_by(Media.title, Media.id))).all()
     if not await anime_is_visible(db):
         loaded = [row for row in loaded if not tracking_projection.is_anime(row[1])]
-    entries = [tracking_projection.entry_data(entry, media, owner, favorite=bool(entry.favorite or favorite))
-        for entry, media, favorite in loaded]
-    watched_movies = await completed_movies(db, user_id, [media.id for _, media, _ in loaded if media.media_type == MediaType.movie])
-    history = await episode_history(db, user_id, [media.tmdb_data or {} for _, media, _ in loaded if media.media_type == MediaType.series])
+    entries = []
+    for row in loaded:
+        tracked, media, favorite = row[:3]
+        entry = tracking_projection.entry_data(tracked, media, owner, favorite=bool(tracked.favorite or favorite))
+        if not owner and media.media_type == MediaType.series:
+            entry['has_season_ratings'] = bool(row.has_season_ratings or any(
+                int(number) > 0 and score and score > 0 for number, score in (tracked.season_scores or {}).items()))
+        entries.append(entry)
+    watched_movies = await completed_movies(db, user_id, [row[1].id for row in loaded if row[1].media_type == MediaType.movie])
+    history = await episode_history(db, user_id, [row[1].tmdb_data or {} for row in loaded if row[1].media_type == MediaType.series])
     today = date.today().isoformat()
-    for entry, (_, media, _) in zip(entries, loaded):
+    for entry, row in zip(entries, loaded):
+        media = row[1]
         entry['availability_dot'], entry['availability_reason'] = False, None
         if media.media_type == MediaType.movie:
             entry['progress'] = int(bool(entry['progress'] or entry['status'] == 'completed' or media.id in watched_movies))
@@ -97,7 +108,7 @@ async def rows_for_profile(db, user_id, viewer, owner, scope: ScreenScope, ids=N
             project_series(entry, media, history(media.tmdb_data or {}), today, owner)
     if owner:
         from core.tracking_editor import attach_editor_context
-        await attach_editor_context(db, viewer, entries, media_rows=[media for _, media, _ in loaded])
+        await attach_editor_context(db, viewer, entries, media_rows=[row[1] for row in loaded])
     if ids is None:
         return entries
     by_id = {entry['id']: {key: value for key, value in entry.items() if key in ROW_FIELDS} for entry in entries}

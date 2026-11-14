@@ -1,73 +1,42 @@
 [data-screen-scope] #entry-groups:not(.grid-view) [data-media-type="series"] .entry-title {
   align-self:stretch;
-  align-items:stretch;
-  gap:8px;
-  padding:0 20px 0 0;
+  padding-block:0;
+  padding-inline-end:0;
 }
-.list-series-title {
-  display:flex;
-  flex:1;
-  min-width:0;
-  color:var(--text-data);
-}
-.list-series-title[hidden] { display:none }
-[data-screen-scope] #entry-groups .entry-title > .entry-title-link[hidden] { display:none }
-.list-season-toggle {
+.list-title-main {
   display:flex;
   flex:1;
   align-items:center;
   min-width:0;
-  padding:0;
-  padding-inline-start:15px;
+}
+#entry-groups:not(.grid-view) .list-title-main > .entry-title-link {
+  color:var(--text-data);
+  font-size:var(--type-row-size);
+  font-weight:var(--type-row-weight);
+  line-height:20px;
+}
+.list-season-toggle {
+  display:flex;
+  flex:1 0 32px;
+  align-self:stretch;
+  align-items:center;
+  padding:0 10px;
   border:0;
   background:transparent;
-  color:inherit;
-  font:inherit;
-  text-align:start;
+  color:var(--text-data);
   cursor:pointer;
 }
-.list-season-title-text { overflow:hidden;text-overflow:ellipsis;white-space:nowrap }
-.list-season-indicator {
+.list-season-toggle[hidden] { display:none }
+.list-season-toggle .ui-icon {
   flex:none;
-  width:6px;
-  height:6px;
-  margin-inline:9px 5px;
-  border-right:1.5px solid currentColor;
-  border-bottom:1.5px solid currentColor;
-  translate:0 -2px;
-  rotate:45deg;
-  opacity:0;
-  transition:opacity .15s ease, rotate .2s ease, translate .2s ease;
+  width:9px;
+  height:9px;
+  transition:rotate .2s ease;
 }
-.list-season-toggle[aria-expanded="true"] .list-season-indicator { rotate:225deg;translate:0 2px;opacity:.8 }
-.list-series-details {
-  display:grid;
-  place-items:center;
-  flex:0 0 32px;
-  color:inherit;
-  opacity:0;
-  pointer-events:none;
-  transition:opacity .15s ease, color .15s ease;
-}
-.list-series-details .ui-icon { width:12px;height:12px }
-.entry-row:is(:hover,:focus-within) :is(.list-season-indicator,.list-series-details) { opacity:.8 }
-.entry-row:is(:hover,:focus-within) .list-series-details { pointer-events:auto }
-.tracker #entry-groups .entry-row .list-series-title :is(.list-season-toggle,.list-series-details):focus-visible {
+.list-season-toggle[aria-expanded="true"] .ui-icon { rotate:180deg }
+.tracker #entry-groups .entry-row .list-season-toggle:focus-visible {
   outline:none;
-}
-.tracker #entry-groups .entry-row .list-series-title .list-season-toggle:focus-visible {
   background:color-mix(in srgb,currentColor 8%,transparent);
-}
-.tracker #entry-groups .entry-row .list-series-details:is(:hover,:focus-visible) { opacity:1;color:#f7b731 }
-.list-season-toggle[aria-expanded="true"] {
-  color:var(--blue);
-}
-[data-screen-scope] #entry-groups:not(.grid-view) [data-media-type="series"] .entry-thumbnail .entry-availability {
-  top:2px;
-  left:auto;
-  right:2px;
-  transform:none;
-  pointer-events:none;
 }
 .list-season-panel {
   position:relative;
@@ -125,10 +94,14 @@
     padding:0;
     align-items:stretch;
   }
-  .list-series-title { grid-area:title;grid-row:1 / span 2;align-self:stretch;min-height:44px }
-  .list-season-toggle { align-items:flex-start;padding:2px 0 0;min-height:44px;font-weight:600 }
-  .list-season-indicator { margin-block-start:5px }
-  .list-series-details { flex-basis:26px;align-items:start;padding-top:5px }
+  .list-title-main { grid-area:title;min-width:0 }
+  [data-media-type="series"] .list-title-main { grid-row:1 / span 2;align-items:flex-start;min-height:44px }
+  #entry-groups:not(.grid-view) .list-title-main > .entry-title-link {
+    font-size:var(--type-compact-row-size);
+    font-weight:600;
+    line-height:18px;
+  }
+  .list-season-toggle { align-items:flex-start;min-height:44px;padding-top:5px }
   [data-screen-scope] #entry-groups:not(.grid-view) [data-media-type="series"] .entry-progress {
     position:relative;
     z-index:1;
@@ -144,10 +117,6 @@
   #entry-groups:not(.grid-view) .list-season-row [data-season-year] { display:none }
   #entry-groups:not(.grid-view) .list-season-row .entry-progress { padding-inline-start:28px }
 }
-@media (hover:none), (any-pointer:coarse) {
-  .list-series-title :is(.list-season-indicator,.list-series-details) { opacity:.8 }
-  .list-series-details { pointer-events:auto }
-}
 @media (prefers-reduced-motion:reduce) {
-  .list-season-indicator,.list-series-details { transition:none }
+  .list-season-toggle .ui-icon { transition:none }
 }

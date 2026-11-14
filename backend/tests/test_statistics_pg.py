@@ -35,6 +35,31 @@ URL = os.getenv("STATISTICS_TEST_DATABASE_URL") or os.getenv("TRACKING_TEST_DATA
 
 @unittest.skipUnless(URL, "Requires explicit disposable statistics PostgreSQL")
 class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
+    async def test_public_series_auto_expansion_uses_the_profile_owners_season_ratings(self):
+        async with self.Session() as db:
+            titles = [Media(title=f'Rating case {number}', media_type=MediaType.series) for number in range(4)]
+            db.add_all(titles)
+            await db.flush()
+            for number, title in enumerate(titles):
+                db.add(TrackedEntry(user_id=self.user_id, media_id=title.id, status='watching',
+                    season_scores={'1': 8} if number == 0 else {}))
+            db.add_all([Rating(user_id=self.user_id, media_id=titles[1].id, season_number=1,
+                              episode_order='tvdb:dvd', rating=7),
+                        Rating(user_id=self.user_id, media_id=titles[2].id, season_number=1, rating=0),
+                        Rating(user_id=self.user_id, media_id=titles[3].id, season_number=None, rating=9)])
+            await db.commit()
+            ids = [title.id for title in titles]
+        username = self.viewer.username
+        owner_page = (await self.client.get(f'/tracking/profile/{username}/series/list')).json()
+        self.assertTrue(all('has_season_ratings' not in row for row in owner_page['results']))
+        self.viewer = User(id=99999, username='another-viewer')
+        public_page = await self.client.get(f'/tracking/profile/{username}/series/list')
+        self.assertEqual(public_page.status_code, 200, public_page.text)
+        self.assertEqual({row['id']: row['has_season_ratings'] for row in public_page.json()['results']},
+                         dict(zip(ids, (True, True, False, False))))
+        rows = (await self.client.get(f'/tracking/profile/{username}/all/rows', params=[('ids', value) for value in ids])).json()
+        self.assertEqual([row['has_season_ratings'] for row in rows], [True, True, False, False])
+
     async def test_profile_series_seasons_only_show_progress_and_the_next_season_after_completion(self):
         from core.tracking_metadata import EPISODE_DETAILS_VERSION
 

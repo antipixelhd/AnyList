@@ -25,7 +25,7 @@ export type ListAdapter={
   paint(row:HTMLElement,state:ListState,template:HTMLTemplateElement):void;
   editorControls:string;
   onClick?(target:Element,title:EditorTitle):void;
-  mountRows?(root:HTMLElement,signal:AbortSignal):{remove(row:HTMLElement):void}|undefined;
+  mountRows?(root:HTMLElement,signal:AbortSignal):{observe?(row:HTMLElement):void;remove(row:HTMLElement):void}|undefined;
   removeChildren?:boolean;
 };
 
@@ -242,6 +242,7 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
         if(row!==cursor)group.insertBefore(row,cursor);
         cursor=row.nextSibling;
         artwork?.observe(row);
+        rowLifecycle?.observe?.(row);
       });
       base+=count;
     }

@@ -24,19 +24,13 @@ export function screenListEditorTitle(state:ListState):EditorTitle{
 export function paintScreenListRow(container:HTMLElement,state:ListState,template:HTMLTemplateElement,acknowledge=false){
   const {id,type,title}=state;
   container.dataset.listEntry=String(id);
+  container.toggleAttribute('data-season-auto',type==='series'&&state.has_season_ratings===true);
   const row=container.firstElementChild as HTMLElement;
   Object.assign(row.dataset,{title:title.toLowerCase(),score:String(state.score??-1),
     progress:String(state.progress??0),mediaType:type,updated:state.updated_at||''});
-  const seriesTitle=row.querySelector<HTMLElement>('.list-series-title');
-  if(seriesTitle){
-    seriesTitle.hidden=type!=='series';
-    seriesTitle.querySelector('[data-season-toggle]')!.setAttribute('aria-label',`${title} seasons`);
-    const details=seriesTitle.querySelector<HTMLAnchorElement>('.list-series-details')!;
-    details.href=`/title/${id}`;details.dataset.detailTitle=title;
-    details.setAttribute('aria-label',`Open ${title} details`);
-  }
-  const movieTitle=row.querySelector<HTMLAnchorElement>('.entry-title-link');
-  if(movieTitle){movieTitle.hidden=type!=='movie';movieTitle.href=`/title/${id}`;}
+  const toggle=row.querySelector<HTMLButtonElement>('[data-season-toggle]');
+  if(toggle){toggle.hidden=type!=='series';toggle.setAttribute('aria-label',`${title} seasons`);}
+  row.querySelector<HTMLAnchorElement>('.entry-title-link')!.href=`/title/${id}`;
   row.querySelectorAll<HTMLElement>('[data-list-title-label]').forEach(label=>{if(label.textContent!==title)label.textContent=title;});
   row.querySelectorAll<HTMLElement>('[data-list-favorite]').forEach(heart=>heart.hidden=!state.favorite);
   const cover=row.querySelector<HTMLElement>('.entry-thumbnail')!;
