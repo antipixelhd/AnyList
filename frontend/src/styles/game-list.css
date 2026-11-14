@@ -37,3 +37,5 @@
     align-self: center;
   }
 }
+
+.game-title-pending{display:inline-block;width:min(65%,16em);min-width:6em;height:.75em;vertical-align:middle}

@@ -1,3 +1,4 @@
+import {gameListTitlePending} from './game-list-title.ts';
 import {applyResponsiveArtwork} from './responsive-artwork';
 import {gameProgress} from './game-progress';
 import {scoreLabel} from './tracker';
@@ -12,7 +13,11 @@ export function paintGameListRow(row:HTMLElement,state:ListState,template:HTMLTe
     year:state.year||'',genres:JSON.stringify(state.genres||[]),favorite:String(!!state.favorite)});
   if(state.base_work_id)row.dataset.gameBase=String(state.base_work_id);else delete row.dataset.gameBase;
   const link=row.querySelector<HTMLAnchorElement>('.entry-title-link')!,heart=link.querySelector<HTMLElement>('[data-game-list-favorite]')!;
-  if(link.firstChild?.nodeType!==Node.TEXT_NODE||link.firstChild.textContent!==state.title)link.replaceChildren(document.createTextNode(state.title),heart);
+  const pendingTitle=gameListTitlePending(state),title=link.querySelector<HTMLElement>('[data-game-list-title]')!;
+  title.textContent=pendingTitle?'':state.title;
+  title.classList.toggle('game-title-pending',pendingTitle);title.classList.toggle('loading-surface',pendingTitle);
+  if(pendingTitle){link.setAttribute('aria-busy','true');link.setAttribute('aria-label','Loading game title');}
+  else {link.removeAttribute('aria-busy');link.removeAttribute('aria-label');}
   link.href=`/games/${id}`;heart.hidden=!state.favorite;
   const edit=row.querySelector<HTMLButtonElement>('[data-edit-game]');
   if(edit){edit.dataset.editGame=String(id);edit.setAttribute('aria-label',`Edit ${state.title}`);}

@@ -677,7 +677,7 @@ async def record_refresh_failure(db, row, token, error, base_delay):
 
 async def refresh_metadata(
     db, providers, provider, kind, external_id, edition_page=None, *, additive=False, expected_entity_id=None,
-    credit_groups=None,on_primary=None
+    credit_groups=None,on_primary=None,primary_only=False
 ):
     providers.validate(provider, kind)
     namespace = f"{provider}.{kind}"
@@ -761,6 +761,7 @@ async def refresh_metadata(
         else:
             options = {'credit_groups': credit_groups} if credit_groups is not None else {}
             if on_primary and provider=='igdb':options['on_primary']=primary
+            if primary_only:options['primary_only']=True
             doc, payload = await providers.detail(provider, kind, external_id, **options)
         # Recheck ownership before publishing. Late workers cannot overwrite.
         await write_lock(db)

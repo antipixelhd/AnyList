@@ -1,4 +1,5 @@
 ---
+import {gameListTitlePending} from '../lib/game-list-title.ts';
 import EntryAnnotations from './EntryAnnotations.astro';
 import Icon from './Icon.astro';
 import {responsiveArtwork} from '../lib/responsive-artwork';
@@ -6,9 +7,9 @@ import {gameProgress} from '../lib/game-progress';
 import {scoreLabel} from '../lib/tracker';
 const {entries,owner,showAchievements,template=false}=Astro.props;
 ---
-{entries.map((entry:any,index:number)=>{const image=responsiveArtwork(entry.image_url,{size:'w185',sizes:'44px',route:'direct'}),progress=gameProgress(entry),id=entry.subject.catalogue_id;return <article class="entry-row" style={`--list-row:${index}`} data-list-entry={id} data-game-base={entry.base_work_id||undefined} data-entry-status={entry.status} data-title={entry.title} data-score={entry.score??-1} data-hours={entry.total_seconds??-1} data-updated={entry.updated_at} data-year={entry.year||''} data-genres={JSON.stringify(entry.genres||[])} data-favorite={String(!!entry.favorite)}>
+{entries.map((entry:any,index:number)=>{const pendingTitle=gameListTitlePending(entry),image=responsiveArtwork(entry.image_url,{size:'w185',sizes:'44px',route:'direct'}),progress=gameProgress(entry),id=entry.subject.catalogue_id;return <article class="entry-row" style={`--list-row:${index}`} data-list-entry={id} data-game-base={entry.base_work_id||undefined} data-entry-status={entry.status} data-title={entry.title} data-score={entry.score??-1} data-hours={entry.total_seconds??-1} data-updated={entry.updated_at} data-year={entry.year||''} data-genres={JSON.stringify(entry.genres||[])} data-favorite={String(!!entry.favorite)}>
               <div class="entry-thumbnail" data-artwork-path={entry.image_url||undefined} data-preview-src={entry.image_url||undefined}>{image||template?<img class="entry-cover" {...(image||{})} alt="" loading="lazy"/>:<span class="entry-cover"/>}{owner&&<button type="button" class="row-menu" data-motion-static data-edit-game={id} aria-label={`Edit ${entry.title}`}><Icon name="ellipsis"/></button>}</div>
-              <div class="entry-title"><a class="entry-title-link" href={`/games/${id}`}>{entry.title}<span class="row-favorite" aria-label="Favorite" data-game-list-favorite hidden={!entry.favorite}><Icon name="heart"/></span></a><EntryAnnotations notes={entry.notes} replayCount={entry.replay_count}/></div>
+              <div class="entry-title"><a class="entry-title-link" href={`/games/${id}`} aria-busy={pendingTitle?"true":undefined} aria-label={pendingTitle?"Loading game title":undefined}><span data-game-list-title class:list={{"game-title-pending":pendingTitle,"loading-surface":pendingTitle}}>{pendingTitle?'':entry.title}</span><span class="row-favorite" aria-label="Favorite" data-game-list-favorite hidden={!entry.favorite}><Icon name="heart"/></span></a><EntryAnnotations notes={entry.notes} replayCount={entry.replay_count}/></div>
               <span class="entry-score">{owner?<button type="button" class="entry-score-button" data-game-list-rate={id} aria-label={`Rate ${entry.title}`}><span data-score-label>{scoreLabel(entry.score)}</span></button>:scoreLabel(entry.score)}</span>
               <span class="entry-progress game-hours"><span data-game-list-hours>{progress.hours||'—'}</span></span>
               {showAchievements&&<span class="game-list-achievements"><span class="game-achievements-label">Achievements: </span><span data-game-list-achievements>{progress.achievement||'—'}</span></span>}

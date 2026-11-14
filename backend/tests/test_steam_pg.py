@@ -184,6 +184,36 @@ class SteamDatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await db.scalar(select(func.count(CatalogueEntity.id))),before)
             self.assertIsNone(await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.kind==IDENTITY_JOB)))
 
+    async def test_import_primary_runs_without_automatic_mapper_and_skips_optional_graph(self):
+        from core import catalogue, game_metadata, steam_cache
+        from core.catalogue_providers import CatalogueProviders
+        from core.config import settings
+        await self.connect()
+        await steam_cache.save_public(self.Session,[{'app_id':'20','name':'Known Steam title'}])
+        async with self.Session() as db:
+            state=await db.get(SteamConnection,self.id)
+            data={**game('20',0),'name':'Steam 20'}
+            await steam_sync.apply_games(db,state,[data],['20'],initial=True,initial_status='planning')
+            await db.commit()
+            identity=await catalogue.resolve_identity(db,'igdb.game','900020')
+            work=await db.get(CatalogueEntity,identity.entity_id)
+            self.assertEqual(work.name,'Known Steam title')
+            job=await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.provider=='igdb',MetadataSnapshot.kind=='game',MetadataSnapshot.external_id=='900020'))
+            self.assertTrue(job.coverage['primary_only'])
+            self.assertIsNotNone(job.next_attempt_at)
+        provider=CatalogueProviders()
+        provider.igdb=AsyncMock(return_value=[{'id':900020,'name':'Resolved title','game_type':{'id':0},'platforms':[{'id':6,'name':'PC'}]}])
+        provider._igdb_pages=AsyncMock(side_effect=AssertionError('optional characters requested'))
+        service=game_metadata.GameMetadata(self.Session,scope=self.engine,providers=SimpleNamespace(validate=lambda *a:None,detail=provider._detail))
+        with patch.object(settings,'game_background_mapper_enabled',False):
+            await service.tick()
+            tasks=[flight.task for (scope,_),flight in list(game_metadata._flights.items()) if scope==id(self.engine)]
+            self.assertTrue(tasks)
+            await asyncio.gather(*tasks)
+        provider._igdb_pages.assert_not_awaited()
+        async with self.Session() as db:
+            self.assertEqual((await db.get(CatalogueEntity,work.id)).name,'Resolved title')
+
     async def test_initial_import_without_dates_silently_saves_status_and_counters(self):
         await self.connect()
         async with self.Session() as db:

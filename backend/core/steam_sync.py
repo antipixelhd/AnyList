@@ -182,7 +182,7 @@ async def apply_games(db, state, library, selected, *, initial=False, add_apps=N
                 if native:
                     identities.append({'namespace': 'igdb.game', 'external_id': native})
                 work = await catalogue.upsert_entity(db, {
-                    'kind': 'game', 'name': data['name'], 'image_url': data['poster'],
+                    'kind': 'game', 'name': (public.get(app,{}).get('name') or data['name']) if data['name']==f'Steam {app}' else data['name'], 'image_url': data['poster'],
                     'attributes': {'game_class': evidence['game_class'],
                         **({'igdb_id': native} if native else {}),
                         **({'release_date': data['release_date'], 'release_date_precision': 'day' if len(data['release_date']) == 10 else 'month' if len(data['release_date']) == 7 else 'year'} if data.get('release_date') else {})},
@@ -202,6 +202,23 @@ async def apply_games(db, state, library, selected, *, initial=False, add_apps=N
             catalogue.merge_fields(work,{'attributes':{'game_class':data['game_class']}},'igdb')
         if not work or not capabilities(work.attributes).independent:
             continue
+        if initial or app in additions:
+            # Display Steam's usable title immediately, including canonical stubs
+            # that were admitted before Steam's library name was available.
+            name=data.get('name') or ''
+            if name==f'Steam {app}':name=public.get(app,{}).get('name') or name
+            if name and name != f'Steam {app}' and (not work.name or work.name.startswith('Steam ')):
+                catalogue.merge_fields(work,{'name':name},'steam')
+            from core.game_work import work_context, Priority
+            from core.game_metadata import request as request_primary
+            with work_context(Priority.CONNECTION,f'steam:{state.user_id}'):
+                native,primary=await request_primary(db,work)
+            if native and not primary['primary_ready']:
+                from models.catalogue import MetadataSnapshot
+                await db.execute(update(MetadataSnapshot).where(MetadataSnapshot.provider=='igdb',
+                    MetadataSnapshot.kind=='game',MetadataSnapshot.external_id==native,
+                    MetadataSnapshot.fetched_at.is_(None),MetadataSnapshot.lease_until.is_(None)).values(
+                    coverage=MetadataSnapshot.coverage.op('||')({'primary_only':True,'priority':'connection'})))
         if data.get('achievement_total') is not None and (identity is None or app in mapping or (work.attributes or {}).get('steam_progress_apps')):
             steam_cache.merge_total(work, app, data['achievement_total'], now())
         groups.setdefault(work.id, (work, []))[1].append(data)
