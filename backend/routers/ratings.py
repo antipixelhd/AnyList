@@ -196,6 +196,7 @@ async def submit_rating(
         await resolve_rating_prompts(db, user_id=current_user.id, media_id=media.id,
             season_number=effective_season, episode_order=effective_episode_order or 'tmdb:aired')
 
+    series_rating = None
     if media_type == MediaType.series and effective_season is not None and rating_changed:
         from models.tracking import TrackedEntry
         from core.activity import suppress_initial_import_rating
@@ -205,6 +206,11 @@ async def submit_rating(
             TrackedEntry.media_id == media.id))
         if entry and effective_episode_order is None:
             entry.season_scores = {**(entry.season_scores or {}), str(effective_season): body.rating or None}
+            await db.flush()
+            await db.refresh(entry, ['updated_at'])
+            series_rating = {'season_scores': entry.season_scores, 'rating_mode': entry.rating_mode,
+                'score': effective_score(entry.rating_mode, entry.manual_score, entry.season_scores),
+                'updated_at': entry.updated_at.isoformat()}
         if entry is None or not suppress_initial_import_rating(entry):
             await record_season_activity(db, user_id=current_user.id, media=media,
                 status=entry.status if entry else 'planning',
@@ -216,8 +222,11 @@ async def submit_rating(
     # A rating made under a non-aired ordering isn't pushed to external
     # services - they'd misread the season number (same rule as the
     # Rating.episode_order.is_(None) push filters in trakt/simkl/mdblist).
+    saved = format_rating(rating, media)
+    if series_rating is not None:
+        saved['series_rating'] = series_rating
     if effective_episode_order is not None or not rating_changed:
-        return format_rating(rating, media)
+        return saved
 
     from core.local_outbound import dispatch_local_tracking_delta
     background_tasks.add_task(
@@ -225,7 +234,7 @@ async def submit_rating(
         set(), {(media.id, effective_season): body.rating}, set(),
     )
 
-    return format_rating(rating, media)
+    return saved
 
 
 @router.get("")

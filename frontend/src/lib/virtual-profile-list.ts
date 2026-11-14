@@ -25,6 +25,7 @@ export type ListAdapter={
   paint(row:HTMLElement,state:ListState,template:HTMLTemplateElement):void;
   editorControls:string;
   onClick?(target:Element,title:EditorTitle):void;
+  mountRows?(root:HTMLElement,signal:AbortSignal):{observe?(row:HTMLElement):void;remove(row:HTMLElement):void}|undefined;
   removeChildren?:boolean;
 };
 
@@ -78,6 +79,7 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
     if(changed)schedule();
   });
   const preview=mountListCoverPreview(signal,panel);
+  const rowLifecycle=adapter.mountRows?.(root,signal);
   const prepareRow=(row:HTMLElement)=>{
     const state=states.get(Number(row.dataset.listEntry));
     return owner&&state?adapter.editorTitle(state):undefined;
@@ -230,6 +232,7 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
           (local?local.ids.includes(activeId):active.dataset.listRowKey?.startsWith(`${epoch}:`)))desired.push(active);
       const keep=new Set(desired);
       for(const child of [...group.children])if(!keep.has(child as HTMLElement)){
+        rowLifecycle?.remove(child as HTMLElement);
         artwork?.remove(child as HTMLElement);
         rowSizes.unobserve(child);delete (child as HTMLElement).dataset.listRowKey;child.remove();
       }
@@ -239,6 +242,7 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
         if(row!==cursor)group.insertBefore(row,cursor);
         cursor=row.nextSibling;
         artwork?.observe(row);
+        rowLifecycle?.observe?.(row);
       });
       base+=count;
     }

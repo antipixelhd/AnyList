@@ -97,8 +97,9 @@ async def season_groups(db, media, user_id, *, display_positions=None):
     catalogue = set(ids) if ids is not None else None
     if catalogue is not None:
         provider = data.get('tracking_catalogue_provider', 'tmdb')
+        imported = set(data.get('tracking_import_episode_media_ids') or [])
         episodes = [ep for ep in episodes if getattr(ep, f'{provider}_id', None) in catalogue
-                    or ep.imported_release]
+                    or ep.id in imported or ep.imported_release]
     order = await db.scalar(select(UserShowEpisodeOrder.episode_order).where(
         UserShowEpisodeOrder.user_id == user_id, UserShowEpisodeOrder.series_tmdb_id == media.tmdb_id)) if media.tmdb_id else None
     order = normalize_order_key(order)
@@ -124,6 +125,14 @@ async def season_groups(db, media, user_id, *, display_positions=None):
         display_positions.update({ep.id: (season, number) for season, values in groups.items() for number, ep in values})
     return order, [(number, [ep for _, ep in sorted(values, key=lambda item: item[0])], expected.get(number, 0))
                    for number, values in sorted(groups.items())], metadata
+
+
+async def watched_episode_ids(db, user_id, episode_ids):
+    if not episode_ids:
+        return set()
+    return set(await db.scalars(select(WatchEvent.media_id).where(
+        WatchEvent.user_id == user_id, WatchEvent.media_id.in_(episode_ids),
+        WatchEvent.completed.is_(True)).distinct()))
 
 
 async def reconcile(db, user_id, media_id, *, groups_data=None, edits=(), series_hint=None,

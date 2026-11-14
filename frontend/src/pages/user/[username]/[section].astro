@@ -3,6 +3,7 @@ import Tracker from '../../../layouts/Tracker.astro';
 import ProfileHeader from '../../../components/ProfileHeader.astro';
 import ProfileListFilters from '../../../components/ProfileListFilters.astro';
 import ScreenListRows from '../../../components/ScreenListRows.astro';
+import ScreenListSeasonRow from '../../../components/ScreenListSeasonRow.astro';
 import ProfileListTableHead from '../../../components/ProfileListTableHead.astro';
 import {tracker,trackerFailure,statuses} from '../../../lib/tracker';
 import {profileListQuery} from '../../../lib/profile-list-query';
@@ -10,6 +11,7 @@ import {viewerMediaPreferences} from '../../../lib/viewer-media-preferences';
 import {profileListPageSize} from '../../../lib/profile-list-window';
 import {categoryChoices,type CategoryPresentation} from '../../../lib/list-categories.ts';
 import '../../../styles/virtual-profile-list.css';
+import '../../../styles/screen-list-seasons.css';
 const {username,section}=Astro.params;
 if(!['movies','series','list'].includes(section!))return Astro.redirect('/404');
 const isCombined=section==='list',mediaType=isCombined?'all':section==='movies'?'movie':'series';
@@ -43,6 +45,7 @@ const count=Object.values(data?.status_counts||{}).reduce((sum:number,value)=>su
     </div>
     <div id="cover-preview" aria-hidden="true" hidden><img alt=""/></div>
     <template data-list-row-template><ScreenListRows entries={[{id:1,title:'',type:'series',status:'completed',progress:0,notes:'Note',rewatch_count:1,new_episodes:1}]} {owner} {isCombined} template/></template>
+    {mediaType!=='movie'&&<template data-list-season-template><ScreenListSeasonRow {owner} {isCombined}/></template>}
     <script id="virtual-list-page" type="application/json" set:html={JSON.stringify(data).replaceAll('<','\\u003c')}/>
     <script is:inline data-astro-rerun>
       (()=>{if(performance.getEntriesByType('navigation')[0]?.type!=='navigate'||history.state)return;const tabs=document.querySelector('.profile-tabs');if(tabs)window.scrollTo(0,window.scrollY+tabs.getBoundingClientRect().top);})();

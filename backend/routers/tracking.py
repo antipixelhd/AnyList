@@ -1230,6 +1230,33 @@ async def profile_list_rows(username: str, media_type: ScreenListScope, db: Scre
     return await rows_for_profile(db, user.id, viewer, owner, media_type, ids)
 
 
+@router.get('/profile/{username}/series/{media_id}/seasons')
+async def profile_series_seasons(username: str, media_id: Annotated[int, Path(gt=0, le=2147483647)],
+        db: ScreenListDB, viewer: Annotated[User | None, Depends(get_optional_user_or_api_key)], response: Response):
+    from core import screen_list, tracking_episode_loading
+
+    user, owner = await profile_access(db, username, viewer)
+    user_id = user.id
+    response.headers['Cache-Control'] = 'private, no-store'
+    row = (await db.execute(select(Media, TrackedEntry.season_scores).join(TrackedEntry,
+        TrackedEntry.media_id == Media.id).where(Media.id == media_id, Media.media_type == MediaType.series,
+        TrackedEntry.user_id == user_id))).one_or_none()
+    if row is None or (tracking_projection.is_anime(row[0]) and not await anime_is_visible(db)):
+        raise HTTPException(404, 'Tracked series not found')
+    media, scores = row
+    status = {}
+    if owner and (media.tmdb_id or media.tvdb_id) and not tracking_episode_loading.fresh(media):
+        try:
+            status = await asyncio.wait_for(tracking_episode_loading.ensure(db, media, user_id), timeout=.25)
+        except TimeoutError:
+            status = {'pending': True, 'retry_after': 2}
+        if status.get('ready') and not status.get('pending'):
+            await db.refresh(media)
+    summary = await screen_list.series_seasons(db, media, user_id, scores)
+    return {**summary, 'pending': status.get('pending', False) and not status.get('error'),
+            'retry_after': status.get('retry_after'), 'unavailable': bool(status.get('error') and not summary['seasons'])}
+
+
 @router.post("/stats/refresh")
 async def refresh_my_statistics(
     response: Response,

@@ -190,6 +190,15 @@ export class EditorStore {
     if (record) record.stale = true;
     if(record?.title.type==='series') {this.seriesCacheRevision++;this.seriesCache.delete(id);}
   }
+  acceptSeasonRating(id:number, rating:{score:number|null;rating_mode:string;season_scores:Record<string,number|null>;updated_at:string}) {
+    this.invalidate(id);
+    const record=[...this.records.values()].find(record=>record.title.id===id&&record.title.type==='series');
+    if(!record?.committed||record.committed.updated_at>rating.updated_at)return;
+    Object.assign(record.committed,rating);
+    record.stale=false;
+    this.paint(record);
+    this.committed(record.title,null);
+  }
   acceptSaved(saved: Record<string, any>) {
     const record = saved.subject?.kind==='game'
       ? [...this.records.values()].find(r=>r.title.type==='game'&&r.title.id===saved.subject.catalogue_id)

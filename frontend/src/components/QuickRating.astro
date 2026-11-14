@@ -148,7 +148,8 @@ document.addEventListener('astro:page-load', () => {
         savedScore=saved.rating||null;paint(savedScore);
         editorStore.invalidate(current.id);
         document.dispatchEvent(new CustomEvent('media-tracker:rating-changed',{detail:{id:current.id,
-          season_number:current.seasonNumber,episode_order:current.episodeOrder||'tmdb:aired',score:savedScore}}));
+          season_number:current.seasonNumber,episode_order:current.episodeOrder||'tmdb:aired',score:savedScore,
+          series_rating:saved.series_rating}}));
         void closeDialog(dialog);
         return;
       }
@@ -249,7 +250,7 @@ document.addEventListener('astro:page-load', () => {
     const button = (event.target as HTMLElement).closest<HTMLElement>('[data-quick-rate-id]');
     if (!button) return;
     event.preventDefault();
-    const visiblePoster=button.closest('[data-attention-prompt],[data-notification-key]')?.querySelector<HTMLImageElement>('img');
+    const visiblePoster=button.closest('[data-attention-prompt],[data-notification-key],[data-list-season]')?.querySelector<HTMLImageElement>('img');
     open({
       id: Number(button.dataset.quickRateId),
       title: button.dataset.quickRateTitle || 'Rate title',
