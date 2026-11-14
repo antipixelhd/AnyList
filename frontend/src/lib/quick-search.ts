@@ -14,6 +14,7 @@ let mountedDialog:HTMLDialogElement|null=null;
 const SEARCH_DEBOUNCE_MS = 300;
 const SKELETON_DELAY_MS = 120;
 const PROGRESS_DELAY_MS = 150;
+const RESULT_LIMIT = 8;
 export function mountQuickSearch() {
   const nextDialog=document.querySelector<HTMLDialogElement>('[data-quick-search]');
   if(nextDialog===mountedDialog&&pageListeners&&!pageListeners.signal.aborted)return;
@@ -175,10 +176,11 @@ export function mountQuickSearch() {
   function syncPanel(content: typeof panelContent[number], animateChange: boolean) {
     const {panel, target, kind, skeleton, secondRow, rows} = content;
     const people = kind === 'actor' || kind === 'staff' || kind === 'studio';
-    const items = people ? contributors[kind] : latest[kind].slice(0, 8);
+    const items = people ? contributors[kind] : latest[kind].slice(0, RESULT_LIMIT);
     const signatures = items.map(item => JSON.stringify(item));
     const wanted = new Set(signatures);
     const loading = pending.has(kind);
+    const showSkeleton = loading && items.length < RESULT_LIMIT;
     for (const [signature, row] of rows) {
       if (wanted.has(signature)) continue;
       row.remove();
@@ -198,7 +200,7 @@ export function mountQuickSearch() {
     secondRow.hidden = items.length > 0;
 
     const exit = skeletonExits.get(skeleton);
-    if (!loading && animateChange && !skeleton.hidden) {
+    if (!showSkeleton && animateChange && !skeleton.hidden) {
       if (!exit) {
         const fade = skeleton.animate({opacity: [1, 0]}, {duration: 150, easing: 'ease-out', fill: 'forwards'});
         skeletonExits.set(skeleton, fade);
@@ -208,7 +210,7 @@ export function mountQuickSearch() {
       if (exit.playState !== 'finished') return;
     }
     if (exit) { exit.cancel(); skeletonExits.delete(skeleton); }
-    skeleton.hidden = !loading;
+    skeleton.hidden = !showSkeleton;
   }
   function updatePanel(content: typeof panelContent[number], visible: boolean, animateChange: boolean, keepSelection: boolean) {
     const {panel, skeleton} = content;
