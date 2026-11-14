@@ -309,7 +309,9 @@ function setup(){
     nav.setAttribute('aria-busy','true');setPanelWaiting(source,true);
     const cached=panels.get(key);
     let loading:HTMLElement|undefined;
-    if (!cached?.ready||cached.preparing||!owner) {
+    // Retain usable content while a cached visitor tab awaits its visibility check.
+    // Loading frames are only needed when the destination is not prepared yet.
+    if (!cached?.ready||cached.preparing) {
       loading = profileLoadingFrame(key, new URL(url, location.href), nav);
       if (loading) {
         loading.dataset.profileUrl = url;
