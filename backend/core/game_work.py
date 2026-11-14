@@ -68,6 +68,8 @@ def work_context(priority=None, owner=None, scope=None, *, replace=False):
 
 
 async def demand(db, key, *, priority=None, reset=False):
+    from core.search_demand import mark
+    await mark(db, [key])
     work = current.get()
     priority = work.priority if priority is None else int(priority)
     if priority==Priority.DIRECT and any(f':{kind}:' in key for kind in (
@@ -102,7 +104,9 @@ def eligible_jobs(provider=None, kind=None):
 
 def job_order():
     key = ('job:' + MetadataSnapshot.provider + ':' + MetadataSnapshot.kind + ':' + MetadataSnapshot.external_id)
-    return func.coalesce(select(effective_priority()).where(GameWorkDemand.key == key).scalar_subquery(), Priority.FINISH)
+    from core.search_demand import active
+    normal = func.coalesce(select(effective_priority()).where(GameWorkDemand.key == key).scalar_subquery(), Priority.FINISH)
+    return func.least(normal, case((active(key), int(Priority.FIRST_WORKS)), else_=int(Priority.AUTOMATIC)))
 
 
 @asynccontextmanager
@@ -145,7 +149,7 @@ async def prune_ephemeral(db):
         await db.execute(delete(model).where(column.in_(old)))
 
 
-def choose(tickets, demands, turns, stamp):
+def choose(tickets, demands, turns, stamp, searches=()):
     """Priority, then user, then entity: opening more pages buys no extra turns."""
     ranked = []
     for ticket in tickets:
@@ -161,8 +165,14 @@ def choose(tickets, demands, turns, stamp):
         entity_key = f'{owner_key}:{entity}'
         order=min((int(scope[16:]) for scope in ticket.scopes
             if scope.startswith('candidate-order:') and scope[16:].isdigit()),default=0)
-        rank = (priority, turns.get(owner_key, datetime.min), turns.get(entity_key, datetime.min), order, ticket.created_at, ticket.id)
-        ranked.append((rank, ticket, owner_key, entity_key))
+        owners = {(priority, owner)}
+        owners.update((int(Priority.FIRST_WORKS), search.owner) for search in searches
+            if search.expires_at > stamp and set(ticket.scopes).intersection(search.targets))
+        for value, candidate_owner in owners:
+            owner_key = f'{ticket.provider}:{value}:{candidate_owner}'
+            entity_key = f'{owner_key}:{entity}'
+            rank = (value, turns.get(owner_key, datetime.min), turns.get(entity_key, datetime.min), order, ticket.created_at, ticket.id, candidate_owner)
+            ranked.append((rank, ticket, owner_key, entity_key))
     return min(ranked, key=lambda row:row[0]) if ranked else None
 
 
@@ -258,19 +268,23 @@ class Dispatcher:
                     GameProviderTicket.expires_at > stamp)))
                 scopes = {scope for ticket in tickets for scope in ticket.scopes}
                 demands = {row.key:row for row in await db.scalars(select(GameWorkDemand).where(GameWorkDemand.key.in_(scopes)))} if scopes else {}
+                from core.search_demand import subscribers
+                searches = await subscribers(db, scopes)
                 tickets=[ticket for ticket in tickets if ticket.id not in self.pending or not self.pending[ticket.id][0].done()]
-                highest=choose(tickets,demands,{},stamp)
+                highest=choose(tickets,demands,{},stamp,searches)
                 pressured=highest is not None and highest[0][0]<Priority.AUTOMATIC
                 for ticket in tickets:
                     local=self.pending.get(ticket.id)
                     if pressured and local and time.monotonic()-local[1]>.5:
-                        effective=choose([ticket],demands,{},stamp)[0][0]
+                        effective=choose([ticket],demands,{},stamp,searches)[0][0]
                         if effective==Priority.AUTOMATIC:local[0].set_exception(PriorityYield())
                 tickets=[ticket for ticket in tickets if ticket.id not in self.pending or not self.pending[ticket.id][0].done()]
                 turn_keys = set()
                 for ticket in tickets:
                     possible = [(ticket.priority, ticket.owner)] + [(row.priority if row.active_until > stamp else max(row.origin,Priority.RETRY) if ticket.priority==Priority.RETRY else row.origin, row.owner)
                         for scope in ticket.scopes if (row := demands.get(scope))]
+                    possible.extend((int(Priority.FIRST_WORKS), search.owner) for search in searches
+                        if set(ticket.scopes).intersection(search.targets))
                     entity = next((scope for scope in ticket.scopes if scope.startswith('job:')),ticket.scopes[-1] if ticket.scopes else 'request')
                     for priority, owner in possible:
                         key = f'{ticket.provider}:{priority}:{owner}'
@@ -279,7 +293,7 @@ class Dispatcher:
                 # Still record its turn so a later subscriber receives its turn.
                 turns = dict((await db.execute(select(GameProviderTurn.key, GameProviderTurn.served_at)
                     .where(GameProviderTurn.key.in_(turn_keys)))).all()) if len(tickets)>1 else {}
-                selected = choose(tickets, demands, turns, stamp)
+                selected = choose(tickets, demands, turns, stamp, searches)
                 if not selected:
                     return .2
                 rank, ticket, owner_key, entity_key = selected

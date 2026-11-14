@@ -369,6 +369,10 @@ export function mountQuickSearch() {
           if (request.kind === 'game') latest.game = unique(data.results || []) as GameSearchResult[];
           else {
             contributors = mergeContributorResults(contributors, data.results || {}, request.scope);
+            if (data.section_pending) sections.forEach(kind => {
+              if (data.section_pending[kind]) pending.add(kind);
+              else pending.delete(kind);
+            });
             if (data.verification_pending) render();
           }
         });

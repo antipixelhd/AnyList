@@ -48,18 +48,18 @@ class GameCompanyDiscovery:
             pending = await db.scalar(select(func.count()).select_from(MetadataSnapshot).where(
                 MetadataSnapshot.provider == 'igdb', MetadataSnapshot.kind == JOB,
                 MetadataSnapshot.next_attempt_at.is_not(None)))
-            if pending >= MAX_PENDING:
+            existing = set(await db.scalars(select(MetadataSnapshot.external_id).where(
+                MetadataSnapshot.provider == 'igdb', MetadataSnapshot.kind == JOB,
+                MetadataSnapshot.external_id.in_([str(raw['id']) for raw in rows]),
+                (MetadataSnapshot.next_attempt_at.is_not(None)) | (MetadataSnapshot.expires_at > now()))))
+            if pending + sum(str(raw['id']) not in existing for raw in rows) > MAX_PENDING:
                 raise ProviderError('rate_limited', 60)
-            for raw in rows[:MAX_PENDING - pending]:
+            for raw in rows:
                 country = numeric_country(raw.get('country'))
                 values = entity('organization', 'igdb.company', raw, artwork=raw.get('logo'),
                     attributes={'countries': [country]} if country else {})
                 company = await catalogue.upsert_entity(db, values, 'igdb')
                 await admit(db, str(raw['id']), kind=JOB, provider='igdb', entity_id=company.id)
-            if len(rows) > MAX_PENDING - pending:
-                # Do not certify an incomplete shortlist as a successful empty
-                # result or silently discard candidates at the admission limit.
-                raise ProviderError('rate_limited', 60)
             await db.commit()
         return {'ids': [str(raw['id']) for raw in rows]}
 
@@ -85,6 +85,10 @@ class GameCompanyDiscovery:
         async with self.sessions() as db:
             # Resolve aliases and read compact job headers together. No credit
             # or portfolio payload is transferred on repeated search polls.
+            from core.search_demand import mark
+            from core.game_work import job_key
+            await mark(db, [job_key('igdb', JOB, native) for native in natives])
+            await db.commit()
             rows = (await db.execute(select(
                 func.coalesce(CatalogueEntity.canonical_company_id, CatalogueEntity.id),
                 MetadataSnapshot.next_attempt_at, MetadataSnapshot.lease_until,

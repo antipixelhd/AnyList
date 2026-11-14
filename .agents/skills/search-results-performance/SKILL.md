@@ -97,3 +97,6 @@ Use the benchmark reference for supported commands, profiles and measurement lim
 
 When changing providers, routes, cases, cache semantics, budgets or benchmark instrumentation, check this skill and its reference for drift in the same change. Update only facts demonstrated by code or measurements. Preserve meaningful stress/failure/quality checks; do not replace them with easier fixtures or universal millisecond promises. Report the cases run, SQL/provider/payload changes, result correctness, and whether timings are controlled backend, live-provider or browser measurements.
 
+### Active quick-search verification
+
+Quick Search uses expiring per-viewer/window/generation demand to promote shared canonical jobs and provider tickets. Replacing/cancelling one query must preserve other subscribers; late requests must not revive released generations. Preserve provider limits and user fairness. IMDb unknown candidates share bounded four-credit alias checks and identity caches; a complete zero excludes only Games. Positive samples need current verified game bindings and normal role/type/mobile exclusions. Full careers continue independently. Keep category pending states truthful, and do not count existing shared jobs again when enforcing admission capacity.

@@ -11,7 +11,7 @@ import logging
 import uuid
 from datetime import date, datetime, timedelta, timezone
 
-from sqlalchemy import func, or_, select, tuple_, update
+from sqlalchemy import String, case, func, or_, select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import aliased, defer
 
@@ -32,6 +32,10 @@ _summary_cache = tmdb._TTLCache(maxsize=512)
 
 def now():
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def demand_scope(kind, native, variant):
+    return f'evidence:{kind}:{native}:{variant}'
 
 
 def evidence_key(kind, native, filters, show_anime):
@@ -101,6 +105,10 @@ async def cached_evidence(db, jobs, viewer_id, *, enqueue=True, summaries=None):
         return {}, False
     table = ContributorEvidence
     current = now()
+    from core.search_demand import mark, current as search_context
+    await mark(db, [demand_scope(*key) for key in jobs])
+    if search_context.get() is not None:
+        await db.commit()
     statement = select(table).where(tuple_(table.kind, table.native_id, table.variant).in_(jobs))
     if summaries:
         statement = statement.options(defer(table.payload))
@@ -271,14 +279,18 @@ async def load_evidence(job, api_key):
 async def run_batch(factory=AsyncSessionLocal):
     """Two jobs, at most four concurrent provider calls; durable cross-worker leases."""
     table, current = ContributorEvidence, now()
+    from core.search_demand import active, fair_order, serve
+    target = 'evidence:' + table.kind + ':' + table.native_id.cast(String) + ':' + table.variant
     async with factory() as db, db.begin():
         rows = list(await db.scalars(select(table).where(table.next_attempt_at <= current,
             or_(table.lease_until.is_(None), table.lease_until <= current))
-            .order_by(table.next_attempt_at).limit(2).with_for_update(skip_locked=True)))
+            .order_by(case((active(target), 0), else_=1), fair_order(target), table.next_attempt_at)
+            .limit(2).with_for_update(skip_locked=True)))
         jobs = []
         for row in rows:
             row.lease_token, row.lease_until = str(uuid.uuid4()), current + timedelta(seconds=45)
             jobs.append({field:getattr(row, field) for field in ('kind', 'native_id', 'variant', 'config', 'payload', 'requested_by', 'lease_token', 'attempts')})
+        await serve(db, [demand_scope(job['kind'], job['native_id'], job['variant']) for job in jobs])
     async def process(job):
         values = {}
         try:

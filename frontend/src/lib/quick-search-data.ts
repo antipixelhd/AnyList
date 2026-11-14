@@ -34,7 +34,7 @@ export async function readQuickSearch(request:SearchRequest,signal:AbortSignal,o
     // A healthy cold career can take several worker turns. Pending evidence
     // is not a provider failure, and must not become one after a poll count.
     retries = 0;
-    const signature=JSON.stringify([data.results,data.partial,data.unavailable,data.verification_pending]);
+    const signature=JSON.stringify([data.results,data.partial,data.unavailable,data.verification_pending,data.section_pending]);
     if(signature!==previous){onResult(data);previous=signature;}
     if(signal.aborted)return;
     if(request.kind!=='contributors'||!data.verification_pending)return;
@@ -49,6 +49,9 @@ export async function readQuickSearch(request:SearchRequest,signal:AbortSignal,o
 export function createQuickSearchReader(lifetime: AbortSignal, fetcher: typeof fetch = fetch, now = () => Date.now()) {
   const cache = createBrowseCache<any>(now, 60_000, 40);
   let generation=0;
+  const searchId = crypto.randomUUID();
+  let searchGeneration = 0, searchQuery = '';
+  const subscribed = new WeakSet<AbortSignal>();
   const clear=()=>{generation++;cache.clear();};
   lifetime.addEventListener('abort', clear, {once:true});
   return {
@@ -58,7 +61,26 @@ export function createQuickSearchReader(lifetime: AbortSignal, fetcher: typeof f
       const epoch=generation;
       const cached = cache.get(request.url);
       if (cached) { onResult(cached); return; }
-      await readQuickSearch(request, signal, data => {
+      let activeRequest = request;
+      if (request.kind === 'contributors') {
+        const url = new URL(request.url, 'https://search.invalid');
+        const query = JSON.stringify([url.searchParams.get('q'), url.searchParams.get('work_domain')]);
+        if (query !== searchQuery || !subscribed.has(signal)) { searchQuery = query; searchGeneration++; }
+        const ownGeneration = searchGeneration;
+        url.searchParams.set('search_id', searchId);
+        url.searchParams.set('search_generation', String(ownGeneration));
+        activeRequest = {...request, url: url.pathname + url.search};
+        if (!subscribed.has(signal)) {
+          subscribed.add(signal);
+          signal.addEventListener('abort', () => {
+            // Release this subscription only. A late cancellation cannot
+            // demote the next generation or another search window/viewer.
+            void fetcher(`/api/proxy/tracking/quick-search/demand/${searchId}?generation=${ownGeneration}`,
+              {method:'DELETE',keepalive:true}).catch(()=>{});
+          }, {once:true});
+        }
+      }
+      await readQuickSearch(activeRequest, signal, data => {
         if (signal.aborted || lifetime.aborted) return;
         // Degraded local-only results must not conceal a recovered remote source.
         if (generation === epoch && !data.verification_pending && !data.notice && !data.partial) cache.set(request.url, data);

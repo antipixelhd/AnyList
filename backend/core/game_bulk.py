@@ -227,10 +227,11 @@ class GameBulk:
     async def tick(self):
         token=uuid.uuid4().hex
         async with self.sessions() as db:
+            from core.game_work import job_order
             job=await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.provider==PROVIDER,
                 MetadataSnapshot.kind==JOB,MetadataSnapshot.next_attempt_at<=now(),
                 or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=now()))
-                .order_by(MetadataSnapshot.next_attempt_at,MetadataSnapshot.id).limit(1).with_for_update(skip_locked=True))
+                .order_by(job_order(),MetadataSnapshot.next_attempt_at,MetadataSnapshot.id).limit(1).with_for_update(skip_locked=True))
             if not job:return False
             job.lease_token=token;job.lease_until=now()+timedelta(minutes=1)
             key=job.external_id;coverage=dict(job.coverage);await db.commit()

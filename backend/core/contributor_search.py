@@ -168,7 +168,7 @@ async def known_principal_status(db, ids):
         .where(ContributorSearch.entity_id.in_(ids), ContributorSearch.screen_count > 0))).all())
 
 
-async def verified_people(db, viewer, groups, api_key):
+async def verified_people(db, viewer, groups, api_key, section_pending=None):
     if not groups['actor'] and not groups['staff']:
         return False
     filters = await result_filters(db, viewer)
@@ -185,6 +185,11 @@ async def verified_people(db, viewer, groups, api_key):
     evidence, pending = await cached_evidence(db, jobs, viewer.id, enqueue=bool(api_key),
         summaries=summaries)
     for section in ('actor', 'staff'):
+        if section_pending is not None:
+            section_pending[section] = bool(pending and api_key and any(row.get('_native') and not (
+                (evidence.get(evidence_key('person', row['_native'], filters, show_anime)[0]) or {}).get('_fresh') and
+                (evidence.get(evidence_key('person', row['_native'], filters, show_anime)[0]) or {}).get('complete'))
+                for row in groups[section]))
         unresolved = [row for row in groups[section] if not (row.get('_native') and
             (evidence.get(evidence_key('person', row['_native'], filters, show_anime)[0]) or {}).get('_fresh') and
             (evidence.get(evidence_key('person', row['_native'], filters, show_anime)[0]) or {}).get('complete'))]
@@ -268,7 +273,7 @@ async def _discover_candidates(db, viewer, term, kind, key):
 _candidate_cache = tmdb._TTLCache(maxsize=128)
 
 
-async def screen_matches(db, viewer, term, kind):
+async def screen_matches(db, viewer, term, kind, section_pending=None):
     key = await settings_store.get_user_tmdb_key(db, viewer.id)
     identity = (viewer.id, term.strip().casefold(), kind, hashlib.sha256(str(key).encode()).digest())
     cached = _candidate_cache.get(identity)
@@ -287,19 +292,25 @@ async def screen_matches(db, viewer, term, kind):
         query = term.casefold()
         row['_match'] = 0 if name == query else 1 if name.startswith(query) else 2
     groups['studio'], studios_pending = await verified_studios(db, viewer, groups['studio'], key)
-    people_pending = await verified_people(db, viewer, groups, key)
+    people_pending = await verified_people(db, viewer, groups, key, section_pending)
+    if section_pending is not None:
+        section_pending['studio'] = studios_pending
     return groups, failed, studios_pending or people_pending
 
 
 async def search_contributors(db, viewer, term, kind='all', work_domain='all'):
     from core.game_access import allowed, require
+    from core.game_search_samples import sample_matches
+    sections = {section:False for section in KINDS}
     if work_domain == 'game':
         require(viewer)
         companies, people = await asyncio.gather(discover_companies(db, term, kind), discover_people(db, term, kind))
         groups = await game_matches(db, term, kind, candidate_ids=companies['ids'] + people['ids'])
+        groups = merge_game_matches(groups, await sample_matches(db, people.get('samples'), kind, groups))
         return {'results': ranked_results(groups, term), 'partial': companies['partial'] or people['partial'],
             'unavailable': companies['partial'] or people.get('unavailable', people['partial']),
             'verification_pending': companies['pending'] or people['pending'], 'game_coverage': 'saved_credits',
+            'section_pending': {**people.get('pending_sections', {'actor':people['pending'], 'staff':people['pending']}), 'studio':companies['pending']},
             **({'retry_after': 2 if companies['pending'] else people.get('retry_after', 2)} if companies['pending'] or people['pending'] else {})}
     if not allowed(viewer):
         work_domain = 'movies_series'
@@ -310,15 +321,19 @@ async def search_contributors(db, viewer, term, kind='all', work_domain='all'):
         # The shared source cache owns discovery after this request returns;
         # pending responses keep the existing verification polling active.
         screen, companies, people = await asyncio.gather(
-            screen_matches(db, viewer, term, kind),
+            screen_matches(db, viewer, term, kind, sections),
             discover_companies(db, term, kind, progressive=True),
             discover_people(db, term, kind, progressive=True))
         groups, failed, pending = screen
         groups = merge_game_matches(groups, await game_matches(db, term, kind, candidate_ids=companies['ids'] + people['ids']))
+        groups = merge_game_matches(groups, await sample_matches(db, people.get('samples'), kind, groups))
     else:
-        groups, failed, pending = await screen_matches(db, viewer, term, kind)
+        groups, failed, pending = await screen_matches(db, viewer, term, kind, sections)
+    sections = {section: sections[section] or (companies['pending'] if section == 'studio' else
+        people.get('pending_sections', {}).get(section, people['pending'])) for section in KINDS}
     return {'results': ranked_results(groups, term), 'partial': failed or companies['partial'] or people['partial'],
             'unavailable': failed or companies['partial'] or people.get('unavailable', people['partial']),
             'verification_pending':pending or companies['pending'] or people['pending'],
+            'section_pending':sections,
             **({'retry_after': 2 if pending or companies['pending'] else people.get('retry_after', 2)} if pending or companies['pending'] or people['pending'] else {}),
             **({'game_coverage':'saved_credits'} if work_domain == 'all' else {})}

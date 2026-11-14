@@ -2,6 +2,34 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {quickSearchRequests,rankCombinedMedia,createQuickTitleBatch,createQuickSearchReader,quickSearchTabOrder,availableQuickSearchTabs,resolvedQuickSearchTab,steppedQuickSearchTab,mergeContributorResults,readQuickSearch} from '../src/lib/quick-search-data.ts';
 
+test('active search generations are shared by sections and isolated between windows',async()=>{
+  const calls=[];
+  const fetcher=async(url,options)=>{calls.push([new URL(url,'https://example.test'),options]);return {ok:true,json:async()=>({results:[],partial:true})};};
+  const reader=createQuickSearchReader(new AbortController().signal,fetcher);
+  const signal=new AbortController();
+  const requests=quickSearchRequests('Beyond Two').filter(r=>r.kind==='contributors');
+  await Promise.all(requests.map(r=>reader.read(r,signal.signal,()=>{})));
+  assert.equal(calls[0][0].searchParams.get('search_id'),calls[1][0].searchParams.get('search_id'));
+  assert.equal(calls[0][0].searchParams.get('search_generation'),calls[1][0].searchParams.get('search_generation'));
+  signal.abort();
+  assert.equal(calls[2][1].method,'DELETE');
+  await reader.read(requests[0],new AbortController().signal,()=>{});
+  assert.equal(calls[3][0].searchParams.get('search_generation'),'2');
+  const other=createQuickSearchReader(new AbortController().signal,fetcher);
+  await other.read(requests[0],new AbortController().signal,()=>{});
+  assert.notEqual(calls[3][0].searchParams.get('search_id'),calls[4][0].searchParams.get('search_id'));
+});
+
+test('category completion publishes even when rows and overall verification are unchanged',async()=>{
+  const states=[{actor:true,staff:true},{actor:false,staff:true}];
+  let calls=0;const seen=[];
+  const signal=new AbortController();
+  await readQuickSearch({kind:'contributors',url:'/people'},signal.signal,data=>{
+    seen.push(data.section_pending);if(seen.length===2)signal.abort();
+  },async()=>({ok:true,json:async()=>({results:[],verification_pending:true,section_pending:states[calls++]})}),async()=>{});
+  assert.deepEqual(seen,states);
+});
+
 test('contributor discovery follows enabled domains instead of revealing hidden game studios',()=>{
   for(const [movies,games,domain] of [[true,true,'all'],[true,false,'movies_series'],[false,true,'game']]){
     const requests=quickSearchRequests('Supergiant',undefined,movies,games).filter(row=>row.kind==='contributors');

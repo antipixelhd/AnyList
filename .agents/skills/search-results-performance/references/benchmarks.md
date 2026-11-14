@@ -500,3 +500,9 @@ request. At 2× it selected the sharper cover directly, without a timed switch.
 Repeat hovers at either density showed no new image timing entries. A new,
 uncached variant can still take time to load. Public CDN images bypass the
 service worker's app-shell cache.
+
+### Active quick-search demand (November 2026)
+
+Pair the existing people_combined/all_contributors/studio/negative_studio/game_people_shared controls with test_search_demand_pg, test_game_people_discovery_pg, test_game_company_discovery_pg and test_game_work. The controls do not establish cold IMDb preflight or active-query latency. Test overlapping identities, alias batching, viewer/window isolation, stale generations, cancellation, full-queue reuse, source-header reuse, failures remaining unknown, verified early positives and independent screen qualification.
+
+A full task-start archive versus changed-code game_people_pipeline comparison preserved complete identities, 32 HTTP requests and 48 logical IGDB queries. At 50ms providers: 9.457→9.581s, 2466→2579 reads, 810→807 writes. At 750ms: 16.908→16.919s, 3109→3225 reads, 785→783 writes. Extra compact subscriber reads support scheduling; these are compatibility samples with no active searches, not speedup claims. The five search controls retained all 90 identities and provider counts; category pending flags add about 68–70 response bytes.

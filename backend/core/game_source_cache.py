@@ -79,6 +79,10 @@ class GameSourceCache:
         async with self.sessions() as db:
             row = await db.scalar(self.query(provider, kind, key))
         now = utcnow()
+        from core.search_demand import mark
+        async with self.sessions() as db:
+            await mark(db, [f'cache:{provider}:{kind}:{key}'])
+            await db.commit()
         previous = self.view(row, now, max_stale, accept)
         if previous and not previous['stale']:
             return previous

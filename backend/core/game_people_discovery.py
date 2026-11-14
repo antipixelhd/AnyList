@@ -36,12 +36,34 @@ class GamePeopleDiscovery:
         candidates = await self.source.people_candidates(term)
         if not candidates:
             return {'ids': []}
+        samples = {}
+        if isinstance(self.source, IMDbGameSource):
+            # Reuse fresh complete source headers without transferring careers.
+            async with self.sessions() as db:
+                totals = dict((await db.execute(select(MetadataSnapshot.external_id,
+                    MetadataSnapshot.coverage['total'].as_integer()).where(
+                        MetadataSnapshot.provider == 'imdb', MetadataSnapshot.kind == JOB,
+                        MetadataSnapshot.external_id.in_([r['id'] for r in candidates]),
+                        MetadataSnapshot.coverage['complete'].as_boolean().is_(True),
+                        MetadataSnapshot.expires_at > now(), MetadataSnapshot.error_code.is_(None)))).all())
+            from core.game_people_presence import presence
+            unknown = [r['id'] for r in candidates if totals.get(r['id']) is None]
+            values = await asyncio.gather(*(presence(self.sessions, native) for native in unknown))
+            samples = dict(zip(unknown, values))
+            totals.update({native: value['total'] for native, value in samples.items()})
+            candidates = [r for r in candidates if totals[r['id']] > 0]
+            if not candidates:
+                return {'ids': []}
         async with self.sessions() as db:
             await catalogue.write_lock(db)
             pending = await db.scalar(select(func.count()).select_from(MetadataSnapshot).where(
                 MetadataSnapshot.provider == 'imdb', MetadataSnapshot.kind == JOB,
                 MetadataSnapshot.next_attempt_at.is_not(None)))
-            if pending + len(candidates) > MAX_PENDING:
+            existing = set(await db.scalars(select(MetadataSnapshot.external_id).where(
+                MetadataSnapshot.provider == 'imdb', MetadataSnapshot.kind == JOB,
+                MetadataSnapshot.external_id.in_([raw['id'] for raw in candidates]),
+                (MetadataSnapshot.next_attempt_at.is_not(None)) | (MetadataSnapshot.expires_at > now()))))
+            if pending + sum(raw['id'] not in existing for raw in candidates) > MAX_PENDING:
                 raise ProviderError('rate_limited', 60)
             for raw in candidates:
                 person = await catalogue.upsert_entity(db, {'kind': 'person', 'name': raw['name'],
@@ -49,10 +71,11 @@ class GamePeopleDiscovery:
                     **({'image_url': raw['image']} if raw.get('image') else {})}, 'imdb')
                 await admit(db, raw['id'], kind=JOB, entity_id=person.id)
             await db.commit()
-        return {'ids': [row['id'] for row in candidates]}
+        return {'ids': [row['id'] for row in candidates],
+                'samples': {r['id']:samples[r['id']] for r in candidates if r['id'] in samples}}
 
     async def search(self, term, *, progressive=False):
-        key = hashlib.sha256(json.dumps(['names-v1', term.strip().casefold()]).encode()).hexdigest()
+        key = hashlib.sha256(json.dumps(['names-v2', term.strip().casefold()]).encode()).hexdigest()
         try:
             async with asyncio.timeout(9):
                 read = self.sources.cache.progressive if progressive else self.sources.cache.get
@@ -68,7 +91,13 @@ class GamePeopleDiscovery:
             return {'ids': [], 'pending': False, 'partial': bool(cached.get('error'))}
         source, discovery, component = (aliased(MetadataSnapshot) for _ in range(3))
         async with self.sessions() as db:
+            from core.search_demand import mark
+            from core.game_work import job_key
+            await mark(db, [job_key('imdb', kind, native) for native in natives
+                for kind in (JOB, DISCOVERY_JOB)])
+            await db.commit()
             rows = (await db.execute(select(
+                CatalogueIdentity.external_id.label('native'),
                 func.coalesce(CatalogueEntity.canonical_person_id, CatalogueEntity.id).label('entity_id'),
                 source.id.label('source_id'), source.next_attempt_at.label('source_due'),
                 source.lease_until.label('source_lease'), source.error_code.label('source_error'),
@@ -89,6 +118,17 @@ class GamePeopleDiscovery:
             return bool(due or lease and lease > stamp)
         pending = any(row.source_id is None or active(row.source_due, row.source_lease)
             or active(row.discovery_due, row.discovery_lease) for row in rows)
+        from core.game_credit_roles import SOURCE_ACTING, source_role
+        samples = cached['data'].get('samples', {}) if not cached.get('stale') and not cached.get('error') else {}
+        def section_pending(section):
+            for row in rows:
+                if not (row.source_id is None or active(row.source_due, row.source_lease) or active(row.discovery_due, row.discovery_lease)):
+                    continue
+                sample = samples.get(row.native)
+                if not sample or not sample['complete'] or any(source_role(credit) != 'thanks' and
+                    (source_role(credit) in SOURCE_ACTING) == (section == 'actor') for credit in sample['rows']):
+                    return True
+            return False
         unavailable = bool(cached.get('error')) or len(rows) != len(natives) or any(
             row.source_error or row.discovery_error
             or not row.source_complete and row.source_id is not None
@@ -104,6 +144,7 @@ class GamePeopleDiscovery:
                 elif due:
                     delays.append(max(1, int((due - stamp).total_seconds()) + 1))
         return {'ids': list({row.entity_id for row in rows}), 'pending': pending, 'partial': unavailable or unmapped,
+            'samples': samples, 'pending_sections':{section:section_pending(section) for section in ('actor','staff')},
             'unavailable': unavailable,
             **({'retry_after': min(3600, min(delays, default=2))} if pending else {})}
 

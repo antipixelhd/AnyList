@@ -59,6 +59,14 @@ class ContributorSearchTests(unittest.IsolatedAsyncioTestCase):
         self.local_mock.assert_awaited_once()
         self.assertEqual(search.verified_studios.await_count,2)
 
+    async def test_verified_empty_games_never_remove_a_screen_only_performer(self):
+        row={'key':'catalogue:42','name':'TV performer','url':'/actors/catalogue:42',
+             'roles':['Actor'],'_works':1,'_native':None}
+        self.local_mock.return_value={**empty(),'actor':[row]}
+        result=await search.search_contributors(self.db,self.viewer,'TV performer','people')
+        self.assertEqual([item['name'] for item in result['results']['actor']],['TV performer'])
+        self.assertFalse(result['verification_pending'])
+
     async def test_remote_people_and_studios_link_to_details_and_respect_sections(self):
         self.people_mock.return_value = {'results': [
             {'id': 11, 'name': 'Actor', 'known_for_department': 'Acting', 'known_for':[{'id':1}], 'profile_path': '/actor.jpg'},
@@ -169,7 +177,7 @@ class ContributorSearchTests(unittest.IsolatedAsyncioTestCase):
     async def test_policy_rechecks_do_not_mutate_the_cached_shortlist(self):
         self.local_mock.return_value={**empty(),'actor':[{'key':'catalogue:5','name':'Saved actor','roles':['Actor']}]}
         attempts=0
-        async def verify(db,viewer,groups,key):
+        async def verify(db,viewer,groups,key,section_pending=None):
             nonlocal attempts
             attempts+=1
             if attempts==1:groups['actor']=[]
