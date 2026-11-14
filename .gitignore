@@ -94,3 +94,6 @@ test.py
 docs/*
 !docs/games-implementation-checklists/
 docs/tvdb-first-class-plan.md
+
+# Local working copies and verification artifacts
+/tmp/
