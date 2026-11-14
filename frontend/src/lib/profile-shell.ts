@@ -1,5 +1,5 @@
 import {statisticsDomainUrl} from './statistics-domains';
-import {preparePanelStyles,panelLayoutFrame} from './panel-readiness';
+import {capturePanelStyles,preparePanelStyles,panelLayoutFrame} from './panel-readiness';
 import {isProfileList,isProfileSummary,profilePanelKey,profileRefreshAge,setPanelWaiting} from './profile-panel';
 import {bindPredictionIntent,predictionAllowed,predictionManifest} from './predictive-loading';
 import {profileLoadingFrame} from './profile-loading';
@@ -406,8 +406,7 @@ function setup(){
     if(!savedPanels||panel.saved||panel.revision!==summaryRevision||editorStore.hasPendingWrites())return;
     const copy=snapshot(panel,true);
     if(!copy)return;
-    const styles=[...document.head.querySelectorAll('link[rel=stylesheet][href],style[data-vite-dev-id],style[data-astro-id]')]
-      .map(style=>style.outerHTML).join('');
+    const styles=capturePanelStyles(document.head);
     const url=new URL(panel.root.dataset.profileUrl||panel.url);
     savedPanels.set(returnViewKey(url),{title:panel.title,content:copy.innerHTML,styles,checkedAt:panel.checkedAt});
     panel.saved=true;

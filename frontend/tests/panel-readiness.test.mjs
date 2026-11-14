@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {preparePanelStyles} from '../src/lib/panel-readiness.ts';
+import {capturePanelStyles,preparePanelStyles} from '../src/lib/panel-readiness.ts';
+import {createProfileSessionCache} from '../src/lib/profile-session-cache.ts';
 
 class Style{
   constructor(text,id){this.textContent=text;this.id=id;}
@@ -64,4 +65,29 @@ test('fetched HTML never rewrites a live stylesheet with the same identity',asyn
   const f=fixture([new Style('.posters{padding:0}','stats.css')],[],[live]);
   await preparePanelStyles(f.source,'https://example.test/user/alex/list',new AbortController().signal,f.document);
   assert.equal(f.nodes.length,1);assert.equal(live.textContent,'.posters{padding:20px 24px}');
+});
+
+test('saved production CSS survives a cache round trip and restores before readiness',async()=>{
+  const production=[new Style('.favorite-card{position:relative}.favorite-remove{position:absolute}'),new Style('.social-person-card{width:100px;height:100px}')];
+  const link=new Link('/profile.css'),fallback=Object.assign(new Style('.social-page{display:none}'),{noscript:true});
+  for(const node of [...production,fallback])node.outerHTML='<style>'+node.textContent+'</style>';
+  link.outerHTML='<link rel="stylesheet" href="/profile.css">';
+  const nodes=[...production,link,fallback];
+  const source={querySelectorAll:selector=>nodes.filter(node=>selector.split(',').some(part=>part==='style'?node instanceof Style:part==='link[rel=stylesheet][href]'&&node instanceof Link))};
+  const styles=capturePanelStyles(source);
+  const data=new Map(),disk={getItem:key=>data.get(key),setItem:(key,value)=>data.set(key,value),removeItem:key=>data.delete(key)};
+  const cache=createProfileSessionCache(disk,'42:true',()=>10);
+  cache.set('favorites',{title:'Favorites',content:'<article class="favorite-card">Poster</article>',styles,checkedAt:10});cache.flush();
+  const restored=createProfileSessionCache(disk,'42:true',()=>10).get('favorites');
+  assert.match(restored.styles,/favorite-remove\{position:absolute\}/);
+  assert.match(restored.styles,/social-person-card\{width:100px;height:100px\}/);
+  assert.doesNotMatch(restored.styles,/display:none/);
+  const decoded=[...restored.styles.matchAll(/<style>(.*?)<\/style>/g)].map(match=>new Style(match[1]));
+  const target=fixture(decoded,[link]);let ready=false;
+  const pending=preparePanelStyles(target.source,'https://example.test/user/alex/favorites',new AbortController().signal,target.document).then(()=>ready=true);
+  await Promise.resolve();assert.equal(ready,false,'linked CSS must also finish before revealing the restored cards');
+  target.nodes.find(node=>node instanceof Link).dispatchEvent(new Event('load'));await pending;
+  assert.deepEqual(target.nodes.filter(node=>node instanceof Style).map(node=>node.textContent),production.map(node=>node.textContent));
+  await preparePanelStyles(fixture(decoded).source,'https://example.test/user/alex/social',new AbortController().signal,target.document);
+  assert.equal(target.nodes.filter(node=>node instanceof Style).length,2,'repeated restores do not duplicate production styles');
 });

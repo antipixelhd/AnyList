@@ -35,3 +35,16 @@ test('restoring a snapshot preserves its original age and the storage budget',()
   time++;
   assert.equal(restored.get('games'),undefined);
 });
+
+test('old snapshots with incomplete production styles are discarded before restoring tabs',()=>{
+  const disk=storage();
+  disk.setItem('anylist:profile-tabs:v1',JSON.stringify({identity:'42:true',entries:[{
+    key:'/user/alex/favorites',title:'Favorites',content:'populated cards',styles:'',checkedAt:10,bytes:100,
+  }]}));
+  const cache=createProfileSessionCache(disk,'42:true',()=>10);
+  assert.equal(cache.get('/user/alex/favorites'),undefined);
+  assert.equal(disk.getItem('anylist:profile-tabs:v1'),undefined);
+  cache.set('/user/alex/favorites',{title:'Favorites',content:'populated cards',styles:'<style>.favorite-card{position:relative}</style>',checkedAt:10});
+  cache.flush();
+  assert.match(createProfileSessionCache(disk,'42:true',()=>10).get('/user/alex/favorites').styles,/favorite-card/);
+});

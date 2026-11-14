@@ -1,3 +1,10 @@
+/** Preserve production inline CSS as well as linked and development styles. */
+export function capturePanelStyles(source:ParentNode){
+  return [...source.querySelectorAll('style,link[rel=stylesheet][href]')]
+    .filter(style=>!style.closest('noscript'))
+    .map(style=>style.outerHTML).join('');
+}
+
 /** Install a fetched route's CSS before exposing its DOM, in dev and production. */
 export async function preparePanelStyles(source:ParentNode,base:string,signal:AbortSignal,document:Document=globalThis.document){
   if(signal.aborted)throw new DOMException('Aborted','AbortError');

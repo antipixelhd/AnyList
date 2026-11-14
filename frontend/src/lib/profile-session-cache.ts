@@ -1,6 +1,7 @@
 import {returnViewLifetime} from './return-view-cache.ts';
 
-const storageKey = 'anylist:profile-tabs:v1';
+const storageKey = 'anylist:profile-tabs:v2';
+const legacyStorageKey = 'anylist:profile-tabs:v1';
 const budget = 2 * 1024 * 1024;
 const limit = 8;
 type Seed = {title:string; content:string; styles:string; checkedAt:number};
@@ -11,6 +12,8 @@ type Entry = Seed & {key:string; bytes:number};
 export function createProfileSessionCache(storage:Storage, identity:string, now=Date.now) {
   let entries:Entry[] = [];
   try {
+    // Version one omitted production inline CSS and cannot restore a usable view.
+    storage.removeItem(legacyStorageKey);
     const stored=JSON.parse(storage.getItem(storageKey)||'null');
     if(stored?.identity===identity&&Array.isArray(stored.entries))entries=stored.entries;
   }catch { /* Storage may be unavailable. */ }
@@ -51,5 +54,5 @@ export function profileSessionCache(identity:string) {
 
 export function clearProfileSessionCache(){
   current?.clear();
-  try{sessionStorage.removeItem(storageKey);}catch { /* Optional storage. */ }
+  try{sessionStorage.removeItem(storageKey);sessionStorage.removeItem(legacyStorageKey);}catch { /* Optional storage. */ }
 }
