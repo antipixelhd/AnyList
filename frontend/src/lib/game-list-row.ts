@@ -1,3 +1,4 @@
+import {gameListTitlePending} from './game-list-title.ts';
 import {applyResponsiveArtwork} from './responsive-artwork';
 import {gameProgress} from './game-progress';
 import {scoreLabel} from './tracker';
@@ -12,7 +13,11 @@ export function paintGameListRow(row:HTMLElement,state:ListState,template:HTMLTe
     year:state.year||'',genres:JSON.stringify(state.genres||[]),favorite:String(!!state.favorite)});
   if(state.base_work_id)row.dataset.gameBase=String(state.base_work_id);else delete row.dataset.gameBase;
   const link=row.querySelector<HTMLAnchorElement>('.entry-title-link')!,heart=link.querySelector<HTMLElement>('[data-game-list-favorite]')!;
-  if(link.firstChild?.nodeType!==Node.TEXT_NODE||link.firstChild.textContent!==state.title)link.replaceChildren(document.createTextNode(state.title),heart);
+  const pendingTitle=gameListTitlePending(state),title=link.querySelector<HTMLElement>('[data-game-list-title]')!;
+  title.textContent=pendingTitle?'':state.title;
+  title.classList.toggle('game-title-pending',pendingTitle);title.classList.toggle('loading-surface',pendingTitle);
+  if(pendingTitle){link.setAttribute('aria-busy','true');link.setAttribute('aria-label','Loading game title');}
+  else {link.removeAttribute('aria-busy');link.removeAttribute('aria-label');}
   link.href=`/games/${id}`;heart.hidden=!state.favorite;
   const edit=row.querySelector<HTMLButtonElement>('[data-edit-game]');
   if(edit){edit.dataset.editGame=String(id);edit.setAttribute('aria-label',`Edit ${state.title}`);}
@@ -20,10 +25,8 @@ export function paintGameListRow(row:HTMLElement,state:ListState,template:HTMLTe
   if(rate){rate.dataset.gameListRate=String(id);rate.setAttribute('aria-label',`Rate ${state.title}`);}
   const score=row.querySelector('[data-score-label]')||row.querySelector('.entry-score');setFeedbackText(score,scoreLabel(state.score),acknowledge);
   const progress=gameProgress(state);row.querySelector('[data-game-list-hours]')!.textContent=progress.hours||'—';
-  row.querySelectorAll<HTMLElement>('[data-game-list-achievements]').forEach(node=>{
-    node.textContent=progress.achievement||'—';node.dataset.known=String(progress.achievement!=null);
-    if(node.classList.contains('game-inline-achievements'))node.setAttribute('aria-label',`Achievements ${progress.achievement||'unknown'}`);
-  });
+  const achievements=row.querySelector('[data-game-list-achievements]');
+  if(achievements)achievements.textContent=progress.achievement||'—';
   const holder=row.querySelector<HTMLElement>('.entry-thumbnail')!;
   let artwork=holder.querySelector<HTMLElement>('.entry-cover')!;
   if(holder.dataset.artworkPath!==(state.image_url||'')||artwork.tagName!==(state.image_url?'IMG':'SPAN')){

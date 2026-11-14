@@ -1,6 +1,6 @@
 import { acceptsImportFile, createImportUploader, importFormats, type ImportFormat } from "./data-imports";
 import { showMessage } from "./settings-feedback";
-import { hideOverlay, showOverlay } from "./ui-motion";
+import { openLegacyDialog, closeLegacyDialog } from "./legacy-modal";
 
 const borderColors = { blue: "border-blue-500", green: "border-green-500" };
 
@@ -20,6 +20,7 @@ function chooseOptions(format: ImportFormat, filename: string, signal: AbortSign
     const render = () => {
       options.forEach(option => {
         const active = selected.has(option.dataset.importOption!);
+        option.setAttribute("aria-pressed", String(active));
         option.querySelector(".check-icon")?.classList.toggle("invisible", !active);
         option.classList.toggle(option.dataset.secret === "true" ? "border-amber-500" : borderColors[format.color], active);
         option.classList.toggle("border-transparent", !active);
@@ -29,7 +30,7 @@ function chooseOptions(format: ImportFormat, filename: string, signal: AbortSign
     const finish = (selection: Record<string, boolean> | null) => {
       listeners.abort();
       signal.removeEventListener("abort", onAbort);
-      if (!signal.aborted) void hideOverlay(modal);
+      if (!signal.aborted) void closeLegacyDialog(modal, true);
       resolve(selection);
     };
     const onAbort = () => finish(null);
@@ -45,13 +46,14 @@ function chooseOptions(format: ImportFormat, filename: string, signal: AbortSign
     }, { signal: listeners.signal });
     cancel.addEventListener("click", () => finish(null), { signal: listeners.signal });
     body.textContent = `Choose what to import from "${filename}". Existing AnyList data is retained and deduplicated.`;
+    modal.addEventListener("cancel", () => finish(null), {signal:listeners.signal});
     render();
-    showOverlay(modal);
+    openLegacyDialog(modal, true);
   });
 }
 
 /** Wire one page lifetime; the caller connects successful uploads to its shared job monitor. */
-export function mountDataImports(token: string, onStarted: (format: ImportFormat["id"], jobId?: number) => void) {
+export function mountDataImports(onStarted: (format: ImportFormat["id"], jobId?: number) => void) {
   const lifetime = new AbortController();
   const { signal } = lifetime;
   const uploaders: ReturnType<typeof createImportUploader>[] = [];
@@ -73,7 +75,7 @@ export function mountDataImports(token: string, onStarted: (format: ImportFormat
     const dropzone = document.getElementById(`${format.id}-import-dropzone`);
     const input = document.querySelector<HTMLInputElement>(`#${format.id}_export_file`);
     if (!dropzone || !input) continue;
-    const uploader = createImportUploader(format, token, {
+    const uploader = createImportUploader(format, {
       onStarted(data) {
         showMessage(data.message || "Import started!", "success");
         onStarted(format.id, data.job_id);
@@ -98,6 +100,10 @@ export function mountDataImports(token: string, onStarted: (format: ImportFormat
         if (!signal.aborted) input.disabled = false;
       }
     };
+    dropzone.tabIndex = input.disabled ? -1 : 0;
+    dropzone.setAttribute("role", "button");
+    dropzone.setAttribute("aria-disabled", String(input.disabled));
+    dropzone.addEventListener("keydown", event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); if (!input.disabled) input.click(); } }, {signal});
     dropzone.addEventListener("click", () => { if (!input.disabled) input.click(); }, { signal });
     input.addEventListener("change", () => {
       const file = input.files?.[0];

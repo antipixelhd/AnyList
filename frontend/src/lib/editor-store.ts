@@ -3,6 +3,7 @@ import { responsiveArtwork,artworkIdentity } from './responsive-artwork';
 import { DecodedArtwork } from './decoded-artwork.ts';
 import {gameHeroChoice} from './game-hero-choice.ts';
 import {detailHeroArtwork} from './detail-artwork.ts';
+import type {EditorEpisodeMetadata, SeriesEditorSummary} from './series-editor';
 
 export type WorkSubject = {kind:'game'; catalogue_id:number}
   | {kind:'movie'|'series'; media_id:number; tmdb_id?:number|null};
@@ -42,6 +43,10 @@ export class EditorStore {
   private records = new Map<string, RecordState>();
   private viewer = '';
   private reads = new Map<string, Promise<EditorTitle>>();
+  private seriesReads = new Map<string, {signal:AbortSignal; request:Promise<any>}>();
+  private seriesCache = new Map<number, {value:SeriesEditorSummary; expires:number}>();
+  private episodeCache = new Map<string, EditorEpisodeMetadata>();
+  private seriesCacheRevision = 0;
   private artworkListeners=new Set<()=>void>();
   private decodedArtwork=new DecodedArtwork(32,12_000_000,()=>this.artworkListeners.forEach(listener=>listener()));
   private request: Transport;
@@ -57,6 +62,10 @@ export class EditorStore {
     this.viewer = viewer;
     this.records.clear();
     this.reads.clear();
+    this.seriesReads.clear();
+    this.seriesCache.clear();
+    this.episodeCache.clear();
+    this.seriesCacheRevision++;
     this.decodedArtwork.clear();
   }
   private key(title: Pick<EditorTitle, 'id' | 'type' | 'tmdb_id' | 'subject'>) {
@@ -79,6 +88,13 @@ export class EditorStore {
     }
     if (existing) {
       if (!existing.pending.length && !existing.libraryPending.length && !existing.importing) {
+        if(title.type==='series'&&title.id&&title.entry!==undefined&&
+            (title.entry===null ? existing.committed!==null :
+              ['updated_at','progress','status','season_scores','start_date','finish_date'].some(key=>
+                key in title.entry! && JSON.stringify(title.entry![key])!==JSON.stringify(existing.committed?.[key])))) {
+          this.seriesCacheRevision++;
+          this.seriesCache.delete(title.id);
+        }
         const displayed=existing.displayedHero;
         if(title.type!=='game'&&displayed&&title.backdrop===displayed.primary){
           title={...title,backdrop:displayed.path};
@@ -172,14 +188,20 @@ export class EditorStore {
   invalidate(id: number) {
     const record = [...this.records.values()].find(r => r.title.id === id && r.title.type!=='game');
     if (record) record.stale = true;
+    if(record?.title.type==='series') {this.seriesCacheRevision++;this.seriesCache.delete(id);}
   }
   acceptSaved(saved: Record<string, any>) {
     const record = saved.subject?.kind==='game'
       ? [...this.records.values()].find(r=>r.title.type==='game'&&r.title.id===saved.subject.catalogue_id)
       : [...this.records.values()].find(r => r.title.id === saved.id && r.title.type!=='game');
     if (!record || record.pending.length) return;
+    if (record.title.type==='series') {
+      this.seriesCacheRevision++;
+      this.seriesCache.delete(saved.id);
+    }
     this.seed({...record.title, ...(record.title.type==='game'?{game_state:saved,favorite:saved.favorite}:{}),
       entry:(record.title.type==='game'?saved.listed:saved.status) ? saved : null});
+    if(record.title.type==='series')this.rememberSeries(saved.id,saved.series_editor);
     this.changed(record.title);
   }
   async resolveId(title: EditorTitle): Promise<number> {
@@ -211,6 +233,8 @@ export class EditorStore {
         : {status:'planning', progress:0, rating_mode:'manual', manual_score:null,
           season_scores:{}, favorite:false, rewatch_count:0, notes:'', start_date:null, finish_date:null};
       entry = {...(entry || defaults), ...operation.patch};
+      const finishIntent=operation.patch.finish_date!=null || operation.patch.series_editor?.seasons?.some(
+        (season:{completion_date?:string|null})=>season.completion_date!=null);
       if(record.title.type==='game'&&'achievement_mode' in operation.patch){
         const achievements={...(entry.achievements||record.title.game_state?.achievements||{})};
         const mode=operation.patch.achievement_mode;achievements.mode=mode;
@@ -228,18 +252,20 @@ export class EditorStore {
         entry.achievements=achievements;
       }
       if ('status' in operation.patch && record.title.type === 'movie') {
-        entry.progress = entry.status === 'completed' ? 1 : 0;
-      } else if (entry.status === 'completed' && previous !== 'completed' && record.title.type === 'series') {
+        entry.progress = entry.status === 'completed' ? 1 : entry.status === previous ? previousProgress : 0;
+      } else if (entry.status === 'completed' && previous !== 'completed' && record.title.type === 'series'
+          && !('progress' in operation.patch)) {
         const seasons = (record.title as EditorTitle & {seasons?: {season_number:number;released_count:number|null}[]}).seasons;
         const regular = seasons?.filter(season => season.season_number > 0);
         const released = entry.released_episodes ?? (regular?.length && regular.every(season => season.released_count != null)
           ? regular.reduce((sum, season) => sum + season.released_count!, 0) : null);
         if (released != null && released > 0) entry.progress = released;
       }
+      if(finishIntent && record.title.type==='movie')entry.progress=1;
       if (entry.progress !== previousProgress) {
         // The ordered released catalogue allows exact optimistic positions across seasons.
         entry.season_position = entry.progress > 0 ? record.title.progress_positions?.[entry.progress - 1] ?? null : null;
-        if ('progress' in operation.patch && !('status' in operation.patch) && entry.progress > 0) {
+        if ('progress' in operation.patch && !('status' in operation.patch) && !finishIntent && entry.progress > 0) {
           const released = entry.released_episodes ?? (record.title.type === 'movie' ? 1 : null);
           entry.status = previous === 'completed' || (released != null && released > 0 && entry.progress >= released)
             ? 'completed' : 'watching';
@@ -247,7 +273,8 @@ export class EditorStore {
       }
       if ('manual_score' in operation.patch) entry.score = operation.patch.manual_score || null;
       const today = localToday();
-      if (entry.status !== previous && entry.status === (record.title.type==='game'?'playing':'watching') && !entry.start_date && !('start_date' in operation.patch)) entry.start_date = today;
+      if (entry.status !== previous && (record.title.type==='game'?['playing','played'].includes(entry.status):entry.status==='watching') && !entry.start_date && !('start_date' in operation.patch)
+          && !(record.title.type==='series' && operation.patch.series_editor)) entry.start_date = today;
       if (entry.status !== previous && entry.status === 'completed' && !entry.finish_date && !('finish_date' in operation.patch)) entry.finish_date = today;
     }
     if(entry)entry={...entry,favorite};
@@ -255,10 +282,63 @@ export class EditorStore {
     record.title.entry = entry;
     if ([...this.records.values()].includes(record)) this.changed(record.title);
   }
-  write(title: EditorTitle, patch: Record<string, any>) {
+  cachedSeries(id:number|null) {
+    const cached = id == null ? undefined : this.seriesCache.get(id);
+    return cached && cached.expires > Date.now() ? cached.value : undefined;
+  }
+  private rememberSeries(id:number, value:SeriesEditorSummary|undefined) {
+    if (!value?.ready) return;
+    this.seriesCache.delete(id);
+    this.seriesCache.set(id, {value, expires:Date.now() + 15_000});
+    if (this.seriesCache.size > 32) this.seriesCache.delete(this.seriesCache.keys().next().value!);
+  }
+  private readSeriesPath(path:string, signal:AbortSignal) {
+    const pending = this.seriesReads.get(path);
+    if (pending && !pending.signal.aborted) return pending.request;
+    const viewer = this.viewer;
+    const request = this.request(path,{signal}).then(value => {
+      if (signal.aborted || viewer !== this.viewer) throw new DOMException('Editor closed', 'AbortError');
+      return value;
+    }).finally(() => {
+      if (this.seriesReads.get(path)?.request === request) this.seriesReads.delete(path);
+    });
+    this.seriesReads.set(path, {signal, request});
+    return request;
+  }
+  async readSeries(id:number, signal:AbortSignal):Promise<SeriesEditorSummary> {
+    const revision = this.seriesCacheRevision;
+    const value = await this.readSeriesPath(`entry/${id}/series-editor`, signal);
+    if (revision === this.seriesCacheRevision) this.rememberSeries(id, value);
+    return value;
+  }
+  async prepareSeries(id:number, signal:AbortSignal):Promise<SeriesEditorSummary> {
+    const viewer=this.viewer;
+    const record=[...this.records.values()].find(row=>row.title.type==='series'&&row.title.id===id);
+    if (record?.pending.length) await record.tail.catch(()=>{});
+    if (signal.aborted || viewer!==this.viewer) throw new DOMException('Editor closed','AbortError');
+    const cached=this.cachedSeries(id);
+    if (cached) return cached;
+    const revision=this.seriesCacheRevision;
+    const value=await this.readSeries(id,signal);
+    if (signal.aborted || viewer!==this.viewer) throw new DOMException('Editor closed','AbortError');
+    // A write may finish while the intent-prefetch is in flight.
+    if (revision!==this.seriesCacheRevision) return this.prepareSeries(id,signal);
+    return value;
+  }
+  async readSeriesEpisode(id:number, episode:number, signal:AbortSignal):Promise<EditorEpisodeMetadata> {
+    const path = `entry/${id}/series-editor/episodes/${episode}`;
+    const cached = this.episodeCache.get(path);
+    if (cached) return cached;
+    const value = await this.readSeriesPath(path, signal);
+    this.episodeCache.set(path,value);
+    if (this.episodeCache.size > 96) this.episodeCache.delete(this.episodeCache.keys().next().value!);
+    return value;
+  }
+  write(title: EditorTitle, patch: Record<string, any>, optimistic?:Record<string,any>) {
     const viewer = this.viewer;
     const record = this.record(title)!;
-    const operation = {patch: {...patch}};
+    const operation = {patch: {...patch, ...optimistic}};
+    if (title.type==='series') {this.seriesCacheRevision++;if(title.id)this.seriesCache.delete(title.id);}
     record.pending.push(operation);
     this.paint(record);
     const task = record.tail.catch(() => {}).then(async () => {
@@ -273,9 +353,15 @@ export class EditorStore {
         const path=game?(favoriteOnly?`games/favorites/${id}`:`games/${child?'children':'entries'}/${id}${record.title.game_class==='dlc'?'?listed=false':''}`):`entry/${id}`;
         const body=game&&!favoriteOnly?{...patch,revision:record.committed?.revision??record.title.game_state?.revision??null}:patch;
         const saved = await this.request(path, {method:favoriteOnly?'PUT':'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
-        record.committed = (game?saved.listed:saved.status) ? saved : null;
+        const {series_editor:seriesSummary, ...entry} = saved;
+        record.committed = (game?saved.listed:saved.status) ? entry : null;
         if(game)record.title.game_state=saved;
         record.favoriteCommitted = saved.favorite ?? record.favoriteCommitted;
+        if (!game && record.title.type === 'series') {
+          this.seriesCacheRevision++;
+          this.seriesCache.delete(id);
+          this.rememberSeries(id,seriesSummary);
+        }
         record.stale = false;
         succeeded=true;
         return saved;
@@ -298,6 +384,7 @@ export class EditorStore {
   remove(title: EditorTitle) {
     const viewer = this.viewer;
     const record = this.record(title)!;
+    if (title.type==='series') {this.seriesCacheRevision++;if(title.id)this.seriesCache.delete(title.id);}
     const operation = {patch:null};
     record.pending.push(operation);
     this.paint(record);

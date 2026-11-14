@@ -18,7 +18,7 @@ const { username } = Astro.props;
     const section = document.getElementById('account-name')?.closest('section');
     if (!section || section.dataset.initialized) return;
     section.dataset.initialized = 'true';
-    const token = document.getElementById('app-data')?.dataset.token ?? '';
+
     function setStatus(_group: string, message: string, state = 'saved') {
       if (state === 'saved' && message) showMessage('Username saved.');
       else if (state === 'error') showMessage(message, 'error');
@@ -49,7 +49,7 @@ const { username } = Astro.props;
         try {
           const response = await fetch('/api/proxy/profile/me/account-name', {
             method: 'PATCH',
-            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ username: requested }),
           });
           const data = await response.json();
@@ -78,7 +78,7 @@ const { username } = Astro.props;
       };
       saveAccountName.addEventListener('click', saveName);
       accountName.addEventListener('keydown', event => {
-        if (event.key === 'Enter') { event.preventDefault(); void saveName(); }
+        if (event.key === 'Enter' && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); void saveName(); }
       });
     }
   }

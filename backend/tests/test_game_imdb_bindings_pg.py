@@ -29,7 +29,7 @@ class IMDbBindingTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(raised.exception.code,'retry_pending')
         async with self.Session() as db:
             work=await db.get(CatalogueEntity,work_id)
-            work.attributes={**work.attributes,'game_class':'bundle'};await db.commit()
+            work.attributes={**work.attributes,'game_class':'mod'};await db.commit()
         self.assertEqual((await service.resolve(work_id))['status'],'excluded')
         async with self.Session() as db:
             work=await db.get(CatalogueEntity,work_id)

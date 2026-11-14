@@ -1,4 +1,5 @@
 <script>
+  import {bindRovingOptions} from "../lib/roving-options";
   import { showMenu, hideMenu } from '../lib/ui-motion';
   import { placeDropdown } from '../lib/dropdown-position';
 
@@ -54,7 +55,8 @@
       const label = select.getAttribute('aria-label') || control.labels[0]?.[0].querySelector(':scope > span')?.textContent?.trim() || control.labels[0]?.[0].firstChild?.textContent?.trim() || 'Choose option';
       trigger.setAttribute('aria-label', `${label}: ${value.textContent}`);
       menu.querySelectorAll<HTMLButtonElement>('[data-option-index]').forEach(button => {
-        button.setAttribute('aria-selected', String(Number(button.dataset.optionIndex) === select.selectedIndex));
+        const selected=Number(button.dataset.optionIndex) === select.selectedIndex;
+        button.setAttribute('aria-selected', String(selected));button.tabIndex=selected?0:-1;
       });
     }
 
@@ -131,6 +133,7 @@
       menu.setAttribute('aria-labelledby', trigger.id);
       menu.dataset.motionStatic = '';
       menu.hidden = true;
+      bindRovingOptions(menu, '[data-option-index]', listeners.signal);
       trigger.setAttribute('aria-controls', menu.id);
       const originalTabIndex = select.getAttribute('tabindex');
       const originalAriaHidden = select.getAttribute('aria-hidden');

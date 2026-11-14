@@ -4,7 +4,7 @@ Restore fills absent personal records; it never overwrites a current entry or
 publishes archive metadata into the shared catalogue.
 """
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
@@ -217,6 +217,8 @@ async def restore_games(db, user_id, backup, *, cancelled):
                         profile = UserProfileData(user_id=user_id); db.add(profile)
                     profile.game_banners = {str(work.id): game.banner, **(profile.game_banners or {})}
                 await db.flush()
+            from core.list_categories import restore_populated
+            await restore_populated(db, user_id)
             await db.commit()
             restored += 1
         except SyncCancelled:

@@ -1007,7 +1007,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(by_media[self.show.id]['score'],7.5)
         self.assertTrue(by_media[self.show.id]['payload']['rating_changed'])
 
-    async def test_daily_activity_merges_interleaved_progress_rating_and_finished_seasons(self):
+    async def test_season_completion_encapsulates_its_progress_and_rating_only(self):
         self.show.tmdb_id = 456789
         self.show.tmdb_data = {
             'tracking_catalogue_refreshed_at': '2026-01-01T00:00:00',
@@ -1034,13 +1034,15 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
 
         rows = (await self.db.execute(select(TrackingActivity).where(
             TrackingActivity.user_id == self.owner.id, TrackingActivity.media_id == self.show.id))).scalars().all()
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0].score, 8)
-        self.assertEqual(rows[0].payload['episodes_watched'], 4)
-        self.assertEqual(rows[0].payload['position'], 'S2E2')
-        self.assertEqual(rows[0].payload['finished_seasons'], [1])
-        self.assertTrue(rows[0].payload['rating_changed'])
-        self.assertTrue(rows[0].payload['status_changed'])
+        self.assertEqual(len(rows), 2)
+        completion = next(row for row in rows if row.payload.get('season_completion_id'))
+        progress = next(row for row in rows if row.payload.get('episodes_watched'))
+        self.assertEqual(completion.score, 8)
+        self.assertEqual(completion.payload['finished_seasons'], [1])
+        self.assertTrue(completion.payload['rating_changed'])
+        self.assertEqual(progress.payload['episodes_watched'], 2)
+        self.assertEqual(progress.payload['episode_positions'], ['S2E1', 'S2E2'])
+        self.assertFalse(progress.payload.get('rating_changed'))
 
         # Rating first and a later status update still produce one daily card.
         await self.db.execute(delete(TrackingActivity).where(TrackingActivity.media_id == self.movie.id))
@@ -1085,9 +1087,9 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(forward.json()['season_position'], 'S5E8')
         rows = (await self.db.execute(activity_query)).scalars().all()
         self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0].payload['episodes_watched'], 2)
-        self.assertEqual(rows[0].payload['position_start'], 'S5E7')
-        self.assertEqual(rows[0].payload['position'], 'S5E8')
+        self.assertTrue(rows[0].payload.get('season_completion_id'))
+        self.assertFalse(rows[0].payload.get('episodes_watched'))
+        self.assertEqual(rows[0].payload['absorbed_progress'][0]['episode_positions'], ['S5E7', 'S5E8'])
         self.assertEqual(rows[0].payload['finished_seasons'], [5])
 
         self.assertEqual((await self.save(self.show, progress=39, confirm_rollback=True)).status_code, 200)
@@ -1096,7 +1098,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rows[0].payload['episodes_watched'], 1)
         self.assertEqual(rows[0].payload['position_start'], 'S5E7')
         self.assertEqual(rows[0].payload['position'], 'S5E7')
-        self.assertEqual(rows[0].payload['finished_seasons'], [])
+        self.assertFalse(rows[0].payload.get('finished_seasons'))
 
         self.assertEqual((await self.save(self.show, progress=38, confirm_rollback=True)).status_code, 200)
         self.assertEqual((await self.db.execute(activity_query)).scalars().all(), [])
@@ -1107,8 +1109,8 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         rows = (await self.db.execute(activity_query)).scalars().all()
         self.assertEqual(len(rows), 1)
         self.assertTrue(rows[0].payload['rating_changed'])
-        self.assertEqual(rows[0].payload['episodes_watched'], 0)
-        self.assertEqual(rows[0].payload['finished_seasons'], [])
+        self.assertFalse(rows[0].payload.get('episodes_watched'))
+        self.assertFalse(rows[0].payload.get('finished_seasons'))
 
     async def test_imported_completed_progress_includes_provisional_episode_without_air_date(self):
         from core.activity import series_activity_details

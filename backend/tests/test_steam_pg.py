@@ -184,6 +184,57 @@ class SteamDatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await db.scalar(select(func.count(CatalogueEntity.id))),before)
             self.assertIsNone(await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.kind==IDENTITY_JOB)))
 
+    async def test_import_primary_runs_without_automatic_mapper_and_skips_optional_graph(self):
+        from core import catalogue, game_metadata, steam_cache
+        from core.catalogue_providers import CatalogueProviders
+        from core.config import settings
+        await self.connect()
+        await steam_cache.save_public(self.Session,[{'app_id':'20','name':'Known Steam title'}])
+        async with self.Session() as db:
+            state=await db.get(SteamConnection,self.id)
+            data={**game('20',0),'name':'Steam 20'}
+            await steam_sync.apply_games(db,state,[data],['20'],initial=True,initial_status='planning')
+            await db.commit()
+            identity=await catalogue.resolve_identity(db,'igdb.game','900020')
+            work=await db.get(CatalogueEntity,identity.entity_id)
+            self.assertEqual(work.name,'Known Steam title')
+            job=await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.provider=='igdb',MetadataSnapshot.kind=='game',MetadataSnapshot.external_id=='900020'))
+            self.assertTrue(job.coverage['primary_only'])
+            self.assertIsNotNone(job.next_attempt_at)
+            from models.game_runner import GameWorkDemand
+            demand=await db.get(GameWorkDemand,'job:igdb:game:900020')
+            self.assertEqual(demand.priority,1)
+            self.assertEqual(demand.origin,2)
+        provider=CatalogueProviders()
+        provider.igdb=AsyncMock(return_value=[{'id':900020,'name':'Resolved title','game_type':{'id':0},'platforms':[{'id':6,'name':'PC'}]}])
+        provider._igdb_pages=AsyncMock(side_effect=AssertionError('optional characters requested'))
+        service=game_metadata.GameMetadata(self.Session,scope=self.engine,providers=SimpleNamespace(validate=lambda *a:None,detail=provider._detail))
+        with patch.object(settings,'game_background_mapper_enabled',False):
+            await service.tick()
+            tasks=[flight.task for (scope,_),flight in list(game_metadata._flights.items()) if scope==id(self.engine)]
+            self.assertTrue(tasks)
+            await asyncio.gather(*tasks)
+        provider._igdb_pages.assert_not_awaited()
+        async with self.Session() as db:
+            self.assertEqual((await db.get(CatalogueEntity,work.id)).name,'Resolved title')
+
+    async def test_collection_import_keeps_shared_hours_on_one_independent_entry(self):
+        from core import steam_cache,catalogue
+        await self.connect()
+        await steam_cache.save_public(self.Session,[{'app_id':'976730','name':'Halo: The Master Chief Collection',
+            'igdb_classification':{'version':1,'state':'bound','igdb_id':'7348','game_class':'bundle','checked_at':steam_sync.now().isoformat()}}])
+        async with self.Session() as db:
+            state=await db.get(SteamConnection,self.id)
+            await steam_sync.apply_games(db,state,[game('976730',6000,100,700)],['976730'],initial=True,initial_status='playing')
+            await db.commit()
+            identity=await catalogue.resolve_identity(db,'igdb.game','7348')
+            work=await db.get(CatalogueEntity,identity.entity_id)
+            self.assertEqual(work.attributes['game_class'],'bundle')
+            entry=await db.scalar(select(GameEntry).where(GameEntry.work_id==work.id,GameEntry.user_id==self.user.id))
+            self.assertEqual(entry.total_seconds,360000)
+            self.assertEqual(entry.achievement_count,100)
+            self.assertEqual(await db.scalar(select(func.count()).select_from(GameEntry)),1)
+
     async def test_initial_import_without_dates_silently_saves_status_and_counters(self):
         await self.connect()
         async with self.Session() as db:
@@ -195,6 +246,21 @@ class SteamDatabaseTests(unittest.IsolatedAsyncioTestCase):
             entries=list(await db.scalars(select(GameEntry).where(GameEntry.user_id==self.user.id)))
             self.assertEqual(len(entries),3)
             self.assertTrue(all(row.total_seconds==3600 and row.achievement_count==1 for row in entries))
+
+    async def test_late_import_achievement_baseline_is_silent_but_later_progress_is_public(self):
+        await self.connect()
+        async with self.Session() as db:
+            state=await db.get(SteamConnection,self.id)
+            await steam_sync.apply_games(db,state,[game('1245620',60)],['1245620'],initial=True,initial_status='planning')
+            await db.commit()
+            await steam_sync.apply_games(db,state,[game('1245620',60,1,3)],['1245620'])
+            await db.commit()
+            self.assertEqual(list(await db.scalars(select(GameActivity).where(GameActivity.user_id==self.user.id))),[])
+            await steam_sync.apply_games(db,state,[game('1245620',60,2,3)],['1245620'])
+            await db.commit()
+            rows=list(await db.scalars(select(GameActivity).where(GameActivity.user_id==self.user.id)))
+            self.assertEqual(len(rows),1)
+            self.assertTrue(rows[0].payload['achievements_changed'])
 
     async def test_initial_import_records_only_dated_milestones_at_their_dates(self):
         from zoneinfo import ZoneInfo
@@ -767,3 +833,21 @@ class SteamDatabaseTests(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as db:
             state = (await game_tracking.states(db, self.user.id, [self.base]))[0]
             self.assertEqual((state.achievements.count, state.achievements.total, state.achievements.percentage), (1, 2, 50))
+
+    async def test_played_import_restores_hidden_category_without_completion_date(self):
+        from core import list_categories
+        from schemas_list_categories import CategoryPatch
+        await self.connect()
+        async with self.Session() as db:
+            await list_categories.save(db,self.user.id,CategoryPatch(revision=0,hidden=['played']))
+        response=await self.client.post(f'/connections/steam/{self.id}/import',json={
+            'generation':1,'selected_apps':['1245620'],'statuses':{'1245620':'played'},
+            'start_dates':{'1245620':'2020-01-01'}})
+        self.assertEqual(response.status_code,200,response.text)
+        async with self.Session() as db:
+            entry=await db.scalar(select(GameEntry).where(GameEntry.user_id==self.user.id))
+            self.assertEqual(entry.status,'played')
+            self.assertEqual(entry.start_date,date(2020,1,1))
+            self.assertIsNone(entry.finish_date)
+            presentation=await list_categories.read(db,self.user.id)
+            self.assertFalse(next(row for row in presentation.categories if row.id=='played').hidden)

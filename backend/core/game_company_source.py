@@ -103,7 +103,7 @@ class GameCompanySource:
             record={**row,'game':game['id']}
             if str(row['id']) in accepted or game.get('version_parent') or kind=='port':pending.append(record)
             elif kind=='unknown' or kind in INDEPENDENT|{'expansion'}:selected.append(record)
-            # Verified non-display DLC/update/bundle categories need no full
+            # Verified non-display DLC/update categories need no full
             # metadata or parent fan-out for a company works projection.
         if len(selected)>SIZE:
             pending=selected[SIZE:]+pending;selected=selected[:SIZE]

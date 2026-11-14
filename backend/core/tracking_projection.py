@@ -130,14 +130,16 @@ def entry_data(entry, media, owner=False, *, favorite=None):
     return result
 
 
-def activity_data(rows, *, include_user=False, limit=12):
+def activity_data(rows, *, include_user=False, limit=12, today=None):
     """Present fixed-window cards, retaining UTC-day grouping for legacy rows."""
     from core.activity import has_activity_event, merge_activity_payload
     from core.streaming_evidence import streaming_episode_span
+    from core.season_activity import present_series_activity
 
     grouped = {}
     for row in rows:
         activity, media = row[0], row[1]
+        details = present_series_activity(activity, media, today=today)
         user = row[2] if include_user else None
         profile = row[3] if include_user else None
         key = (
@@ -162,15 +164,18 @@ def activity_data(rows, *, include_user=False, limit=12):
                 ),
                 "status": activity.status,
                 "score": activity.score,
-                "payload": dict(activity.payload or {}),
+                "payload": details,
                 "created_at": activity.created_at,
                 "media": media_data(media),
             }
         else:
             grouped[key]["payload"] = merge_activity_payload(
-                grouped[key]["payload"], activity.payload
+                grouped[key]["payload"], details
             )
     for activity in grouped.values():
+        if activity['payload'].get('series_completed'):
+            activity['status'] = 'completed'
+            activity['payload']['status_changed'] = True
         if not activity['payload'].get('position_start'):
             span = streaming_episode_span(activity['payload'])
             if span:
@@ -205,12 +210,12 @@ def following_title_activity(rows, media, *, today=None, limit=30):
             activity.status in ('completed', 'dropped', 'paused', 'planning')
             or (activity.status == 'watching' and details.get('started_watching') is True)
         )
-        if not status_event and not details.get('finished_seasons'):
+        if not status_event and not details.get('finished_seasons') and not details.get('season_rating_group'):
             continue
         candidates.append((activity, user, profile))
     ordered = sorted(candidates, key=lambda row: (row[0].created_at, row[0].id), reverse=True)
     cards = activity_data([(activity, media, user, profile) for activity, user, profile in ordered],
-                          include_user=True, limit=len(ordered))
+                          include_user=True, limit=len(ordered), today=today)
     by_user = {}
     for card in cards:
         details = card['payload']
@@ -233,10 +238,16 @@ def following_title_activity(rows, media, *, today=None, limit=30):
             choices.setdefault('status', card)
         if details.get('finished_seasons'):
             choices.setdefault('season', card)
+        if details.get('season_rating_group'):
+            choices.setdefault('rating', card)
     result = []
     for choices in by_user.values():
         status = choices.get('status')
         card = status if status and status['status'] == 'completed' else choices.get('season') or status
+        seasonal = [candidate for candidate in (status, choices.get('rating')) if candidate and
+                    (candidate['payload'].get('season_status') or candidate['payload'].get('season_rating_group'))]
+        if seasonal:
+            card = max([candidate for candidate in [card, *seasonal] if candidate], key=lambda candidate:candidate['created_at'])
         if card is None:
             continue
         if card is choices.get('season') and not (card['status'] == 'completed' and card['payload'].get('status_changed')):

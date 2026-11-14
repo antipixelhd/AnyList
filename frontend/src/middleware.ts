@@ -9,6 +9,7 @@ import { publicLegalPage } from './lib/legal-routes';
 import {anonymousGameDiscoveryRoute,approvedGamesPage} from './lib/game-public-routes';
 import {viewerMediaPreferences} from './lib/viewer-media-preferences';
 import {viewerProfilePreferences} from './lib/viewer-profile-preferences';
+import {profilePanelRequest,profilePanelHeader,profilePagePath} from './lib/profile-panel-request';
 
 const PUBLIC_ROUTES = ["/login", "/register", "/logout", "/oidc-callback", "/oidc-start", "/link", "/site.webmanifest", "/favicon-96x96.png", "/apple-touch-icon.png", "/sw.js", "/offline.html"];
 // /api/proxy/auth/device/code and /device/token are the RFC 8628 endpoints a
@@ -26,6 +27,7 @@ const PUBLIC_LEGACY_STATS_PAGE_RE = /^\/stats\/\d+\/?$/;
 // extension, so it doesn't fall under isStaticAsset below like TMDB poster
 // URLs do, and needs the same admin-gated anonymous allowance as the page itself.
 const PUBLIC_AVATAR_PROXY_RE = /^\/api\/proxy\/profile\/(?:avatar|background)\/\d+$/;
+const PUBLIC_PROFILE_SOCIAL_RE = /^\/api\/proxy\/tracking\/people\/[^/]+\/social\/?$/;
 // Matches /list/{id} (someone else's public/friends-only list page). The list
 // itself still enforces its own privacy_level server-side; this only decides
 // whether a logged-out visitor gets past the gate at all.
@@ -66,18 +68,21 @@ const PUBLIC_MEDIA_ROWS_PROXY_RE =
 const ADMIN_ONLY_ROUTES = ["/docs", "/redoc", "/openapi.json"];
 
 // Security headers added to every response.
-// CSP is intentionally omitted — Astro's define:vars emits inline <script>
-// blocks whose hashes change every build, making a static policy impractical.
+// Stage one observes inline scripts and DOM sinks without blocking existing UI.
+// Do not request script samples: inline scripts may contain private page data.
 const SECURITY_HEADERS: Record<string, string> = {
   "X-Frame-Options": "DENY",
   "X-Content-Type-Options": "nosniff",
   "Referrer-Policy": "strict-origin-when-cross-origin",
   "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+  "Content-Security-Policy-Report-Only": "script-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; report-uri /api/csp-report; report-to csp",
 };
 
 export const onRequest = defineMiddleware(async (context, next) => {
   const token = context.cookies.get(sessionCookieName("token"))?.value;
   const { pathname } = context.url;
+  if (pathname === '/api/csp-report') return next();
+  context.locals.profilePanel = profilePanelRequest(context.request);
 
   if (context.request.method === 'GET' || context.request.method === 'HEAD') {
     const preview = await crawlerShareResponse(context.url, context.request.headers.get('User-Agent') || '', process.env.SERVER_URL || context.url.origin);
@@ -115,7 +120,8 @@ export const onRequest = defineMiddleware(async (context, next) => {
   // The proxy prefers the cookie over an API key, so a query key cannot exempt
   // a cookie-authenticated write. Explicit Bearer headers override the cookie.
   if (requiresSameOrigin(context.request.method, pathname, !!token, hasProxyBearer) &&
-      !isSameOrigin(context.request, context.url, process.env.SERVER_URL)) {
+      !isSameOrigin(context.request, context.url, process.env.SERVER_URL,
+        (process.env.ADDITIONAL_PUBLIC_ORIGINS || '').split(',').map(value => value.trim()).filter(Boolean))) {
     return new Response('Cross-site form submissions are forbidden', { status: 403, headers: SECURITY_HEADERS });
   }
 
@@ -147,6 +153,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
       PUBLIC_PROFILE_PAGE_RE.test(pathname) ||
       PUBLIC_LEGACY_STATS_PAGE_RE.test(pathname) ||
       PUBLIC_AVATAR_PROXY_RE.test(pathname) ||
+      (context.request.method === 'GET' && PUBLIC_PROFILE_SOCIAL_RE.test(pathname)) ||
       PUBLIC_LIST_PAGE_RE.test(pathname) ||
       PUBLIC_TOP_RATED_PAGE_RE.test(pathname) ||
       PUBLIC_RECENTLY_WATCHED_PAGE_RE.test(pathname) ||
@@ -230,6 +237,13 @@ export const onRequest = defineMiddleware(async (context, next) => {
   }
 
   const response = await next();
+  if (response.headers.get('Content-Type')?.includes('text/html')) {
+    response.headers.set('Reporting-Endpoints', `csp="${context.url.origin}/api/csp-report"`);
+  }
+  if(profilePagePath.test(pathname)){
+    response.headers.append('Vary',profilePanelHeader);
+    response.headers.set('Cache-Control','private, no-store');
+  }
   for (const [header, value] of Object.entries(SECURITY_HEADERS)) {
     response.headers.set(header, value);
   }

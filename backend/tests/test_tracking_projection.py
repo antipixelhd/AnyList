@@ -61,15 +61,16 @@ class TrackingProjectionTests(unittest.TestCase):
         self.assertEqual(rows[1][0].payload, before)
         rows.append(row(6, 6, 'dropped', {'status_changed': True}, other))
         cards = tracking_projection.following_title_activity(rows, _media())
-        self.assertEqual(cards[0]['payload']['finished_seasons'], [1])
-        self.assertEqual(cards[0]['status'], 'watching')
+        self.assertEqual(cards[0]['payload']['season_number'], 1)
+        self.assertEqual(cards[0]['status'], 'dropped')
         self.assertEqual(len(cards), 2)
         rows.append(row(7, 7, 'dropped', {'status_changed': True}))
         rows.append(row(8, 8, 'watching', {'status_changed': True, 'started_watching': True}))
         cards = tracking_projection.following_title_activity(rows, _media())
         self.assertEqual(cards[0]['created_at'], datetime(2026, 1, 8))
         self.assertTrue(cards[0]['payload']['started_watching'])
-        self.assertEqual(cards[1]['payload']['finished_seasons'], [1])
+        self.assertEqual(cards[1]['payload']['season_number'], 1)
+        self.assertEqual(cards[1]['status'], 'dropped')
 
     def test_following_series_completion_expires_only_when_a_new_season_is_released(self):
         from datetime import date
@@ -80,7 +81,8 @@ class TrackingProjectionTests(unittest.TestCase):
             {'season_number': 3, 'air_date': '2028-01-01'},
         ]})
         activity = SimpleNamespace(id=1, user_id=1, created_at=datetime(2025, 1, 1), status='completed',
-                                   score=8, payload={'status_changed': True, 'rating_changed': True})
+                                   score=8, payload={'season_completion_id':1,'season_number':1,'series_completed':True,
+                                                     'finished_seasons':[1], 'rating_changed': True})
         rows = [(activity, SimpleNamespace(id=1, username='friend'), None)]
         self.assertEqual(tracking_projection.following_title_activity(rows, media, today=date(2026, 6, 30))[0]['status'], 'completed')
         card = tracking_projection.following_title_activity(rows, media, today=date(2026, 7, 1))[0]
@@ -88,9 +90,10 @@ class TrackingProjectionTests(unittest.TestCase):
         self.assertEqual(card['payload']['finished_seasons'], [1])
         self.assertTrue(card['payload']['rating_changed'])
         activity.created_at = datetime(2026, 8, 1)
+        activity.payload = {**activity.payload,'season_completion_id':2,'season_number':2,'finished_seasons':[2]}
         self.assertEqual(tracking_projection.following_title_activity(rows, media, today=date(2026, 8, 2))[0]['status'], 'completed')
         self.assertEqual(activity.status, 'completed')
-        self.assertNotIn('finished_seasons', activity.payload)
+        self.assertEqual(activity.payload['finished_seasons'],[2])
 
     def test_release_annotations_distinguish_watched_seasons_from_untouched_seasons(self):
         episodes = [SimpleNamespace(id=1, season_number=1), SimpleNamespace(id=2, season_number=1),
@@ -216,6 +219,18 @@ class TrackingProjectionTests(unittest.TestCase):
         self.assertEqual([r["payload"]["episodes_watched"] for r in result], [3, 4, 5])
         self.assertEqual(result[0]["created_at"], newest.created_at)
         self.assertEqual([row.payload for row, _ in rows], before)
+
+    def test_grouping_legacy_completions_cannot_restore_an_ineligible_series_status(self):
+        from datetime import date
+        media=_media(tmdb_data={'seasons':[{'season_number':1,'air_date':'2024-01-01'},
+                                          {'season_number':2,'air_date':'2026-07-01'}]})
+        rows=[(SimpleNamespace(user_id=7,status='completed',score=None,
+                created_at=datetime(2025,1,1,hour),payload={'status_changed':True}),media) for hour in (12,10)]
+        cards=tracking_projection.activity_data(rows,today=date(2026,8,1))
+        self.assertEqual(len(cards),1)
+        self.assertFalse(cards[0]['payload']['status_changed'])
+        self.assertFalse(cards[0]['payload'].get('series_completed'))
+        self.assertEqual(cards[0]['payload']['finished_seasons'],[1])
 
     def test_fixed_windows_remain_distinct_when_latest_events_share_a_date(self):
         media = _media()

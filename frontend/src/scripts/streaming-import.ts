@@ -108,7 +108,7 @@ function mountStreamingImport(app: HTMLElement) {
   const extension = app.dataset.extension!;
   const connectionId = app.dataset.connectionImport;
   const sourceLabel = connectionId ? `From ${serviceName}` : "In your file";
-  const token = document.getElementById("app-data")?.getAttribute("data-token") ?? "";
+
   const hasTmdbKey = app.getAttribute("data-has-tmdb-key") === "true";
 
   let session: StreamingSession | null = null;
@@ -198,7 +198,7 @@ function mountStreamingImport(app: HTMLElement) {
 
   async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const headers = new Headers(init.headers);
-    if (token) headers.set("Authorization", `Bearer ${token}`);
+
     if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
     const timeout = AbortSignal.timeout(init.body instanceof FormData ? 120000 : 30000);
     const signal = AbortSignal.any([dateSignal.signal, timeout, ...(init.signal ? [init.signal] : [])]);
@@ -1134,7 +1134,7 @@ function mountStreamingImport(app: HTMLElement) {
     searchTimer = window.setTimeout(() => { void searchTitles(); }, 180);
   });
   remapInput.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
+    if (event.key === "Enter" && !event.isComposing && event.keyCode !== 229) {
       event.preventDefault();
       window.clearTimeout(searchTimer);
       void searchTitles();
@@ -1259,7 +1259,7 @@ function mountStreamingImport(app: HTMLElement) {
   });
   upload.addEventListener("keydown", (event) => {
     if ((event.target as HTMLElement).closest("a")) return;
-    if (hasTmdbKey && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); fileInput.click(); }
+    if (hasTmdbKey && (event.key === "Enter" && !event.isComposing && event.keyCode !== 229 || event.key === " ")) { event.preventDefault(); fileInput.click(); }
   });
   fileInput.addEventListener("change", () => { void uploadFile(fileInput.files?.[0]); });
   upload.addEventListener("dragover", (event) => { event.preventDefault(); upload.classList.add("border-blue-500", "bg-blue-500/5"); });

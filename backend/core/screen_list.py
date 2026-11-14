@@ -7,7 +7,7 @@ from typing import Literal
 from sqlalchemy import Integer, any_, func, literal, or_, select
 from sqlalchemy.dialects.postgresql import ARRAY
 
-from core import season_releases, tracking_projection
+from core import list_categories, season_releases, tracking_projection
 from core.tracking_access import anime_is_visible
 from core.tracking_rules import effective_score
 from models import Media, WatchEvent
@@ -15,7 +15,7 @@ from models.base import MediaType
 from models.tracking import MediaFavorite, TrackedEntry
 
 ScreenScope = Literal['movie', 'series', 'all']
-SCREEN_STATUSES = ('watching', 'completed', 'paused', 'dropped', 'planning')
+SCREEN_STATUSES = tuple(category[0] for category in list_categories.DEFINITIONS['screen'])
 STATUS_ORDER = {value: index for index, value in enumerate(SCREEN_STATUSES)}
 ROW_FIELDS = frozenset(('id', 'type', 'title', 'original_title', 'tagline', 'poster', 'backdrop', 'backdrop_fallbacks', 'background_status', 'year', 'genres', 'release_date',
     'status', 'rating_mode', 'score', 'progress', 'favorite', 'rewatch_count', 'updated_at', 'notes',
@@ -192,7 +192,7 @@ async def members(db, user_id, scope: ScreenScope, *, progress=False, cap=None):
     return result
 
 
-def select_page(entries, *, status, sort, q, genre, year, favorites, offset, limit):
+def select_page(entries, *, status, sort, q, genre, year, favorites, offset, limit, status_order=STATUS_ORDER):
     status_counts, group_counts = {}, {}
     for member in entries:
         status_counts[member.status] = status_counts.get(member.status, 0) + 1
@@ -208,7 +208,7 @@ def select_page(entries, *, status, sort, q, genre, year, favorites, offset, lim
             return member.updated or datetime.min, -member.id
         return member.rank,
     matches.sort(key=order, reverse=sort == 'updated')
-    matches.sort(key=lambda member: STATUS_ORDER.get(member.status, len(SCREEN_STATUSES)))
+    matches.sort(key=lambda member: status_order.get(member.status, len(status_order)))
     for member in matches:
         group_counts[member.status] = group_counts.get(member.status, 0) + 1
     return [member.id for member in matches[offset:offset + limit]], dict(

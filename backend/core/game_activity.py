@@ -16,7 +16,7 @@ PUBLIC_FIELDS = (*PUBLIC_FLAGS, 'previous_score', 'rating_first', 'total_seconds
 
 async def record_import(db,row,*,timezone_name='UTC'):
     """Historical onboarding milestones require dates; baseline counters are silent."""
-    day=row.finish_date if row.status=='completed' else row.start_date if row.status=='playing' else None
+    day=row.finish_date if row.status=='completed' else row.start_date if row.status in {'playing','played'} else None
     if day is None:return
     stamp=datetime.combine(day,time(12),ZoneInfo(timezone_name)).astimezone(timezone.utc).replace(tzinfo=None)
     exists=await db.scalar(select(GameActivity.id).where(GameActivity.user_id==row.user_id,
@@ -93,13 +93,17 @@ async def rows(db, user_ids, *, limit=60, work_id=None, public_only=False):
         query = query.where(UserProfileData.privacy_level == PrivacyLevel.public)
     if work_id is not None:
         query = query.where(GameActivity.work_id == work_id)
+    from core.list_categories import resolve
+    from models import UserSettings
+    query=query.add_columns(UserSettings.preferences).outerjoin(UserSettings,UserSettings.user_id==User.id)
     result = []
-    for activity, work_id, title, poster, username, display_name, avatar_path, completion_seconds, game_class in (await db.execute(query.order_by(
+    for activity, work_id, title, poster, username, display_name, avatar_path, completion_seconds, game_class, preferences in (await db.execute(query.order_by(
         GameActivity.created_at.desc(), GameActivity.id.desc()).limit(limit))).all():
         details = activity.payload or {}
         result.append(dict(key=f'game:{activity.user_id}:{work_id}:{details.get("window_started_at", activity.id)}',
             user_id=activity.user_id, username=username, display_name=display_name or username,
             has_avatar=bool(avatar_path), status=activity.status, score=activity.score,
+            status_label=next(category.label for category in resolve(preferences=preferences).categories if category.id==activity.status),
             # Read the current first-completion fact through the existing owner/work
             # join. Old events update retroactively without writes or reordering.
             payload={**{key: details[key] for key in PUBLIC_FIELDS if key in details},
@@ -120,12 +124,15 @@ async def social_people(db, viewer_id, work_id):
             GameChildState.work_id == work_id, GameChildState.base_entry_id.is_not(None)),
     ).subquery()
     visible = or_(User.id == viewer_id, and_(User.id.in_(following_ids(viewer_id)), UserProfileData.privacy_level == PrivacyLevel.public))
-    data = (await db.execute(select(User.id, User.username, UserProfileData.display_name, UserProfileData.avatar_path, membership.c.status, membership.c.score, membership.c.total_seconds)
+    from models import UserSettings
+    from core.list_categories import resolve
+    data = (await db.execute(select(User.id, User.username, UserProfileData.display_name, UserProfileData.avatar_path, membership.c.status, membership.c.score, membership.c.total_seconds, UserSettings.preferences)
         .join(membership, membership.c.user_id == User.id)
-        .outerjoin(UserProfileData, UserProfileData.user_id == User.id).where(visible))).all()
-    rank = {status: index for index, status in enumerate(('completed', 'playing', 'paused', 'dropped', 'planning'))}
+        .outerjoin(UserProfileData, UserProfileData.user_id == User.id).outerjoin(UserSettings,UserSettings.user_id==User.id).where(visible))).all()
+    rank = {status: index for index, status in enumerate(('completed', 'playing', 'played', 'paused', 'dropped', 'planning'))}
     people = [dict(id=user_id, username=username, display_name=display_name or username,
-        has_avatar=bool(avatar_path), status=status, score=score, total_seconds=total_seconds, self=user_id == viewer_id)
-        for user_id, username, display_name, avatar_path, status, score, total_seconds in data]
+        has_avatar=bool(avatar_path), status=status, score=score, total_seconds=total_seconds,
+        status_label=next(category.label for category in resolve(preferences=preferences).categories if category.id==status), self=user_id == viewer_id)
+        for user_id, username, display_name, avatar_path, status, score, total_seconds, preferences in data]
     people.sort(key=lambda row: (rank.get(row['status'], 99), row['score'] is None, -(row['score'] or 0), not row['self'], row['display_name'].casefold()))
     return people

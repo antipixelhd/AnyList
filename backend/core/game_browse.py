@@ -21,7 +21,7 @@ from models.games import GameChildState, GameEntry
 CATEGORIES = {'trending':'Trending','most_played':'Most Played','sellers':'Top sellers',
     'newest':'Newest','popular':'All-time popular','score':'Highest rated'}
 PAGE_AGE = timedelta(hours=2)
-RELEASE_POLICY='game-content-v2-no-mobile'
+RELEASE_POLICY='game-content-v3-bundles-no-mobile'
 
 
 def digest(value):

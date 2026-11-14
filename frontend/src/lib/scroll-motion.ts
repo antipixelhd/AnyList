@@ -4,7 +4,7 @@ export function initializeScrollMotion(
   signal: AbortSignal,
   selector = ".lab-module",
   revealClass = "lab-scroll-reveal",
-  options: { animateInitial?: boolean; animateVisibleArrivals?: boolean; downwardOnly?: boolean; scaleEntrance?: boolean; once?: boolean; appearedAttribute?: string; prepareBeforeEntry?: boolean } = {},
+  options: { animateInitial?: boolean; animateVisibleArrivals?: boolean; downwardOnly?: boolean; scaleEntrance?: boolean; once?: boolean; appearedAttribute?: string; prepareBeforeEntry?: boolean; deferHidden?: boolean } = {},
 ) {
   const scaleTiming = { duration: 300, easing: "linear" };
   const scaleFrames = [
@@ -16,7 +16,7 @@ export function initializeScrollMotion(
   if (reduced.matches || signal.aborted) return;
   const mobile = matchMedia("(max-width: 650px), (pointer: coarse)");
   const pending = new Map<HTMLElement, Animation | null>();
-  const entrances = new Set<Animation>();
+  const entrances = new Map<HTMLElement, Animation>();
   let modules: HTMLElement[] = [];
   const registered = new WeakSet<HTMLElement>();
   const appeared = new WeakSet<HTMLElement>();
@@ -51,7 +51,7 @@ export function initializeScrollMotion(
       ],
       { ...(options.scaleEntrance ? scaleTiming : { duration: 260, easing: "cubic-bezier(.25,.1,.25,1)" }), fill: "both" },
     );
-    if (options.prepareBeforeEntry === false) {
+    if (options.prepareBeforeEntry === false || options.deferHidden) {
       const startTime = element.ownerDocument.timeline.currentTime;
       if (startTime !== null) animation.startTime = startTime;
     }
@@ -65,15 +65,40 @@ export function initializeScrollMotion(
     pending.set(element, null);
   };
 
-  const register = () => {
+  const cancelEntrance = (element: HTMLElement) => {
+    entrances.get(element)?.cancel();
+    entrances.delete(element);
+  };
+  const enter = (element: HTMLElement) => {
+    const animation = element.animate(
+      options.scaleEntrance ? scaleFrames : [
+        { opacity: 0, transform: "translateY(7px)" },
+        { opacity: 1, transform: "translateY(0)" },
+      ],
+      options.scaleEntrance ? scaleTiming : { duration: 260, easing: "ease" },
+    );
+    if (options.deferHidden) {
+      const startTime = element.ownerDocument.timeline.currentTime;
+      if (startTime !== null) animation.startTime = startTime;
+    }
+    entrances.set(element, animation);
+    animation.addEventListener("finish", () => {
+      if (entrances.get(element) === animation) entrances.delete(element);
+    }, { once: true });
+  };
+
+  const register = (animateArrivals = true) => {
     modules = modules.filter((element) => {
       if (element.isConnected) return true;
       complete(element);
+      cancelEntrance(element);
       registered.delete(element);
       return false;
     });
     root.querySelectorAll<HTMLElement>(selector).forEach((element) => {
       if (registered.has(element)) return;
+      const visible = element.getClientRects().length;
+      if (!visible && options.deferHidden) return;
       registered.add(element);
       modules.push(element);
       if ((options.once && appeared.has(element)) || (options.appearedAttribute && element.hasAttribute(options.appearedAttribute))) {
@@ -81,25 +106,11 @@ export function initializeScrollMotion(
         return;
       }
       const bounds = element.getBoundingClientRect();
-      const visible = element.getClientRects().length;
       if (!visible && options.animateVisibleArrivals === false) return;
       if (visible && bounds.top < viewport().bottom) {
         markAppeared(element);
-        if (bounds.bottom > 0 && (initialRegistration ? options.animateInitial !== false : options.animateVisibleArrivals !== false)) {
-          const entrance = element.animate(
-            options.scaleEntrance ? scaleFrames : [
-              { opacity: 0, transform: "translateY(7px)" },
-              { opacity: 1, transform: "translateY(0)" },
-            ],
-            options.scaleEntrance ? scaleTiming : { duration: 260, easing: "ease" },
-          );
-          entrances.add(entrance);
-          entrance.addEventListener(
-            "finish",
-            () => entrances.delete(entrance),
-            { once: true },
-          );
-        }
+        const animate = initialRegistration ? options.animateInitial !== false : options.animateVisibleArrivals !== false;
+        if (animateArrivals && animate && bounds.bottom > 0) enter(element);
         return;
       }
       // Set the starting appearance BEFORE entry, rather than resetting an
@@ -146,6 +157,7 @@ export function initializeScrollMotion(
     } of positions) {
       if (!visible) {
         if (animation) complete(element);
+        cancelEntrance(element);
         continue;
       }
       // Browse entrances come from the lower edge only. Returning through the
@@ -192,7 +204,7 @@ export function initializeScrollMotion(
     cancelAnimationFrame(frame);
     frame = 0;
     for (const element of pending.keys()) complete(element);
-    entrances.forEach((animation) => animation.cancel());
+    for (const element of entrances.keys()) cancelEntrance(element);
   };
   update();
   window.addEventListener("scroll", schedule, { passive: true, signal });
@@ -243,9 +255,26 @@ export function initializeScrollMotion(
     },
     { once: true },
   );
-  return (element: HTMLElement) => {
+  const settle = (element: HTMLElement) => {
     if (!registered.has(element)) return;
     markAppeared(element);
     complete(element);
+    cancelEntrance(element);
   };
+  return Object.assign(settle, {
+    replayVisible() {
+      if (reduced.matches || signal.aborted) return;
+      register(false);
+      const { top, bottom } = viewport();
+      const visible = modules.filter((element) => {
+        if (!element.getClientRects().length) return false;
+        const bounds = (element.parentElement ?? element).getBoundingClientRect();
+        return bounds.top < bottom && bounds.bottom > top;
+      });
+      for (const element of visible) {
+        settle(element);
+        enter(element);
+      }
+    },
+  });
 }

@@ -4,9 +4,10 @@ import {readFileSync} from 'node:fs';
 import {stripTypeScriptTypes} from 'node:module';
 import {runInNewContext} from 'node:vm';
 import {gameProgress} from '../src/lib/game-progress.ts';
+import {gameCategoryName} from '../src/lib/game-category-store.ts';
 const source=readFileSync(new URL('../src/lib/home-game-progress.ts',import.meta.url),'utf8');
 const {paintHomeGameProgress}=runInNewContext(stripTypeScriptTypes(source).replace(/^import .*;$/gm,'').replace('export function','function')+';({paintHomeGameProgress})',
-  {gameProgress,scoreLabel:score=>String(Number(score.toFixed(1)))});
+  {gameProgress,gameCategoryName,scoreLabel:score=>String(Number(score.toFixed(1)))});
 
 test('game shelf follows optimistic edits and rollback without replacing cards or colliding with series ids',()=>{
   const label={textContent:''},otherLabel={textContent:'other'};

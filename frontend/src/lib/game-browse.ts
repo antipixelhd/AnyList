@@ -1,22 +1,22 @@
 import {browseElement,browsePanelActive,setBrowsePanelUrl} from './browse-tabs';
 import {editorStore,type EditorTitle} from './editor-store';
-import {bindBrowseCardActions,bindBrowseCardTouch,paintBrowseCardState,type BrowseItem} from './browse-card-actions';
+import {bindBrowseCardActions,bindBrowseCardTouch,paintBrowseCardState,restoreBrowseItemState,type BrowseItem} from './browse-card-actions';
 import {browseCardKey,browseCardHref} from './browse-card-data';
 import {createBrowseCard} from './browse-card-render';
-import {prepareBrowsePoster,createBrowseLoading} from './browse-loading';
+import {prepareBrowsePoster,createBrowseLoading,handoffBrowseSkeletons,trackBrowseSkeleton} from './browse-loading';
 import {createBrowseCache} from './browse-cache';
 import {readVerifiedGamePage,gameBrowseCacheable,type GameVerificationPage} from './game-browse-verification';
 import {initializeMobileBrowseFilters} from './browse-mobile-filters';
 import {initializeBrowseMenus} from './browse-menus';
 import {initializeBrowseRanges} from './browse-ranges';
 import {initializeBrowseSort} from './browse-sort';
-import {initializeScrollMotion} from './scroll-motion';
 import {createBrowsePaginationDemand} from './browse-pagination';
 import {appendBrowseTimeline} from './browse-timeline';
 import {genreSelectionLabel} from './browse-view';
 import {formatDate} from './date-time';
 import {gameBrowseValues,gameBrowseIsCategories,gameBrowseHasFilters,gameBrowseCategory,gameBrowseSnapshot,gameBrowseRequest,gameBrowseHref,gamePlatformSelection,gameSourceContext,type GamePlatformGroup} from './game-browse-data';
 import {createBrowseFacetLoader} from './browse-facet-loading';
+import {writeReturnSeed} from './return-view-cache';
 
 type Payload=GameVerificationPage&{results:BrowseItem[];has_more:boolean;cursor?:string|null;source?:string;source_at?:number|null;fetched_at?:string|null;partial?:boolean;stale?:boolean;coverage_limited?:boolean};
 type Shelf={key:string;title:string;payload:Payload|null};
@@ -67,11 +67,15 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
       const href=browseCardHref(item);if(href)card.querySelectorAll<HTMLAnchorElement>('a').forEach(link=>link.href=href);
     }
   };
-  let contextAt=Date.now();
-  root.addEventListener('anylist:browse-active',()=>{
-    if(loading||Date.now()-contextAt<60_000||document.body.dataset.cacheUser==='anonymous')return;
+  let contextAt=Number(root.dataset.returnCheckedAt)||Date.now();
+  root.dataset.returnCheckedAt=String(contextAt);
+  root.addEventListener('anylist:browse-active',event=>{
+    const returned=(event as CustomEvent<{restored?:boolean}>).detail?.restored;
+    if(loading||!returned&&Date.now()-contextAt<60_000||document.body.dataset.cacheUser==='anonymous')return;
     contextAt=Date.now();const started=writeVersion;
-    const ids=[...new Set([...items.values()].map(item=>item.id).filter((id):id is number=>!!id))];
+    root.dataset.returnCheckedAt=String(contextAt);
+    const candidates=returned?[...items].filter(([card])=>{const rect=card.getBoundingClientRect();return rect.bottom>0&&rect.top<innerHeight;}).map(([,item])=>item):[...items.values()];
+    const ids=[...new Set(candidates.map(item=>item.id).filter((id):id is number=>!!id))];
     void(async()=>{
       for(let offset=0;offset<ids.length&&!signal.aborted;offset+=80){
         try{
@@ -132,6 +136,7 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
     const cards:HTMLElement[]=[];
     for(const item of rows){const key=browseCardKey(item);if(dedupe&&seen.has(key))continue;if(dedupe)seen.add(key);const card=createBrowseCard(item,template,signal,readyPosters);items.set(card,item);cards.push(card);}
     if(timeline)appendBrowseTimeline(container,cards,items,ascending,true);else container.append(...cards);
+    return cards;
   };
   const footer=()=>{
     const current=values(),overridden=current.has('unfiltered');
@@ -150,11 +155,15 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
     host.querySelectorAll<HTMLElement>('[data-game-view-all]').forEach(link=>{link.title=context;link.setAttribute('aria-description',context);});
   };
   for(const shelf of shelves.values())if(shelf.payload){
-    reconcile(shelf.payload,-1);if(gameBrowseCacheable(shelf.payload))cache.set(gameBrowseRequest(new URLSearchParams({sort:shelf.key}),6),shelf.payload);
+    if(initial.restored)shelf.payload.results.forEach(restoreBrowseItemState);else reconcile(shelf.payload,-1);
+    if(gameBrowseCacheable(shelf.payload))cache.set(gameBrowseRequest(new URLSearchParams({sort:shelf.key}),6),shelf.payload);
     register(find(`[data-game-shelf="${shelf.key}"]`),shelf.payload.results);paintSource(shelf);
   }
-  if(!initial.categories){reconcile(payload,-1);register(grid,payload.results);if(!initial.pending&&!initial.error&&gameBrowseCacheable(payload))cache.set(gameBrowseRequest(initialValues),payload);}
-  requestAnimationFrame(()=>requestAnimationFrame(()=>{if(!signal.aborted)initializeScrollMotion(root,signal,'.browse-card-body','browse-scroll-reveal',{animateInitial:false,animateVisibleArrivals:false,downwardOnly:true,scaleEntrance:true,once:true,appearedAttribute:'data-browse-appeared'});}));
+  if(!initial.categories){
+    if(initial.restored)payload.results.forEach(restoreBrowseItemState);else reconcile(payload,-1);
+    register(grid,payload.results);
+    if(!initial.restored&&!initial.pending&&!initial.error&&gameBrowseCacheable(payload))cache.set(gameBrowseRequest(initialValues),payload);
+  }
   bindBrowseCardActions(region,items,signal,syncItem,message=>{notice.textContent=message;notice.hidden=false;});bindBrowseCardTouch(region,signal);
   function updateControls(){
     syncing=true;
@@ -247,13 +256,25 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
     const shelf=shelves.get(key)!,host=find(`[data-game-shelf="${key}"]`),cards=host.querySelector<HTMLElement>('[data-game-shelf-cards]')!;
     if(shelf.payload)return;
     host.setAttribute('aria-busy','true');host.querySelector<HTMLElement>('[data-game-shelf-error]')!.hidden=true;
+    const timing = trackBrowseSkeleton(cards);
     try{
       const page=await json(gameBrowseRequest(new URLSearchParams({sort:key}),6),requestSignal);
+      const wait = timing.settle(requestSignal);
+      if (wait) await wait;
       if(signal.aborted||requestSignal.aborted||epoch!==generation)return;
-      shelf.payload=page;clear(cards);render(page.results,cards);paintSource(shelf);
+      const placeholders = [...cards.children];
+      shelf.payload=page;
+      const rendered = render(page.results,cards);
+      handoffBrowseSkeletons(cards,rendered.map(card => card.querySelector<HTMLElement>('.browse-card-body')!));
+      placeholders.forEach(slot => slot.remove());
+      paintSource(shelf);
       if(!page.results.length){const text=document.createElement('p');text.className='browse-category-empty';text.textContent=page.has_more?'No verified matches in this source segment. Use View all to continue.':'No games available from this source.';cards.append(text);}
-    }catch(cause){if(!signal.aborted&&!requestSignal.aborted&&epoch===generation){clear(cards);host.querySelector<HTMLElement>('[data-game-shelf-error]')!.hidden=false;}}
-    finally{if(!signal.aborted&&epoch===generation)host.setAttribute('aria-busy','false');}
+    }catch(cause){
+      const wait = timing.settle(requestSignal);
+      if (wait) await wait;
+      if(!signal.aborted&&!requestSignal.aborted&&epoch===generation){clear(cards);host.querySelector<HTMLElement>('[data-game-shelf-error]')!.hidden=false;}
+    }
+    finally{timing.stop();if(!signal.aborted&&epoch===generation)host.setAttribute('aria-busy','false');}
   }
   async function loadShelves(epoch:number,requestSignal:AbortSignal){
     const queue=[...shelves.keys()].filter(key=>!shelves.get(key)!.payload);
@@ -271,7 +292,7 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
       setBrowsePanelUrl(root,gameBrowseHref(current));
       grid.hidden=!(payload.verification_pending&&activeValues===current.toString());sections.hidden=true;
       if(config.category){sections.hidden=false;loadingView.finish();}
-      else loadingView.show(false,false,config.timeline);
+      else if(grid.hidden) loadingView.show("replace",false,config.timeline);
     }
     region.setAttribute('aria-busy',String(!config.category));footer();
     if(delay){await new Promise<void>(resolve=>{const finish=()=>{clearTimeout(timer);currentRequest.signal.removeEventListener('abort',finish);resolve();};timer=setTimeout(finish,delay);currentRequest.signal.addEventListener('abort',finish,{once:true});});}
@@ -283,7 +304,14 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
         await loadShelves(epoch,currentRequest.signal);return;
       }
       let painted=false;
-      await readVerifiedGamePage(()=>json(path,currentRequest.signal),result=>{
+      await readVerifiedGamePage(async()=>{
+        const result = await json(path,currentRequest.signal);
+        if (result.results.length || !result.verification_pending) {
+          const wait = loadingView.settle(currentRequest.signal);
+          if (wait) await wait;
+        }
+        return result;
+      },result=>{
         if(signal.aborted||currentRequest.signal.aborted||epoch!==generation)return;
         if(!append){
           const existing=[...grid.querySelectorAll<HTMLElement>('[data-browse-card]')].map(card=>card.dataset.key);
@@ -292,7 +320,9 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
           if((!painted&&activeValues!==current.toString())||!samePrefix){clear(grid);seen.clear();}
         }
         grid.className=config.timeline?'browse-timeline':'browse-grid';
-        render(result.results,grid,config.timeline,true,current.get('status')==='upcoming');painted=true;
+        const cards = render(result.results,grid,config.timeline,true,current.get('status')==='upcoming');
+        loadingView.handoff(cards.map(card => card.querySelector<HTMLElement>('.browse-card-body')!));
+        painted=true;
         if(!result.verification_pending&&!result.verification_error)payload=result;
         presentedCategories=false;paintedTimeline=config.timeline;activeValues=current.toString();
         if(result.results.length||!result.verification_pending)loadingView.finish();
@@ -300,6 +330,8 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
         notice.textContent=!result.verification_pending&&current.has('min_metacritic')&&result.partial?'Some games have no verified critic score.':'';
       },currentRequest.signal);
     }catch(cause){
+      const wait = loadingView.settle(currentRequest.signal);
+      if (wait) await wait;
       if(signal.aborted||currentRequest.signal.aborted||epoch!==generation)return;
       loadingView.finish();sections.hidden=!presentedCategories;grid.hidden=presentedCategories;
       root.dataset.browseView=paintedTimeline?'timeline':'grid';
@@ -370,9 +402,9 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
   signal.addEventListener('abort',()=>{request?.abort();clearTimeout(timer);observer.disconnect();cancelAnimationFrame(frame);},{once:true});
   if(facetsReady)syncGenres();syncPlatforms();updateControls();footer();
   if(!facetsReady)void facetLoader.load();
-  if(initial.categories){request=new AbortController();void loadShelves(generation,request.signal);}
+  if(initial.categories&&!initial.restored){request=new AbortController();void loadShelves(generation,request.signal);}
   else if(initial.pending||payload.verification_pending)void load(false);
-  return (values: URLSearchParams) => {
+  const applyContext = (values: URLSearchParams) => {
     const q = values.get('q') || '', view = values.get('view')==='timeline' ? 'timeline' : 'grid';
     if (field('q').value===q && field('view').value===view) return;
     field('q').value=q;
@@ -380,4 +412,14 @@ export function initializeGameBrowse(root:HTMLElement,signal:AbortSignal){
     if (q) field('unfiltered').value='';
     changed();
   };
+  return {applyContext,capture(target:HTMLElement){
+    const loadedShelves=[...shelves.values()];
+    if(!facetsReady||presentedCategories&&loadedShelves.some(shelf=>!shelf.payload))return false;
+    const snapshot=gameBrowseSnapshot({loading,failed:!error.hidden,activeValues,categories:presentedCategories,
+      values:values().toString(),sections:loadedShelves,payload,
+      rows:[...grid.querySelectorAll<HTMLElement>('[data-browse-card]')].map(card=>items.get(card)).filter(Boolean)});
+    if(!snapshot)return false;
+    writeReturnSeed(target,'[data-browse-id="game-browse-data"]',{...initial,...snapshot,pending:false,facets_pending:false,restored:true});
+    return true;
+  }};
 }

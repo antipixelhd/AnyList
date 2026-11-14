@@ -23,7 +23,7 @@ test('Games browse keys separate provider and catalogue identities and survive r
   assert.equal(browseCardHref({...remote,id:50}),'/games/50');
   assert.equal(browseCardHref({id:50,type:'series'}),'/title/50');
   assert.equal(browseCardKey({id:50,type:'movie',release_event:'event:1'}),'event:1');
-  assert.equal(browseStatusLabel('planning',true),'Planned');
+  assert.equal(browseStatusLabel('planning',true),'Planning');
   assert.equal(expansionCard({...remote,game_class:'expansion'}),true);
 });
 

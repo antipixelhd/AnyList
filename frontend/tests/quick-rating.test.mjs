@@ -13,7 +13,7 @@ function picker(score, onScore) {
     active: null,
     savedScore: null,
     pendingScore: null,
-    dialog: {},
+    dialog: {querySelector:()=>({})},
     title: {},
     poster: {removeAttribute() {}},
     remove: {hidden: true},
@@ -85,4 +85,26 @@ test('synchronous callback failure leaves the picker open with its previous rati
   assert.equal(context.remove.hidden, false);
   assert.equal(context.error.hidden, true);
   assert.equal(context.failures[0][0], 'rating');
+});
+
+test('season requests save only the selected season and preserve the overall rating path', async()=>{
+  const {context,detail}=picker(null);
+  const calls=[],events=[],invalidated=[];
+  Object.assign(detail,{id:42,seasonNumber:2,episodeOrder:'tmdb:group:test'});
+  Object.assign(context,{
+    signal:new AbortController().signal,
+    stars:{classList:{add(){},remove(){}}},
+    fetch:async(url,options)=>{calls.push({url,...options});return {ok:true,json:async()=>({rating:8.5})};},
+    editorStore:{invalidate:id=>invalidated.push(id),write:()=>assert.fail('Must not write an overall score')},
+    CustomEvent:class {constructor(type,{detail}){this.type=type;this.detail=detail;}},
+    document:{dispatchEvent:event=>events.push(event)},
+  });
+  await context.picker.save(8.5);
+  assert.equal(calls[0].url,'/api/proxy/ratings');
+  assert.deepEqual(JSON.parse(calls[0].body),{media_id:42,media_type:'series',season_number:2,episode_order:'tmdb:group:test',rating:8.5});
+  assert.deepEqual(invalidated,[42]);
+  assert.equal(events[0].detail.season_number,2);
+  assert.equal(events[0].detail.episode_order,'tmdb:group:test');
+  assert.equal(context.savedScore,8.5);
+  assert.equal(context.failures.length,0);
 });

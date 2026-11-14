@@ -44,6 +44,12 @@ class FakePreview(c.Preview):
     def dependencies(self, force=False):
         self.events.append("dependencies-force" if force else "dependencies")
 
+    def build_frontend(self):
+        self.events.append("build-production" if self.branch == "beta" else "build-skipped")
+
+    def configure_services(self):
+        self.events.append("configure-services")
+
     def migration_state(self):
         return {"compatible": self.compatible, "pending": self.changed,
                 "current": ["old"], "heads": ["new"]}
@@ -123,6 +129,42 @@ class ControllerTests(unittest.TestCase):
         p.deploy(SHA, forced=True, recreate=True)
         self.assertNotIn("db-reset", p.events)
         self.assertLess(p.events.index("backup"), p.events.index("migrate"))
+        self.assertLess(p.events.index("build-production"), p.events.index("restart"))
+        self.assertLess(p.events.index("configure-services"), p.events.index("restart"))
+
+    def test_only_beta_builds_frontend_in_production_mode(self):
+        for branch in ("beta", "development-1"):
+            p = self.preview(branch)
+            p.env = lambda: {"PREVIEW_SLOT": branch}
+            commands = []
+            p.app = lambda args, **kwargs: commands.append((args, kwargs))
+            c.Preview.build_frontend(p)
+            if branch == "beta":
+                self.assertEqual(commands[0][0], ["npm", "run", "build"])
+                self.assertEqual(commands[0][1]["env"]["NODE_ENV"], "production")
+            else:
+                self.assertEqual(commands, [])
+
+    def test_service_templates_select_beta_production_and_development_reload(self):
+        templates = Path(__file__).parents[1]
+        for branch in ("beta", "development-1"):
+            p = self.preview(branch)
+            p.user = "anylist-" + branch
+            units = self.state / branch
+            units.mkdir()
+            def path(value):
+                return units if str(value) == "/etc/systemd/system" else Path(value)
+            with patch.object(c, "INSTALL", templates), patch.object(c, "Path", path), patch.object(c, "run") as run:
+                c.Preview.configure_services(p)
+            unit = (units / f"anylist-preview-{branch}-frontend.service").read_text()
+            self.assertNotIn("@FRONTEND_COMMAND@", unit)
+            if branch == "beta":
+                self.assertIn("Environment=NODE_ENV=production", unit)
+                self.assertIn("ExecStart=/usr/bin/node scripts/serve.mjs", unit)
+            else:
+                self.assertIn("Environment=NODE_ENV=development", unit)
+                self.assertIn("astro.mjs dev --host 127.0.0.1 --port 8002", unit)
+            run.assert_called_once_with(["systemctl", "daemon-reload"])
 
     def test_beta_incompatibility_and_migration_failure_fail_safely(self):
         for compatible in [False, True]:

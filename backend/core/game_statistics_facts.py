@@ -17,7 +17,9 @@ from core.catalogue_normalize import image
 from models.catalogue import CatalogueEntity,CatalogueCredit,MetadataSnapshot,CharacterPerformance
 from models.games import GameEntry,GameAchievement,GameAchievementUnlock
 
-STATUSES=('planning','playing','paused','completed','dropped')
+from core.list_categories import DEFINITIONS
+STATUSES=tuple(row[0] for row in DEFINITIONS['game'])
+STATUS_LABELS={row[0]:row[1] for row in DEFINITIONS['game']}
 BASELINES=(('main_story_seconds','Main Story'),('main_sides_seconds','Main + Sides'),('completionist_seconds','Completionist'))
 
 
@@ -142,7 +144,7 @@ def build_statistics(facts,credits):
         'achievement_percentage':statistics.fmean(known_percentages) if known_percentages else None,
         'achievement_progress_games':len(known_percentages),'achievement_count':sum(counts) if counts else None,'achievement_count_games':len(counts)},
         'planned':{'games':len(planned),'estimated_seconds':sum(planned_estimates) if planned_estimates else None,'known_estimate_games':len(planned_estimates)},
-        'statuses':[{'key':status,'label':'Planned' if status=='planning' else status.title(),'games':sum(row['status']==status for row in facts)} for status in STATUSES],
+        'statuses':[{'key':status,'label':STATUS_LABELS[status],'games':sum(row['status']==status for row in facts)} for status in STATUSES],
         'scores':scores,'hours':hours,'release_years':grouped(played,lambda row:year(row.get('release_date'))),
         'completion_years':grouped(completed,lambda row:year(row.get('finish_date')),time=False),'comparisons':comparisons,
         'coverage':{'unknown_time_games':len(played)-all_metrics['known_time_games'],

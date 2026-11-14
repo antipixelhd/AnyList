@@ -1,4 +1,5 @@
 """Games-only statistics; movie/series scopes cannot include this contract."""
+from schemas_list_categories import CategoryPresentation
 from datetime import datetime
 from typing import Literal
 from pydantic import BaseModel,Field
@@ -88,6 +89,7 @@ class GameOverview(BaseModel):
 
 
 class GameStatsResponse(BaseModel):
+    category_presentation: CategoryPresentation = Field(default_factory=CategoryPresentation)
     profile:dict
     owner:bool
     following:bool

@@ -8,11 +8,19 @@ os.environ.setdefault('SECRET_KEY','game-store-test-only')
 os.environ.setdefault('DATABASE_URL','postgresql+asyncpg://test:test@localhost/test')
 import httpx
 from core.catalogue_providers import ProviderError,ProviderHTTP
-from core.game_store_source import text_rows,age_ratings,igdb_age_ratings,GameStoreSource
+from core.game_store_source import text_rows,age_ratings,igdb_age_ratings,GameStoreSource,store_release
 from core.game_rating_source import GameRatingSource
 
 
 class GameStoreParserTests(unittest.TestCase):
+    def test_store_release_accepts_english_day_dates_and_ignores_uncertain_or_early_access_dates(self):
+        for value in ('Nov 27, 2026','27 Nov, 2026','27 Nov 2026'):
+            self.assertEqual(store_release({'release_date':{'date':value}})['release_date'],'2026-11-27')
+        for value in ('Coming soon','2026','Q4 2026','November 2026','Feb 30, 2026',''):
+            self.assertEqual(store_release({'release_date':{'date':value}}),{})
+        self.assertEqual(store_release({'release_date':None}),{})
+        self.assertEqual(store_release({'release_date':{'date':'Nov 27, 2026'},'genres':[{'id':'70'}]}),{})
+
     def test_requirements_keep_plain_text_and_structure_without_executable_html(self):
         rows=text_rows('<strong>Minimum:</strong><br><ul><li>Requires 64-bit CPU</li><li><strong>Memory:</strong> 12 GB RAM</li><li>Storage: 60 GB</li><li>Additional Notes: </li></ul><script>BAD_SCRIPT</script><img src=x onerror=BAD_EVENT><iframe>BAD_FRAME</iframe><p>Notes: &lt;safe&gt; &amp; fast</p>')
         self.assertEqual(rows,[{'label':None,'value':'Requires 64-bit CPU'},{'label':'Memory','value':'12 GB RAM'},{'label':'Storage','value':'60 GB'},{'label':'Notes','value':'<safe> & fast'}])
@@ -38,9 +46,11 @@ class GameStoreTransportTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(request.url.params['cc'],'US')
             return httpx.Response(200,json={'987654321':{'success':True,'data':{'steam_appid':987654321,
                 'metacritic':{'score':91},'ratings':{'usk':{'rating':'18'}},'pc_requirements':[],
+                'release_date':{'coming_soon':True,'date':'Nov 27, 2026'},
                 'mac_requirements':{'minimum':'Mac only'}}}})
         async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
             http=ProviderHTTP(client=client)
             info=GameStoreSource(None);ratings=GameRatingSource(None);info.http=ratings.http=http
             a,b=await asyncio.gather(info.fetch('987654321','info',datetime.now(timezone.utc)),ratings.fetch('987654321','critic',datetime.now(timezone.utc)))
             self.assertEqual(count,1);self.assertIsNone(a['requirements']);self.assertEqual(b['score'],91)
+            self.assertEqual(a['release_date'],'2026-11-27');self.assertEqual(b['release_date'],a['release_date'])

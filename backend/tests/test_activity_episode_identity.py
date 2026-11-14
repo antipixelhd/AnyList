@@ -15,12 +15,17 @@ class EpisodeIdentityActivityTests(unittest.IsolatedAsyncioTestCase):
     async def test_gaps_and_rollbacks_update_positions_and_finished_seasons(self):
         episodes = [SimpleNamespace(id=1,season_number=1,episode_number=1),
                     SimpleNamespace(id=2,season_number=2,episode_number=1)]
+        for ep in episodes:
+            ep.release_date, ep.tmdb_data = '2020-01-01', {}
+        async def groups(*args, display_positions, **kwargs):
+            display_positions.update({ep.id: (ep.season_number, ep.episode_number) for ep in episodes})
+            return 'tmdb:aired', [(ep.season_number, [ep], 1) for ep in episodes], {}
         media = SimpleNamespace(id=10,media_type=MediaType.series)
         db = MagicMock()
         db.delete = AsyncMock()
         with (patch.object(activity,'_prepare_rating_activity',AsyncMock(return_value=(False,None))),
               patch.object(activity,'_active_activity_card',AsyncMock(return_value=None)) as active,
-              patch.object(activity,'_series_activity_catalog',AsyncMock(return_value=(episodes,{1:1,2:1})))):
+              patch('core.season_completion.season_groups',side_effect=groups)):
             async def save(before, after):
                 return await activity.record_progress_activity(db,user_id=1,media=media,
                     previous_progress=len(before),progress=len(after),status='watching',score=None,

@@ -10,6 +10,24 @@ class ChildrenTests(unittest.IsolatedAsyncioTestCase):
     asyncSetUp=fixture.GamesDatabaseTests.asyncSetUp
     cleanup=fixture.GamesDatabaseTests.cleanup
 
+    async def test_detail_hint_matches_playable_children_without_loading_cards(self):
+        from core.game_children import has_children
+        from core.media_details import game_primary_details, catalogue_title
+        async with self.Session() as db:
+            base=await db.get(CatalogueEntity,self.base)
+            unknown=await db.get(CatalogueEntity,self.unknown)
+            child=await db.get(CatalogueEntity,self.child)
+            self.assertTrue(await has_children(db,base))
+            self.assertFalse(await has_children(db,unknown))
+            self.assertFalse(await has_children(db,child))
+            self.assertTrue((await game_primary_details(db,base))['has_game_children'])
+            self.assertTrue((await catalogue_title(db,base))['has_game_children'])
+            self.assertFalse((await catalogue_title(db,unknown))['has_game_children'])
+            # A pack linked by a DLC relation is still not playable evidence.
+            db.add(CatalogueRelationship(source_id=self.pack,target_id=self.unknown,relation='dlc',provider='igdb'))
+            await db.flush()
+            self.assertFalse(await has_children(db,unknown))
+
     async def test_zero_local_rows_are_unknown_until_successful_source_completes(self):
         from datetime import datetime,timedelta,timezone
         from models.catalogue import MetadataSnapshot

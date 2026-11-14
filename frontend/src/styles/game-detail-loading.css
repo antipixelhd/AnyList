@@ -1,6 +1,7 @@
 .game-section-skeleton{display:grid;gap:14px;padding:4px 0;min-width:0}
+.media-detail[data-game-banner-pending] .lab-hero-image,.media-detail[data-game-banner-pending] .lab-hero-art-button{visibility:hidden}
 .game-section-skeleton[hidden]{display:none}
-.game-section-skeleton span{display:block;height:20px;border-radius:4px;background:color-mix(in srgb,var(--border) 65%,var(--panel))}
+.game-section-skeleton span{display:block;height:20px;border-radius:4px;background-color:var(--field)}
 .game-section-skeleton>span:nth-child(2n){width:72%}
 .game-section-skeleton-price{grid-column:1/-1;min-height:166px;align-content:center}
 .game-section-skeleton-price>span:first-child{height:34px;width:55%}
@@ -14,5 +15,5 @@
 .media-detail [data-game-primary-facts]{display:grid;gap:15px}
 .media-detail [data-game-primary-facts]>span{height:18px;width:75%}
 .media-detail .lab-genres[aria-busy=true]{min-height:28px}
-.media-detail .lab-genres[aria-busy=true]::before{content:'';width:180px;height:20px;border-radius:4px;background:var(--field)}
+.media-detail .lab-genres[aria-busy=true]::before{content:'';width:180px;height:20px;border-radius:4px;background-color:var(--field)}
 @media(max-width:650px){.game-section-skeleton-requirements{grid-template-columns:minmax(0,1fr)}}

@@ -14,7 +14,6 @@ type ProgressWidget = keyof typeof colors;
 /** Resolve controls on each update because settings navigation replaces their DOM. */
 export function createSyncProgressRenderer(
   widget: ProgressWidget,
-  token: string,
   onError: (message: string) => void,
 ) {
   return (job: SyncJob | null) => {

@@ -8,7 +8,7 @@
 :is([data-section="actors"],[data-section="staff"]) [data-stats-loading-shape="people"] { display:block; }
 .stats-loading-content { --stats-placeholder:color-mix(in srgb,var(--text) 12%,transparent); }
 .stats-loading-content :is(.stats-loading-title,.stats-loading-label,.stats-loading-value,.stats-loading-rank,.stats-loading-control) {
-  display:block; max-width:100%; background:var(--stats-placeholder); border-radius:4px;
+  display:block; max-width:100%; background-color:var(--stats-placeholder); border-radius:4px;
 }
 .stats-loading-title { width:52%; height:1.55rem; }
 .stats-loading-content .stats-loading-rank { width:25px; height:25px; border-radius:50%; }
@@ -23,7 +23,7 @@
 .stats-loading-content .stats-genre-summary header { min-height:30px; }
 .stats-loading-content .stats-genre-summary dd { min-height:2rem; }
 .stats-loading-content .stats-genre-track { overflow:hidden; }
-.stats-loading-content .stats-genre-poster { background:var(--stats-placeholder); }
+.stats-loading-content .stats-genre-poster { background-color:var(--stats-placeholder); }
 .stats-loading-plot { display:grid; padding:22px 20px 30px 32px; }
 .stats-loading-axes {
   background:repeating-linear-gradient(to top,var(--stats-placeholder) 0 1px,transparent 1px 25%);

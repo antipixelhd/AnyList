@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from .base import Base
@@ -23,10 +23,14 @@ class TrackedEntry(Base):
     manual_score: Mapped[float | None] = mapped_column(Float)
     season_scores: Mapped[dict] = mapped_column(JSONB, default=dict)
     progress: Mapped[int] = mapped_column(Integer, default=0)
+    season_cursor: Mapped[dict | None] = mapped_column(JSONB)
     favorite: Mapped[bool] = mapped_column(Boolean, default=False)
     notes: Mapped[str | None] = mapped_column(Text)
     start_date: Mapped[date | None] = mapped_column(Date)
+    start_date_source: Mapped[str | None] = mapped_column(String(16))
     finish_date: Mapped[date | None] = mapped_column(Date)
+    finish_date_source: Mapped[str | None] = mapped_column(String(16))
+    season_release_check_on: Mapped[date | None] = mapped_column(Date)
     rewatch_count: Mapped[int] = mapped_column(Integer, default=0)
     # Provenance for ordering provider observations against an explicit local
     # status decision.  ``updated_at`` also changes for notes, scores and
@@ -87,6 +91,7 @@ class TrackingPreferences(Base):
     low_priority_notifications: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     low_priority_retention_days: Mapped[int] = mapped_column(Integer, default=7, server_default="7")
     show_new_ratings_popup: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    show_season_rating_popup: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     new_season_release_dates: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     new_season_releases: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     remove_specials_seasons: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
@@ -115,6 +120,7 @@ class TrackingSeasonReleaseObservation(Base):
 
 class SyncReview(Base):
     __tablename__ = "tracking_reviews"
+    __table_args__ = (Index('uq_tracking_review_season_event', 'user_id', 'season_event_key', unique=True),)
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     media_id: Mapped[int | None] = mapped_column(ForeignKey("media.id", ondelete="CASCADE"))

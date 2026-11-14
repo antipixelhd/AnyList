@@ -29,6 +29,7 @@ class Flight:
     task:asyncio.Task|None=None
     entity_id:int|None=None
     prepare_cast:bool=False
+    primary_only:bool=False
 
 
 async def native_id(db,work,identities=None):
@@ -47,6 +48,7 @@ async def header(db,native):
         MetadataSnapshot.next_attempt_at,MetadataSnapshot.lease_until,MetadataSnapshot.error_code,
         MetadataSnapshot.coverage['requested_at'].astext.label('requested_at'),
         MetadataSnapshot.coverage['characters_complete'].as_boolean().label('characters_complete'),
+        MetadataSnapshot.coverage['primary_only'].as_boolean().label('primary_only'),
         MetadataSnapshot.coverage['release_precision_version'].as_integer().label('release_precision_version'),
         MetadataSnapshot.coverage['artwork_policy_version'].as_integer().label('artwork_policy_version')).where(
             MetadataSnapshot.provider=='igdb',MetadataSnapshot.kind=='game',MetadataSnapshot.external_id==native))).one_or_none()
@@ -119,7 +121,7 @@ async def request(db,work,*,identities=None):
     if row and row.fetched_at and row.artwork_policy_version in range(1,GAME_ARTWORK_VERSION):
         await upgrade_cached_artwork(db,work,native)
         row=await header(db,native)
-    if (row and row.fetched_at and (row.release_precision_version!=RELEASE_VERSION or row.artwork_policy_version!=GAME_ARTWORK_VERSION) and not row.next_attempt_at
+    if (row and row.fetched_at and (row.release_precision_version!=RELEASE_VERSION or row.artwork_policy_version!=GAME_ARTWORK_VERSION or getattr(row,'primary_only',False)) and not row.next_attempt_at
             and not (row.lease_until and row.lease_until>stamp) and row.expires_at and row.expires_at>stamp):
         await db.execute(update(MetadataSnapshot).where(MetadataSnapshot.provider=='igdb',MetadataSnapshot.kind=='game',
             MetadataSnapshot.external_id==native,MetadataSnapshot.next_attempt_at.is_(None),
@@ -160,14 +162,14 @@ class GameMetadata:
         await db.commit()
         self.start(native,None,prepare_cast=True)
 
-    def start(self,native,expected,*,prepare_cast=False):
+    def start(self,native,expected,*,prepare_cast=False,primary_only=False):
         key=(id(self.scope),native)
         flight=_flights.get(key)
         if flight:
             flight.prepare_cast |= prepare_cast
             return flight
         if len(_flights)>=64:return None
-        flight=Flight(prepare_cast=prepare_cast);_flights[key]=flight
+        flight=Flight(prepare_cast=prepare_cast,primary_only=primary_only);_flights[key]=flight
         flight.task=asyncio.create_task(self.refresh(flight,native,expected))
         def done(task):
             if _flights.get(key) is flight:_flights.pop(key,None)
@@ -205,7 +207,7 @@ class GameMetadata:
             await _slots.acquire();primary_held=True
             async with self.factory() as db:
                 result=await catalogue.refresh_metadata(db,self.providers,'igdb','game',native,
-                    expected_entity_id=expected,on_primary=primary)
+                    expected_entity_id=expected,on_primary=primary,**({'primary_only':True} if flight.primary_only else {}))
                 flight.entity_id=result.get('entity_id')
                 return result
         finally:
@@ -270,13 +272,13 @@ class GameMetadata:
         from core.game_work import eligible_jobs, job_order
         async with self.factory() as db:
             jobs=(await db.execute(select(MetadataSnapshot.external_id,MetadataSnapshot.entity_id,MetadataSnapshot.coverage['priority'].astext,
-                MetadataSnapshot.coverage['requested_at'].astext,MetadataSnapshot.error_code).where(
+                MetadataSnapshot.coverage['requested_at'].astext,MetadataSnapshot.error_code,MetadataSnapshot.coverage['primary_only'].as_boolean()).where(
                 MetadataSnapshot.provider=='igdb',MetadataSnapshot.kind=='game',MetadataSnapshot.entity_id.is_not(None),eligible_jobs(),
                 MetadataSnapshot.next_attempt_at<=now(),or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=now()))
                 .order_by(job_order(),case((MetadataSnapshot.coverage['priority'].astext=='background',1),else_=0),MetadataSnapshot.next_attempt_at,MetadataSnapshot.id).limit(2))).all()
         # One background primary at a time reserves capacity for a page click.
         background_started=False
-        for native,expected,background_job,requested,error in jobs:
+        for native,expected,background_job,requested,error,primary_only in jobs:
             async with self.factory() as db:
                 if error and demand_expired(requested,now()):
                     await db.execute(update(MetadataSnapshot).where(MetadataSnapshot.provider=='igdb',MetadataSnapshot.kind=='game',
@@ -302,7 +304,7 @@ class GameMetadata:
             # Flights own their leases, exceptions and lifecycle. Waiting for
             # optional characters here would block the next scheduler tick and
             # starve unrelated primary jobs despite free primary slots.
-            self.start(native,expected)
+            self.start(native,expected,primary_only=primary_only is True)
         return False
 
 

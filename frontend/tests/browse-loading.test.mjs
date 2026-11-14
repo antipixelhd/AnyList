@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createBrowseLoading, prepareBrowsePoster } from "../src/lib/browse-loading.ts";
+import { createBrowseLoading, handoffBrowseSkeletons, prepareBrowsePoster, trackBrowseSkeleton } from "../src/lib/browse-loading.ts";
 
 function view(visibleCards) {
   const cards = visibleCards.map((visible) => ({
@@ -17,71 +17,44 @@ function view(visibleCards) {
 test('timeline loading and pagination use timeline slots, and switching views restores grid slots',()=>{
   const v=view([]);
   for(const append of [false,true]){
-    v.loading.show(append,false,true);
+    v.loading.show(append ? "append" : "replace",false,true);
     assert.equal(v.skeletonTimeline.hidden,false);
     assert.equal(v.skeletonGrid.hidden,true);
     assert.equal(v.skeletonSections.hidden,true);
     v.loading.finish();
   }
-  v.loading.show();
+  v.loading.show("replace");
   assert.equal(v.skeletonTimeline.hidden,true);
   assert.equal(v.skeletonGrid.hidden,false);
 });
 
-test("category and grid refreshes keep existing cards visible without skeletons", () => {
-  for (const count of [24, 30]) {
-    const v = view(Array(count).fill(true));
-    const cards = v.region.querySelectorAll();
-    v.loading.show();
-    assert.equal(v.region.dataset.browseLoading, undefined);
-    assert.equal(v.skeleton.hidden, true);
-    assert.equal(v.region.querySelectorAll(), cards);
-    v.loading.finish();
-    assert.equal(v.region.dataset.browseLoading, undefined);
-    assert.equal(v.skeleton.hidden, true);
-  }
+test("a replacement always opens its skeleton even if old cards still have layout boxes", () => {
+  const v = view([true]);
+  v.loading.show("replace");
+  assert.equal(v.region.dataset.browseLoading, "empty");
+  assert.equal(v.skeleton.hidden, false);
+  v.loading.finish();
+  assert.equal(v.skeleton.hidden, true);
 });
 
 test("replacing a pending view releases its skeleton synchronously", () => {
   const v = view([]);
-  v.loading.show();
+  v.loading.show("replace");
   assert.equal(v.skeleton.hidden, false);
   v.loading.finish();
   assert.equal(v.skeleton.hidden, true);
   assert.equal(v.region.dataset.browseLoading, undefined);
 });
-test("only skeleton slots that appeared hand their entrance to replacement covers", () => {
-  const v = view([]);
-  const appeared = {getBoundingClientRect: () => ({top:20,bottom:120,height:100})};
-  const pending = {getBoundingClientRect: () => ({top:900,bottom:1000,height:100})};
-  v.skeleton.querySelectorAll = selector => selector === '.browse-skeleton-body' ? [appeared, pending] : [];
-  const covers = Array.from({length: 3}, () => ({
-    attributes: new Set(),
-    setAttribute(name) { this.attributes.add(name); },
-  }));
-  const previousHeight=globalThis.innerHeight;
-  globalThis.innerHeight=800;
-  try {
-    v.loading.handoff(covers);
-    assert.equal(covers[0].attributes.size, 0);
-    v.loading.show();
-    v.loading.handoff(covers);
-    assert(covers[0].attributes.has('data-browse-appeared'));
-    assert.equal(covers[1].attributes.size, 0);
-    assert.equal(covers[2].attributes.size, 0);
-  } finally { globalThis.innerHeight=previousHeight; }
-});
-
 test("category discovery uses section slots; filtered results and pagination use grid slots", () => {
   const v = view([]);
-  v.loading.show(false, true);
+  v.loading.show("replace", true);
   assert.equal(v.skeletonGrid.hidden, true);
   assert.equal(v.skeletonSections.hidden, false);
-  v.loading.show(false, false);
+  v.loading.show("replace", false);
   assert.equal(v.skeletonGrid.hidden, false);
   assert.equal(v.skeletonSections.hidden, true);
   v.loading.finish();
-  v.loading.show(true, true);
+  v.loading.show("append", true);
   assert.equal(v.skeletonGrid.hidden, false);
   assert.equal(v.skeletonSections.hidden, true);
 });
@@ -92,6 +65,86 @@ function poster(complete = false) {
   Object.assign(image, { complete, hidden: false, closest: () => cover });
   return { cover, image };
 }
+
+function paintClock(t) {
+  let now = 0, nextFrame = 0;
+  const frames = new Map();
+  const globals = {
+    innerHeight: 800,
+    requestAnimationFrame(callback) { frames.set(++nextFrame, callback); return nextFrame; },
+    cancelAnimationFrame(frame) { frames.delete(frame); },
+  };
+  const saved = Object.fromEntries(Object.keys(globals).map(key => [key, Object.getOwnPropertyDescriptor(globalThis,key)]));
+  Object.assign(globalThis, globals);
+  t.after(() => Object.entries(saved).forEach(([key, descriptor]) => {
+    if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+    else delete globalThis[key];
+  }));
+  t.mock.method(performance, 'now', () => now);
+  t.mock.timers.enable({apis:['setTimeout']});
+  return {
+    element: {isConnected:true, getBoundingClientRect: () => ({width:100, height:150, top:100, bottom:250})},
+    paint() { for (const [id,callback] of frames) { frames.delete(id); callback(); } },
+    advance(ms) { now += ms; t.mock.timers.tick(ms); },
+  };
+}
+
+test('only a painted placeholder holds a result, and abort releases the wait', async t => {
+  const clock = paintClock(t);
+  const controller = new AbortController();
+  const unpainted = trackBrowseSkeleton(clock.element);
+  assert.equal(unpainted.settle(controller.signal), undefined);
+  const painted = trackBrowseSkeleton(clock.element);
+  clock.paint();
+  clock.advance(20);
+  let resolved = false;
+  const waiting = painted.settle(controller.signal).then(() => { resolved = true; });
+  clock.advance(329);
+  await Promise.resolve();
+  assert.equal(resolved, false);
+  controller.abort();
+  await waiting;
+  assert.equal(resolved, true);
+});
+
+test('a poster arriving during a painted skeleton holds it for 350 ms before fading in', async t => {
+  const clock = paintClock(t);
+  const {cover,image} = poster();
+  Object.assign(cover,clock.element);
+  prepareBrowsePoster(image,new AbortController().signal);
+  clock.paint();
+  clock.advance(50);
+  image.dispatchEvent(new Event('load'));
+  clock.advance(299);
+  await Promise.resolve();
+  assert(cover.attributes.has('data-poster-loading'));
+  clock.advance(1);
+  await Promise.resolve();
+  assert.deepEqual([...cover.attributes],['data-poster-revealing','data-poster-ready']);
+});
+
+test('a poster continues its skeleton entrance from the same timeline position', () => {
+  const frames = [{scale:'0.92', opacity:0}, {scale:'1', opacity:1}];
+  const skeleton = {
+    hasAttribute: () => true,
+    getAnimations: () => [{playState:'running',startTime:120,effect:{getKeyframes:()=>frames,getTiming:()=>({duration:300})}}],
+  };
+  const continuation = {startTime:0};
+  const attributes = [];
+  const card = {
+    setAttribute: name => attributes.push(name),
+    classList:{remove(){}},
+    querySelector:()=>null,
+    animate(keyframes, timing) {
+      assert.deepEqual(keyframes,frames);
+      assert.equal(timing.duration,300);
+      return continuation;
+    },
+  };
+  handoffBrowseSkeletons({querySelectorAll:()=>[skeleton]},[card]);
+  assert.deepEqual(attributes,['data-browse-appeared']);
+  assert.equal(continuation.startTime,120);
+});
 
 test("cached posters fade immediately; uncached posters start with an entrance skeleton", t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
@@ -149,7 +202,7 @@ test("loaded posters reveal immediately and stalled posters recover", t => {
 
 test("loading more keeps existing cards readable and shows the appended skeleton grid", () => {
   const v = view([true]);
-  v.loading.show(true);
+  v.loading.show("append");
   assert.equal(v.region.dataset.browseLoading, "append");
   assert.equal(v.skeleton.hidden, false);
   v.loading.finish();
@@ -171,7 +224,7 @@ test("navigation removes pending artwork state and prevents a late poster fade",
 test("empty results use fallback skeletons without counting hidden cards from the other view", () => {
   for (const visible of [[], [false, false]]) {
     const v = view(visible);
-    v.loading.show();
+    v.loading.show("replace");
     assert.equal(v.region.dataset.browseLoading, "empty");
     assert.equal(v.skeleton.hidden, false);
     v.loading.finish();

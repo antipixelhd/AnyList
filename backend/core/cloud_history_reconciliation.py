@@ -313,11 +313,9 @@ async def reconcile_cloud_watch_events(
                 await record_daily_activity(db,user_id=user_id,media_id=root_id,status=entry.status,
                     score=activity_score,status_changed=changed,previous_status=previous_status,
                     first_watching=previous_start_date is None and previous_status != 'watching')
-        if changed and not initial_import:
-            if entry.status == "completed":
-                await queue_sync_completion_rating(
-                    db, user_id=user_id, media=media, entry=entry, source=provider,
-                )
+        if not initial_import and (media.media_type == MediaType.series or changed and entry.status == 'completed'):
+            await queue_sync_completion_rating(db, user_id=user_id, media=media, entry=entry, source=provider,
+                new_episode_ids={event_media.id for _, event_media in item['events']})
         if not initial_import:
             await _add_applied_notification(
                 db,

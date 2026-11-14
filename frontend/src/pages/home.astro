@@ -1,11 +1,13 @@
 ---
 import ProgressCard from "../components/ProgressCard.astro";
+import {categoryName,defaultGameCategories} from '../lib/list-categories.ts';
 import GameProgressCard from '../components/GameProgressCard.astro';
 import {viewerMediaPreferences} from '../lib/viewer-media-preferences';
 import {gameListEditorTitle} from '../lib/game-list-data';
 import {mergeActivityFeeds,activityPresentation} from '../lib/activity-feed';
 import Tracker from '../layouts/Tracker.astro';
 import ActivityCard from '../components/ActivityCard.astro';
+import ActivityRating from '../components/ActivityRating.astro';
 import Icon from '../components/Icon.astro';
 import LocalDateTime from '../components/LocalDateTime.astro';
 import {tracker} from '../lib/tracker';
@@ -69,7 +71,7 @@ const upcomingSeasonCards=upcomingSeasons.map((entry:any)=>({
         </div>
       </article>)}</div> : <p class="series-progress-empty" data-upcoming-empty>Tracked series with confirmed upcoming season dates will appear here.</p>}
     </section></section>}
-    {domains.show_games&&<section class="home-playing-games" data-playing-games data-show-achievements={String(domains.show_game_achievements)} data-playing-revisions={gamesResult.status==='fulfilled'?JSON.stringify([playingGamesTotal,playingGames.map((entry:any)=>[entry.subject.catalogue_id,entry.revision])]):undefined}><div class="section-heading"><h2>Currently playing games</h2>{playingGamesTotal>0&&<a href={`${profile}/games?status=playing`}>View all</a>}</div>{gamesResult.status==='rejected'?<p class="series-progress-empty" role="status">Games are temporarily unavailable.</p>:playingGames.length?<div class="series-progress-grid">{playingGames.map((entry:any)=><GameProgressCard entry={entry} showAchievements={domains.show_game_achievements}/>)}</div>:<p class="series-progress-empty">Games you mark as Playing will appear here.</p>}</section>}
+    {domains.show_games&&!domains.list_categories?.game.categories.find(category=>category.id==='playing')?.hidden&&<section class="home-playing-games" data-playing-games data-show-achievements={String(domains.show_game_achievements)} data-playing-revisions={gamesResult.status==='fulfilled'?JSON.stringify([playingGamesTotal,playingGames.map((entry:any)=>[entry.subject.catalogue_id,entry.revision])]):undefined}><div class="section-heading"><h2>{categoryName(domains.list_categories?.game||defaultGameCategories(),'playing')}</h2>{playingGamesTotal>0&&<a href={`${profile}/games?status=playing`}>View all</a>}</div>{gamesResult.status==='rejected'?<p class="series-progress-empty" role="status">Games are temporarily unavailable.</p>:playingGames.length?<div class="series-progress-grid">{playingGames.map((entry:any)=><GameProgressCard entry={entry} showAchievements={domains.show_game_achievements}/>)}</div>:<p class="series-progress-empty">Games you mark as {categoryName(domains.list_categories?.game||defaultGameCategories(),'playing')} will appear here.</p>}</section>}
   </aside><section class="activity-stream" aria-labelledby="activity-heading" data-activity-feed data-show-movies-series={String(domains.show_movies_series)} data-show-games={String(domains.show_games)}><div class="section-heading"><h2 id="activity-heading">Activity</h2><span>Following</span></div>
   <p class="section-empty" role="status" data-activity-refresh-status hidden={!activityFailures||!!error}>Some activity is temporarily unavailable.</p>
   {error?<p class="error-message" role="alert" data-activity-error>{error}</p>:activities.length?activities.map(a=><ActivityCard activity={a} showUser/>):<div class="empty-state" data-activity-empty><span class="empty-symbol"><Icon name="play" /></span><h2>Your following feed is quiet</h2><p>Follow public profiles to see their tracking updates here. Your own updates live on your profile.</p><a class="button-primary" href={`${profile}/social?section=search#social-search-input`}>Find people</a></div>}
@@ -80,7 +82,7 @@ const upcomingSeasonCards=upcomingSeasons.map((entry:any)=>({
 <template id="activity-card-template"><article class="visual-event following-event" data-activity-card>
   <a class="event-cover"><img alt="" loading="lazy"/><span class="cover-placeholder" hidden><Icon name="play" /></span></a>
   <div class="event-body"><div class="event-meta"><time data-relative-time></time></div>
-  <div class="event-content"><a class="event-user"></a><p class="event-action"><span></span> <a></a><span data-activity-completion></span></p><a class="event-avatar"><img alt="" loading="lazy"/><span aria-hidden="true"></span></a></div><div class="event-footer" hidden><span class="score-pill"><Icon name="star"/> <span data-rating-previous hidden><span data-rating-previous-value></span><span class="score-transition" aria-hidden="true">→</span></span><b data-rating-current></b><small>/10</small></span></div></div>
+  <div class="event-content"><a class="event-user"></a><p class="event-action"><span></span> <a></a><span data-activity-completion></span></p><a class="event-avatar"><img alt="" loading="lazy"/><span aria-hidden="true"></span></a></div><ActivityRating/></div>
 </article></template>
 <template id="activity-empty-template"><div class="empty-state" data-activity-empty><span class="empty-symbol"><Icon name="play" /></span><h2>Your following feed is quiet</h2><p>Follow public profiles to see their tracking updates here. Your own updates live on your profile.</p><a class="button-primary" href={`${profile}/social?section=search#social-search-input`}>Find people</a></div></template>
 </Tracker>
@@ -308,6 +310,7 @@ document.addEventListener('astro:page-load', initializeHomeProgress);
 <script>
 import {activityAction,activityCompletionSuffix,activityRating,activityTime,scoreLabel} from '../lib/tracker';
 import {mergeActivityFeeds,activityPresentation} from '../lib/activity-feed';
+import {renderActivityRating} from '../lib/activity-rating';
 import {applyResponsiveArtwork} from '../lib/responsive-artwork';
 import {startVisibleRefresh, type VisibleRefreshHandle} from '../lib/visible-refresh';
 import {reconcileHomePanel} from '../lib/home-panel-reconcile';
@@ -357,15 +360,7 @@ document.addEventListener('astro:page-load',()=>{
     const title=card.querySelector<HTMLAnchorElement>('.event-action>a')!;title.href=mediaHref;title.textContent=activity.media.title;
     card.querySelector('[data-activity-completion]')!.textContent=activityCompletionSuffix(activity);
     const footer=card.querySelector<HTMLElement>('.event-footer')!;
-    const rating=activityRating(activity);
-    if(rating){
-      footer.hidden=false;
-      const previous=footer.querySelector<HTMLElement>('[data-rating-previous]')!;
-      previous.hidden=rating.previous==null;
-      if(rating.previous!=null)previous.querySelector<HTMLElement>('[data-rating-previous-value]')!.textContent=scoreLabel(rating.previous);
-      footer.querySelector<HTMLElement>('[data-rating-current]')!.textContent=scoreLabel(rating.current);
-      footer.querySelector('.score-pill')!.setAttribute('aria-label',rating.label);
-    }
+    renderActivityRating(footer,activity);
     return card;
   };
 

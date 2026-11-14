@@ -14,3 +14,8 @@
 .media-detail [data-detail-tab]:disabled{color:var(--muted);opacity:.45;cursor:default;pointer-events:none}
 @media(max-width:650px){.game-dlc-head{padding:16px;gap:14px}.game-dlc-copy h3{font-size:16px}.game-dlc-head img{width:52px}.game-dlc-body{padding:0 16px 16px}}
 @media(prefers-reduced-motion:reduce){.game-dlc-head{transition:none}}
+
+/* Only late availability fades in; server-rendered tabs paint immediately. */
+.media-detail [data-detail-tab="dlc"][data-dlc-revealed]{opacity:1;transition:opacity .2s ease-out}
+@starting-style{.media-detail [data-detail-tab="dlc"][data-dlc-revealed]{opacity:0}}
+@media(prefers-reduced-motion:reduce){.media-detail [data-detail-tab="dlc"][data-dlc-revealed]{transition:none}}

@@ -275,7 +275,7 @@ class GameBrowseSources:
                 raise ValueError()
         except (ValueError, TypeError):
             raise ProviderError('invalid_request') from None
-        conditions = ['version_parent=null', 'game_type=(0,4,8,9,10,11)']
+        conditions = ['version_parent=null', 'game_type=(0,3,4,8,9,10,11)']
         if genres:
             conditions.append('genres=('+','.join(map(str, sorted(set(genres))))+')')
         if platforms:
@@ -299,7 +299,7 @@ class GameBrowseSources:
                 conditions.append(f'(first_release_date<{exact} | release_dates.date<{year_end})')
             else:
                 conditions.append(f'first_release_date<{exact}')
-        key_parts = ['game-content-v2',sort,offset,sorted(genres),sorted(platforms),start,end,policy]
+        key_parts = ['game-content-v3-bundles',sort,offset,sorted(genres),sorted(platforms),start,end,policy]
         if sort == 'newest' or ascending or released_before:
             key_parts.extend(['release-window-v1',ascending,released_before])
         key = hashlib.sha256(json.dumps(key_parts).encode()).hexdigest()
@@ -309,7 +309,7 @@ class GameBrowseSources:
             ordering = '' if q else f'sort {"rating_count" if sort == "popular" else "first_release_date"} desc;'
             async def fetch(query):
                 if not query and sort=='newest':
-                    filters=['game.version_parent=null','game.game_type=(0,4,8,9,10,11)','(status=null | status.name="Full Release")']
+                    filters=['game.version_parent=null','game.game_type=(0,3,4,8,9,10,11)','(status=null | status.name="Full Release")']
                     if predicate := provider_predicate(policy or {}, 'game.'):
                         filters.append(predicate)
                     if genres:filters.append('game.genres=('+','.join(map(str,sorted(set(genres))))+')')
@@ -384,7 +384,7 @@ class GameBrowseSources:
         """Finalize a bounded canonical search window before chronological paging."""
         if not q or not isinstance(snapshot,int) or isinstance(snapshot,bool) or snapshot<0 or not 0<=offset<=1000:
             raise ProviderError('invalid_request')
-        key=hashlib.sha256(json.dumps(['game-timeline-v2',snapshot,q,sorted(genres),sorted(platforms),
+        key=hashlib.sha256(json.dumps(['game-timeline-v3-bundles',snapshot,q,sorted(genres),sorted(platforms),
             start,end,ascending,released_before]).encode()).hexdigest()
         async def load():
             rows,seen,more=[],set(),True

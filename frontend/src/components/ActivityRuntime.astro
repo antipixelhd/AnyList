@@ -1,9 +1,14 @@
+---
+import '../styles/activity-card-rating.css';
+---
 <script>
 import {activityAction,activityCompletionSuffix,activityRating,activityTime,scoreLabel} from '../lib/tracker';
 import {timestamp} from '../lib/date-time';
+import {mountSeasonRatings} from '../lib/activity-rating';
 let listeners:AbortController|undefined;
 function mount(){
   listeners?.abort();listeners=new AbortController();const {signal}=listeners;
+  mountSeasonRatings(signal);
   const revisions=new Map<number,number>();
   document.addEventListener('click',event=>{
     const button=(event.target as Element).closest<HTMLButtonElement>('[data-activity-playtime]');

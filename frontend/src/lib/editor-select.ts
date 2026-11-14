@@ -1,4 +1,6 @@
+import {bindRovingOptions} from './roving-options';
 import {showMenu, hideMenu} from './ui-motion';
+import {placeDropdown} from './dropdown-position';
 
 /** One interaction and motion contract for shared tracking-editor selects. */
 export function setupEditorSelect(root: HTMLElement, signal: AbortSignal) {
@@ -7,12 +9,22 @@ export function setupEditorSelect(root: HTMLElement, signal: AbortSignal) {
   const value = root.querySelector<HTMLElement>('[data-editor-select-value]')!;
   const menu = root.querySelector<HTMLElement>('[role="listbox"]')!;
   const scope = root.closest('dialog') || root;
+  const floating = menu.hasAttribute('popover') && typeof menu.showPopover === 'function';
+  const place = () => { if (floating) placeDropdown(trigger, menu, 180); };
+  const reposition = () => {
+    if (trigger.getAttribute('aria-expanded') === 'true') place();
+  };
+  bindRovingOptions(menu, '[data-editor-option]', signal);
   let signature = '';
+  let typed = '', typedAt = 0;
   const buttons = () => [...menu.querySelectorAll<HTMLButtonElement>('[data-editor-option]')];
   const enabled = () => buttons().filter(button => !button.disabled);
-  const close = () => {
+  const close = (immediate = false) => {
+    if (trigger.getAttribute('aria-expanded') !== 'true' && !immediate) return;
     trigger.setAttribute('aria-expanded', 'false');
-    if (!menu.hidden) void hideMenu(menu);
+    void hideMenu(menu, immediate).then(() => {
+      if (floating && menu.hidden && menu.matches(':popover-open')) menu.hidePopover();
+    });
   };
   const sync = () => {
     const options = [...select.options];
@@ -33,12 +45,17 @@ export function setupEditorSelect(root: HTMLElement, signal: AbortSignal) {
     trigger.disabled = select.disabled;
     value.textContent = select.selectedOptions[0]?.text || select.getAttribute('aria-label') || '';
     if (!trigger.hasAttribute('aria-labelledby')) trigger.setAttribute('aria-label', `${select.getAttribute('aria-label')}: ${value.textContent}`);
-    buttons().forEach(button => button.setAttribute('aria-selected', String(button.dataset.editorOption === select.value)));
+    buttons().forEach(button => {const selected=button.dataset.editorOption === select.value;button.setAttribute('aria-selected', String(selected));button.tabIndex=selected?0:-1;});
     if (select.disabled) close();
   };
   const open = (focus = false) => {
     sync();
     if (trigger.disabled || !enabled().length) return;
+    if (floating) {
+      menu.hidden = false;
+      if (!menu.matches(':popover-open')) menu.showPopover();
+      place();
+    }
     showMenu(menu);
     trigger.setAttribute('aria-expanded', 'true');
     if (focus) (enabled().find(button => button.dataset.editorOption === select.value) || enabled()[0])?.focus();
@@ -71,13 +88,23 @@ export function setupEditorSelect(root: HTMLElement, signal: AbortSignal) {
       const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1
         : (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
       items[next]?.focus();
+    } else if (event.key.length===1 && !event.ctrlKey && !event.metaKey && !event.altKey && !event.isComposing) {
+      const now=performance.now();typed=now-typedAt<700?typed+event.key:event.key;typedAt=now;
+      const match=items.find(item=>item.textContent?.trim().toLocaleLowerCase().startsWith(typed.toLocaleLowerCase()));
+      if(match){event.preventDefault();match.focus();}
     }
   }, {signal});
   scope.addEventListener('click', event => { if (!root.contains(event.target as Node)) close(); }, {signal});
   root.addEventListener('focusout', event => { if (!root.contains((event as FocusEvent).relatedTarget as Node)) close(); }, {signal});
-  scope.addEventListener('close', close, {signal});
+  if (floating) {
+    scope.addEventListener('scroll', event => { if (event.target !== menu) reposition(); }, {signal, capture:true, passive:true});
+    window.addEventListener('resize', reposition, {signal});
+    window.visualViewport?.addEventListener('resize', reposition, {signal});
+    window.visualViewport?.addEventListener('scroll', reposition, {signal});
+  }
+  scope.addEventListener('close', () => close(true), {signal});
   select.addEventListener('change', sync, {signal});
-  signal.addEventListener('abort', close, {once: true});
+  signal.addEventListener('abort', () => close(true), {once: true});
   sync();
   return {sync, close};
 }

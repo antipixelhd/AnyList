@@ -10,7 +10,6 @@ export function resetCancelButton(button: HTMLButtonElement): void {
 export function wireCancelButton(
   button: HTMLButtonElement | null,
   job: CancellableJob,
-  token: string,
   onError: (message: string) => void,
 ): void {
   if (!button) return;
@@ -44,7 +43,7 @@ export function wireCancelButton(
     button.textContent = 'Cancelling…';
     try {
       const response = await fetch(`/api/proxy/sync/${job.id}/cancel`, {
-        method: 'POST', headers: { Authorization: `Bearer ${token}` },
+        method: 'POST', headers: { },
       });
       if (!response.ok) throw new Error(`Unable to cancel job (HTTP ${response.status})`);
       // Leave the button disabled until polling observes the cooperative stop.

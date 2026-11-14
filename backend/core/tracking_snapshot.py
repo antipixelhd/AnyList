@@ -538,7 +538,7 @@ async def observe_stream_snapshot(
             await queue_dismissals(db, conn, media)
             if auto_confirm:
                 from core.activity import record_daily_activity
-                await record_daily_activity(db,user_id=conn.user_id,media_id=media.id,status=proposed,
+                await record_daily_activity(db,user_id=conn.user_id,media_id=media.id,media=media,status=proposed,
                     score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores),
                     status_changed=True,previous_status=prior_status)
     # Only changed observations advance an existing tracked entry. Repeated
@@ -744,16 +744,18 @@ async def observe_stream_snapshot(
                         previous_status=None if newly_tracked else previous_status,
                         first_watching=newly_tracked or (previous_start_date is None and previous_status != 'watching'))
                 else:
-                    await record_daily_activity(db,user_id=conn.user_id,media_id=media.id,status=entry.status,
+                    await record_daily_activity(db,user_id=conn.user_id,media_id=media.id,media=media,status=entry.status,
                         score=activity_score,status_changed=entry.status != previous_status or newly_tracked,
                         previous_status=None if newly_tracked else previous_status,
                         first_watching=newly_tracked or (previous_start_date is None and previous_status != 'watching'))
             if row in changed_active and baseline.approved:
                 from core.stream_actions import queue_progress_update
                 await queue_progress_update(db, conn, media, row)
-            if entry.status == 'completed' and (entry.status != previous_status or newly_tracked):
+            season_completions = {(item.get('season'), item.get('episode')) for item in observation_rows
+                if not first and baseline.approved and item in new_completed and item.get('season') and item.get('episode')}
+            if media.media_type == MediaType.series and season_completions or entry.status == 'completed' and (entry.status != previous_status or newly_tracked):
                 await queue_sync_completion_rating(
-                    db, user_id=conn.user_id, media=media, entry=entry, source=conn.type,
+                    db, user_id=conn.user_id, media=media, entry=entry, source=conn.type, positions=season_completions,
                 )
     if not first and conn.type == 'nuvio' and (sync_playback or sync_watched):
         # Watched episode history commonly remains for an unfinished series;
@@ -811,7 +813,7 @@ async def observe_stream_snapshot(
             await queue_dismissals(db, conn, media)
             if auto_confirm:
                 from core.activity import record_daily_activity
-                await record_daily_activity(db, user_id=conn.user_id, media_id=media.id,
+                await record_daily_activity(db, user_id=conn.user_id, media_id=media.id, media=media,
                     status=proposed,
                     score=effective_score(entry.rating_mode, entry.manual_score, entry.season_scores),
                     status_changed=True, previous_status=prior_status)

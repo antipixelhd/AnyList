@@ -518,7 +518,7 @@ class CatalogueProviders:
             for r in rows[(page - 1) * limit : page * limit]
         ]
 
-    async def detail(self, provider, kind, external_id, *, credit_groups=None,on_primary=None):
+    async def detail(self, provider, kind, external_id, *, credit_groups=None,on_primary=None,primary_only=False):
         self.validate(provider, kind)
         if provider == "openlibrary":
             from .openlibrary import detail
@@ -527,7 +527,7 @@ class CatalogueProviders:
         if not str(external_id).isdigit() or int(external_id) <= 0:
             raise ProviderError("invalid_request")
         return await asyncio.wait_for(
-            self._detail(provider, kind, int(external_id), credit_groups=credit_groups,on_primary=on_primary), timeout=120
+            self._detail(provider, kind, int(external_id), credit_groups=credit_groups,on_primary=on_primary,primary_only=primary_only), timeout=120
         )
 
     async def openlibrary_isbn(self, value):
@@ -540,7 +540,7 @@ class CatalogueProviders:
 
         return await asyncio.wait_for(detail(self.http, external_id, page), timeout=120)
 
-    async def _detail(self, provider, kind, id, *, credit_groups=None,on_primary=None):
+    async def _detail(self, provider, kind, id, *, credit_groups=None,on_primary=None,primary_only=False):
         if provider == "igdb":
             from core.game_types import igdb_game_class
             from core.game_release_dates import VERSION as RELEASE_VERSION
@@ -576,6 +576,12 @@ class CatalogueProviders:
                 'children_complete':all(isinstance(raw.get(field,[]),list) and all(
                     isinstance(child,dict) and child.get('id') and child.get('name') and igdb_game_class(child)!='unknown'
                     for child in raw.get(field,[])) for field in ('dlcs','expansions'))}
+            if primary_only:
+                # Imported membership needs its game header, not a career graph.
+                raw['_coverage'].update(primary_only=True,contributors='not_requested')
+                doc=document()
+                doc['credits']=[]
+                return doc,{'game':raw,'version':version}
             if on_primary:await on_primary(document(),{'game':raw,'version':version})
             raw["_characters"], complete = await self._igdb_pages(
                 "characters",

@@ -52,13 +52,25 @@ function firstRating(details: any) {
 
 export function activityRating(activity: any) {
   const details = activity.payload || {};
-  if (!details.rating_changed || typeof activity.score !== 'number' || activity.score <= 0) return null;
+  if (!(details.rating_changed||details.rating_snapshot) || typeof activity.score !== 'number' || activity.score <= 0) return null;
   const previous = typeof details.previous_score === 'number' ? details.previous_score : null;
   const current = typeof activity.score === 'number' ? activity.score : null;
+  const seasons = Object.entries(details.season_ratings || {}).map(([number, score]) =>
+    ({number: Number(number), score: Number(score)})).filter(row => row.number > 0 && row.score > 0).sort((a,b)=>a.number-b.number);
   const label = previous == null
     ? `Rated ${scoreLabel(current)} out of 10`
     : `Rating changed from ${scoreLabel(previous)} to ${scoreLabel(current)} out of 10`;
-  return { previous, current, label };
+  return { previous, current, label: seasons.length > 1 ? `Average ${scoreLabel(current)} out of 10. ${seasons.map(row=>`Season ${row.number}: ${scoreLabel(row.score)}`).join(', ')}` : label, seasons };
+}
+
+export function seasonRange(numbers:number[]) {
+  const sorted=[...new Set(numbers)].sort((a,b)=>a-b), ranges:string[]=[];
+  for(let i=0;i<sorted.length;i++){
+    const first=sorted[i];let last=first;
+    while(sorted[i+1]===last+1)last=sorted[++i];
+    ranges.push(first===last?String(first):`${first}–${last}`);
+  }
+  return ranges.join(', ');
 }
 
 export function activityCompletionSuffix(activity:any){
@@ -70,19 +82,31 @@ export function activityCompletionSuffix(activity:any){
 export function activityAction(activity: any) {
   const details = activity.payload || {};
   if(activity.media?.type==='game'){
-    if(details.status_changed)return ({planning:'Plans to play',playing:'Started playing',completed:'Completed',paused:'Paused',dropped:'Dropped'} as Record<string,string>)[activity.status]||'Updated';
+    if(details.status_changed&&activity.status_label)return `Marked ${activity.status_label}`;
+    if(details.status_changed)return ({planning:'Plans to play',playing:'Started playing',played:'Played',completed:'Completed',paused:'Paused',dropped:'Dropped'} as Record<string,string>)[activity.status]||'Updated';
     if(details.rating_changed)return activity.score==null?'Removed rating for':details.rating_first?'Rated':'Changed rating for';
     if(details.hours_changed)return 'Updated playtime for';
     if(details.achievements_changed)return 'Updated achievement progress for';
     return details.added_to_list?'Added to list':'Updated';
   }
   const finished = details.finished_seasons || [];
-  if (details.status_changed && ['completed', 'dropped', 'paused', 'planning'].includes(activity.status)) {
+  if(activity.media?.type==='series'){
+    if(details.series_completed)return 'Completed';
+    if(details.season_status&&details.status_changed&&details.season_number){
+      const verb=({planning:'Plans to watch',watching:details.continued_watching?'Continued watching':'Started watching',paused:'Paused',dropped:'Dropped'} as Record<string,string>)[activity.status];
+      if(verb)return `${verb} Season ${details.season_number} of`;
+    }
+    if(details.season_rating_group&&details.rating_changed){
+      const seasons=Object.keys(details.season_ratings||{}).map(Number);
+      return `${firstRating(details)?'Rated':'Changed rating for'} ${seasons.length===1?'Season':'Seasons'} ${seasonRange(seasons)} of`;
+    }
+  }
+  if (!details.season_completion_id && details.status_changed && ['completed', 'dropped', 'paused', 'planning'].includes(activity.status)) {
     return activity.status === 'planning' ? 'Plans to watch' : statuses.find(([status]) => status === activity.status)?.[1] || 'Updated';
   }
   if (activity.media?.type === 'series' && finished.length) {
     const seasons = finished.join(finished.length > 1 ? ' and ' : '');
-    return `Watched ${finished.length === 1 ? 'season' : 'seasons'} ${seasons} of`;
+    return `Completed ${finished.length === 1 ? 'Season' : 'Seasons'} ${seasons} of`;
   }
   const startPosition = details.position_start || (details.episodes_watched === 1 ? details.position : null);
   if (activity.media?.type === 'series' && details.episodes_watched && startPosition && details.position) {

@@ -30,7 +30,7 @@ function updatedAt(job: SyncJob) {
 }
 
 /** Share a status request across all page widgets and own its navigation lifetime. */
-export function createSyncJobMonitor(token: string) {
+export function createSyncJobMonitor() {
   const controller = new AbortController();
   const watches = new Map<string, WatchState>();
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -127,7 +127,7 @@ export function createSyncJobMonitor(token: string) {
       let delay = 2000;
       try {
         const response = await fetch("/api/proxy/sync/status", {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: { },
           cache: "no-store",
           signal: controller.signal,
         });

@@ -182,7 +182,7 @@ async def apply_games(db, state, library, selected, *, initial=False, add_apps=N
                 if native:
                     identities.append({'namespace': 'igdb.game', 'external_id': native})
                 work = await catalogue.upsert_entity(db, {
-                    'kind': 'game', 'name': data['name'], 'image_url': data['poster'],
+                    'kind': 'game', 'name': (public.get(app,{}).get('name') or data['name']) if data['name']==f'Steam {app}' else data['name'], 'image_url': data['poster'],
                     'attributes': {'game_class': evidence['game_class'],
                         **({'igdb_id': native} if native else {}),
                         **({'release_date': data['release_date'], 'release_date_precision': 'day' if len(data['release_date']) == 10 else 'month' if len(data['release_date']) == 7 else 'year'} if data.get('release_date') else {})},
@@ -202,6 +202,23 @@ async def apply_games(db, state, library, selected, *, initial=False, add_apps=N
             catalogue.merge_fields(work,{'attributes':{'game_class':data['game_class']}},'igdb')
         if not work or not capabilities(work.attributes).independent:
             continue
+        if initial or app in additions:
+            # Display Steam's usable title immediately, including canonical stubs
+            # that were admitted before Steam's library name was available.
+            name=data.get('name') or ''
+            if name==f'Steam {app}':name=public.get(app,{}).get('name') or name
+            if name and name != f'Steam {app}' and (not work.name or work.name.startswith('Steam ')):
+                catalogue.merge_fields(work,{'name':name},'steam')
+            from core.game_work import work_context, Priority
+            from core.game_metadata import request as request_primary
+            with work_context(Priority.FIRST_WORKS,f'steam:{state.user_id}'):
+                native,primary=await request_primary(db,work)
+            if native and not primary['primary_ready']:
+                from models.catalogue import MetadataSnapshot
+                await db.execute(update(MetadataSnapshot).where(MetadataSnapshot.provider=='igdb',
+                    MetadataSnapshot.kind=='game',MetadataSnapshot.external_id==native,
+                    MetadataSnapshot.fetched_at.is_(None),MetadataSnapshot.lease_until.is_(None)).values(
+                    coverage=MetadataSnapshot.coverage.op('||')({'primary_only':True,'priority':'connection'})))
         if data.get('achievement_total') is not None and (identity is None or app in mapping or (work.attributes or {}).get('steam_progress_apps')):
             steam_cache.merge_total(work, app, data['achievement_total'], now())
         groups.setdefault(work.id, (work, []))[1].append(data)
@@ -236,7 +253,7 @@ async def apply_games(db, state, library, selected, *, initial=False, add_apps=N
             if status_game['app_id'] in (ratings or {}):
                 entry.score = ratings[status_game['app_id']]
             status_games = [game for game in games if (statuses or {}).get(game['app_id'], initial_status) == entry.status]
-            if entry.status=='playing':
+            if entry.status in {'playing', 'played'}:
                 dates=[value for game in status_games if (value:=(start_dates or {}).get(game['app_id'])) is not None]
                 entry.start_date=min(dates) if dates else None
             if entry.status == 'completed':
@@ -282,7 +299,13 @@ async def apply_games(db, state, library, selected, *, initial=False, add_apps=N
             entry.revision = (entry.revision or 0) + 1
             await db.flush()
             if initial:await game_activity.record_import(db,entry,timezone_name=state.timezone or 'UTC')
-            else:await game_activity.record(db, entry, before, await game_activity.snapshot(db, work, entry, achievements=state.sync_achievements))
+            else:
+                after = await game_activity.snapshot(db, work, entry, achievements=state.sync_achievements)
+                # Late import enrichment establishes source counters; it is not
+                # newly earned progress, even when public game metadata is new.
+                if state.sync_achievements and any(prior.get('achievement_count') is None for prior in priors.values()):
+                    before['achievements'] = after['achievements']
+                await game_activity.record(db, entry, before, after)
             changed += 1
         for game in games:
             app = game['app_id']
@@ -293,6 +316,8 @@ async def apply_games(db, state, library, selected, *, initial=False, add_apps=N
                 **({'achievement_count': game['achievement_count']} if state.sync_achievements and game.get('achievement_count') is not None else {}),
                 **({'achievement_checked_at': game['achievement_checked_at']} if game.get('achievement_checked_at') else {})}
     state.checkpoints = checkpoints
+    from core.list_categories import restore_populated
+    await restore_populated(db, state.user_id)
     return changed
 
 
@@ -301,7 +326,6 @@ def achievement_due(row, prior, stamp):
     return (row['playtime_minutes'] != prior.get('observed_playtime_minutes')
             or row.get('last_played') is not None and row['last_played'] != prior.get('last_played')
             or not checked or datetime.fromisoformat(checked) <= stamp - timedelta(days=1))
-
 
 async def run_steam_sync(user_id, job_id, _a=0, _b=0, connection_id=None):
     from db import AsyncSessionLocal

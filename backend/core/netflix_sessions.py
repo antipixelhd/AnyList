@@ -796,7 +796,7 @@ async def _track_imported_root(
         from core.stream_actions import queue_local_dismissals
         await queue_local_dismissals(db, user_id, root)
     entry.progress = max(int(entry.progress or 0), progress_count)
-    if accepted_dates:
+    if accepted_dates and entry.start_date_source != 'manual':
         first = min(accepted_dates)
         entry.start_date = min(entry.start_date, first) if entry.start_date else first
     if "finish_date" in outcome and outcome["finish_date"] is None:
@@ -845,6 +845,10 @@ async def _record_import_activity(db, user_id, root, entry, item):
     from core.streaming_activity import record_streaming_activity
     outcome = item["outcome"]
     events = activity_plan(item, entry.finish_date)
+    if entry.start_date_source == 'manual':
+        # The canonical first-season start owns this action, including an
+        # explicitly cleared date. Imported watch evidence must not invent one.
+        events = [event for event in events if event['key'] != 'start']
     for event in events:
         if event["key"] == "start" and entry.start_date:
             event["date"] = entry.start_date.isoformat()

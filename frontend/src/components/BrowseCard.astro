@@ -1,5 +1,7 @@
 ---
 import Icon from "./Icon.astro";
+import {viewerMediaPreferences} from '../lib/viewer-media-preferences';
+import {categoryName,defaultGameCategories} from '../lib/list-categories.ts';
 import { responsiveArtwork } from "../lib/responsive-artwork";
 import { formatDateTime, requestDateLocale } from '../lib/date-time';
 import { contributorMediaLabel,contributorCreditScope } from '../lib/contributor-page-data';
@@ -15,6 +17,7 @@ const image = responsiveArtwork(item.poster, {
   sizes: "(max-width: 650px) 30vw, (max-width: 1000px) 22vw, 185px",
   route:'direct',
 });
+const categoryPresentation=(await viewerMediaPreferences(Astro.locals)).list_categories?.game||defaultGameCategories();
 const state = item.list_status;
 const game=item.type==='game';
 const href=browseCardHref(item);
@@ -51,16 +54,16 @@ const href=browseCardHref(item);
     <span
       class="browse-list-state"
       data-list-state
-      title={browseStatusLabel(state,game)}
-      aria-label={browseStatusLabel(state,game)}
+      title={game?categoryName(categoryPresentation,state):browseStatusLabel(state,game)}
+      aria-label={game?categoryName(categoryPresentation,state):browseStatusLabel(state,game)}
       hidden={!state}
     >
-      {["watching", "playing", "completed", "planning", "paused", "dropped"].map(
+      {["watching", "playing", "played", "completed", "planning", "paused", "dropped"].map(
         (value) => (
           <span data-state-icon={value} hidden={state !== value}>
             <Icon
               name={
-                value === "watching" || value === "playing"
+                value === "watching" || value === "playing" || value === "played"
                   ? "play"
                   : value === "completed"
                     ? "check"
@@ -87,11 +90,11 @@ const href=browseCardHref(item);
           <span data-editor-icon="edit" hidden={!state}><Icon name="edit" /></span>
         </button>
         <div class="browse-extra-actions" hidden={!browseCardQuickActions(item)}>
-          <button type="button" data-browse-action="watch" hidden={state === (game?'playing':'watching')} aria-label={`${browseActionLabel('watch',game)} ${item.title}`} data-tooltip={browseActionLabel('watch',game)}><Icon name="play" /></button>
+          <button type="button" data-browse-action="watch" hidden={state === (game?'playing':'watching')||game&&categoryPresentation.categories.some(category=>category.id==='playing'&&category.hidden)} aria-label={`${browseActionLabel('watch',game)} ${item.title}`} data-tooltip={browseActionLabel('watch',game)}><Icon name="play" /></button>
           <button
             type="button"
             data-browse-action="plan"
-            hidden={!!state}
+            hidden={!!state||game&&categoryPresentation.categories.some(category=>category.id==='planning'&&category.hidden)}
             aria-label={`${browseActionLabel('plan',game)} ${item.title}`}
             data-tooltip={browseActionLabel('plan',game)}
           >

@@ -22,3 +22,15 @@ test('mobile and reduced motion leave the destination appearance immediate',()=>
     assert.deepEqual(incoming.style,{});
   }
 });
+
+test('profile tab swaps carry the visible position even on mobile',()=>{
+  let measured=false;
+  const previous={ownerDocument:{defaultView:{matchMedia:q=>({matches:q.includes('max-width')}),
+    getComputedStyle:()=>({transform:'matrix(1, 0, 0, 1, 0, -24)'})}}};
+  const incoming={style:{removeProperty(name){assert.equal(name,'transform');assert(measured);delete this.transform;}},
+    get offsetWidth(){measured=true;return 390;}};
+  const release=carryAppbarAppearance(previous,incoming,true);
+  assert.equal(incoming.style.transform,'matrix(1, 0, 0, 1, 0, -24)');
+  release();
+  assert.equal(incoming.style.transform,undefined);
+});

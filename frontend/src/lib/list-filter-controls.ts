@@ -1,3 +1,5 @@
+import {bindRovingOptions} from './roving-options';
+import {listFilterLabel} from './list-filter-label.ts';
 import {placeDropdown} from './dropdown-position';
 import {reveal,dismiss,showMenu,hideMenu} from './ui-motion';
 
@@ -5,7 +7,6 @@ import {reveal,dismiss,showMenu,hideMenu} from './ui-motion';
 export function mountListFilterControls(root:HTMLElement,signal:AbortSignal) {
     const input=(id:string)=>root.querySelector<HTMLInputElement>(`#${id}`)!;
     const mobileToggle=root.querySelector<HTMLButtonElement>('.mobile-filter-toggle')!;
-    const resetButton=root.querySelector<HTMLButtonElement>('#reset-filters')!;
     const yearSlider=input('year-filter');
     const yearOutput=root.querySelector<HTMLOutputElement>('#year-value')!;
     const yearField=root.querySelector<HTMLInputElement>('[data-list-selected-year]')!;
@@ -27,8 +28,11 @@ export function mountListFilterControls(root:HTMLElement,signal:AbortSignal) {
     }),{once:true});
     function syncDropdown(dropdown:FilterDropdown) {
       const selected=dropdown.options.find(option=>option.dataset.filterValue===dropdown.select.value) || dropdown.options[0];
-      dropdown.value.textContent=selected?.textContent||'';
-      dropdown.options.forEach(option=>option.setAttribute('aria-selected',String(option===selected)));
+      const label = dropdown.select.dataset.filterLabel || '';
+      const value = listFilterLabel(dropdown.select.value, dropdown.select.dataset.filterDefault || '', label, selected?.textContent, dropdown.select.dataset.filterShowDefault === 'true');
+      dropdown.value.textContent = value;
+      dropdown.trigger.setAttribute('aria-label', value === label ? label : `${label}: ${value}`);
+      dropdown.options.forEach(option=>{option.setAttribute('aria-selected',String(option===selected));option.tabIndex=option===selected?0:-1;});
     }
     function closeDropdown(dropdown:FilterDropdown,restoreFocus=false) {
       if(dropdown.trigger.getAttribute('aria-expanded')!=='true')return;
@@ -46,6 +50,7 @@ export function mountListFilterControls(root:HTMLElement,signal:AbortSignal) {
       if(focusOption)(dropdown.options.find(option=>option.dataset.filterValue===dropdown.select.value)||dropdown.options[0])?.focus();
     }
     filterDropdowns.forEach(dropdown=>{
+      bindRovingOptions(dropdown.menu, '[data-filter-value]', signal);
       syncDropdown(dropdown);
       dropdown.trigger.addEventListener('click',()=>{
         if(dropdown.trigger.getAttribute('aria-expanded')==='true')closeDropdown(dropdown);
@@ -123,6 +128,8 @@ export function mountListFilterControls(root:HTMLElement,signal:AbortSignal) {
     function selectedYear(){const position=Number(yearSlider.value);return position>0?availableYears[position-1]:'';}
     function syncYear(){
       const year=selectedYear();yearField.value=year;
+      const fill = availableYears.length ? Number(yearSlider.value) / availableYears.length * 100 : 0;
+      yearSlider.style.setProperty('--year-fill', `${fill}%`);
       yearOutput.value=year||'Any year';yearOutput.textContent=year||'Any year';
       yearSlider.setAttribute('aria-valuetext',year||'Any year');
     }
@@ -160,11 +167,9 @@ export function mountListFilterControls(root:HTMLElement,signal:AbortSignal) {
       const active=[status!=='all',input('list-search').value.trim()!=='',input('genre-filter').value!=='',selectedYear()!=='',input('favorite-filter').value!=='',input('sort-filter').value!==defaultSort].filter(Boolean).length;
       mobileToggle.toggleAttribute('data-active',active>0);
       mobileToggle.setAttribute('aria-label',active>0?`Filters and sorting (${active} active)`:'Filters and sorting');
-      resetButton.disabled=active===0;
       filterDropdowns.forEach(syncDropdown);
       root.querySelectorAll<HTMLButtonElement>('[data-status]').forEach(button=>{
         button.setAttribute('aria-pressed',String(button.dataset.status===status));
-        button.classList.toggle('selected',button.dataset.status===status);
       });
     }};
 }

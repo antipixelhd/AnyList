@@ -8,7 +8,6 @@ export interface DeviceCode {
 
 interface AuthorizationOptions {
   provider: string;
-  token: string;
   startUrl: string;
   pollUrl: string;
   onCode: (code: DeviceCode) => void;
@@ -44,7 +43,7 @@ export function createDeviceAuthorization(options: AuthorizationOptions) {
       current?.abort();
       const controller = (current = new AbortController());
       const { signal } = controller;
-      const headers = { Authorization: `Bearer ${options.token}` };
+      const headers = { };
 
       async function request(url: string, body?: Record<string, string>) {
         const response = await fetch(url, {

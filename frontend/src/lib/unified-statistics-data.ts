@@ -1,3 +1,4 @@
+import {defaultGameCategories} from './list-categories.ts';
 import type {Overview,OverviewResponse,MediaScope} from './stats-overview-data';
 import {gameCard,gameChartRows,type GameStatsResponse,type GameStatsGroup,type GameOverview} from './game-statistics-data.ts';
 
@@ -18,7 +19,7 @@ export function gameStatisticsView(game:GameStatsResponse,selectionSort='count')
       const data=game.data as GameOverview;
       view.totals={...view.totals,listed_titles:data.totals.listed_games,watched_titles:data.totals.completed_games,watch_minutes:(data.totals.recorded_seconds||0)/60,mean_score:data.totals.mean_score,standard_deviation:data.totals.standard_deviation,rated_titles:data.totals.rated_games};
       view.scores=gameChartRows(data.scores);view.episode_counts=gameChartRows(data.hours);view.release_years=gameChartRows(data.release_years);view.watch_years=gameChartRows(data.completion_years);
-      view.statuses=data.statuses.map(row=>({key:row.key,label:row.label,titles:row.games}));view.coverage=data.coverage;
+      view.statuses=(game.category_presentation||defaultGameCategories()).categories.filter(category=>!category.hidden).map(category=>({key:category.id,label:category.label,titles:data.statuses.find(row=>row.key===category.id)?.games||0}));view.coverage=data.coverage;
     }else{
       const rows=(game.data as GameStatsGroup[]).slice(0,30).map(gameCard);
       if(game.section==='genres')view.genres=rows.map(row=>({...row,browse_filters:{movie:'',series:''}}));

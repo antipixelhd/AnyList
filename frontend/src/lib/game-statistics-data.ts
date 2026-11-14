@@ -1,3 +1,4 @@
+import type {CategoryPresentation} from './list-categories.ts';
 import type {ProfileStats} from './profile-stats-data';
 import type {MetricGroup,StudioGroup,StaffGroup} from './stats-overview-data';
 import {displayNumber} from './stats-overview-data.ts';
@@ -22,6 +23,7 @@ export interface GameOverview {
   coverage:Record<string,number>;
 }
 export interface GameStatsResponse {
+  category_presentation?:CategoryPresentation;
   profile:ProfileStats['profile'];owner:boolean;following:boolean;follows_you:boolean;combine_lists:boolean;domain:'game';
   section:GameStatsSection;status:'ready'|'pending'|'error';generation:number|null;computed_at:string|null;refreshing:boolean;
   data:GameOverview|GameStatsGroup[]|null;page:number;total:number|null;has_more:boolean;retry_after?:number;
@@ -33,14 +35,17 @@ export function gameStatsQuery(search:URLSearchParams) {
   return {section,sort,page};
 }
 export function gameHeadlines(data:GameOverview|null) {
-  const t=data?.totals,unknown=data?.coverage.unknown_time_games||0;
+  const t=data?.totals;
+  const recordedHours=t?.recorded_seconds!=null
+    ? displayNumber(t.recorded_seconds/3600)
+    : t && !t.played_games ? '0' : '—';
   return [
     {label:'Total games',value:t?displayNumber(t.listed_games):'—',detail:'Listed base games; expansions are excluded'},
     {label:'Completed games',value:t?displayNumber(t.completed_games):'—',detail:'Games currently marked Completed'},
-    {label:'Hours recorded',value:t? t.recorded_seconds===null?(t.played_games?'—':'0'):`${unknown?'≥ ':''}${displayNumber(t.recorded_seconds/3600,1)}`:'—',detail:t?`${t.known_time_games} games with recorded time`:'Recorded time'},
+    {label:'Hours recorded',value:recordedHours,detail:t?`${t.known_time_games} games with recorded time. Games with unknown time are excluded.`:'Recorded time'},
     {label:'Mean score',value:displayNumber(t?.mean_score??null,2),detail:t?`${t.rated_games} rated played games`:'Personal ratings'},
     {label:'Achievement progress',value:t?.achievement_percentage==null?'—':`${displayNumber(t.achievement_percentage,1)}%`,detail:t?`Average across ${t.achievement_progress_games} games with known progress`:'Known progress only'},
-    {label:'Achievements unlocked',value:displayNumber(t?.achievement_count??null),detail:t?`${t.achievement_count_games} games with known counts`:'Known counts only'},
+    {label:'Achievement count',value:displayNumber(t?.achievement_count??null),detail:t?`${t.achievement_count_games} games with known counts`:'Known counts only'},
   ];
 }
 export function gameChartRows(rows:GameMetric[]):MetricGroup[] {

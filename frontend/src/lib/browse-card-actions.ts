@@ -1,3 +1,4 @@
+import {viewerGameCategories} from './game-category-store.ts';
 import { editorStore, type EditorTitle } from './editor-store';
 import {showActionFailure} from './action-failure';
 import {predictionAllowed} from './predictive-loading';
@@ -19,6 +20,16 @@ export type BrowseItem = {
 export const sameBrowseTitle = (a: BrowseItem, b: Pick<EditorTitle, 'id' | 'tmdb_id' | 'type'>) =>
   a.type === b.type && (!!(b.id && a.id === b.id) || !!(b.tmdb_id && a.tmdb_id === b.tmdb_id));
 
+export function restoreBrowseItemState(item:BrowseItem){
+  if(!item.id)return;
+  if(item.type!=='movie'&&item.type!=='series'&&item.type!=='game')return;
+  const title=editorStore.findSubject(item.type==='game'
+    ?{kind:'game',catalogue_id:item.id}:{kind:item.type,media_id:item.id});
+  if(!title)return;
+  Object.assign(item,{entry:title.entry,list_status:title.entry?.status??null,score:title.entry?.score??null,
+    rating_mode:title.entry?.rating_mode,favorite:title.favorite,editor_library:title.editor_library});
+}
+
 export function paintBrowseCardState(card: HTMLElement, item: BrowseItem) {
   const actions=card.querySelector<HTMLElement>('.browse-actions');if(actions)actions.hidden=!browseCardCanEdit(item);
   card.querySelector('[data-browse-action=edit]')?.setAttribute('aria-label',`Open list editor for ${item.title}`);
@@ -37,7 +48,7 @@ export function paintBrowseCardState(card: HTMLElement, item: BrowseItem) {
   for (const action of ['watch','plan','rate']) {
     const button = card.querySelector<HTMLButtonElement>(`[data-browse-action=${action}]`);
     if (button){
-      button.hidden = !browseCardQuickActions(item)||(action === 'watch' ? item.list_status === (game?'playing':'watching') : action === 'plan' ? !!item.list_status : item.score != null && item.score > 0);
+      button.hidden = game&&action!=='rate'&&viewerGameCategories().categories.some(category=>category.id===(action==='watch'?'playing':'planning')&&category.hidden)||!browseCardQuickActions(item)||(action === 'watch' ? item.list_status === (game?'playing':'watching') : action === 'plan' ? !!item.list_status : item.score != null && item.score > 0);
       button.setAttribute('aria-label',`${browseActionLabel(action,game)} ${item.title}`);
       if(action!=='rate')button.dataset.tooltip=browseActionLabel(action,game);
     }
@@ -50,6 +61,9 @@ export function bindBrowseCardActions<T extends BrowseItem>(
   onUpdate: (item: T) => void, onError: (message: string) => void,
 ) {
   const titleFor = (item: T) => editorStore.get({...item, entry:item.entry ?? null});
+  document.addEventListener('anylist:game-categories',()=>{
+    for(const [card,item] of items)if(item.type==='game')paintBrowseCardState(card,item);
+  },{signal});
   const gameReads=new Map<number,Promise<EditorTitle>>();
   const gameTitle=async(item:T)=>{
     const key=item.igdb_id||-item.id!;

@@ -1,12 +1,16 @@
 import {editorStore,type EditorTitle} from './editor-store';
 import {gameListEditorTitle} from './game-list-data';
 import {paintGameListRow} from './game-list-row';
-import {gameStatuses} from './game-editor-data';
+import {defaultGameCategories,type CategoryPresentation} from './list-categories.ts';
+import {mountCategoryControls} from './list-category-controls.ts';
 import {initializeVirtualList} from './virtual-profile-list';
 
 export function initializeGameList(panel:HTMLElement,lifetime:AbortSignal){
+  const root=panel.querySelector<HTMLElement>('[data-virtual-list]');
+  const presentation:CategoryPresentation=root?JSON.parse(root.dataset.categoryPresentation||'null')||defaultGameCategories():defaultGameCategories();
+  if(root)mountCategoryControls(root,presentation,lifetime);
   initializeVirtualList(panel,lifetime,{
-    statuses:gameStatuses,
+    statuses:presentation.categories.map(category=>[category.id,category.label] as const),
     accepts:title=>title.type==='game',
     editorTitle:gameListEditorTitle,
     updateState:(title,previous)=>({...previous,...title.game_state,...title.entry,subject:title.subject,

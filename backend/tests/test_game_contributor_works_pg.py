@@ -27,6 +27,18 @@ class GameContributorTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result.json()['game_person_status']['id'],'nm1')
             profile.assert_not_awaited()
 
+    async def test_compilation_credits_qualify_in_index_and_portfolio(self):
+        games,_,_=await self.seed(1)
+        async with self.Session() as db:
+            work=await db.get(CatalogueEntity,games[0].id)
+            work.attributes={**work.attributes,'game_class':'bundle'};await db.commit()
+            from models.catalogue import ContributorSearch
+            index=await db.get(ContributorSearch,self.person_id)
+            self.assertGreaterEqual(index.game_actor_count,1)
+        result=await self.request(media_type='game')
+        self.assertEqual(result.status_code,200)
+        self.assertIn(games[0].id,{row['id'] for row in result.json()['works']})
+
     async def asyncSetUp(self):
         await fixture.ContributorDetailsTests.asyncSetUp(self)
         async with self.Session() as db:
@@ -107,7 +119,7 @@ class GameContributorTests(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as db:
             expansion = CatalogueEntity(kind='game', name='Expansion', attributes={'game_class': 'expansion'})
             port = CatalogueEntity(kind='game', name='Platform port', attributes={'game_class': 'port'})
-            excluded = [CatalogueEntity(kind='game', name=kind, attributes={'game_class': kind}) for kind in ('dlc','pack','update','unknown','bundle')]
+            excluded = [CatalogueEntity(kind='game', name=kind, attributes={'game_class': kind}) for kind in ('dlc','pack','update','unknown','mod')]
             retired = CatalogueEntity(kind='game', name='Retired credit', attributes={'game_class': 'game'})
             db.add_all([expansion, port, retired, *excluded]); await db.flush()
             db.add_all([CatalogueRelationship(source_id=expansion.id, target_id=games[0].id, relation='expansion', provider='igdb'),
@@ -240,7 +252,7 @@ class GameContributorTests(unittest.IsolatedAsyncioTestCase):
             expansion = CatalogueEntity(kind='game', name='Verified expansion', attributes={'game_class':'expansion'})
             orphan = CatalogueEntity(kind='game', name='Unverified expansion', attributes={'game_class':'expansion'})
             extras = [CatalogueEntity(kind='game', name=f'Add-on {i}', attributes={'game_class':kind})
-                for i, kind in enumerate(('dlc','pack','update','bundle','unknown') * 6)]
+                for i, kind in enumerate(('dlc','pack','update','mod','unknown') * 6)]
             db.add_all([expansion, orphan, *extras]); await db.flush()
             db.add(CatalogueRelationship(source_id=expansion.id, target_id=games[0].id,
                 relation='expansion', provider='igdb'))

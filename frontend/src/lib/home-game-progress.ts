@@ -1,3 +1,4 @@
+import {gameCategoryName} from './game-category-store.ts';
 import type {EditorTitle} from './editor-store';
 import {gameProgress} from './game-progress';
 import {scoreLabel} from './tracker';
@@ -8,6 +9,8 @@ export function paintHomeGameProgress(shelf:HTMLElement,title:EditorTitle) {
   for(const card of shelf.querySelectorAll<HTMLElement>('[data-game-playing-card]')){
     if(Number(card.dataset.gamePlayingCard)!==title.id)continue;
     card.hidden=!title.entry||title.entry.status!=='playing';
+    const status=card.querySelector<HTMLElement>('.progress-card-behind');
+    if(status)status.textContent=gameCategoryName(title.entry?.status||'playing');
     const progress=gameProgress(title.entry);
     const label=card.querySelector<HTMLElement>('.progress-card-progress-label');
     if(label)label.textContent=[progress.hours,shelf.dataset.showAchievements!=='false'?progress.achievement:null,

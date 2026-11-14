@@ -19,6 +19,15 @@ SHA = "a" * 40
 
 
 class LoginShellTests(unittest.TestCase):
+    def test_public_beta_controls_are_fixed_target_and_reject_extra_arguments(self):
+        for operation in ['public-beta-on', 'public-beta-off', 'public-beta-status']:
+            self.assertEqual(entry.parse_command(['-c', f'preview {operation} beta'], SLOTS),
+                             [operation, 'beta'])
+            for suffix in ['development-1', 'main', f'beta {SHA} false', 'beta; id']:
+                with self.subTest(operation=operation, suffix=suffix), \
+                     self.assertRaises((ValueError, controller.Refused)):
+                    entry.parse_command(['-c', f'preview {operation} {suffix}'], SLOTS)
+
     def test_production_only_accepts_fixed_deploy_and_commit(self):
         self.assertEqual(entry.parse_command(['-c', f'anylist deploy {SHA}'], SLOTS),
                          ['production-deploy', SHA])

@@ -58,3 +58,17 @@ class GameStatisticsFactsTests(unittest.TestCase):
         self.assertEqual((result['developers'][0]['games'],result['publishers'][0]['games']),(1,1))
         unknown=build_statistics([fact(1)],[])['overview']['totals']
         self.assertIsNone(unknown['recorded_seconds']);self.assertIsNone(unknown['achievement_percentage']);self.assertIsNone(unknown['achievement_count'])
+
+    def test_played_keeps_hours_ratings_and_achievements_without_completion_statistics(self):
+        row=fact(1,status='played',score=9,total_seconds=360000,completion_seconds=3600,
+            finish_date=date(2020,1,1),achievement_mode='percentage',achievement_percentage=50,
+            estimates={'main_story_seconds':3600})
+        result=build_statistics([row],[])
+        overview=result['overview']
+        self.assertEqual(overview['totals']['recorded_seconds'],360000)
+        self.assertEqual(overview['totals']['mean_score'],9)
+        self.assertEqual(overview['totals']['achievement_percentage'],50)
+        self.assertEqual(overview['totals']['completed_games'],0)
+        self.assertEqual(overview['completion_years'],[])
+        self.assertTrue(all(comparison['games']==0 for comparison in overview['comparisons']))
+        self.assertEqual(result['genres'][0]['games'],1)

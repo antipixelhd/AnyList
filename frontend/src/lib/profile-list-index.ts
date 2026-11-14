@@ -1,6 +1,7 @@
 // Compact wire projection: no notes, artwork, achievements or editor revisions.
 export type ListIndexRow=[number,string,string,number|null,number|null,string|null,string|null,string[],boolean,number|null,number];
-export type ListIndexResponse={complete:boolean;results:ListIndexRow[]};
+import type {CategoryPresentation} from './list-categories.ts';
+export type ListIndexResponse={category_presentation?:CategoryPresentation;complete:boolean;results:ListIndexRow[]};
 export type ListState=Record<string,any>;
 export const entryId=(state:ListState):number=>state.subject?.catalogue_id??state.id;
 type Member={id:number;title:string;status:string;score:number|null;progress:number|null;updated:string;year:string|null;genres:string[];favorite:boolean;base:number|null;rank:number;listed:boolean};
@@ -15,7 +16,28 @@ export class ProfileListIndex {
   constructor(statuses:ReadonlyArray<readonly [string,string]>){
     this.order=new Map(statuses.map(([status],index)=>[status,index]));
   }
+  setOrder(statuses:ReadonlyArray<readonly [string,string]>){
+    this.order=new Map(statuses.map(([status],index)=>[status,index]));
+  }
   get ready(){return this.complete;}
+  snapshot():ListIndexResponse|undefined{
+    if(!this.complete)return;
+    return {complete:true,results:[...this.members.values()].filter(row=>row.listed).map(row=>[
+      row.id,row.title,row.status,row.score,row.progress,row.updated,row.year,row.genres,row.favorite,row.base,row.rank,
+    ])};
+  }
+  changedRows(snapshot:ListIndexResponse){
+    const removed=new Set(this.members.keys()),changed:number[]=[];
+    for(const [id,title,status,score,progress,updated,year,genres,favorite,base,rank] of snapshot.results){
+      const old=this.members.get(id);
+      removed.delete(id);
+      if(!old||!old.listed||old.updated!==timestamp(updated)||old.title!==title||old.status!==status||
+        old.score!==score||old.progress!==progress||old.year!==year||old.favorite!==favorite||
+        old.base!==base||old.rank!==rank||old.genres.length!==genres.length||genres.some((value,index)=>old.genres[index]!==value))changed.push(id);
+    }
+    for(const id of removed)if(this.members.get(id)?.listed)changed.push(id);
+    return changed;
+  }
   publish(snapshot:ListIndexResponse){
     this.invalidate();
     if(!snapshot.complete)return false;

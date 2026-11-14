@@ -185,6 +185,10 @@ def activity_plan(item, finish_date=None):
     dated = [(ep, min(ep['dates'])) for ep in episodes if ep.get('dates')]
     dates = [day for _, day in dated] if item['kind'] == 'show' else list(item.get('source_dates') or [])
     events = [{'key': 'start', 'date': min(dates), 'status': 'watching', 'started_watching': True, 'status_changed': True}] if dates else []
+    if events and item['kind'] == 'show' and dated:
+        first = min(dated, key=lambda pair: (pair[1], pair[0].get('season_number') or 0, pair[0].get('episode_number') or 0))[0]
+        events[0].update(season_number=first['season_number'],
+                         start_position=f"S{first['season_number']}E{first['episode_number']}")
     for ep, day in dated:
         sn, en = ep.get('season_number'), ep.get('episode_number')
         events.append({'key': f'episode:{sn}:{en}', 'date': day, 'status': 'watching',

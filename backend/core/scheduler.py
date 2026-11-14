@@ -836,6 +836,7 @@ async def _watchlist_poller():
 @asynccontextmanager
 async def background_jobs():
     from core.game_background import scheduler as game_background
+    from core.season_completion import scheduler as season_completion
     """Run periodic jobs for the application lifespan and cancel them on exit."""
     from core.statistics_snapshots import scheduler as statistics_scheduler
     from core.contributor_evidence import scheduler as contributor_verification
@@ -854,6 +855,7 @@ async def background_jobs():
     from core.game_mapping_scheduler import scheduler as game_mapping_index
 
     jobs = (
+        season_completion,
         statistics_scheduler,
         contributor_verification,
         game_credit_enrichment,

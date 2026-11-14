@@ -1,10 +1,11 @@
 """Game tracking contracts use catalogue identity, never a legacy Media id."""
+from schemas_list_categories import CategoryPresentation
 from datetime import date, datetime
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-GameStatus = Literal['planning', 'playing', 'paused', 'completed', 'dropped']
+GameStatus = Literal['planning', 'playing', 'played', 'paused', 'completed', 'dropped']
 AchievementMode = Literal['percentage', 'count', 'targeted']
 Seconds = Annotated[int, Field(strict=True, ge=0, le=2**53 - 1)]
 
@@ -104,6 +105,7 @@ class GamePlayingOut(BaseModel):
 
 
 class GameListOut(BaseModel):
+    category_presentation: CategoryPresentation = Field(default_factory=CategoryPresentation)
     results: list[GameEntryOut]
     total: int
     offset: int
@@ -165,5 +167,6 @@ GameListIndexRow = tuple[int, str, GameStatus, float | None, int | None,
 
 
 class GameListIndexOut(BaseModel):
+    category_presentation: CategoryPresentation = Field(default_factory=CategoryPresentation)
     complete: bool
     results: list[GameListIndexRow] = Field(default_factory=list)

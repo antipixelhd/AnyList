@@ -1,6 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {ProfileListIndex} from '../src/lib/profile-list-index.ts';
+
+test('an index recheck detects revisions beyond the first list page',()=>{
+  const index=new ProfileListIndex([['completed','Completed']]);
+  const results=Array.from({length:101},(_,i)=>[i+1,`game ${i}`,'completed',8,20,'2026-11-13T09:00:00.000001Z','2026',[],false,null,i]);
+  index.publish({complete:true,results});
+  const edited=results.map(row=>[...row]);
+  edited[100][5]='2026-11-13T09:00:00.000002Z';
+  assert.deepEqual(index.changedRows({complete:true,results}),[]);
+  assert.deepEqual(index.changedRows({complete:true,results:edited}),[101]);
+});
 import {gameStatuses} from '../src/lib/game-editor-data.ts';
 
 const row=(id,title,status='playing',extra={})=>{

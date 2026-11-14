@@ -32,12 +32,13 @@ export function createStatisticsReader(username:string,signal:AbortSignal,select
     seed(value:StatisticsSelection,data:UnifiedStatistics){save(statisticsRequestKey(value),data);},
     clear,
     async prefetch(value:StatisticsSelection){try{await read(value);}catch{/* Speculation never replaces usable data. */}},
-    async load(_media?:MediaScope,quiet=false){
+    async load(_media?:MediaScope,quiet=false,background=false){
       const version=++selected,value=selection();
-      quiet=quiet||cache.has(statisticsRequestKey(value));callbacks.onBusy(true,quiet);
+      quiet=quiet||cache.has(statisticsRequestKey(value));
+      if(!background)callbacks.onBusy(true,quiet);
       try{const data=await read(value);if(!signal.aborted&&version===selected)callbacks.render(data);}
       catch(error){if(signal.aborted||version!==selected||(error as Error).name==='AbortError')return;const status=(error as {status?:number}).status;if(status===409){cache.clear();callbacks.changed();}else {const denied=[401,403,404].includes(status||0);if(denied)clear();callbacks.onError((error as Error).message,denied);}}
-      finally{if(!signal.aborted&&version===selected)callbacks.onBusy(false,quiet);}
+      finally{if(!background&&!signal.aborted&&version===selected)callbacks.onBusy(false,quiet);}
     },
     stop(){selected++;},
   };

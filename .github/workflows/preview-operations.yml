@@ -9,7 +9,7 @@ on:
       operation:
         type: choice
         required: true
-        options: [status, restart, redeploy, reset-db-from-beta, recreate-preview]
+        options: [status, restart, redeploy, reset-db-from-beta, recreate-preview, "Public beta.anylist ON", "Public beta.anylist OFF", public-beta-status]
 permissions:
   contents: read
   id-token: write
@@ -22,5 +22,5 @@ jobs:
     uses: ./.github/workflows/preview-remote.yml
     with:
       preview: ${{ inputs.preview }}
-      operation: ${{ inputs.operation }}
+      operation: ${{ inputs.operation == 'Public beta.anylist ON' && 'public-beta-on' || inputs.operation == 'Public beta.anylist OFF' && 'public-beta-off' || inputs.operation }}
     secrets: inherit

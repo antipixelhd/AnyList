@@ -25,7 +25,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
 <TrackerSettings title="Administration">
   <AdminTabs />
   <div id="app-data"
-    data-token={token}
+    data-authenticated={!!Astro.locals.user}
     data-current-user-id={user!.id}
     data-admin-count={adminCount}
     class="hidden" aria-hidden="true">
@@ -786,7 +786,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
   const appData = document.getElementById('app-data') as HTMLElement | null;
   if (!document.getElementById('global-settings-form') || !appData || appData.dataset.adminInitialized) return;
   appData.dataset.adminInitialized = 'true';
-  const token = appData.dataset.token!;
+
   const currentUserId = parseInt(appData.dataset.currentUserId!);
 
   function esc(s: string | null | undefined): string {
@@ -862,7 +862,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
   const postIntegrationCredentials = (path: string, credentials: { url: string; token: string }) =>
     fetch(path, {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(credentials),
     });
 
@@ -1035,7 +1035,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
         const pin = (document.getElementById('tvdb_subscriber_pin') as HTMLInputElement).value.trim();
         const response = await fetch(`/api/proxy/auth/test-${provider}`, {
           method: 'POST',
-          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ key, ...(provider === 'tvdb' ? { pin: pin || null } : {}) }),
         });
         const result = await response.json();
@@ -1055,7 +1055,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     const formElement = document.getElementById('global-settings-form');
     if (!formElement || formElement.dataset.initialized) return;
     formElement.dataset.initialized = 'true';
-    const token = document.getElementById('app-data')?.dataset.token ?? '';
+
     formElement.addEventListener('submit', async (e) => {
       e.preventDefault();
       const btn = document.getElementById('save-settings-btn') as HTMLButtonElement;
@@ -1090,7 +1090,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
       try {
         const res = await fetch('/api/proxy/admin/settings', {
           method: 'PATCH',
-          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
         });
         if (!res.ok) throw new Error((await res.json()).detail || 'Failed to save');
@@ -1124,7 +1124,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     try {
       const res = await fetch('/api/proxy/admin/settings', {
         method: 'PATCH',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
       if (!res.ok) throw new Error((await res.json()).detail || 'Failed to save');
@@ -1161,7 +1161,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     try {
       const res = await fetch('/api/proxy/admin/users', {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
       if (!res.ok) {
@@ -1186,7 +1186,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     btn.textContent = 'Preparing…';
     try {
       const res = await fetch('/api/proxy/admin/backup', {
-        headers: { 'Authorization': `Bearer ${token}` },
+        headers: { },
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -1246,7 +1246,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
       fd.append('file', file);
       const res = await fetch('/api/proxy/admin/restore', {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` },
+        headers: { },
         body: fd,
       });
       if (!res.ok) {
@@ -1384,7 +1384,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     btn.disabled = true;
     try {
       const res = await fetch(`/api/proxy/admin/users/${userId}`, {
-        method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` },
+        method: 'DELETE', headers: { },
       });
       if (!res.ok) throw new Error((await res.json()).detail || 'Failed');
       if (isSelf) {
@@ -1468,7 +1468,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
 
   async function pollAdminHealJob() {
     try {
-      const res = await fetch('/api/proxy/sync/status', { headers: { 'Authorization': `Bearer ${token}` } });
+      const res = await fetch('/api/proxy/sync/status', { headers: { } });
       if (!res.ok) return;
       const jobs: any[] = await res.json();
       const job = jobs.find((j: any) => j.source === 'tmdb' && j.job_type === 'heal');
@@ -1496,7 +1496,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
   // Resume active heal on page load
   (async () => {
     try {
-      const res = await fetch('/api/proxy/sync/status', { headers: { 'Authorization': `Bearer ${token}` } });
+      const res = await fetch('/api/proxy/sync/status', { headers: { } });
       if (!res.ok) return;
       const jobs: any[] = await res.json();
       const job = jobs.find((j: any) => j.source === 'tmdb' && j.job_type === 'heal');
@@ -1511,7 +1511,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     try {
       const res = await fetch('/api/proxy/admin/maintenance/heal', {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` },
+        headers: { },
       });
       if (!res.ok) throw new Error((await res.json()).detail || 'Failed to start heal');
       startAdminHealPoller();
@@ -1534,7 +1534,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     try {
       const res = await fetch('/api/proxy/admin/maintenance/clear-cache', {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` },
+        headers: { },
       });
       if (!res.ok) throw new Error((await res.json()).detail || 'Failed to clear cache');
       showMessage('Image cache cleared successfully.');
@@ -1574,7 +1574,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
       paint(!previous);
       try {
         const response=await fetch(`/api/proxy/admin/users/${userId}/games-access`,{
-          method:'PATCH',headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
+          method:'PATCH',headers:{'Content-Type':'application/json'},
           body:JSON.stringify({approved:!previous}),
         });
         if(!response.ok)throw new Error((await response.json()).detail||'Could not update Games access');
@@ -1592,7 +1592,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
       btn.disabled = true;
       try {
         const res = await fetch(`/api/proxy/admin/users/${userId}/toggle-admin`, {
-          method: 'PATCH', headers: { 'Authorization': `Bearer ${token}` },
+          method: 'PATCH', headers: { },
         });
         if (!res.ok) throw new Error((await res.json()).detail || 'Failed');
         const updated = await res.json();
@@ -1647,7 +1647,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     try {
       const res = await fetch(`/api/proxy/admin/users/${resetUserId}/reset-password`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password: resetInput.value }),
       });
       if (!res.ok) throw new Error((await res.json()).detail || 'Could not reset password');
@@ -1699,7 +1699,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     try {
       const res = await fetch(`/api/proxy/admin/users/${emailUserId}/email`, {
         method: 'PATCH',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: emailInput.value }),
       });
       if (!res.ok) throw new Error((await res.json()).detail || 'Could not change email');
@@ -1723,7 +1723,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
   async function loadCacheStats() {
     try {
       const res = await fetch('/api/proxy/admin/maintenance/cache-stats', {
-        headers: { 'Authorization': `Bearer ${token}` },
+        headers: { },
       });
       if (!res.ok) return;
       const data = await res.json();

@@ -1,0 +1,17 @@
+---
+import Icon from './Icon.astro';
+import {activityRating,scoreLabel} from '../lib/tracker';
+import '../styles/activity-card-rating.css';
+const rating=activityRating(Astro.props.activity||{});
+const multiple=(rating?.seasons.length||0)>1;
+---
+<div class="event-footer" hidden={!rating}>
+  <div class="activity-rating" data-season-breakdown={multiple?'multiple':undefined}>
+    <button type="button" class="score-pill" disabled={!multiple} tabindex={multiple?0:-1} aria-label={rating?.label} aria-expanded={multiple?'false':undefined} data-season-rating-toggle>
+      <Icon name="star"/> <span data-rating-previous hidden={rating?.previous==null}><span data-rating-previous-value>{scoreLabel(rating?.previous??null)}</span><span class="score-transition" aria-hidden="true">→</span></span><span data-rating-current>{scoreLabel(rating?.current??null)}</span><small>/10</small>
+    </button>
+    <div class="season-score-breakdown" role="tooltip" data-season-rating-scores>
+      {rating?.seasons.map(season=><div><span>Season {season.number}</span><strong>{scoreLabel(season.score)}<small>/10</small></strong></div>)}
+    </div>
+  </div>
+</div>

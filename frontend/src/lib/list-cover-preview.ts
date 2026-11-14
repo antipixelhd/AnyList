@@ -22,7 +22,7 @@ export function mountListCoverPreview(signal:AbortSignal,root:ParentNode=documen
   const events=root as HTMLElement|Document;
   const rowFor=(event:Event)=>(event.target as Element).closest<HTMLElement>('.entry-row');
   events.addEventListener('pointerover',event=>{const row=rowFor(event);if(!row||row.contains((event as PointerEvent).relatedTarget as Node|null))return;hovered=row;dismissed=false;show(row);},{signal});
-  events.addEventListener('pointerout',event=>{const row=rowFor(event);if(!row||row.contains((event as PointerEvent).relatedTarget as Node|null))return;if(hovered===row)hovered=null;if(shown===row)hide();if(!editorOpen())delete row.dataset.editorDeselected;},{signal});
+  events.addEventListener('pointerout',event=>{const row=rowFor(event);if(!row||row.contains((event as PointerEvent).relatedTarget as Node|null))return;if(hovered===row)hovered=null;if(shown===row)hide();if(!editorOpen()&&!('controlsDismissed' in row.dataset))delete row.dataset.editorDeselected;},{signal});
   events.addEventListener('focusin',event=>{const row=rowFor(event);if(!row||hovered||(event.target as Element).closest('[data-edit-entry],[data-edit-game]'))return;dismissed=false;show(row);},{signal});
   events.addEventListener('focusout',()=>{if(!hovered)hide();},{signal});
   events.addEventListener('click',hide,{signal});

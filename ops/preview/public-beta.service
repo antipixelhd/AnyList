@@ -1,0 +1,12 @@
+[Unit]
+Description=Private socket proxy to AnyList beta frontend
+Requires=anylist-public-beta.socket
+After=anylist-public-beta.socket
+
+[Service]
+ExecStart=/lib/systemd/systemd-socket-proxyd 127.0.0.1:8001
+DynamicUser=yes
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true

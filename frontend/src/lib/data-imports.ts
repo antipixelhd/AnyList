@@ -51,7 +51,7 @@ interface UploadCallbacks {
 }
 
 /** A format has one active upload. Navigation cancels it and suppresses late feedback. */
-export function createImportUploader(format: ImportFormat, token: string, callbacks: UploadCallbacks) {
+export function createImportUploader(format: ImportFormat, callbacks: UploadCallbacks) {
   let request: AbortController | undefined;
   let stopped = false;
   return {
@@ -73,7 +73,7 @@ export function createImportUploader(format: ImportFormat, token: string, callba
           body.append(`${format.fieldPrefix}${option.key}`, String(selection[option.key] === true));
         }
         const response = await fetch(format.endpoint, {
-          method: "POST", headers: { Authorization: `Bearer ${token}` }, body,
+          method: "POST", headers: { }, body,
           signal: controller.signal,
         });
         const data = await response.json();

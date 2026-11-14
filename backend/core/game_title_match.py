@@ -3,18 +3,18 @@ import re
 import unicodedata
 from datetime import date, datetime, timezone
 from urllib.parse import urlsplit
-from core.game_types import igdb_game_class, mobile_only
+from core.game_types import igdb_game_class, mobile_only, INDEPENDENT
 from core.game_release_dates import game_release, release
 
-VERSION = 10
+VERSION = 11
 # Existing positives retain their criteria; annual sports scopes require v8.
-SUPPORTED_VERSIONS = (6, 7, 8, 9, VERSION)
+SUPPORTED_VERSIONS = (6, 7, 8, 9, 10, VERSION)
 
 
 def same_game_port(other,winner):
     """An explicit port parent shares the displayed game, not another namesake."""
     return (other.get('game_class')=='port' and not other.get('cancelled') and other.get('parent')==winner.get('id')
-        and winner.get('game_class') in ('game','standalone_expansion','remake','remaster','expanded_game')
+        and winner.get('game_class') in (INDEPENDENT-{'port'})
         and (spelling(other.get('name'))==spelling(winner.get('name'))
             or bool(title_formats(other.get('name')) & title_formats(winner.get('name')))))
 
@@ -25,7 +25,7 @@ def scoped_title(raw,title):
     if kind not in ('dlc','expansion','standalone_expansion','episode'):return False
     parent=raw.get('parent_game')
     if not isinstance(parent,dict) or type(parent.get('id')) is not int or parent['id']<=0:return False
-    if igdb_game_class(parent) not in ('game','standalone_expansion','remake','remaster','expanded_game'):return False
+    if igdb_game_class(parent) not in (INDEPENDENT-{'port'}):return False
     if kind=='episode':
         # The source may spell out the series subtitle before the numbered
         # episode. Require the actual provider parent and the same episode,
@@ -56,7 +56,7 @@ def cancelled_scope(other,winner,title):
     try:released=date.fromisoformat(stamp)
     except (TypeError,ValueError):return False
     return (stamp==scope.get('store_date')==scope.get('igdb_date') and released<=datetime.now(timezone.utc).date()
-        and released.year==title.get('year') and winner.get('game_class') in ('game','remake','remaster','expanded_game','standalone_expansion')
+        and released.year==title.get('year') and winner.get('game_class') in (INDEPENDENT-{'port'})
         and other.get('game_class')=='port' and other.get('cancelled') is True
         and type(other.get('parent')) is int and other['parent']>0 and other['parent']!=winner.get('id')
         and bool(other.get('platforms')) and bool(winner.get('platforms'))
@@ -204,7 +204,7 @@ def annual_title(raw,title):
 
 def terminal_exact_tie(ranked):
     return sum(row['rank']==3 and row['year_match'] and not row['edition']
-        and row['game_class'] in ('game','standalone_expansion','remake','remaster','expanded_game')
+        and row['game_class'] in (INDEPENDENT-{'port'})
         for row in ranked)>=2
 
 

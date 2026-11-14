@@ -1,11 +1,12 @@
 <script>
+  import {openLegacyDialog, closeLegacyDialog} from '../lib/legacy-modal';
   import { formatDateTime, localToday } from '../lib/date-time';
   import {showActionFailure} from '../lib/action-failure';
   import {markFailureHandled} from '../lib/handled-failures';
     import {showToast} from '../lib/toasts';
     // ── Card action bar ────────────────────────────────────────────────────────
     const API = '/api/proxy';
-    const TOKEN = () => (window as any).__AUTH_TOKEN__ ?? '';
+
 
     // #174: an "aired" order needs no translation; any other key is forwarded to
     // the season/show bulk endpoints so they map the display season to the real
@@ -21,7 +22,7 @@
     async function apiFetch(path: string, method = 'GET', body?: unknown) {
       const res = await fetch(`${API}${path}`, {
         method,
-        headers: { Authorization: `Bearer ${TOKEN()}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+        headers: { ...(body ? { 'Content-Type': 'application/json' } : {}) },
         body: body ? JSON.stringify(body) : undefined,
       });
       if (!res.ok) throw new Error(await res.text());
@@ -49,10 +50,12 @@
         const dialog = document.getElementById('confirm-dialog')!;
         (document.getElementById('confirm-title') as HTMLElement).textContent = title;
         (document.getElementById('confirm-body') as HTMLElement).textContent = body;
-        dialog.classList.remove('hidden');
+        openLegacyDialog(dialog);
         const ok = document.getElementById('confirm-ok')!;
         const cancel = document.getElementById('confirm-cancel')!;
-        const close = (v: boolean) => { dialog.classList.add('hidden'); ok.replaceWith(ok.cloneNode(true)); cancel.replaceWith(cancel.cloneNode(true)); resolve(v); };
+        const lifetime = new AbortController();
+        dialog.addEventListener('cancel', () => close(false), {signal:lifetime.signal});
+        const close = (v: boolean) => { lifetime.abort(); closeLegacyDialog(dialog); ok.replaceWith(ok.cloneNode(true)); cancel.replaceWith(cancel.cloneNode(true)); resolve(v); };
         document.getElementById('confirm-ok')!.addEventListener('click', () => close(true), { once: true });
         document.getElementById('confirm-cancel')!.addEventListener('click', () => close(false), { once: true });
       });
@@ -66,7 +69,7 @@
     let _pendingRatePrompt: any = null;
 
     function closeRatingPopover() {
-      document.getElementById('rating-popover')!.classList.add('hidden');
+      closeLegacyDialog(document.getElementById('rating-popover')!);
       _activeRatingBtn = null;
       if (_pendingRatePrompt) {
         const m = _pendingRatePrompt;
@@ -204,16 +207,14 @@
         } catch { /* ignore */ }
       };
 
-      popover.classList.remove('hidden');
+      openLegacyDialog(popover);
     }
 
     document.getElementById('rating-popover-close')!.addEventListener('click', () => closeRatingPopover());
     document.getElementById('rating-popover')!.addEventListener('click', (e) => {
       if (e.target === document.getElementById('rating-popover')) closeRatingPopover();
     });
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') closeRatingPopover();
-    });
+    document.getElementById('rating-popover')!.addEventListener('cancel', () => closeRatingPopover());
 
     // ── Prompt to rate after watching (#177) ──────────────────────────────────
     // The Now Playing poller (inline script above) fires this when a session
@@ -276,7 +277,7 @@
     let _listSeasonNumber = '';
 
     function closeListPopover() {
-      document.getElementById('list-popover')!.classList.add('hidden');
+      closeLegacyDialog(document.getElementById('list-popover')!);
       _activeListBtn = null;
     }
 
@@ -289,7 +290,7 @@
       const popover = document.getElementById('list-popover')!;
       const itemsEl = document.getElementById('list-popover-items')!;
       itemsEl.innerHTML = '<div class="px-3 py-2 text-xs text-zinc-500">Loading…</div>';
-      popover.classList.remove('hidden');
+      openLegacyDialog(popover);
 
       // Fetch lists
       let lists: { id: number; name: string }[] = [];
@@ -402,13 +403,11 @@
     document.getElementById('list-popover')!.addEventListener('click', (e) => {
       if (e.target === document.getElementById('list-popover')) closeListPopover();
     });
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') closeListPopover();
-    });
+    document.getElementById('list-popover')!.addEventListener('cancel', () => closeListPopover());
 
     // ── Rewatch modal ────────────────────────────────────────────────────────
     function closeRewatchModal() {
-      document.getElementById('rewatch-modal')!.classList.add('hidden');
+      closeLegacyDialog(document.getElementById('rewatch-modal')!);
     }
 
     function openRewatchModal(seriesTmdbId: string) {
@@ -432,20 +431,18 @@
         }
       };
 
-      document.getElementById('rewatch-modal')!.classList.remove('hidden');
+      openLegacyDialog(document.getElementById('rewatch-modal')!);
     }
 
     document.getElementById('rewatch-modal-close')!.addEventListener('click', closeRewatchModal);
     document.getElementById('rewatch-modal')!.addEventListener('click', (e) => {
       if (e.target === document.getElementById('rewatch-modal')) closeRewatchModal();
     });
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') closeRewatchModal();
-    });
+    document.getElementById('rewatch-modal')!.addEventListener('cancel', () => closeRewatchModal());
 
     // ── Drop modal ───────────────────────────────────────────────────────────
     function closeDropModal() {
-      document.getElementById('drop-modal')!.classList.add('hidden');
+      closeLegacyDialog(document.getElementById('drop-modal')!);
     }
 
     function openDropModal(mediaType: string, showId: string | undefined, mediaId: string, tmdbId?: string) {
@@ -489,23 +486,21 @@
         }
       };
 
-      document.getElementById('drop-modal')!.classList.remove('hidden');
+      openLegacyDialog(document.getElementById('drop-modal')!);
     }
 
     document.getElementById('drop-modal-close')!.addEventListener('click', closeDropModal);
     document.getElementById('drop-modal')!.addEventListener('click', (e) => {
       if (e.target === document.getElementById('drop-modal')) closeDropModal();
     });
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') closeDropModal();
-    });
+    document.getElementById('drop-modal')!.addEventListener('cancel', () => closeDropModal());
 
     // ── Customize-on-add modal (admin-only - root folder/quality profile/
     // tags/season-folder override for one Radarr/Sonarr add) ────────────────
     let _customizeAddTags: number[] = [];
 
     function closeCustomizeAddPopover() {
-      document.getElementById('customize-add-popover')!.classList.add('hidden');
+      closeLegacyDialog(document.getElementById('customize-add-popover')!);
     }
 
     function renderCustomizeAddTags(tags: any[], selectedIds: number[]) {
@@ -553,7 +548,7 @@
       footer.classList.add('hidden');
       errorEl.classList.add('hidden');
       seasonRow.classList.toggle('hidden', !isSeries);
-      popover.classList.remove('hidden');
+      openLegacyDialog(popover);
 
       try {
         const opts = await apiFetch(`/media/${mediaType}/customize-options`);
@@ -605,21 +600,19 @@
     document.getElementById('customize-add-popover')!.addEventListener('click', (e) => {
       if (e.target === document.getElementById('customize-add-popover')) closeCustomizeAddPopover();
     });
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') closeCustomizeAddPopover();
-    });
+    document.getElementById('customize-add-popover')!.addEventListener('cancel', () => closeCustomizeAddPopover());
 
     // ── Create list modal ──────────────────────────────────────────────────────
     function openCreateListModal() {
       const modal = document.getElementById('create-list-modal')!;
       const input = document.getElementById('create-list-name') as HTMLInputElement;
       input.value = '';
-      modal.classList.remove('hidden');
+      openLegacyDialog(modal);
       input.focus();
     }
 
     document.getElementById('create-list-cancel')!.addEventListener('click', () => {
-      document.getElementById('create-list-modal')!.classList.add('hidden');
+      closeLegacyDialog(document.getElementById('create-list-modal')!);
     });
 
     document.getElementById('create-list-confirm')!.addEventListener('click', async () => {
@@ -628,7 +621,7 @@
       if (!name) { input.focus(); return; }
       try {
         await apiFetch('/lists', 'POST', { name });
-        document.getElementById('create-list-modal')!.classList.add('hidden');
+        closeLegacyDialog(document.getElementById('create-list-modal')!);
         // Re-open popover if we had an active card
         if (_activeListBtn) {
           const card = _activeListBtn.closest('[data-card]') as HTMLElement;
@@ -638,7 +631,7 @@
     });
 
     document.getElementById('create-list-name')!.addEventListener('keydown', (e: KeyboardEvent) => {
-      if (e.key === 'Enter') (document.getElementById('create-list-confirm') as HTMLButtonElement).click();
+      if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) (document.getElementById('create-list-confirm') as HTMLButtonElement).click();
     });
 
     // ── Watched button UI updater ──────────────────────────────────────────────
@@ -785,7 +778,7 @@
     const toUTC = (d: Date) => d.toISOString().slice(0, 16);
 
     function closeWatchHistoryModal() {
-      document.getElementById('watch-history-modal')!.classList.add('hidden');
+      closeLegacyDialog(document.getElementById('watch-history-modal')!);
       _watchHistoryBulkMode = null;
     }
 
@@ -830,7 +823,7 @@
       resetWatchHistoryDateUI();
 
       document.getElementById('watch-history-log-btn')!.textContent = 'Mark as watched';
-      document.getElementById('watch-history-modal')!.classList.remove('hidden');
+      openLegacyDialog(document.getElementById('watch-history-modal')!);
       await loadWatchHistoryEvents();
     }
 
@@ -846,7 +839,7 @@
       resetWatchHistoryDateUI();
 
       document.getElementById('watch-history-log-btn')!.textContent = 'Mark as watched';
-      document.getElementById('watch-history-modal')!.classList.remove('hidden');
+      openLegacyDialog(document.getElementById('watch-history-modal')!);
     }
 
     function cascadeWatchedUI(btn: HTMLElement, mediaType: string, tmdbId: string, seriesId: string, season: string, episodeOrder: string, nowWatched: boolean) {
@@ -937,9 +930,7 @@
     document.getElementById('watch-history-modal')!.addEventListener('click', (e) => {
       if (e.target === document.getElementById('watch-history-modal')) closeWatchHistoryModal();
     });
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') closeWatchHistoryModal();
-    });
+    document.getElementById('watch-history-modal')!.addEventListener('cancel', () => closeWatchHistoryModal());
 
     document.getElementById('watch-history-modal-events')!.addEventListener('click', async (e) => {
       const delBtn = (e.target as Element).closest<HTMLElement>('[data-delete-event]');

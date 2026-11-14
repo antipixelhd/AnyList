@@ -1,3 +1,4 @@
+import {gameCategoryChoices} from '../lib/game-category-store.ts';
 import { defaultSteamDraft, sortSteamGames, steamSelected, steamProgressPending, steamStatus, filterSteamGames, reconcileSteamCards, chooseSteamStatus, steamAccentText, steamScrollAnchor, steamWishlistSelected } from '../lib/steam-import';
 import type { SteamDraft, SteamGame } from '../lib/steam-import';
 import { showDialog, closeDialog } from '../lib/ui-motion';
@@ -289,7 +290,7 @@ function init() {
     const choices = document.createElement('div'); choices.className = 'steam-game-controls';
     const choicesInner = document.createElement('div'); choicesInner.className='steam-game-controls-inner'; choices.append(choicesInner);
     const status = document.createElement('select'); status.className = 'steam-game-status'; status.setAttribute('aria-label', `Import status for ${game.name}`);
-    for (const [value, label] of [['completed','Completed'],['playing','Playing'],['paused','Paused'],['dropped','Dropped'],['planning','Planning to play']]) {
+    for (const [value, label] of gameCategoryChoices(steamStatus(game,draft))) {
       const option = document.createElement('option'); option.value = value; option.textContent = label; status.append(option);
     }
     listen(status, 'change', () => {

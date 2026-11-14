@@ -17,6 +17,29 @@ def suppress_initial_import_rating(entry: TrackedEntry, now: datetime | None = N
     )
 
 
+async def record_synced_rating_activity(db, *, user_id, media, entry, season_number,
+                                       previous_score, score, now):
+    """Accepted ongoing ratings use the editor's windows and frozen snapshots."""
+    if score is not None and score > 0:
+        from core.web_push import resolve_rating_prompts
+        await resolve_rating_prompts(db, user_id=user_id, media_id=media.id, season_number=season_number)
+    if entry is None or suppress_initial_import_rating(entry, now):
+        return
+    if media.media_type == MediaType.series:
+        from core.season_activity import record_season_activity
+        from core.tracking_rules import effective_score
+        handled = await record_season_activity(db, user_id=user_id, media=media,
+            status=entry.status, score=effective_score(entry.rating_mode, entry.manual_score, entry.season_scores or {}),
+            rating_changed=season_number is None, previous_score=previous_score,
+            season_changes={season_number: (previous_score, score, 'season')} if season_number is not None else None,
+            episode_order='tmdb:aired' if season_number is not None else None,
+            now=now)
+        if handled:
+            return
+    await record_daily_activity(db, user_id=user_id, media_id=media.id, status=entry.status,
+        score=score, previous_score=previous_score, rating_changed=True, now=now)
+
+
 def merge_activity_payload(newer: dict | None, older: dict | None) -> dict:
     """Combine persisted activity details while retaining the newest position."""
     current = dict(newer or {})
@@ -71,20 +94,26 @@ RATING_ACTIVITY_FIELDS = {
 
 
 async def clear_recent_rating_activity(db, *, user_id: int, media_id: int,
+                                      include_seasons: bool = False,
                                       now: datetime | None = None) -> None:
     """Erase rating evidence only from cards displayed in the preceding week."""
     now = now or datetime.now(timezone.utc).replace(tzinfo=None)
-    rows = (await db.execute(select(TrackingActivity).where(
+    query = select(TrackingActivity).where(
         TrackingActivity.user_id == user_id, TrackingActivity.media_id == media_id,
         TrackingActivity.created_at >= now - timedelta(days=7),
         TrackingActivity.created_at <= now,
-    ))).scalars().all()
+    )
+    if not include_seasons:
+        query = query.where(TrackingActivity.payload['season_completion_id'].as_integer().is_(None),
+                            TrackingActivity.payload['episode_order'].as_string().is_(None))
+    rows = (await db.execute(query)).scalars().all()
+    fields = RATING_ACTIVITY_FIELDS | {'rating_snapshot','season_ratings','season_rating_sources','season_rating_baselines'}
     for row in rows:
         details = {key: value for key, value in (row.payload or {}).items()
-                   if key not in RATING_ACTIVITY_FIELDS}
+                   if key not in fields}
         if 'streaming_base' in details:
             details['streaming_base'] = {key: value for key, value in details['streaming_base'].items()
-                                         if key not in RATING_ACTIVITY_FIELDS}
+                                         if key not in fields}
         row.score, row.payload = None, details
         if not has_activity_event(row.status, details):
             await db.delete(row)
@@ -105,6 +134,7 @@ async def _prepare_rating_activity(db, *, user_id: int, media_id: int, status: s
         TrackingActivity.user_id == user_id, TrackingActivity.media_id == media_id,
         TrackingActivity.created_at >= now - timedelta(hours=72),
         TrackingActivity.created_at <= now,
+        TrackingActivity.payload['episode_order'].as_string().is_(None),
     ))).scalars().all()
     originals = [row for row in rows if (row.payload or {}).get("first_rated_at")]
     original = max(originals, key=lambda row: row.payload["first_rated_at"], default=None)
@@ -240,6 +270,8 @@ async def _active_activity_card(db, *, user_id: int, media_id: int, now: datetim
         TrackingActivity.user_id == user_id, TrackingActivity.media_id == media_id,
         TrackingActivity.created_at > now - timedelta(hours=24),
         TrackingActivity.created_at <= now,
+        TrackingActivity.payload['season_completion_id'].as_integer().is_(None),
+        TrackingActivity.payload['episode_order'].as_string().is_(None),
     ).order_by(TrackingActivity.created_at.desc(), TrackingActivity.id.desc()).limit(1))).scalar_one_or_none()
     if row and activity_window_start(row) <= now < activity_window_start(row) + timedelta(hours=24):
         return row
@@ -316,6 +348,8 @@ async def reconcile_unwatched_activity(db, *, user_id, media, episodes, watched_
 
     for row in rows:
         details = dict(row.payload or {})
+        if details.get('season_completion_id') or details.get('season_status') or details.get('season_rating_group'):
+            continue  # Durable seasons are reconciled from the surviving watches.
         if 'streaming_events' in details:
             details['streaming_base'] = trim(details.get('streaming_base', {}), details.get('streaming_base_status', row.status))
             details['streaming_events'] = {
@@ -344,9 +378,17 @@ async def record_progress_activity(db, *, user_id: int, media: Media, previous_p
                                    previous_score: float | None = None,
                                    previous_watched_ids: set[int] | None = None,
                                    watched_ids: set[int] | None = None,
+                                   explicit_status: bool = False, season_actions: bool = True,
                                    now: datetime | None = None) -> TrackingActivity | None:
     """Keep the fixed-window card equal to net progress and exact episode evidence."""
     now = now or datetime.now(timezone.utc).replace(tzinfo=None)
+    if media.media_type == MediaType.series:
+        from core.season_activity import record_season_activity
+        handled = not season_actions or await record_season_activity(db, user_id=user_id, media=media,
+            status=status, score=score, status_changed=status_changed, explicit_status=explicit_status,
+            previous_status=previous_status, rating_changed=rating_changed, previous_score=previous_score, now=now)
+        if handled:
+            status_changed = rating_changed = False
     rating_changed, _ = await _prepare_rating_activity(
         db, user_id=user_id, media_id=media.id, status=status, score=score,
         previous_score=previous_score, rating_changed=rating_changed, now=now,
@@ -364,8 +406,13 @@ async def record_progress_activity(db, *, user_id: int, media: Media, previous_p
     details["episodes_watched"] = watched
     details["progress_start"] = baseline
     details["progress"] = progress
-    if watched_ids is not None or 'watched_start_ids' in details:
-        episodes, expected = await _series_activity_catalog(db, media)
+    if media.media_type == MediaType.series:
+        from core.season_completion import is_released, season_groups
+        positions = {}
+        order, groups, _ = await season_groups(db, media, user_id, display_positions=positions)
+    if media.media_type == MediaType.series and (groups or watched_ids is not None or 'watched_start_ids' in details):
+        episodes = [ep for _, members, _ in groups for ep in members if is_released(ep, now.date())]
+        details['progress_order'] = order
         catalogue_ids = {episode.id for episode in episodes}
         if watched_ids is None:
             watched_ids = set(await db.scalars(select(WatchEvent.media_id).where(
@@ -378,18 +425,22 @@ async def record_progress_activity(db, *, user_id: int, media: Media, previous_p
             # Legacy count-only cards represented a contiguous prefix. Keep
             # that window baseline when first adding exact episode evidence.
             previous = [episode.id for episode in episodes if episode.id in previous_ids]
-            start_ids = previous[:baseline] if row else previous
+            start_ids = previous[:baseline] if row or previous_watched_ids is None else previous
         start_ids = set(start_ids) & catalogue_ids
         details['watched_start_ids'] = sorted(start_ids)
         new = [episode for episode in episodes if episode.id in current_ids - start_ids]
+        details['progress_episode_ids'] = [episode.id for episode in new]
         details['episodes_watched'] = max(0, len(current_ids) - len(start_ids))
         def position(episode):
-            return f'S{episode.season_number}E{episode.episode_number}'
+            sn, en = positions[episode.id]
+            return f'S{sn}E{en}'
         details['position_start'] = position(new[0]) if new and details['episodes_watched'] else None
         details['position'] = position(new[-1]) if new and details['episodes_watched'] else None
         details['episode_positions'] = [position(episode) for episode in new]
-        before = _finished_watched_seasons(episodes, expected, [episode for episode in episodes if episode.id in start_ids])
-        after = _finished_watched_seasons(episodes, expected, [episode for episode in episodes if episode.id in current_ids])
+        def finished(ids):
+            return {sn for sn, members, total in groups if total and len(members) == total
+                    and all(ep.id in ids for ep in members)}
+        before, after = finished(start_ids), finished(current_ids)
         details['finished_seasons'] = sorted(set(after) - set(before))
     else:
         details["position_start"], details["position"], details["finished_seasons"] = (
@@ -427,9 +478,20 @@ async def record_daily_activity(db, *, user_id: int, media_id: int, status: str,
                                 status_changed: bool = False, rating_changed: bool = False,
                                 previous_status: str | None = None, first_watching: bool | None = None,
                                 previous_score: float | None = None,
+                                explicit_status: bool = False, season_actions: bool | None = True,
+                                media: Media | None = None,
                                 now: datetime | None = None) -> TrackingActivity | None:
     """Merge updates within 24 hours of this title card's first event."""
     now = now or datetime.now(timezone.utc).replace(tzinfo=None)
+    if media is not None and media.media_type == MediaType.series and season_actions is not None:
+        from core.season_activity import record_season_activity
+        handled = not season_actions or await record_season_activity(db, user_id=user_id, media=media,
+            status=status, score=score, status_changed=status_changed, explicit_status=explicit_status,
+            previous_status=previous_status, rating_changed=rating_changed, previous_score=previous_score, now=now)
+        if handled:
+            status_changed = rating_changed = False
+            if not episodes_watched and not finished_seasons:
+                return None
     had_rating_change = rating_changed
     rating_changed, rating_card = await _prepare_rating_activity(
         db, user_id=user_id, media_id=media_id, status=status, score=score,

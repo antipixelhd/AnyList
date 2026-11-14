@@ -2,7 +2,7 @@
 import Tracker from '../../../layouts/Tracker.astro';
 import ProfileHeader from '../../../components/ProfileHeader.astro';
 import Icon from '../../../components/Icon.astro';
-import {tracker} from '../../../lib/tracker';
+import {tracker,trackerFailure} from '../../../lib/tracker';
 import {responsiveArtwork} from '../../../lib/responsive-artwork';
 import {profileMediaGroups} from '../../../lib/profile-media-groups';
 import {hasStreamingLibraryConnection} from '../../../lib/streaming-library-availability';
@@ -18,7 +18,9 @@ try {
     tracker('library', Astro.locals.token),
   ]);
 } catch (cause) {
-  error = (cause as Error).message;
+  const failure=trackerFailure(cause);
+  error=failure.message;
+  Astro.response.status=failure.status;
 }
 
 const sections = profileMediaGroups(entries, profile?.combine_lists !== false);
@@ -56,41 +58,3 @@ const sections = profileMediaGroups(entries, profile?.combine_lists !== false);
     </>}
   </div>
 </Tracker>
-<script>
-import {showActionFailure} from '../../../lib/action-failure';
-let libraryListeners: AbortController;
-document.addEventListener('astro:page-load', () => {
-  libraryListeners?.abort();
-  libraryListeners = new AbortController();
-  const page = document.querySelector<HTMLElement>('.library-page');
-  if (!page) return;
-  const error = page.querySelector<HTMLElement>('[data-library-error]')!;
-  page.addEventListener('click', async event => {
-    const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-library-remove]');
-    if (!button) return;
-    button.disabled = true;
-    error.hidden = true;
-    try {
-      const response = await fetch(`/api/proxy/tracking/library/${button.dataset.libraryRemove}`, {
-        method: 'PUT',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({in_library: false}),
-      });
-      if (!response.ok) {
-        const details = await response.json().catch(() => null);
-        throw new Error(typeof details?.detail === 'string' ? details.detail : 'Could not remove this title from your library.');
-      }
-      const card = button.closest<HTMLElement>('[data-library-entry]')!;
-      const group = card.closest<HTMLElement>('[data-library-group]')!;
-      card.remove();
-      group.hidden = !group.querySelector('[data-library-entry]');
-      const hasEntries = !!page.querySelector('[data-library-entry]');
-      page.querySelector<HTMLElement>('.library-sections')!.hidden = !hasEntries;
-      page.querySelector<HTMLElement>('[data-library-empty]')!.hidden = hasEntries;
-    } catch (cause) {
-      showActionFailure('library',button.closest<HTMLElement>('[data-library-entry]')?.dataset.title,cause);
-      button.disabled = false;
-    }
-  }, {signal: libraryListeners.signal});
-});
-</script>

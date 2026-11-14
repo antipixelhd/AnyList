@@ -5,6 +5,7 @@ DATABASE_URL=postgresql+asyncpg://<slot-role>:<generated-password>@127.0.0.1:543
 SERVER_URL=https://<machine>.<tailnet>.ts.net:8001
 PREVIEW_HOSTNAME=<machine>.<tailnet>.ts.net
 PREVIEW_SLOT=beta
+NEW_ACCOUNTS_GAMES_ACCESS=true
 BACKEND_PORT=8101
 OIDC_REDIRECT_URL=https://<machine>.<tailnet>.ts.net:8001/oidc-callback
 DATA_DIR=/srv/anylist-preview/beta/data

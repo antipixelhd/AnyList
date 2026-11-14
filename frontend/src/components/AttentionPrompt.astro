@@ -8,11 +8,13 @@ import Icon from "./Icon.astro";
     <div class="attention-prompt-copy">
       <span class="eyebrow" data-attention-kicker>Needs attention</span>
       <strong data-attention-title><a data-attention-title-link></a></strong>
+      <small data-attention-metadata hidden></small>
       <p data-attention-message></p>
     </div>
     <div class="attention-prompt-actions">
       <a class="button-primary" href="/recent-events" data-attention-action>Review</a>
       <button class="button-primary button-rate" type="button" data-attention-rate hidden>Rate Now</button>
+      <button class="button-secondary button-rate" type="button" data-attention-rate-series hidden>Rate series</button>
       <button class="button-secondary" type="button" data-attention-cancel-import hidden>Cancel import</button>
       <button class="button-quiet" type="button" data-attention-close aria-label="Dismiss this prompt">Dismiss</button>
     </div>
@@ -24,6 +26,7 @@ import {cancelImportNotification} from '../lib/import-cancel';
 import {bindAttentionPromptMotion} from '../lib/attention-prompt-motion';
 import {refreshNotifications, subscribeNotifications, type NotificationSnapshot} from '../lib/notification-store';
 import {applyResponsiveArtwork, responsiveArtwork} from '../lib/responsive-artwork';
+import {eventImage,isSeasonRating,ratingMetadata,ratingPopupEnabled,groupRatingNotifications,ratingActionLabel} from '../lib/notification-presentation';
 
 let pageListeners: AbortController;
 document.addEventListener('astro:page-load', () => {
@@ -59,17 +62,21 @@ document.addEventListener('astro:page-load', () => {
     finally { button.disabled = false; }
   }, {signal: pageListeners.signal});
   let showNewRatingsPopup = false;
+  let showSeasonRatingPopup = false;
   let preferencesLoaded = false;
-  let preferenceChangedLocally = false;
+  const preferencesChangedLocally = new Set<string>();
   let lastSnapshot: NotificationSnapshot | null = null;
   const motion = bindAttentionPromptMotion(prompt, pageListeners.signal, () => writeAcknowledged(visibleIds));
   const hide = (acknowledge = true) => acknowledge ? motion.dismiss() : motion.hide();
   prompt.querySelectorAll('[data-attention-close]').forEach(button => button.addEventListener('click', () => hide(), {signal: pageListeners.signal}));
   document.addEventListener('astro:before-swap', () => pageListeners.abort(), {signal: pageListeners.signal, once: true});
   document.addEventListener('media-tracker:rating-changed', event => {
-    const mediaId = Number((event as CustomEvent<{id?: number}>).detail?.id);
+    const detail=(event as CustomEvent).detail;
+    const mediaId = Number(detail?.id);
     if (!Number.isFinite(mediaId)) return;
-    const ratedTokens = currentRatings.filter((item: any) => Number(item.media?.id) === mediaId).map(token);
+    const ratedTokens = currentRatings.filter((item: any) => Number(item.media?.id) === mediaId &&
+      (item.season_number??null)===(detail?.season_number??null) &&
+      (!isSeasonRating(item) || (item.payload?.episode_order??'tmdb:aired')===(detail?.episode_order??'tmdb:aired'))).map(token);
     if (!ratedTokens.length) return;
     writeAcknowledged(ratedTokens);
     void refreshNotifications({force: true});
@@ -92,8 +99,9 @@ document.addEventListener('astro:page-load', () => {
     const acknowledged = readAcknowledged();
     const conflicts = (data.results || []).filter((item: any) => item.state === 'pending' && item.priority === 'high' && item.kind !== 'import_ready');
     const allRatings = (data.results || []).filter((item: any) => item.kind === 'rating_needed' && item.media);
-    if (!showNewRatingsPopup) writeAcknowledged(allRatings.map(token));
-    const ratings = showNewRatingsPopup ? allRatings : [];
+    const preferences={show_new_ratings_popup:showNewRatingsPopup,show_season_rating_popup:showSeasonRatingPopup};
+    writeAcknowledged(allRatings.filter((item:any)=>!ratingPopupEnabled(item,preferences)).map(token));
+    const ratings = allRatings.filter((item:any)=>ratingPopupEnabled(item,preferences));
     const imports = (data.results || []).filter((item: any) => item.kind === 'import_ready'
       && !document.querySelector('[data-import-session], [data-connection-import][data-import-active="true"]:not([hidden])'));
     const eligible = [...imports, ...conflicts, ...ratings];
@@ -104,8 +112,9 @@ document.addEventListener('astro:page-load', () => {
     const unresolvedRatings = ratings.filter((item: any) => !acknowledged.has(token(item)) && !isNotificationsPage());
     const unresolvedImports = imports.filter((item: any) => !acknowledged.has(token(item)) && !isNotificationsPage());
     currentImport = unresolvedImports[0] || null;
-    const items = [...unresolvedImports, ...unresolvedConflicts, ...unresolvedRatings];
-    visibleIds = items.map(token);
+    const groupedRatings=groupRatingNotifications(unresolvedRatings);
+    const items = [...unresolvedImports, ...unresolvedConflicts, ...groupedRatings];
+    visibleIds = [...unresolvedImports,...unresolvedConflicts,...unresolvedRatings].map(token);
     currentRatings = unresolvedRatings;
 
     const kicker = prompt.querySelector<HTMLElement>('[data-attention-kicker]')!;
@@ -113,7 +122,9 @@ document.addEventListener('astro:page-load', () => {
     const message = prompt.querySelector<HTMLElement>('[data-attention-message]')!;
     const action = prompt.querySelector<HTMLAnchorElement>('[data-attention-action]')!;
     const rate = prompt.querySelector<HTMLButtonElement>('[data-attention-rate]')!;
+    const rateSeries=prompt.querySelector<HTMLButtonElement>('[data-attention-rate-series]')!;
     const poster = prompt.querySelector<HTMLImageElement>('[data-attention-poster]')!;
+    const metadata=prompt.querySelector<HTMLElement>('[data-attention-metadata]')!;
     const resetSingleRating = () => {
       title.after(message);
       titleLink.hidden = true;
@@ -123,10 +134,14 @@ document.addEventListener('astro:page-load', () => {
       poster.removeAttribute('srcset');
       poster.removeAttribute('sizes');
       rate.hidden = true;
+      rateSeries.hidden=true;
+      for(const name of Object.keys(rateSeries.dataset))if(name.startsWith('quickRate'))delete rateSeries.dataset[name];
       rate.removeAttribute('data-quick-rate-id');
       rate.removeAttribute('data-quick-rate-title');
       rate.removeAttribute('data-quick-rate-poster');
       rate.removeAttribute('data-quick-rate-score');
+      for(const name of ['season','order','metadata'])rate.removeAttribute(`data-quick-rate-${name}`);
+      metadata.hidden=true;metadata.textContent='';
       action.hidden = false;
       prompt.querySelector<HTMLButtonElement>('[data-attention-cancel-import]')!.hidden = true;
       kicker.hidden = false;
@@ -147,7 +162,7 @@ document.addEventListener('astro:page-load', () => {
       prompt.querySelector<HTMLButtonElement>('[data-attention-cancel-import]')!.hidden = false;
     } else if (items.length > 1) {
       const summary = [];
-      if (unresolvedRatings.length) summary.push(`${unresolvedRatings.length} ${unresolvedRatings.length === 1 ? 'title' : 'titles'} ready to rate`);
+      if (unresolvedRatings.length) summary.push(`${unresolvedRatings.length} ${unresolvedRatings.length === 1 ? 'rating' : 'ratings'} ready`);
       if (unresolvedConflicts.length) summary.push(`${unresolvedConflicts.length} ${unresolvedConflicts.length === 1 ? 'change' : 'changes'} need review`);
       title.textContent = summary.join(' · ');
       message.textContent = 'Open Notifications to work through the queue one item at a time.';
@@ -159,48 +174,70 @@ document.addEventListener('astro:page-load', () => {
       action.href = '/recent-events';
       action.textContent = 'Review change';
     } else {
-      const item = unresolvedRatings[0];
+      const item = groupedRatings[0];
       const media = item.media;
       kicker.hidden = true;
-      message.textContent = 'You have completed';
+      message.textContent = isSeasonRating(item)?`You completed Season ${item.season_number}`:'You have completed';
       title.before(message);
       title.textContent = '';
       titleLink.textContent = media.title || 'Untitled';
       titleLink.href = `/title/${media.id}`;
       titleLink.hidden = false;
       title.append(titleLink);
-      const posterImage = responsiveArtwork(media.poster,{size:'w185',sizes:'185px',route:'auto'});
-      if (posterImage?.src) { applyResponsiveArtwork(poster,media.poster,{size:'w185',sizes:'185px',route:'auto'}); poster.hidden = false; }
+      metadata.textContent=ratingMetadata(item);metadata.hidden=!metadata.textContent;
+      const image=eventImage(item);
+      const posterImage = responsiveArtwork(image,{size:'w185',sizes:'185px',route:'auto'});
+      if (posterImage?.src) { applyResponsiveArtwork(poster,image,{size:'w185',sizes:'185px',route:'auto'}); poster.hidden = false; }
       action.hidden = true;
       rate.hidden = false;
+      rate.textContent=ratingActionLabel(item);
       rate.dataset.quickRateId = String(media.id);
       rate.dataset.quickRateTitle = media.title || 'Rate title';
+      rate.dataset.quickRateMetadata = metadata.textContent;
+      if(isSeasonRating(item)) {
+        rate.dataset.quickRateSeason=String(item.season_number);
+        rate.dataset.quickRateOrder=item.payload?.episode_order||'tmdb:aired';
+      }
       if (posterImage?.src) rate.dataset.quickRatePoster = posterImage.src;
       rate.dataset.quickRateScore = '';
+      rate.dataset.quickRateMode=isSeasonRating(item)?'manual':item.payload?.rating_mode||'manual';
+      if(item.series_rating_request) {
+        const series=item.series_rating_request;
+        rateSeries.hidden=false;
+        rateSeries.dataset.quickRateId=String(series.media.id);
+        rateSeries.dataset.quickRateTitle=series.media.title;
+        rateSeries.dataset.quickRateMetadata=ratingMetadata(series);
+        rateSeries.dataset.quickRateMode=series.payload?.rating_mode||'manual';
+        rateSeries.dataset.quickRateScore='';
+        rateSeries.dataset.quickRateUseVisiblePoster='false';
+        rateSeries.dataset.quickRatePoster=responsiveArtwork(eventImage(series),{size:'w185',sizes:'185px',route:'auto'})?.src||'';
+      }
     }
     motion.show();
   };
   document.addEventListener('streaming:activity-changed', () => { if (lastSnapshot) renderPrompt(lastSnapshot); }, {signal: pageListeners.signal});
   document.addEventListener('anylist:rating-popup-preference', event => {
-    preferenceChangedLocally = true;
-    showNewRatingsPopup = Boolean((event as CustomEvent<{enabled: boolean}>).detail?.enabled);
-    preferencesLoaded = true;
+    const detail=(event as CustomEvent).detail;
+    const name=detail?.name||'show_new_ratings_popup';
+    preferencesChangedLocally.add(name);
+    if(name==='show_season_rating_popup')showSeasonRatingPopup=Boolean(detail?.enabled);
+    else showNewRatingsPopup=Boolean(detail?.enabled);
     if (lastSnapshot) renderPrompt(lastSnapshot);
   }, { signal: pageListeners.signal });
   void fetch('/api/proxy/tracking/preferences', {cache: 'no-store', signal: pageListeners.signal})
     .then(response => response.ok ? response.json() : Promise.reject(new Error('Preferences unavailable')))
     .then(preferences => {
       if (pageListeners.signal.aborted) return;
-      if (preferenceChangedLocally) return;
-      showNewRatingsPopup = preferences.show_new_ratings_popup !== false;
+      if (!preferencesChangedLocally.has('show_new_ratings_popup'))showNewRatingsPopup = preferences.show_new_ratings_popup !== false;
+      if (!preferencesChangedLocally.has('show_season_rating_popup'))showSeasonRatingPopup = preferences.show_season_rating_popup !== false;
       preferencesLoaded = true;
       if (lastSnapshot) renderPrompt(lastSnapshot);
     })
     .catch(error => {
       if (pageListeners.signal.aborted) return;
-      if (preferenceChangedLocally) return;
       console.debug('Rating popup preference refresh deferred.', error);
-      showNewRatingsPopup = true;
+      if (!preferencesChangedLocally.has('show_new_ratings_popup'))showNewRatingsPopup = true;
+      if (!preferencesChangedLocally.has('show_season_rating_popup'))showSeasonRatingPopup = true;
       preferencesLoaded = true;
       if (lastSnapshot) renderPrompt(lastSnapshot);
     });

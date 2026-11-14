@@ -90,6 +90,7 @@ test('cached mixed navigation waits for approval and falls back on revocation, i
     const controller=new AbortController(),page={html:'cached',bytes:6,requiresGamesAccess:outcome!=='ordinary'};
     const state={user:'7',pages:new Map([['/home',page]]),generation:1,bytes:6,usedCached:new Set()};
     const context={URL,Date,state,document:{querySelector:()=>null,addEventListener:(_name,callback)=>handler=callback},navigator:{onLine:true},
+      location:new URL('https://example.test/browse'),returnViewKey:url=>url.pathname,returnViews:new Map(),browseReturnTarget:()=>undefined,lastBrowseView:undefined,
       closeNavigationDialogs(){},resetForIdentity(){},keyFor:()=>'/home',cacheable:()=>true,approvedGamesPage:()=>false,reusableGamesPage:()=>false,
       currentUser:()=>outcome==='other-viewer'?'8':'7',startProgress(){},finishProgress(){},clearPreview:undefined,clearNavigationFeedback:undefined,detailDestination:()=>undefined,
       cancelLoadingReveals(){},pageEntrance:undefined,detailLayoutTop:undefined,profileTabPosition:undefined,
