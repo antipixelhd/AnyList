@@ -3,10 +3,11 @@ import {stripTypeScriptTypes} from 'node:module';
 import {runInNewContext} from 'node:vm';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import {profilePanelHeader} from '../src/lib/profile-panel-request.ts';
 
 const source=readFileSync(new URL('../src/lib/profile-shell.ts',import.meta.url),'utf8');
 const select=source.slice(source.indexOf('  function select('),source.indexOf('  const target='));
-const visibility=source.slice(source.indexOf('  async function checkVisibility('),source.indexOf('  let refreshFlight:'));
+const readPage=source.slice(source.indexOf('  async function readPage('),source.indexOf('  async function read('));
 const tabs=['overview','movies','series','games','favorites','social','stats','stats/games','library'];
 const settle=()=>new Promise(setImmediate);
 
@@ -28,44 +29,38 @@ function fixture(owner=false){
     fetch:(url,options)=>new Promise((resolve,reject)=>requests.push({url,options,resolve:(status=200,redirected=false)=>resolve({status,ok:status===200,redirected}),reject})),
     show:node=>{context.shown=node;changes.push(node);},ProfileAccessChanged:class extends Error{},
   };
-  runInNewContext(stripTypeScriptTypes(visibility+select)+';this.select=select;',context);
+  runInNewContext(stripTypeScriptTypes(select)+';this.select=select;',context);
   return {context,outgoing,frame,changes,requests,waiting,redirects,events,
     switchTab:key=>context.select(key,`https://example.test/user/other/${key}`,false,true)};
 }
 
-for(const tab of tabs)test(`a ready visitor ${tab} tab keeps content visible during its visibility check`,async()=>{
+for(const tab of tabs)test(`a ready visitor ${tab} tab opens immediately without another access request`,()=>{
   const f=fixture();f.switchTab(tab);
-  assert.equal(f.context.shown,f.outgoing.root);
-  assert.deepEqual(f.changes,[],'no skeleton is mounted while permission is pending');
-  assert.equal(f.events.includes('anylist:route-progress-start'),false);
-  assert.equal(f.requests.length,1);
-  assert.equal(f.requests[0].options.cache,'no-store');
-  assert.equal(f.requests[0].options.credentials,'same-origin');
-  f.requests[0].resolve();await settle();
   assert.equal(f.context.shown,f.context.panels.get(tab).root);
   assert.deepEqual(f.changes,[f.context.panels.get(tab).root]);
+  assert.equal(f.events.includes('anylist:route-progress-start'),false);
+  assert.equal(f.requests.length,0);
   assert.deepEqual(f.waiting,[[f.outgoing.root,true],[f.outgoing.root,false]]);
 });
 
-for(const [status,redirected] of [[401,false],[403,false],[404,false],[200,true]])test(`cached tabs are not revealed after visibility response ${status}, redirected=${redirected}`,async()=>{
-  const f=fixture();f.switchTab('movies');f.requests[0].resolve(status,redirected);await settle();
-  assert.equal(f.context.shown,f.outgoing.root);assert.deepEqual(f.changes,[]);
-  assert.deepEqual(f.redirects,['https://example.test/user/other/movies']);
+for(const [status,redirected] of [[401,false],[403,false],[404,false],[200,true]])test(`fresh tab reads still reject access response ${status}, redirected=${redirected}`,async()=>{
+  const ProfileAccessChanged=class extends Error{};
+  const context={AbortSignal,signal:new AbortController().signal,ProfileAccessChanged,profilePanelHeader,
+    fetch:async()=>({status,ok:status===200,redirected})};
+  runInNewContext(stripTypeScriptTypes(readPage)+';this.readPage=readPage;',context);
+  await assert.rejects(context.readPage('/user/other/movies',context.signal),ProfileAccessChanged);
 });
 
-test('a failed visibility request leaves existing content usable without revealing the destination',async()=>{
-  const f=fixture();f.switchTab('movies');f.requests[0].reject(new Error('offline'));await settle();
-  assert.equal(f.context.shown,f.outgoing.root);assert.deepEqual(f.changes,[]);
-  assert.deepEqual(f.waiting.at(-1),[f.outgoing.root,false]);
-});
-
-test('an obsolete visibility check cannot replace the latest selected tab',async()=>{
-  const f=fixture();f.switchTab('movies');f.switchTab('series');
-  f.requests[1].resolve();await settle();
+test('a tab still being prepared cannot replace a newer ready selection',async()=>{
+  const f=fixture();let finish;
+  const first=f.context.panels.get('movies');first.preparing=new Promise(resolve=>finish=resolve);
+  f.context.prepare=panel=>panel.preparing;
+  f.switchTab('movies');assert.equal(f.context.shown,f.frame);
+  f.switchTab('series');
   const latest=f.context.panels.get('series').root;
   assert.equal(f.context.shown,latest);
-  f.requests[0].resolve();await settle();
-  assert.equal(f.context.shown,latest);assert.deepEqual(f.changes,[latest]);
+  finish();await settle();
+  assert.equal(f.context.shown,latest);assert.deepEqual(f.changes,[f.frame,latest]);
 });
 
 test('ready owner tabs still switch immediately without a visibility request',()=>{

@@ -309,7 +309,6 @@ function setup(){
     nav.setAttribute('aria-busy','true');setPanelWaiting(source,true);
     const cached=panels.get(key);
     let loading:HTMLElement|undefined;
-    // Retain usable content while a cached visitor tab awaits its visibility check.
     // Loading frames are only needed when the destination is not prepared yet.
     if (!cached?.ready||cached.preparing) {
       loading = profileLoadingFrame(key, new URL(url, location.href), nav);
@@ -323,12 +322,6 @@ function setup(){
     const isCurrent=()=>!signal.aborted&&attempt===selection&&document.body.dataset.cacheUser===viewer;
     const activate=async(panel:Panel)=>{
       if(!isCurrent())return;
-      // A cold visitor read goes straight to the authorized page endpoint.
-      if(cached&&!owner){
-        await checkVisibility();
-        if(!isCurrent())return;
-        panel.visibilityCheckedAt=Date.now();
-      }
       if(!panel.ready||panel.preparing){
         try{await prepare(panel);}
         catch(error){
@@ -420,7 +413,7 @@ function setup(){
     panel.saved=true;
   }
   function queueWarm(){
-    if(!owner||!initialReady||warming||warmFrame||warmTimer||leaving||signal.aborted||document.hidden||nav.hasAttribute('aria-busy'))return;
+    if(!initialReady||warming||warmFrame||warmTimer||leaving||signal.aborted||document.hidden||nav.hasAttribute('aria-busy'))return;
     // Yield a paint before using the main thread, including after a restored tab.
     warmFrame=requestAnimationFrame(()=>{
       warmFrame=0;warmTimer=window.setTimeout(()=>{
@@ -434,8 +427,10 @@ function setup(){
     if(current)savePanel(current);
     const links=[...nav.querySelectorAll<HTMLAnchorElement>('a[href]')].map(target);
     const missing=links.filter(next=>next&&!attempted.has(next.key)&&!panels.get(next.key)?.ready&&next.key!==active);
-    const cached=missing.find(next=>next&&(panels.has(next.key)||savedPanels?.get(returnViewKey(new URL(next.url)))||returnViews.get(returnViewKey(new URL(next.url)))));
-    const next=cached||(predictionAllowed()?missing[0]:undefined);
+    const lighter=missing.filter(next=>next&&!next.key.startsWith('stats'));
+    const candidates=lighter.length?lighter:missing;
+    const cached=candidates.find(next=>next&&(panels.has(next.key)||savedPanels?.get(returnViewKey(new URL(next.url)))||owner&&returnViews.get(returnViewKey(new URL(next.url)))));
+    const next=cached||(predictionAllowed()?candidates[0]:undefined);
     if(!next){savedPanels?.flush();return;}
     attempted.add(next.key);warming=true;
     const request=new AbortController();
@@ -473,7 +468,7 @@ function setup(){
     if(warmRequest&&warmRequest.key!==next.key)warmRequest.controller.abort();
     select(next.key,next.url,false,!!link.closest('.profile-tabs'));
   },{signal,capture:true});
-  bindPredictionIntent(host,signal,link=>{const next=target(link);if(owner&&next&&next.key!==wanted)void read(next.key,next.url).catch(()=>{});});
+  bindPredictionIntent(host,signal,link=>{const next=target(link);if(next&&next.key!==wanted)void read(next.key,next.url).catch(()=>{});});
   document.addEventListener('anylist:capture-return-view',event=>{
     if(!owner||viewer==='anonymous'||editorStore.hasPendingWrites()||shown!==panels.get(active)?.root)return;
     const {source,save}=(event as CustomEvent<CaptureReturnView>).detail;
