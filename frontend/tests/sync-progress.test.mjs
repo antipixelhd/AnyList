@@ -33,7 +33,7 @@ const job = (overrides = {}) => ({
 
 test('queued and running jobs distinguish unknown progress, real progress, and current steps', t => {
   const ui = controls(t, 'simkl');
-  const render = createSyncProgressRenderer('simkl', 'token', () => {});
+  const render = createSyncProgressRenderer('simkl', () => {});
   render(job({ status: 'pending', job_type: 'push' }));
   assert.equal(ui.label.textContent, 'Push queued…');
   assert.equal(ui.bar.style.width, '100%');
@@ -52,7 +52,7 @@ test('queued and running jobs distinguish unknown progress, real progress, and c
 
 test('import errors and completion keep dropzones hidden until the monitor expires', t => {
   const ui = controls(t, 'scrob-import');
-  const render = createSyncProgressRenderer('scrob-import', 'token', () => {});
+  const render = createSyncProgressRenderer('scrob-import', () => {});
   render(job({ status: 'failed', error_message: 'Invalid export' }));
   assert.equal(ui.items.textContent, '');
   assert.equal(ui.status.textContent, 'Invalid export');
@@ -74,7 +74,7 @@ test('provider summaries preserve their distinct counts and labels', t => {
     ['bingebase', '4 items pushed', 'Push complete'],
   ]) {
     const ui = controls(t, widget);
-    createSyncProgressRenderer(widget, 'token', () => {})(job({
+    createSyncProgressRenderer(widget, () => {})(job({
       status: 'completed', stats: { movies: 2, episodes: 3, ratings: 4, succeeded: 5, failed: 1 },
     }));
     assert.equal(ui.items.textContent, summary);
@@ -87,7 +87,7 @@ test('provider progress never exposes an independent cancellation action', async
   const ui = controls(t, 'trakt');
   let requests = 0;
   t.mock.method(globalThis, 'fetch', async () => { requests++; return new Response(null, { status: 204 }); });
-  const render = createSyncProgressRenderer('trakt', 'token', () => {});
+  const render = createSyncProgressRenderer('trakt', () => {});
   render(job());
   render(job({ processed_items: 6 }));
   assert.equal(ui.cancel.onclick, null);

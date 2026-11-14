@@ -23,7 +23,7 @@ if (me.totp_enabled) {
 <TrackerSettings title="Account">
   <div
     id="app-data"
-    data-token={token}
+    data-authenticated={!!Astro.locals.user}
     class="hidden"
     aria-hidden="true"
   ></div>
@@ -420,7 +420,7 @@ if (me.totp_enabled) {
   import type { PersonalDataSelection } from '../lib/api';
   import { showOverlay, hideOverlay, showDialog, closeDialog } from '../lib/ui-motion';
   const appData = document.getElementById('app-data');
-  const token = appData?.dataset.token ?? '';
+
 
 
   function showExportDataModal(): Promise<PersonalDataSelection | null> {
@@ -516,7 +516,7 @@ if (me.totp_enabled) {
         listConfirm.textContent = 'Deleting...';
         try {
           const response = await fetch(`/api/proxy/auth/me/lists/${selectedList}?confirm=delete`, {
-            method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
+            method: 'DELETE', headers: { },
           });
           if (!response.ok) {
             const data = await response.json();
@@ -556,7 +556,7 @@ if (me.totp_enabled) {
         try {
           const res = await fetch(`/api/proxy/auth/me`, {
             method: 'DELETE',
-            headers: { 'Authorization': `Bearer ${token}` }
+            headers: { }
           });
           if (res.ok) {
             window.location.href = '/logout';
@@ -603,7 +603,7 @@ if (me.totp_enabled) {
       try {
         const res = await fetch(`/api/proxy/auth/change-password`, {
           method: 'POST',
-          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ current_password, new_password }),
         });
 
@@ -635,7 +635,7 @@ if (me.totp_enabled) {
       try {
         const res = await fetch('/api/proxy/auth/change-email', {
           method: 'POST',
-          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email: data.get('email'), current_password: data.get('current_password') || null }),
         });
         const result = await res.json();
@@ -677,7 +677,7 @@ if (me.totp_enabled) {
           connections: String(selection.connections),
         });
         const res = await fetch(`/api/proxy/export/data?${params}`, {
-          headers: { 'Authorization': `Bearer ${token}` },
+          headers: { },
         });
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
@@ -723,7 +723,7 @@ if (me.totp_enabled) {
   import { escapeHtml as esc, showMessage, errorMessage } from '../lib/settings-feedback';
 
   const appData = document.getElementById('app-data') as HTMLElement | null;
-  const token: string = appData?.dataset.token ?? '';
+
 
   let pendingTotpSecret = '';
 
@@ -759,7 +759,7 @@ if (me.totp_enabled) {
       try {
         const res = await fetch(`/api/proxy/auth/2fa/setup`, {
           method: 'POST',
-          headers: { 'Authorization': `Bearer ${token}` },
+          headers: { },
         });
         if (!res.ok) {
           const data = await res.json();
@@ -804,7 +804,7 @@ if (me.totp_enabled) {
       try {
         const res = await fetch(`/api/proxy/auth/2fa/enable`, {
           method: 'POST',
-          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ secret: pendingTotpSecret, code }),
         });
         if (!res.ok) {
@@ -862,7 +862,7 @@ if (me.totp_enabled) {
       try {
         const res = await fetch(`/api/proxy/auth/2fa/disable`, {
           method: 'POST',
-          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ code }),
         });
         if (!res.ok) {

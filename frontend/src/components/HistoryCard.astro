@@ -127,7 +127,7 @@ const href = media.type === 'movie' ? `/media/movie/${media.tmdb_id}` : episodeH
       if (!ok) return;
 
       const eventId = card.dataset.eventId;
-      const token = (window as any).__AUTH_TOKEN__ ?? '';
+
 
       btn.disabled = true;
       btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="animate-spin"><circle cx="12" cy="12" r="10" stroke-opacity="0.25"/><path d="M12 2a10 10 0 0 1 10 10" /></svg>`;
@@ -135,7 +135,7 @@ const href = media.type === 'movie' ? `/media/movie/${media.tmdb_id}` : episodeH
       try {
         const res = await fetch(`/api/proxy/history/event/${eventId}`, {
           method: 'DELETE',
-          headers: { 'Authorization': `Bearer ${token}` },
+          headers: { },
         });
         if (!res.ok) throw new Error('Failed');
         card.style.transition = 'opacity 0.25s, transform 0.25s';

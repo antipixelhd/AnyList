@@ -52,7 +52,7 @@ test("credentials precede authorization and pending responses poll until connect
   assert.deepEqual(requests.map(request => request.url), ["/api/proxy/auth/settings", "/start"]);
   assert.equal(requests[0].options.method, "PATCH");
   assert.deepEqual(JSON.parse(requests[0].options.body), { trakt_client_id: "id", trakt_client_secret: "secret" });
-  assert.equal(requests[0].options.headers.Authorization, "Bearer fixture-token");
+  assert.equal(requests[0].options.headers.Authorization, undefined);
   assert.deepEqual(state.codes, [code]);
   await env.tick();
   assert.equal(state.connected(), 0);

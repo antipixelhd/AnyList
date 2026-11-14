@@ -166,7 +166,7 @@ const scopeLabel = scope === "write"
 <script>
   const box = document.getElementById("confirm");
   if (box) {
-    const token = (window as any).__AUTH_TOKEN__ ?? "";
+
     const code = box.dataset.code ?? "";
     const approveBtn = document.getElementById("approve-btn") as HTMLButtonElement | null;
     const denyBtn = document.getElementById("deny-btn") as HTMLButtonElement | null;
@@ -190,7 +190,7 @@ const scopeLabel = scope === "write"
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            ...(token ? { } : {}),
           },
           body: JSON.stringify(payload),
         });

@@ -186,7 +186,7 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
   number.addEventListener('change',()=>{void commitProgress(number.value);},{signal});
   number.addEventListener('blur',()=>{void commitProgress(number.value);},{signal});
   number.addEventListener('keydown',event=>{
-    if(event.key==='Enter'){event.preventDefault();number.blur();}
+    if(event.key==='Enter' && !event.isComposing && event.keyCode !== 229){event.preventDefault();number.blur();}
     if(event.key==='Escape'){event.preventDefault();event.stopPropagation();number.value=String(progress());number.blur();}
   },{signal});
   loadMore.addEventListener('click',()=>{loadMore.textContent='Load more';void loadAchievements();},{signal});
@@ -204,7 +204,7 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
   },{signal});
   firstInput.addEventListener('focusout',event=>{if(firstInput.contains(event.relatedTarget as Node)||!first.checkValidity())return;firstInput.hidden=true;firstEdit.hidden=false;renderFirst();},{signal});
   first.addEventListener('keydown',event=>{
-    if(event.key==='Enter'){event.preventDefault();first.blur();}
+    if(event.key==='Enter' && !event.isComposing && event.keyCode !== 229){event.preventDefault();first.blur();}
     if(event.key==='Escape'&&firstCorrection){
       event.preventDefault();event.stopPropagation();
       first.value=firstCorrection.first;total.value=firstCorrection.total;

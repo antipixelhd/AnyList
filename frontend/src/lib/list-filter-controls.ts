@@ -1,3 +1,4 @@
+import {bindRovingOptions} from './roving-options';
 import {listFilterLabel} from './list-filter-label.ts';
 import {placeDropdown} from './dropdown-position';
 import {reveal,dismiss,showMenu,hideMenu} from './ui-motion';
@@ -31,7 +32,7 @@ export function mountListFilterControls(root:HTMLElement,signal:AbortSignal) {
       const value = listFilterLabel(dropdown.select.value, dropdown.select.dataset.filterDefault || '', label, selected?.textContent, dropdown.select.dataset.filterShowDefault === 'true');
       dropdown.value.textContent = value;
       dropdown.trigger.setAttribute('aria-label', value === label ? label : `${label}: ${value}`);
-      dropdown.options.forEach(option=>option.setAttribute('aria-selected',String(option===selected)));
+      dropdown.options.forEach(option=>{option.setAttribute('aria-selected',String(option===selected));option.tabIndex=option===selected?0:-1;});
     }
     function closeDropdown(dropdown:FilterDropdown,restoreFocus=false) {
       if(dropdown.trigger.getAttribute('aria-expanded')!=='true')return;
@@ -49,6 +50,7 @@ export function mountListFilterControls(root:HTMLElement,signal:AbortSignal) {
       if(focusOption)(dropdown.options.find(option=>option.dataset.filterValue===dropdown.select.value)||dropdown.options[0])?.focus();
     }
     filterDropdowns.forEach(dropdown=>{
+      bindRovingOptions(dropdown.menu, '[data-filter-value]', signal);
       syncDropdown(dropdown);
       dropdown.trigger.addEventListener('click',()=>{
         if(dropdown.trigger.getAttribute('aria-expanded')==='true')closeDropdown(dropdown);

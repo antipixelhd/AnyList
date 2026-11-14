@@ -116,7 +116,7 @@ if (token) {
   (window as any).__applyResponsiveArtwork = applyResponsiveArtwork;
 </script>
 
-<script define:vars={{ token, canPick }}>
+<script define:vars={{ canPick }}>
   if (canPick) {
     const PHRASES = [
       { emoji: '🔮', text: 'Consulting the crystal ball…' },
@@ -269,7 +269,7 @@ if (token) {
       showLoading();
       try {
         const res = await fetch(`/api/proxy/media/pick?type=${type}`, {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: { },
         });
         if (res.status === 404) {
           showError('No unwatched titles found. Watch something first, or adjust your profile.');

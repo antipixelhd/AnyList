@@ -4,7 +4,7 @@ import { createImportUploader, importFormats } from "../src/lib/data-imports.ts"
 
 function session(format = importFormats[0]) {
   const started = [], errors = [];
-  const uploader = createImportUploader(format, "fixture-token", {
+  const uploader = createImportUploader(format, {
     onStarted: data => started.push(data), onError: message => errors.push(message),
   });
   return { uploader, started, errors };
@@ -25,7 +25,7 @@ for (const format of importFormats) {
     const { url, options } = requests[0];
     assert.equal(url, format.endpoint);
     assert.equal(options.method, "POST");
-    assert.deepEqual(options.headers, { Authorization: "Bearer fixture-token" });
+    assert.deepEqual(options.headers, {});
     assert.equal(options.body.get("file").name, `export${format.extension.toUpperCase()}`);
     assert.deepEqual([...options.body.keys()], ["file", ...format.options.map(option => format.fieldPrefix + option.key)]);
     for (const option of format.options) assert.equal(options.body.get(format.fieldPrefix + option.key), String(!option.secret));

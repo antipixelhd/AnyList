@@ -53,7 +53,7 @@ function page(t, fetch) {
   t.after(() => { if (previous === undefined) delete globalThis.document; else globalThis.document = previous; });
   t.mock.method(globalThis, 'fetch', fetch);
   let saved = 0;
-  const controller = mountSeasonRemap('token', () => saved++);
+  const controller = mountSeasonRemap(() => saved++);
   t.after(() => controller.stop());
   return { modal, get: id => modal.querySelector(`#${id}`), controller, saved: () => saved,
     click(button) {
@@ -107,7 +107,7 @@ test('delegated warning clicks handle nested targets and refreshed rows without 
   state.controller.stop();
   state.click(warningButton('match-show-btn', { mediaType: 'movie', seriesName: 'Movie' }));
   assert.equal(calls.length, 3);
-  const replacement = mountSeasonRemap('token', () => {});
+  const replacement = mountSeasonRemap(() => {});
   t.after(() => replacement.stop());
   state.click(warningButton('match-show-btn', { mediaType: 'movie', seriesName: 'Movie' }));
   await drain();
@@ -127,7 +127,7 @@ test('unmatching submits each media identity once while its request is pending',
     state.click(button);
     assert.equal(calls.at(-1).url, `/api/proxy/sync/unmatch-${mediaType}`);
     assert.deepEqual(JSON.parse(calls.at(-1).options.body), { [mediaType === 'movie' ? 'movie_title' : 'show_title']: 'Title' });
-    assert.equal(calls.at(-1).options.headers.Authorization, 'Bearer token');
+    assert.equal(calls.at(-1).options.headers.Authorization, undefined);
     finish(Response.json({}));
     await drain();
   }
@@ -246,7 +246,7 @@ test('navigation aborts searches and removes listeners before mounting the repla
   assert.equal(calls[0].options.signal.aborted, true);
   state.get('remap-search-btn').click();
   assert.equal(calls.length, 1);
-  const replacement = mountSeasonRemap('token', () => {});
+  const replacement = mountSeasonRemap(() => {});
   t.after(() => replacement.stop());
   state.get('remap-search-btn').click();
   assert.equal(calls.length, 2);

@@ -44,7 +44,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
 ---
 
 <TrackerSettings title={title}>
-  <div id="app-data" data-token={token} class="hidden" aria-hidden="true"></div>
+  <div id="app-data" data-authenticated={!!Astro.locals.user} class="hidden" aria-hidden="true"></div>
   <div data-connections-page class="max-w-4xl mx-auto min-w-0 w-full">
 
     <div class="settings-stack">
@@ -1013,7 +1013,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
   });
 
   const appData = document.getElementById('app-data');
-  const token = appData?.dataset.token ?? '';
+
 
   const streamPullPreferences = [
     { key: 'sync_collection', label: 'Collection status' },
@@ -1215,7 +1215,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
 
   // ── Simkl progress tracking ───────────────────────────────────────────────
 
-  const renderSimklProgress = createSyncProgressRenderer('simkl', token, message => showMessage(message, 'error'));
+  const renderSimklProgress = createSyncProgressRenderer('simkl', message => showMessage(message, 'error'));
 
   function startSimklPoller(jobId?: number) {
     void jobMonitor?.watch('simkl', {
@@ -1228,7 +1228,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
 
   // ── Trakt progress tracking ───────────────────────────────────────────────
 
-  const renderTraktProgress = createSyncProgressRenderer('trakt', token, message => showMessage(message, 'error'));
+  const renderTraktProgress = createSyncProgressRenderer('trakt', message => showMessage(message, 'error'));
 
   function startTraktPoller(jobId?: number) {
     void jobMonitor?.watch('trakt', {
@@ -1240,7 +1240,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
   }
 
   // ── Trakt export-import progress (the "Import" section's upload box) ─────
-  const renderTraktImportProgress = createSyncProgressRenderer('trakt-import', token, message => showMessage(message, 'error'));
+  const renderTraktImportProgress = createSyncProgressRenderer('trakt-import', message => showMessage(message, 'error'));
 
   function startTraktImportPoller(jobId?: number) {
     void jobMonitor?.watch('trakt-import', {
@@ -1253,7 +1253,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
 
   // ── Scrob export-import progress (the "Import" section's Scrob tab) ──────
 
-  const renderScrobImportProgress = createSyncProgressRenderer('scrob-import', token, message => showMessage(message, 'error'));
+  const renderScrobImportProgress = createSyncProgressRenderer('scrob-import', message => showMessage(message, 'error'));
 
   function startScrobImportPoller(jobId?: number) {
     void jobMonitor?.watch('manual-import', {
@@ -1266,7 +1266,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
 
   // ── Yamtrack/Floppy import progress (the "Import" section's Yamtrack tab) ──
 
-  const renderYamtrackImportProgress = createSyncProgressRenderer('yamtrack-import', token, message => showMessage(message, 'error'));
+  const renderYamtrackImportProgress = createSyncProgressRenderer('yamtrack-import', message => showMessage(message, 'error'));
 
   function startYamtrackImportPoller(jobId?: number) {
     void jobMonitor?.watch('yamtrack-import', {
@@ -1278,7 +1278,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
   }
 
   // ── MDBList progress tracking ─────────────────────────────────────────────
-  const renderMdblistProgress = createSyncProgressRenderer('mdblist', token, message => showMessage(message, 'error'));
+  const renderMdblistProgress = createSyncProgressRenderer('mdblist', message => showMessage(message, 'error'));
 
   function startMdblistPoller(jobId?: number) {
     void jobMonitor?.watch('mdblist', {
@@ -1291,7 +1291,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
 
   // ── Bingebase progress tracking ───────────────────────────────────────────
 
-  const renderBingebaseProgress = createSyncProgressRenderer('bingebase', token, message => showMessage(message, 'error'));
+  const renderBingebaseProgress = createSyncProgressRenderer('bingebase', message => showMessage(message, 'error'));
 
   function startBingebasePoller(jobId?: number) {
     void jobMonitor?.watch('bingebase', {
@@ -1306,7 +1306,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
     jobMonitor?.stop();
     jobMonitor = undefined;
     if (!document.querySelector('[data-connections-page]')) return;
-    jobMonitor = createSyncJobMonitor(document.getElementById('app-data')?.dataset.token ?? '');
+    jobMonitor = createSyncJobMonitor();
     void jobMonitor.watch('account-cycle', {
       matches: job => job.job_type === 'pull_cycle',
       persistent: true,
@@ -1318,7 +1318,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
         const button = document.querySelector<HTMLButtonElement>('[data-action="sync_account"]');
         if (button) {
           if (job && ['pending', 'running'].includes(job.status)) {
-            wireCancelButton(button, job, token, message => showMessage(message, 'error'));
+            wireCancelButton(button, job, message => showMessage(message, 'error'));
           } else {
             resetCancelButton(button);
             button.textContent = 'Sync now';
@@ -1393,7 +1393,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
   }
 
   async function checkConnections() {
-    if (!token) return;
+    if (document.getElementById('app-data')?.dataset.authenticated !== 'true') return;
     const traktConnected = !!document.querySelector<HTMLButtonElement>('#trakt-disconnect-btn');
     const simklConnected = !!document.querySelector<HTMLButtonElement>('#simkl-disconnect-btn');
     const mdblistConfigured = !!document.querySelector<HTMLInputElement>('#mdblist_api_key')?.value;
@@ -1413,7 +1413,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
 
     try {
       const res = await fetch('/api/proxy/auth/connection-status', {
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers: { }
       });
       if (!res.ok) return;
       const data = await res.json();
@@ -1474,7 +1474,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
     listEl.classList.add('italic', 'text-zinc-500');
     try {
       const res = await fetch(`/api/proxy/sync/connection/${connId}/libraries`, {
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers: { }
       });
       if (res.ok) {
         const data = await res.json();
@@ -1522,7 +1522,6 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
     const res = await fetch('/api/proxy/auth/settings', {
       method: 'PATCH',
       headers: {
-        'Authorization': `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(preferences),
@@ -1537,7 +1536,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
   const postIntegrationCredentials = (path: string, credentials: Record<string, string>) =>
     fetch(path, {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(credentials),
     });
 
@@ -1549,7 +1548,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
       if (btn.parentNode) {
         btn.parentNode.replaceChild(newBtn, btn);
       }
-      
+
       newBtn.addEventListener('click', async () => {
         const action = newBtn.getAttribute('data-action');
         if (action === 'sync_account' && newBtn.dataset.cycleActive === 'true') return;
@@ -1572,7 +1571,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
           if (action === 'save_pull_schedule') {
             const value = (document.getElementById('account-pull-interval') as HTMLSelectElement).value;
             const response = await fetch('/api/proxy/sync/schedule', {
-              method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+              method: 'PUT', headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ interval: value ? Number(value) : null }),
             });
             if (!response.ok) throw new Error('Could not save pull interval');
@@ -1589,7 +1588,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
             const ui = (card?.querySelector('.conn-user-id-input') as HTMLInputElement)?.value || '';
             if (connType === 'stremio') {
               const statusResponse = await fetch('/api/proxy/auth/connection-status', {
-                headers: { 'Authorization': `Bearer ${token}` },
+                headers: { },
               });
               const statusData = await statusResponse.json();
               const connectionStatus = (statusData.connections || []).find(
@@ -1609,7 +1608,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
             if (connType === 'nuvio') {
               testRes = await fetch('/api/proxy/auth/test-nuvio', {
                 method: 'POST',
-                headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ url: u, token: t, profile_id: parseInt(ui) }),
               });
             } else {
@@ -1626,7 +1625,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
               if (connType === 'nuvio' && connId) {
                 const saveTokenRes = await fetch(`/api/proxy/auth/connections/${connId}`, {
                   method: 'PATCH',
-                  headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                  headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ token: testData.refresh_token }),
                 });
                 if (!saveTokenRes.ok) throw new Error('Nuvio session was validated but could not be saved');
@@ -1660,7 +1659,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
             }
             const saveRes = await fetch(`/api/proxy/auth/connections/${connId}`, {
               method: 'PATCH',
-              headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+              headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(body),
             });
             if (!saveRes.ok) {
@@ -1682,7 +1681,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
               const libPayload = pickerType === 'plex' ? { library_keys: ids } : { library_ids: ids };
               const libraryRes = await fetch(`/api/proxy/sync/connection/${connId}/libraries`, {
                 method: 'PUT',
-                headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(libPayload),
               });
               if (!libraryRes.ok) {
@@ -1704,7 +1703,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
             });
             const res = await fetch(`/api/proxy/auth/scrobble-connections/${connId}`, {
               method: 'PATCH',
-              headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+              headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(body),
             });
             if (!res.ok) {
@@ -1716,7 +1715,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
           } else if (trackingSettings) {
             const response = await fetch('/api/proxy/auth/settings', {
               method: 'PATCH',
-              headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+              headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(trackingSettings.body),
             });
             if (!response.ok) {
@@ -1728,7 +1727,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
           } else if (action === 'push_bingebase') {
             const pushRes = await fetch('/api/proxy/bingebase/push', {
               method: 'POST',
-              headers: { 'Authorization': `Bearer ${token}` }
+              headers: { }
             });
             const data = await pushRes.json();
             if (!pushRes.ok) throw new Error(data.detail || 'Bingebase push failed to start');
@@ -1740,7 +1739,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
             const name = provider === 'radarr' ? 'Radarr' : 'Sonarr';
             const response = await fetch('/api/proxy/auth/settings', {
               method: 'PATCH',
-              headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+              headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(arrSettings(provider)),
             });
             if (!response.ok) {
@@ -1755,7 +1754,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
             if (!confirm(`Delete scrobble connection "${connName}"? This cannot be undone.`)) return;
             const delRes = await fetch(`/api/proxy/auth/scrobble-connections/${connId}`, {
               method: 'DELETE',
-              headers: { 'Authorization': `Bearer ${token}` },
+              headers: { },
             });
             if (!delRes.ok) {
               const err = await delRes.json();
@@ -1770,7 +1769,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
             if (!confirm(`Delete connection "${connName}"? This cannot be undone.`)) return;
             const delRes = await fetch(`/api/proxy/auth/connections/${connId}`, {
               method: 'DELETE',
-              headers: { 'Authorization': `Bearer ${token}` },
+              headers: { },
             });
             if (!delRes.ok) {
               const err = await delRes.json();
@@ -1977,7 +1976,6 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
           const res = await fetch(url, {
             method,
             headers: {
-              'Authorization': `Bearer ${token}`,
               ...(requestBody ? { 'Content-Type': 'application/json' } : {}),
             },
             body: requestBody ? JSON.stringify(requestBody) : undefined,
@@ -1989,7 +1987,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
             showMessage(data.message || 'Action successful!', 'success');
             if (action === 'sync_account') {
               newBtn.dataset.cycleActive = 'true';
-              wireCancelButton(newBtn, { id: data.job_id, job_type: 'pull_cycle' }, token, message => showMessage(message, 'error'));
+              wireCancelButton(newBtn, { id: data.job_id, job_type: 'pull_cycle' }, message => showMessage(message, 'error'));
               setupJobMonitoring();
             }
             if (syncConnId) {
@@ -2041,7 +2039,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
 
     dataImports?.stop();
     if (document.querySelector('[data-connections-page]')) {
-      dataImports = mountDataImports(document.getElementById('app-data')?.dataset.token ?? '', (format, jobId) => {
+      dataImports = mountDataImports((format, jobId) => {
         if (format === 'trakt') {
           startTraktPoller();
           if (jobId) startTraktImportPoller(jobId);
@@ -2121,7 +2119,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
           const reauthUrl = reauthUrlInput?.value.trim() || defaultUrl;
           const loginRes = await fetch(loginEndpoint, {
             method: 'POST',
-            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ email, password, url: reauthUrl }),
           });
           const loginData = await loginRes.json();
@@ -2143,7 +2141,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
 
           const saveRes = await fetch(`/api/proxy/auth/connections/${connId}`, {
             method: 'PATCH',
-            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ token: loginData.refresh_token, server_user_id: profileSelect.value }),
           });
           const saved = await saveRes.json();
@@ -2197,7 +2195,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
         try {
           const response = await fetch('/api/proxy/auth/stremio/link/start', {
             method: 'POST',
-            headers: { 'Authorization': `Bearer ${token}` },
+            headers: { },
           });
           const link = await response.json();
           if (!response.ok) throw new Error(link.detail || 'Could not create the Stremio link.');
@@ -2216,7 +2214,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
               }
               const pollResponse = await fetch('/api/proxy/auth/stremio/link/poll', {
                 method: 'POST',
-                headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ code: link.code, connection_id: connId ? parseInt(connId) : undefined }),
               });
               const result = await pollResponse.json();
@@ -2474,7 +2472,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
         const endpoint = isArvio ? '/api/proxy/auth/arvio-login' : '/api/proxy/auth/nuvio-login';
         response = await fetch(endpoint, {
           method: 'POST',
-          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email, password, url }),
         });
         data = await response.json();
@@ -2484,7 +2482,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
         const testEndpoint = isArvio ? '/api/proxy/auth/test-arvio' : '/api/proxy/auth/test-nuvio';
         const testRes = await fetch(testEndpoint, {
           method: 'POST',
-          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ url, token: password, profile_id: selectedProfile || '0' }),
         });
         const testData = await testRes.json();
@@ -2535,7 +2533,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
       try {
         const response = await fetch('/api/proxy/auth/stremio/link/start', {
           method: 'POST',
-          headers: { 'Authorization': `Bearer ${token}` },
+          headers: { },
         });
         const link = await response.json();
         if (!response.ok) throw new Error(link.detail || 'Could not create the Stremio link.');
@@ -2559,7 +2557,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
             }
             const pollResponse = await fetch('/api/proxy/auth/stremio/link/poll', {
               method: 'POST',
-              headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+              headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 code: link.code,
                 name,
@@ -2607,7 +2605,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
       try {
         const startRes = await fetch('/api/proxy/auth/plex/pin/start', {
           method: 'POST',
-          headers: { 'Authorization': `Bearer ${token}` },
+          headers: { },
         });
         const start = await startRes.json();
         if (!startRes.ok) throw new Error(start.detail || 'Could not start the Plex login.');
@@ -2622,7 +2620,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
             if (Date.now() >= expiresAt) throw new Error('Plex login expired. Try again.');
             const pollRes = await fetch('/api/proxy/auth/plex/pin/poll', {
               method: 'POST',
-              headers: { 'Authorization': `Bearer ${token}` },
+              headers: { },
             });
             const result = await pollRes.json();
             if (!pollRes.ok) throw new Error(result.detail || 'Plex login failed.');
@@ -2761,7 +2759,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
 
           const res = await fetch('/api/proxy/auth/connections', {
             method: 'POST',
-            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
           });
           if (!res.ok) {
@@ -2843,7 +2841,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
         try {
           const res = await fetch('/api/proxy/auth/scrobble-connections', {
             method: 'POST',
-            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
           });
           if (!res.ok) {
@@ -2865,7 +2863,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
     if (!form) return;
 
     // Plex "Also monitor users" — toggle picker visibility and lazy-load friends
-    async function loadPlexFriends(picker: HTMLElement, token: string) {
+    async function loadPlexFriends(picker: HTMLElement) {
       const connId = picker.getAttribute('data-conn-id');
       const monitored: string[] = JSON.parse(picker.getAttribute('data-monitored') || '[]');
       const list = picker.querySelector('.plex-user-list') as HTMLElement;
@@ -2873,7 +2871,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
       list.innerHTML = '<p class="text-xs text-zinc-500 italic">Loading users…</p>';
       try {
         const res = await fetch(`/api/proxy/sync/connection/${connId}/plex-friends`, {
-          headers: { 'Authorization': `Bearer ${token}` },
+          headers: { },
         });
         if (!res.ok) throw new Error('Failed to load users');
         const data = await res.json();
@@ -2884,11 +2882,11 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
         list.innerHTML = data.friends.map((f: any) => `
           <label class="flex items-center gap-3 cursor-pointer group">
             <input type="checkbox" class="plex-user-checkbox w-4 h-4 rounded cursor-pointer"
-              data-user-id="${f.watchlist_id}"
+              data-user-id="${esc(String(f.watchlist_id))}"
               ${monitored.includes(f.watchlist_id) ? 'checked' : ''}
             />
             <span class="text-sm text-zinc-300 group-hover:text-zinc-100 transition-colors">
-              ${f.display_name || f.username}
+              ${esc(f.display_name || f.username)}
             </span>
           </label>
         `).join('');
@@ -2906,7 +2904,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
       btn.addEventListener('click', () => {
         const open = !picker.classList.contains('hidden') && !picker.inert;
         if (open) void hideCollapsible(picker);
-        else { showCollapsible(picker); loadPlexFriends(picker, token); }
+        else { showCollapsible(picker); loadPlexFriends(picker); }
         btn.setAttribute('aria-expanded', String(!open));
         if (chevron) chevron.style.transform = open ? '' : 'rotate(180deg)';
       });
@@ -2977,7 +2975,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
         try {
           const res = await fetch(`/api/proxy/auth/api-key/regenerate`, {
             method: 'POST',
-            headers: { 'Authorization': `Bearer ${token}` },
+            headers: { },
           });
           if (!res.ok) {
             const data = await res.json();
@@ -3009,7 +3007,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
         try {
           const res = await fetch(`/api/proxy/auth/device/grants/${id}`, {
             method: 'DELETE',
-            headers: { 'Authorization': `Bearer ${token}` },
+            headers: { },
           });
           if (!res.ok) throw new Error();
           row?.remove();
@@ -3074,12 +3072,12 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
 
   async function loadLastSynced() {
     const appData = document.getElementById('app-data') as HTMLElement | null;
-    const token = appData?.dataset.token ?? '';
-    if (!token) return;
+
+    if (document.getElementById('app-data')?.dataset.authenticated !== 'true') return;
 
     try {
       const res = await fetch('/api/proxy/sync/status', {
-        headers: { 'Authorization': `Bearer ${token}` },
+        headers: { },
       });
       if (!res.ok) return;
       const jobs: any[] = await res.json();
@@ -3115,8 +3113,8 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
 
   async function loadSyncWarnings() {
     const appData = document.getElementById('app-data') as HTMLElement | null;
-    const token = appData?.dataset.token ?? '';
-    if (!token) return;
+
+    if (document.getElementById('app-data')?.dataset.authenticated !== 'true') return;
 
     try {
       // Remember which warning detail panes are currently open so we can restore them after rebuild
@@ -3126,9 +3124,9 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
       });
 
       const [statusRes, overridesRes, matchedRes] = await Promise.all([
-        fetch('/api/proxy/sync/status', { headers: { 'Authorization': `Bearer ${token}` } }),
-        fetch('/api/proxy/sync/season-overrides', { headers: { 'Authorization': `Bearer ${token}` } }),
-        fetch('/api/proxy/sync/matched-shows', { headers: { 'Authorization': `Bearer ${token}` } }),
+        fetch('/api/proxy/sync/status', { headers: { } }),
+        fetch('/api/proxy/sync/season-overrides', { headers: { } }),
+        fetch('/api/proxy/sync/matched-shows', { headers: { } }),
       ]);
       if (!statusRes.ok) return;
       const jobs: any[] = await statusRes.json();
@@ -3436,7 +3434,7 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
 
   function setupSeasonRemap() {
     seasonRemap?.stop();
-    seasonRemap = mountSeasonRemap(document.getElementById('app-data')?.dataset.token ?? '', loadSyncWarnings);
+    seasonRemap = mountSeasonRemap(loadSyncWarnings);
   }
 
   function setupConnectionsPage() {

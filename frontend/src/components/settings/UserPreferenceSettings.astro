@@ -109,7 +109,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
 ---
 
 
-  <div id="app-data" data-token={token} class="hidden" aria-hidden="true"></div>
+  <div id="app-data" data-authenticated={!!Astro.locals.user} class="hidden" aria-hidden="true"></div>
   <div class="profile-settings" data-preference-settings data-username={me.username}>
     <div id="js-message" class="hidden" role="status" aria-live="polite"></div>
     {category === "profile" && (
@@ -405,7 +405,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
     if (!page || page.dataset.initialized) return;
     page.dataset.initialized = 'true';
     const appData = document.getElementById('app-data');
-    const token = appData?.dataset.token ?? '';
+
 
 
 
@@ -438,7 +438,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
     async function patchProfile(change: Record<string, unknown>) {
       const response = await fetch('/api/proxy/profile/me', {
         method: 'PATCH',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(change),
       });
       if (!response.ok) {
@@ -786,7 +786,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
     async function poll() {
       try {
         const res = await fetch('/api/proxy/profile/me/translations/backfill/status', {
-          headers: { 'Authorization': `Bearer ${token}` },
+          headers: { },
         });
         if (!res.ok) return;
         applyStatus(await res.json() as BackfillStatus);
@@ -802,7 +802,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
     async function initStatus() {
       try {
         const res = await fetch('/api/proxy/profile/me/translations/backfill/status', {
-          headers: { 'Authorization': `Bearer ${token}` },
+          headers: { },
         });
         if (!res.ok) return;
         const s = await res.json() as BackfillStatus;
@@ -823,7 +823,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
       try {
         const res = await fetch('/api/proxy/profile/me/translations/backfill', {
           method: 'POST',
-          headers: { 'Authorization': `Bearer ${token}` },
+          headers: { },
         });
         if (!res.ok) {
           const d = await res.json() as { detail?: string };
@@ -851,7 +851,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
       try {
         await fetch('/api/proxy/profile/me/translations/backfill', {
           method: 'DELETE',
-          headers: { 'Authorization': `Bearer ${token}` },
+          headers: { },
         });
         backfillCancelBtn.classList.add('hidden');
         if (backfillLabel) backfillLabel.textContent = 'Cancelling…';
@@ -873,7 +873,7 @@ const COUNTRIES = category === 'media' ? (await api.profile.countries(token!)).m
       if (!val) backfillSection?.classList.add('hidden');
     });
 
-    if (token && backfillSection) initStatus();
+    if (backfillSection) initStatus();
   }
 
   setup();

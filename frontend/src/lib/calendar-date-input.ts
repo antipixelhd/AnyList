@@ -1,3 +1,4 @@
+import {bindRovingOptions} from './roving-options';
 import AirDatepicker from 'air-datepicker';
 import englishLocale from 'air-datepicker/locale/en';
 import type {AirDatepickerLocale} from 'air-datepicker';
@@ -70,6 +71,12 @@ export function setupCalendarDateInputs(root: ParentNode, signal: AbortSignal, o
       month.textContent = localeEn.months[picker.viewDate.getMonth()];
       month.hidden = picker.currentView !== 'days';
       position();
+      queueMicrotask(() => {
+        if (signal.aborted || !panel) return;
+        const cells=[...panel.querySelectorAll<HTMLElement>('.air-datepicker-cell:not(.-disabled-)')];
+        const active=cells.find(cell=>cell===document.activeElement)||cells.find(cell=>cell.tabIndex===0)||cells.find(cell=>cell.classList.contains('-current-'))||cells[0];
+        cells.forEach(cell=>cell.tabIndex=cell===active?0:-1);
+      });
     };
     const open = () => {
       if (input.disabled || display.disabled) return;
@@ -93,11 +100,12 @@ export function setupCalendarDateInputs(root: ParentNode, signal: AbortSignal, o
         panel.append(header);
         const host = document.createElement('div');
         panel.append(host);
+        bindRovingOptions(host, '.air-datepicker-cell', signal);
         picker = new AirDatepicker(host, {
           inline:true, locale:{...localeEn, daysMin:localeEn.daysShort}, firstDay:0,
           fixedHeight:true, toggleSelected:false,
           onChangeViewDate:updateHeader, onChangeView:updateHeader,
-          onRenderCell:({date, cellType}) => ({attrs:{tabindex:'0', role:'button', 'aria-label':cellType === 'day' ? formatDate(localToday(date)) : cellType === 'month' ? localeEn.months[date.getMonth()] : String(date.getFullYear())}}),
+          onRenderCell:({date, cellType}) => ({attrs:{tabindex:localToday(date)===(input.value||localToday())?'0':'-1', role:'button', 'aria-pressed':String(localToday(date)===input.value), 'aria-label':cellType === 'day' ? formatDate(localToday(date)) : cellType === 'month' ? localeEn.months[date.getMonth()] : String(date.getFullYear())}}),
           onSelect:({date}) => {
             if (!(date instanceof Date)) return;
             input.value = localToday(date);
@@ -132,7 +140,7 @@ export function setupCalendarDateInputs(root: ParentNode, signal: AbortSignal, o
             event.preventDefault(); cell.click();
           } else if (['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key)) {
             event.preventDefault();
-            const cells = Array.from(cell.parentElement!.querySelectorAll<HTMLElement>('.air-datepicker-cell'));
+            const cells = Array.from(cell.parentElement!.querySelectorAll<HTMLElement>('.air-datepicker-cell:not(.-disabled-)'));
             const columns = picker!.currentView === 'days' ? 7 : picker!.currentView === 'months' ? 3 : 4;
             const delta = event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : event.key === 'ArrowUp' ? -columns : columns;
             cells[(cells.indexOf(cell) + delta + cells.length) % cells.length]?.focus();

@@ -68,18 +68,20 @@ const PUBLIC_MEDIA_ROWS_PROXY_RE =
 const ADMIN_ONLY_ROUTES = ["/docs", "/redoc", "/openapi.json"];
 
 // Security headers added to every response.
-// CSP is intentionally omitted — Astro's define:vars emits inline <script>
-// blocks whose hashes change every build, making a static policy impractical.
+// Stage one observes inline scripts and DOM sinks without blocking existing UI.
+// Do not request script samples: inline scripts may contain private page data.
 const SECURITY_HEADERS: Record<string, string> = {
   "X-Frame-Options": "DENY",
   "X-Content-Type-Options": "nosniff",
   "Referrer-Policy": "strict-origin-when-cross-origin",
   "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+  "Content-Security-Policy-Report-Only": "script-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; report-uri /api/csp-report; report-to csp",
 };
 
 export const onRequest = defineMiddleware(async (context, next) => {
   const token = context.cookies.get(sessionCookieName("token"))?.value;
   const { pathname } = context.url;
+  if (pathname === '/api/csp-report') return next();
   context.locals.profilePanel = profilePanelRequest(context.request);
 
   if (context.request.method === 'GET' || context.request.method === 'HEAD') {
@@ -235,6 +237,9 @@ export const onRequest = defineMiddleware(async (context, next) => {
   }
 
   const response = await next();
+  if (response.headers.get('Content-Type')?.includes('text/html')) {
+    response.headers.set('Reporting-Endpoints', `csp="${context.url.origin}/api/csp-report"`);
+  }
   if(profilePagePath.test(pathname)){
     response.headers.append('Vary',profilePanelHeader);
     response.headers.set('Cache-Control','private, no-store');

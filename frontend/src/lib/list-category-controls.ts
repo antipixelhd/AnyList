@@ -150,7 +150,7 @@ export function mountCategoryControls(root: HTMLElement, initial: CategoryPresen
   document.addEventListener('anylist:profile-tab-changed', () => {if (mode) finish(false);}, {signal});
   section.addEventListener('keydown', event => {
     if (event.key === 'Escape' && !busy) {event.preventDefault(); finish();}
-    if (event.key === 'Enter' && event.target instanceof HTMLInputElement) {event.preventDefault(); save.click();}
+    if (event.key === 'Enter' && !event.isComposing && event.keyCode !== 229 && event.target instanceof HTMLInputElement) {event.preventDefault(); save.click();}
   }, {signal});
   save.addEventListener('click', async () => {
     if (busy) return;
