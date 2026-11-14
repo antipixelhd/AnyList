@@ -67,6 +67,7 @@ export type DetailMedia = EditorTitle & {
   countries: string[]; pages?: number; creators?: {name: string}[]; networks?: {name: string}[];
   tmdb_score?: number | null; imdb_score?: number | null; rt_critic_score?: number | null; rt_audience_score?: number | null;
   imdb_id?: string; tvdb_id?: number; tracking_available?: boolean;
+  has_game_children?:boolean;
   base_game?:{id:number;title:string;image_url?:string|null}|null;
 };
 export const kindLabel = {movie:'Movie', series:'Series', game:'Game', book:'Book'};

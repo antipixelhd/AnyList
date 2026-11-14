@@ -307,7 +307,9 @@ async def game_primary_details(db, work):
             sources.append(source_link(row.provider,url,homepage=bool(homepage)))
     identities = list(await db.scalars(select(CatalogueIdentity).where(CatalogueIdentity.entity_id == work.id,
         CatalogueIdentity.namespace == 'steam.app')))
-    return {**primary_details(work), 'sources':game_source_links(work,sources,identities), 'releases':await game_releases(db, work)}
+    from core.game_children import has_children
+    return {**primary_details(work), 'has_game_children':await has_children(db,work),
+        'sources':game_source_links(work,sources,identities), 'releases':await game_releases(db, work)}
 
 
 async def catalogue_title(db, work, viewer_id=None, *, store_country=None, enqueue_offers=False,enqueue_ratings=False,enqueue_info=False,identities=None):
@@ -328,6 +330,7 @@ async def catalogue_title(db, work, viewer_id=None, *, store_country=None, enque
     if work.kind == 'game':
         from core.game_types import capabilities
         from core import game_tracking
+        from core.game_children import has_children
         caps = capabilities(work.attributes)
         state = (await game_tracking.states(db, viewer_id, [work.id]))[0] if viewer_id else None
         base = None
@@ -340,6 +343,7 @@ async def catalogue_title(db, work, viewer_id=None, *, store_country=None, enque
             except HTTPException:
                 pass  # Preserve metadata pages while an uncertain base is resolved.
         personal = {'subject': {'kind': 'game', 'catalogue_id': work.id}, 'game_class': caps.game_class,
+            'has_game_children': await has_children(db,work),
             'base_work_id': base.id if base else None,
             'base_game': {'id': base.id, 'title': base.name, 'image_url': image(base.image_url)} if base else None,
             'game_state': state.model_dump(mode='json') if state else None,

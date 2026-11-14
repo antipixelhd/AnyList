@@ -76,8 +76,9 @@ const achievementsVisible=!!achievementSummary.mode||!!achievementSummary.total|
 const creators=detailCreators(people);
 const typeHref=title&&detailBrowseHref(title.type);
 const yearHref=title?.year&&detailBrowseHref(title.type,{year:title.year});
-const tabs=[{id:'overview',label:'Overview'},...(title?.type==='series'?[{id:'seasons',label:'Seasons'}]:[]),...(gameTitle&&!gameChild&&trackable?[{id:'dlc',label:'DLC'},...(signedIn?[{id:'achievements',label:'Achievements'}]:[])]:[]),...(signedIn&&trackable?[{id:'social',label:'Social'}]:[]),...(trackable||people.length?[{id:'people',label:trackable?'Cast & crew':'Creators'}]:[]),...(screenTitle||gameTitle||artwork.length?[{id:'artwork',label:'Artwork'}]:[])];
-const initialTab=tabs.find(tab=>tab.id===Astro.url.searchParams.get('tab')&&!(tab.id==='people'&&gamePeopleEmpty)&&!(tab.id==='artwork'&&gameTitle&&!artwork.length&&!gamePrimaryPending))?.id||'overview';
+const dlcAvailable=title?.has_game_children===true;
+const tabs=[{id:'overview',label:'Overview'},...(title?.type==='series'?[{id:'seasons',label:'Seasons'}]:[]),...(gameTitle&&!gameChild&&trackable&&signedIn?[{id:'achievements',label:'Achievements'}]:[]),...(signedIn&&trackable?[{id:'social',label:'Social'}]:[]),...(trackable||people.length?[{id:'people',label:trackable?'Cast & crew':'Creators'}]:[]),...(screenTitle||gameTitle||artwork.length?[{id:'artwork',label:'Artwork'}]:[]),...(gameTitle&&!gameChild&&trackable?[{id:'dlc',label:'DLC'}]:[])];
+const initialTab=tabs.find(tab=>tab.id===Astro.url.searchParams.get('tab')&&!(tab.id==='dlc'&&!dlcAvailable)&&!(tab.id==='people'&&gamePeopleEmpty)&&!(tab.id==='artwork'&&gameTitle&&!artwork.length&&!gamePrimaryPending))?.id||'overview';
 // Discover only the primary preview in the head, ahead of the large credit JSON.
 const initialArtwork=[
   ...(poster?[{...poster,priority:'high'}]:[]),
@@ -121,7 +122,7 @@ const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
     </aside>
     <div class="lab-main">
       {title.base_game&&<a class="game-base-link" href={`/games/${title.base_game.id}`}><span>Base game</span><strong>{title.base_game.title}</strong><Icon name="arrow-right"/></a>}
-      <div class="lab-section-navigation"><div class="lab-tabs" role="tablist" aria-label="Media details">{tabs.map(tab=><button type="button" role="tab" id={`detail-tab-${tab.id}`} aria-controls={`detail-panel-${tab.id}`} aria-selected={tab.id===initialTab} tabindex={tab.id===initialTab?0:-1} data-detail-tab={tab.id} hidden={tab.id==='achievements'&&!achievementsVisible||tab.id==='artwork'&&gameTitle&&!artwork.length&&!gamePrimaryPending} disabled={tab.id==='people'&&gamePeopleEmpty||tab.id==='achievements'&&!achievementsVisible||tab.id==='artwork'&&gameTitle&&!artwork.length&&!gamePrimaryPending}>{tab.label}</button>)}</div></div>
+      <div class="lab-section-navigation"><div class="lab-tabs" role="tablist" aria-label="Media details">{tabs.map(tab=><button type="button" role="tab" id={`detail-tab-${tab.id}`} aria-controls={`detail-panel-${tab.id}`} aria-selected={tab.id===initialTab} tabindex={tab.id===initialTab?0:-1} data-detail-tab={tab.id} hidden={tab.id==='dlc'&&!dlcAvailable||tab.id==='achievements'&&!achievementsVisible||tab.id==='artwork'&&gameTitle&&!artwork.length&&!gamePrimaryPending} disabled={tab.id==='dlc'&&!dlcAvailable||tab.id==='people'&&gamePeopleEmpty||tab.id==='achievements'&&!achievementsVisible||tab.id==='artwork'&&gameTitle&&!artwork.length&&!gamePrimaryPending}>{tab.label}</button>)}</div></div>
       <div data-detail-panels>
         <div class="lab-panel" id="detail-panel-overview" role="tabpanel" aria-labelledby="detail-tab-overview" data-detail-panel="overview" hidden={initialTab!=='overview'}>
           <div class="lab-overview-grid">

@@ -11,7 +11,7 @@ for(const moved of [false,true])test(`empty DLC retry restores focus unless the 
   const more={addEventListener(){},set disabled(value){if(value&&document.activeElement===this)document.activeElement=document.body;}};
   const overview={click(){selected=true;},focus(){focused=true;document.activeElement=this;}};
   const host={contains(node){return node===more;},querySelector(selector){return selector.includes('-rows')?rows:selector.includes('-status')?status:more;}};
-  const root={querySelector(selector){return selector==='[data-game-dlc]'?host:selector.includes('"dlc"')?tab:overview;}};
+  const root={addEventListener(){},querySelector(selector){return selector==='[data-game-dlc]'?host:selector.includes('"dlc"')?tab:overview;}};
   const controller=new AbortController();
   const context={document,editorStore:{},setTimeout(){return 0;},clearTimeout(){},fetch:()=>new Promise(resolve=>release=resolve)};
   const source=readFileSync(new URL('../src/lib/media-detail-dlc.ts',import.meta.url),'utf8');
@@ -25,4 +25,23 @@ for(const moved of [false,true])test(`empty DLC retry restores focus unless the 
   assert.equal(tab.hidden,true);assert.equal(selected,true);
   assert.equal(focused,!moved);
   assert.equal(document.activeElement,moved?outside:overview);
+});
+
+
+test('DLC stays hidden until matching primary evidence confirms playable children, without fetching cards',()=>{
+  const handlers={},controller=new AbortController();let requests=0;
+  const tab={hidden:true,disabled:true,tabIndex:-1,dataset:{}};
+  const host={querySelector:()=>({addEventListener(){}})};
+  const root={querySelector:s=>s==='[data-game-dlc]'?host:tab,addEventListener:(name,fn)=>handlers[name]=fn};
+  const context={document:{addEventListener(){}},fetch(){requests++;}};
+  const source=readFileSync(new URL('../src/lib/media-detail-dlc.ts',import.meta.url),'utf8');
+  runInNewContext(stripTypeScriptTypes(source.replace(/^import .*$/gm,'').replace(/export /g,''))+';globalThis.mount=mountDetailDlc;',context);
+  context.mount(root,42,controller.signal);
+  const publish=data=>handlers['anylist:game-primary']({detail:data});
+  publish({id:42});publish({id:42,has_game_children:false});publish({id:99,has_game_children:true});
+  assert.equal(tab.hidden,true);assert.equal(tab.disabled,true);assert.equal(requests,0);
+  publish({id:42,has_game_children:true});
+  assert.equal(tab.hidden,false);assert.equal(tab.disabled,false);assert.equal(tab.dataset.dlcRevealed,'true');
+  assert.equal(tab.tabIndex,-1,'revealing does not steal tab selection or focus');assert.equal(requests,0);
+  tab.hidden=true;controller.abort();publish({id:42,has_game_children:true});assert.equal(tab.hidden,true);
 });

@@ -9,10 +9,8 @@ from core.game_types import capabilities,NONPLAYABLE_DLC_NAME
 from models.catalogue import CatalogueEntity,CatalogueRelationship,MetadataSnapshot
 
 
-async def children(db,work_id,user_id,*,offset=0,limit=24):
-    base=await work(db,work_id)
-    if not capabilities(base.attributes).independent:
-        raise HTTPException(422,'An independently playable base game is required')
+def eligible_children(work_id):
+    """Canonical playable-child membership shared by detail hints and paging."""
     other=aliased(CatalogueRelationship)
     kind=CatalogueEntity.attributes['game_class'].astext
     # A relation field alone is not enough: IGDB dlcs can contain packs. Match
@@ -26,6 +24,22 @@ async def children(db,work_id,user_id,*,offset=0,limit=24):
         CatalogueRelationship.target_id==work_id,CatalogueRelationship.relation==kind,
         CatalogueRelationship.attributes['source_active'].astext.is_distinct_from('false'),
         unique_base==1).distinct().subquery()
+    return eligible
+
+
+async def has_children(db,work):
+    if not capabilities(work.attributes).independent:
+        return False
+    eligible=eligible_children(work.id)
+    return bool(await db.scalar(select(select(eligible.c.id).exists())))
+
+
+async def children(db,work_id,user_id,*,offset=0,limit=24):
+    base=await work(db,work_id)
+    if not capabilities(base.attributes).independent:
+        raise HTTPException(422,'An independently playable base game is required')
+    eligible=eligible_children(work_id)
+    kind=CatalogueEntity.attributes['game_class'].astext
     total=await db.scalar(select(func.count()).select_from(eligible))
     complete=bool(await db.scalar(select(MetadataSnapshot.id).where(MetadataSnapshot.entity_id==work_id,
         MetadataSnapshot.provider=='igdb',MetadataSnapshot.kind=='game',

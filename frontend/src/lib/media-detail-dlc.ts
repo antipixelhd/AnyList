@@ -8,6 +8,12 @@ import {scoreLabel} from './tracker';
 export function mountDetailDlc(root:HTMLElement,id:number,signal:AbortSignal){
   const host=root.querySelector<HTMLElement>('[data-game-dlc]');
   if(!host)return ()=>{};
+  const tab=root.querySelector<HTMLButtonElement>('[data-detail-tab="dlc"]');
+  root.addEventListener('anylist:game-primary',event=>{
+    const data=(event as CustomEvent).detail;
+    if(signal.aborted||data.id!==id||data.has_game_children!==true||!tab||!tab.hidden)return;
+    tab.dataset.dlcRevealed='true';tab.hidden=false;tab.disabled=false;
+  },{signal});
   const rows=host.querySelector<HTMLElement>('[data-game-dlc-rows]')!;
   const status=host.querySelector<HTMLElement>('[data-game-dlc-status]')!;
   const more=host.querySelector<HTMLButtonElement>('[data-game-dlc-more]')!;
