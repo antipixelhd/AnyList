@@ -120,7 +120,7 @@ class DiscoverySourceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_edition_parent_must_be_current_independent_and_not_another_edition(self):
         from test_game_title_match import game
-        for extra in ({'game_type':{'id':3}},{'version_parent':99},{'first_release_date':None},
+        for extra in ({'game_type':{'id':5}},{'version_parent':99},{'first_release_date':None},
                 {'first_release_date':game(year=2025)['first_release_date']}):
             self.response([])
             title={'id':'tt1','title':'Example: Complete Edition','year':2024}

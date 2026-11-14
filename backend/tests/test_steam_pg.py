@@ -218,6 +218,23 @@ class SteamDatabaseTests(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as db:
             self.assertEqual((await db.get(CatalogueEntity,work.id)).name,'Resolved title')
 
+    async def test_collection_import_keeps_shared_hours_on_one_independent_entry(self):
+        from core import steam_cache,catalogue
+        await self.connect()
+        await steam_cache.save_public(self.Session,[{'app_id':'976730','name':'Halo: The Master Chief Collection',
+            'igdb_classification':{'version':1,'state':'bound','igdb_id':'7348','game_class':'bundle','checked_at':steam_sync.now().isoformat()}}])
+        async with self.Session() as db:
+            state=await db.get(SteamConnection,self.id)
+            await steam_sync.apply_games(db,state,[game('976730',6000,100,700)],['976730'],initial=True,initial_status='playing')
+            await db.commit()
+            identity=await catalogue.resolve_identity(db,'igdb.game','7348')
+            work=await db.get(CatalogueEntity,identity.entity_id)
+            self.assertEqual(work.attributes['game_class'],'bundle')
+            entry=await db.scalar(select(GameEntry).where(GameEntry.work_id==work.id,GameEntry.user_id==self.user.id))
+            self.assertEqual(entry.total_seconds,360000)
+            self.assertEqual(entry.achievement_count,100)
+            self.assertEqual(await db.scalar(select(func.count()).select_from(GameEntry)),1)
+
     async def test_initial_import_without_dates_silently_saves_status_and_counters(self):
         await self.connect()
         async with self.Session() as db:

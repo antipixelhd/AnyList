@@ -60,6 +60,19 @@ async def save_game_banner(work_id:WorkId,body:BannerChoice,db:DB,viewer:Writer)
     return {'pinned_banner':body.image}
 
 
+@router.get('/works/{work_id}/editions')
+async def game_editions(work_id:WorkId,db:DB,viewer:Reader,response:Response) -> dict:
+    from core.game_editions import GameEditions
+    from core.game_source_cache import session_factory
+    from core.catalogue_providers import ProviderError
+    await tracking.work(db,work_id)
+    sessions=session_factory(db.bind)
+    await db.close()  # Optional provider work never holds the request's SQL connection.
+    response.headers['Cache-Control']='private, no-store'
+    try:return await GameEditions(sessions).read(work_id)
+    except ProviderError:raise HTTPException(503,'Edition information is temporarily unavailable') from None
+
+
 @router.get('/works/{work_id}/background')
 async def game_background(work_id:WorkId,db:DB,viewer:Reader,animated:bool=False,
         provider:Literal['steamgriddb','igdb']='steamgriddb') -> dict:

@@ -4,6 +4,7 @@ import LocalDateTime from './LocalDateTime.astro';
 import Tracker from '../layouts/Tracker.astro';
 import StatusControl from './StatusControl.astro';
 import GameProgress from './GameProgress.astro';
+import MediaDetailGameEditions from './MediaDetailGameEditions.astro';
 import GameBannerStartup from './GameBannerStartup.astro';
 import MediaDetailGameTimes from './MediaDetailGameTimes.astro';
 import MediaDetailGameOffer from './MediaDetailGameOffer.astro';
@@ -135,6 +136,7 @@ const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
               {(gameTitle||!!title.releases.length)&&<section class="lab-module" data-game-releases hidden={!title.releases.length}><div class="lab-section-title"><h2>Releases</h2></div><div class="media-releases">{title.releases.map(release=><p><strong>{release.platform}</strong><span>{release.region}{release.region&&release.release_date?' · ':''}{release.release_date&&(release.release_quarter?`Q${release.release_quarter} ${release.release_date}`:<LocalDateTime value={release.release_date}/>)}</span></p>)}</div></section>}
             </div>
             <div class="lab-secondary-column">
+              {gameTitle&&signedIn&&<MediaDetailGameEditions/>}
               {(gameTitle||!!ratings.length)&&<MediaDetailRatings rows={gameTitle?gameRatings:ratings} game={gameTitle} pending={gameTitle?gameSectionPending(title.game_rating_status,gamePrimaryPending):title.scores_pending}/>}
               {gameTitle&&<MediaDetailGameOffer data={offers} primaryPending={gamePrimaryPending}/>}
               {!!title.friends.length&&<section class="lab-friends lab-module"><div class="lab-section-title"><h2>People you follow</h2><span><Icon name="star"/>{scoreLabel(title.friends_average??null)}</span></div><div class="lab-friends-grid">{title.friends.map(friend=><a class="lab-friend" href={`/user/${encodeURIComponent(friend.username)}/${title.type==='movie'?'movies':'series'}`}><span class="lab-friend-avatar friend-one" aria-hidden="true">{friend.id&&friend.has_avatar?<img src={`/api/proxy/profile/avatar/${friend.id}`} alt="" loading="lazy"/>:friend.username.slice(0,1).toUpperCase()}</span><div><h3>{friend.display_name||friend.username}</h3><p>{statuses.find(([id])=>id===friend.status)?.[1]||friend.status}</p></div><strong>{scoreLabel(friend.score)}</strong></a>)}</div></section>}

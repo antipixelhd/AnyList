@@ -17,7 +17,7 @@ FIELDS += ',alternative_names.name,release_dates.date,release_dates.status.name,
 PAGE = 100
 MAX_PAGES = 3
 # Matching rules may change while the provider query and stored facts stay valid.
-RETRIEVAL_VERSION = 6
+RETRIEVAL_VERSION = 7
 IDENTITY_FIELDS=('id','name','alternative_names','first_release_date','release_dates','game_type',
     'version_parent','parent_game','websites','external_games','involved_companies','platforms','ports')
 

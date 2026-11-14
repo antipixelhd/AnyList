@@ -1,3 +1,4 @@
+import {mountGameEditions} from './game-editions';
 import {preparePanelStyles} from './panel-readiness';
 import { editorStore, seedEditorPage, type EditorTitle } from './editor-store';
 import { mountDetailsMotion } from './content-motion';
@@ -47,7 +48,7 @@ export function mountMediaDetail() {
   const loadAchievements=mountDetailAchievements(root,info.id,signal);
   const deferArtwork=observeDeferredArtwork(root,signal);
   mountDetailCast(root,signal,info);
-  if(root.dataset.mediaKind==='game'){mountGameMetadata(root,info.id,signal);mountGameTimeToBeat(root,info.id,signal,info.gameEstimateStatus);mountGameOffers(root,info.id,signal,info.gameOffers);mountGameRatings(root,info.id,signal,info.gameRatingStatus);mountGameInfo(root,info.id,signal,info.gameInfo);}
+  if(root.dataset.mediaKind==='game'){mountGameEditions(root,info.id,signal,info.gamePrimaryPending);mountGameMetadata(root,info.id,signal);mountGameTimeToBeat(root,info.id,signal,info.gameEstimateStatus);mountGameOffers(root,info.id,signal,info.gameOffers);mountGameRatings(root,info.id,signal,info.gameRatingStatus);mountGameInfo(root,info.id,signal,info.gameInfo);}
   if(info.backgroundAvailable&&root.dataset.mediaKind!=='game'){
     const scoreStatus=root.querySelector<HTMLElement>('[data-detail-score-status]');
     const scores=detailBackground<Record<string,any>>(`/api/proxy/tracking/title/${info.id}/scores`,signal,data=>{

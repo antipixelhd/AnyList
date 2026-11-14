@@ -19,7 +19,7 @@ TYPE_NAMES = {
     'pack / add-on': 'pack', 'update': 'update', 'bundle': 'bundle',
     'mod': 'mod', 'episode': 'episode', 'season': 'season', 'fork': 'fork',
 }
-INDEPENDENT = frozenset({'game', 'standalone_expansion', 'remake', 'remaster', 'expanded_game', 'port'})
+INDEPENDENT = frozenset({'game', 'bundle', 'standalone_expansion', 'remake', 'remaster', 'expanded_game', 'port'})
 PLAYABLE_CHILDREN = frozenset({'dlc', 'expansion'})
 CREDIT_CHILDREN = frozenset({'dlc', 'expansion', 'update', 'episode'})
 # Provider platform identities, including pre-smartphone releases. Dedicated

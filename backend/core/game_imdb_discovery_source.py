@@ -13,7 +13,7 @@ from core.game_browse_sources import GameBrowseSources,positive,SLUG
 from core.game_credit_sources import GameCreditSources
 from core.game_imdb_mapping import game_mapping
 from core.game_imdb_source import TITLE_ID
-from core.game_types import capabilities,igdb_game_class,CREDIT_CHILDREN
+from core.game_types import INDEPENDENT, capabilities,igdb_game_class,CREDIT_CHILDREN
 from core.game_release_dates import FIELDS as RELEASE_FIELDS
 from core.wikidata_claims import best_claims,qualified,snak_value
 
@@ -67,7 +67,7 @@ def project_game(title_id,raw,games,evidence):
     if kind in CREDIT_CHILDREN:
         value=raw.get('parent_game');native=value.get('id') if isinstance(value,dict) else value
         parent=games.get(native)
-        if not parent or parent.get('version_parent') or igdb_game_class(parent) not in {'game','standalone_expansion','remake','remaster','expanded_game'}:
+        if not parent or parent.get('version_parent') or igdb_game_class(parent) not in INDEPENDENT-{'port'}:
             return {'id':title_id,'status':'unresolved','reason':'expansion_parent' if kind=='expansion' else 'credit_parent','igdb_id':raw['id']}
     doc=normalize_igdb(raw)
     if parent:

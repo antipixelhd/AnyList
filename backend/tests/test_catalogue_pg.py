@@ -100,6 +100,7 @@ class CatalogueDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 importlib.import_module("migrations.versions.mt065_person_credit_scope").upgrade()
                 importlib.import_module("migrations.versions.mt070_game_mapping_index").upgrade()
                 importlib.import_module("migrations.versions.mt080_game_background_runner").upgrade()
+                importlib.import_module("migrations.versions.mt093_playable_bundles").upgrade()
 
         async with self.engine.begin() as conn:
             await conn.run_sync(setup)

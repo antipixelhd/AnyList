@@ -317,3 +317,12 @@ body.tracker .media-detail :is(.lab-public-score,.lab-game-offer) h2 { font-size
 @media (max-width:650px) { .media-detail .game-banner-controls { top:12px; } }
 
 .media-detail .game-banner-settings,.media-detail .game-banner-settings:popover-open { animation:none !important; transition:none !important; transform:none !important; }
+
+.game-newer-editions h2{font-size:14px;color:var(--muted);margin:0 0 16px}
+.game-newer-editions a{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:8px 0;color:var(--bright);transition:color .18s}
+.game-newer-editions a>span{display:grid;gap:6px;min-width:0}
+.game-newer-editions strong{font-size:17px;line-height:1.4;font-weight:600}
+.game-newer-editions [data-game-edition-year]{font-size:13px;color:var(--muted)}
+.game-newer-editions a:is(:hover,:focus-visible){color:var(--blue);outline:none}
+.game-newer-editions .ui-icon{width:16px;height:16px;flex-shrink:0}
+@media(prefers-reduced-motion:reduce){.game-newer-editions a{transition:none}}
