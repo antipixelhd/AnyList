@@ -123,7 +123,7 @@ export function mountScreenListSeasons(root:HTMLElement,profilePanel:HTMLElement
     const panel=document.createElement('div');panel.className='list-season-panel';
     panel.id=`list-seasons-${root.dataset.screenScope}-${id}`;
     toggle.setAttribute('aria-controls',panel.id);toggle.setAttribute('aria-expanded','true');
-    const item={entry,toggle,panel,title:entry.querySelector('.entry-title-link')?.firstChild?.textContent||''};
+    const item={entry,toggle,panel,title:toggle.querySelector('[data-list-title-label]')?.textContent||''};
     expanded.set(id,item);
     message(item,'Loading seasons…');entry.append(panel);animate(item,0);void load(item);
   },{signal});
