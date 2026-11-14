@@ -1,5 +1,6 @@
 [data-screen-scope] #entry-groups:not(.grid-view) [data-media-type="series"] .entry-title {
   align-self:stretch;
+  align-items:stretch;
   padding-block:0;
   padding-inline-end:0;
 }
@@ -28,12 +29,16 @@
 }
 .list-season-toggle[hidden] { display:none }
 .list-season-toggle .ui-icon {
+  display:grid;
+  place-items:center;
   flex:none;
-  width:9px;
-  height:9px;
+  width:12px;
+  height:12px;
+  transform-origin:center;
   transition:rotate .2s ease;
 }
-.list-season-toggle[aria-expanded="true"] .ui-icon { rotate:180deg }
+.list-season-toggle .ui-icon > svg { display:block;width:9px;height:9px }
+.list-season-toggle[aria-expanded="true"] .ui-icon { rotate:-180deg }
 .tracker #entry-groups .entry-row .list-season-toggle:focus-visible {
   outline:none;
   background:color-mix(in srgb,currentColor 8%,transparent);
@@ -95,13 +100,18 @@
     align-items:stretch;
   }
   .list-title-main { grid-area:title;min-width:0 }
-  [data-media-type="series"] .list-title-main { grid-row:1 / span 2;align-items:flex-start;min-height:44px }
+  [data-media-type="series"] .list-title-main { grid-row:1 / -1;align-self:stretch;align-items:flex-start;min-height:44px }
   #entry-groups:not(.grid-view) .list-title-main > .entry-title-link {
     font-size:var(--type-compact-row-size);
     font-weight:600;
     line-height:18px;
   }
-  .list-season-toggle { align-items:flex-start;min-height:44px;padding-top:5px }
+  .list-season-toggle {
+    align-items:flex-start;
+    min-height:var(--list-row-height);
+    margin-block:calc(0px - var(--list-row-inline-padding));
+    padding-top:calc(var(--list-row-inline-padding) + 3px);
+  }
   [data-screen-scope] #entry-groups:not(.grid-view) [data-media-type="series"] .entry-progress {
     position:relative;
     z-index:1;
