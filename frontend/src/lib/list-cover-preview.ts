@@ -4,6 +4,7 @@ import {applyResponsiveArtwork} from './responsive-artwork';
 export function mountListCoverPreview(signal:AbortSignal,root:ParentNode=document){
   const preview=root.querySelector<HTMLElement>('#cover-preview'),image=preview?.querySelector<HTMLImageElement>('img');
   let dismissed=false,hovered:HTMLElement|null=null,shown:HTMLElement|null=null;
+  let artwork:string|undefined;
   const editorOpen=()=>document.querySelector<HTMLDialogElement>('#tracking-editor')?.open;
   const hide=()=>{
     shown=null;
@@ -13,7 +14,10 @@ export function mountListCoverPreview(signal:AbortSignal,root:ParentNode=documen
     const thumbnail=row.querySelector<HTMLElement>('.entry-thumbnail'),source=thumbnail?.dataset.previewSrc;
     if(!preview||!source||dismissed||editorOpen()||!matchMedia('(hover:hover) and (min-width:901px)').matches){hide();return;}
     if(!image)return;
-    applyResponsiveArtwork(image,source,{size:'w500',sizes:'174px',route:'auto',compactIgdbCover:true});
+    if(artwork!==source){
+      applyResponsiveArtwork(image,source,{size:'w500',sizes:'174px',route:'auto',compactIgdbCover:true});
+      artwork=source;
+    }
     const rect=thumbnail.getBoundingClientRect(),width=174,height=248,gap=18;
     preview.style.left=`${Math.max(8,Math.min(innerWidth-width-8,rect.left-width-gap>=8?rect.left-width-gap:rect.right+gap))}px`;
     preview.style.top=`${Math.max(8,Math.min(innerHeight-height-8,rect.top-(height-rect.height)/2))}px`;
@@ -25,9 +29,14 @@ export function mountListCoverPreview(signal:AbortSignal,root:ParentNode=documen
   events.addEventListener('pointerout',event=>{const row=rowFor(event);if(!row||row.contains((event as PointerEvent).relatedTarget as Node|null))return;if(hovered===row)hovered=null;if(shown===row)hide();if(!editorOpen()&&!('controlsDismissed' in row.dataset))delete row.dataset.editorDeselected;},{signal});
   events.addEventListener('focusin',event=>{const row=rowFor(event);if(!row||hovered||(event.target as Element).closest('[data-edit-entry],[data-edit-game]'))return;dismissed=false;show(row);},{signal});
   events.addEventListener('focusout',()=>{if(!hovered)hide();},{signal});
-  events.addEventListener('click',hide,{signal});
+  events.addEventListener('click',event=>{
+    if((event.target as Element).closest('[data-season-toggle]')){
+      if(hovered)show(hovered);
+    }else hide();
+  },{signal});
   document.addEventListener('keydown',event=>{if(event.key==='Escape'){dismissed=true;hide();}},{signal});
-  window.addEventListener('scroll',hide,{capture:true,signal});window.addEventListener('resize',hide,{signal});
+  window.addEventListener('scroll',()=>{if(hovered?.matches(':hover'))show(hovered);else hide();},{capture:true,signal});
+  window.addEventListener('resize',hide,{signal});
   signal.addEventListener('abort',hide,{once:true});
   return {hide};
 }

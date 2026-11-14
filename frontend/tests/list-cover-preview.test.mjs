@@ -21,3 +21,41 @@ test('holding or cancelling the edit button keeps the cover preview until a conf
     fire('click');assert.equal(preview.hidden,true);
   }
 });
+
+test('expanding seasons preserves the hovered poster through layout scrolling and row changes',()=>{
+  const source=readFileSync(new URL('../src/lib/list-cover-preview.ts',import.meta.url),'utf8')
+    .replace(/^import .*\r?\n/gm,'').replace('export function','function');
+  const handlers=new Map(),windowHandlers=new Map(),posters=[];
+  const preview={hidden:true,style:{},querySelector:()=>({})};
+  const row=poster=>({dataset:{},contains:()=>false,matches:()=>true,
+    querySelector:()=>({dataset:{previewSrc:poster},getBoundingClientRect:()=>({left:250,right:290,top:100,height:40})})});
+  const series=row('/series.jpg'),season=row('/season.jpg');
+  const toggle={closest:selector=>selector==='.entry-row'?series:selector==='[data-season-toggle]'?toggle:null};
+  const seasonTarget={closest:selector=>selector==='.entry-row'?season:null};
+  const context={
+    applyResponsiveArtwork:(_image,poster)=>posters.push(poster),
+    matchMedia:()=>({matches:true}),innerWidth:1280,innerHeight:900,
+    document:{querySelector:selector=>selector==='#cover-preview'?preview:{open:false},
+      addEventListener:(name,callback)=>handlers.set(name,callback)},
+    window:{addEventListener:(name,callback)=>windowHandlers.set(name,callback)},
+  };
+  runInNewContext(stripTypeScriptTypes(source),context);
+  const lifetime=new AbortController();
+  context.mountListCoverPreview(lifetime.signal);
+  handlers.get('pointerover')({target:toggle,relatedTarget:null});
+  assert.equal(preview.hidden,false);
+  for(let clicks=0;clicks<2;clicks++){
+    handlers.get('click')({target:toggle});
+    windowHandlers.get('scroll')();
+    assert.equal(preview.hidden,false);
+    assert.equal(posters.at(-1),'/series.jpg');
+  }
+  assert.equal(posters.length,1);
+  handlers.get('pointerout')({target:toggle,relatedTarget:null});
+  handlers.get('pointerover')({target:seasonTarget,relatedTarget:null});
+  assert.equal(preview.hidden,false);
+  assert.equal(posters.at(-1),'/season.jpg');
+  handlers.get('pointerout')({target:seasonTarget,relatedTarget:null});
+  assert.equal(preview.hidden,true);
+  lifetime.abort();
+});
