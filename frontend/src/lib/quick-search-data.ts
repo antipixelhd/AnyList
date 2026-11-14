@@ -1,7 +1,6 @@
 import {createBrowseCache} from './browse-cache.ts';
 import {verifiedEmptySearch, broadSearchParams, type SearchPage} from './search-fallback.ts';
 export type SearchSection = 'all' | 'movie' | 'series' | 'game' | 'actor' | 'staff' | 'studio';
-export type ResultSection = SearchSection;
 export type ContributorScope = 'people'|'actor'|'staff'|'studio';
 export type SearchRequest = {kind:'movie'|'series'|'game'|'contributors';url:string;scope?:ContributorScope};
 
@@ -95,7 +94,8 @@ export async function readQuickTitles<T>(requests: SearchRequest[], signal: Abor
     result.failed += broad.failed;
     expand.forEach((request, index) => { result.pages[titles.indexOf(request)] = broad.pages[index]; });
   }
-  const rows = {movie: [] as T[], series: [] as T[], failed: result.failed};
+  const incomplete = result.pages.some(page => page && (page.notice || page.verification_pending || (!page.results?.length && page.has_more)));
+  const rows = {movie: [] as T[], series: [] as T[], failed: result.failed, incomplete};
   titles.forEach((request, index) => { rows[request.kind as 'movie'|'series'] = result.pages[index]?.results as T[] || []; });
   return rows;
 }
@@ -119,19 +119,11 @@ export function mergeContributorResults<T>(current:Record<'actor'|'staff'|'studi
     staff:scope==='studio'||scope==='actor'?current.staff:incoming.staff||[],
     studio:scope==='people'||scope==='actor'||scope==='staff'?current.studio:incoming.studio||[]};
 }
-type SectionCounts=Partial<Record<ResultSection,number>>;
-export function visibleQuickSearchSections(mobile:boolean, selected:SearchSection, combined:boolean, counts:SectionCounts,showMoviesSeries=true,showGames=true): ResultSection[] {
-  const order=quickSearchTabOrder(combined,showMoviesSeries,showGames);
-  const sections:ResultSection[] = mobile ? [resolvedQuickSearchTab(selected,order)] : order;
-  return sections.filter(section=>(counts[section]||0)>0);
-}
-
-function quickSearchTabOrder(combined:boolean,showMoviesSeries=true,showGames=true):SearchSection[] {
+export function quickSearchTabOrder(combined:boolean,showMoviesSeries=true,showGames=true):SearchSection[] {
   return [...(showMoviesSeries?(combined ? ['all' as const] : ['movie' as const,'series' as const]):[]),...(showGames?['game' as const]:[]),'actor','staff','studio'];
 }
-export function availableQuickSearchTabs(counts:SectionCounts, searching:boolean, mediaPending=false, combined=true,showMoviesSeries=true,showGames=true,gamePending=false):SearchSection[] {
-  const order=quickSearchTabOrder(combined,showMoviesSeries,showGames);
-  return searching?order.filter(kind=>(counts[kind]||0)>0||(['all','movie','series'].includes(kind)&&mediaPending)||(kind==='game'&&gamePending)):order;
+export function availableQuickSearchTabs(order: SearchSection[], counts: Partial<Record<SearchSection, number>>, pending: ReadonlySet<SearchSection>): SearchSection[] {
+  return order.filter(kind => (counts[kind] ?? 0) > 0 || pending.has(kind));
 }
 export function resolvedQuickSearchTab(selected:SearchSection, available:SearchSection[]):SearchSection {
   return available.includes(selected)?selected:available[0]??'all';

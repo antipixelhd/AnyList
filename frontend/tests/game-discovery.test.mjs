@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {gameResultHref,resolveGameId} from '../src/lib/game-discovery.ts';
-import {quickSearchRequests,availableQuickSearchTabs,visibleQuickSearchSections,readQuickSearch} from '../src/lib/quick-search-data.ts';
+import {quickSearchRequests,quickSearchTabOrder,availableQuickSearchTabs,readQuickSearch} from '../src/lib/quick-search-data.ts';
 
 test('games use canonical catalogue routes and resolve remote IDs without a tracking write',async()=>{
   const game={id:null,igdb_id:240009,type:'game',title:'Erdtree',game_class:'expansion'};
@@ -19,10 +19,9 @@ test('Games title fan-out, pending tabs and visibility stay separate from movie/
   assert.deepEqual(quickSearchRequests('Ring',undefined,false,true).map(row=>row.kind),['game','contributors','contributors']);
   assert.ok(!quickSearchRequests('Ring',undefined,true,false).some(row=>row.kind==='game'));
   const counts={all:2,movie:1,series:1,game:4,actor:1};
-  assert.deepEqual(visibleQuickSearchSections(false,'all',true,counts),['all','game','actor']);
-  assert.deepEqual(visibleQuickSearchSections(false,'all',true,counts,true,false),['all','actor']);
-  assert.deepEqual(availableQuickSearchTabs({},true,false,true,false,true,true),['game']);
-  assert.deepEqual(visibleQuickSearchSections(true,'game',true,counts),['game']);
+  assert.deepEqual(availableQuickSearchTabs(quickSearchTabOrder(true),counts,new Set()),['all','game','actor']);
+  assert.deepEqual(availableQuickSearchTabs(quickSearchTabOrder(true,true,false),counts,new Set(['game'])),['all','actor']);
+  assert.deepEqual(availableQuickSearchTabs(quickSearchTabOrder(true,false,true),{},new Set(['game'])),['game']);
 });
 
 test('a stalled game request does not gate an independently completed movie response',async()=>{

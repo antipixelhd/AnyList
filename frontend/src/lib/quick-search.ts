@@ -1,16 +1,18 @@
 
 import { editorStore, type EditorTitle } from './editor-store';
-  import { showDialog, closeDialog } from './ui-motion';
+import { showDialog, closeDialog } from './ui-motion';
 import { responsiveArtwork } from './responsive-artwork';
 import { quickSearchShortcut } from './quick-search-shortcut';
 import { wireSearchWordCapitalization } from './search-word-capitalization';
 import { mountQuickSearchLayout } from './quick-search-layout';
-import {quickSearchRequests,rankCombinedMedia,readQuickTitles,createQuickSearchReader,visibleQuickSearchSections,availableQuickSearchTabs,resolvedQuickSearchTab,steppedQuickSearchTab,mergeContributorResults,type SearchSection} from './quick-search-data';
+import {quickSearchRequests,rankCombinedMedia,readQuickTitles,createQuickSearchReader,quickSearchTabOrder,availableQuickSearchTabs,resolvedQuickSearchTab,steppedQuickSearchTab,mergeContributorResults,type SearchSection} from './quick-search-data';
 import { animate } from 'motion/mini';
 import {gameResultHref,resolveGameId,type GameSearchResult} from './game-discovery';
 
 let pageListeners: AbortController;
 let mountedDialog:HTMLDialogElement|null=null;
+const SEARCH_DEBOUNCE_MS = 300;
+const SKELETON_DELAY_MS = 120;
 export function mountQuickSearch() {
   const nextDialog=document.querySelector<HTMLDialogElement>('[data-quick-search]');
   if(nextDialog===mountedDialog&&pageListeners&&!pageListeners.signal.aborted)return;
@@ -18,14 +20,15 @@ export function mountQuickSearch() {
   pageListeners = new AbortController();
   type MediaSearchResult = { id: number | null; tmdb_id?: number; type: 'movie' | 'series'; title: string; poster?: string | null; year?: string | null; search_rank?:number };
   type SearchResult = MediaSearchResult | GameSearchResult;
-  const dialog = document.querySelector<HTMLDialogElement>('[data-quick-search]');
   const openButton = document.querySelector<HTMLButtonElement>('[data-quick-search-open]');
-  if (!dialog || !openButton) return;
+  if (!nextDialog || !openButton) return;
+  const dialog = nextDialog;
   mountedDialog=dialog;
   const searchReader=createQuickSearchReader(pageListeners.signal);
   document.addEventListener('anylist:cache-invalidated',()=>searchReader.clear(),{signal:pageListeners.signal});
   document.addEventListener('astro:before-swap',()=>pageListeners.abort(),{once:true,signal:pageListeners.signal});
   const mobile=matchMedia('(max-width:650px)');
+  const reducedMotion=matchMedia('(prefers-reduced-motion:reduce)');
   const combined=()=>dialog.dataset.combined==='yes';
   const showMoviesSeries=()=>dialog.dataset.showMoviesSeries!=='false';
   const showGames=()=>dialog.dataset.showGames!=='false';
@@ -42,11 +45,12 @@ export function mountQuickSearch() {
   const closeButton = dialog?.querySelector<HTMLButtonElement>('[data-quick-search-close]');
   const input = dialog?.querySelector<HTMLInputElement>('#quick-search-input');
   if (input) wireSearchWordCapitalization(input, pageListeners.signal);
-  const resultShell = dialog?.querySelector<HTMLElement>('.quick-search-results');
-  const scheduleLayout = resultShell ? mountQuickSearchLayout(resultShell, pageListeners.signal) : () => {};
+  const resultShell = dialog.querySelector<HTMLElement>('.quick-search-results')!;
+  const updateLayout = mountQuickSearchLayout(resultShell, pageListeners.signal);
+  const panels = [...resultShell.querySelectorAll<HTMLElement>('[data-search-section]')];
+  const skeleton = dialog.querySelector<HTMLTemplateElement>('[data-search-skeleton]')!;
   const state = dialog?.querySelector<HTMLElement>('[data-search-state]');
   const announcement = dialog?.querySelector<HTMLElement>('[data-search-announcement]');
-  const progress = dialog?.querySelector<HTMLElement>('[data-search-progress]');
   const addIcon = document.querySelector<HTMLTemplateElement>('[data-search-add-icon]');
   const editorTitles = new WeakMap<HTMLButtonElement, EditorTitle>();
   const gameResults = new WeakMap<HTMLButtonElement, GameSearchResult>();
@@ -54,18 +58,22 @@ export function mountQuickSearch() {
   try { sessionStorage.removeItem('anylist.quick-search.restore'); } catch { /* Storage may be unavailable. */ }
   let controller: AbortController | null = null;
   let timer = 0;
-  let progressTimer = 0;
-  let latest:{movie:MediaSearchResult[];series:MediaSearchResult[];game:GameSearchResult[]} = { movie: [], series: [], game: [] };
+  let revealTimer = 0;
+  let revealed = false;
+  let latest = { all: [] as MediaSearchResult[], movie: [] as MediaSearchResult[], series: [] as MediaSearchResult[], game: [] as GameSearchResult[] };
   let contributors:Record<'actor'|'staff'|'studio',ContributorResult[]>={actor:[],staff:[],studio:[]};
-  let pending=0,failed=0,mediaPending=0,gamePending=false;
-  const selected=()=>activeTab;
+  let failed=0;
+  const pending = new Set<SearchSection>();
+  const exits = new Map<HTMLElement, Animation>();
+  const rendered = new Map<HTMLElement, string>();
+  const panelOrder = () => quickSearchTabOrder(combined(), showMoviesSeries(), showGames());
   const updatePlaceholder=()=>{input!.placeholder=mobile.matches?'Search titles, people, studios…':'Search titles, people and studios…';};
-  const resultCounts=()=>({all:latest.movie.length+latest.series.length,movie:latest.movie.length,series:latest.series.length,game:latest.game.length,actor:contributors.actor.length,staff:contributors.staff.length,studio:contributors.studio.length});
-  const availableTabs=()=>availableQuickSearchTabs(resultCounts(),(input?.value.trim().length||0)>=2,mediaPending>0,combined(),showMoviesSeries(),showGames(),gamePending);
+  const resultCounts=()=>({all:latest.all.length,movie:latest.movie.length,series:latest.series.length,game:latest.game.length,actor:contributors.actor.length,staff:contributors.staff.length,studio:contributors.studio.length});
+  const availableTabs=()=>revealed ? availableQuickSearchTabs(panelOrder(),resultCounts(),pending) : panelOrder();
   const tabNav=dialog.querySelector<HTMLElement>('[data-search-tabs]')!;
-  function updateTabs(available=availableTabs()) {
-    activeTab=resolvedQuickSearchTab(activeTab,available);
-    tabNav.hidden=mobile.matches&&(input?.value.trim().length||0)>=2&&!available.length;
+  function updateTabs(available=availableTabs(), keepSelection=false) {
+    if (!keepSelection) activeTab=resolvedQuickSearchTab(activeTab,available);
+    tabNav.hidden=!available.length&&!keepSelection;
     tabTitle.textContent=tabs.find(tab=>tab.kind===activeTab)!.label;
     tabButtons.forEach(button=>{
       const next=steppedQuickSearchTab(activeTab,available,Number(button.dataset.searchTabStep));
@@ -137,134 +145,204 @@ export function mountQuickSearch() {
     row.append(link, add);
     return row;
   }
-  function fill(kind: 'all'|'movie'|'series'|'game', items: SearchResult[]) {
-    const target = dialog?.querySelector<HTMLElement>(`[data-search-results="${kind}"]`);
-    if (!target) return;
-    target.replaceChildren(...items.slice(0,8).map(resultNode));
-  }
-  function fillContributors(kind:'actor'|'staff'|'studio') {
-    const target=dialog!.querySelector<HTMLElement>(`[data-search-results="${kind}"]`)!;
-    target.replaceChildren(...contributors[kind].map(item=>{
-      const row=document.createElement('div');row.className=`quick-search-result quick-search-contributor ${kind==='studio'?'quick-search-studio':''}`;
-      const link=document.createElement('a');link.className='quick-search-result-link';link.href=item.url;
-      const art=responsiveArtwork(item.image,{size:'w92',sizes:'48px',route:'auto'});
-      if(art){const image=document.createElement('img');image.src=art.src;if(art.srcset)image.srcset=art.srcset;if(art.sizes)image.sizes=art.sizes;image.alt='';image.loading='lazy';link.append(image);}
-      else {const fallback=document.createElement('span');fallback.className='quick-search-poster';fallback.textContent=item.name.slice(0,1);link.append(fallback);}
-      const copy=document.createElement('span');const name=document.createElement('strong');name.textContent=item.name;copy.append(name);
-      if(item.roles.length){const meta=document.createElement('small');meta.textContent=item.roles.join(' · ');copy.append(meta);}
-      link.append(copy);row.append(link);return row;
-    }));
+  function contributorNode(kind:'actor'|'staff'|'studio', item:ContributorResult) {
+    const row=document.createElement('div');row.className=`quick-search-result quick-search-contributor ${kind==='studio'?'quick-search-studio':''}`;
+    const link=document.createElement('a');link.className='quick-search-result-link';link.href=item.url;
+    const art=responsiveArtwork(item.image,{size:'w92',sizes:'48px',route:'auto'});
+    if(art){const image=document.createElement('img');image.src=art.src;if(art.srcset)image.srcset=art.srcset;if(art.sizes)image.sizes=art.sizes;image.alt='';image.loading='lazy';link.append(image);}
+    else {const fallback=document.createElement('span');fallback.className='quick-search-poster';fallback.textContent=item.name.slice(0,1);link.append(fallback);}
+    const copy=document.createElement('span');const name=document.createElement('strong');name.textContent=item.name;copy.append(name);
+    if(item.roles.length){const meta=document.createElement('small');meta.textContent=item.roles.join(' · ');copy.append(meta);}
+    link.append(copy);row.append(link);return row;
   }
   function showState(message: string) {
     if (!state) return;
-    state.textContent = message;
+    if (state.textContent !== message) state.textContent = message;
     state.hidden = !message;
   }
-  function render(updated?:'titles'|'games'|'contributors') {
-    if(updated==='titles'){
-      fill('movie',latest.movie);fill('series',latest.series);fill('all', rankCombinedMedia(latest.movie, latest.series));
+  function syncPanel(panel: HTMLElement, kind: SearchSection, count: number) {
+    const target = panel.querySelector<HTMLElement>('[data-search-results]')!;
+    const rows = kind === 'actor' || kind === 'staff' || kind === 'studio'
+      ? contributors[kind] : latest[kind].slice(0, 8);
+    const signature = count ? JSON.stringify(rows) : '';
+    const previous = rendered.get(panel);
+    if (previous === signature) return;
+    rendered.set(panel, signature);
+    panel.setAttribute('aria-busy', String(!count));
+    if (!count) target.replaceChildren(skeleton.content.cloneNode(true));
+    else if (kind === 'actor' || kind === 'staff' || kind === 'studio') {
+      target.replaceChildren(...contributors[kind].map(item => contributorNode(kind, item)));
+    } else target.replaceChildren(...latest[kind].slice(0, 8).map(resultNode));
+    if (count && previous === '' && !reducedMotion.matches) {
+      target.animate({opacity: [.5, 1]}, {duration: 160, easing: 'ease-out'});
     }
-    if(updated==='contributors')for(const kind of ['actor','staff','studio'] as const)fillContributors(kind);
-    if(updated==='games')fill('game',latest.game);
+  }
+  function updatePanel(panel: HTMLElement, visible: boolean, canExit: boolean, count: number) {
+    const exit = exits.get(panel);
+    if (!visible && canExit && !panel.hidden && !reducedMotion.matches) {
+      if (!exit) {
+        const fade = panel.animate({opacity: [Number(getComputedStyle(panel).opacity), 0]},
+          {duration: 150, easing: 'ease-in', fill: 'forwards'});
+        exits.set(panel, fade);
+        fade.onfinish = render;
+        panel.inert = true;
+        return;
+      }
+      if (exit.playState !== 'finished') return;
+    }
+    if (exit) { exit.cancel(); exits.delete(panel); }
+    panel.inert = false;
+    panel.hidden = !visible;
+    if (visible) syncPanel(panel, panel.dataset.searchSection as SearchSection, count);
+  }
+  function render() {
+    if (!revealed) return;
     const counts=resultCounts();
     const available=availableTabs();
-    updateTabs(available);
-    const visible=visibleQuickSearchSections(mobile.matches,selected(),dialog?.dataset.combined==='yes',counts,showMoviesSeries(),showGames());
-    for (const kind of ['all','movie','series','game','actor','staff','studio'] as const) {
-      const section = dialog?.querySelector<HTMLElement>(`[data-search-section="${kind}"]`);
-      if (section) section.hidden = !visible.includes(kind);
+    const wasStale = resultShell.inert;
+    const selectedPanel = panels.find(panel => panel.dataset.searchSection === activeTab);
+    const keepSelection = mobile.matches && !wasStale && !reducedMotion.matches &&
+      !available.includes(activeTab) && !!selectedPanel && !selectedPanel.hidden &&
+      exits.get(selectedPanel)?.playState !== 'finished';
+    if (mobile.matches && !keepSelection && !available.includes(activeTab)) {
+      activeTab = available.find(kind => counts[kind]) ?? activeTab;
     }
-    if (resultShell) {
-      resultShell.hidden = !visible.length;
-      scheduleLayout();
-    }
-    dialog!.style.setProperty('--search-columns',String(Math.max(1,Math.min(4,visible.length))));
-    dialog!.toggleAttribute('data-search-expanded',visible.length>1&&!mobile.matches);
-    showState(pending ? '' : failed ? available.length?'Some search results are unavailable.':'Search is unavailable. Try again.' : visible.length?'':'No matching results.');
-    if (announcement) announcement.textContent = visible.map(kind=>`${counts[kind]} ${kind==='all'?'movie and series':kind==='staff'?'crew':kind} results`).join(', ');
+    updateTabs(available, keepSelection);
+    const visible = mobile.matches ? available.filter(kind => kind === activeTab) : available;
+    updateLayout(() => {
+      resultShell.inert = false;
+      tabNav.inert = false;
+      for (const panel of panels) {
+        const kind = panel.dataset.searchSection as SearchSection;
+        updatePanel(panel, visible.includes(kind), !wasStale && (!mobile.matches || keepSelection), counts[kind]);
+      }
+      resultShell.hidden = panels.every(panel => panel.hidden);
+    });
+    const message = pending.size || exits.size ? '' : failed
+      ? available.length ? 'Some search results are unavailable.' : 'Search is unavailable. Try again.'
+      : available.length ? '' : 'No matching results.';
+    showState(message);
+    const summary = visible.filter(kind => counts[kind]).map(kind=>`${counts[kind]} ${kind==='all'?'movie and series':kind==='staff'?'crew':kind} results`).join(', ');
+    if (announcement && announcement.textContent !== summary) announcement.textContent = summary;
   }
   function setActiveTab(next:SearchSection,direction?:number) {
-    if (next===activeTab) return;
+    if (next===activeTab || tabNav.inert) return;
     direction??=tabs.findIndex(tab=>tab.kind===next)>tabs.findIndex(tab=>tab.kind===activeTab)?1:-1;
     activeTab=next;
-    updateTabs();
-    if ((input?.value.trim().length||0)>=2) render();
+    if (revealed) render();
+    else updateTabs();
     tabAnimations.forEach(control=>control.cancel());tabAnimations=[];
-    if (!mobile.matches||matchMedia('(prefers-reduced-motion:reduce)').matches) return;
+    if (!mobile.matches||reducedMotion.matches) return;
     const timing={duration:.22,ease:[.2,.7,.2,1] as [number,number,number,number]};
     tabAnimations.push(animate(tabTitle,{opacity:[.45,1],transform:[`translateX(${direction*14}px)`,'translateX(0)']},timing));
     const content=resultShell&&!resultShell.hidden?resultShell:state&&!state.hidden?state:null;
     if(content)tabAnimations.push(animate(content,{opacity:[.5,1],transform:['translateY(6px)','translateY(0)']},timing));
   }
+  function stopSearch() {
+    clearTimeout(timer);
+    clearTimeout(revealTimer);
+    controller?.abort();
+    controller = null;
+    revealed = false;
+    pending.clear();
+    for (const [panel, exit] of exits) {
+      exit.cancel();
+      panel.hidden = true;
+      panel.inert = false;
+    }
+    exits.clear();
+    tabAnimations.forEach(control => control.cancel());
+    tabAnimations = [];
+  }
+  function prepareSearch(retainResults = true) {
+    stopSearch();
+    latest = {all: [], movie: [], series: [], game: []};
+    contributors = {actor: [], staff: [], studio: []};
+    failed = 0;
+    const query = input?.value.trim() || '';
+    // Preserve the layout during debounce while disabling links from the previous query.
+    const keepLayout = retainResults && query.length >= 2 && !resultShell.hidden;
+    resultShell.inert = keepLayout;
+    tabNav.inert = keepLayout;
+    if (!keepLayout) {
+      resultShell.hidden = true;
+      for (const panel of panels) panel.hidden = true;
+      updateTabs();
+    }
+    if (announcement) announcement.textContent = '';
+    showState(query.length === 1 ? 'Type one more character.' : '');
+    return query;
+  }
   async function search() {
     const query = input?.value.trim() || '';
-    controller?.abort();
-    clearTimeout(progressTimer);progress?.classList.remove('visible');
-    latest={movie:[],series:[],game:[]};contributors={actor:[],staff:[],studio:[]};failed=0;pending=0;mediaPending=query.length>=2&&showMoviesSeries()?2:0;gamePending=query.length>=2&&showGames();
-    if (resultShell) resultShell.hidden = true;
-    if (announcement) announcement.textContent = '';
-    if (query.length < 2) {
-      updateTabs();
-      showState(query ? 'Type one more character.' : '');
-      fill('movie',[]); fill('series',[]); fill('all',[]);fill('game',[]);
-      if (resultShell) resultShell.setAttribute('aria-busy','false');
-      return;
-    }
+    if (query.length < 2) return;
     const current = new AbortController();
     controller = current;
-    if (resultShell) resultShell.setAttribute('aria-busy','true');
-    showState('');
-    clearTimeout(progressTimer);
-    progressTimer=window.setTimeout(()=>{if(controller===current)progress?.classList.add('visible');},150);
-    try {
-      const requests=quickSearchRequests(query,undefined,showMoviesSeries(),showGames());pending=requests.length;
-      updateTabs();
-      const titles = (async () => {
-        try {
-          const result = await readQuickTitles<MediaSearchResult>(requests, current.signal, searchReader.read, combined());
-          if (controller !== current || current.signal.aborted) return;
-          latest = {...latest, movie: unique(result.movie), series: unique(result.series)};
-          failed += result.failed;
-        } catch { if (controller === current && !current.signal.aborted) failed++; }
-        finally { if (controller === current && !current.signal.aborted) {
-          pending -= requests.filter(request=>request.kind==='movie'||request.kind==='series').length; mediaPending = 0; render('titles');
-        } }
-      })();
-      await Promise.all([titles, ...requests.filter(request => request.kind === 'contributors'||request.kind==='game').map(async request=>{
-        let gameRows:GameSearchResult[]=[];
-        let requestPartial=false;
-        try{
-          await searchReader.read(request,current.signal,data=>{
-            if(controller!==current||current.signal.aborted)return;
-            if(request.kind==='game')gameRows=unique(data.results||[]) as GameSearchResult[];
-            else{contributors=mergeContributorResults(contributors,data.results||{},request.scope);
-              if(!!data.partial!==requestPartial){failed+=data.partial?1:-1;requestPartial=!!data.partial;}
-              render('contributors');}
-          });
-        }catch(cause){if(controller!==current||current.signal.aborted)return;if(!requestPartial)failed++;}
-        finally{if(controller===current&&!current.signal.aborted){
-          pending--;
-          if(request.kind==='game'){gamePending=false;latest.game=gameRows;render('games');}
+    const isCurrent = () => controller === current && !current.signal.aborted;
+    const order = panelOrder();
+    order.forEach(kind => pending.add(kind));
+    const reveal = () => {
+      if (!isCurrent()) return;
+      clearTimeout(revealTimer);
+      revealed = true;
+      render();
+    };
+    revealTimer = window.setTimeout(reveal, SKELETON_DELAY_MS);
+
+    const requests = quickSearchRequests(query, undefined, showMoviesSeries(), showGames());
+    const titleSections = order.filter(kind => kind === 'all' || kind === 'movie' || kind === 'series');
+    const titles = (async () => {
+      if (!titleSections.length) return;
+      try {
+        const result = await readQuickTitles<MediaSearchResult>(requests, current.signal, searchReader.read, combined());
+        if (!isCurrent()) return;
+        latest.movie = unique(result.movie);
+        latest.series = unique(result.series);
+        latest.all = rankCombinedMedia(latest.movie, latest.series);
+        if (result.failed || result.incomplete) failed++;
+      } catch {
+        if (isCurrent()) failed++;
+      } finally {
+        if (isCurrent()) {
+          titleSections.forEach(kind => pending.delete(kind));
           render();
-        }}
-      })]);
-    } catch (cause) {
-      if (controller === current && (cause as Error).name !== 'AbortError') showState('Search is unavailable. Try again.');
-    } finally { if (controller === current) { clearTimeout(progressTimer);progress?.classList.remove('visible');resultShell?.setAttribute('aria-busy','false'); } }
+        }
+      }
+    })();
+
+    await Promise.all([titles, ...requests.filter(request => request.kind === 'contributors' || request.kind === 'game').map(async request => {
+      const sections: SearchSection[] = request.kind === 'game' ? ['game'] : request.scope === 'studio' ? ['studio'] : ['actor', 'staff'];
+      let incomplete = false;
+      try {
+        await searchReader.read(request, current.signal, data => {
+          if (!isCurrent()) return;
+          incomplete = !!(data.partial || data.notice || data.verification_pending);
+          if (request.kind === 'game') latest.game = unique(data.results || []) as GameSearchResult[];
+          else {
+            contributors = mergeContributorResults(contributors, data.results || {}, request.scope);
+            if (data.verification_pending) render();
+          }
+        });
+      } catch {
+        incomplete = true;
+      } finally {
+        if (isCurrent()) {
+          if (incomplete) failed++;
+          sections.forEach(kind => pending.delete(kind));
+          render();
+        }
+      }
+    })]);
+    if (!revealed) reveal();
   }
   function open() {
-    clearTimeout(timer);
-    clearTimeout(progressTimer);progress?.classList.remove('visible');
-    controller?.abort();
-    activeTab=combined()?'all':'movie';updatePlaceholder();dialog?.removeAttribute('data-search-expanded');
-    tabAnimations.forEach(control=>control.cancel());tabAnimations=[];
+    activeTab=combined()?'all':'movie';
+    updatePlaceholder();
     if (input) input.value = '';
-    latest={movie:[],series:[],game:[]};contributors={actor:[],staff:[],studio:[]};mediaPending=0;gamePending=false;
-    updateTabs();
-    if (resultShell) resultShell.hidden = true;
-    if (announcement) announcement.textContent = '';
-    showState('');
-    if (dialog) showDialog(dialog);
+    prepareSearch();
+    dialog.scrollTop = 0;
+    resultShell.scrollTop = 0;
+    showDialog(dialog);
     requestAnimationFrame(() => input?.focus());
   }
   openButton?.addEventListener('click', open,{signal:pageListeners.signal});
@@ -324,20 +402,15 @@ export function mountQuickSearch() {
     event.stopPropagation();
     void closeDialog(dialog, 'cancel');
   }, {signal: pageListeners.signal});
-  dialog?.addEventListener('close', () => { clearTimeout(timer);clearTimeout(progressTimer);progress?.classList.remove('visible');controller?.abort(); },{signal:pageListeners.signal});
+  dialog.addEventListener('close', () => { if (!dialog.open) stopSearch(); }, {signal:pageListeners.signal});
   input?.addEventListener('input', () => {
-    clearTimeout(timer);clearTimeout(progressTimer);controller?.abort();controller=null;progress?.classList.remove('visible');
-    latest={movie:[],series:[],game:[]};contributors={actor:[],staff:[],studio:[]};mediaPending=input.value.trim().length>=2&&showMoviesSeries()?2:0;gamePending=input.value.trim().length>=2&&showGames();
-    if (resultShell) resultShell.hidden = true;
-    if (announcement) announcement.textContent = '';
-    showState('');
-    updateTabs();
-    timer = window.setTimeout(search, 300);
+    if (prepareSearch().length >= 2) timer = window.setTimeout(search, SEARCH_DEBOUNCE_MS);
   },{signal:pageListeners.signal});
-  document.addEventListener('anylist:quick-search-policy-changed',()=>{
-    controller?.abort();latest={movie:[],series:[],game:[]};mediaPending=0;gamePending=false;
-    if(dialog.open)void search();else updateTabs();
-  },{signal:pageListeners.signal});
+  function refreshPolicy() {
+    if (dialog.open && prepareSearch(false).length >= 2) void search();
+    else updateTabs();
+  }
+  document.addEventListener('anylist:quick-search-policy-changed',refreshPolicy,{signal:pageListeners.signal});
   tabButtons.forEach(button=>button.addEventListener('click',()=>{
     const direction=Number(button.dataset.searchTabStep);
     const next=steppedQuickSearchTab(activeTab,availableTabs(),direction);
@@ -360,13 +433,13 @@ export function mountQuickSearch() {
     if(next){event.preventDefault();setActiveTab(next,direction);}
   },{passive:false,signal:pageListeners.signal});
   dialog.addEventListener('touchcancel',()=>{touchStart=null;},{signal:pageListeners.signal});
-  mobile.addEventListener('change',()=>{updatePlaceholder();if(dialog.open&&(input?.value.trim().length||0)>=2)render();},{signal:pageListeners.signal});
+  mobile.addEventListener('change',()=>{updatePlaceholder();if(dialog.open)render();},{signal:pageListeners.signal});
+  reducedMotion.addEventListener('change',()=>{if(dialog.open)render();},{signal:pageListeners.signal});
   document.addEventListener('anylist:combine-lists-changed',event=>{
     dialog.dataset.combined=(event as CustomEvent<{combineLists:boolean}>).detail.combineLists?'yes':'no';
-    if(dialog.open&&(input?.value.trim().length||0)>=2)void search();
-    else updateTabs();
+    refreshPolicy();
   },{signal:pageListeners.signal});
-  pageListeners.signal.addEventListener('abort',()=>{clearTimeout(timer);clearTimeout(progressTimer);controller?.abort();tabAnimations.forEach(control=>control.cancel());},{once:true});
+  pageListeners.signal.addEventListener('abort',stopSearch,{once:true});
   document.addEventListener('keydown', event => {
     const action = quickSearchShortcut(event, dialog.open, !!document.querySelector('dialog[open]:not([data-quick-search])'));
     if (!action) return;

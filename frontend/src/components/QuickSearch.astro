@@ -10,7 +10,6 @@ const { combineLists = true, hideTrigger = false,showMoviesSeries=true,showGames
     <label class="sr-only" for="quick-search-input">Quick search</label>
     <input id="quick-search-input" type="search" placeholder="Search titles, people and studios…" maxlength="100" autocomplete="off" autocapitalize="words" spellcheck="false" />
     <button class="editor-icon-button" type="button" aria-label="Close search" data-motion-press data-quick-search-close><Icon name="close" /></button>
-    <div class="quick-search-progress" data-search-progress aria-hidden="true"></div>
   </div>
   <p class="quick-search-hint">Hint: Hit Ctrl-S to quickly toggle Quick Search</p>
   <nav class="quick-search-mobile-tabs" data-search-tabs aria-label="Search result sections">
@@ -23,7 +22,7 @@ const { combineLists = true, hideTrigger = false,showMoviesSeries=true,showGames
   </nav>
   <p class="quick-search-state" data-search-state role="status" hidden></p>
   <p class="sr-only" data-search-announcement role="status"></p>
-  <div class:list={['quick-search-results', {'combined': combineLists}]} aria-busy="false" hidden>
+  <div class="quick-search-results" hidden>
     <section class="quick-search-card" data-search-section="all" hidden><h2>Movies & Series</h2><div data-search-results="all"></div></section>
     <section class="quick-search-card" data-search-section="movie" hidden><h2>Movies</h2><div data-search-results="movie"></div></section>
     <section class="quick-search-card" data-search-section="series" hidden><h2>Series</h2><div data-search-results="series"></div></section>
@@ -32,6 +31,14 @@ const { combineLists = true, hideTrigger = false,showMoviesSeries=true,showGames
     <section class="quick-search-card" data-search-section="staff" hidden><h2>Crew</h2><div data-search-results="staff"></div></section>
     <section class="quick-search-card" data-search-section="studio" hidden><h2>Studios</h2><div data-search-results="studio"></div></section>
   </div>
+  <template data-search-skeleton>
+    <div class="quick-search-skeleton" aria-hidden="true">
+      {Array.from({length:3}, () => <div class="quick-search-skeleton-row">
+        <span class="quick-search-skeleton-image"></span>
+        <span class="quick-search-skeleton-copy"><span></span><span></span></span>
+      </div>)}
+    </div>
+  </template>
 </dialog>
 <template data-search-add-icon><span class="ui-icon" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 2v12M2 8h12" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" /></svg></span></template>
 

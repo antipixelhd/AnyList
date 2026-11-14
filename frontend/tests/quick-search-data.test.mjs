@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {quickSearchRequests,rankCombinedMedia,createQuickTitleBatch,createQuickSearchReader,visibleQuickSearchSections,availableQuickSearchTabs,resolvedQuickSearchTab,steppedQuickSearchTab,mergeContributorResults,readQuickSearch} from '../src/lib/quick-search-data.ts';
+import {quickSearchRequests,rankCombinedMedia,createQuickTitleBatch,createQuickSearchReader,quickSearchTabOrder,availableQuickSearchTabs,resolvedQuickSearchTab,steppedQuickSearchTab,mergeContributorResults,readQuickSearch} from '../src/lib/quick-search-data.ts';
 
 test('contributor discovery follows enabled domains instead of revealing hidden game studios',()=>{
   for(const [movies,games,domain] of [[true,true,'all'],[true,false,'movies_series'],[false,true,'game']]){
@@ -14,8 +14,9 @@ test('movie/series opt-out rejects title fan-out and title tabs together, retain
   const requests=quickSearchRequests('Troy',undefined,false,false);
   assert.equal(requests.length,2);assert.ok(requests.every(request=>request.kind==='contributors'));
   const counts={all:1,movie:1,series:0,actor:2,staff:1,studio:0};
-  assert.deepEqual(availableQuickSearchTabs(counts,false,false,true,false,false),['actor','staff','studio']);
-  assert.deepEqual(availableQuickSearchTabs(counts,true,false,true,false),['actor','staff']);
+  const order=quickSearchTabOrder(true,false,false);
+  assert.deepEqual(order,['actor','staff','studio']);
+  assert.deepEqual(availableQuickSearchTabs(order, counts, new Set(['all','game'])),['actor','staff']);
 });
 
 test('warm titles reuse private dialog cache until expiry, invalidation or unmount',async()=>{
@@ -157,35 +158,35 @@ test('combined movie and series results follow shared relevance instead of alter
   assert.deepEqual(rankCombinedMedia(movies,series).map(row=>row.title),
     ['War series','War movie','War stories','War report']);
 });
-test('desktop shows only matching sections and respects combined media; mobile displays one section',()=>{
+test('enabled sections start together and leave as their sources settle empty',()=>{
   const counts={all:3,movie:1,series:2,actor:2,staff:0,studio:1};
-  assert.deepEqual(visibleQuickSearchSections(false,'all',true,counts),['all','actor','studio']);
-  assert.deepEqual(visibleQuickSearchSections(false,'all',false,counts),['movie','series','actor','studio']);
-  assert.deepEqual(visibleQuickSearchSections(true,'all',false,counts),['movie']);
-  assert.deepEqual(visibleQuickSearchSections(true,'series',false,counts),['series']);
-  assert.deepEqual(visibleQuickSearchSections(true,'studio',true,counts),['studio']);
-  assert.deepEqual(visibleQuickSearchSections(true,'staff',true,counts),[]);
+  const combined=quickSearchTabOrder(true);
+  assert.deepEqual(availableQuickSearchTabs(combined, {}, new Set(combined)),['all','game','actor','staff','studio']);
+  assert.deepEqual(availableQuickSearchTabs(combined, counts, new Set(['staff'])),['all','actor','staff','studio']);
+  assert.deepEqual(availableQuickSearchTabs(combined, counts, new Set()),['all','actor','studio']);
+  assert.deepEqual(availableQuickSearchTabs(quickSearchTabOrder(false), counts, new Set()),['movie','series','actor','studio']);
 });
 
 test('separate mobile lists navigate movies and series independently through loading and empty results',()=>{
   const empty={all:0,movie:0,series:0,actor:0,staff:0,studio:0};
-  assert.deepEqual(availableQuickSearchTabs(empty,false,false,false),['movie','series','game','actor','staff','studio']);
-  assert.deepEqual(availableQuickSearchTabs(empty,true,true,false),['movie','series']);
+  const order=quickSearchTabOrder(false);
+  assert.deepEqual(order,['movie','series','game','actor','staff','studio']);
+  assert.deepEqual(availableQuickSearchTabs(order, empty, new Set(['movie','series'])),['movie','series']);
   const counts={...empty,all:2,series:2,actor:1};
-  const available=availableQuickSearchTabs(counts,true,false,false);
+  const available=availableQuickSearchTabs(order, counts, new Set());
   assert.deepEqual(available,['series','actor']);
   assert.equal(resolvedQuickSearchTab('movie',available),'series');
   assert.equal(steppedQuickSearchTab('series',available,1),'actor');
   assert.equal(steppedQuickSearchTab('actor',available,1),'series');
-  assert.equal(resolvedQuickSearchTab('series',availableQuickSearchTabs(counts,true,false,true)),'all');
+  assert.equal(resolvedQuickSearchTab('series',availableQuickSearchTabs(quickSearchTabOrder(true),counts,new Set())),'all');
 });
 
 test('mobile navigation removes empty tabs, recovers selection, and wraps through available results',()=>{
   const counts={all:0,movie:0,series:0,actor:2,staff:0,studio:1};
-  assert.deepEqual(availableQuickSearchTabs(counts,false),['all','game','actor','staff','studio']);
-  const available=availableQuickSearchTabs(counts,true);
+  const order=quickSearchTabOrder(true);
+  const available=availableQuickSearchTabs(order, counts, new Set());
   assert.deepEqual(available,['actor','studio']);
-  assert.deepEqual(availableQuickSearchTabs(counts,true,true),['all','actor','studio']);
+  assert.deepEqual(availableQuickSearchTabs(order, counts, new Set(['all'])),['all','actor','studio']);
   assert.equal(resolvedQuickSearchTab('all',available),'actor');
   assert.equal(steppedQuickSearchTab('actor',available,-1),'studio');
   assert.equal(steppedQuickSearchTab('studio',available,1),'actor');
