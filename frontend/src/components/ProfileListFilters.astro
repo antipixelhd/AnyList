@@ -59,7 +59,7 @@ const id=(name:string)=>pending?`pending-${name}`:name;
       <label class="filter-year filter-control"><span class="filter-year-heading"><span>Year</span><output id={id('year-value')} for={id('year-filter')}>{year||'Any year'}</output></span><input id={id('year-filter')} type="range" min="0" max={availableYears.length} step="1" value={yearPosition} style={`--year-fill:${yearFill}%`} data-years={JSON.stringify(availableYears)} aria-label="Release year" aria-valuetext={year||'Any year'} disabled={!availableYears.length}/></label>
       <ListFilterSelect id={id('favorite-filter')} name="favorites" label="Favorites" value={favorites?'true':''} options={[["","All entries"],["true","Favorites only"]]}/>
       <h2>Sort</h2>
-      <ListFilterSelect id={id('sort-filter')} name="sort" label="Sort" value={sort} defaultValue={defaultSort} options={[["title","Title"],["score","Score"],["progress",progressLabel],["updated","Recently updated"]]}/>
+      <ListFilterSelect id={id('sort-filter')} name="sort" label="Sort" showDefaultValue value={sort} defaultValue={defaultSort} options={[["title","Title"],["score","Score"],["progress",progressLabel],["updated","Recently updated"]]}/>
     </div>
   </form>
 </aside>

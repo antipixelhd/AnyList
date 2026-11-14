@@ -1,3 +1,4 @@
+import {listFilterLabel} from './list-filter-label.ts';
 import { gameStatuses } from './game-editor-data.ts';
 import { mediaDomains } from './media-domains.ts';
 import { profileListQuery } from './profile-list-query.ts';
@@ -88,7 +89,7 @@ export function profileLoadingFrame(kind: string, url: URL, nav: HTMLElement) {
     const select = frame.querySelector<HTMLSelectElement>(`select[name="${name}"]`)!;
     select.value = query.get(name) || select.dataset.filterDefault || '';
     frame.querySelector(`#pending-${id}-filter-value`)!.textContent =
-      select.value === select.dataset.filterDefault ? select.dataset.filterLabel || '' : select.selectedOptions[0]?.textContent || '';
+      listFilterLabel(select.value, select.dataset.filterDefault || '', select.dataset.filterLabel || '', select.selectedOptions[0]?.textContent, select.dataset.filterShowDefault === 'true');
   }
   return frame;
 }

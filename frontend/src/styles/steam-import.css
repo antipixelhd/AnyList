@@ -181,6 +181,11 @@ html:has(.steam-workflow[open]) { scrollbar-gutter:stable; }
 .steam-sort { width:200px; }
 .steam-rule-row { grid-column:1/-1; display:flex; align-items:flex-start; gap:24px; }
 .steam-rule-row .steam-selection-rules { margin:0; }
+@media(min-width:801px) {
+ .steam-rule-row .steam-selection-rules { flex:1 1 0; }
+ .steam-rule-row .steam-progress { flex:0 0 auto; }
+ .steam-rule-row .steam-filters { grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr)); }
+}
 .steam-rule-row .steam-progress { margin:0; min-height:36px; gap:8px; }
 .steam-progress progress { display:none; }
 .steam-spinner { width:12px; height:12px; border:2px solid color-mix(in srgb,var(--steam-muted) 30%,transparent); border-top-color:var(--steam-muted); border-radius:50%; animation:steam-spin .8s linear infinite; }
@@ -207,6 +212,7 @@ html:has(.steam-workflow[open]) { scrollbar-gutter:stable; }
  .steam-sort { width:min(150px,42%); }
  .steam-rule-row { gap:16px; flex-wrap:wrap; }
  .steam-rule-row:not(:has(details[open])) { flex-wrap:nowrap; gap:12px; }
+ .steam-rule-row .steam-selection-rules[open] { flex-basis:100%; }
  .steam-rule-row .steam-progress { flex:1; min-width:0; }
  .steam-rule-row .steam-progress [data-steam-progress-label] { display:none; }
  .steam-spinner { flex-shrink:0; }

@@ -1,3 +1,4 @@
+import {listFilterLabel} from './list-filter-label.ts';
 import {placeDropdown} from './dropdown-position';
 import {reveal,dismiss,showMenu,hideMenu} from './ui-motion';
 
@@ -27,7 +28,7 @@ export function mountListFilterControls(root:HTMLElement,signal:AbortSignal) {
     function syncDropdown(dropdown:FilterDropdown) {
       const selected=dropdown.options.find(option=>option.dataset.filterValue===dropdown.select.value) || dropdown.options[0];
       const label = dropdown.select.dataset.filterLabel || '';
-      const value = dropdown.select.value === dropdown.select.dataset.filterDefault ? label : selected?.textContent || label;
+      const value = listFilterLabel(dropdown.select.value, dropdown.select.dataset.filterDefault || '', label, selected?.textContent, dropdown.select.dataset.filterShowDefault === 'true');
       dropdown.value.textContent = value;
       dropdown.trigger.setAttribute('aria-label', value === label ? label : `${label}: ${value}`);
       dropdown.options.forEach(option=>option.setAttribute('aria-selected',String(option===selected)));

@@ -1,5 +1,6 @@
 ---
 import Icon from './Icon.astro';
+import {listFilterLabel} from '../lib/list-filter-label.ts';
 
 interface Props {
   id: string;
@@ -8,14 +9,15 @@ interface Props {
   value?: string;
   name?: string;
   defaultValue?: string;
+  showDefaultValue?: boolean;
 }
 
-const { id, label, options, value = '', name, defaultValue = '' } = Astro.props;
-const selectedLabel = value === defaultValue ? label : options.find(([optionValue]) => optionValue === value)?.[1] ?? label;
+const { id, label, options, value = '', name, defaultValue = '', showDefaultValue = false } = Astro.props;
+const selectedLabel = listFilterLabel(value, defaultValue, label, options.find(([optionValue]) => optionValue === value)?.[1], showDefaultValue);
 ---
 <div class="filter-control filter-dropdown-field">
   <span id={`${id}-label`} class="sr-only">{label}</span>
-  <select id={id} name={name} class="filter-select-native" tabindex="-1" aria-hidden="true" data-filter-label={label} data-filter-default={defaultValue}>
+  <select id={id} name={name} class="filter-select-native" tabindex="-1" aria-hidden="true" data-filter-label={label} data-filter-default={defaultValue} data-filter-show-default={showDefaultValue?'true':undefined}>
     {options.map(([optionValue, optionLabel]) => <option value={optionValue} selected={optionValue === value}>{optionLabel}</option>)}
   </select>
   <div class="filter-dropdown" data-filter-dropdown data-motion-static>
