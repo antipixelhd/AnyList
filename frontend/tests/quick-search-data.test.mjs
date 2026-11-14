@@ -101,11 +101,14 @@ test('pending contributor evidence renders immediately and refreshes only its ow
   assert.deepEqual(requests,['/studios','/studios']);
 });
 
-test('verification polling is bounded and cancelled on query change',async()=>{
+test('healthy verification continues past twenty reads and cancels on query change',async()=>{
   const controller=new AbortController();let calls=0;
-  const fetcher=async()=>{calls++;return {ok:true,json:async()=>({verification_pending:true})};};
-  await readQuickSearch({kind:'contributors',url:'/studios'},controller.signal,()=>{},fetcher,async()=>{});
-  assert.equal(calls,20);
+  const updates=[];
+  const fetcher=async()=>({ok:true,json:async()=>({results:{actor:['saved']},verification_pending:++calls<25})});
+  await readQuickSearch({kind:'contributors',url:'/people'},controller.signal,data=>updates.push(data),fetcher,async()=>{});
+  assert.equal(calls,25);
+  assert.equal(updates.at(-1).verification_pending,false);
+  assert.ok(updates.every(data=>!data.partial));
   calls=0;
   await readQuickSearch({kind:'contributors',url:'/studios'},controller.signal,()=>controller.abort(),fetcher);
   assert.equal(calls,1);
@@ -120,15 +123,31 @@ test('cold people can settle after the old seven-second polling window',async()=
   assert.equal(updates.at(-1).verification_pending,false);
 });
 
-test('exhausted or long-cooldown verification stays partial and preserves usable results',async()=>{
-  for(const retry_after of [2,60]){
-    let calls=0;const updates=[];
-    await readQuickSearch({kind:'contributors',url:'/people'},new AbortController().signal,data=>updates.push(data),
-      async()=>{calls++;return {ok:true,json:async()=>({results:{actor:['existing person']},verification_pending:true,retry_after})};},async()=>{});
-    assert.equal(calls,retry_after===60?1:20);
-    assert.equal(updates.at(-1).partial,true);
-    assert.deepEqual(updates.at(-1).results.actor,['existing person']);
-  }
+test('long retry deadlines preserve usable results without inventing a failure',async()=>{
+  let calls=0;const updates=[],delays=[];
+  await readQuickSearch({kind:'contributors',url:'/people'},new AbortController().signal,data=>updates.push(data),
+    async()=>({ok:true,json:async()=>({results:{actor:['existing person']},verification_pending:++calls<2,retry_after:60})}),
+    async(_signal,delay)=>{delays.push(delay);});
+  assert.deepEqual(delays,[60000]);
+  assert.equal(calls,2);
+  assert.ok(updates.every(data=>!data.partial));
+  assert.deepEqual(updates.at(-1).results.actor,['existing person']);
+});
+
+test('real provider partial results and transport failures remain failures',async()=>{
+  const updates=[];
+  await readQuickSearch({kind:'contributors',url:'/people'},new AbortController().signal,data=>updates.push(data),
+    async()=>({ok:true,json:async()=>({results:{actor:['saved']},partial:true,verification_pending:false})}));
+  assert.equal(updates[0].partial,true);
+  await assert.rejects(readQuickSearch({kind:'contributors',url:'/people'},new AbortController().signal,()=>{},async()=>({ok:false})),/Search unavailable/);
+});
+
+test('query cancellation aborts a scheduled verification deadline',async()=>{
+  const controller=new AbortController();let calls=0;
+  const pending=readQuickSearch({kind:'contributors',url:'/people'},controller.signal,()=>queueMicrotask(()=>controller.abort()),
+    async()=>{calls++;return {ok:true,json:async()=>({verification_pending:true,retry_after:60})};});
+  await assert.rejects(pending);
+  assert.equal(calls,1);
 });
 
 test('desktop searches both media types and all contributors without duplicating people requests',()=>{

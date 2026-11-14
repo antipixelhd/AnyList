@@ -5,11 +5,11 @@ export type ResultSection = SearchSection;
 export type ContributorScope = 'people'|'actor'|'staff'|'studio';
 export type SearchRequest = {kind:'movie'|'series'|'game'|'contributors';url:string;scope?:ContributorScope};
 
-function verificationPause(signal:AbortSignal) {
+function verificationPause(signal:AbortSignal, delay=1500) {
   return new Promise<void>((resolve,reject)=>{
     if(signal.aborted){reject(signal.reason);return;}
     const aborted=()=>{clearTimeout(timer);reject(signal.reason);};
-    const timer=setTimeout(()=>{signal.removeEventListener('abort',aborted);resolve();},1500);
+    const timer=setTimeout(()=>{signal.removeEventListener('abort',aborted);resolve();},delay);
     signal.addEventListener('abort',aborted,{once:true});
   });
 }
@@ -19,21 +19,20 @@ function verificationPause(signal:AbortSignal) {
 export async function readQuickSearch(request:SearchRequest,signal:AbortSignal,onResult:(data:any)=>void,
   fetcher:typeof fetch=fetch,pause=verificationPause) {
   let previous:string|undefined;
-  for(let attempt=0;attempt<20;attempt++) {
+  while(!signal.aborted) {
     const response=await fetcher(request.url,{signal});
     if(!response.ok)throw new Error('Search unavailable');
     const data=await response.json();
     if(signal.aborted)return;
-    // A slow cold career may need several worker ticks. Preserve its usable
-    // results, but never turn an exhausted/cooling-down check into verified empty.
-    const stoppedPending=request.kind==='contributors'&&data.verification_pending&&
-      (attempt===19||(typeof data.retry_after==='number'&&data.retry_after>30));
-    const published=stoppedPending?{...data,partial:true}:data;
-    const signature=JSON.stringify([published.results,published.partial,published.verification_pending]);
-    if(signature!==previous){onResult(published);previous=signature;}
+    // A healthy cold career can take several worker turns. Pending evidence
+    // is not a provider failure, and must not become one after a poll count.
+    const signature=JSON.stringify([data.results,data.partial,data.verification_pending]);
+    if(signature!==previous){onResult(data);previous=signature;}
     if(signal.aborted)return;
-    if(request.kind!=='contributors'||!data.verification_pending||stoppedPending)return;
-    await pause(signal);
+    if(request.kind!=='contributors'||!data.verification_pending)return;
+    const delay=typeof data.retry_after==='number'&&Number.isFinite(data.retry_after)
+      ? Math.max(1500,Math.min(3600,data.retry_after)*1000) : 1500;
+    await pause(signal,delay);
   }
 }
 

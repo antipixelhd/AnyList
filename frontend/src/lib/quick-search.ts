@@ -57,7 +57,7 @@ export function mountQuickSearch() {
   let progressTimer = 0;
   let latest:{movie:MediaSearchResult[];series:MediaSearchResult[];game:GameSearchResult[]} = { movie: [], series: [], game: [] };
   let contributors:Record<'actor'|'staff'|'studio',ContributorResult[]>={actor:[],staff:[],studio:[]};
-  let pending=0,failed=0,mediaPending=0,gamePending=false;
+  let pending=0,failed=0,mediaPending=0,gamePending=false,verificationPending=0;
   const selected=()=>activeTab;
   const updatePlaceholder=()=>{input!.placeholder=mobile.matches?'Search titles, people, studios…':'Search titles, people and studios…';};
   const resultCounts=()=>({all:latest.movie.length+latest.series.length,movie:latest.movie.length,series:latest.series.length,game:latest.game.length,actor:contributors.actor.length,staff:contributors.staff.length,studio:contributors.studio.length});
@@ -180,7 +180,9 @@ export function mountQuickSearch() {
     }
     dialog!.style.setProperty('--search-columns',String(Math.max(1,Math.min(4,visible.length))));
     dialog!.toggleAttribute('data-search-expanded',visible.length>1&&!mobile.matches);
-    showState(pending ? '' : failed ? available.length?'Some search results are unavailable.':'Search is unavailable. Try again.' : visible.length?'':'No matching results.');
+    if(!pending){clearTimeout(progressTimer);progress?.classList.remove('visible');}
+    resultShell?.setAttribute('aria-busy',String(pending>0));
+    showState(pending ? '' : failed ? available.length?'Some search results are unavailable.':'Search is unavailable. Try again.' : visible.length||verificationPending?'':'No matching results.');
     if (announcement) announcement.textContent = visible.map(kind=>`${counts[kind]} ${kind==='all'?'movie and series':kind==='staff'?'crew':kind} results`).join(', ');
   }
   function setActiveTab(next:SearchSection,direction?:number) {
@@ -200,7 +202,7 @@ export function mountQuickSearch() {
     const query = input?.value.trim() || '';
     controller?.abort();
     clearTimeout(progressTimer);progress?.classList.remove('visible');
-    latest={movie:[],series:[],game:[]};contributors={actor:[],staff:[],studio:[]};failed=0;pending=0;mediaPending=query.length>=2&&showMoviesSeries()?2:0;gamePending=query.length>=2&&showGames();
+    latest={movie:[],series:[],game:[]};contributors={actor:[],staff:[],studio:[]};failed=0;pending=0;verificationPending=0;mediaPending=query.length>=2&&showMoviesSeries()?2:0;gamePending=query.length>=2&&showGames();
     if (resultShell) resultShell.hidden = true;
     if (announcement) announcement.textContent = '';
     if (query.length < 2) {
@@ -233,17 +235,22 @@ export function mountQuickSearch() {
       await Promise.all([titles, ...requests.filter(request => request.kind === 'contributors'||request.kind==='game').map(async request=>{
         let gameRows:GameSearchResult[]=[];
         let requestPartial=false;
+        let initialPending=true;
+        let verifying=false;
         try{
           await searchReader.read(request,current.signal,data=>{
             if(controller!==current||current.signal.aborted)return;
             if(request.kind==='game')gameRows=unique(data.results||[]) as GameSearchResult[];
-            else{contributors=mergeContributorResults(contributors,data.results||{},request.scope);
+            else{if(initialPending){pending--;initialPending=false;}
+              if(!!data.verification_pending!==verifying){verifying=!!data.verification_pending;verificationPending+=verifying?1:-1;}
+              contributors=mergeContributorResults(contributors,data.results||{},request.scope);
               if(!!data.partial!==requestPartial){failed+=data.partial?1:-1;requestPartial=!!data.partial;}
               render('contributors');}
           });
         }catch(cause){if(controller!==current||current.signal.aborted)return;if(!requestPartial)failed++;}
         finally{if(controller===current&&!current.signal.aborted){
-          pending--;
+          if(initialPending)pending--;
+          if(verifying)verificationPending--;
           if(request.kind==='game'){gamePending=false;latest.game=gameRows;render('games');}
           render();
         }}
