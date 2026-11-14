@@ -135,39 +135,6 @@
   font-size:14px;
 }
 .quick-search-dialog .quick-search-bar .editor-icon-button:is(:hover,:focus-visible) { background:transparent; color:var(--blue); }
-.quick-search-loading-bar {
-  position:absolute;
-  inset:auto 0 0;
-  inline-size:100%;
-  block-size:2px;
-  appearance:none;
-  border:0;
-  background:transparent;
-  overflow:clip;
-  pointer-events:none;
-  container-type:inline-size;
-  --quick-search-progress-animation:quick-search-progress-slide 2.2s ease-in-out infinite;
-}
-.quick-search-loading-bar::-webkit-progress-bar { background:transparent; }
-.quick-search-loading-bar::-webkit-progress-value {
-  background:var(--blue);
-  animation:var(--quick-search-progress-animation);
-}
-.quick-search-loading-bar::-moz-progress-bar {
-  background:var(--blue);
-  animation:var(--quick-search-progress-animation);
-}
-@keyframes quick-search-progress-slide {
-  from,to { inline-size:36%; margin-right:auto; }
-  from { translate:-100%; }
-  to { translate:100cqi; }
-}
-@media(prefers-reduced-motion:reduce) {
-  .quick-search-loading-bar { --quick-search-progress-animation:quick-search-progress-still 1s linear infinite; }
-}
-@keyframes quick-search-progress-still {
-  from,to { inline-size:36%; margin-right:auto; }
-}
 .quick-search-dialog .quick-search-results,.quick-search-dialog .quick-search-results.combined {
   grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));
   justify-content:stretch;
@@ -237,6 +204,7 @@
 .quick-search-skeleton-copy > span:first-child { width:68%; height:11px; }
 .quick-search-skeleton-copy > span:last-child { width:34%; height:8px; }
 .quick-search-skeleton-row:nth-child(2) .quick-search-skeleton-copy > span:first-child { width:52%; }
+.quick-search-skeleton[hidden],.quick-search-skeleton-row[hidden] { display:none; }
 .quick-search-dialog .quick-search-results[inert] { opacity:.48; }
 .quick-search-dialog .quick-search-result { min-height:60px; margin-inline:-20px; padding:10px 20px; gap:8px; border-radius:0; }
 .quick-search-dialog .quick-search-result:is(:hover,:focus-within) { background:var(--blue); color:#fff; }
@@ -340,7 +308,7 @@
 @media (prefers-reduced-motion:no-preference) {
   .quick-search-dialog .quick-search-results { transition:opacity .14s ease; }
   .quick-search-dialog .quick-search-card:not([hidden]) { animation:quick-search-panel-in .18s cubic-bezier(.2,.7,.2,1) both; }
-  .quick-search-skeleton { animation:quick-search-skeleton-pulse 1.6s ease-in-out infinite alternate; }
+  .quick-search-skeleton-row { animation:quick-search-skeleton-pulse 1.6s ease-in-out infinite alternate; }
   .quick-search-dialog .quick-search-result { transition:background-color .15s ease,color .15s ease; }
   .quick-search-dialog .quick-search-result :is(.quick-search-result-link,.quick-search-add,small) { transition:color .15s ease; }
 }

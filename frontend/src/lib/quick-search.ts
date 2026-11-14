@@ -13,6 +13,7 @@ let pageListeners: AbortController;
 let mountedDialog:HTMLDialogElement|null=null;
 const SEARCH_DEBOUNCE_MS = 300;
 const SKELETON_DELAY_MS = 120;
+const PROGRESS_DELAY_MS = 150;
 export function mountQuickSearch() {
   const nextDialog=document.querySelector<HTMLDialogElement>('[data-quick-search]');
   if(nextDialog===mountedDialog&&pageListeners&&!pageListeners.signal.aborted)return;
@@ -48,10 +49,18 @@ export function mountQuickSearch() {
   const resultShell = dialog.querySelector<HTMLElement>('.quick-search-results')!;
   const updateLayout = mountQuickSearchLayout(resultShell, pageListeners.signal);
   const panels = [...resultShell.querySelectorAll<HTMLElement>('[data-search-section]')];
-  const skeleton = dialog.querySelector<HTMLTemplateElement>('[data-search-skeleton]')!;
+  const skeletonTemplate = dialog.querySelector<HTMLTemplateElement>('[data-search-skeleton]')!;
+  const panelContent = panels.map(panel => {
+    const target = panel.querySelector<HTMLElement>('[data-search-results]')!;
+    const skeleton = skeletonTemplate.content.firstElementChild!.cloneNode(true) as HTMLElement;
+    skeleton.hidden = true;
+    target.replaceChildren(skeleton);
+    return {panel, target, skeleton, secondRow: skeleton.lastElementChild as HTMLElement,
+      kind: panel.dataset.searchSection as SearchSection, rows: new Map<string, HTMLElement>()};
+  });
   const state = dialog?.querySelector<HTMLElement>('[data-search-state]');
   const announcement = dialog?.querySelector<HTMLElement>('[data-search-announcement]');
-  const progress = dialog.querySelector<HTMLProgressElement>('[data-search-progress]')!;
+  const progress = dialog.querySelector<HTMLElement>('[data-search-progress]')!;
   const addIcon = document.querySelector<HTMLTemplateElement>('[data-search-add-icon]');
   const editorTitles = new WeakMap<HTMLButtonElement, EditorTitle>();
   const gameResults = new WeakMap<HTMLButtonElement, GameSearchResult>();
@@ -60,6 +69,7 @@ export function mountQuickSearch() {
   let controller: AbortController | null = null;
   let timer = 0;
   let revealTimer = 0;
+  let progressTimer = 0;
   let revealed = false;
   let latest = { all: [] as MediaSearchResult[], movie: [] as MediaSearchResult[], series: [] as MediaSearchResult[], game: [] as GameSearchResult[] };
   let contributors:Record<'actor'|'staff'|'studio',ContributorResult[]>={actor:[],staff:[],studio:[]};
@@ -67,7 +77,7 @@ export function mountQuickSearch() {
   let partialCoverage = false;
   const pending = new Set<SearchSection>();
   const exits = new Map<HTMLElement, Animation>();
-  const rendered = new Map<HTMLElement, string>();
+  const skeletonExits = new Map<HTMLElement, Animation>();
   const panelOrder = () => quickSearchTabOrder(combined(), showMoviesSeries(), showGames());
   const updatePlaceholder=()=>{input!.placeholder=mobile.matches?'Search titles, people, studios…':'Search titles, people and studios…';};
   const resultCounts=()=>({all:latest.all.length,movie:latest.movie.length,series:latest.series.length,game:latest.game.length,actor:contributors.actor.length,staff:contributors.staff.length,studio:contributors.studio.length});
@@ -162,26 +172,48 @@ export function mountQuickSearch() {
     if (state.textContent !== message) state.textContent = message;
     state.hidden = !message;
   }
-  function syncPanel(panel: HTMLElement, kind: SearchSection, count: number) {
-    const target = panel.querySelector<HTMLElement>('[data-search-results]')!;
-    const rows = kind === 'actor' || kind === 'staff' || kind === 'studio'
-      ? contributors[kind] : latest[kind].slice(0, 8);
-    const signature = count ? JSON.stringify(rows) : '';
-    const previous = rendered.get(panel);
-    if (previous === signature) return;
-    rendered.set(panel, signature);
-    panel.setAttribute('aria-busy', String(!count));
-    if (!count) target.replaceChildren(skeleton.content.cloneNode(true));
-    else if (kind === 'actor' || kind === 'staff' || kind === 'studio') {
-      target.replaceChildren(...contributors[kind].map(item => contributorNode(kind, item)));
-    } else target.replaceChildren(...latest[kind].slice(0, 8).map(resultNode));
-    if (count && previous === '' && !reducedMotion.matches) {
-      target.animate({opacity: [.5, 1]}, {duration: 160, easing: 'ease-out'});
+  function syncPanel(content: typeof panelContent[number], animateChange: boolean) {
+    const {panel, target, kind, skeleton, secondRow, rows} = content;
+    const people = kind === 'actor' || kind === 'staff' || kind === 'studio';
+    const items = people ? contributors[kind] : latest[kind].slice(0, 8);
+    const signatures = items.map(item => JSON.stringify(item));
+    const wanted = new Set(signatures);
+    const loading = pending.has(kind);
+    for (const [signature, row] of rows) {
+      if (wanted.has(signature)) continue;
+      row.remove();
+      rows.delete(signature);
     }
+    items.forEach((item, index) => {
+      const signature = signatures[index];
+      let row = rows.get(signature);
+      if (!row) {
+        row = 'roles' in item ? contributorNode(kind as 'actor' | 'staff' | 'studio', item) : resultNode(item);
+        rows.set(signature, row);
+        if (animateChange) row.animate({opacity: [.4, 1]}, {duration: 160, easing: 'ease-out'});
+      }
+      if (target.children[index] !== row) target.insertBefore(row, target.children[index]);
+    });
+    panel.setAttribute('aria-busy', String(loading));
+    secondRow.hidden = items.length > 0;
+
+    const exit = skeletonExits.get(skeleton);
+    if (!loading && animateChange && !skeleton.hidden) {
+      if (!exit) {
+        const fade = skeleton.animate({opacity: [1, 0]}, {duration: 150, easing: 'ease-out', fill: 'forwards'});
+        skeletonExits.set(skeleton, fade);
+        fade.onfinish = render;
+        return;
+      }
+      if (exit.playState !== 'finished') return;
+    }
+    if (exit) { exit.cancel(); skeletonExits.delete(skeleton); }
+    skeleton.hidden = !loading;
   }
-  function updatePanel(panel: HTMLElement, visible: boolean, canExit: boolean, count: number) {
+  function updatePanel(content: typeof panelContent[number], visible: boolean, animateChange: boolean, keepSelection: boolean) {
+    const {panel, skeleton} = content;
     const exit = exits.get(panel);
-    if (!visible && canExit && !panel.hidden && !reducedMotion.matches) {
+    if (!visible && animateChange && (!mobile.matches || keepSelection) && !panel.hidden) {
       if (!exit) {
         const fade = panel.animate({opacity: [Number(getComputedStyle(panel).opacity), 0]},
           {duration: 150, easing: 'ease-in', fill: 'forwards'});
@@ -193,18 +225,21 @@ export function mountQuickSearch() {
       if (exit.playState !== 'finished') return;
     }
     if (exit) { exit.cancel(); exits.delete(panel); }
+    if (!visible) {
+      skeletonExits.get(skeleton)?.cancel();
+      skeletonExits.delete(skeleton);
+    } else syncPanel(content, animateChange && !panel.hidden);
     panel.inert = false;
     panel.hidden = !visible;
-    if (visible) syncPanel(panel, panel.dataset.searchSection as SearchSection, count);
   }
   function render() {
     if (!revealed) return;
-    progress.hidden = !pending.size;
     const counts=resultCounts();
     const available=availableTabs();
     const wasStale = resultShell.inert;
+    const animateChange = !wasStale && !reducedMotion.matches;
     const selectedPanel = panels.find(panel => panel.dataset.searchSection === activeTab);
-    const keepSelection = mobile.matches && !wasStale && !reducedMotion.matches &&
+    const keepSelection = mobile.matches && animateChange &&
       !available.includes(activeTab) && !!selectedPanel && !selectedPanel.hidden &&
       exits.get(selectedPanel)?.playState !== 'finished';
     if (mobile.matches && !keepSelection && !available.includes(activeTab)) {
@@ -215,9 +250,8 @@ export function mountQuickSearch() {
     updateLayout(() => {
       resultShell.inert = false;
       tabNav.inert = false;
-      for (const panel of panels) {
-        const kind = panel.dataset.searchSection as SearchSection;
-        updatePanel(panel, visible.includes(kind), !wasStale && (!mobile.matches || keepSelection), counts[kind]);
+      for (const content of panelContent) {
+        updatePanel(content, visible.includes(content.kind), animateChange, keepSelection);
       }
       resultShell.hidden = panels.every(panel => panel.hidden);
     });
@@ -226,7 +260,8 @@ export function mountQuickSearch() {
       : available.length ? '' : partialCoverage ? 'Some matches could not be verified.' : 'No matching results.';
     showState(message);
     const summary = visible.filter(kind => counts[kind]).map(kind=>`${counts[kind]} ${kind==='all'?'movie and series':kind==='staff'?'crew':kind} results`).join(', ');
-    if (announcement && announcement.textContent !== summary) announcement.textContent = summary;
+    const status = summary || (pending.size ? 'Searching.' : '');
+    if (announcement && announcement.textContent !== status) announcement.textContent = status;
   }
   function setActiveTab(next:SearchSection,direction?:number) {
     if (next===activeTab || tabNav.inert) return;
@@ -244,11 +279,14 @@ export function mountQuickSearch() {
   function stopSearch() {
     clearTimeout(timer);
     clearTimeout(revealTimer);
+    clearTimeout(progressTimer);
     controller?.abort();
     controller = null;
     revealed = false;
     pending.clear();
-    progress.hidden = true;
+    progress.classList.remove('visible');
+    skeletonExits.forEach(exit => exit.cancel());
+    skeletonExits.clear();
     for (const [panel, exit] of exits) {
       exit.cancel();
       panel.hidden = true;
@@ -293,6 +331,9 @@ export function mountQuickSearch() {
       render();
     };
     revealTimer = window.setTimeout(reveal, SKELETON_DELAY_MS);
+    progressTimer = window.setTimeout(() => {
+      if (isCurrent()) progress.classList.add('visible');
+    }, PROGRESS_DELAY_MS);
 
     const requests = quickSearchRequests(query, undefined, showMoviesSeries(), showGames());
     const titleSections = order.filter(kind => kind === 'all' || kind === 'movie' || kind === 'series');
@@ -340,6 +381,9 @@ export function mountQuickSearch() {
         }
       }
     })]);
+    if (!isCurrent()) return;
+    clearTimeout(progressTimer);
+    progress.classList.remove('visible');
     if (!revealed) reveal();
   }
   function open() {
