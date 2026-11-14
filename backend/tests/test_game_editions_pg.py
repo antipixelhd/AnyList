@@ -13,7 +13,7 @@ from models.games import GameEntry
 
 def source():
     return {'id':100,'first_release_date':1500000000,'expanded_games':[
-        {'id':200,'name':'Expanded edition','first_release_date':1600000000,'game_type':{'id':10},'parent_game':{'id':100}}]}
+        {'id':200,'name':'Expanded edition','cover':{'url':'https://images.igdb.com/igdb/image/upload/t_thumb/cover.jpg'},'first_release_date':1600000000,'game_type':{'id':10},'parent_game':{'id':100}}]}
 
 
 class EditionPolicyTests(unittest.TestCase):
@@ -50,6 +50,7 @@ class EditionDatabaseTests(unittest.IsolatedAsyncioTestCase):
         first,second=await asyncio.gather(service.read(self.base),service.read(self.base))
         self.assertEqual(first,second);self.assertEqual(provider.igdb.await_count,1)
         self.assertEqual((await service.read(self.base)),first);self.assertEqual(provider.igdb.await_count,1)
+        self.assertTrue(first['editions'][0]['poster'].startswith('https://images.igdb.com/'))
         target=first['editions'][0]['id'];self.assertNotEqual(target,self.base)
         async with self.Session() as db:
             self.assertEqual(await db.scalar(select(func.count()).select_from(GameEntry)),1)

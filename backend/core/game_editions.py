@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 
 from core import catalogue
-from core.catalogue_normalize import entity
+from core.catalogue_normalize import entity, image
 from core.catalogue_providers import CatalogueProviders, ProviderHTTP, ProviderError
 from core.game_source_cache import GameSourceCache
 from core.game_types import igdb_game_class, mobile_only
@@ -12,7 +12,7 @@ from core.game_release_dates import game_release
 from models.catalogue import CatalogueEntity, CatalogueIdentity, CatalogueRelationship
 
 KINDS={'expanded_games':'expanded_game','remasters':'remaster','remakes':'remake'}
-FIELDS='id,name,first_release_date,game_type.type,version_parent,parent_game.id,platforms.id'
+FIELDS='id,name,first_release_date,game_type.type,version_parent,parent_game.id,platforms.id,cover.url'
 QUERY_FIELDS='id,name,first_release_date,'+','.join(f'{field}.{part}' for field in KINDS for part in FIELDS.split(','))
 
 
@@ -31,7 +31,7 @@ def candidates(raw,stamp=None):
                 or igdb_game_class(row)!=kind or mobile_only(row)):continue
             parent=row.get('parent_game')
             if parent and (not isinstance(parent,dict) or parent.get('id')!=raw['id']):continue
-            result[native]={'native':str(native),'name':row['name'],'year':datetime.fromtimestamp(day,timezone.utc).year,'released_at':day,'kind':kind}
+            result[native]={'native':str(native),'name':row['name'],'year':datetime.fromtimestamp(day,timezone.utc).year,'released_at':day,'kind':kind,'poster':image(row.get('cover'))}
     return sorted(result.values(),key=lambda row:(-row['year'],int(row['native'])))
 
 
@@ -56,7 +56,7 @@ class GameEditions:
                 original=await db.get(CatalogueEntity,work_id)
                 if not original or await native_id(db,original)!=native:raise ProviderError('identity_conflict')
                 for value in values:
-                    target=await catalogue.upsert_entity(db,entity('game','igdb.game',{'id':int(value['native']),'name':value['name']},
+                    target=await catalogue.upsert_entity(db,entity('game','igdb.game',{'id':int(value['native']),'name':value['name']},artwork=value.get('poster'),
                         attributes={'game_class':value['kind'],'igdb_id':value['native'],**game_release({'first_release_date':value['released_at']})}),'igdb')
                     if target.id==work_id:continue
                     # A version association is not a provider identity or progress target.
@@ -69,10 +69,10 @@ class GameEditions:
         values=cached['data']['rows']
         if not values:return {'editions':[],'status':{'state':'ready'}}
         async with self.sessions() as db:
-            rows=(await db.execute(select(CatalogueEntity.id,CatalogueEntity.name,CatalogueIdentity.external_id).join(CatalogueIdentity,
+            rows=(await db.execute(select(CatalogueEntity.id,CatalogueEntity.name,CatalogueEntity.image_url,CatalogueIdentity.external_id).join(CatalogueIdentity,
                 CatalogueIdentity.entity_id==CatalogueEntity.id).where(CatalogueIdentity.namespace=='igdb.game',
                 CatalogueIdentity.external_id.in_([row['native'] for row in values])))).all()
-        known={native:{'id':identifier,'title':title} for identifier,title,native in rows}
+        known={native:{'id':identifier,'title':title,'poster':poster} for identifier,title,poster,native in rows}
         return {'editions':[{**known[value['native']],'year':value['year']}
             for value in values if value['native'] in known and known[value['native']]['id']!=work_id],
             'status':{'state':'ready'}}

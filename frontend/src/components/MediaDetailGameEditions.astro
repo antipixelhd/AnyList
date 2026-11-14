@@ -2,7 +2,7 @@
 import Icon from './Icon.astro';
 ---
 <article class="lab-module game-newer-editions" data-game-editions hidden>
-  <h2>Newer version available</h2>
+  <h2 data-game-editions-heading>New version available</h2>
   <div data-game-edition-links></div>
-  <template data-game-edition-template><a><span><strong data-game-edition-title></strong><span data-game-edition-year></span></span><Icon name="arrow-right"/></a></template>
+  <template data-game-edition-template><a><img data-game-edition-poster alt="" width="56" height="84" loading="lazy" decoding="async" hidden/><span><strong data-game-edition-title></strong><span data-game-edition-year></span></span><Icon name="arrow-right"/></a></template>
 </article>
