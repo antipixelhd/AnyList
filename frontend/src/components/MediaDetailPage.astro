@@ -4,6 +4,7 @@ import LocalDateTime from './LocalDateTime.astro';
 import Tracker from '../layouts/Tracker.astro';
 import StatusControl from './StatusControl.astro';
 import GameProgress from './GameProgress.astro';
+import GameBannerStartup from './GameBannerStartup.astro';
 import MediaDetailGameTimes from './MediaDetailGameTimes.astro';
 import MediaDetailGameOffer from './MediaDetailGameOffer.astro';
 import MediaDetailRatings from './MediaDetailRatings.astro';
@@ -93,7 +94,8 @@ const login=`/login?next=${encodeURIComponent(Astro.url.pathname+Astro.url.searc
 const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
 ---
 <Tracker requiresGamesAccess={gameTitle} title={title?.title||'Media'} shareDescription={title ? mediaShareDescription(title) : undefined} predictionArtwork={initialArtwork} preloadArtwork={initialArtwork}>
-{title?<article class="detail-lab concept-marquee concept-marquee-25 concept-marquee-27 media-detail" data-media-detail data-media-kind={title.type} data-game-primary-pending={String(!!gamePrimaryPending)} data-has-backdrop={String(reserveBackdrop)} data-spoilers="false">
+{title?<article class="detail-lab concept-marquee concept-marquee-25 concept-marquee-27 media-detail" data-media-detail data-media-kind={title.type} data-game-banner-key={signedIn&&gameTitle?`game-banner:${Astro.locals.user!.id}:${title.id}`:undefined} data-game-banner-pinned={signedIn&&gameTitle?String(!!title.game_state?.pinned_banner):undefined} data-game-primary-pending={String(!!gamePrimaryPending)} data-has-backdrop={String(reserveBackdrop)} data-spoilers="false">
+  {signedIn&&gameTitle&&<GameBannerStartup/>}
   {signedIn&&trackable&&<script id="title-editor-data" type="application/json" set:html={encode({...title,detail_creators:creators.map(person=>person.name),people:undefined,organizations:undefined,posters:undefined,artwork:undefined,relations:undefined,similar:undefined,editor_library:{available:!!library?.connections?.length,desired:library?.desired===true}})}/>}
   <header class="lab-hero">
     {(backdrop||trackable)&&<picture class="lab-hero-picture">{separateMobileBackdrop&&<source media="(max-width:650px)" srcset={mobileBackdrop!.src} />}<img class="lab-hero-image" src={backdrop?.src} srcset={backdrop?.srcset} sizes={backdrop?.sizes} data-hero-fallback={title.backdrop_fallback} hidden={!backdrop&&!mobileBackdrop} alt="" fetchpriority="high"/></picture>}<div class="lab-hero-shade"></div>

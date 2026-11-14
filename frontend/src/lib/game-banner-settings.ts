@@ -38,11 +38,13 @@ export function mountGameBannerSettings(root:HTMLElement,id:number,viewer:string
         if(!cycleChoice||!list.includes(cycleChoice))cycleChoice=list[cyclePosition%list.length];
         data.backdrop=cycleChoice;
       }
-      apply(data);
+      // A still-acquiring cycle list must not briefly reveal the primary.
+      if(!(root.dataset?.gameBannerPending&&settings.cycle&&!data.pinned_banner&&!list.length
+        &&['pending','deferred'].includes(data.background_status?.state)))apply(data);
       if(['pending','deferred'].includes(data.background_status?.state))timer=setTimeout(()=>void read(),Math.max(2,data.background_status.retry_after||10)*1000);
       const status=root.querySelector<HTMLElement>('[data-banner-status]');
       if(status){status.textContent=!mobile&&settings.animated&&!data.banners?.length?'No animated banners available.':settings.cycle&&list.length<2?mobile?'Only one banner available.':'Only one banner meets the rating threshold.':'';status.hidden=!status.textContent;}
-    }catch{if(!signal.aborted&&current===revision){delete root.dataset.gameBannerPending;const status=root.querySelector<HTMLElement>('[data-banner-status]');if(status){status.textContent='Couldn’t load banners. Try again.';status.hidden=false;}}}
+    }catch{if(!signal.aborted&&current===revision){if(root.dataset?.gameBannerPending)apply({backdrop:initial?.backdrop,pinned_banner:initial?.pinned_banner});const status=root.querySelector<HTMLElement>('[data-banner-status]');if(status){status.textContent='Couldn’t load banners. Try again.';status.hidden=false;}}}
     })();
     request=pending;
     void pending.finally(()=>{if(request===pending)request=undefined;});
@@ -54,8 +56,8 @@ export function mountGameBannerSettings(root:HTMLElement,id:number,viewer:string
     void read(true);
   },{signal}));
   root.addEventListener('anylist:banner-pinned',()=>void read(true),{signal});
-  // A known primary is already rendered. Optional cycling/animation may resolve
-  // in the background; ordinary visits need no duplicate metadata request.
+  // Ordinary visits render the known primary without a duplicate metadata read.
+  // Cycling visits hold only the hero until their entry choice is decoded.
   if(!initial?.backdrop||!['ready','unavailable'].includes(initial.background_status?.state||'')
     ||!initial.pinned_banner&&(settings.cycle||!mobile&&settings.animated))void read();
   return {load:()=>loaded?Promise.resolve():read()};

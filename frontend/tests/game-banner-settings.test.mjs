@@ -91,3 +91,38 @@ test('reloading settings and pin changes do not consume another cycle slot on th
   assert.deepEqual(output,['a','a','a']);
   assert.equal(stored.get(key+':position:false'),'1');assert.equal(stored.has(key+':position:true'),false);
 });
+
+test('a delayed cycle response keeps the startup hold until its selected banner is ready',async t=>{
+  let finish;
+  t.mock.method(globalThis,'fetch',()=>new Promise(resolve=>finish=resolve));
+  const previous=Object.getOwnPropertyDescriptor(globalThis,'localStorage');
+  Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{getItem:()=>'{"cycle":true}',setItem(){}}});
+  const controller=new AbortController(),output=[];
+  t.after(()=>{controller.abort();if(previous)Object.defineProperty(globalThis,'localStorage',previous);else delete globalThis.localStorage;});
+  const root={dataset:{gameBannerPending:'true'},addEventListener(){},querySelectorAll:()=>[],querySelector:()=>null};
+  const settings=mountGameBannerSettings(root,7,'viewer',controller.signal,data=>output.push(data.backdrop),false,
+    {backdrop:'primary',background_status:{state:'ready'}});
+  assert.deepEqual(output,[]);
+  assert.equal(root.dataset.gameBannerPending,'true');
+  finish({ok:true,json:async()=>({backdrop:'primary',cycle_banners:['selected'],background_status:{state:'ready'}})});
+  await settings.load();
+  assert.deepEqual(output,['selected']);
+  assert.equal(root.dataset.gameBannerPending,'true','the image commit owns the reveal after loading/decoding');
+});
+
+test('unfinished cycle acquisition stays hidden, and a failed retry restores the primary',async t=>{
+  let fail=false;
+  t.mock.method(globalThis,'fetch',async()=>{if(fail)throw Error('offline');return {ok:true,json:async()=>({backdrop:'primary',cycle_banners:[],background_status:{state:'pending'}})};});
+  const previous=Object.getOwnPropertyDescriptor(globalThis,'localStorage');
+  Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{getItem:()=>'{"cycle":true}',setItem(){}}});
+  const controller=new AbortController(),output=[],handlers={},root={dataset:{gameBannerPending:'true'},addEventListener:(name,fn)=>handlers[name]=fn,querySelectorAll:()=>[],querySelector:()=>null};
+  t.after(()=>{controller.abort();if(previous)Object.defineProperty(globalThis,'localStorage',previous);else delete globalThis.localStorage;});
+  mountGameBannerSettings(root,7,'viewer',controller.signal,data=>output.push(data.backdrop),false,
+    {backdrop:'primary',background_status:{state:'ready'}});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(output,[]);
+  fail=true;
+  handlers['anylist:banner-pinned']();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(output,['primary']);
+});
