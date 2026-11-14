@@ -196,6 +196,21 @@ class SteamDatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(entries),3)
             self.assertTrue(all(row.total_seconds==3600 and row.achievement_count==1 for row in entries))
 
+    async def test_late_import_achievement_baseline_is_silent_but_later_progress_is_public(self):
+        await self.connect()
+        async with self.Session() as db:
+            state=await db.get(SteamConnection,self.id)
+            await steam_sync.apply_games(db,state,[game('1245620',60)],['1245620'],initial=True,initial_status='planning')
+            await db.commit()
+            await steam_sync.apply_games(db,state,[game('1245620',60,1,3)],['1245620'])
+            await db.commit()
+            self.assertEqual(list(await db.scalars(select(GameActivity).where(GameActivity.user_id==self.user.id))),[])
+            await steam_sync.apply_games(db,state,[game('1245620',60,2,3)],['1245620'])
+            await db.commit()
+            rows=list(await db.scalars(select(GameActivity).where(GameActivity.user_id==self.user.id)))
+            self.assertEqual(len(rows),1)
+            self.assertTrue(rows[0].payload['achievements_changed'])
+
     async def test_initial_import_records_only_dated_milestones_at_their_dates(self):
         from zoneinfo import ZoneInfo
         await self.connect()

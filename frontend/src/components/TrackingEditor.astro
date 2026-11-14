@@ -403,7 +403,7 @@ document.addEventListener('astro:page-load', () => {
         sectionHeading.tabIndex = -1;
         sectionHeading.focus({preventScroll:true});
       } else opener?.blur();
-      if (!listRow.matches(':hover')) delete listRow.dataset.editorDeselected;
+      // Dismissal lasts until a fresh interaction, including after focus restoration.
     } else if (!document.querySelector('[data-quick-search][data-motion-closing]')) opener?.focus();
     opener = null;
   });

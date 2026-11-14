@@ -282,7 +282,13 @@ async def apply_games(db, state, library, selected, *, initial=False, add_apps=N
             entry.revision = (entry.revision or 0) + 1
             await db.flush()
             if initial:await game_activity.record_import(db,entry,timezone_name=state.timezone or 'UTC')
-            else:await game_activity.record(db, entry, before, await game_activity.snapshot(db, work, entry, achievements=state.sync_achievements))
+            else:
+                after = await game_activity.snapshot(db, work, entry, achievements=state.sync_achievements)
+                # Late import enrichment establishes source counters; it is not
+                # newly earned progress, even when public game metadata is new.
+                if state.sync_achievements and any(prior.get('achievement_count') is None for prior in priors.values()):
+                    before['achievements'] = after['achievements']
+                await game_activity.record(db, entry, before, after)
             changed += 1
         for game in games:
             app = game['app_id']

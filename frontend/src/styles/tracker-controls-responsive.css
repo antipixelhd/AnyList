@@ -233,3 +233,5 @@
 .tracker[data-list-landing] .list-shell {
   min-height:calc(100dvh - 50px)
 }
+
+.grid-view .entry-row[data-controls-dismissed] .entry-thumbnail .row-menu,.entry-row[data-controls-dismissed] .progress-increment { opacity:0; pointer-events:none; }
