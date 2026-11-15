@@ -8,6 +8,7 @@ import json
 import logging
 import uuid
 from datetime import date, datetime, timedelta, timezone
+from weakref import WeakValueDictionary
 
 from sqlalchemy import Float, String, cast, delete, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
@@ -23,6 +24,7 @@ log = logging.getLogger(__name__)
 CLASSES = {1:'Lists', 2:'Viewed games', 3:'Browse highlights'}
 _wake=None
 RELEASE_SOURCE='release-week:'
+_observation_gates = WeakValueDictionary()
 
 
 async def release_week(db,native,stamp):
@@ -116,10 +118,20 @@ async def write_weights(db,counts):
             {'values':json.dumps(values)})
 
 
+def _observation_gate():
+    loop = asyncio.get_running_loop()
+    gate = _observation_gates.get(loop)
+    if gate is None:
+        gate = _observation_gates[loop] = asyncio.Lock()
+    return gate
+
+
 async def observe_work(work_id, engine, user_id, category=2, *, removed=False):
     """Post-response hook; no provider calls and no request-owned transaction."""
     from core.game_source_cache import session_factory
-    async with session_factory(engine)() as db:
+    # Only one local observation needs a database connection to contend for
+    # the shared feed lock. PostgreSQL still fences automatic and other writers.
+    async with _observation_gate(), session_factory(engine)() as db:
         native=await db.scalar(select(CatalogueIdentity.external_id).join(CatalogueEntity,
             CatalogueEntity.id==CatalogueIdentity.entity_id).where(CatalogueIdentity.entity_id==work_id,
             CatalogueIdentity.namespace=='igdb.game',or_(CatalogueEntity.attributes['igdb_id'].astext.is_(None),
@@ -142,7 +154,7 @@ async def observe_work(work_id, engine, user_id, category=2, *, removed=False):
 
 async def observe_browse(engine, user_id, category, cards):
     from core.game_source_cache import session_factory
-    async with session_factory(engine)() as db:
+    async with _observation_gate(), session_factory(engine)() as db:
         source=f'browse:{user_id}:{category}'
         rows=(await db.execute(select(GameMapperInterest.game,GameMapperInterest.expires_at).where(GameMapperInterest.source==source))).all()
         desired={str(card['igdb_id']) for card in cards[:6]}

@@ -896,6 +896,36 @@ class BackgroundMappingTests(unittest.IsolatedAsyncioTestCase):
             item=await db.get(GameMapperItem,'game:10')
             self.assertEqual((item.weight,item.counts),(1,{'1':1}))
 
+    async def test_post_response_observations_wait_without_holding_pool_connections(self):
+        from core import game_background
+
+        reached = asyncio.Event()
+        entries = []
+        lock_feed = game_background.feed_lock
+
+        async def observe_lock(db):
+            entries.append(db)
+            reached.set()
+            await lock_feed(db)
+
+        async with self.Session() as writer:
+            await lock_feed(writer)
+            initial = self.engine.pool.checkedout()
+            with patch.object(game_background, 'feed_lock', side_effect=observe_lock):
+                tasks = [asyncio.create_task(game_background.observe_work(self.base, self.engine, self.user.id))
+                         for _ in range(6)]
+                try:
+                    await asyncio.wait_for(reached.wait(), 5)
+                    await asyncio.sleep(.1)
+                    self.assertEqual(len(entries), 1)
+                    self.assertEqual(self.engine.pool.checkedout(), initial + 1)
+                finally:
+                    await writer.rollback()
+                    await asyncio.wait_for(asyncio.gather(*tasks), 5)
+        async with self.Session() as db:
+            item = await db.get(GameMapperItem, 'game:10')
+            self.assertEqual(item.counts, {'2': 1})
+
     async def test_primary_publication_and_detail_observation_do_not_invert_fk_locks(self):
         from core import catalogue,game_background
         from core.game_imdb_enrichment import JOB
