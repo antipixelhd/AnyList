@@ -490,7 +490,6 @@ async def browse_games(db: DB, viewer: Viewer, background:BackgroundTasks,
             wait_seconds=.15 if min_metacritic else None)
         result=await game_browse.project(db,viewer_id,page)
         if cursor is None and not q and not genres and not platforms and not start and not end and not timeline and not status:
-            await db.commit()
             from core.game_background import observe_browse
             background.add_task(observe_browse,db.bind,viewer_id,category,result['results'])
         return result
@@ -539,7 +538,6 @@ async def game_children(work_id:WorkId,db:DB,viewer:Reader,
 @router.patch('/entries/{work_id}')
 async def save_entry(work_id: WorkId, body: GamePatch, db: DB, viewer: Writer,background:BackgroundTasks) -> GameEntryOut:
     result=await tracking.save_entry(db, viewer.id, work_id, body)
-    await db.commit()
     background.add_task(request_game_metadata,work_id,db.bind)
     from core.game_background import observe_work
     background.add_task(observe_work,work_id,db.bind,viewer.id,1)
@@ -562,7 +560,6 @@ async def remove_entry(work_id: WorkId, db: DB, viewer: Writer,background:Backgr
 async def save_child(work_id: WorkId, body: ChildPatch, db: DB, viewer: Writer,background:BackgroundTasks,
                      listed: bool = True) -> GameEntryOut:
     result=await tracking.save_child(db, viewer.id, work_id, body, listed=listed)
-    await db.commit()
     from core.game_background import observe_work
     background.add_task(observe_work,work_id,db.bind,viewer.id,1)
     return result
@@ -582,9 +579,7 @@ async def unlist_child(work_id: WorkId, db: DB, viewer: Writer,background:Backgr
     await db.commit()
     from core.game_background import observe_work
     background.add_task(observe_work,work_id,db.bind,viewer.id,1)
-    result = (await tracking.states(db, viewer.id, [work_id]))[0]
-    await db.commit()
-    return result
+    return (await tracking.states(db, viewer.id, [work_id]))[0]
 
 
 @router.put('/favorites/order')
@@ -603,9 +598,7 @@ async def set_favorite(work_id: WorkId, body: FavoritePatch, db: DB, viewer: Wri
     await db.commit()
     from core.game_background import observe_work
     background.add_task(observe_work,work_id,db.bind,viewer.id,1)
-    result = (await tracking.states(db, viewer.id, [work_id]))[0]
-    await db.commit()
-    return result
+    return (await tracking.states(db, viewer.id, [work_id]))[0]
 
 
 @router.get('/works/{work_id}/achievements')
