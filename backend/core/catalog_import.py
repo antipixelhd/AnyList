@@ -2,17 +2,41 @@
 
 import logging
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.descriptive_metadata import tmdb_fields
-from core.enrichment import create_media_safely, enrich_media
+from core.enrichment import create_media_safely, enrich_media, enrich_series_from_show
 from models.base import MediaType
 from models.media import Media
 from models.show import Show
 
 logger = logging.getLogger(__name__)
+
+
+async def get_or_create_series_from_show(db: AsyncSession, show: Show) -> Media | None:
+    """Ensure episode evidence has a tracking root using already saved metadata."""
+    identities = []
+    if show.tmdb_id:
+        identities.append(Media.tmdb_id == show.tmdb_id)
+    if show.tvdb_id:
+        identities.append(Media.tvdb_id == show.tvdb_id)
+    if not identities:
+        return None
+    if not show.tmdb_id:
+        # Null TMDB identities have no uniqueness constraint. Serialize their
+        # creation on the canonical show, then recheck after acquiring the lock.
+        await db.execute(select(Show.id).where(Show.id == show.id).with_for_update())
+    media = await db.scalar(select(Media).where(
+        Media.media_type == MediaType.series, or_(*identities)).order_by(Media.id).limit(1))
+    if media is not None:
+        return media
+    media, created = await create_media_safely(
+        db, show.tmdb_id, MediaType.series, title=show.title, tvdb_id=show.tvdb_id)
+    if created:
+        enrich_series_from_show(media, show)
+    return media
 
 
 async def get_or_create_show(db: AsyncSession, tmdb_id: int, title: str, api_key: str | None) -> Show | None:

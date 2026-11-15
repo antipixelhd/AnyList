@@ -474,11 +474,24 @@ async def _playback(db, state, cycle, added):
     completions = {}
     records = {}
     tmdb_ids = {int(value) for snapshot in state.snapshots for value in snapshot["tmdb_ids"].values() if value is not None}
+    series_tmdb_ids = set()
     for snapshot in state.snapshots:
         baseline = await db.get(StreamBaseline, snapshot["connection_id"])
-        tmdb_ids.update(int(value) for value in ((baseline.snapshot or {}).get("mappings", {}) if baseline else {}).values() if value is not None)
+        mappings = {**((baseline.snapshot or {}).get("mappings", {}) if baseline else {}), **snapshot["tmdb_ids"]}
+        tmdb_ids.update(int(value) for value in mappings.values() if value is not None)
+        series_tmdb_ids.update(int(value) for row in [*snapshot["watched"], *snapshot["progress"]]
+            if row.get("content_type") == "series"
+            if (value := mappings.get(str(row.get("content_id")))) is not None)
+    from core.catalog_import import get_or_create_series_from_show
     media_rows = (await db.execute(select(Media).where(Media.tmdb_id.in_(tmdb_ids)))).scalars()
     lookup = {(m.tmdb_id, m.media_type.value): m.id for m in media_rows}
+    missing_series = series_tmdb_ids - {identity for identity, kind in lookup if kind == 'series'}
+    if missing_series:
+        shows = (await db.execute(select(Show).where(Show.tmdb_id.in_(missing_series)).order_by(Show.id))).scalars()
+        for show in shows:
+            root = await get_or_create_series_from_show(db, show)
+            if root is not None:
+                lookup[(show.tmdb_id, 'series')] = root.id
     for snapshot in state.snapshots:
         conn = await db.get(MediaServerConnection, snapshot["connection_id"])
         if conn is None or conn.user_id != state.user_id or conn.identity_version != snapshot.get("identity_version", conn.identity_version):
@@ -548,8 +561,7 @@ async def _playback(db, state, cycle, added):
         root = media
         if media.show_id:
             show = await db.get(Show, media.show_id)
-            root = (await db.execute(select(Media).where(Media.tmdb_id == show.tmdb_id,
-                Media.media_type == "series"))).scalar_one_or_none() if show else None
+            root = await get_or_create_series_from_show(db, show) if show else None
         if root is None:
             continue
         for observation in observations:
@@ -927,7 +939,6 @@ async def _tracking_root(db, media_id):
 
 
 async def _lookup_tracking_root(db, media_id):
-    from sqlalchemy import select, or_
     from models import Media, Show
     media = await db.get(Media, media_id)
     if media is None or media.show_id is None:
@@ -935,13 +946,9 @@ async def _lookup_tracking_root(db, media_id):
     show = await db.get(Show, media.show_id)
     if not show:
         return media_id
-    conditions = []
-    if show.tmdb_id:
-        conditions.append(Media.tmdb_id == show.tmdb_id)
-    if show.tvdb_id:
-        conditions.append(Media.tvdb_id == show.tvdb_id)
-    root = (await db.execute(select(Media.id).where(Media.media_type == "series", or_(*conditions)))).scalar_one_or_none() if conditions else None
-    return root or media_id
+    from core.catalog_import import get_or_create_series_from_show
+    root = await get_or_create_series_from_show(db, show)
+    return root.id if root else media_id
 
 
 async def _watches(db, state, cycle):

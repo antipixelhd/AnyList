@@ -38,6 +38,16 @@ async def import_tracking_history(db, user_id: int, added_media_ids: set[int] | 
     series=(await db.execute(select(Media).where(Media.media_type==MediaType.series))).scalars().all()
     series_by_tmdb={m.tmdb_id:m for m in series if m.tmdb_id}
     series_by_tvdb={m.tvdb_id:m for m in series if m.tvdb_id}
+    from core.catalog_import import get_or_create_series_from_show
+    for show in sorted(shows.values(), key=lambda show: show.id):
+        if show.tmdb_id in series_by_tmdb or show.tvdb_id in series_by_tvdb:
+            continue
+        root = await get_or_create_series_from_show(db, show)
+        if root is not None:
+            if root.tmdb_id:
+                series_by_tmdb[root.tmdb_id] = root
+            if root.tvdb_id:
+                series_by_tvdb[root.tvdb_id] = root
     def parent(media):
         if media.media_type!=MediaType.episode:return media
         show=shows.get(media.show_id)

@@ -88,7 +88,7 @@ class WatchStatePolicyTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(len(actions), 2)
                 for action in actions:
                     self.assertEqual(action.state, 'pending')
-                with patch('core.stream_actions.push_nuvio_progress', AsyncMock()) as nuvio, \
+                with patch('core.stream_actions.push_nuvio_progress', AsyncMock(return_value=None)) as nuvio, \
                      patch('core.stream_actions.push_stremio_progress', AsyncMock()) as stremio, \
                      patch('core.stream_actions.refresh_stream_connection', AsyncMock()), \
                      patch('core.tracking_snapshot.require_stream_reconciliation', AsyncMock()):
@@ -108,6 +108,80 @@ class WatchStatePolicyTests(unittest.IsolatedAsyncioTestCase):
         entries = (await self.db.scalars(select(TrackedEntry))).all()
         self.assertEqual({entry.media_id for entry in entries}, {self.movie.id, self.series.id})
         self.assertEqual({entry.status for entry in entries}, {'watching'})
+
+    async def remove_series_root(self):
+        await self.db.delete(self.series)
+        await self.db.commit()
+        self.assertIsNone(await self.db.scalar(select(Media).where(
+            Media.media_type == MediaType.series, Media.tmdb_id == self.show.tmdb_id)))
+
+    async def test_immediate_creates_missing_series_from_confirmed_resume(self):
+        await self.remove_series_root()
+        self.settings.preferences = {'watch_state_sync': 'immediate'}
+        self.show.poster_path = 'https://images.invalid/series.jpg'
+        await self.db.commit()
+        await self.resume()
+        root = await self.db.scalar(select(Media).where(
+            Media.media_type == MediaType.series, Media.tmdb_id == self.show.tmdb_id))
+        self.assertIsNotNone(root)
+        self.assertEqual(root.poster_path, self.show.poster_path)
+        entry = await self.db.scalar(select(TrackedEntry).where(TrackedEntry.media_id == root.id))
+        self.assertEqual(entry.status, 'watching')
+        self.assertIsNotNone(await self.db.scalar(select(PlaybackProgress).where(
+            PlaybackProgress.media_id == self.episode.id)))
+        await self.resume(30000)
+        self.assertEqual(len((await self.db.scalars(select(Media).where(
+            Media.media_type == MediaType.series, Media.tmdb_id == self.show.tmdb_id))).all()), 1)
+
+    async def test_conservative_missing_series_waits_for_completed_episode(self):
+        await self.remove_series_root()
+        await self.resume()
+        self.assertEqual((await self.db.scalars(select(TrackedEntry))).all(), [])
+        self.db.add(WatchEvent(user_id=self.user.id, media_id=self.episode.id,
+            completed=False, watched_at=self.clock))
+        await self.db.commit()
+        self.assertEqual(await import_tracking_history(self.db, self.user.id), 0)
+        self.db.add(WatchEvent(user_id=self.user.id, media_id=self.episode.id,
+            completed=True, watched_at=self.clock))
+        await self.db.commit()
+        self.assertEqual(await import_tracking_history(self.db, self.user.id), 1)
+        root = await self.db.scalar(select(Media).where(
+            Media.media_type == MediaType.series, Media.tmdb_id == self.show.tmdb_id))
+        entry = await self.db.scalar(select(TrackedEntry).where(TrackedEntry.media_id == root.id))
+        self.assertEqual(entry.status, 'watching')
+        self.assertEqual(entry.progress, 1)
+
+    async def test_missing_series_history_is_admitted_and_selected_for_delivery(self):
+        from core.sync_reconciliation import initialize, finalize, _source, add_watch_event
+        await self.remove_series_root()
+        state, cycle = Reconciliation(self.user.id), PullCycleState(self.user.id)
+        await initialize(self.db, state)
+        token = _current.set(state)
+        source_token = _source.set(f'connection:{self.source.id}')
+        try:
+            add_watch_event(self.db, WatchEvent(user_id=self.user.id,
+                media_id=self.episode.id, completed=True, watched_at=self.clock))
+            await finalize(self.db, state, cycle)
+        finally:
+            _source.reset(source_token)
+            _current.reset(token)
+        root = await self.db.scalar(select(Media).where(
+            Media.media_type == MediaType.series, Media.tmdb_id == self.show.tmdb_id))
+        entry = await self.db.scalar(select(TrackedEntry).where(TrackedEntry.media_id == root.id))
+        self.assertEqual(entry.status, 'watching')
+        self.assertIn(self.episode.id, cycle.new_watched_ids)
+
+    async def test_tvdb_only_history_creates_and_reuses_series_root(self):
+        await self.remove_series_root()
+        self.show.tmdb_id, self.show.tvdb_id = None, 91003
+        self.db.add(WatchEvent(user_id=self.user.id, media_id=self.episode.id,
+            completed=True, watched_at=self.clock))
+        await self.db.commit()
+        self.assertEqual(await import_tracking_history(self.db, self.user.id), 1)
+        self.assertEqual(await import_tracking_history(self.db, self.user.id), 0)
+        roots = (await self.db.scalars(select(Media).where(
+            Media.media_type == MediaType.series, Media.tvdb_id == self.show.tvdb_id))).all()
+        self.assertEqual(len(roots), 1)
 
     async def test_completed_movie_and_later_episode_still_admit_entries(self):
         await self.resume()
@@ -146,7 +220,7 @@ class WatchStatePolicyTests(unittest.IsolatedAsyncioTestCase):
     async def test_peer_echo_does_not_admit_sampled_titles_or_queue_a_return_write(self):
         from core.stream_actions import dispatch_stream_actions
         await self.resume()
-        with patch('core.stream_actions.push_nuvio_progress', AsyncMock()), \
+        with patch('core.stream_actions.push_nuvio_progress', AsyncMock(return_value=None)), \
              patch('core.tracking_snapshot.require_stream_reconciliation', AsyncMock()):
             await dispatch_stream_actions(self.db, self.user.id)
         self.source, self.target = self.target, self.source
