@@ -863,6 +863,7 @@ async def get_show(
         api_key = await settings_store.get_user_tmdb_key(db, effective_user_id)
         metadata_lang = await get_user_metadata_language(db, effective_user_id)
         if settings_store.check_tmdb_key(api_key):
+            await db.commit()
             try:
                 tmdb_extra = await tmdb.get_show(series_tmdb_id, api_key=api_key, language=metadata_lang)
                 networks = [
@@ -1192,6 +1193,7 @@ async def get_show(
         )
 
     metadata_lang = await get_user_metadata_language(db, effective_user_id)
+    await db.commit()
     try:
         data = await tmdb.get_show(series_tmdb_id, api_key=api_key, language=metadata_lang)
 

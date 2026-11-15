@@ -19,6 +19,19 @@ logger = logging.getLogger(__name__)
 VERSION = 3
 
 
+async def _screen_providers(db, user_id):
+    return CatalogueProviders(ProviderHTTP(session_factory=AsyncSessionLocal),
+        tmdb_key=await settings_store.get_user_tmdb_key(db, user_id),
+        tvdb_key=await settings_store.get_user_tvdb_key(db, user_id))
+
+
+def _credits_projected(snapshot, work, groups):
+    coverage = snapshot.coverage or {}
+    projected = coverage.get('detail_credit_groups', ('cast', 'crew', 'organizations'))
+    return (work is not None and snapshot.entity_id == work.id and
+            coverage.get('detail_credits_version') == VERSION and groups.issubset(projected))
+
+
 async def fill_screen_credits(db, media, user_id=None, *, providers=None, authoritative_primary=False):
     """Fill either missing cast or crew, respecting shared cache/leases/backoff.
 
@@ -37,14 +50,11 @@ async def fill_screen_credits(db, media, user_id=None, *, providers=None, author
             verified = await screen_work(db, media)
             if verified is None or verified.id != work.id or verified.kind != media.media_type.value:
                 return 'failed'
-            await catalogue.upsert(db, CatalogueLegacyLink,
-                {'media_id': media.id, 'entity_id': work.id}, ['media_id'])
+            if await db.get(CatalogueLegacyLink, media.id, populate_existing=True) is None:
+                await catalogue.upsert(db, CatalogueLegacyLink,
+                    {'media_id': media.id, 'entity_id': work.id}, ['media_id'])
+                linked = True
             await db.commit()
-            linked = True
-    if providers is None:
-        providers = CatalogueProviders(ProviderHTTP(session_factory=AsyncSessionLocal),
-            tmdb_key=await settings_store.get_user_tmdb_key(db, user_id),
-            tvdb_key=await settings_store.get_user_tvdb_key(db, user_id))
     sources = await screen_sources(db, media)
     result = 'unavailable'
     updated = linked
@@ -61,15 +71,19 @@ async def fill_screen_credits(db, media, user_id=None, *, providers=None, author
                 continue
             # Remote matching is useful only for a real gap, never for routine
             # dual-provider ingestion. Character art has its own lookup path.
-            if (provider == 'tvdb' and not native and media.media_type == MediaType.movie
-                    and providers.tvdb_key):
+            if provider == 'tvdb' and not native and media.media_type == MediaType.movie:
                 from core import tvdb
                 imdb_id = media.imdb_id
                 if not imdb_id and work:
                     imdb_id = await db.scalar(select(CatalogueIdentity.external_id).where(
                         CatalogueIdentity.entity_id == work.id, CatalogueIdentity.namespace == 'imdb.title'))
                 if imdb_id:
+                    if providers is None:
+                        providers = await _screen_providers(db, user_id)
+                    if not providers.tvdb_key:
+                        continue
                     try:
+                        await db.commit()
                         async with providers.http.lane('tvdb'):
                             native = await tvdb.find_movie(imdb_id, providers.tvdb_key)
                     except Exception:
@@ -77,29 +91,38 @@ async def fill_screen_credits(db, media, user_id=None, *, providers=None, author
         if not native:
             continue
         kind = media.media_type.value
+        requested = groups if groups is not None else {'cast', 'crew', 'organizations'}
+        key = (MetadataSnapshot.provider == provider, MetadataSnapshot.kind == kind,
+               MetadataSnapshot.external_id == str(native))
         try:
-            snapshot = await db.scalar(select(MetadataSnapshot).where(
-                MetadataSnapshot.provider == provider, MetadataSnapshot.kind == kind,
-                MetadataSnapshot.external_id == str(native)))
+            header = (await db.execute(select(MetadataSnapshot.id, MetadataSnapshot.coverage,
+                MetadataSnapshot.entity_id, MetadataSnapshot.fetched_at, MetadataSnapshot.expires_at,
+                MetadataSnapshot.lease_until, MetadataSnapshot.next_attempt_at,
+                MetadataSnapshot.payload.is_not(None).label('has_payload')).where(*key))).one_or_none()
             now = datetime.now(timezone.utc).replace(tzinfo=None)
-            status = catalogue.cached_refresh_status(snapshot, now) if snapshot else None
+            status = catalogue.cached_refresh_status(header, now) if header else None
             if status in ('refreshing', 'retry_pending', 'last_good'):
                 result = 'deferred'
                 continue
-            coverage = (snapshot.coverage or {}) if snapshot else {}
-            projected_groups = set(coverage.get('detail_credit_groups', ('cast', 'crew', 'organizations')))
-            if not authoritative and status == 'cached' and work and snapshot.entity_id == work.id and (
-                    coverage.get('detail_credits_version') == VERSION and
-                    ((groups if groups is not None else {'cast', 'crew', 'organizations'}) <= projected_groups)):
+            if not authoritative and status == 'cached' and _credits_projected(header, work, requested):
                 result = 'cached'
                 continue
-            if status == 'cached' and snapshot.payload:
+            snapshot = None
+            if status == 'cached' and header.has_payload:
                 await catalogue.write_lock(db)
-                await db.refresh(snapshot, with_for_update=True)
-                if catalogue.cached_refresh_status(snapshot, datetime.now(timezone.utc).replace(tzinfo=None)) != 'cached':
+                snapshot = await db.get(MetadataSnapshot, header.id, populate_existing=True, with_for_update=True)
+                if snapshot is None or catalogue.cached_refresh_status(snapshot, datetime.now(timezone.utc).replace(tzinfo=None)) != 'cached':
                     await db.commit()
                     result = 'deferred'
                     continue
+                if not authoritative and _credits_projected(snapshot, work, requested):
+                    await db.commit()
+                    result = 'cached'
+                    continue
+                if not snapshot.payload:
+                    await db.commit()
+                    snapshot = None
+            if snapshot is not None:
                 doc = (normalize_tmdb if provider == 'tmdb' else normalize_tvdb)(snapshot.payload, kind)
                 if not any(i['namespace'] == f'{provider}.{kind}' and i['external_id'] == str(native)
                            for i in doc['work']['identities']):
@@ -110,18 +133,18 @@ async def fill_screen_credits(db, media, user_id=None, *, providers=None, author
                     if work and repaired.id != work.id:
                         raise catalogue.IdentityConflict('Existing title bridge requires review')
                     snapshot.entity_id = repaired.id
-            elif getattr(providers, provider + '_key'):
+            else:
+                if providers is None:
+                    providers = await _screen_providers(db, user_id)
+                if not getattr(providers, provider + '_key'):
+                    continue
                 receipt = await catalogue.refresh_metadata(db, providers, provider, kind, str(native),
                     additive=not authoritative, expected_entity_id=work.id if work else None, credit_groups=groups)
                 if receipt['status'] != 'updated':
                     result = 'failed' if receipt.get('error_code') else 'deferred'
                     continue
                 repaired = await db.get(CatalogueEntity, receipt['entity_id'])
-                snapshot = await db.scalar(select(MetadataSnapshot).where(
-                    MetadataSnapshot.provider == provider, MetadataSnapshot.kind == kind,
-                    MetadataSnapshot.external_id == str(native)))
-            else:
-                continue
+                snapshot = await db.scalar(select(MetadataSnapshot).where(*key))
             await catalogue.write_lock(db)
             link = await db.get(CatalogueLegacyLink, media.id, populate_existing=True)
             if link and link.entity_id != repaired.id:
@@ -130,8 +153,7 @@ async def fill_screen_credits(db, media, user_id=None, *, providers=None, author
                 await catalogue.upsert(db, CatalogueLegacyLink,
                     {'media_id': media.id, 'entity_id': repaired.id}, ['media_id'])
             snapshot.coverage = {**(snapshot.coverage or {}), 'detail_credits_version': VERSION,
-                                 'detail_credit_groups': sorted(groups if groups is not None else
-                                                               {'cast', 'crew', 'organizations'})}
+                                 'detail_credit_groups': sorted(requested)}
             await db.commit()
             work = repaired
             result = 'updated'

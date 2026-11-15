@@ -481,6 +481,8 @@ async def search_media(
         return {"page": 1, "total_pages": 1, "total_results": len(formatted), "results": formatted}
 
     # 1. Search TMDB (primary source for ordering)
+    # Keep the database pool available while waiting for a cold provider result.
+    await db.commit()
     raw_results = []
     total_pages = 1
     total_results = 0
@@ -1692,6 +1694,7 @@ async def get_media_details(
     try:
         # 1. Fetch from TMDB
         if type == MediaType.movie:
+            await db.commit()
             data = await tmdb.get_movie(tmdb_id, api_key=tmdb_key, language=metadata_lang)
         elif type == MediaType.episode:
             # Look up the episode in the local DB to find its show context
@@ -1717,6 +1720,7 @@ async def get_media_details(
             if show is None:
                 raise HTTPException(status_code=404, detail="Show not found for this episode")
 
+            await db.commit()
             ep_data = await tmdb.get_episode(
                 show.tmdb_id, local_ep.season_number, local_ep.episode_number,
                 api_key=tmdb_key, language=metadata_lang,

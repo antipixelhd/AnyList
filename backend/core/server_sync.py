@@ -1518,6 +1518,7 @@ async def _run_media_browser_sync(provider: Literal["jellyfin", "emby"], user_id
                 return
 
             server_url, server_token, server_user = conn.url, conn.token, conn.server_user_id
+            await db.commit()  # Return the connection to the pool before the provider wait.
 
             print(f"  Fetching libraries from {server_url}")
             libraries = await adapter.get_libraries(server_url, server_token, server_user)
@@ -1526,6 +1527,7 @@ async def _run_media_browser_sync(provider: Literal["jellyfin", "emby"], user_id
                 select(selection_model).where(selection_model.connection_id == conn.id)
             )
             selected_ids = {row.library_id for row in sel_result.scalars().all()}
+            await db.commit()
             if selected_ids:
                 libraries = [lib for lib in libraries if lib.get("Id") in selected_ids]
 

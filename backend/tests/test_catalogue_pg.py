@@ -823,6 +823,45 @@ class CatalogueDatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNotNone(state.next_attempt_at)
         self.assertEqual((await refresh())["status"], "last_good")
 
+    async def test_snapshot_claim_and_cancellation_do_not_wait_for_unrelated_catalogue_write(self):
+        started = asyncio.Event()
+        provider_wait = asyncio.Event()
+        adapter = AsyncMock()
+        adapter.validate = lambda *args: None
+
+        async def detail(*args, **kwargs):
+            started.set()
+            await provider_wait.wait()
+            return normalize_igdb(fixture('igdb')), {'public': 'payload'}
+
+        adapter.detail.side_effect = detail
+
+        async def refresh():
+            async with self.Session() as db:
+                return await catalogue.refresh_metadata(db, adapter, 'igdb', 'game', '1942')
+
+        async with self.Session() as writer:
+            await catalogue.write_lock(writer)
+            first = asyncio.create_task(refresh())
+            try:
+                await asyncio.wait_for(started.wait(), 3)
+                second = await asyncio.wait_for(refresh(), 3)
+                self.assertEqual(second['status'], 'refreshing')
+                self.assertEqual(adapter.detail.await_count, 1)
+                first.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await asyncio.wait_for(first, 3)
+                async with self.Session() as db:
+                    row = await db.scalar(select(MetadataSnapshot))
+                    self.assertIsNone(row.lease_token)
+                    self.assertIsNone(row.lease_until)
+            finally:
+                await writer.rollback()
+                first.cancel()
+                await asyncio.gather(first, return_exceptions=True)
+        provider_wait.set()
+        self.assertEqual((await refresh())['status'], 'updated')
+
     async def test_performance_cross_work_foreign_keys_and_restrict_deletion(self):
         async with self.Session() as db:
             doc = normalize_tvdb(fixture("tvdb"))

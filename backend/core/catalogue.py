@@ -651,9 +651,9 @@ def cached_refresh_status(row, now):
 
 
 async def record_refresh_failure(db, row, token, error, base_delay):
-    # Use the same lock order as claims/publication, including after a rollback.
+    # Retry bookkeeping only changes this snapshot. Publication still takes
+    # the catalogue lock before locking the snapshot or changing identities.
     try:
-        await write_lock(db)
         await db.refresh(row, with_for_update=True)
         if row.lease_token != token:
             return "refreshing", False
@@ -697,7 +697,8 @@ async def refresh_metadata(
     snapshot_kind = "edition_page" if edition_page else kind
     snapshot_id = f"{external_id}:{edition_page}" if edition_page else external_id
     token = uuid.uuid4().hex
-    await write_lock(db)
+    # The unique provider key and the row lock below serialize competing
+    # claims. Commit before entering provider admission or publishing identities.
     await db.execute(
         insert(MetadataSnapshot)
         .values(provider=provider, kind=snapshot_kind, external_id=snapshot_id,
@@ -795,7 +796,6 @@ async def refresh_metadata(
         status = "updated"
     except asyncio.CancelledError:
         await db.rollback()
-        await write_lock(db)
         owned=await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.id==snapshot_row_id).with_for_update())
         if owned and owned.lease_token==token:
             owned.lease_token=owned.lease_until=None;owned.next_attempt_at=datetime.now(timezone.utc).replace(tzinfo=None)
