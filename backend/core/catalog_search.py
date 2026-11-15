@@ -84,14 +84,16 @@ async def enrich_search_runtimes(items, known, api_key, *, min_runtime=0, db=Non
         missing = [str(item['id']) for item in items if title_runtime(item) is None
                    and not (item['id'] in known and (known[item['id']].runtime or title_runtime(known[item['id']].tmdb_data or {})))]
         if missing:
-            snapshots = await db.scalars(select(MetadataSnapshot).where(
+            snapshots = await db.execute(select(MetadataSnapshot.external_id, MetadataSnapshot.payload['runtime']).where(
                 MetadataSnapshot.provider == 'tmdb', MetadataSnapshot.kind == 'movie',
                 MetadataSnapshot.external_id.in_(missing),
                 MetadataSnapshot.expires_at > datetime.now(timezone.utc).replace(tzinfo=None)))
-            runtimes = {row.external_id: title_runtime(row.payload or {}) for row in snapshots}
+            runtimes = {native: title_runtime({'runtime': runtime}) for native, runtime in snapshots}
             for item in items:
                 if title_runtime(item) is None and runtimes.get(str(item['id'])):
                     item['runtime'] = runtimes[str(item['id'])]
+            if any(not runtimes.get(native) for native in missing):
+                await db.commit()
 
     async def load(item):
         if title_runtime(item) is not None:

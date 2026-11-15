@@ -260,7 +260,7 @@ class SearchRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_durable_snapshot_runtime_avoids_provider_read(self):
         from core.catalog_search import enrich_search_runtimes
-        db = SimpleNamespace(scalars=AsyncMock(return_value=[SimpleNamespace(external_id='1', payload={'runtime': 12})]))
+        db = SimpleNamespace(execute=AsyncMock(return_value=[('1', 12)]))
         items = [{'id': 1}]
         with patch('core.tmdb.get_movie_light', AsyncMock()) as read:
             await enrich_search_runtimes(items, {}, 'key', min_runtime=30, db=db)

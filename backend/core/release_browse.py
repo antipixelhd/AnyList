@@ -34,6 +34,8 @@ async def page(db, viewer, *, media_type, filters, key, show_anime, page_number,
     remote, provider = None, []
     notice = None
     if key and source != 'local':
+        if prefetched is None:
+            await db.commit()
         try:
             if isinstance(prefetched, BaseException):
                 raise prefetched

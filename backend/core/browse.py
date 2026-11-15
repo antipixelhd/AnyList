@@ -164,6 +164,8 @@ async def iter_browse_sections(
     for values in filters:
         policy = policies[values['sort']]
         values.update(min_votes=policy.min_votes, min_popularity=policy.min_popularity)
+    # The feeds use the resolved policy values while the request waits.
+    await db.commit()
     # Fetch remote feeds concurrently, but use the shared database session sequentially.
     semaphore = asyncio.Semaphore(2)
 
@@ -204,6 +206,7 @@ async def iter_browse_sections(
             from core.tracking_editor import attach_editor_context
             if progressive:
                 await attach_editor_context(db, viewer, section['results'])
+            await db.commit()
             yield {'index': index, 'section': section, 'notice': page.get('notice')}
     finally:
         for task in tasks:
@@ -773,6 +776,8 @@ async def browse_page(
     if source == "remote" and not available:
         raise ValueError("The metadata key is no longer available")
     if source != "local" and available:
+        if prefetched is None:
+            await db.commit()
         try:
             if isinstance(prefetched, BaseException):
                 raise prefetched
