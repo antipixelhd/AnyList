@@ -110,6 +110,69 @@ class BackgroundMappingTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(runner.payload['release_scan'])
             self.assertGreater(datetime.fromisoformat(runner.payload['releases_due']),stamp+timedelta(hours=23))
 
+    async def test_failed_release_scan_backs_off_without_delaying_an_unrelated_game(self):
+        from datetime import datetime
+        from core.catalogue_providers import ProviderError
+        service=GameBackground(self.Session)
+        service.seed_lists=AsyncMock(return_value=False)
+        service.seed_releases=AsyncMock(side_effect=ProviderError('unavailable',120))
+        service.game=AsyncMock(return_value=now()+timedelta(days=1))
+        cursor={'day':now().date().isoformat(),'after':100,'seen':['10']}
+        try:
+            for has_game in (False,True):
+                with self.subTest(has_game=has_game):
+                    async with self.Session() as db:
+                        runner=await state(db)
+                        runner.payload={**runner.payload,'releases_due':now().isoformat(),'release_scan':cursor,
+                            'highlights_due':(now()+timedelta(hours=1)).isoformat(),
+                            'browse_due':(now()+timedelta(hours=1)).isoformat()}
+                        if has_game:await observe(db,[('10',self.base)],category=1,source='retry-test')
+                        await db.commit()
+                    service.seed_releases.reset_mock()
+                    stamp=now()
+                    self.assertFalse(await service.tick())
+                    async with self.Session() as db:
+                        runner=await state(db)
+                        self.assertGreaterEqual(datetime.fromisoformat(runner.payload['releases_due']),
+                            stamp+timedelta(seconds=120))
+                        self.assertEqual(runner.payload['release_scan'],cursor)
+                        if has_game:
+                            item=await db.get(GameMapperItem,'game:10')
+                            self.assertIsNone(item.error)
+                            self.assertLessEqual(item.next_at,stamp)
+                    self.assertEqual(await service.tick(),has_game)
+                    service.seed_releases.assert_awaited_once()
+            service.game.assert_awaited_once()
+        finally:await service.close()
+
+    async def test_yielded_release_scan_keeps_its_cursor_and_does_not_delay_a_game(self):
+        from datetime import datetime
+        from core.game_work import PriorityYield
+        service=GameBackground(self.Session)
+        service.seed_lists=AsyncMock(return_value=False)
+        service.seed_releases=AsyncMock(side_effect=PriorityYield())
+        service.game=AsyncMock(return_value=now()+timedelta(days=1))
+        cursor={'day':now().date().isoformat(),'after':100,'seen':['10']}
+        async with self.Session() as db:
+            runner=await state(db)
+            runner.payload={**runner.payload,'releases_due':now().isoformat(),'release_scan':cursor}
+            await observe(db,[('10',self.base)],category=1,source='yield-test')
+            await db.commit()
+        stamp=now()
+        try:
+            self.assertFalse(await service.tick())
+            async with self.Session() as db:
+                runner=await state(db)
+                self.assertGreaterEqual(datetime.fromisoformat(runner.payload['releases_due']),stamp+timedelta(seconds=1))
+                self.assertLess(datetime.fromisoformat(runner.payload['releases_due']),stamp+timedelta(seconds=5))
+                self.assertEqual(runner.payload['release_scan'],cursor)
+                item=await db.get(GameMapperItem,'game:10')
+                self.assertIsNone(item.error)
+                self.assertLessEqual(item.next_at,stamp)
+            self.assertTrue(await service.tick())
+            service.game.assert_awaited_once()
+        finally:await service.close()
+
     async def test_restart_waits_for_canonical_lease_then_reuses_saved_cursor(self):
         from core.game_imdb_enrichment import snapshot
         from core.game_company_works import JOB

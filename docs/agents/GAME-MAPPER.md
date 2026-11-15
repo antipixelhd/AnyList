@@ -96,6 +96,9 @@ observations, while complete scans retire titles no longer meeting the rule.
 Canonical title credits refresh daily during that watch, then weekly. Primary
 metadata retains its normal cache lifetime. These stages use the same automatic
 provider priority and Start/Stop controls as the rest of the mapper.
+Discovery scan failures back off their own stage for at least one minute,
+respecting a longer provider retry deadline. Priority yields pause that stage
+briefly. Both retain its cursor and leave unrelated game deadlines unchanged.
 
 Each game acquires compact primary facts and canonical title credits, then
 selects eight distinct cast people, eight crew and two companies. People appearing

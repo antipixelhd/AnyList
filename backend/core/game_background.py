@@ -487,13 +487,17 @@ class GameBackground:
                 deep_count=await db.scalar(select(func.count()).select_from(GameMapperItem).where(
                     GameMapperItem.kind=='game',GameMapperItem.category==4,GameMapperItem.next_at<=now(),GameMapperItem.weight>0))
                 await db.commit()
+            scan_stage=None
             try:
                 with work_context(Priority.AUTOMATIC,'automatic',replace=True):
                     if runner.payload.get('releases_due','')<=now().isoformat():
+                        scan_stage='releases_due'
                         await self.seed_releases(runner)
                     elif (not item or item.category>=3) and runner.payload.get('highlights_due','')<=now().isoformat():
+                        scan_stage='highlights_due'
                         await self.seed_browse(runner,highlights=True)
                     elif (not item or item.category==4) and deep_count==0 and runner.payload.get('browse_due','')<=now().isoformat():
+                        scan_stage='browse_due'
                         await self.seed_browse(runner)
                     elif item:
                         deadline=await (self.game(item) if item.kind=='game' else self.contributor(item))
@@ -510,20 +514,26 @@ class GameBackground:
                 if asyncio.current_task().cancelling():raise
                 # Provider admission yielded; the canonical cursor/lease was
                 # released by its owner. No attempts/negative evidence change.
-                if item:
+                if scan_stage:
+                    async with self.sessions() as db:
+                        stored=await db.get(GameMapperState,1)
+                        stored.payload={**stored.payload,scan_stage:(now()+timedelta(seconds=1)).isoformat()}
+                        await db.commit()
+                elif item:
                     async with self.sessions() as db:
                         stored=await db.get(GameMapperItem,item.key);stored.next_at=now()+timedelta(seconds=1)
                         await db.commit()
                 return False
             except Exception as error:
                 async with self.sessions() as db:
-                    if item:
+                    retry=now()+timedelta(seconds=max(60,getattr(error,'retry_after',0) or 0))
+                    if scan_stage:
+                        stored=await db.get(GameMapperState,1)
+                        stored.payload={**stored.payload,scan_stage:retry.isoformat()}
+                    elif item:
                         stored=await db.get(GameMapperItem,item.key)
                         stored.error=getattr(error,'code','retry_pending')
-                        stored.next_at=now()+timedelta(seconds=max(60,getattr(error,'retry_after',0) or 0))
-                    else:
-                        stored=await db.get(GameMapperState,1)
-                        stored.payload={**stored.payload,'browse_due':(now()+timedelta(minutes=1)).isoformat()}
+                        stored.next_at=retry
                     await db.commit()
                 log.warning('Automatic game mapping will retry (%s)',type(error).__name__)
                 return False

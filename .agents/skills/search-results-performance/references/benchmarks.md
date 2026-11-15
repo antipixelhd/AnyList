@@ -543,3 +543,12 @@ first-week titles in1.404s using one100-row page/one IGDB request. This cohort i
 time-dependent. The scan follows the automatic mapper toggle, retains first-week
 watch observations on failure and retires exclusions only after a complete scan.
 No catalogue schema change or runtime mapper enablement is part of this patch.
+
+
+Follow-up scan retry verification: all39 `test_game_background_pg` tests passed,
+including failures with/without a queued game and provider-priority yield. A
+failed discovery scan now delays its own durable stage by max(60s, provider
+retry_after), preserves its cursor and never marks an unprocessed game failed.
+A priority yield pauses only that scan for one second. This changes exception
+scheduling, not successful retrieval, result ranking or provider budgets; the
+paired search measurements above remain applicable to the successful path.
