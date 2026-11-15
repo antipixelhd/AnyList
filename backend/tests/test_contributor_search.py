@@ -34,6 +34,8 @@ class ContributorSearchTests(unittest.IsolatedAsyncioTestCase):
         self.local_mock = self.local.start()
         self.keys = patch.object(search.settings_store, 'get_user_tmdb_key', AsyncMock(return_value='fixture-key'))
         self.keys.start()
+        policy = patch.object(search, 'verification_policy', AsyncMock(return_value={}))
+        policy.start(); self.addCleanup(policy.stop)
         self.people = patch.object(search.tmdb, 'search_people', AsyncMock(return_value={'results': []}))
         self.people_mock = self.people.start()
         self.companies = patch.object(search.tmdb, 'search_company', AsyncMock(return_value={'results': []}))
@@ -45,7 +47,7 @@ class ContributorSearchTests(unittest.IsolatedAsyncioTestCase):
         status = patch.object(search, 'known_principal_status', AsyncMock(return_value={}))
         self.principal_status = status.start()
         self.addCleanup(status.stop)
-        verified = patch.object(search, 'verified_studios', AsyncMock(side_effect=lambda db, viewer, rows, key: (rows, False)))
+        verified = patch.object(search, 'verified_studios', AsyncMock(side_effect=lambda db, viewer, rows, key, **options: (rows, False)))
         verified.start()
         self.addCleanup(verified.stop)
         people_verified=patch.object(search,'verified_people',AsyncMock(return_value=False))
@@ -177,7 +179,7 @@ class ContributorSearchTests(unittest.IsolatedAsyncioTestCase):
     async def test_policy_rechecks_do_not_mutate_the_cached_shortlist(self):
         self.local_mock.return_value={**empty(),'actor':[{'key':'catalogue:5','name':'Saved actor','roles':['Actor']}]}
         attempts=0
-        async def verify(db,viewer,groups,key,section_pending=None):
+        async def verify(db,viewer,groups,key,section_pending=None,**options):
             nonlocal attempts
             attempts+=1
             if attempts==1:groups['actor']=[]

@@ -21,6 +21,8 @@ import sys
 import time
 from collections import Counter
 from contextlib import ExitStack
+from contextvars import ContextVar
+from functools import wraps
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -92,6 +94,9 @@ async def main(args):
         raise SystemExit('--primary-blocking-reference requires --case game_details_cold')
     if args.pipeline_people!=2 and args.case not in (['game_people_pipeline'],['game_people_pipeline_shared']):
         raise SystemExit('--pipeline-people requires one game_people_pipeline case')
+    if args.concurrent_readers > 1 and (not args.case or
+            not set(args.case) <= {'actor', 'crew', 'studio', 'negative_studio', 'people_combined', 'all_contributors'}):
+        raise SystemExit('--concurrent-readers requires explicit screen contributor cases')
     if args.baseline_ref:
         if not re.fullmatch(r'[0-9a-fA-F]{7,40}', args.baseline_ref):
             raise SystemExit('--baseline-ref must be a local commit SHA')
@@ -141,6 +146,15 @@ async def main(args):
             if args.case and 'game_person_review' in args.case:viewer.is_admin=True
             settings = UserSettings(user_id=viewer.id, tmdb_api_key='fixture-provider-key', preferences={})
             db.add(settings)
+            search_viewers = [viewer]
+            for index in range(1, args.concurrent_readers):
+                reader = User(email=f'search-reader-{index}@example.test',
+                    username=f'search-reader-{index}', api_key=f'benchmark-reader-{index}', games_access=True)
+                db.add(reader)
+                await db.flush()
+                db.add_all([UserSettings(user_id=reader.id, tmdb_api_key='fixture-provider-key', preferences={}),
+                    UserProfileData(user_id=reader.id)])
+                search_viewers.append(reader)
             global_settings = await db.get(GlobalSettings, 1)
             global_settings.mdblist_api_key = 'fixture-mdb-key'
             if args.case and 'game_portraits' in args.case:global_settings.tmdb_api_key='fixture-provider-key'
@@ -407,8 +421,9 @@ async def main(args):
         if game_statistics_enabled:
             from core import game_statistics
             await game_statistics.run_due(fixture.Session)
-        fixture.app.dependency_overrides[get_current_user] = lambda: viewer
-        fixture.app.dependency_overrides[get_current_user_or_api_key] = lambda: viewer
+        request_viewer = ContextVar('benchmark_search_viewer', default=viewer)
+        fixture.app.dependency_overrides[get_current_user] = lambda: request_viewer.get()
+        fixture.app.dependency_overrides[get_current_user_or_api_key] = lambda: request_viewer.get()
 
         def sql_start(conn, cursor, statement, parameters, context, many):
             context.benchmark_started = time.perf_counter()
@@ -873,6 +888,59 @@ async def main(args):
                 raise ValueError('Unknown case for the selected matrix')
             cases = [case for case in cases if case[0] in selected]
         with ExitStack() as stack:
+            if args.stage_timings:
+                from core import studio_discovery
+
+                def timed_stage(name, function):
+                    @wraps(function)
+                    async def timed(*values, **options):
+                        started = time.perf_counter()
+                        try:
+                            result = await function(*values, **options)
+                            if name in ('people_evidence', 'studio_evidence'):
+                                counters['evidence_credit_rows'] += sum(len(payload.get(field) or [])
+                                    for payload in result[0].values() for field in ('cast', 'crew', 'works'))
+                            return result
+                        finally:
+                            counters[f'stage:{name}:ms'] += (time.perf_counter() - started) * 1000
+                            counters[f'stage:{name}:calls'] += 1
+                    return timed
+
+                for module, attribute, name in (
+                    (contributor_search, 'local_matches', 'local_candidates'),
+                    (contributor_search, '_discover_candidates', 'candidate_discovery'),
+                    (contributor_search, 'verified_people', 'people_verification'),
+                    (contributor_search, 'verified_studios', 'studio_verification'),
+                    *([(contributor_search, 'verification_policy', 'viewer_policy')]
+                      if hasattr(contributor_search, 'verification_policy') else []),
+                    (contributor_search, 'cached_evidence', 'people_evidence'),
+                    (studio_discovery, 'cached_evidence', 'studio_evidence'),
+                    (contributor_search, 'local_evidence', 'people_local_eligibility'),
+                    (studio_discovery, 'local_evidence', 'studio_local_eligibility'),
+                    (contributor_evidence, 'load_evidence', 'worker_provider_evidence'),
+                    (contributor_search, 'discover_people', 'game_people_discovery'),
+                    (contributor_search, 'discover_companies', 'game_company_discovery'),
+                    (contributor_search, 'game_matches', 'game_candidates'),
+                ):
+                    stack.enter_context(patch.object(module, attribute,
+                        timed_stage(name, getattr(module, attribute))))
+
+                def timed_sync_stage(name, function):
+                    @wraps(function)
+                    def timed(*values, **options):
+                        started = time.perf_counter()
+                        try:
+                            return function(*values, **options)
+                        finally:
+                            counters[f'stage:{name}:ms'] += (time.perf_counter() - started) * 1000
+                            counters[f'stage:{name}:calls'] += 1
+                    return timed
+                for module, attribute, name in (
+                    (contributor_evidence, '_work_summary', 'policy_summary'),
+                    (contributor_search, 'ranked_results', 'ranking'),
+                ):
+                    stack.enter_context(patch.object(module, attribute,
+                        timed_sync_stage(name, getattr(module, attribute))))
             if args.case and 'game_details_cold' in args.case:
                 from core import game_metadata
                 from core.catalogue_normalize import normalize_igdb,GAME_ARTWORK_VERSION
@@ -930,19 +998,20 @@ async def main(args):
                 stack.enter_context(patch.object(game_browse.GameBrowse,'page',blocking_page))
             stack.enter_context(patch('core.mdblist_discovery.ranked_rows', AsyncMock(return_value=(feed, False))))
             if args.skip_contributor_relevance:
-                async def unverified_studios(db, viewer, rows, api_key):
+                async def unverified_studios(db, viewer, rows, api_key, **options):
                     return rows, False
                 stack.enter_context(patch.object(contributor_search, 'verified_studios', side_effect=unverified_studios))
                 stack.enter_context(patch.object(contributor_search, 'verified_people', AsyncMock(return_value=False)))
             for mode in ('curated', 'floor_disabled', 'show_all'):
                 async with fixture.Session() as db:
-                    saved = await db.scalar(select(UserSettings).where(UserSettings.user_id == viewer.id))
-                    saved.preferences = {'minimum_popularity': 25 if mode == 'curated' else 0,
-                        **({'game_min_ratings': 0, 'game_min_follows': 0, 'game_upcoming_min_follows': 0} if mode == 'floor_disabled' else {})}
-                    profile = await db.scalar(select(UserProfileData).where(UserProfileData.user_id == viewer.id))
-                    profile.minimum_votes = 0 if mode == 'show_all' else 250
-                    profile.minimum_movie_runtime = 0 if mode == 'show_all' else 30
-                    profile.excluded_categories = [] if mode == 'show_all' else [99]
+                    for reader in search_viewers:
+                        saved = await db.scalar(select(UserSettings).where(UserSettings.user_id == reader.id))
+                        saved.preferences = {'minimum_popularity': 25 if mode == 'curated' else 0,
+                            **({'game_min_ratings': 0, 'game_min_follows': 0, 'game_upcoming_min_follows': 0} if mode == 'floor_disabled' else {})}
+                        profile = await db.scalar(select(UserProfileData).where(UserProfileData.user_id == reader.id))
+                        profile.minimum_votes = 0 if mode == 'show_all' else 250
+                        profile.minimum_movie_runtime = 0 if mode == 'show_all' else 30
+                        profile.excluded_categories = [] if mode == 'show_all' else [99]
                     await db.commit()
                 for label, path, values in cases:
                     current_case = label
@@ -1309,6 +1378,25 @@ async def main(args):
                             collected.extend(result['results'])
                         return {**result, 'results': collected}
 
+                    if args.concurrent_readers > 1:
+                        single_operation = operation
+                        async def operation():
+                            async def read(reader):
+                                token = request_viewer.set(reader)
+                                started = time.perf_counter()
+                                try:
+                                    result = await single_operation()
+                                    return result, (time.perf_counter() - started) * 1000
+                                finally:
+                                    request_viewer.reset(token)
+                            responses = await asyncio.gather(*(read(reader) for reader in search_viewers))
+                            if any(result['results'] != responses[0][0]['results'] for result, _ in responses):
+                                raise RuntimeError('Equivalent concurrent viewers received different contributors')
+                            durations = sorted(duration for _, duration in responses)
+                            counters['reader_p50_ms'] = statistics.median(durations)
+                            counters['reader_max_ms'] = durations[-1]
+                            return responses[0][0]
+
                     journey_started=time.perf_counter()
                     await measure(label, mode, 'cold', operation)
                     if label=='game_details_cold':
@@ -1356,6 +1444,7 @@ async def main(args):
                   'local_titles': args.local_titles, 'credit_works_per_section': args.credit_works,
                   'contributor_relevance': not args.skip_contributor_relevance,
                   'provider_delay_ms': args.provider_delay_ms, 'rounds': args.rounds,
+                  'concurrent_readers': args.concurrent_readers,
                   'baseline_ref': args.baseline_ref, 'sql_patterns': sql_patterns, 'samples': samples}
         output['primary_blocking_reference']=args.primary_blocking_reference
         target = ROOT / args.output
@@ -1392,5 +1481,9 @@ if __name__ == '__main__':
     parser.add_argument('--credit-works', type=int, default=80)
     parser.add_argument('--contributors-only', action='store_true')
     parser.add_argument('--skip-contributor-relevance', action='store_true')
+    parser.add_argument('--stage-timings', action='store_true',
+        help='Record inclusive contributor stage durations; nested/parallel timings are not additive')
+    parser.add_argument('--concurrent-readers', type=int, choices=range(1, 17), default=1,
+        help='Run each screen-contributor operation for distinct concurrent viewers with equivalent policies')
     parser.add_argument('--case', action='append', help='Restrict to named cases; repeat for several')
     asyncio.run(main(parser.parse_args()))

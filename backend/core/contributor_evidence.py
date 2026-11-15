@@ -12,7 +12,7 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import String, case, func, or_, select, tuple_, update
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.dialects.postgresql import array, insert
 from sqlalchemy.orm import aliased, defer
 
 from core import settings_store, tmdb
@@ -60,13 +60,13 @@ def eligible_work(raw, kind, filters, show_anime, *, released=False):
     return policy.accepts(raw) and matches_result_filters(raw, kind, **personal) and anime_visible(raw, show_anime)
 
 
-def _summary_key(identity, section, filters, show_anime):
-    return (tuple(identity), section, json.dumps(filters, sort_keys=True), show_anime)
+def _summary_key(identity, section, filters, show_anime, existence_only=False):
+    return (tuple(identity), section, json.dumps(filters, sort_keys=True), show_anime, existence_only)
 
 
-def work_summary(payload, section, filters, show_anime):
+def work_summary(payload, section, filters, show_anime, *, existence_only=False):
     identity = payload.get('_cache_identity') if payload and payload.get('_fresh') and payload.get('complete') else None
-    key = _summary_key(identity, section, filters, show_anime) if identity else None
+    key = _summary_key(identity, section, filters, show_anime, existence_only) if identity else None
     if payload and '_cached_summaries' in payload:
         # Retain the request's snapshot even if its shared TTL expires between
         # reading the evidence header and applying the result policy.
@@ -75,13 +75,13 @@ def work_summary(payload, section, filters, show_anime):
         cached = _summary_cache.get(key)
         if cached is not None:
             return cached
-    value = _work_summary(payload, section, filters, show_anime)
+    value = _work_summary(payload, section, filters, show_anime, existence_only=existence_only)
     if key and value is not None:
         _summary_cache.set(key, value, 60)
     return value
 
 
-def _work_summary(payload, section, filters, show_anime):
+def _work_summary(payload, section, filters, show_anime, *, existence_only=False):
     if payload is None:
         return None
     rows = payload.get('works', []) if section == 'studio' else (payload.get('cast', []) if section == 'actor' else payload.get('crew', []))
@@ -93,10 +93,38 @@ def _work_summary(payload, section, filters, show_anime):
         if section == 'staff' and str(row.get('job', '')).casefold() in ('actor', 'acting'):
             continue
         if eligible_work(row, kind, filters, show_anime, released=section == 'studio'):
+            # People search consumes eligibility only. Keep full counts for
+            # studio ranking and callers that explicitly request a summary.
+            if existence_only:
+                return {'works': 1, 'popularity': float(row.get('popularity') or 0),
+                        'latest': row.get('release_date') or row.get('first_air_date') or ''}
             visible[(kind, row['id'])] = row
     if not visible and not payload.get('complete', True):
         return None
     return {'works': len(visible), 'popularity': max((float(r.get('popularity') or 0) for r in visible.values()), default=0), 'latest': max((r.get('release_date') or r.get('first_air_date') or '' for r in visible.values()), default='')}
+
+
+async def verification_policy(db, viewer):
+    """One request-owned policy read for people and studios; no private cache."""
+    from sqlalchemy import Integer, literal
+    from core.discovery_policy import tuning
+    from core.result_categories import default_excluded_categories
+    from models import GlobalSettings
+    from models.profile import UserProfileData
+    from models.users import UserSettings
+
+    owner = select(literal(viewer.id if viewer else None, Integer).label('id')).subquery()
+    row = (await db.execute(select(UserProfileData.user_id, UserProfileData.minimum_movie_runtime,
+        UserProfileData.excluded_categories, UserProfileData.minimum_votes, UserSettings.preferences,
+        select(GlobalSettings.show_anime).where(GlobalSettings.id == 1).scalar_subquery().label('show_anime'))
+        .select_from(owner).outerjoin(UserProfileData, UserProfileData.user_id == owner.c.id)
+        .outerjoin(UserSettings, UserSettings.user_id == owner.c.id))).one()
+    filters = (dict(min_runtime=row.minimum_movie_runtime, excluded_genres=row.excluded_categories or [])
+        if row.user_id is not None else dict(min_runtime=30, excluded_genres=default_excluded_categories()))
+    policy = tuning(row.preferences or {}, 'movie', 'search',
+        row.minimum_votes if row.minimum_votes is not None else 250)
+    return {'filters': filters, 'studio_filters': {**filters, 'min_popularity': policy.min_popularity},
+        'show_anime': row.show_anime is not False}
 
 
 async def cached_evidence(db, jobs, viewer_id, *, enqueue=True, summaries=None, established=None):
@@ -116,8 +144,9 @@ async def cached_evidence(db, jobs, viewer_id, *, enqueue=True, summaries=None, 
         requests = (summaries or {}).get(key, ())
         if requests and row.expires_at and row.expires_at > current:
             resolved = {}
-            for section, filters, show_anime in requests:
-                cache_key = _summary_key([*key, row.expires_at.isoformat()], section, filters, show_anime)
+            for section, filters, show_anime, *options in requests:
+                cache_key = _summary_key([*key, row.expires_at.isoformat()], section, filters, show_anime,
+                    options[0] if options else False)
                 value = _summary_cache.get(cache_key)
                 if value is None:
                     break
@@ -133,8 +162,23 @@ async def cached_evidence(db, jobs, viewer_id, *, enqueue=True, summaries=None, 
         # Only uncached policies/evidence need the potentially huge JSON credits.
         # Cache hits still read expiry/queue state, so edits and invalidation are
         # observed without transferring the same filmographies on every poll.
+        # A mixed people search needs cast for its actors and crew for its staff,
+        # not both complete careers for every candidate. Leave the stored public
+        # evidence intact for other roles, policies and contributor pages.
+        shapes = {}
+        fields = {'actor': 'cast', 'staff': 'crew', 'studio': 'works'}
+        for key in missing:
+            if key[0] != 'person':
+                continue
+            requested = frozenset(fields[request[0]] for request in summaries.get(key, ()))
+            if requested:
+                shapes.setdefault(requested, []).append(key)
+        projections = [(tuple_(table.kind, table.native_id, table.variant).in_(keys),
+            table.payload.op('-')(array(sorted({'cast', 'crew', 'works', 'person_identity',
+                'domain_availability'} - requested)))) for requested, keys in shapes.items()]
+        payload = case(*projections, else_=table.payload) if projections else table.payload
         payloads.update({(kind, native, variant): payload for kind, native, variant, payload in await db.execute(
-            select(table.kind, table.native_id, table.variant, table.payload).where(
+            select(table.kind, table.native_id, table.variant, payload).where(
                 tuple_(table.kind, table.native_id, table.variant).in_(missing)))})
     views={key: {**payload, '_fresh': bool(existing[key].expires_at and existing[key].expires_at > current),
                  '_cache_identity': [*key, existing[key].expires_at.isoformat() if existing[key].expires_at else None]}

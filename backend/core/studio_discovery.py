@@ -7,14 +7,17 @@ from models import GlobalSettings
 MAX_CANDIDATES = 8
 
 
-async def verified_studios(db, viewer, rows, api_key):
+async def verified_studios(db, viewer, rows, api_key, *, policy=None):
     if not rows:
         return [], False
-    filters = await result_filters(db, viewer)
-    policy = await browse_preferences(db, viewer, 'movie', 'search')
-    filters = {**filters, 'min_popularity': policy['min_popularity']}
-    settings = await db.get(GlobalSettings, 1)
-    show_anime = settings is None or settings.show_anime
+    if policy is None:
+        filters = await result_filters(db, viewer)
+        preferences = await browse_preferences(db, viewer, 'movie', 'search')
+        filters = {**filters, 'min_popularity': preferences['min_popularity']}
+        settings = await db.get(GlobalSettings, 1)
+        show_anime = settings is None or settings.show_anime
+    else:
+        filters, show_anime = policy['studio_filters'], policy['show_anime']
     # Prefer known contributors, then provider-branded matches; retain provider
     # order among equal candidates rather than sorting unverified names A-Z.
     rows = sorted(rows, key=lambda row: (row.get('_match', 2), -row.get('_works', 0), not bool(row.get('image'))))

@@ -211,6 +211,30 @@ The harness runs three profiles automatically:
 
 `--skip-contributor-relevance` separately bypasses bounded contributor work eligibility **for the benchmark only**. It changes result quality and does not disable acquisition limits or add an account setting. Use it for explicit relevance-cost investigations, not as the normal performance target. Popularity-off and eligibility-off are different controls.
 
+Use `--stage-timings` for contributor discovery, local candidates, viewer policy,
+people/studio evidence, local eligibility, policy scans, worker acquisition,
+Games branches and ranking. These are inclusive wall-clock durations; nested
+stages and overlapping branches must not be added together. Worker provider
+durations are summed across jobs and can exceed the enclosing wall time.
+`evidence_credit_rows` counts cast/crew/work records returned to Python by the
+evidence reader, including request-owned payloads; it is not a network byte count.
+Warm header/summary hits return zero credit rows.
+
+`--concurrent-readers 8` runs each contributor operation concurrently for eight
+distinct database users with equivalent policies. Use explicit `actor`, `crew`,
+`studio`, `negative_studio`, `people_combined` or `all_contributors` cases. The
+harness checks identical result composition between readers, reports per-wave
+wall time plus `reader_p50_ms` and `reader_max_ms`, and aggregates SQL/provider
+work across the wave. Response fingerprints/bytes describe one equivalent
+response. Each profile updates every reader's settings before timing. This
+measures contention and shared public evidence, not different-policy privacy;
+pair it with the concurrent-viewer policy test in `test_contributor_evidence_pg`.
+Authentication remains stubbed, and provider transport delay is controlled.
+
+```powershell
+.venv/Scripts/python.exe scripts/benchmark_search.py --case people_combined --case all_contributors --case studio --case negative_studio --credit-works 5000 --rounds 7 --stage-timings --concurrent-readers 8 --output .local-design/search-browse/contributors-concurrent.json
+```
+
 Each case resets relevant in-process caches; contributor cases also reset durable evidence. `cold` records initial discovery/admission. `verification_worker` drains contributor jobs and includes a final poll; scheduled waiting is skipped. Three `warm` repeats use fresh caches/completed evidence. `expired` forces durable expiry to check refresh admission. Inspect pending/row counts; cold contributors may intentionally be incomplete.
 
 ## What the output establishes

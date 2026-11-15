@@ -18,6 +18,106 @@ from test_contributor_evidence import FILTERS, film
 
 @unittest.skipUnless(fixture.URL, 'Requires explicit disposable PostgreSQL')
 class EvidenceDatabaseTests(unittest.IsolatedAsyncioTestCase):
+    async def test_shared_policy_read_matches_existing_policies_and_is_request_scoped(self):
+        from core.catalog_search import result_filters, browse_preferences
+        from models import GlobalSettings, User
+        from models.profile import UserProfileData
+        from models.users import UserSettings
+        statements = []
+        def record(conn, cursor, statement, parameters, context, many):
+            statements.append(statement)
+        async with self.Session() as db:
+            reader = User(email='policy-reader@example.test', username='policy-reader', api_key='policy-reader-key')
+            db.add(reader); await db.flush()
+            db.add(UserSettings(user_id=reader.id, preferences={'minimum_popularity': 12}))
+            profile = await db.scalar(select(UserProfileData).where(UserProfileData.user_id == self.user_id))
+            profile.minimum_movie_runtime = 99
+            profile.excluded_categories = [16, 99]
+            db.add(UserSettings(user_id=self.user_id, preferences={'minimum_popularity': 65,
+                'discovery_tuning': {'search': {'movie': {'min_votes': 0}}}}))
+            (await db.get(GlobalSettings, 1)).show_anime = False
+            await db.commit()
+            for viewer in (None, SimpleNamespace(id=self.user_id), reader):
+                filters = await result_filters(db, viewer)
+                preferences = await browse_preferences(db, viewer, 'movie', 'search')
+                statements.clear()
+                event.listen(self.engine.sync_engine, 'before_cursor_execute', record)
+                try:
+                    policy = await evidence.verification_policy(db, viewer)
+                finally:
+                    event.remove(self.engine.sync_engine, 'before_cursor_execute', record)
+                self.assertEqual(len(statements), 1)
+                self.assertEqual(policy, {'filters': filters,
+                    'studio_filters': {**filters, 'min_popularity': preferences['min_popularity']}, 'show_anime': False})
+            profile.minimum_movie_runtime = 10
+            (await db.get(GlobalSettings, 1)).show_anime = True
+            await db.commit()
+            changed = await evidence.verification_policy(db, SimpleNamespace(id=self.user_id))
+            self.assertEqual(changed['filters']['min_runtime'], 10)
+            self.assertTrue(changed['show_anime'])
+
+    async def test_concurrent_viewers_keep_distinct_eligibility_with_shared_evidence(self):
+        from core import contributor_search as search
+        from models import User
+        from models.profile import UserProfileData
+        key, config = evidence.evidence_key('person', 889, FILTERS, True)
+        async with self.Session() as db:
+            other = User(email='strict-reader@example.test', username='strict-reader', api_key='strict-reader-key')
+            db.add(other); await db.flush()
+            db.add(UserProfileData(user_id=other.id, minimum_movie_runtime=200))
+            db.add(ContributorEvidence(kind=key[0], native_id=key[1], variant=key[2], config=config,
+                payload={'cast': [film(runtime=90)], 'crew': [], 'complete': True},
+                expires_at=evidence.now() + timedelta(days=1)))
+            await db.commit()
+        async def read(viewer):
+            async with self.Session() as db:
+                policy = await evidence.verification_policy(db, viewer)
+                groups = {'actor': [{'key': 'tmdb:889', '_native': 889}], 'staff': [], 'studio': []}
+                await search.verified_people(db, viewer, groups, None, {}, policy=policy)
+                return groups['actor']
+        for _ in range(2):
+            ordinary, strict = await asyncio.gather(read(SimpleNamespace(id=self.user_id)), read(other))
+            self.assertEqual(len(ordinary), 1)
+            self.assertEqual(strict, [])
+
+    async def test_role_projection_preserves_stored_credits_and_other_policy_reads(self):
+        evidence._summary_cache._store.clear()
+        requests, jobs = {}, {}
+        payload = {'cast': [film(runtime=90), film(id=2, runtime=90)], 'crew': [film(job='Director', runtime=90)],
+            'complete': True, 'person_identity': {'name': 'Preserved'},
+            'domain_availability': {'actor': {'movie': 'available'}}}
+        async with self.Session() as db:
+            for native, sections in ((881, ('actor',)), (882, ('staff',)), (883, ('actor', 'staff'))):
+                key, config = evidence.evidence_key('person', native, FILTERS, True)
+                jobs[key] = config
+                requests[key] = [(section, FILTERS, True, True) for section in sections]
+                db.add(ContributorEvidence(kind=key[0], native_id=key[1], variant=key[2], config=config,
+                    payload=payload, expires_at=evidence.now() + timedelta(days=1)))
+            await db.commit()
+        async with self.Session() as db:
+            views, _ = await evidence.cached_evidence(db, jobs, self.user_id, summaries=requests)
+            for key, requested in requests.items():
+                view = views[key]
+                self.assertEqual('cast' in view, any(r[0] == 'actor' for r in requested))
+                self.assertEqual('crew' in view, any(r[0] == 'staff' for r in requested))
+                self.assertNotIn('person_identity', view)
+                for section, filters, anime, existence in requested:
+                    self.assertEqual(evidence.work_summary(view, section, filters, anime,
+                        existence_only=existence)['works'], 1)
+            stored = list(await db.scalars(select(ContributorEvidence)))
+            self.assertTrue(all(row.payload == payload for row in stored))
+        # Different roles and stricter policies must read their own projection,
+        # rather than treating the first viewer's positive as shared eligibility.
+        key = next(iter(jobs))
+        async with self.Session() as db:
+            stricter = {**FILTERS, 'min_runtime': 1000}
+            views, _ = await evidence.cached_evidence(db, {key: jobs[key]}, self.user_id,
+                summaries={key: [('staff', stricter, True, True)]})
+            self.assertIn('crew', views[key])
+            self.assertEqual(evidence.work_summary(views[key], 'staff', stricter, True, existence_only=True)['works'], 0)
+            full, _ = await evidence.cached_evidence(db, {key: jobs[key]}, self.user_id, enqueue=False)
+            self.assertEqual({k: v for k, v in full[key].items() if not k.startswith('_')}, payload)
+
     async def test_expired_positive_search_evidence_refreshes_without_loading_or_priority(self):
         from core import contributor_search as search,search_demand
         from models.search_demand import SearchDemand

@@ -18,7 +18,7 @@ from core.statistics_staff import role_label, role_order
 from core.studio_names import studio_name
 from core.studio_discovery import verified_studios
 from core.studio_groups import matching_studio_members
-from core.contributor_evidence import cached_evidence, evidence_key, local_evidence, work_summary
+from core.contributor_evidence import cached_evidence, evidence_key, local_evidence, work_summary, verification_policy
 from core.catalog_search import result_filters
 from models import GlobalSettings
 from models.catalogue import CatalogueEntity, CatalogueIdentity, ContributorSearch
@@ -168,12 +168,15 @@ async def known_principal_status(db, ids):
         .where(ContributorSearch.entity_id.in_(ids), ContributorSearch.screen_count > 0))).all())
 
 
-async def verified_people(db, viewer, groups, api_key, section_pending=None):
+async def verified_people(db, viewer, groups, api_key, section_pending=None, *, policy=None):
     if not groups['actor'] and not groups['staff']:
         return False
-    filters = await result_filters(db, viewer)
-    settings = await db.get(GlobalSettings, 1)
-    show_anime = settings is None or settings.show_anime
+    if policy is None:
+        filters = await result_filters(db, viewer)
+        settings = await db.get(GlobalSettings, 1)
+        show_anime = settings is None or settings.show_anime
+    else:
+        filters, show_anime = policy['filters'], policy['show_anime']
     jobs, summaries = {}, {}
     for section in ('actor', 'staff'):
         groups[section] = groups[section][:MAX_CANDIDATES]
@@ -181,7 +184,7 @@ async def verified_people(db, viewer, groups, api_key, section_pending=None):
             if row.get('_native'):
                 key, config = evidence_key('person', row['_native'], filters, show_anime)
                 jobs[key] = config
-                summaries.setdefault(key, []).append((section, filters, show_anime))
+                summaries.setdefault(key, []).append((section, filters, show_anime, True))
     local_by_section={'actor':{},'staff':{}}
     values_by_section={'actor':{},'staff':{}}
     async def established(evidence):
@@ -194,7 +197,7 @@ async def verified_people(db, viewer, groups, api_key, section_pending=None):
             for row in groups[section]:
                 if not row.get('_native'):continue
                 key=evidence_key('person',row['_native'],filters,show_anime)[0]
-                value=work_summary(evidence.get(key),section,filters,show_anime)
+                value=work_summary(evidence.get(key),section,filters,show_anime,existence_only=True)
                 values_by_section[section][key]=value
                 if not local_by_section[section].get(row['key']) and not (value and value['works']):settled.discard(key)
         return settled
@@ -207,12 +210,12 @@ async def verified_people(db, viewer, groups, api_key, section_pending=None):
         for row in groups[section]:
             key = evidence_key('person', row['_native'], filters, show_anime)[0] if row.get('_native') else None
             value = (values_by_section[section][key] if key in values_by_section[section]
-                     else work_summary(evidence.get(key), section, filters, show_anime))
+                     else work_summary(evidence.get(key), section, filters, show_anime, existence_only=True))
             # known_for is positive evidence only. A failed shortlist is unknown,
             # not proof of an empty filmography. Full cached credits take priority.
             if value is None and row.get('_known_for'):
                 shortlist = {'cast' if section == 'actor' else 'crew':row['_known_for']}
-                value = work_summary(shortlist, section, filters, show_anime)
+                value = work_summary(shortlist, section, filters, show_anime, existence_only=True)
             if local.get(row['key']) or (value and value['works']):
                 output.append(row)
             if key and (evidence.get(key) or {}).get('_pending') and not local.get(row['key']) and not (value and value['works']):
@@ -304,8 +307,9 @@ async def screen_matches(db, viewer, term, kind, section_pending=None):
         name = row.get('name', '').casefold()
         query = term.casefold()
         row['_match'] = 0 if name == query else 1 if name.startswith(query) else 2
-    groups['studio'], studios_pending = await verified_studios(db, viewer, groups['studio'], key)
-    people_pending = await verified_people(db, viewer, groups, key, section_pending)
+    policy = await verification_policy(db, viewer) if any(groups.values()) else None
+    groups['studio'], studios_pending = await verified_studios(db, viewer, groups['studio'], key, policy=policy)
+    people_pending = await verified_people(db, viewer, groups, key, section_pending, policy=policy)
     if section_pending is not None:
         section_pending['studio'] = studios_pending
     return groups, failed, studios_pending or people_pending
