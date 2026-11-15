@@ -682,7 +682,7 @@ async def record_refresh_failure(db, row, token, error, base_delay):
 
 async def refresh_metadata(
     db, providers, provider, kind, external_id, edition_page=None, *, additive=False, expected_entity_id=None,
-    credit_groups=None,on_primary=None,primary_only=False
+    credit_groups=None, on_primary=None, primary_only=False, on_publish=None,
 ):
     providers.validate(provider, kind)
     namespace = f"{provider}.{kind}"
@@ -800,6 +800,8 @@ async def refresh_metadata(
             row.attempts = 0
             row.error_code = None
             row.next_attempt_at = None
+            if on_publish is not None:
+                await on_publish(entity, row)
         status = "updated"
     except asyncio.CancelledError:
         await db.rollback()

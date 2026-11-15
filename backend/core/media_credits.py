@@ -32,6 +32,17 @@ def _credits_projected(snapshot, work, groups):
             coverage.get('detail_credits_version') == VERSION and groups.issubset(projected))
 
 
+async def _publish_credits(db, media_id, work, snapshot, groups):
+    link = await db.get(CatalogueLegacyLink, media_id, populate_existing=True)
+    if link and link.entity_id != work.id:
+        raise catalogue.IdentityConflict('Existing title bridge requires review')
+    if link is None:
+        await catalogue.upsert(db, CatalogueLegacyLink,
+            {'media_id': media_id, 'entity_id': work.id}, ['media_id'])
+    snapshot.coverage = {**(snapshot.coverage or {}), 'detail_credits_version': VERSION,
+                         'detail_credit_groups': sorted(groups)}
+
+
 async def fill_screen_credits(db, media, user_id=None, *, providers=None, authoritative_primary=False):
     """Fill either missing cast or crew, respecting shared cache/leases/backoff.
 
@@ -133,28 +144,24 @@ async def fill_screen_credits(db, media, user_id=None, *, providers=None, author
                     if work and repaired.id != work.id:
                         raise catalogue.IdentityConflict('Existing title bridge requires review')
                     snapshot.entity_id = repaired.id
+                    await _publish_credits(db, media.id, repaired, snapshot, requested)
+                await db.commit()
             else:
                 if providers is None:
                     providers = await _screen_providers(db, user_id)
                 if not getattr(providers, provider + '_key'):
                     continue
+
+                async def finish_projection(entity, published):
+                    await _publish_credits(db, media.id, entity, published, requested)
+
                 receipt = await catalogue.refresh_metadata(db, providers, provider, kind, str(native),
-                    additive=not authoritative, expected_entity_id=work.id if work else None, credit_groups=groups)
+                    additive=not authoritative, expected_entity_id=work.id if work else None,
+                    credit_groups=groups, on_publish=finish_projection)
                 if receipt['status'] != 'updated':
                     result = 'failed' if receipt.get('error_code') else 'deferred'
                     continue
                 repaired = await db.get(CatalogueEntity, receipt['entity_id'])
-                snapshot = await db.scalar(select(MetadataSnapshot).where(*key))
-            await catalogue.write_lock(db)
-            link = await db.get(CatalogueLegacyLink, media.id, populate_existing=True)
-            if link and link.entity_id != repaired.id:
-                raise catalogue.IdentityConflict('Existing title bridge requires review')
-            if link is None:
-                await catalogue.upsert(db, CatalogueLegacyLink,
-                    {'media_id': media.id, 'entity_id': repaired.id}, ['media_id'])
-            snapshot.coverage = {**(snapshot.coverage or {}), 'detail_credits_version': VERSION,
-                                 'detail_credit_groups': sorted(requested)}
-            await db.commit()
             work = repaired
             result = 'updated'
             updated = True
