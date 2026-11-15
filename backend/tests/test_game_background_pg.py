@@ -19,6 +19,97 @@ from models.game_runner import GameMapperEdge, GameMapperItem, GameMapperInteres
 class BackgroundMappingTests(unittest.IsolatedAsyncioTestCase):
     cleanup=fixture.GamesDatabaseTests.cleanup
 
+    async def test_release_scan_filters_the_week_and_shortens_only_qualified_jobs(self):
+        from datetime import datetime, timezone
+        from test_game_imdb_discovery_source import raw
+        from core.game_background import RELEASE_SOURCE
+        from core.game_imdb_enrichment import JOB
+        stamp=now()
+        def game(native,days=0,**fields):
+            release=int((stamp-timedelta(days=days)).replace(tzinfo=timezone.utc).timestamp())
+            return raw(native,first_release_date=release,release_dates=[{'date':release,
+                'date_format':{'format':'YYYYMMDD'}}],**fields)
+        async with self.Session() as db:
+            runner=await state(db)
+            db.add(MetadataSnapshot(provider='imdb',kind=JOB,external_id=str(self.base),entity_id=self.base,
+                coverage={'complete':True},fetched_at=stamp-timedelta(days=2),expires_at=stamp+timedelta(days=5)))
+            await db.commit()
+        service=GameBackground(self.Session)
+        service.sources.igdb=AsyncMock(return_value=[game(10,rating_count=5),game(20,hypes=2),
+            game(30,rating_count=4,hypes=1),game(40,days=8,rating_count=100),
+            game(50,days=-1,rating_count=100),game(60,rating_count=100,platforms=[{'id':34,'name':'Android'}])])
+        try:await service.seed_releases(runner)
+        finally:await service.close()
+        self.assertIn('(rating_count>=5 | hypes>=2)',service.sources.igdb.await_args.args[1])
+        async with self.Session() as db:
+            watched=list(await db.scalars(select(GameMapperInterest).where(GameMapperInterest.source.startswith(RELEASE_SOURCE))))
+            self.assertEqual({row.game for row in watched},{'10','20'})
+            expected=datetime.combine(stamp.date()+timedelta(days=7),datetime.min.time())
+            self.assertTrue(all(row.expires_at==expected for row in watched))
+            item=await db.get(GameMapperItem,'game:10')
+            self.assertEqual(item.category,3)
+            job=await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.kind==JOB))
+            self.assertEqual(job.expires_at,job.fetched_at+timedelta(days=1))
+            state_row=await state(db)
+            self.assertIsNone(state_row.payload['release_scan'])
+            self.assertGreater(datetime.fromisoformat(state_row.payload['releases_due']),stamp+timedelta(hours=23))
+
+    async def test_release_watch_survives_failure_but_retires_after_confirmed_exclusion(self):
+        from datetime import timezone
+        from test_game_imdb_discovery_source import raw
+        from core.game_background import RELEASE_SOURCE, release_week
+        from core.catalogue_providers import ProviderError
+        stamp=now()
+        release=int(stamp.replace(tzinfo=timezone.utc).timestamp())
+        game=raw(10,first_release_date=release,release_dates=[{'date':release,
+            'date_format':{'format':'YYYYMMDD'}}],rating_count=5)
+        async with self.Session() as db:
+            runner=await state(db);await db.commit()
+        service=GameBackground(self.Session)
+        service.sources.igdb=AsyncMock(side_effect=[[game],ProviderError('unavailable'),[]])
+        try:
+            await service.seed_releases(runner)
+            async with self.Session() as db:
+                runner=await state(db)
+            with self.assertRaises(ProviderError):await service.seed_releases(runner)
+            async with self.Session() as db:
+                self.assertTrue(await release_week(db,'10',stamp))
+                runner=await state(db)
+            await service.seed_releases(runner)
+        finally:await service.close()
+        async with self.Session() as db:
+            self.assertFalse(await release_week(db,'10',stamp))
+            self.assertIsNone(await db.scalar(select(GameMapperInterest).where(
+                GameMapperInterest.source.startswith(RELEASE_SOURCE))))
+            self.assertEqual((await db.get(GameMapperItem,'game:10')).category,4)
+            self.assertIsNotNone(await db.scalar(select(GameMapperInterest).where(
+                GameMapperInterest.source=='catalogue',GameMapperInterest.game=='10')))
+
+    async def test_release_scan_continues_at_its_saved_cursor_then_returns_to_daily(self):
+        from datetime import datetime,timezone
+        from test_game_imdb_discovery_source import raw
+        async with self.Session() as db:
+            runner=await state(db);await db.commit()
+        stamp=now()
+        release=int(stamp.replace(tzinfo=timezone.utc).timestamp())
+        rows=[raw(native,first_release_date=release,release_dates=[{'date':release,
+            'date_format':{'format':'YYYYMMDD'}}],rating_count=5)
+            for native in range(1,101)]
+        service=GameBackground(self.Session)
+        service.sources.igdb=AsyncMock(side_effect=[rows,[]])
+        try:
+            await service.seed_releases(runner)
+            async with self.Session() as db:
+                runner=await state(db)
+                self.assertEqual(runner.payload['release_scan']['after'],100)
+            await service.seed_releases(runner)
+        finally:await service.close()
+        self.assertIn('id>100',service.sources.igdb.await_args.args[1])
+        async with self.Session() as db:
+            runner=await state(db)
+            self.assertIsNone(runner.payload['release_scan'])
+            self.assertGreater(datetime.fromisoformat(runner.payload['releases_due']),stamp+timedelta(hours=23))
+
     async def test_restart_waits_for_canonical_lease_then_reuses_saved_cursor(self):
         from core.game_imdb_enrichment import snapshot
         from core.game_company_works import JOB
@@ -321,7 +412,9 @@ class BackgroundMappingTests(unittest.IsolatedAsyncioTestCase):
         await fixture.GamesDatabaseTests.asyncSetUp(self)
         async with self.Session() as db:
             db.add(CatalogueIdentity(entity_id=self.base,namespace='igdb.game',external_id='10',source='igdb'))
-            await state(db);await db.commit()
+            runner=await state(db)
+            runner.payload={'releases_due':(now()+timedelta(hours=1)).isoformat()}
+            await db.commit()
 
     async def test_interest_is_idempotent_and_counts_distinct_users_in_each_class(self):
         async with self.Session() as db:
@@ -459,7 +552,7 @@ class BackgroundMappingTests(unittest.IsolatedAsyncioTestCase):
         service=GameBackground(self.Session)
         async with self.Session() as db:
             await observe(db,[('10',self.base)],category=2,source='view',user_id=self.user.id)
-            runner=await state(db);runner.payload={'lists_due':(now()+timedelta(hours=1)).isoformat()}
+            runner=await state(db);runner.payload={**runner.payload,'lists_due':(now()+timedelta(hours=1)).isoformat()}
             item=await db.get(GameMapperItem,'game:10');item.processed=1;item.next_at=now()-timedelta(seconds=1)
             await db.commit()
         service.game=AsyncMock(return_value=now()+timedelta(days=7))
@@ -639,7 +732,8 @@ class BackgroundMappingTests(unittest.IsolatedAsyncioTestCase):
                 weight=1,counts={'4':1},next_at=now()))
             runner=await state(db)
             runner.payload={'lists_due':(now()+timedelta(hours=1)).isoformat(),
-                'highlights_due':(now()+timedelta(hours=1)).isoformat()}
+                'highlights_due':(now()+timedelta(hours=1)).isoformat(),
+                'releases_due':(now()+timedelta(hours=1)).isoformat()}
             await db.commit()
         service=GameBackground(self.Session)
         service.seed_browse=AsyncMock();service.contributor=AsyncMock()

@@ -4,6 +4,7 @@ import importlib
 import unittest
 from datetime import timedelta
 from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
 
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
@@ -17,6 +18,57 @@ from test_contributor_evidence import FILTERS, film
 
 @unittest.skipUnless(fixture.URL, 'Requires explicit disposable PostgreSQL')
 class EvidenceDatabaseTests(unittest.IsolatedAsyncioTestCase):
+    async def test_expired_positive_search_evidence_refreshes_without_loading_or_priority(self):
+        from core import contributor_search as search,search_demand
+        from models.search_demand import SearchDemand
+        key,config=evidence.evidence_key('person',887,FILTERS,True)
+        async with self.Session() as db:
+            db.add(ContributorEvidence(kind=key[0],native_id=key[1],variant=key[2],config=config,
+                payload={'cast':[film(runtime=90)],'crew':[],'complete':True},
+                expires_at=evidence.now()-timedelta(days=1)))
+            await db.commit()
+            demand=await search_demand.begin(db,self.user_id,'established-search',1,'performer','movies_series')
+        def groups(native=887):
+            return {'actor':[{'key':f'tmdb:{native}','name':'Performer','_native':native}], 'staff':[],'studio':[]}
+        async with self.Session() as db:
+            with patch.object(search,'result_filters',AsyncMock(return_value=FILTERS)),search_demand.context(demand):
+                ready=groups();sections={}
+                pending=await search.verified_people(db,SimpleNamespace(id=self.user_id),ready,'key',sections)
+            self.assertFalse(pending)
+            self.assertFalse(sections['actor'])
+            self.assertEqual(len(ready['actor']),1)
+            row=await db.scalar(select(ContributorEvidence).where(ContributorEvidence.native_id==887))
+            self.assertIsNotNone(row.next_attempt_at)
+            subscription=await db.get(SearchDemand,demand[0])
+            self.assertNotIn(evidence.demand_scope(*key),subscription.targets)
+        async with self.Session() as db:
+            with patch.object(search,'result_filters',AsyncMock(return_value={**FILTERS,'min_runtime':200})),search_demand.context(demand):
+                filtered=groups();sections={}
+                pending=await search.verified_people(db,SimpleNamespace(id=self.user_id),filtered,'key',sections)
+            self.assertTrue(pending)
+            self.assertTrue(sections['actor'])
+            self.assertFalse(filtered['actor'])
+            subscription=await db.get(SearchDemand,demand[0])
+            self.assertIn(evidence.demand_scope(*key),subscription.targets)
+
+    async def test_last_queue_slot_prefers_unknown_over_established_refresh(self):
+        from core import contributor_search as search
+        key,config=evidence.evidence_key('person',887,FILTERS,True)
+        async with self.Session() as db:
+            db.add(ContributorEvidence(kind=key[0],native_id=key[1],variant=key[2],config=config,
+                payload={'cast':[film(runtime=90)],'crew':[],'complete':True},
+                expires_at=evidence.now()-timedelta(days=1)))
+            await db.commit()
+        groups={'actor':[{'key':f'tmdb:{native}','name':'Performer','_native':native}
+            for native in (887,888)],'staff':[],'studio':[]}
+        async with self.Session() as db:
+            with patch.object(search,'result_filters',AsyncMock(return_value=FILTERS)),patch.object(evidence,'MAX_PENDING',1):
+                self.assertTrue(await search.verified_people(db,SimpleNamespace(id=self.user_id),groups,'key',{}))
+            self.assertEqual([row['key'] for row in groups['actor']],['tmdb:887'])
+            queued=list(await db.scalars(select(ContributorEvidence.native_id).where(
+                ContributorEvidence.next_attempt_at.is_not(None))))
+            self.assertEqual(queued,[888])
+
     async def asyncSetUp(self):
         await fixture.StatisticsDatabaseTests.asyncSetUp(self)
 

@@ -88,6 +88,15 @@ bounded to 100 due games, advances ranked pages first, then uses an IGDB ID
 keyset to reach beyond ranked feed windows. Its durable position survives process
 restarts and is independent of expiring interactive pagination cursors.
 
+A daily release scan uses a separate durable 100-row IGDB ID cursor across the
+current UTC date and six preceding dates. Only independent non-mobile, non-adult
+games with at least five ratings **or** two follows enter its first-week watch.
+The watch ends seven calendar days after release; failed scans preserve prior
+observations, while complete scans retire titles no longer meeting the rule.
+Canonical title credits refresh daily during that watch, then weekly. Primary
+metadata retains its normal cache lifetime. These stages use the same automatic
+provider priority and Start/Stop controls as the rest of the mapper.
+
 Each game acquires compact primary facts and canonical title credits, then
 selects eight distinct cast people, eight crew and two companies. People appearing
 in both groups produce one queue item. Contributor weight accumulates from

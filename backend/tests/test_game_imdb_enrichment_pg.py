@@ -30,6 +30,32 @@ def page(rows,total,more=False,cursor=None):
 
 @unittest.skipUnless(fixture.URL,'Requires explicit disposable catalogue PostgreSQL')
 class IMDbEnrichmentTests(unittest.IsolatedAsyncioTestCase):
+    async def test_qualified_release_week_credits_refresh_daily_then_return_to_weekly(self):
+        from core.game_background import RELEASE_SOURCE
+        from models.game_runner import GameMapperInterest
+        stamp=now()
+        async with self.Session() as db:
+            work=await db.get(CatalogueEntity,self.work_id)
+            work.attributes={**work.attributes,'release_date':stamp.date().isoformat()}
+            db.add(GameMapperInterest(source=RELEASE_SOURCE+stamp.date().isoformat(),game='10',category=3,
+                expires_at=stamp+timedelta(days=6)))
+            await db.commit()
+        self.assertEqual(await self.service.run(self.work_id),'ready')
+        async with self.Session() as db:
+            job=await db.scalar(snapshot(JOB,self.work_id))
+            self.assertAlmostEqual((job.expires_at-job.fetched_at).total_seconds(),86400,delta=1)
+            interest=await db.scalar(select(GameMapperInterest))
+            interest.expires_at=now()-timedelta(seconds=1)
+            work=await db.get(CatalogueEntity,self.work_id)
+            work.attributes={**work.attributes,'release_date':'2020-12-31'}
+            await db.commit()
+        await self.due()
+        self.assertEqual(await self.service.run(self.work_id),'ready')
+        async with self.Session() as db:
+            job=await db.scalar(snapshot(JOB,self.work_id))
+            self.assertAlmostEqual((job.expires_at-job.fetched_at).total_seconds(),7*86400,delta=1)
+        self.assertEqual(len(await self.active()),2)
+
     async def test_adaptive_pages_resume_promote_expire_and_preserve_refresh_identities(self):
         from core.game_work import demand,job_key,work_context,Priority
         from models.game_runner import GameWorkDemand

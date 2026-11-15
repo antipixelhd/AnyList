@@ -510,3 +510,36 @@ A full task-start archive versus changed-code game_people_pipeline comparison pr
 Exercise the active write path by sending a stable search ID and generation with contributor requests. An eight-case comparison across three policy modes held result fingerprints, pending states, payload sizes and provider counts constant for all 432 pairs. Across 360 warm pairs, SQL write statements fell from 1,440 to 1,125 and median latency fell from 7.56 ms to 6.62 ms with the shared source cache at baseline. Live cold completion varied with upstream HTTP time.
 
 The Wikidata overlap implementation reused seeded complete statement observations for Hans Zimmer, Bryan Cranston and Troy Baker with identical title/QID sets. Live reverse-step samples were 2,201/476/813 ms before and 27/9/8 ms after, with three upstream requests reduced to zero and two SQL reads per hit. This measures complete cached overlap. Mixed-hit PostgreSQL checks cover missing-only acquisition, newer observations, verified negatives, expiry, ambiguity, coalescing, original proof references and durable bindings after cache eviction. Run test_game_background_pg, test_game_imdb_discovery_source, test_game_imdb_discovery_pg and test_game_imdb_bindings_pg with explicit disposable Games/catalogue DSNs. Run game_people_pipeline_shared at 50 and 750 ms for mapper compatibility.
+
+
+## Established contributor freshness and release-week credits (November 2026)
+
+Compare baseline `541feaae` with the retained change using the existing
+`scripts/benchmark_search.py` cases `game_people_shared`, `studio`,
+`negative_studio`, `people_combined` and `all_contributors`, seven warm rounds
+across curated/floor-disabled/show-all modes. The local wrapper adds a stable
+active search generation to the normal contributor request; it does not replace
+fixtures, worker publication or provider instrumentation. Each arm records 150
+samples using disposable PostgreSQL and controlled providers, not browser or
+live-provider percentiles. All result identities/order, row counts and provider
+request counts matched. The nine expired positive cases intentionally changed
+pending=true to false, reducing payloads by 14–16 bytes and total expired writes
+78→66; expired reads stayed147. Warm totals remained714 reads/336 writes and zero
+provider calls. Warm median7.74→6.99ms and expired13.80→13.50ms are small local
+observations, not a universal latency claim. Evaluate stale large portfolios
+once per request and reuse their eligibility value for both admission and output.
+
+The full shared game-people pipeline retained its published work fingerprint and
+24 logical IGDB queries at both50/750ms controlled provider delays. Wall times
+were5.721→5.435s and11.010→10.751s; physical requests18→17 and17→17 reflect shared
+batching. This protects canonical mapping and provider-lane behavior, rather
+than establishing a production speedup. PostgreSQL checks cover current-policy
+revalidation, role-specific and cross-domain settlement, no duplicate presence
+check for known game contributors, last-slot preference for unknown evidence,
+shared-user demand, daily-to-weekly expiry and restartable release scanning.
+
+A separate live IGDB scan against a disposable VPS database found28 eligible
+first-week titles in1.404s using one100-row page/one IGDB request. This cohort is
+time-dependent. The scan follows the automatic mapper toggle, retains first-week
+watch observations on failure and retires exclusions only after a complete scan.
+No catalogue schema change or runtime mapper enablement is part of this patch.

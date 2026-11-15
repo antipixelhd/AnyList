@@ -182,22 +182,32 @@ async def verified_people(db, viewer, groups, api_key, section_pending=None):
                 key, config = evidence_key('person', row['_native'], filters, show_anime)
                 jobs[key] = config
                 summaries.setdefault(key, []).append((section, filters, show_anime))
+    local_by_section={'actor':{},'staff':{}}
+    values_by_section={'actor':{},'staff':{}}
+    async def established(evidence):
+        settled=set(jobs)
+        for section in ('actor','staff'):
+            unresolved=[row for row in groups[section] if not (row.get('_native') and
+                (evidence.get(evidence_key('person',row['_native'],filters,show_anime)[0]) or {}).get('_fresh') and
+                (evidence.get(evidence_key('person',row['_native'],filters,show_anime)[0]) or {}).get('complete'))]
+            local_by_section[section]=await local_evidence(db,unresolved,section,filters,show_anime) if unresolved else {}
+            for row in groups[section]:
+                if not row.get('_native'):continue
+                key=evidence_key('person',row['_native'],filters,show_anime)[0]
+                value=work_summary(evidence.get(key),section,filters,show_anime)
+                values_by_section[section][key]=value
+                if not local_by_section[section].get(row['key']) and not (value and value['works']):settled.discard(key)
+        return settled
     evidence, pending = await cached_evidence(db, jobs, viewer.id, enqueue=bool(api_key),
-        summaries=summaries)
+        summaries=summaries,established=established)
     for section in ('actor', 'staff'):
-        if section_pending is not None:
-            section_pending[section] = bool(pending and api_key and any(row.get('_native') and not (
-                (evidence.get(evidence_key('person', row['_native'], filters, show_anime)[0]) or {}).get('_fresh') and
-                (evidence.get(evidence_key('person', row['_native'], filters, show_anime)[0]) or {}).get('complete'))
-                for row in groups[section]))
-        unresolved = [row for row in groups[section] if not (row.get('_native') and
-            (evidence.get(evidence_key('person', row['_native'], filters, show_anime)[0]) or {}).get('_fresh') and
-            (evidence.get(evidence_key('person', row['_native'], filters, show_anime)[0]) or {}).get('complete'))]
-        local = await local_evidence(db, unresolved, section, filters, show_anime) if unresolved else {}
+        local=local_by_section[section]
+        waiting=False
         output = []
         for row in groups[section]:
             key = evidence_key('person', row['_native'], filters, show_anime)[0] if row.get('_native') else None
-            value = work_summary(evidence.get(key), section, filters, show_anime)
+            value = (values_by_section[section][key] if key in values_by_section[section]
+                     else work_summary(evidence.get(key), section, filters, show_anime))
             # known_for is positive evidence only. A failed shortlist is unknown,
             # not proof of an empty filmography. Full cached credits take priority.
             if value is None and row.get('_known_for'):
@@ -205,8 +215,11 @@ async def verified_people(db, viewer, groups, api_key, section_pending=None):
                 value = work_summary(shortlist, section, filters, show_anime)
             if local.get(row['key']) or (value and value['works']):
                 output.append(row)
+            if key and (evidence.get(key) or {}).get('_pending') and not local.get(row['key']) and not (value and value['works']):
+                waiting=True
         groups[section] = output
-    return pending and bool(api_key)
+        if section_pending is not None:section_pending[section]=waiting
+    return any((section_pending or {}).values()) if section_pending is not None else pending and bool(api_key)
 
 
 async def _discover_candidates(db, viewer, term, kind, key):
@@ -298,6 +311,24 @@ async def screen_matches(db, viewer, term, kind, section_pending=None):
     return groups, failed, studios_pending or people_pending
 
 
+async def settle_game_discovery(db,groups,people,companies):
+    from core.search_demand import mark, current
+    scopes=[]
+    for discovery in (people,companies):
+        if 'pending_jobs' not in discovery:continue
+        states={}
+        for section,jobs in discovery['pending_jobs'].items():
+            known={row['key'] for row in groups[section]}
+            waiting=[job for job in jobs if f'catalogue:{job["id"]}' not in known]
+            states[section]=bool(waiting)
+            scopes.extend(scope for job in waiting for scope in job['scopes'])
+        discovery['pending_sections']=states
+        discovery['pending']=any(states.values())
+    if scopes and current.get() is not None:
+        await mark(db,scopes)
+        await db.commit()
+
+
 async def search_contributors(db, viewer, term, kind='all', work_domain='all'):
     from core.game_access import allowed, require
     from core.game_search_samples import sample_matches
@@ -307,6 +338,7 @@ async def search_contributors(db, viewer, term, kind='all', work_domain='all'):
         companies, people = await asyncio.gather(discover_companies(db, term, kind), discover_people(db, term, kind))
         groups = await game_matches(db, term, kind, candidate_ids=companies['ids'] + people['ids'])
         groups = merge_game_matches(groups, await sample_matches(db, people.get('samples'), kind, groups))
+        await settle_game_discovery(db,groups,people,companies)
         return {'results': ranked_results(groups, term), 'partial': companies['partial'] or people['partial'],
             'unavailable': companies['partial'] or people.get('unavailable', people['partial']),
             'verification_pending': companies['pending'] or people['pending'], 'game_coverage': 'saved_credits',
@@ -327,6 +359,7 @@ async def search_contributors(db, viewer, term, kind='all', work_domain='all'):
         groups, failed, pending = screen
         groups = merge_game_matches(groups, await game_matches(db, term, kind, candidate_ids=companies['ids'] + people['ids']))
         groups = merge_game_matches(groups, await sample_matches(db, people.get('samples'), kind, groups))
+        await settle_game_discovery(db,groups,people,companies)
     else:
         groups, failed, pending = await screen_matches(db, viewer, term, kind, sections)
     sections = {section: sections[section] or (companies['pending'] if section == 'studio' else

@@ -127,9 +127,12 @@ class EvidenceTests(unittest.IsolatedAsyncioTestCase):
         from core import contributor_search as search
         groups = {section: [{'key': f'tmdb:{i}', '_native': i, '_known_for': [film(job='Director')]}
                            for i in range(1, 31)] for section in ('actor', 'staff')}
+        async def read(db,jobs,viewer,**options):
+            await options['established']({})
+            return {},True
         with patch.object(search, 'result_filters', AsyncMock(return_value=FILTERS)), \
              patch.object(search, 'local_evidence', AsyncMock(return_value={})) as local, \
-             patch.object(search, 'cached_evidence', AsyncMock(return_value=({}, True))) as cached:
+             patch.object(search, 'cached_evidence', AsyncMock(side_effect=read)) as cached:
             await search.verified_people(SimpleNamespace(get=AsyncMock(return_value=None)),
                 SimpleNamespace(id=1), groups, 'key')
         self.assertEqual(len(cached.await_args.args[1]), 8)

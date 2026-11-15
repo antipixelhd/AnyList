@@ -21,7 +21,7 @@ from core.game_imdb_person import JOB, COMPONENT
 from core.game_imdb_source import IMDbGameSource
 from core.game_source_cache import session_factory
 from db import AsyncSessionLocal
-from models.catalogue import CatalogueEntity, CatalogueIdentity, MetadataSnapshot
+from models.catalogue import CatalogueEntity, CatalogueIdentity, ContributorSearch, MetadataSnapshot
 
 MAX_PENDING = 128
 
@@ -37,6 +37,10 @@ class GamePeopleDiscovery:
         if not candidates:
             return {'ids': []}
         samples = {}
+        from core.game_search_samples import qualified_games
+        async with self.sessions() as db:
+            qualified=await qualified_games(db,'imdb.person',[row['id'] for row in candidates])
+        established={native for native,roles in qualified.items() if roles['actor'] or roles['staff']}
         if isinstance(self.source, IMDbGameSource):
             # Reuse fresh complete source headers without transferring careers.
             async with self.sessions() as db:
@@ -47,11 +51,11 @@ class GamePeopleDiscovery:
                         MetadataSnapshot.coverage['complete'].as_boolean().is_(True),
                         MetadataSnapshot.expires_at > now(), MetadataSnapshot.error_code.is_(None)))).all())
             from core.game_people_presence import presence
-            unknown = [r['id'] for r in candidates if totals.get(r['id']) is None]
+            unknown = [r['id'] for r in candidates if r['id'] not in established and totals.get(r['id']) is None]
             values = await asyncio.gather(*(presence(self.sessions, native) for native in unknown))
             samples = dict(zip(unknown, values))
             totals.update({native: value['total'] for native, value in samples.items()})
-            candidates = [r for r in candidates if totals[r['id']] > 0]
+            candidates = [r for r in candidates if r['id'] in established or totals.get(r['id'],0) > 0]
             if not candidates:
                 return {'ids': []}
         async with self.sessions() as db:
@@ -69,12 +73,18 @@ class GamePeopleDiscovery:
                 person = await catalogue.upsert_entity(db, {'kind': 'person', 'name': raw['name'],
                     'identities': [{'namespace': 'imdb.person', 'external_id': raw['id']}],
                     **({'image_url': raw['image']} if raw.get('image') else {})}, 'imdb')
-                await admit(db, raw['id'], kind=JOB, entity_id=person.id)
+                if qualified.get(raw['id'],{}).get('established'):
+                    from core.game_work import work_context, Priority
+                    from core.search_demand import context
+                    with context(None), work_context(Priority.RETRY):
+                        await admit(db,raw['id'],kind=JOB,entity_id=person.id)
+                else:
+                    await admit(db, raw['id'], kind=JOB, entity_id=person.id)
             await db.commit()
         return {'ids': [row['id'] for row in candidates],
                 'samples': {r['id']:samples[r['id']] for r in candidates if r['id'] in samples}}
 
-    async def search(self, term, *, progressive=False):
+    async def search(self, term, *, progressive=False, kind='people'):
         key = hashlib.sha256(json.dumps(['names-v2', term.strip().casefold()]).encode()).hexdigest()
         try:
             async with asyncio.timeout(9):
@@ -100,6 +110,8 @@ class GamePeopleDiscovery:
                 discovery.next_attempt_at.label('discovery_due'), discovery.lease_until.label('discovery_lease'),
                 discovery.error_code.label('discovery_error'),
                 component.coverage['unmapped_games'].as_integer().label('unmapped_games'),
+                ContributorSearch.game_actor_count.label('actor_works'),
+                ContributorSearch.game_staff_count.label('staff_works'),
             ).select_from(CatalogueEntity).join(CatalogueIdentity, CatalogueIdentity.entity_id == CatalogueEntity.id)
                 .outerjoin(source, and_(source.provider == 'imdb', source.kind == JOB,
                     source.external_id == CatalogueIdentity.external_id))
@@ -107,44 +119,42 @@ class GamePeopleDiscovery:
                     discovery.external_id == CatalogueIdentity.external_id))
                 .outerjoin(component, and_(component.provider == 'imdb', component.kind == COMPONENT,
                     component.external_id == CatalogueIdentity.external_id))
+                .outerjoin(ContributorSearch,ContributorSearch.entity_id==func.coalesce(
+                    CatalogueEntity.canonical_person_id,CatalogueEntity.id))
                 .where(CatalogueIdentity.namespace == 'imdb.person', CatalogueIdentity.external_id.in_(natives)))).all()
+        qualified={row.native:{'actor':bool(row.actor_works),'staff':bool(row.staff_works)} for row in rows}
         stamp = now()
         def active(due, lease):
             return bool(due or lease and lease > stamp)
-        pending = any(row.source_id is None or active(row.source_due, row.source_lease)
-            or active(row.discovery_due, row.discovery_lease) for row in rows)
-        from core.search_demand import current as search_context, mark
-        if pending and search_context.get() is not None:
-            from core.game_work import job_key
-            targets = []
-            for row in rows:
-                source_pending = row.source_id is None or active(row.source_due, row.source_lease)
-                if source_pending:
-                    targets.append(job_key('imdb', JOB, row.native))
-                # Keep demand through the source-to-mapping handoff.
-                if source_pending or active(row.discovery_due, row.discovery_lease):
-                    targets.append(job_key('imdb', DISCOVERY_JOB, row.native))
-            async with self.sessions() as db:
-                await mark(db, targets)
-                await db.commit()
+        requested=('actor','staff') if kind in ('people','all') else (kind,)
+        needs_verification={row.native for row in rows if any(
+            not qualified.get(row.native,{}).get(section,False) for section in requested)}
         from core.game_credit_roles import SOURCE_ACTING, source_role
         samples = cached['data'].get('samples', {}) if not cached.get('stale') and not cached.get('error') else {}
-        def section_pending(section):
+        def pending_jobs(section):
+            if section not in requested:return []
+            from core.game_work import job_key
+            jobs=[]
             for row in rows:
+                if qualified.get(row.native,{}).get(section,False):continue
                 if not (row.source_id is None or active(row.source_due, row.source_lease) or active(row.discovery_due, row.discovery_lease)):
                     continue
                 sample = samples.get(row.native)
                 if not sample or not sample['complete'] or any(source_role(credit) != 'thanks' and
                     (source_role(credit) in SOURCE_ACTING) == (section == 'actor') for credit in sample['rows']):
-                    return True
-            return False
-        unavailable = bool(cached.get('error')) or len(rows) != len(natives) or any(
+                    jobs.append({'id':row.entity_id,'scopes':[job_key('imdb',JOB,row.native),
+                        job_key('imdb',DISCOVERY_JOB,row.native)]})
+            return jobs
+        waiting={section:pending_jobs(section) for section in ('actor','staff')}
+        pending=any(waiting.values())
+        unavailable = bool(cached.get('error')) or len(rows) != len(natives) or any(row.native in needs_verification and (
             row.source_error or row.discovery_error
             or not row.source_complete and row.source_id is not None
-                and not active(row.source_due, row.source_lease) for row in rows)
-        unmapped = any((row.unmapped_games or 0) > 0 for row in rows)
+                and not active(row.source_due, row.source_lease)) for row in rows)
+        unmapped = any(row.native in needs_verification and (row.unmapped_games or 0) > 0 for row in rows)
         delays = []
         for row in rows:
+            if row.native not in needs_verification:continue
             if row.source_id is None:
                 delays.append(2)
             for due, lease in ((row.source_due, row.source_lease), (row.discovery_due, row.discovery_lease)):
@@ -153,7 +163,8 @@ class GamePeopleDiscovery:
                 elif due:
                     delays.append(max(1, int((due - stamp).total_seconds()) + 1))
         return {'ids': list({row.entity_id for row in rows}), 'pending': pending, 'partial': unavailable or unmapped,
-            'samples': samples, 'pending_sections':{section:section_pending(section) for section in ('actor','staff')},
+            'samples': samples, 'pending_sections':{section:bool(jobs) for section,jobs in waiting.items()},
+            'pending_jobs':waiting,
             'unavailable': unavailable,
             **({'retry_after': min(3600, min(delays, default=2))} if pending else {})}
 
@@ -161,4 +172,4 @@ class GamePeopleDiscovery:
 async def discover_people(db, term, kind, *, progressive=False):
     if kind == 'studio':
         return {'ids': [], 'pending': False, 'partial': False}
-    return await GamePeopleDiscovery(session_factory(db.bind)).search(term, progressive=progressive)
+    return await GamePeopleDiscovery(session_factory(db.bind)).search(term, progressive=progressive,kind=kind)

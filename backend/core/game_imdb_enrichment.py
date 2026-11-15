@@ -277,6 +277,7 @@ class GameIMDbEnrichment:
                 occurrences=occurrences,omitted=state['omitted']+doc['coverage']['omitted_rows'])
             if page['has_next']:state['seen_cursors']=[*state['seen_cursors'],page['cursor']]
             if page['has_next']:job.lease_until=now()+timedelta(minutes=3)
+            if (job.coverage or {}).get('release_watch'):state['release_watch']=True
             state['complete']=not page['has_next'] and state['omitted']==0
             if not page['has_next']:
                 if state['complete']:
@@ -323,10 +324,18 @@ class GameIMDbEnrichment:
                 job.next_attempt_at=None
                 release=(work.attributes or {}).get('release_date') or ''
                 established=bool(release and release[:4].isdigit() and int(release[:4])<now().year)
-                job.expires_at=now()+timedelta(days=(30 if established else 7) if state['complete'] else 1)
+                release_watch=bool(state.get('release_watch'))
+                days=(30 if established and not release_watch else 7) if state['complete'] else 1
+                from core.game_background import release_week
+                if state['complete'] and await release_week(db,native,now()):
+                    days=1
+                    release_watch=True
+                if release_watch:state['release_watch']=True
+                job.expires_at=now()+timedelta(days=days)
             job.payload=dict(state)
             job.coverage=retain_demand(job,{**{key:state.get(key) for key in ('state','complete','received','total')},
-                'mapping_revalidation':state.get('_mapping_request')})
+                'mapping_revalidation':state.get('_mapping_request'),
+                **({'release_watch':True} if state.get('release_watch') else {})})
             job.fetched_at=now()
             job.error_code=None
             job.attempts=0

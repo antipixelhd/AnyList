@@ -1,13 +1,25 @@
 """Early positive search evidence; never a substitute for a complete career."""
 from collections import defaultdict
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import aliased, load_only
 
 from core.game_credit_roles import SOURCE_ACTING, source_role
 from core.game_credit_parents import person_bindings
 from core.game_types import INDEPENDENT, capabilities
-from models.catalogue import CatalogueEntity, CatalogueIdentity
+from models.catalogue import CatalogueEntity, CatalogueIdentity, ContributorSearch
+
+
+async def qualified_games(db,namespace,natives):
+    """Read canonical qualification summaries without transferring portfolios."""
+    root=func.coalesce(CatalogueEntity.canonical_person_id,CatalogueEntity.canonical_company_id,CatalogueEntity.id)
+    rows=(await db.execute(select(CatalogueIdentity.external_id,ContributorSearch.game_actor_count,
+        ContributorSearch.game_staff_count,ContributorSearch.game_work_count,ContributorSearch.work_count).join(
+            CatalogueEntity,CatalogueEntity.id==CatalogueIdentity.entity_id).join(
+            ContributorSearch,ContributorSearch.entity_id==root).where(
+            CatalogueIdentity.namespace==namespace,CatalogueIdentity.external_id.in_(natives)))).all()
+    return {native:{'actor':actors>0,'staff':staff>0,'studio':works>0,'established':works>0 or screen>0}
+            for native,actors,staff,works,screen in rows}
 
 
 async def sample_matches(db, samples, kind, existing=None):

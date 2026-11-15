@@ -99,9 +99,10 @@ def _work_summary(payload, section, filters, show_anime):
     return {'works': len(visible), 'popularity': max((float(r.get('popularity') or 0) for r in visible.values()), default=0), 'latest': max((r.get('release_date') or r.get('first_air_date') or '' for r in visible.values()), default='')}
 
 
-async def cached_evidence(db, jobs, viewer_id, *, enqueue=True, summaries=None):
+async def cached_evidence(db, jobs, viewer_id, *, enqueue=True, summaries=None, established=None):
     """Read headers once, uncached payloads only, and admit bounded refresh work."""
     if not jobs:
+        if established:await established({})
         return {}, False
     table = ContributorEvidence
     current = now()
@@ -135,24 +136,28 @@ async def cached_evidence(db, jobs, viewer_id, *, enqueue=True, summaries=None):
         payloads.update({(kind, native, variant): payload for kind, native, variant, payload in await db.execute(
             select(table.kind, table.native_id, table.variant, table.payload).where(
                 tuple_(table.kind, table.native_id, table.variant).in_(missing)))})
+    views={key: {**payload, '_fresh': bool(existing[key].expires_at and existing[key].expires_at > current),
+                 '_cache_identity': [*key, existing[key].expires_at.isoformat() if existing[key].expires_at else None]}
+           for key,payload in payloads.items() if payload is not None}
+    settled=await established(views) if established else set()
     due = [key for key in jobs if key not in existing or
            ((existing[key].expires_at is None or existing[key].expires_at <= current)
             and (existing[key].next_attempt_at is None or existing[key].next_attempt_at <= current)
             and (existing[key].lease_until is None or existing[key].lease_until <= current))]
     active = [key for key, row in existing.items()
               if row.next_attempt_at is not None and row.next_attempt_at <= current + timedelta(seconds=8)]
-    pending = bool(active)
-    if enqueue and search_context.get() is not None and (active or due):
-        await mark(db, [demand_scope(*key) for key in active + due])
+    foreground=set(active+due)-settled
+    pending = bool(set(active)-settled or (set(due)-settled if enqueue else set()))
+    if enqueue and search_context.get() is not None and foreground:
+        await mark(db, [demand_scope(*key) for key in foreground])
         await db.commit()
     if enqueue and due:
         # A competing admission or a full queue is temporary. Let the bounded
         # client refresh retry rather than leaving a fresh query empty forever.
-        pending = True
         # Serialize admission only, never hold the lock over network requests.
         if await db.scalar(select(func.pg_try_advisory_xact_lock(724052))):
             count = await db.scalar(select(func.count()).select_from(table).where(table.next_attempt_at.is_not(None)))
-            due = due[:max(0, MAX_PENDING - count)]
+            due = sorted(due,key=lambda key:key in settled)[:max(0, MAX_PENDING - count)]
             if due:
                 statement = insert(table).values([dict(kind=k[0], native_id=k[1], variant=k[2], config=jobs[k],
                     requested_by=viewer_id, next_attempt_at=current) for k in due])
@@ -162,12 +167,12 @@ async def cached_evidence(db, jobs, viewer_id, *, enqueue=True, summaries=None):
                     where=(table.expires_at.is_(None) | (table.expires_at <= current)) &
                           (table.lease_until.is_(None) | (table.lease_until <= current)) &
                           (table.next_attempt_at.is_(None) | (table.next_attempt_at <= current))))
-                pending = True
             await db.commit()
             _wake.set()
-    return {key: {**payload, '_fresh': bool(existing[key].expires_at and existing[key].expires_at > current),
-                           '_cache_identity': [*key, existing[key].expires_at.isoformat() if existing[key].expires_at else None]}
-            for key, payload in payloads.items() if payload is not None}, pending
+    if established:
+        for key in foreground:views.setdefault(key,{'complete':False,'_fresh':False})
+    for key,value in views.items():value['_pending']=enqueue and key in foreground
+    return views, pending
 
 
 async def local_evidence(db, rows, section, filters, show_anime, *, limit=8):

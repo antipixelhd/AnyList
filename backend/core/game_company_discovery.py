@@ -19,7 +19,7 @@ from core.game_company_works import JOB
 from core.game_imdb_enrichment import now, request as admit
 from core.game_source_cache import session_factory
 from db import AsyncSessionLocal
-from models.catalogue import CatalogueEntity, CatalogueIdentity, MetadataSnapshot
+from models.catalogue import CatalogueEntity, CatalogueIdentity, ContributorSearch, MetadataSnapshot
 
 LIMIT = 8
 MAX_PENDING = 256
@@ -54,12 +54,20 @@ class GameCompanyDiscovery:
                 (MetadataSnapshot.next_attempt_at.is_not(None)) | (MetadataSnapshot.expires_at > now()))))
             if pending + sum(str(raw['id']) not in existing for raw in rows) > MAX_PENDING:
                 raise ProviderError('rate_limited', 60)
+            from core.game_search_samples import qualified_games
+            qualified=await qualified_games(db,'igdb.company',[str(row['id']) for row in rows])
             for raw in rows:
                 country = numeric_country(raw.get('country'))
                 values = entity('organization', 'igdb.company', raw, artwork=raw.get('logo'),
                     attributes={'countries': [country]} if country else {})
                 company = await catalogue.upsert_entity(db, values, 'igdb')
-                await admit(db, str(raw['id']), kind=JOB, provider='igdb', entity_id=company.id)
+                if qualified.get(str(raw['id']),{}).get('established'):
+                    from core.game_work import work_context, Priority
+                    from core.search_demand import context
+                    with context(None), work_context(Priority.RETRY):
+                        await admit(db,str(raw['id']),kind=JOB,provider='igdb',entity_id=company.id)
+                else:
+                    await admit(db, str(raw['id']), kind=JOB, provider='igdb', entity_id=company.id)
             await db.commit()
         return {'ids': [str(raw['id']) for raw in rows]}
 
@@ -88,23 +96,23 @@ class GameCompanyDiscovery:
             rows = (await db.execute(select(
                 func.coalesce(CatalogueEntity.canonical_company_id, CatalogueEntity.id),
                 MetadataSnapshot.next_attempt_at, MetadataSnapshot.lease_until,
-                MetadataSnapshot.id, CatalogueIdentity.external_id,
+                MetadataSnapshot.id, CatalogueIdentity.external_id, ContributorSearch.game_work_count,
             ).select_from(CatalogueEntity).join(CatalogueIdentity, CatalogueIdentity.entity_id == CatalogueEntity.id)
                 .outerjoin(MetadataSnapshot, and_(MetadataSnapshot.provider == 'igdb',
                     MetadataSnapshot.kind == JOB,
                     MetadataSnapshot.external_id == CatalogueIdentity.external_id))
+                .outerjoin(ContributorSearch,ContributorSearch.entity_id==func.coalesce(
+                    CatalogueEntity.canonical_company_id,CatalogueEntity.id))
                 .where(CatalogueIdentity.namespace == 'igdb.company',
                     CatalogueIdentity.external_id.in_(natives)))).all()
         stamp = now()
-        pending = [row[4] for row in rows if row[3] is None or row[1] or row[2] and row[2] > stamp]
-        from core.search_demand import current as search_context, mark
-        if pending and search_context.get() is not None:
-            from core.game_work import job_key
-            async with self.sessions() as db:
-                await mark(db, [job_key('igdb', JOB, native) for native in pending])
-                await db.commit()
+        pending = [row[4] for row in rows if not row[5]
+            and (row[3] is None or row[1] or row[2] and row[2] > stamp)]
+        from core.game_work import job_key
         return {'ids': list({row[0] for row in rows}),
             'pending': bool(pending),
+            'pending_jobs':{'studio':[{'id':row[0],'scopes':[job_key('igdb',JOB,row[4])]}
+                for row in rows if row[4] in pending]},
             'partial': bool(cached.get('error')) or len(rows) != len(natives)}
 
 

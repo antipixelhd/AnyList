@@ -7,9 +7,9 @@ import asyncio
 import json
 import logging
 import uuid
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
-from sqlalchemy import Float, String, cast, delete, func, or_, select, text
+from sqlalchemy import Float, String, cast, delete, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import aliased
 
@@ -22,6 +22,13 @@ from models.games import GameChildState, GameEntry, GameFavorite
 log = logging.getLogger(__name__)
 CLASSES = {1:'Lists', 2:'Viewed games', 3:'Browse highlights'}
 _wake=None
+RELEASE_SOURCE='release-week:'
+
+
+async def release_week(db,native,stamp):
+    return bool(await db.scalar(select(GameMapperInterest.game).where(
+        GameMapperInterest.game==str(native),GameMapperInterest.source.startswith(RELEASE_SOURCE),
+        GameMapperInterest.expires_at>stamp).limit(1)))
 
 
 def wake_runner():
@@ -56,17 +63,18 @@ async def add_items(db, kind, values):
         set_={'entity_id':func.coalesce(GameMapperItem.entity_id,statement.excluded.entity_id)}))
 
 
-async def observe(db, games, *, category, source, user_id=None, ttl=timedelta(days=30)):
+async def observe(db, games, *, category, source, user_id=None, ttl=timedelta(days=30), expires_at=None):
     games=list({str(native):entity for native,entity in games if str(native).isdigit()}.items())
     if not games:return
+    expires_at=expires_at or now()+ttl
     fresh=(await db.execute(select(GameMapperInterest.game).where(GameMapperInterest.source==source,
         GameMapperInterest.game.in_([native for native,_ in games]),GameMapperInterest.category==category,
-        GameMapperInterest.expires_at>now()+ttl-min(timedelta(hours=1),ttl/2)))).scalars().all()
+        GameMapperInterest.expires_at>expires_at-min(timedelta(hours=1),ttl/2)))).scalars().all()
     if len(fresh)==len(games):return
     await feed_lock(db)
     await add_items(db,'game',games)
     statement=insert(GameMapperInterest).values([{'source':source,'game':native,'category':category,
-        'user_id':user_id,'expires_at':now()+ttl} for native,_ in games])
+        'user_id':user_id,'expires_at':expires_at} for native,_ in games])
     await db.execute(statement.on_conflict_do_update(index_elements=['source','game'],
         set_={'expires_at':statement.excluded.expires_at,'category':category}))
     await refresh_weights(db,[native for native,_ in games])
@@ -255,6 +263,72 @@ class GameBackground:
             stored.payload={**stored.payload,**changes}
             await db.commit()
 
+    async def seed_releases(self,runner):
+        """Scan one bounded page of qualifying first-week releases each turn."""
+        from core.game_browse_policy import accepts
+        from core.game_browse_sources import DISCOVERY_CARD_FIELDS, card, positive
+        stamp=now()
+        payload=dict(runner.payload)
+        scan=payload.get('release_scan') or {'day':stamp.date().isoformat(),'after':0,'seen':[]}
+        last=date.fromisoformat(scan['day'])
+        first=last-timedelta(days=6)
+        begin=int(datetime.combine(first,datetime.min.time(),tzinfo=timezone.utc).timestamp())
+        end=int(datetime.combine(last+timedelta(days=1),datetime.min.time(),tzinfo=timezone.utc).timestamp())
+        rows=await self.sources.igdb('games',f'fields {DISCOVERY_CARD_FIELDS}; where version_parent=null '
+            f'& game_type=(0,3,4,8,9,10,11) & first_release_date>={begin} & first_release_date<{end} '
+            f'& (rating_count>=5 | hypes>=2) & id>{scan["after"]}; sort id asc; limit 100;')
+        if (not isinstance(rows,list) or len(rows)>100 or any(not isinstance(row,dict)
+                or not positive(row.get('id')) or row['id']<=scan['after'] for row in rows)
+                or len({row['id'] for row in rows})!=len(rows)):
+            from core.catalogue_providers import ProviderError
+            raise ProviderError('bad_response')
+        grouped={}
+        for raw in rows:
+            value=card(raw)
+            if not value or value['is_erotic'] or not accepts(value,{'ratings':5,'follows':2}):continue
+            try:released=date.fromisoformat(value['release_date'])
+            except (TypeError,ValueError):continue
+            if not first<=released<=min(last,stamp.date()):continue
+            grouped.setdefault(released,[]).append((str(value['igdb_id']),None))
+        async with self.sessions() as db:
+            games=[game for values in grouped.values() for game in values]
+            scan['seen']=sorted(set(scan.get('seen',[]))|{native for native,_ in games})
+            await observe(db,games,category=4,source='catalogue',ttl=timedelta(days=3650))
+            for released,values in grouped.items():
+                expires=datetime.combine(released+timedelta(days=7),datetime.min.time())
+                if expires>stamp:
+                    await observe(db,values,category=3,source=RELEASE_SOURCE+released.isoformat(),
+                        ttl=expires-stamp,expires_at=expires)
+            if games:
+                natives=[native for native,_ in games]
+                await db.execute(update(GameMapperItem).where(GameMapperItem.kind=='game',
+                    GameMapperItem.native.in_(natives)).values(next_at=func.least(GameMapperItem.next_at,stamp)))
+                known=select(CatalogueIdentity.entity_id).where(CatalogueIdentity.namespace=='igdb.game',
+                    CatalogueIdentity.external_id.in_(natives))
+                from core.game_imdb_enrichment import JOB
+                await db.execute(update(MetadataSnapshot).where(MetadataSnapshot.provider=='imdb',
+                    MetadataSnapshot.kind==JOB,MetadataSnapshot.entity_id.in_(known),
+                    MetadataSnapshot.coverage['complete'].as_boolean().is_(True),
+                    MetadataSnapshot.expires_at.is_not(None),MetadataSnapshot.next_attempt_at.is_(None))
+                    .values(expires_at=func.least(MetadataSnapshot.expires_at,
+                        MetadataSnapshot.fetched_at+text("INTERVAL '1 day'"))))
+            stored=await db.get(GameMapperState,1)
+            if len(rows)==100:
+                scan['after']=max(row['id'] for row in rows)
+                changes={'release_scan':scan,'releases_due':stamp.isoformat()}
+            else:
+                missing=select(GameMapperInterest.game).where(
+                    GameMapperInterest.source.startswith(RELEASE_SOURCE),
+                    GameMapperInterest.game.not_in(scan['seen']))
+                retired=list(await db.scalars(missing.distinct()))
+                await db.execute(delete(GameMapperInterest).where(
+                    GameMapperInterest.source.startswith(RELEASE_SOURCE),
+                    GameMapperInterest.game.not_in(scan['seen'])))
+                await refresh_weights(db,retired)
+                changes={'release_scan':None,'releases_due':(stamp+timedelta(days=1)).isoformat()}
+            stored.payload={**stored.payload,**changes}
+            await db.commit()
+
     async def canonical_job(self,provider,kind,native,entity,service):
         from core.game_imdb_enrichment import request, snapshot
         async with self.sessions() as db:
@@ -415,7 +489,9 @@ class GameBackground:
                 await db.commit()
             try:
                 with work_context(Priority.AUTOMATIC,'automatic',replace=True):
-                    if (not item or item.category>=3) and runner.payload.get('highlights_due','')<=now().isoformat():
+                    if runner.payload.get('releases_due','')<=now().isoformat():
+                        await self.seed_releases(runner)
+                    elif (not item or item.category>=3) and runner.payload.get('highlights_due','')<=now().isoformat():
                         await self.seed_browse(runner,highlights=True)
                     elif (not item or item.category==4) and deep_count==0 and runner.payload.get('browse_due','')<=now().isoformat():
                         await self.seed_browse(runner)

@@ -6,12 +6,12 @@ from unittest.mock import AsyncMock, patch
 
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
-from sqlalchemy import event, select
+from sqlalchemy import delete, event, select
 
 import test_game_contributor_works_pg as fixture
 from core import contributor_search as search
 from dependencies import get_current_user
-from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueRelationship, ContributorSearch
+from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity, CatalogueRelationship, ContributorSearch, MetadataSnapshot
 
 
 @unittest.skipUnless(fixture.fixture.fixture.URL, 'Requires explicit disposable statistics PostgreSQL')
@@ -41,6 +41,66 @@ class GameContributorSearchTests(unittest.IsolatedAsyncioTestCase):
             params={'q':term,'kind':kind,'work_domain':domain})
         self.assertEqual(response.status_code,200,response.text)
         return response.json()
+
+    async def test_established_game_people_refresh_below_new_candidates_without_loading(self):
+        from core.game_people_discovery import GamePeopleDiscovery
+        from core.game_imdb_person import JOB
+        from core.game_work import Priority,job_key
+        from models.game_runner import GameWorkDemand
+        await self.seed(1)
+        async with self.Session() as db:
+            db.add(CatalogueIdentity(entity_id=self.person_id,namespace='imdb.person',external_id='nm1',source='imdb'))
+            await db.commit()
+        service=GamePeopleDiscovery(self.Session)
+        service.source.people_candidates=AsyncMock(return_value=[{'id':'nm1','name':'Fixture person','image':None}])
+        with patch('core.game_people_presence.presence',AsyncMock(side_effect=AssertionError('Saved eligible credits qualify'))):
+            ready=await service.search('Fixture')
+        self.assertFalse(ready['pending'])
+        self.assertFalse(any(ready['pending_sections'].values()))
+        async with self.Session() as db:
+            demand=await db.get(GameWorkDemand,job_key('imdb',JOB,'nm1'))
+            self.assertEqual(demand.priority,Priority.RETRY)
+            await db.execute(delete(MetadataSnapshot).where(MetadataSnapshot.kind=='game_people_search'))
+            await db.commit()
+        service.source.people_candidates.return_value.append({'id':'nm2','name':'Fixture newcomer','image':None})
+        with patch('core.game_people_presence.presence',AsyncMock(return_value={'total':1,'rows':[],'complete':False})):
+            waiting=await service.search('Fixture')
+        self.assertTrue(waiting['pending'])
+        self.assertTrue(all(job['id']!=self.person_id for jobs in waiting['pending_jobs'].values() for job in jobs))
+        async with self.Session() as db:
+            newcomer=await db.get(GameWorkDemand,job_key('imdb',JOB,'nm2'))
+            self.assertLess(newcomer.priority,Priority.RETRY)
+
+    async def test_known_studio_portfolio_refresh_is_lower_priority_and_does_not_block_search(self):
+        from core.game_company_discovery import GameCompanyDiscovery
+        from core.game_browse_sources import GameBrowseSources
+        from core.game_company_works import JOB
+        from core.game_work import Priority,job_key
+        from models.game_runner import GameWorkDemand
+        _,_,company=await self.seed(1)
+        async with self.Session() as db:
+            db.add(CatalogueIdentity(entity_id=company,namespace='igdb.company',external_id='1012',source='igdb'))
+            await db.commit()
+        sources=GameBrowseSources(self.Session)
+        sources.api.validate=lambda *args:None
+        sources.igdb=AsyncMock(return_value=[{'id':1012,'name':'Game company'}])
+        service=GameCompanyDiscovery(self.Session,sources=sources)
+        ready=await service.search('Game company')
+        self.assertFalse(ready['pending'])
+        async with self.Session() as db:
+            demand=await db.get(GameWorkDemand,job_key('igdb',JOB,'1012'))
+            self.assertEqual(demand.priority,Priority.RETRY)
+
+    async def test_saved_cross_domain_results_settle_only_the_matching_candidate_and_role(self):
+        from core.contributor_search import settle_game_discovery
+        person={'pending':True,'pending_jobs':{'actor':[{'id':self.person_id,'scopes':['known']}],
+            'staff':[{'id':999,'scopes':['new-crew']}]}}
+        company={'pending':False}
+        groups={'actor':[{'key':f'catalogue:{self.person_id}'}],'staff':[],'studio':[]}
+        async with self.Session() as db:
+            await settle_game_discovery(db,groups,person,company)
+        self.assertEqual(person['pending_sections'],{'actor':False,'staff':True})
+        self.assertTrue(person['pending'])
 
     async def test_roles_are_separate_and_new_game_credits_are_immediately_searchable(self):
         # Establish a reusable movie/provider shortlist before Games exists.
