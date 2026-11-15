@@ -840,12 +840,17 @@ class CatalogueDatabaseTests(unittest.IsolatedAsyncioTestCase):
             async with self.Session() as db:
                 return await catalogue.refresh_metadata(db, adapter, 'igdb', 'game', '1942')
 
-        async with self.Session() as writer:
+        async with self.Session() as writer, self.Session() as reader:
+            reader.add(MetadataSnapshot(provider='igdb', kind='game', external_id='1942'))
+            await reader.commit()
+            stale = await reader.scalar(select(MetadataSnapshot))
+            self.assertIsNone(stale.lease_token)
             await catalogue.write_lock(writer)
             first = asyncio.create_task(refresh())
             try:
                 await asyncio.wait_for(started.wait(), 3)
-                second = await asyncio.wait_for(refresh(), 3)
+                second = await asyncio.wait_for(catalogue.refresh_metadata(
+                    reader, adapter, 'igdb', 'game', '1942'), 3)
                 self.assertEqual(second['status'], 'refreshing')
                 self.assertEqual(adapter.detail.await_count, 1)
                 first.cancel()

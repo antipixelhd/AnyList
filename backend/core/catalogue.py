@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import delete, select, text, tuple_, update
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.orm import defer
 
 from models.catalogue import (
     CatalogueEntity,
@@ -650,11 +651,15 @@ def cached_refresh_status(row, now):
     return None
 
 
+_REFRESH_STATE_COLUMNS = ('entity_id', 'coverage', 'fetched_at', 'expires_at',
+                          'attempts', 'error_code', 'next_attempt_at', 'lease_token', 'lease_until')
+
+
 async def record_refresh_failure(db, row, token, error, base_delay):
     # Retry bookkeeping only changes this snapshot. Publication still takes
     # the catalogue lock before locking the snapshot or changing identities.
     try:
-        await db.refresh(row, with_for_update=True)
+        await db.refresh(row, attribute_names=_REFRESH_STATE_COLUMNS, with_for_update=True)
         if row.lease_token != token:
             return "refreshing", False
         code = (
@@ -713,6 +718,8 @@ async def refresh_metadata(
                 MetadataSnapshot.kind == snapshot_kind,
                 MetadataSnapshot.external_id == snapshot_id,
             )
+            .options(defer(MetadataSnapshot.payload))
+            .execution_options(populate_existing=True)
             .with_for_update()
         )
     ).scalar_one()
@@ -738,7 +745,7 @@ async def refresh_metadata(
         # Commit the next interaction before fetching optional characters.
         # Established content remains intact until its full refresh succeeds.
         await write_lock(db)
-        await db.refresh(row,with_for_update=True)
+        await db.refresh(row, attribute_names=_REFRESH_STATE_COLUMNS, with_for_update=True)
         if row.lease_token!=token:raise IdentityConflict('Metadata lease changed')
         await verify_game(doc)
         if not row.fetched_at:
@@ -766,7 +773,7 @@ async def refresh_metadata(
             doc, payload = await providers.detail(provider, kind, external_id, **options)
         # Recheck ownership before publishing. Late workers cannot overwrite.
         await write_lock(db)
-        await db.refresh(row, with_for_update=True)
+        await db.refresh(row, attribute_names=_REFRESH_STATE_COLUMNS, with_for_update=True)
         if row.lease_token != token:
             result = refresh_result(row, "refreshing")
             await db.commit()
@@ -796,7 +803,8 @@ async def refresh_metadata(
         status = "updated"
     except asyncio.CancelledError:
         await db.rollback()
-        owned=await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.id==snapshot_row_id).with_for_update())
+        owned=await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.id==snapshot_row_id)
+            .options(defer(MetadataSnapshot.payload)).with_for_update())
         if owned and owned.lease_token==token:
             owned.lease_token=owned.lease_until=None;owned.next_attempt_at=datetime.now(timezone.utc).replace(tzinfo=None)
         await db.commit()
