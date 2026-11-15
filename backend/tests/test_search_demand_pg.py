@@ -242,6 +242,30 @@ class SearchDemandTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await evidence.run_batch(self.Session), 2)
         self.assertEqual(acquired[0], 103)
 
+    async def test_weighted_people_batch_gives_competing_viewer_the_next_turn(self):
+        from core import contributor_evidence as evidence
+        keys = [evidence.evidence_key('person', native, {}, True) for native in range(201, 209)]
+        studio = evidence.evidence_key('studio', 301, {}, True)
+        async with self.Session() as db:
+            for offset, (key, config) in enumerate([*keys, studio]):
+                db.add(ContributorEvidence(kind=key[0], native_id=key[1], variant=key[2], config=config,
+                    next_attempt_at=demand.now() - timedelta(seconds=20-offset)))
+            await db.commit()
+        await self.mark(await self.begin(1, 'people-window', 1), [evidence.demand_scope(*key) for key, _ in keys])
+        await self.mark(await self.begin(2, 'other-studio-window', 1), [evidence.demand_scope(*studio[0])])
+        acquired = []
+        async def load(job, key):
+            acquired.append(job['native_id'])
+            return {'works': [], 'complete': True}
+        with patch.object(evidence, 'load_evidence', load), patch.object(evidence.settings_store,
+                'get_user_tmdb_key', AsyncMock(return_value='fixture')):
+            self.assertEqual(await evidence.run_batch(self.Session), 4)
+            self.assertEqual(set(acquired), {201, 202, 203, 204})
+            acquired.clear()
+            self.assertEqual(await evidence.run_batch(self.Session), 3)
+        self.assertEqual(acquired[0], 301)
+        self.assertEqual(len(set(acquired)), 3)
+
     async def test_migration_round_trip(self):
         migration = importlib.import_module('migrations.versions.mt094_search_demand')
         def run(conn):

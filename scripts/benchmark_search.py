@@ -97,6 +97,15 @@ async def main(args):
     if args.concurrent_readers > 1 and (not args.case or
             not set(args.case) <= {'actor', 'crew', 'studio', 'negative_studio', 'people_combined', 'all_contributors'}):
         raise SystemExit('--concurrent-readers requires explicit screen contributor cases')
+    if args.verification_scheduler and (not args.case or not set(args.case) <= {
+            'actor', 'crew', 'studio', 'negative_studio', 'people_combined', 'all_contributors'}):
+        raise SystemExit('--verification-scheduler requires explicit screen contributor cases')
+    studio_fixture = None
+    if args.studio_fixture:
+        if args.case != ['studio'] or not args.studio_query:
+            raise SystemExit('--studio-fixture requires --case studio and --studio-query')
+        capture = json.loads(Path(args.studio_fixture).read_text(encoding='utf-8'))
+        studio_fixture = next(case for case in capture['cases'] if case['term'] == args.studio_query)
     if args.baseline_ref:
         if not re.fullmatch(r'[0-9a-fA-F]{7,40}', args.baseline_ref):
             raise SystemExit('--baseline-ref must be a local commit SHA')
@@ -137,6 +146,8 @@ async def main(args):
     counters = Counter()
     sql_patterns = {}
     current_case = ''
+    search_generation = 0
+    verification_observation = False
     series_stages = {}
     game_statistics_enabled=not args.case or any(name.startswith('game_statistics') for name in args.case)
     try:
@@ -444,8 +455,27 @@ async def main(args):
             counters['provider:' + url.removeprefix(tmdb.TMDB_BASE)] += 1
             if current_case == 'provider_failure':
                 raise tmdb.TMDBUnavailable('Controlled provider outage')
-            await asyncio.sleep(args.provider_delay_ms / 1000)
             path = url.removeprefix(tmdb.TMDB_BASE + '/').split('/')
+            # Deterministic ordinary provider variation, identical across arms.
+            native = 0
+            if path[0] == 'person':
+                native = int(path[1])
+            elif path[0] == 'discover':
+                native = int(str((params or {}).get('with_companies') or '0').split('|')[0])
+            delay = args.provider_delay_ms + (native % 4) * args.provider_jitter_ms
+            await asyncio.sleep(delay / 1000)
+            if studio_fixture and path == ['search', 'company']:
+                return {'total_pages': 1, 'results': [{'id': row['native'], 'name': row['name'],
+                    'logo_path': row['image']} for row in studio_fixture['candidates']]}
+            if studio_fixture and path[0] == 'discover':
+                candidate = next(row for row in studio_fixture['candidates'] if row['native'] == native)
+                kind = 'movie' if path[1] == 'movie' else 'series'
+                media_type = 'movie' if kind == 'movie' else 'tv'
+                first = [row for row in candidate['first']['works'] if row['media_type'] == media_type]
+                full = [row for row in candidate['full']['works'] if row['media_type'] == media_type]
+                page = int((params or {}).get('page', 1))
+                return {'page': page, 'total_pages': 2 if candidate['first']['pages'][kind] else 1 if first else 0,
+                    'results': first if page == 1 else full[len(first):]}
             if current_case == 'series_resolve' and path[:2] == ['tv', '9900001']:
                 if len(path) > 2 and path[2] == 'season':
                     number = int(path[3])
@@ -601,6 +631,8 @@ async def main(args):
             return result
 
         async def request(path, params):
+            if args.active_search_demand and path == 'quick-search/contributors':
+                params = {**params, 'search_id': 'benchmark-search-window', 'search_generation': search_generation}
             if path=='games/people/images':
                 response=await fixture.client.post('/tracking/'+path,json={'ids':portrait_ids})
             elif path == 'browse/context':
@@ -975,7 +1007,11 @@ async def main(args):
             stack.enter_context(patch.object(game_people_discovery, 'GamePeopleDiscovery', return_value=people_discovery))
             if args.case and 'game_offers' in args.case:
                 stack.enter_context(patch.object(provider_settings,'itad_api_key','fixture-itad-key'))
-            stack.enter_context(patch.object(tmdb, '_request', side_effect=provider))
+            async def measured_provider(*values, **options):
+                result = await provider(*values, **options)
+                counters['provider_payload_bytes'] += len(json.dumps(result).encode())
+                return result
+            stack.enter_context(patch.object(tmdb, '_request', side_effect=measured_provider))
             from core import browse as browse_core
             if hasattr(chronological_discovery, '_snapshots'):
                 from core.release_snapshots import ReleaseSnapshots
@@ -1015,6 +1051,9 @@ async def main(args):
                     await db.commit()
                 for label, path, values in cases:
                     current_case = label
+                    search_generation += 1
+                    if studio_fixture:
+                        values = {**values, 'q': args.studio_query}
                     reset()
                     if label=='game_portraits':
                         async with fixture.Session() as db:
@@ -1391,7 +1430,12 @@ async def main(args):
                                     request_viewer.reset(token)
                             responses = await asyncio.gather(*(read(reader) for reader in search_viewers))
                             if any(result['results'] != responses[0][0]['results'] for result, _ in responses):
-                                raise RuntimeError('Equivalent concurrent viewers received different contributors')
+                                if verification_observation:
+                                    # Different snapshots can straddle a commit.
+                                    # Require exact equality once workers settle.
+                                    counters['progressive_reader_variations'] += 1
+                                else:
+                                    raise RuntimeError('Equivalent concurrent viewers received different contributors')
                             durations = sorted(duration for _, duration in responses)
                             counters['reader_p50_ms'] = statistics.median(durations)
                             counters['reader_max_ms'] = durations[-1]
@@ -1419,6 +1463,34 @@ async def main(args):
                         if counters['provider_requests']!=2:raise RuntimeError('Cold primary journey duplicated or skipped provider components')
                     if path == 'quick-search/contributors':
                         async def verify(operation=operation):
+                            nonlocal verification_observation
+                            if args.verification_scheduler:
+                                batch = contributor_evidence.run_batch
+                                async def isolated_batch(*values, **options):
+                                    return await batch(fixture.Session, **options)
+                                started = time.perf_counter()
+                                with patch.object(contributor_evidence, 'AsyncSessionLocal', fixture.Session), \
+                                     patch.object(contributor_evidence, 'run_batch', isolated_batch):
+                                    worker = asyncio.create_task(contributor_evidence.scheduler())
+                                    verification_observation = True
+                                    try:
+                                        async with asyncio.timeout(120):
+                                            while True:
+                                                result = await operation()
+                                                for section, rows in result['results'].items():
+                                                    if rows:
+                                                        counters.setdefault(f'first_{section}_ms', round((time.perf_counter() - started) * 1000, 2))
+                                                async with fixture.Session() as db:
+                                                    outstanding = await db.scalar(select(ContributorEvidence.native_id).where(
+                                                        ContributorEvidence.next_attempt_at.is_not(None)).limit(1))
+                                                if outstanding is None and not result.get('verification_pending'):
+                                                    verification_observation = False
+                                                    return await operation() if args.concurrent_readers > 1 else result
+                                                await asyncio.sleep(.2)
+                                    finally:
+                                        verification_observation = False
+                                        worker.cancel()
+                                        await asyncio.gather(worker, return_exceptions=True)
                             for _ in range(20):
                                 async with fixture.Session() as db:
                                     jobs = list(await db.scalars(select(ContributorEvidence).where(ContributorEvidence.next_attempt_at.is_not(None))))
@@ -1426,7 +1498,10 @@ async def main(args):
                                         job.next_attempt_at = contributor_evidence.now()
                                     await db.commit()
                                 if not jobs:
-                                    break
+                                    result = await operation()
+                                    if not result.get('verification_pending'):
+                                        return result
+                                    continue
                                 await contributor_evidence.run_batch(fixture.Session)
                             return await operation()
                         await measure(label, mode, 'verification_worker', verify)
@@ -1445,6 +1520,9 @@ async def main(args):
                   'contributor_relevance': not args.skip_contributor_relevance,
                   'provider_delay_ms': args.provider_delay_ms, 'rounds': args.rounds,
                   'concurrent_readers': args.concurrent_readers,
+                  'verification_scheduler': args.verification_scheduler, 'provider_jitter_ms': args.provider_jitter_ms,
+                  'studio_query': args.studio_query if studio_fixture else None,
+                  'active_search_demand': args.active_search_demand,
                   'baseline_ref': args.baseline_ref, 'sql_patterns': sql_patterns, 'samples': samples}
         output['primary_blocking_reference']=args.primary_blocking_reference
         target = ROOT / args.output
@@ -1469,6 +1547,14 @@ if __name__ == '__main__':
     parser.add_argument('--rounds', type=int, default=3)
     parser.add_argument('--pipeline-people',type=int,choices=(1,2,3),default=2)
     parser.add_argument('--provider-delay-ms', type=float, default=50)
+    parser.add_argument('--provider-jitter-ms', type=float, default=0,
+        help='Add repeatable 0/1/2/3 multiples per contributor to controlled provider delay')
+    parser.add_argument('--verification-scheduler', action='store_true',
+        help='Run the real verification scheduler, continuation waits and 200ms API observations instead of forcing jobs due')
+    parser.add_argument('--studio-fixture', help='Replay public first/full studio evidence from a JSON capture instead of synthetic studio works')
+    parser.add_argument('--studio-query', help='Select a captured studio query with --studio-fixture')
+    parser.add_argument('--active-search-demand', action='store_true',
+        help='Send stable per-viewer search generations through the real demand admission and renewal path')
     parser.add_argument('--baseline-ref', help='Load benchmarked modules from a trusted local commit SHA')
     parser.add_argument('--critic-blocking-reference',action='store_true',
         help='Compare the same critic workload while waiting for its full page; not a historical checkout replay')

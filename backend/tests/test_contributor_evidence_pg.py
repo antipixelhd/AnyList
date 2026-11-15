@@ -18,6 +18,166 @@ from test_contributor_evidence import FILTERS, film
 
 @unittest.skipUnless(fixture.URL, 'Requires explicit disposable PostgreSQL')
 class EvidenceDatabaseTests(unittest.IsolatedAsyncioTestCase):
+    async def test_studio_witness_parks_sample_and_another_viewer_resumes_shared_pages(self):
+        from core import studio_discovery
+        from models import User, UserProfileData
+        async with self.Session() as db:
+            profile = await db.scalar(select(UserProfileData).where(UserProfileData.user_id == self.user_id))
+            profile.excluded_categories = []
+            profile.minimum_movie_runtime = 30
+            other = User(email='witness-reader@example.test', username='witness-reader', api_key='witness-reader-key')
+            db.add(other)
+            await db.commit()
+        key, _ = await self.queue(771)
+        movies = AsyncMock(return_value={'results': [film(runtime=90, genre_ids=[99], popularity=80)], 'total_pages': 2})
+        shows = AsyncMock(return_value={'results': [], 'total_pages': 0})
+        policy = {'studio_filters': FILTERS, 'show_anime': True}
+        async def search(filters=FILTERS, viewer=None):
+            async with self.Session() as db:
+                return await studio_discovery.verified_studios(db, viewer or SimpleNamespace(id=self.user_id),
+                    [{'key': 'tmdb:771', '_native': 771, 'name': 'Witness studio', 'url': '/studio/tmdb:771'}], 'key',
+                    policy={**policy, 'studio_filters': filters})
+        with patch.object(evidence.tmdb, 'discover_movies', movies), patch.object(evidence.tmdb, 'discover_shows', shows), \
+             patch.object(evidence.settings_store, 'get_user_tmdb_key', AsyncMock(return_value='key')):
+            await evidence.run_batch(self.Session)
+            async with self.Session() as db:
+                row = await db.get(ContributorEvidence, key)
+                self.assertFalse(row.payload['complete'])
+                self.assertEqual(row.payload['pages'], {'movie': 2, 'series': None})
+                self.assertIsNone(row.next_attempt_at)
+            # Fresh partial summaries must stay small without claiming complete
+            # coverage or queueing unnecessary pages for the ordinary viewer.
+            for _ in range(2):
+                rows, pending = await search()
+                self.assertEqual(len(rows), 1)
+                self.assertFalse(pending)
+            stricter = {**FILTERS, 'excluded_genres': [99]}
+            ordinary, strict = await asyncio.gather(search(), search(stricter, other))
+            self.assertEqual(len(ordinary[0]), 1)
+            self.assertFalse(strict[0])
+            self.assertTrue(strict[1])
+            movies.return_value = {'results': [film(id=2, runtime=90, genre_ids=[18], popularity=40)], 'total_pages': 2}
+            await asyncio.gather(evidence.run_batch(self.Session), evidence.run_batch(self.Session))
+            rows, pending = await search(stricter, other)
+            self.assertEqual(len(rows), 1)
+            self.assertFalse(pending)
+            self.assertEqual(movies.await_count, 2)
+            self.assertEqual(shows.await_count, 1)
+            self.assertEqual([call.kwargs['page'] for call in movies.await_args_list], [1, 2])
+        async with self.Session() as db:
+            row = await db.get(ContributorEvidence, key)
+            self.assertTrue(row.payload['complete'])
+            self.assertEqual(len(row.payload['works']), 2)
+
+    async def test_studio_without_a_witness_finishes_sample_and_reuses_verified_negative(self):
+        from core import studio_discovery
+        key, _ = await self.queue(772)
+        filters = {**FILTERS, 'excluded_genres': [99]}
+        provider = AsyncMock(return_value={'results': [film(runtime=90, genre_ids=[99])], 'total_pages': 50})
+        async def search():
+            async with self.Session() as db:
+                return await studio_discovery.verified_studios(db, SimpleNamespace(id=self.user_id),
+                    [{'key': 'tmdb:772', '_native': 772, 'name': 'No qualifying works', 'url': '/studio/tmdb:772'}], 'key',
+                    policy={'studio_filters': filters, 'show_anime': True})
+        with patch.object(evidence.tmdb, 'discover_movies', provider), patch.object(evidence.tmdb, 'discover_shows', provider), \
+             patch.object(evidence.settings_store, 'get_user_tmdb_key', AsyncMock(return_value='key')):
+            await evidence.run_batch(self.Session)
+            self.assertEqual(await search(), ([], True))
+            await evidence.run_batch(self.Session)
+            self.assertEqual(await search(), ([], False))
+            self.assertEqual(await search(), ([], False))
+            self.assertEqual(provider.await_count, 4)
+        async with self.Session() as db:
+            self.assertTrue((await db.get(ContributorEvidence, key)).payload['complete'])
+
+    async def test_verification_admits_four_people_or_two_studios_under_same_request_ceiling(self):
+        for kind, natives, expected in (('person', range(781, 786), 4), ('studio', range(791, 796), 2)):
+            async with self.Session() as db:
+                for native in natives:
+                    key, config = evidence.evidence_key(kind, native, FILTERS, True)
+                    db.add(ContributorEvidence(kind=key[0], native_id=key[1], variant=key[2], config=config,
+                        next_attempt_at=evidence.now()))
+                await db.commit()
+            acquired = []
+            async def load(job, key):
+                acquired.append(job['kind'])
+                await asyncio.sleep(.01)
+                return {'complete': True, 'works': []}
+            with patch.object(evidence, 'load_evidence', load), patch.object(evidence.settings_store,
+                    'get_user_tmdb_key', AsyncMock(return_value='key')):
+                self.assertEqual(await evidence.run_batch(self.Session), expected)
+                self.assertEqual(sum(1 if value == 'person' else 2 for value in acquired), 4)
+                # Drain this fixture before checking the next media kind.
+                while await evidence.run_batch(self.Session):
+                    pass
+
+    async def test_failed_partial_sample_keeps_cooldown_and_unknown_coverage(self):
+        key, _ = await self.queue(773)
+        async with self.Session() as db:
+            row = await db.get(ContributorEvidence, key)
+            row.payload = {'works': [film(genre_ids=[99])], 'complete': False, 'pages': {'movie': 2, 'series': None}}
+            row.expires_at = evidence.now() + timedelta(days=7)
+            row.attempts = 4
+            await db.commit()
+        with patch.object(evidence, 'load_evidence', AsyncMock(side_effect=TimeoutError)), patch.object(
+                evidence.settings_store, 'get_user_tmdb_key', AsyncMock(return_value='key')):
+            await evidence.run_batch(self.Session)
+        _, (views, pending) = await self.queue(773)
+        self.assertFalse(pending)
+        self.assertIsNone(evidence.work_summary(views[key], 'studio', {**FILTERS, 'excluded_genres': [99]}, True))
+        async with self.Session() as db:
+            row = await db.get(ContributorEvidence, key)
+            self.assertEqual(row.attempts, 5)
+            self.assertIsNone(row.next_attempt_at)
+            self.assertGreater(row.expires_at, evidence.now() + timedelta(hours=5))
+
+    async def test_studios_with_only_one_media_page_left_fill_four_provider_slots(self):
+        async with self.Session() as db:
+            for native in range(801, 805):
+                key, config = evidence.evidence_key('studio', native, FILTERS, True)
+                db.add(ContributorEvidence(kind=key[0], native_id=key[1], variant=key[2], config=config,
+                    payload={'works': [], 'complete': False, 'pages': {'movie': 2, 'series': None}},
+                    expires_at=evidence.now() + timedelta(days=1), next_attempt_at=evidence.now()))
+            await db.commit()
+        arrived, release = asyncio.Event(), asyncio.Event()
+        calls = []
+        async def movies(**options):
+            calls.append(options)
+            if len(calls) == 4:
+                arrived.set()
+            await release.wait()
+            return {'results': [], 'total_pages': 2}
+        with patch.object(evidence.tmdb, 'discover_movies', movies), patch.object(evidence.tmdb, 'discover_shows',
+                AsyncMock(side_effect=AssertionError('Finished series pages must not be fetched'))), patch.object(
+                evidence.settings_store, 'get_user_tmdb_key', AsyncMock(return_value='key')):
+            task = asyncio.create_task(evidence.run_batch(self.Session))
+            try:
+                await asyncio.wait_for(arrived.wait(), 3)
+            finally:
+                release.set()
+                count = await task
+            self.assertEqual(count, 4)
+        self.assertEqual([call['page'] for call in calls], [2, 2, 2, 2])
+
+    async def test_expired_parked_studio_refreshes_first_pages_without_renewing_old_works(self):
+        key, _ = await self.queue(774)
+        async with self.Session() as db:
+            row = await db.get(ContributorEvidence, key)
+            row.payload = {'works': [film(id=1)], 'complete': False, 'pages': {'movie': 2, 'series': None}}
+            row.expires_at = evidence.now() - timedelta(seconds=1)
+            await db.commit()
+        movies = AsyncMock(return_value={'results': [film(id=2)], 'total_pages': 2})
+        shows = AsyncMock(return_value={'results': [], 'total_pages': 0})
+        with patch.object(evidence.tmdb, 'discover_movies', movies), patch.object(evidence.tmdb, 'discover_shows', shows), \
+             patch.object(evidence.settings_store, 'get_user_tmdb_key', AsyncMock(return_value='key')):
+            await evidence.run_batch(self.Session)
+        self.assertEqual(movies.await_args.kwargs['page'], 1)
+        self.assertEqual(shows.await_args.kwargs['page'], 1)
+        async with self.Session() as db:
+            row = await db.get(ContributorEvidence, key)
+            self.assertEqual([work['id'] for work in row.payload['works']], [2])
+            self.assertFalse(row.payload['complete'])
+
     async def test_shared_policy_read_matches_existing_policies_and_is_request_scoped(self):
         from core.catalog_search import result_filters, browse_preferences
         from models import GlobalSettings, User

@@ -420,12 +420,13 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
         if sharing:
             share_rows = all_known
             if kind == 'studio' and native:
-                # Count the complete evidence collection, never a displayed page.
+                # Count all observed public works, never a displayed page. A
+                # search witness may intentionally retain partial coverage.
                 from core.contributor_evidence import evidence_key, cached_evidence, eligible_work
                 evidence_id, config = evidence_key('studio', native, filters, show_anime)
                 evidence, _ = await cached_evidence(db, {evidence_id:config}, None, enqueue=False)
                 payload = evidence.get(evidence_id) or {}
-                if payload.get('complete'):
+                if payload.get('works'):
                     discovered = [remote_work(raw, None) for raw in payload.get('works', [])
                         if eligible_work(raw, {'movie':'movie','tv':'series'}.get(raw.get('media_type')), filters, show_anime, released=True)]
                     share_rows = merge_works(all_known + [row for row in discovered if row])

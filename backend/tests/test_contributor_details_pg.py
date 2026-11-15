@@ -12,6 +12,30 @@ from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity
 
 @unittest.skipUnless(fixture.URL, "Requires explicit disposable statistics PostgreSQL")
 class ContributorDetailsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_studio_share_uses_known_public_works_from_a_parked_search_sample(self):
+        from datetime import timedelta
+        from core import contributor_evidence as evidence
+        from core.contributor_details import contributor_page
+        from models.catalogue import ContributorEvidence
+        filters = {'min_runtime': 0, 'excluded_genres': []}
+        key, config = evidence.evidence_key('studio', 913321, filters, True)
+        self.key_mock.return_value = 'fixture'
+        raw = {'id': 913321, 'media_type': 'movie', 'title': 'Public observed work',
+            'release_date': '2025-01-01', 'runtime': 90, 'backdrop_path': '/observed.jpg'}
+        async with self.Session() as db:
+            db.add(ContributorEvidence(kind=key[0], native_id=key[1], variant=key[2], config=config,
+                payload={'works': [raw, {**raw, 'id': 913322, 'adult': True},
+                    {**raw, 'id': 913323, 'release_date': '2099-01-01'}],
+                    'complete': False, 'pages': {'movie': 2, 'series': None}},
+                expires_at=evidence.now() + timedelta(days=7)))
+            await db.commit()
+            with patch('core.contributor_details.resolve_contributor', AsyncMock(return_value=(None, 913321, {}))), \
+                 patch('core.tmdb.get_company', AsyncMock(return_value={'id': 913321, 'name': 'Public observed studio'})):
+                data = await contributor_page(db, None, kind='studio', key='tmdb:913321', sharing=True)
+            self.assertEqual(data['share_summary']['movies'], 1)
+            self.assertEqual(data['share_summary']['series'], 0)
+            self.assertIsNone((await db.get(ContributorEvidence, key)).next_attempt_at)
+
     async def test_portraits_are_lazy_and_obey_anonymous_catalog_access(self):
         path=f'/tracking/contributors/actor/catalogue:{self.person_id}/images'
         self.viewer=None

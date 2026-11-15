@@ -13,14 +13,14 @@ notability score. Our work-eligibility and recency ranking are product choices.
 
 ## Rules
 
-- Studio results require released production works passing the viewer's vote,
-  runtime, category and anime filters, with a discovery floor of 250 votes on
-  an attributable work (or the viewer's higher vote threshold). No logo requirement or arbitrary name
+- Studio results require a released production work passing the viewer's runtime,
+  category, anime and work-popularity filters. Studio verification does not apply
+  an independent vote-count floor. No logo requirement or arbitrary name
   exclusion substitutes for work evidence. Existing local results survive a
   provider outage; unverified remote companies do not enter results.
-- Rank prefix/exact matches ahead of incidental substring matches, then newer
-  qualifying releases ahead of older catalogues; work count breaks ties. This
-  measures credited release recency, not a claimed company founding date.
+- Rank exact/prefix matches ahead of incidental substring matches, then qualifying
+  work popularity, observed sample count and latest qualifying release. Counts
+  describe acquired evidence, not a complete career or company founding date.
 - `core/studio_groups.py` holds reviewed presentation memberships. Preserve
   separate provider identities, original credits and historical URLs. Never infer
   membership from similar names, shared ownership alone, or date overlap alone.
@@ -47,23 +47,31 @@ one request. Reviewed studio members share one job; person credits share one job
 across actor/staff scopes and viewer filters. No credentials or list state are
 stored in evidence, and discovered titles are not imported into the catalogue.
 
-At most 12 studio candidates per query are admitted to a global queue capped at
-256 pending records. Each worker batch leases two jobs (`FOR UPDATE SKIP LOCKED`)
-for 45 seconds and performs at most four concurrent provider requests. Network
+At most eight studio candidates per query are admitted to a global queue capped at
+256 pending records. Each worker batch leases a fair prefix (`FOR UPDATE SKIP LOCKED`)
+for 45 seconds costing at most four concurrent provider requests: four people,
+two initial studios, or a fitting mix. Fresh continuations cost only their
+remaining media pages. Network
 work happens outside database transactions. Interrupted workers recover through
 lease expiry; token-guarded publication rejects superseded results.
 
-Studio variants include provider-side vote/runtime/category filters, anime
-visibility, and reviewed membership. Positive evidence lasts seven days; complete
+Studio variants include provider-side minimum runtime and reviewed membership.
+Popularity, category and anime eligibility are evaluated per viewer using the
+same public evidence. Positive evidence lasts seven days; complete
 empty evidence lasts one day. Person combined credits are stored once and filtered
 for each viewer/role. Local evidence is checked against work metadata in a batch,
 not accepted from an unfiltered contributor count. `known_for` may establish a
 positive person match before full credits are available; a failed shortlist is
 unknown, not verified empty. Complete cached credits override the shortlist.
 
-A studio job reads one movie and one TV discovery page, continuing on later ticks
-only when additional pages may contain qualifying works. It retains progress
-instead of declaring an unexamined timeline empty. Work counts from this evidence
+A studio job reads one movie and one TV discovery page, then checks its requesting
+viewer's current policy. A qualifying-work witness parks the retained sample;
+otherwise the worker continues without a client poll, up to two pages per media
+kind. Batch-owned policy reads are never stored in public evidence. A search with
+a different policy can resume the remaining pages. A positive sample avoids unnecessary requests;
+a different viewer can continue it without repeating the first pages. Partial
+coverage remains distinct from a verified negative. Share previews can reuse its
+already observed public works. Work counts from this evidence
 are observed samples, not claimed complete filmography totals. Positive local
 works remain usable during provider failures. Retries back off; after five failed
 attempts the job frees its queue slot and waits six hours for search-driven retry.

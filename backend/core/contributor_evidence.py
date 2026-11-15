@@ -10,6 +10,7 @@ import json
 import logging
 import uuid
 from datetime import date, datetime, timedelta, timezone
+from types import SimpleNamespace
 
 from sqlalchemy import String, case, func, or_, select, tuple_, update
 from sqlalchemy.dialects.postgresql import array, insert
@@ -24,6 +25,7 @@ from db import AsyncSessionLocal
 from models.catalogue import CatalogueCredit, CatalogueEntity, ContributorEvidence
 
 MAX_PENDING = 256
+PROVIDER_SLOTS = 4
 VERSION = 3
 log = logging.getLogger(__name__)
 _wake = asyncio.Event()
@@ -65,7 +67,7 @@ def _summary_key(identity, section, filters, show_anime, existence_only=False):
 
 
 def work_summary(payload, section, filters, show_anime, *, existence_only=False):
-    identity = payload.get('_cache_identity') if payload and payload.get('_fresh') and payload.get('complete') else None
+    identity = payload.get('_cache_identity') if payload and payload.get('_fresh') else None
     key = _summary_key(identity, section, filters, show_anime, existence_only) if identity else None
     if payload and '_cached_summaries' in payload:
         # Retain the request's snapshot even if its shared TTL expires between
@@ -74,10 +76,10 @@ def work_summary(payload, section, filters, show_anime, *, existence_only=False)
     if key:
         cached = _summary_cache.get(key)
         if cached is not None:
-            return cached
+            return cached['value']
     value = _work_summary(payload, section, filters, show_anime, existence_only=existence_only)
     if key and value is not None:
-        _summary_cache.set(key, value, 60)
+        _summary_cache.set(key, {'value': value, 'complete': payload.get('complete', True)}, 60)
     return value
 
 
@@ -150,9 +152,9 @@ async def cached_evidence(db, jobs, viewer_id, *, enqueue=True, summaries=None, 
                 value = _summary_cache.get(cache_key)
                 if value is None:
                     break
-                resolved[cache_key] = value
+                resolved[cache_key] = value['value']
             else:
-                payloads[key] = {'complete': True, '_cached_summaries': resolved}
+                payloads[key] = {'complete': value['complete'], '_cached_summaries': resolved}
                 continue
         if summaries:
             missing.append(key)
@@ -184,8 +186,13 @@ async def cached_evidence(db, jobs, viewer_id, *, enqueue=True, summaries=None, 
                  '_cache_identity': [*key, existing[key].expires_at.isoformat() if existing[key].expires_at else None]}
            for key,payload in payloads.items() if payload is not None}
     settled=await established(views) if established else set()
+    # A useful partial studio sample can rest without acquiring more pages.
+    # A different viewer whose policy has no witness resumes the same public
+    # sample. Failed checks retain their ordinary cooldown, never a negative.
     due = [key for key in jobs if key not in existing or
-           ((existing[key].expires_at is None or existing[key].expires_at <= current)
+           ((existing[key].expires_at is None or existing[key].expires_at <= current or
+             (key not in settled and (payloads.get(key) or {}).get('complete') is False and existing[key].attempts == 0
+              and existing[key].next_attempt_at is None))
             and (existing[key].next_attempt_at is None or existing[key].next_attempt_at <= current)
             and (existing[key].lease_until is None or existing[key].lease_until <= current))]
     active = [key for key, row in existing.items()
@@ -208,7 +215,9 @@ async def cached_evidence(db, jobs, viewer_id, *, enqueue=True, summaries=None, 
                 await db.execute(statement.on_conflict_do_update(
                     index_elements=['kind', 'native_id', 'variant'],
                     set_={'next_attempt_at':current, 'requested_by':viewer_id},
-                    where=(table.expires_at.is_(None) | (table.expires_at <= current)) &
+                    where=(table.expires_at.is_(None) | (table.expires_at <= current) |
+                           (table.payload['complete'].as_boolean().is_(False) & (table.attempts == 0) &
+                            table.next_attempt_at.is_(None))) &
                           (table.lease_until.is_(None) | (table.lease_until <= current)) &
                           (table.next_attempt_at.is_(None) | (table.next_attempt_at <= current))))
             await db.commit()
@@ -327,7 +336,11 @@ async def load_evidence(job, api_key):
 
 
 async def run_batch(factory=AsyncSessionLocal):
-    """Two jobs, at most four concurrent provider calls; durable cross-worker leases."""
+    """Admit a fair prefix costing at most four concurrent provider calls.
+
+    People need one combined-credit request; studios use remaining media pages.
+    Keep the same upstream ceiling without leaving half of it idle for people.
+    """
     table, current = ContributorEvidence, now()
     from core.search_demand import active, fair_order, serve
     target = 'evidence:' + table.kind + ':' + table.native_id.cast(String) + ':' + table.variant
@@ -335,12 +348,35 @@ async def run_batch(factory=AsyncSessionLocal):
         rows = list(await db.scalars(select(table).where(table.next_attempt_at <= current,
             or_(table.lease_until.is_(None), table.lease_until <= current))
             .order_by(case((active(target), 0), else_=1), fair_order(target), table.next_attempt_at)
-            .limit(2).with_for_update(skip_locked=True)))
+            .limit(PROVIDER_SLOTS).with_for_update(skip_locked=True)))
         jobs = []
+        remaining = PROVIDER_SLOTS
         for row in rows:
+            # A refresh restarts page one; it must not renew old observations.
+            payload = row.payload if row.expires_at is None or row.expires_at > current else None
+            cost = 1 if row.kind == 'person' else 2
+            if row.kind == 'studio' and payload and not payload.get('complete') and row.config.get('scope') != 'domain_availability':
+                pages = payload.get('pages', {'movie': 1, 'series': 1})
+                cost = max(1, sum(pages.get(kind) is not None for kind in ('movie', 'series')))
+            if cost > remaining:
+                break  # Do not jump over an older/fairer studio for cheap work.
+            remaining -= cost
             row.lease_token, row.lease_until = str(uuid.uuid4()), current + timedelta(seconds=45)
-            jobs.append({field:getattr(row, field) for field in ('kind', 'native_id', 'variant', 'config', 'payload', 'requested_by', 'lease_token', 'attempts')})
+            job = {field:getattr(row, field) for field in ('kind', 'native_id', 'variant', 'config', 'payload', 'requested_by', 'lease_token', 'attempts')}
+            job['payload'] = payload
+            jobs.append(job)
         await serve(db, [demand_scope(job['kind'], job['native_id'], job['variant']) for job in jobs])
+    policies = {}
+    policy_lock = asyncio.Lock()
+    async def policy_for(viewer_id):
+        # Batch-owned private projections, never shared with another batch or
+        # persisted in public evidence. Concurrent jobs for one viewer reuse it.
+        async with policy_lock:
+            if viewer_id not in policies:
+                async with factory() as db:
+                    viewer = SimpleNamespace(id=viewer_id) if viewer_id is not None else None
+                    policies[viewer_id] = await verification_policy(db, viewer)
+            return policies[viewer_id]
     async def process(job):
         values = {}
         try:
@@ -350,9 +386,16 @@ async def run_batch(factory=AsyncSessionLocal):
                 raise ValueError('Provider unavailable')
             async with asyncio.timeout(20):
                 payload = await load_evidence(job, key)
+                continuation = False
+                if job['kind'] == 'studio' and not payload['complete']:
+                    policy = await policy_for(job['requested_by'])
+                    value = work_summary(payload, 'studio', policy['studio_filters'], policy['show_anime'])
+                    continuation = not (value and value['works'])
             values = dict(payload=payload, attempts=0,
                 expires_at=now() + timedelta(days=7 if any(payload.get(k) for k in ('works', 'cast', 'crew')) else 1),
-                next_attempt_at=None if payload['complete'] else now() + timedelta(seconds=2))
+                # Finish unresolved checks without waiting for a client poll.
+                # Useful samples park; a stricter later viewer can resume them.
+                next_attempt_at=now() if continuation else None)
         except asyncio.CancelledError:
             raise
         except Exception:

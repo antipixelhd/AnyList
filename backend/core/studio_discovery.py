@@ -54,9 +54,14 @@ async def verified_studios(db, viewer, rows, api_key, *, policy=None):
     local,values={},{}
     async def established(evidence):
         nonlocal local
-        unresolved=[row for row in candidates if not (row.get('_native') and
-            (evidence.get(evidence_key('studio',row['_native'],filters,show_anime)[0]) or {}).get('_fresh') and
-            (evidence.get(evidence_key('studio',row['_native'],filters,show_anime)[0]) or {}).get('complete'))]
+        unresolved=[]
+        for row in candidates:
+            key=evidence_key('studio',row['_native'],filters,show_anime)[0] if row.get('_native') else None
+            payload=evidence.get(key) or {}
+            value=work_summary(evidence.get(key),'studio',filters,show_anime)
+            if key:values[key]=value
+            if not (payload.get('_fresh') and (payload.get('complete') or value and value['works'])):
+                unresolved.append(row)
         local_rows=[{'key':key} for row in unresolved for key in row['_local_keys']]
         member_limit=MAX_CANDIDATES*max((len(studio_members(row['_native']))
             if row.get('_native') else 1 for row in unresolved),default=1)
@@ -65,8 +70,7 @@ async def verified_studios(db, viewer, rows, api_key, *, policy=None):
         for row in candidates:
             if not row.get('_native'):continue
             key=evidence_key('studio',row['_native'],filters,show_anime)[0]
-            value=work_summary(evidence.get(key),'studio',filters,show_anime)
-            values[key]=value
+            value=values[key]
             if any(key in local for key in row['_local_keys']) or value and value['works']:settled.add(key)
         return settled
     evidence, pending = await cached_evidence(db, jobs, viewer.id if viewer else None, enqueue=bool(api_key),

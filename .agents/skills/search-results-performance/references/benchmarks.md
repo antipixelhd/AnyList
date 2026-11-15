@@ -235,7 +235,38 @@ Authentication remains stubbed, and provider transport delay is controlled.
 .venv/Scripts/python.exe scripts/benchmark_search.py --case people_combined --case all_contributors --case studio --case negative_studio --credit-works 5000 --rounds 7 --stage-timings --concurrent-readers 8 --output .local-design/search-browse/contributors-concurrent.json
 ```
 
-Each case resets relevant in-process caches; contributor cases also reset durable evidence. `cold` records initial discovery/admission. `verification_worker` drains contributor jobs and includes a final poll; scheduled waiting is skipped. Three `warm` repeats use fresh caches/completed evidence. `expired` forces durable expiry to check refresh admission. Inspect pending/row counts; cold contributors may intentionally be incomplete.
+Each case resets relevant in-process caches; contributor cases also reset durable evidence. `cold` records initial discovery/admission. By default, `verification_worker` forces queued work due and includes the next result poll. Studio workers continue unresolved checks immediately and park positive samples; a later viewer without a qualifying witness can admit the retained second pages. Scheduled waiting is skipped. `warm` repeats reuse fresh evidence, including parked partial positive samples. `expired` forces durable expiry to check refresh admission. Inspect pending/row counts; cold contributors may intentionally be incomplete.
+
+For cold screen-contributor measurements use `--verification-scheduler`. It runs
+the actual scheduler against the disposable session factory, retains normal
+continuation/idle waits, and observes API results every 200ms. Add `cold.ms` and
+`verification_worker.ms` for the measured discovery-to-settled journey.
+`first_actor_ms`, `first_staff_ms` and `first_studio_ms` start after the initial
+response and measure the first nonempty observation, not a browser paint or the
+completion of every contributor. SQL counts include these observations and vary
+with duration. In concurrent runs, readers may legitimately straddle a commit;
+the final quiescent wave must have identical results for equivalent policies.
+
+`--provider-jitter-ms 150` adds deterministic 0/150/300/450ms per-candidate
+variation on top of `--provider-delay-ms`; both arms use the same IDs and delays.
+`--active-search-demand` sends a stable search ID with increasing generations
+through the real per-viewer admission/renewal path. Use it with
+`--concurrent-readers 8` to exercise demand rather than only shared evidence.
+The worker's total remains four concurrent provider requests: four people, two
+initial studios, or a fitting prefix of mixed jobs. A fresh studio continuation
+costs only its remaining movie/series pages. Pair concurrency benchmarks with
+the distinct-policy, competing-viewer fairness and lease regressions.
+
+`--studio-fixture CAPTURE.json --studio-query Marvel --case studio` replays public
+studio evidence instead of the synthetic studio payloads. The capture contains
+`cases`, each with `term` and up to eight `candidates`; each candidate supplies
+`native`, `name`, `image`, `first` and `full`. Evidence contains `works` and `pages`
+(`movie`/`series`, next page number or null). Full evidence retains first-page
+rows followed by second-page rows within each media kind. Only public evidence
+belongs in a capture; keep raw captures in a verified ignored directory. This
+replay controls provider delay and does not establish live-provider latency.
+`provider_payload_bytes` counts uncompressed JSON from controlled TMDB responses,
+not actual compressed HTTP traffic. Public response bytes remain separate.
 
 ## What the output establishes
 
