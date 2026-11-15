@@ -30,9 +30,10 @@ export function mountListCoverPreview(signal:AbortSignal,root:ParentNode=documen
   events.addEventListener('focusin',event=>{const row=rowFor(event);if(!row||hovered||(event.target as Element).closest('[data-edit-entry],[data-edit-game]'))return;dismissed=false;show(row);},{signal});
   events.addEventListener('focusout',()=>{if(!hovered)hide();},{signal});
   events.addEventListener('click',event=>{
-    if((event.target as Element).closest('[data-season-toggle]')){
+    const target=event.target as Element;
+    if(target.closest('[data-season-toggle]')){
       if(hovered)show(hovered);
-    }else hide();
+    }else if(rowFor(event)!==hovered||!hovered||target.closest('a,button,input,select,textarea,[role="button"]'))hide();
   },{signal});
   document.addEventListener('keydown',event=>{if(event.key==='Escape'){dismissed=true;hide();}},{signal});
   window.addEventListener('scroll',()=>{if(hovered?.matches(':hover'))show(hovered);else hide();},{capture:true,signal});

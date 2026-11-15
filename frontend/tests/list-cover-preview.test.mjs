@@ -4,6 +4,35 @@ import {stripTypeScriptTypes} from 'node:module';
 import {runInNewContext} from 'node:vm';
 import test from 'node:test';
 
+test('plain row clicks retain the hovered cover while links and controls dismiss it',()=>{
+  const source=readFileSync(new URL('../src/lib/list-cover-preview.ts',import.meta.url),'utf8')
+    .replace(/^import .*\r?\n/gm,'').replace('export function','function');
+  const handlers=new Map(),preview={hidden:true,style:{},querySelector:()=>({})};
+  const row={dataset:{},contains:()=>false,
+    querySelector:()=>({dataset:{previewSrc:'/poster.jpg'},getBoundingClientRect:()=>({left:250,right:290,top:100,height:40})})};
+  const target=(interactive=false)=>({closest:selector=>selector==='.entry-row'?row:
+    selector==='a,button,input,select,textarea,[role="button"]'&&interactive?{}:null});
+  const context={applyResponsiveArtwork(){},matchMedia:()=>({matches:true}),innerWidth:1280,innerHeight:900,
+    document:{querySelector:selector=>selector==='#cover-preview'?preview:{open:false},
+      addEventListener:(name,callback)=>handlers.set(name,callback)},window:{addEventListener(){}}};
+  runInNewContext(stripTypeScriptTypes(source),context);
+  context.mountListCoverPreview(new AbortController().signal);
+  const plain=target();
+  handlers.get('pointerover')({target:plain,relatedTarget:null});
+  assert.equal(preview.hidden,false);
+  for(let clicks=0;clicks<2;clicks++){
+    handlers.get('click')({target:plain});
+    assert.equal(preview.hidden,false);
+  }
+  handlers.get('click')({target:target(true)});
+  assert.equal(preview.hidden,true);
+  handlers.get('pointerout')({target:plain,relatedTarget:null});
+  handlers.get('pointerover')({target:plain,relatedTarget:null});
+  assert.equal(preview.hidden,false);
+  handlers.get('pointerout')({target:plain,relatedTarget:null});
+  assert.equal(preview.hidden,true);
+});
+
 test('holding or cancelling the edit button keeps the cover preview until a confirmed click',()=>{
   const source=readFileSync(new URL('../src/lib/list-cover-preview.ts',import.meta.url),'utf8')
     .replace(/^import .*\r?\n/gm,'').replace('export function','function');
