@@ -9,6 +9,7 @@ declare namespace App {
     settings?: import('./lib/api').UserSettings;
     hasRpdbKey?: boolean;
     pageContext?: import('./lib/api').PageContext;
+    notifications?: Promise<import('./lib/notification-store').NotificationSnapshot|null>;
     mediaPreferences?: Promise<import('./lib/media-domains').MediaDomains>;
     profilePreferences?: Promise<import('./lib/api').UserPreferences|null>;
   }

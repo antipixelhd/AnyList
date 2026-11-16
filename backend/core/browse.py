@@ -419,8 +419,9 @@ def local_query(
         if sort in IMDB_SORTS
         else []
     )
-    votes = data["imdb"]["votes"].astext.cast(Float)
-    rank = data["imdb"]["popularity_rank"].astext.cast(Float)
+    from core.browse_metrics import ImdbVotes, ImdbRank
+    votes = ImdbVotes(data)
+    rank = ImdbRank(data)
     score = Media.imdb_rating
     if cached:
         # One JSON parameter per mapping keeps broad feeds below PostgreSQL's

@@ -76,6 +76,24 @@ class PageContextTests(unittest.IsolatedAsyncioTestCase):
         await self.db.commit()
         self.assertEqual(await self.get('/tracking/notifications'), await self.get('/tracking/recent-events'))
 
+    async def test_essential_context_does_not_wait_for_or_execute_optional_notifications(self):
+        from unittest.mock import AsyncMock, patch
+        with patch('core.notification_feed.notification_feed', AsyncMock(side_effect=RuntimeError('Unavailable'))) as optional:
+            value = await self.get('/auth/page-context?include_notifications=false')
+        self.assertIsNone(value['notifications'])
+        optional.assert_not_awaited()
+        self.assertEqual(sum(sql.startswith('SELECT') for sql in self.statements), 2)
+
+    async def test_optional_notification_failure_does_not_discard_valid_account_context(self):
+        from unittest.mock import AsyncMock, patch
+        identifier = self.owner.id
+        with patch('core.notification_feed.notification_feed', AsyncMock(side_effect=RuntimeError('Unavailable'))):
+            with self.assertLogs('routers.auth', level='ERROR'):
+                value = await self.get('/auth/page-context')
+        self.assertEqual(value['user']['id'], identifier)
+        self.assertFalse(value['preferences']['combine_lists'])
+        self.assertIsNone(value['notifications'])
+
     async def test_feed_uses_sync_job_headers_for_failure_alerts_and_respects_recovery(self):
         for index in range(2):
             self.db.add(SyncJob(user_id=self.owner.id, source=CollectionSource.trakt, status=SyncStatus.failed,

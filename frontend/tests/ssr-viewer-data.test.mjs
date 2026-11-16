@@ -29,6 +29,7 @@ test('middleware starts preferences and profile independently of settings before
     context,token:'private',isStaticAsset:false,pathname:'/browse',
     viewerMediaPreferences:()=>{calls.push('media');return media.promise;},
     viewerProfilePreferences:()=>{calls.push('profile');return profile.promise;},
+    viewerNotifications:()=>Promise.resolve(null),
     api:{auth:{getSettings:()=>{calls.push('settings');return settings.promise;}}},
     displayPreferenceCookies:()=>[],
   });
@@ -46,10 +47,38 @@ test('app bar starts notifications while its shared preferences read is still pe
     Astro:{locals:{user:{username:'a'},token:'private'},props:{},url:{pathname:'/title/1'}},
     viewerMediaPreferences:()=>media.promise,
     viewerProfilePreferences:()=>{calls.push('profile');return Promise.resolve(null);},
-    tracker:path=>{calls.push(path);return Promise.resolve({results:[]});},
+    viewerNotifications:()=>{calls.push('notifications');return Promise.resolve({results:[]});},
   });
   assert.deepEqual(calls,['notifications','profile']);
   media.resolve({combine_lists:true});await pending;
+});
+
+test('optional notifications coalesce per request and failure does not reject essential page data',async()=>{
+  const source=stripTypeScriptTypes(read('../src/lib/viewer-notifications.ts')).replace(/^import .*;$/gm,'').replace('export function','function');
+  const requests=[],pending=deferred();
+  const load=runInNewContext(source+';viewerNotifications',{tracker:(_,token)=>{requests.push(token);return token==='failed'?Promise.reject(new Error('optional unavailable')):pending.promise;}});
+  const locals={token:'a',user:{id:1}};
+  assert.equal(load(locals),load(locals));
+  assert.equal(await load({user:{id:2},token:'failed'}),null);
+  assert.equal(await load({}),null);
+  pending.resolve({results:[]});await load(locals);
+  assert.deepEqual(requests,['a','failed']);
+});
+
+test('partial views retain essential settings while skipping notifications; auth redirects only validate the session',async()=>{
+  const source=read('../src/middleware.ts');
+  const a=source.indexOf('      const pageContext =');
+  const snippet=stripTypeScriptTypes(source.slice(a,source.indexOf('      // If logged in',a)));
+  for(const [pathname,panel,expected] of [['/title/1',false,'full'],['/user/a',true,'essential'],['/login',false,'me']]){
+    const calls=[],context={locals:{profilePanel:panel}};
+    await runInNewContext('(async()=>{'+snippet+'})()',{
+      context,isStaticAsset:false,pathname,token:'private',api:{auth:{
+        pageContext:async(_,notifications)=>{calls.push(notifications?'full':'essential');return {user:{id:1}};},
+        me:async()=>{calls.push('me');return {id:1};},
+      }},
+    });
+    assert.deepEqual(calls,[expected]);assert.equal(context.locals.user.id,1);
+  }
 });
 
 test('page context supplies private preferences and profile without repeat API reads',async()=>{

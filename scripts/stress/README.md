@@ -6,9 +6,13 @@ The default fixture creates 400 users, 6,000 screen titles, 2,000 games, 80 scre
 
 Set `STRESS_LIBRARY_SIZE=200` on the isolated unit to exercise ordinary larger lists (accepted range 1..500; default 80). Use the same size for both builds, and rebuild matching production frontend artifacts when measuring shared page initialization changes.
 
+Set `STRESS_ACCOUNTS=500` for the 500-session workload. `STRESS_RANKINGS=1` adds populated IMDb votes/ranks to warm synthetic titles so local popular/trending browse does real ranking work. On reuse it updates only object-shaped fixture documents without existing IMDb evidence; cold JSON-null stubs remain cold. Record these options with the results.
+
 Each virtual user works through one journey at a time with a mean 3.5-second pause. The mix includes screen and game detail pages and their follow-up requests, title and contributor search, browse, list reads, connection and sync status reads, and manual tracking writes. About 23% of journey selections use varying keys. `--prime` first reads the twelve shared search and detail keys. Short levels admit a subset of connected users' full pulls during the level. Longer levels rotate the subset in three or fewer windows to preserve overlapping sync work. Use the recorded provider calls to verify cache misses. A varying key can become warm when a previous request or worker acquired it.
 
 Use `--prime --cold-fraction .04` to exercise predominantly warm traffic. Put `--split-catalogue` before the load flags to move catalogue processing into a separately measured process. At the end of that run, a standby must take ownership after the first process stops, publish queued metadata, and serve it from PostgreSQL through the authenticated API.
+
+For high concurrency use `--client-shards 16` on both comparison arms. This partitions the load driver's HTTP connection pools; a single large pool can consume substantial CPU on connection bookkeeping. Keep the generator's measured CPU separate from API CPU. `--probe-rounds 24` records serial single-user page and follow-up latencies before timed levels, with normal workers still active. Neither option changes application caching or the journey mix. Changing `--think` changes offered load, so 500 users at 15 seconds between journeys cannot establish capacity for the 3.5-second workload.
 
 The Jellyfin fixture serves HTTP on loopback with 60 ms of delay. TMDB, IGDB, Wikidata and IMDb responses are synthesized at the backend HTTP transport with 100 ms of delay. AnyList's cache, database leases, throttling and SQL paths still run. The benchmark covers SSR and API response time. Browser rendering, public CDN and artwork downloads, live provider latency/quotas, and other connection adapters require separate measurements.
 
@@ -38,11 +42,15 @@ Read `rps` as request attempts divided by the scheduled level duration. The summ
 
 `STRESS_REUSE=1` keeps a previous synthetic database and refreshes test session tokens. Archive the previous `results.jsonl` and `host.jsonl` first. Use `--offset` to vary the seed for cold keys and sync cohorts. Record this mode with the results because the durable caches and account histories carry over.
 
+Use `STRESS_MIGRATE=1` when explicitly upgrading a reused disposable database. For a stricter comparison, stop the lab and restore the same saved disposable database snapshot before each arm. Never restore over a running database or reuse a deployment database.
+
 The resource monitor reloads primary PID assignments every sample so a reused run cannot retain the prior process identities. Older reused traces can lack primary/frontend per-PID counters; their cgroup totals and latency remain useful, but do not infer the missing per-process attribution.
 
 ## Authenticated page context
 
 The production frontend uses `/auth/page-context` to share authentication, settings, preferences, profile and user notifications within one page render. It hydrates only notification/popup data, retains fresh session checks and keeps private responses out of shared caches. Ordinary browser notification refreshes use `/tracking/notifications`; opening the inbox requests the operational queues through `/tracking/recent-events`.
+
+Full pages retain the five-read combined context. Profile panel fragments use `include_notifications=false` (two reads on the ordinary fixture), preserving settings and preferences while skipping their unused notification feed. Login/register/logout session checks skip full context. An optional notification failure returns usable essential context; the app bar shares one fallback request. Splitting all full pages into essential context plus a separate feed was slower in mixed load and was rejected. See [the 500-user investigation](SCALE500-2026-11-17.md).
 
 `scripts/benchmark_page_context.py --output <ignored-report.json>` compares the five legacy calls with the new context using real ASGI routes and an explicitly disposable `TRACKING_TEST_DATABASE_URL` named `anylist_test...`. It checks complete response fingerprints, SQL, CPU/wall time and payload bytes with empty and 200-job histories. The sequential microbenchmark does not measure frontend request parallelism or whole-system capacity. See [the ordinary-user comparison](PAGE-CONTEXT-2026-11-16.md) for mixed HTTP results at 200 entries per user, the remaining CPU ceiling and verification limits.
 
@@ -83,3 +91,9 @@ Migration `mt095_metadata_revision_shards` distributes transactional statistics 
 For real authenticated HTTP and concurrent primary-loop health probes, put the trusted baseline `backend/core/sync_reconciliation.py` at the lab root as `baseline-reconciliation.py`, then set `STRESS_ACCOUNT_PREPARE=1` inside the normal isolated launcher environment. The launcher runs calibration and `account_prepare_http.py`, writing `state/account-prepare-http.json`, then exits. This mode disables primary periodic jobs, alternates old/new initializer bodies on identical 1,000/5,000/10,000-item fixtures, and supports repeated disposable-state runs. It must not be mixed into capacity results. The diagnostic route exists only in the stress app after its private-namespace check.
 
 The normal mixed-load run includes manual pulls and periodic mapper/statistics/etc. A five-minute account-sync tick is not exercised by short levels merely because scheduled settings were seeded. Use a sufficiently long run or an explicit scheduled-cycle scenario to evaluate that path. See the [architecture investigation](ARCHITECTURE-2026-11-16.md) for the measured quadratic defect, its fix and remaining architectural targets.
+
+## Local browse ranking
+
+Migration `mt096_browse_ranking_indexes` adds two PostgreSQL expression indexes for public IMDb votes/ranks. The query uses fixed expressions matching that DDL. Missing/malformed ranking evidence stays stored and ranks as unknown. Apply the migration before using the new query; changed expressions require a new migration. SQLite test schemas omit the PostgreSQL indexes.
+
+`scripts/benchmark_browse_index.py --output <ignored-report.json>` requires an explicit disposable `TRACKING_TEST_DATABASE_URL` named `anylist_test...`. It compares result order, plans and timings on 6,000 empty/ranked titles with default exclusions, plus bounded metadata update cost with/without the indexes. Update timings exclude commit/fsync. This is SQL evidence, not a whole-application user-capacity benchmark; plans and deeper-page performance can differ with catalogue distribution and viewer policy.

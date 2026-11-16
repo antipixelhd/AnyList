@@ -36,6 +36,13 @@ if [[ ${STRESS_REUSE:-0} == 1 ]]; then
 else
     mkdir "$state"
 fi
+"$python" - <<'PY' >"$state/runtime-config.json"
+import json
+from core.config import settings
+print(json.dumps({name: getattr(settings, name) for name in (
+    'database_pool_size', 'database_pool_overflow', 'api_read_workers',
+    'sync_concurrency', 'catalogue_worker_mode')}))
+PY
 
 shutdown() {
     for pid in ${load_pid:-} ${frontend_pid:-} ${app_pid:-} ${fixture_pid:-} ${catalogue_pid:-}; do
@@ -53,6 +60,9 @@ fi
 "$pg/pg_ctl" -D "$state/postgres" -l "$state/postgres.log" -w start \
     -o "-h 127.0.0.1 -p $PGPORT -k $state -c shared_buffers=128MB -c max_connections=100 -c effective_cache_size=4GB -c shared_preload_libraries=pg_stat_statements -c log_lock_waits=on -c track_io_timing=on"
 if [[ ${STRESS_REUSE:-0} == 1 ]]; then
+    if [[ ${STRESS_MIGRATE:-0} == 1 ]]; then
+        (cd "$root/backend" && "$python" -m alembic upgrade head) >"$state/migrations.log" 2>&1
+    fi
     "$python" "$root/scripts/stress/fixture.py" "$state/fixture.json" --refresh-tokens
 else
     "$pg/createdb" anylist_test_stress
@@ -98,7 +108,7 @@ wait "$load_pid"
 "$pg/psql" -X --csv -d anylist_test_stress >"$state/sql.csv" <<'SQL'
 SELECT calls, round(total_exec_time::numeric, 2) AS total_ms,
        round(mean_exec_time::numeric, 3) AS mean_ms, rows, shared_blks_hit,
-       shared_blks_read, temp_blks_written, left(query, 1000) AS query
+       shared_blks_read, temp_blks_written, query
 FROM stress_metrics.pg_stat_statements WHERE dbid = (SELECT oid FROM pg_database WHERE datname=current_database())
   AND query !~* '^(INSERT INTO (users|media|tracked_entries|catalogue_entities|game_entries|user_profile_data)|CREATE|ALTER|ANALYZE)'
 ORDER BY total_exec_time DESC LIMIT 30;

@@ -402,7 +402,7 @@ class PageContext(BaseModel):
     settings: schemas.UserSettings
     preferences: dict
     profile: schemas.UserProfileResponse
-    notifications: dict
+    notifications: dict | None
 
 
 @router.get('/page-context', response_model=PageContext)
@@ -410,6 +410,7 @@ async def page_context(
     db: Annotated[AsyncSession, Depends(get_db, scope='function')],
     current_user: Annotated[User, Depends(get_current_user)],
     response: Response,
+    include_notifications: Annotated[bool, Query()] = True,
 ) -> PageContext:
     from core.notification_feed import notification_feed
     from core.profile_images import configured_background_url
@@ -430,9 +431,15 @@ async def page_context(
         profile_data.background_url = configured_background_url(profile, global_settings)
         if profile.avatar_path:
             profile_data.avatar_url = f'/profile/avatar/{current_user.id}'
-    return PageContext(user=schemas.User.model_validate(current_user), settings=settings_data,
-        preferences=preference_data(prefs, settings), profile=profile_data,
-        notifications=await notification_feed(db, current_user.id, prefs))
+    result = PageContext(user=schemas.User.model_validate(current_user), settings=settings_data,
+        preferences=preference_data(prefs, settings), profile=profile_data, notifications=None)
+    if include_notifications:
+        try:
+            result.notifications = await notification_feed(db, result.user.id, prefs)
+        except Exception:
+            logger.exception('Optional page notifications unavailable')
+            await db.rollback()
+    return result
 
 @router.delete("/me")
 async def delete_user_me(

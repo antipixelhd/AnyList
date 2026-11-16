@@ -7,6 +7,7 @@ import math
 import random
 import time
 from collections import Counter, defaultdict
+from contextlib import AsyncExitStack
 from pathlib import Path
 
 import asyncpg
@@ -34,7 +35,7 @@ def percentiles(values):
 
 
 class Stage:
-    def __init__(self, client, db, fixture, number, users, duration, think, calibration=False, *, cold_fraction=.23):
+    def __init__(self, client, db, fixture, number, users, duration, think, calibration=False, *, cold_fraction=.23, clients=None):
         self.client, self.db, self.fixture = client, db, fixture
         self.number, self.users, self.duration, self.think = number, users, duration, think
         self.calibration = calibration
@@ -51,11 +52,13 @@ class Stage:
         self.finished = None
         self.sync_started_ids = []
         self.samples = []
+        self.clients = clients
 
     async def call(self, user, label, path, *, method='GET', body=None, params=None, verify=None):
         started = time.perf_counter()
         try:
-            response = await self.client.request(method, path, params=params, json=body, headers={
+            client = self.clients[int(user['username'].rsplit('-', 1)[1]) % len(self.clients)] if self.clients else self.client
+            response = await client.request(method, path, params=params, json=body, headers={
                 'Cookie': f'token={user["token"]}', 'Origin': FRONTEND,
                 'Referer': FRONTEND + '/browse', 'Accept-Encoding': 'gzip',
             })
@@ -230,6 +233,15 @@ class Stage:
                 await self.journey(user, action, random.Random(20), hot_index=hot_index)
         print(json.dumps({'warm_keys_per_operation': HOT}), flush=True)
 
+    async def latency_probe(self, rounds):
+        """One user at a time; identical hot keys and real page/follow-up HTTP."""
+        for turn in range(rounds):
+            for action in ('screen', 'game', 'list', 'connections', 'browse'):
+                await self.journey(self.fixture['users'][0], action, random.Random(turn), hot_index=turn % HOT)
+        return {'rounds': rounds, 'environment': 'single-user sequential journeys; normal workers remain active',
+            'errors': {key: dict(value) for key, value in self.errors.items() if value},
+            'labels': {key: {'requests': len(values), **percentiles(values)} for key, values in self.latency.items()}}
+
     async def run(self):
         self.started = time.perf_counter()
         start_unix = time.time()
@@ -270,16 +282,27 @@ async def main(args):
         raise SystemExit('Invalid stage settings or insufficient synthetic accounts.')
     db = await asyncpg.connect(host='127.0.0.1', port=57639, user='anylist_stress', database='anylist_test_stress')
     limits = httpx.Limits(max_connections=max(args.users)*3+32, max_keepalive_connections=max(args.users)*2+32)
-    async with httpx.AsyncClient(base_url=FRONTEND, trust_env=False, timeout=15, limits=limits) as client:
+    async with AsyncExitStack() as stack:
+        client = await stack.enter_async_context(httpx.AsyncClient(base_url=FRONTEND, trust_env=False, timeout=15, limits=limits))
+        clients = None
+        if args.client_shards > 1:
+            shared_limit = math.ceil(max(args.users)/args.client_shards)
+            shard_limits = httpx.Limits(max_connections=shared_limit*3+8, max_keepalive_connections=shared_limit*2+8)
+            clients = [await stack.enter_async_context(httpx.AsyncClient(base_url=FRONTEND, trust_env=False,
+                timeout=15, limits=shard_limits)) for _ in range(args.client_shards)]
         if args.smoke:
-            await Stage(client, db, fixture, 0, 1, 30, args.think, calibration=True).calibration_run()
+            await Stage(client, db, fixture, 0, 1, 30, args.think, calibration=True, clients=clients).calibration_run()
         else:
             if args.prime:
-                await Stage(client, db, fixture, 0, 1, 30, args.think, calibration=True).prime_warm_set()
+                await Stage(client, db, fixture, 0, 1, 30, args.think, calibration=True, clients=clients).prime_warm_set()
+            if args.probe_rounds:
+                probe = await Stage(client, db, fixture, 0, 1, 30, args.think, calibration=True, clients=clients).latency_probe(args.probe_rounds)
+                args.output.with_name('latency-probe.json').write_text(json.dumps(probe, indent=2), encoding='utf-8')
             with args.output.open('x', encoding='utf-8') as output:
                 for number, users in enumerate(args.users):
                     result = await Stage(client, db, fixture, number+args.offset, users, args.seconds, args.think,
-                                         cold_fraction=args.cold_fraction).run()
+                                         cold_fraction=args.cold_fraction, clients=clients).run()
+                    result['client_shards'] = args.client_shards
                     print(json.dumps(result), file=output, flush=True)
                     print(json.dumps({k: result[k] for k in ('users', 'rps', 'p95', 'errors', 'sync_completed', 'sync_started')}), flush=True)
                     await asyncio.sleep(3)
@@ -297,5 +320,9 @@ if __name__ == '__main__':
                         help='Fraction of journeys using an unprimed title or search key.')
     parser.add_argument('--offset', type=int, default=0)
     parser.add_argument('--prime', action='store_true', help='Read all hot search and detail keys before timing stages.')
+    parser.add_argument('--probe-rounds', type=int, choices=range(1, 101), default=0,
+                        help='Before timed levels, measure serial single-user journeys on primed keys.')
+    parser.add_argument('--client-shards', type=int, choices=range(1, 33), default=1,
+                        help='Partition traffic connection pools to bound driver overhead at high concurrency.')
     parser.add_argument('--smoke', action='store_true')
     asyncio.run(main(parser.parse_args()))

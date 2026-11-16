@@ -165,10 +165,14 @@ def apply_result_filters(query, data, media_type, *, min_runtime=0, excluded_gen
     if media_type == 'movie' and min_runtime:
         duration = func.nullif(func.coalesce(runtime, data['runtime'].astext.cast(Float)), 0)
         query = query.where(or_(duration.is_(None), duration >= min_runtime))
+    excluded = []
     for native in excluded_genres:
-        excluded = or_(data['genre_ids'].contains([native]), data['genres'].contains([{'id': native}]),
-                       data['genres'].contains([GENRES[native]]), data['genres'].contains([{'name': GENRES[native]}]))
-        query = query.where(~func.coalesce(excluded, False))
+        excluded.extend((data['genre_ids'].contains([native]), data['genres'].contains([{'id': native}]),
+                         data['genres'].contains([GENRES[native]]), data['genres'].contains([{'name': GENRES[native]}])))
+    if excluded:
+        # One NULL-safe exclusion preserves missing metadata and avoids multiplying
+        # opaque COALESCE selectivities, which hid bounded ranking index scans.
+        query = query.where(~func.coalesce(or_(*excluded), False))
     return query
 
 

@@ -82,6 +82,8 @@ async def seed(destination, user_count):
             series = i % 5 == 4
             native = TITLE_BASE + i
             payload = screen_title(native, series)
+            if os.getenv('STRESS_RANKINGS') == '1':
+                payload['imdb'] = {'votes': 20000 + i, 'popularity_rank': i + 1}
             titles.append(dict(title=f'Stress Atlas {native}',
                 media_type=MediaType.series if series else MediaType.movie, tmdb_id=native,
                 runtime=105, release_date='2024-06-15', poster_path='/atlas.jpg',
@@ -157,11 +159,23 @@ async def refresh_tokens(destination):
 
     payload = json.loads(destination.read_text(encoding='utf-8'))
     async with AsyncSessionLocal() as db:
+        if os.getenv('STRESS_RANKINGS') == '1':
+            await _populate_rankings(db)
+            await db.commit()
         tokens = {u.username: create_session_token(u) for u in await db.scalars(select(User))}
     for user in payload['users']:
         user['token'] = tokens[user['username']]
     destination.write_text(json.dumps(payload), encoding='utf-8')
     await engine.dispose()
+
+
+async def _populate_rankings(db):
+    from sqlalchemy import text
+    await db.execute(text("""UPDATE media SET tmdb_data = tmdb_data || jsonb_build_object(
+        'imdb', jsonb_build_object('votes', 20000 + tmdb_id - :base,
+            'popularity_rank', tmdb_id - :base + 1))
+        WHERE tmdb_id >= :base AND tmdb_id < :last AND jsonb_typeof(tmdb_data) = 'object'
+          AND NOT (tmdb_data ? 'imdb')"""), {'base': TITLE_BASE, 'last': TITLE_BASE + TITLE_COUNT})
 
 
 def private_file(path, flags):
