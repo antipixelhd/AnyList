@@ -22,6 +22,32 @@ from routers.catalogue import router
 
 @unittest.skipUnless(fixture.URL, 'Requires explicit disposable statistics PostgreSQL')
 class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_movie_snapshot_requires_fresh_complete_provider_shape(self):
+        from datetime import timedelta
+
+        from core.game_source_cache import utcnow
+        from core.media_details import tmdb_movie_snapshot
+
+        stamp = utcnow()
+        components = ('credits', 'release_dates')
+        async with self.Session() as db:
+            db.add_all([
+                MetadataSnapshot(provider='tmdb', kind='movie', external_id=str(native),
+                    payload=payload, fetched_at=fetched, expires_at=stamp+timedelta(minutes=10))
+                for native, payload, fetched in (
+                    (51, {'id': 51, 'credits': {}, 'release_dates': {}}, stamp),
+                    (52, {'id': 52, 'credits': {}}, stamp),
+                    (53, {'id': 53, 'credits': {}, 'release_dates': {}}, stamp-timedelta(hours=1)),
+                    (54, {'id': 51, 'credits': {}, 'release_dates': {}}, stamp),
+                )
+            ])
+            await db.commit()
+        movie, remaining = await tmdb_movie_snapshot(self.engine, 51, components, 1800)
+        self.assertEqual(movie['id'], 51)
+        self.assertTrue(0 < remaining <= 600)
+        for native in (52, 53, 54, 55):
+            self.assertIsNone(await tmdb_movie_snapshot(self.engine, native, components, 1800))
+
     async def test_snapshot_entity_index_migration_round_trip(self):
         migration=importlib.import_module('migrations.versions.mt083_snapshot_entity')
         async with self.engine.begin() as conn:

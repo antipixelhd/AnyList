@@ -33,7 +33,7 @@ from schemas_contributors import ContributorKind, ContributorMediaScope, Contrib
 from core.tracking_access import catalog_access, profile_access, anime_is_visible
 
 router = APIRouter()
-CategoryDB = Annotated[AsyncSession, Depends(get_db)]
+CategoryDB = Annotated[AsyncSession, Depends(get_db, scope="function")]
 CategoryViewer = Annotated[User, Depends(get_current_user)]
 
 
@@ -53,7 +53,7 @@ async def update_category_preferences(domain: Literal['game', 'screen'], body: C
 
 
 @router.delete('/entry/{media_id}')
-async def remove_entry(media_id:int,confirmed:bool=False,db:AsyncSession=Depends(get_db),viewer:User=Depends(get_current_user)):
+async def remove_entry(media_id:int,confirmed:bool=False,db:AsyncSession=Depends(get_db, scope="function"),viewer:User=Depends(get_current_user)):
     if not confirmed:raise HTTPException(409,'Confirm deletion of all personal tracking data for this title')
     media=await db.get(Media,media_id)
     if not media or media.media_type not in (MediaType.movie,MediaType.series):raise HTTPException(404,'Title not found')
@@ -110,7 +110,7 @@ async def remove_entry(media_id:int,confirmed:bool=False,db:AsyncSession=Depends
 
 
 @router.post('/import-history')
-async def import_history(db:AsyncSession=Depends(get_db),viewer:User=Depends(get_current_user)):
+async def import_history(db:AsyncSession=Depends(get_db, scope="function"),viewer:User=Depends(get_current_user)):
     from core.tracking_import import import_tracking_history
     return {'added':await import_tracking_history(db,viewer.id,initial_import=True)}
 
@@ -144,7 +144,7 @@ class PreferencePatch(BaseModel):
 
 
 @router.get('/preferences')
-async def preferences(db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
+async def preferences(db: AsyncSession = Depends(get_db, scope="function"), viewer: User = Depends(get_current_user)):
     from core.list_categories import resolve
     from core.game_browse_policy import preferences as game_preferences
     row=await db.get(TrackingPreferences,viewer.id)
@@ -176,7 +176,7 @@ async def preferences(db: AsyncSession = Depends(get_db), viewer: User = Depends
 
 @router.patch('/preferences')
 async def set_preferences(body: PreferencePatch, background_tasks: BackgroundTasks,
-                          db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
+                          db: AsyncSession = Depends(get_db, scope="function"), viewer: User = Depends(get_current_user)):
     from sqlalchemy.dialects.postgresql import JSONB, insert
     from core.game_browse_policy import AI_KEYWORDS, DEFAULTS
     from models.users import UserSettings
@@ -221,7 +221,7 @@ async def set_preferences(body: PreferencePatch, background_tasks: BackgroundTas
 
 
 @router.get('/upcoming-seasons')
-async def upcoming_seasons(db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
+async def upcoming_seasons(db: AsyncSession = Depends(get_db, scope="function"), viewer: User = Depends(get_current_user)):
     from core.season_releases import upcoming_seasons_for_user
 
     results = await upcoming_seasons_for_user(db, viewer.id)
@@ -343,7 +343,7 @@ def group_outbound_delivery(stream_actions, cloud_actions, review_rows, markers,
 
 
 @router.get('/recent-events')
-async def recent_events(db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
+async def recent_events(db: AsyncSession = Depends(get_db, scope="function"), viewer: User = Depends(get_current_user)):
     prefs=await db.get(TrackingPreferences,viewer.id)
     retention=prefs.low_priority_retention_days if prefs else 7
     cutoff=datetime.utcnow()-timedelta(days=retention)
@@ -444,7 +444,7 @@ class SeenReviews(BaseModel):
 
 
 @router.post('/recent-events/seen')
-async def mark_events_seen(body: SeenReviews,db:AsyncSession=Depends(get_db),viewer:User=Depends(get_current_user)):
+async def mark_events_seen(body: SeenReviews,db:AsyncSession=Depends(get_db, scope="function"),viewer:User=Depends(get_current_user)):
     rows=(await db.execute(select(SyncReview).where(SyncReview.user_id==viewer.id,SyncReview.id.in_(body.ids)))).scalars().all()
     now=datetime.utcnow()
     for row in rows:
@@ -455,7 +455,7 @@ async def mark_events_seen(body: SeenReviews,db:AsyncSession=Depends(get_db),vie
 
 
 @router.delete('/recent-events/{event_id}')
-async def dismiss_event(event_id:int,db:AsyncSession=Depends(get_db),viewer:User=Depends(get_current_user)):
+async def dismiss_event(event_id:int,db:AsyncSession=Depends(get_db, scope="function"),viewer:User=Depends(get_current_user)):
     row=(await db.execute(select(SyncReview).where(SyncReview.id==event_id,SyncReview.user_id==viewer.id))).scalar_one_or_none()
     if not row:raise HTTPException(404,'Event not found')
     season_notice = row.kind in {'new_season_release_date','new_season_release'}
@@ -467,13 +467,13 @@ async def dismiss_event(event_id:int,db:AsyncSession=Depends(get_db),viewer:User
 
 
 @router.get('/provider-ignores')
-async def provider_ignores(db:AsyncSession=Depends(get_db),viewer:User=Depends(get_current_user)):
+async def provider_ignores(db:AsyncSession=Depends(get_db, scope="function"),viewer:User=Depends(get_current_user)):
     rows=(await db.execute(select(ProviderIgnore).where(ProviderIgnore.user_id==viewer.id).order_by(ProviderIgnore.provider,ProviderIgnore.title))).scalars().all()
     return {'results':[{'id':r.id,'provider':r.provider,'external_key':r.external_key,'title':r.title,'created_at':r.created_at} for r in rows]}
 
 
 @router.delete('/provider-ignores/{ignore_id}')
-async def remove_provider_ignore(ignore_id:int,db:AsyncSession=Depends(get_db),viewer:User=Depends(get_current_user)):
+async def remove_provider_ignore(ignore_id:int,db:AsyncSession=Depends(get_db, scope="function"),viewer:User=Depends(get_current_user)):
     result=await db.execute(delete(ProviderIgnore).where(ProviderIgnore.id==ignore_id,ProviderIgnore.user_id==viewer.id))
     if not result.rowcount:raise HTTPException(404,'Ignored item not found')
     await db.commit();return {'removed':True}
@@ -486,7 +486,7 @@ class ReviewResolution(BaseModel):
 
 
 @router.post('/recent-events/{event_id}')
-async def resolve_event(event_id:int,body:ReviewResolution,background_tasks:BackgroundTasks,db:AsyncSession=Depends(get_db),viewer:User=Depends(get_current_user)):
+async def resolve_event(event_id:int,body:ReviewResolution,background_tasks:BackgroundTasks,db:AsyncSession=Depends(get_db, scope="function"),viewer:User=Depends(get_current_user)):
     await db.execute(select(User.id).where(User.id == viewer.id).with_for_update())
     event=(await db.execute(select(SyncReview).where(SyncReview.id==event_id,SyncReview.user_id==viewer.id).with_for_update())).scalar_one_or_none()
     if not event:raise HTTPException(404,'Event not found')
@@ -713,7 +713,7 @@ async def resolve_event(event_id:int,body:ReviewResolution,background_tasks:Back
 
 
 @router.get('/people/{username}/header')
-async def person_header(username: str, db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user_or_api_key)):
+async def person_header(username: str, db: AsyncSession = Depends(get_db, scope="function"), viewer: User | None = Depends(get_optional_user_or_api_key)):
     from core.tracking_access import profile_header
     user, owner = await profile_access(db, username, viewer)
     return await profile_header(db, user, owner, viewer)
@@ -722,7 +722,7 @@ async def person_header(username: str, db: AsyncSession = Depends(get_db), viewe
 @router.get('/people/{username}/social')
 async def person_social(
     username: str,
-    db: Annotated[AsyncSession, Depends(get_db)],
+    db: Annotated[AsyncSession, Depends(get_db, scope="function")],
     viewer: Annotated[User | None, Depends(get_optional_user_or_api_key)],
     response: Response,
 ):
@@ -755,7 +755,7 @@ async def person_social(
 async def people_favorites(
     username: str,
     response: Response,
-    db: Annotated[AsyncSession, Depends(get_db)],
+    db: Annotated[AsyncSession, Depends(get_db, scope="function")],
     viewer: Annotated[User | None, Depends(get_optional_user_or_api_key)],
     show_screen: bool = True,
     show_games: bool = True,
@@ -774,7 +774,7 @@ async def people_favorites(
 
 
 @router.get("/people/{username}")
-async def person(username: str, db: AsyncSession = Depends(get_db), viewer: User | None = Depends(get_optional_user_or_api_key)):
+async def person(username: str, db: AsyncSession = Depends(get_db, scope="function"), viewer: User | None = Depends(get_optional_user_or_api_key)):
     user, owner = await profile_access(db, username, viewer)
     entries = (await db.execute(select(TrackedEntry, Media).join(Media, Media.id == TrackedEntry.media_id).where(TrackedEntry.user_id == user.id))).all()
     if not await anime_is_visible(db):entries=[row for row in entries if not tracking_projection.is_anime(row[1])]
@@ -826,7 +826,7 @@ class FavoriteOrderBody(BaseModel):
 
 
 @router.put('/favorites/order')
-async def reorder_favorites(body: FavoriteOrderBody, db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
+async def reorder_favorites(body: FavoriteOrderBody, db: AsyncSession = Depends(get_db, scope="function"), viewer: User = Depends(get_current_user)):
     favorite_rows = (await db.execute(select(TrackedEntry.media_id, Media).join(
         Media, Media.id == TrackedEntry.media_id
     ).where(TrackedEntry.user_id == viewer.id, TrackedEntry.favorite.is_(True)))).all()
@@ -853,7 +853,7 @@ async def reorder_favorites(body: FavoriteOrderBody, db: AsyncSession = Depends(
 
 @router.get('/quick-search/contributors')
 async def quick_search_contributors(
-    db: Annotated[AsyncSession, Depends(get_db)],
+    db: Annotated[AsyncSession, Depends(get_db, scope="function")],
     viewer: Annotated[User, Depends(get_current_user)],
     q: Annotated[str, Query(max_length=100)] = '',
     kind: Literal['all', 'people', 'actor', 'staff', 'studio'] = 'all',
@@ -874,7 +874,7 @@ async def quick_search_contributors(
 
 @router.delete('/quick-search/demand/{search_id}')
 async def release_search_demand(
-    db: Annotated[AsyncSession, Depends(get_db)],
+    db: Annotated[AsyncSession, Depends(get_db, scope="function")],
     viewer: Annotated[User, Depends(get_current_user)],
     search_id: Annotated[str, Path(pattern=r'^[a-zA-Z0-9-]{16,64}$')],
     generation: Annotated[int, Query(ge=0, le=9007199254740991)],
@@ -885,7 +885,7 @@ async def release_search_demand(
 
 
 @router.get('/people-search')
-async def people_search(q:str=Query('',max_length=100),db:AsyncSession=Depends(get_db),viewer:User=Depends(get_current_user)):
+async def people_search(q:str=Query('',max_length=100),db:AsyncSession=Depends(get_db, scope="function"),viewer:User=Depends(get_current_user)):
     term=q.strip()
     if not term:return {'results':[]}
     rows=(await db.execute(select(User,UserProfileData).join(UserProfileData,UserProfileData.user_id==User.id).where(
@@ -899,7 +899,7 @@ async def people_search(q:str=Query('',max_length=100),db:AsyncSession=Depends(g
 
 
 @router.post('/people/{username}/follow')
-async def follow_person(username:str,db:AsyncSession=Depends(get_db),viewer:User=Depends(get_current_user)):
+async def follow_person(username:str,db:AsyncSession=Depends(get_db, scope="function"),viewer:User=Depends(get_current_user)):
     target=(await db.execute(select(User).join(UserProfileData,UserProfileData.user_id==User.id).where(
         User.username==username,UserProfileData.privacy_level==PrivacyLevel.public))).scalar_one_or_none()
     if not target:raise HTTPException(404,'Public profile not found')
@@ -910,7 +910,7 @@ async def follow_person(username:str,db:AsyncSession=Depends(get_db),viewer:User
 
 
 @router.delete('/people/{username}/follow')
-async def unfollow_person(username:str,db:AsyncSession=Depends(get_db),viewer:User=Depends(get_current_user)):
+async def unfollow_person(username:str,db:AsyncSession=Depends(get_db, scope="function"),viewer:User=Depends(get_current_user)):
     target=(await db.execute(select(User).where(User.username==username))).scalar_one_or_none()
     if not target:raise HTTPException(404,'Profile not found')
     await db.execute(delete(Follow).where(Follow.follower_id==viewer.id,Follow.following_id==target.id));await db.commit()
@@ -918,7 +918,7 @@ async def unfollow_person(username:str,db:AsyncSession=Depends(get_db),viewer:Us
 
 
 @router.get("/library")
-async def library(db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
+async def library(db: AsyncSession = Depends(get_db, scope="function"), viewer: User = Depends(get_current_user)):
     from models.streaming_library import StreamingLibraryIntent
 
     observed = select(Collection.media_id).join(CollectionFile,
@@ -943,7 +943,7 @@ class LibraryIntentPatch(BaseModel):
 
 
 @router.get("/library/{media_id}")
-async def get_library_state(media_id: int, db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
+async def get_library_state(media_id: int, db: AsyncSession = Depends(get_db, scope="function"), viewer: User = Depends(get_current_user)):
     media = await db.get(Media, media_id)
     if not media or media.media_type not in (MediaType.movie, MediaType.series):
         raise HTTPException(404, "Title not found")
@@ -953,7 +953,7 @@ async def get_library_state(media_id: int, db: AsyncSession = Depends(get_db), v
 
 @router.put("/library/{media_id}")
 async def update_library_state(media_id: int, body: LibraryIntentPatch, background_tasks: BackgroundTasks,
-                               db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
+                               db: AsyncSession = Depends(get_db, scope="function"), viewer: User = Depends(get_current_user)):
     from core.streaming_library import deliver_library_intent, set_library_intent
     state = await set_library_intent(db, viewer.id, media_id, body.in_library)
     should_deliver = state.pop('_delivery_queued', False)
@@ -963,7 +963,7 @@ async def update_library_state(media_id: int, body: LibraryIntentPatch, backgrou
 
 
 @router.post("/library/{media_id}/retry")
-async def retry_library_delivery(media_id: int, db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
+async def retry_library_delivery(media_id: int, db: AsyncSession = Depends(get_db, scope="function"), viewer: User = Depends(get_current_user)):
     from core.streaming_library import dispatch_library_deliveries, library_state
     await dispatch_library_deliveries(db, viewer.id, media_id)
     return await library_state(db, viewer.id, media_id)
@@ -1025,7 +1025,7 @@ class ExternalEntryPatch(BaseModel):
 
 @router.patch("/entry/{media_id}/external")
 async def save_external_entry(media_id: int, body: ExternalEntryPatch, background_tasks: BackgroundTasks,
-                              db: AsyncSession = Depends(get_db), viewer: User = Depends(get_tracking_write_user)):
+                              db: AsyncSession = Depends(get_db, scope="function"), viewer: User = Depends(get_tracking_write_user)):
     return await save_entry(media_id, EntryPatch(**body.model_dump(exclude_unset=True)), background_tasks, db, viewer)
 
 
@@ -1037,7 +1037,7 @@ async def contributor_portraits(
     kind: Literal['actor', 'staff'],
     contributor_key: Annotated[str, Path(pattern=r'^(catalogue|tmdb):[1-9][0-9]{0,9}$')],
     response: Response,
-    db: Annotated[AsyncSession, Depends(get_db)],
+    db: Annotated[AsyncSession, Depends(get_db, scope="function")],
     viewer: Annotated[User | None, Depends(get_optional_user)],
 ) -> ContributorImages:
     from core.contributor_images import contributor_images
@@ -1056,7 +1056,7 @@ async def contributor_domain_availability(
     kind: ContributorKind,
     contributor_key: Annotated[str,Path(pattern=r'^(catalogue|tmdb):[1-9][0-9]{0,9}$')],
     response: Response,
-    db: Annotated[AsyncSession,Depends(get_db)],
+    db: Annotated[AsyncSession,Depends(get_db, scope="function")],
     viewer: Annotated[User,Depends(get_current_user_or_api_key)],
 ) -> ContributorAvailability:
     from core.contributor_availability import availability
@@ -1073,7 +1073,7 @@ async def contributor_details(
     kind: ContributorKind,
     contributor_key: Annotated[str, Path(pattern=r'^(catalogue|tmdb):[1-9][0-9]{0,9}$')],
     response: Response,
-    db: Annotated[AsyncSession, Depends(get_db)],
+    db: Annotated[AsyncSession, Depends(get_db, scope="function")],
     viewer: Annotated[User, Depends(get_current_user_or_api_key)],
     media_type: ContributorMediaScope = 'all',
     list_scope: ListScope = 'all',
@@ -1109,7 +1109,7 @@ async def contributor_details(
 @router.get('/studios/{studio_key}')
 async def studio_metadata(
     studio_key: Annotated[str, Path(pattern=r'^(catalogue|tmdb):[1-9][0-9]{0,9}$')],
-    db: Annotated[AsyncSession, Depends(get_db)],
+    db: Annotated[AsyncSession, Depends(get_db, scope="function")],
     viewer: Annotated[User, Depends(get_current_user_or_api_key)],
 ) -> StudioDetail:
     from core.statistics_studios import studio_detail
@@ -1125,7 +1125,7 @@ async def studio_metadata(
 @router.get('/staff/{person_key}')
 async def staff_metadata(
     person_key: Annotated[str, Path(pattern=r'^(catalogue|tmdb):[1-9][0-9]{0,9}$')],
-    db: Annotated[AsyncSession, Depends(get_db)],
+    db: Annotated[AsyncSession, Depends(get_db, scope="function")],
     viewer: Annotated[User, Depends(get_current_user_or_api_key)],
 ) -> PersonDetail:
     from core.statistics_staff import person_detail
@@ -1162,7 +1162,7 @@ def decode_activity_cursor(cursor: str) -> tuple[datetime, int]:
 
 
 @router.get("/profile/{username}/{media_type}")
-async def profile_list(username: str, media_type: Literal["movie", "series", "all"], db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user_or_api_key)):
+async def profile_list(username: str, media_type: Literal["movie", "series", "all"], db: AsyncSession = Depends(get_db, scope="function"), viewer: User = Depends(get_current_user_or_api_key)):
     user, owner = await profile_access(db, username, viewer)
     from core.screen_list import rows_for_profile
     entries = await rows_for_profile(db, user.id, viewer, owner, media_type)
@@ -1182,7 +1182,7 @@ async def profile_list(username: str, media_type: Literal["movie", "series", "al
     }
 
 
-ScreenListDB = Annotated[AsyncSession, Depends(get_db)]
+ScreenListDB = Annotated[AsyncSession, Depends(get_db, scope="function")]
 ScreenListViewer = Annotated[User, Depends(get_current_user_or_api_key)]
 ScreenListScope = Literal['movie', 'series', 'all']
 
@@ -1283,7 +1283,7 @@ async def my_statistics_refresh_status(
 async def profile_stats_overview(
     username: str,
     response: Response,
-    db: Annotated[AsyncSession, Depends(get_db)],
+    db: Annotated[AsyncSession, Depends(get_db, scope="function")],
     viewer: Annotated[User, Depends(get_current_user_or_api_key)],
     media_type: Annotated[MediaScope, Query()] = "all",
 ) -> OverviewResponse:
@@ -1311,7 +1311,7 @@ async def profile_stats_overview(
 
 @router.get("/profile/{username}/stats/summary")
 async def profile_stats(username: str, media_type: Literal["movie", "series", "all"] = "all",
-                        year: int | None = Query(None, ge=1900, le=2200), db: AsyncSession = Depends(get_db),
+                        year: int | None = Query(None, ge=1900, le=2200), db: AsyncSession = Depends(get_db, scope="function"),
                         viewer: User = Depends(get_current_user_or_api_key)):
     """Current list totals plus documented viewing statistics for a profile."""
     user, owner = await profile_access(db, username, viewer)
@@ -1399,7 +1399,7 @@ class BrowseContextRequest(BaseModel):
 
 
 @router.post('/browse/context')
-async def browse_context(body: BrowseContextRequest, response: Response, db: AsyncSession = Depends(get_db),
+async def browse_context(body: BrowseContextRequest, response: Response, db: AsyncSession = Depends(get_db, scope="function"),
                          viewer: User = Depends(get_current_user_or_api_key)):
     """Refresh only viewer-owned state for an already rendered browse selection."""
     response.headers['Cache-Control'] = 'private, no-store'
@@ -1414,7 +1414,7 @@ async def browse_context(body: BrowseContextRequest, response: Response, db: Asy
 
 
 @router.get('/browse/facets')
-async def browse_facets(media_type: Literal['movie', 'series'] = 'movie', region: str | None = Query(None, pattern='^[A-Z]{2}$'), genres: Annotated[str, Query(max_length=200)] = '', db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user_or_api_key)):
+async def browse_facets(media_type: Literal['movie', 'series'] = 'movie', region: str | None = Query(None, pattern='^[A-Z]{2}$'), genres: Annotated[str, Query(max_length=200)] = '', db: AsyncSession = Depends(get_db, scope="function"), viewer: User = Depends(get_current_user_or_api_key)):
     from core.browse import GENRES, MOVIE_GENRES, TV_GENRES, local_providers
     from core import tmdb
     await catalog_access(db, viewer)
@@ -1465,7 +1465,7 @@ def browse_ids(value: str) -> list[int]:
 
 
 @router.get('/browse/sections')
-async def browse_sections(media_type: Literal['movie', 'series'] = 'movie', region: str | None = Query(None, pattern='^[A-Z]{2}$'), min_score: Annotated[float, Query(ge=0, le=10)] = 0, unfiltered: Annotated[bool, Query()] = False, stream: Annotated[bool, Query()] = False, db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user_or_api_key)):
+async def browse_sections(media_type: Literal['movie', 'series'] = 'movie', region: str | None = Query(None, pattern='^[A-Z]{2}$'), min_score: Annotated[float, Query(ge=0, le=10)] = 0, unfiltered: Annotated[bool, Query()] = False, stream: Annotated[bool, Query()] = False, db: AsyncSession = Depends(get_db, scope="request"), viewer: User = Depends(get_current_user_or_api_key)):
     from core.browse import browse_sections as sections
     from core.external_scores import effective_mdblist_key
     await catalog_access(db, viewer)
@@ -1507,7 +1507,7 @@ async def browse(q: str = Query('', max_length=200), media_type: Literal['movie'
                  include_rereleases: Annotated[bool | None, Query()] = None,
                  timeline: Annotated[bool, Query()] = False,
                  cursor: Annotated[str | None, Query(max_length=160)] = None,
-                 db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user_or_api_key)):
+                 db: AsyncSession = Depends(get_db, scope="function"), viewer: User = Depends(get_current_user_or_api_key)):
     from core.browse import browse_page, MOVIE_GENRES, TV_GENRES
     from core.external_scores import effective_mdblist_key
     from core.browse_cursor import decode_search_cursor
@@ -1550,7 +1550,7 @@ async def catalog(q: str = "", media_type: Literal["movie", "series"] = "movie",
                   region: str | None = Query(None, pattern='^[A-Z]{2}$'),
                   unfiltered: Annotated[bool, Query()] = False,
                   scan_empty: Annotated[bool, Query()] = False,
-                  db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user_or_api_key)):
+                  db: AsyncSession = Depends(get_db, scope="function"), viewer: User = Depends(get_current_user_or_api_key)):
     from core.browse import browse_page
     await catalog_access(db, viewer)
     term = q.strip()[:200]
@@ -1578,7 +1578,7 @@ async def catalog_preview(
     media_type: Literal['movie', 'series'],
     tmdb_id: Annotated[int, Path(gt=0, le=2147483647)],
     response: Response,
-    db: Annotated[AsyncSession, Depends(get_db)],
+    db: Annotated[AsyncSession, Depends(get_db, scope="function")],
     viewer: Annotated[User, Depends(get_current_user_or_api_key)],
 ):
     from core import tmdb
@@ -1605,7 +1605,7 @@ async def catalog_preview(
 
 
 @router.post("/catalog/{media_type}/{tmdb_id}")
-async def import_catalog_title(media_type: Literal['movie','series'], tmdb_id: Annotated[int, Path(gt=0, le=2147483647)], db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user_or_api_key)):
+async def import_catalog_title(media_type: Literal['movie','series'], tmdb_id: Annotated[int, Path(gt=0, le=2147483647)], db: AsyncSession = Depends(get_db, scope="function"), viewer: User = Depends(get_current_user_or_api_key)):
     from core.enrichment import create_media_safely, enrich_media
     await catalog_access(db, viewer)
     key = await settings_store.get_user_tmdb_key(db, viewer.id if viewer else -1)
@@ -1627,7 +1627,7 @@ async def import_catalog_title(media_type: Literal['movie','series'], tmdb_id: A
 
 
 @router.get("/editor/{media_id}")
-async def editor_context(media_id: int, db: Annotated[AsyncSession, Depends(get_db)],
+async def editor_context(media_id: int, db: Annotated[AsyncSession, Depends(get_db, scope="function")],
                          viewer: Annotated[User, Depends(get_current_user)]) -> dict:
     media = await db.get(Media, media_id)
     if not media or media.media_type not in (MediaType.movie, MediaType.series):
@@ -1668,7 +1668,7 @@ async def detail_seasons(db, media, viewer, *, include_episodes=True):
 
 
 @router.get('/title/{media_id}/seasons')
-async def title_seasons(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db)],
+async def title_seasons(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db, scope="function")],
         viewer: Annotated[User, Depends(get_current_user_or_api_key)], response: Response,
         revision: Annotated[str | None, Query(max_length=80)] = None):
     await catalog_access(db, viewer)
@@ -1692,7 +1692,7 @@ async def title_seasons(media_id: Annotated[int, Path(gt=0)], db: Annotated[Asyn
 
 
 @router.get("/title/{media_id}")
-async def title(media_id: int, db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user_or_api_key),
+async def title(media_id: int, db: AsyncSession = Depends(get_db, scope="function"), viewer: User = Depends(get_current_user_or_api_key),
         episodes: Annotated[bool, Query()] = True):
     await catalog_access(db, viewer)
     media = await db.get(Media, media_id)
@@ -1742,7 +1742,7 @@ async def title(media_id: int, db: AsyncSession = Depends(get_db), viewer: User 
 
 
 @router.get('/title/{media_id}/related')
-async def title_related(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db)],
+async def title_related(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db, scope="function")],
                         viewer: Annotated[User, Depends(get_current_user)]) -> dict:
     media = await db.get(Media, media_id)
     if not media or media.media_type not in (MediaType.movie, MediaType.series):
@@ -1761,7 +1761,7 @@ async def title_related(media_id: Annotated[int, Path(gt=0)], db: Annotated[Asyn
 
 @router.get('/title/{media_id}/episode-images')
 async def title_episode_images(media_id: Annotated[int, Path(gt=0)],
-                               db: Annotated[AsyncSession, Depends(get_db)],
+                               db: Annotated[AsyncSession, Depends(get_db, scope="function")],
                                viewer: Annotated[User, Depends(get_current_user_or_api_key)]) -> dict:
     await catalog_access(db, viewer)
     media = await db.get(Media, media_id)
@@ -1828,7 +1828,7 @@ async def title_episode_images(media_id: Annotated[int, Path(gt=0)],
 
 @router.get('/title/{media_id}/social')
 async def title_social(media_id: Annotated[int, Path(gt=0)],
-                       db: Annotated[AsyncSession, Depends(get_db)],
+                       db: Annotated[AsyncSession, Depends(get_db, scope="function")],
                        viewer: Annotated[User, Depends(get_current_user)]) -> dict:
     media = await db.get(Media, media_id)
     if not media or media.media_type not in (MediaType.movie, MediaType.series):
@@ -1886,7 +1886,7 @@ async def title_social(media_id: Annotated[int, Path(gt=0)],
 
 
 @router.get('/title/{media_id}/people')
-async def title_people(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db)],
+async def title_people(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db, scope="function")],
                        viewer: Annotated[User, Depends(get_current_user)],
                        characters: Annotated[bool, Query()] = False) -> dict:
     media = await db.get(Media, media_id)
@@ -1912,7 +1912,7 @@ async def title_people(media_id: Annotated[int, Path(gt=0)], db: Annotated[Async
 
 
 @router.get('/title/{media_id}/scores')
-async def title_scores(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db)],
+async def title_scores(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db, scope="function")],
                        viewer: Annotated[User, Depends(get_current_user)]) -> dict:
     media = await db.get(Media, media_id)
     if not media or media.media_type not in (MediaType.movie, MediaType.series):
@@ -1927,7 +1927,7 @@ async def title_scores(media_id: Annotated[int, Path(gt=0)], db: Annotated[Async
 
 
 @router.get('/title/{media_id}/background')
-async def title_background(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db)],
+async def title_background(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db, scope="function")],
                            viewer: Annotated[User, Depends(get_current_user_or_api_key)]) -> dict:
     await catalog_access(db,viewer)
     media=await db.get(Media,media_id)
@@ -1943,7 +1943,7 @@ async def title_background(media_id: Annotated[int, Path(gt=0)], db: Annotated[A
 
 
 @router.get('/title/{media_id}/artwork-preview')
-async def title_artwork_preview(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db)],
+async def title_artwork_preview(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db, scope="function")],
                                 viewer: Annotated[User, Depends(get_current_user_or_api_key)]) -> dict:
     await catalog_access(db,viewer)
     media=await db.get(Media,media_id)
@@ -1960,7 +1960,7 @@ async def title_artwork_preview(media_id: Annotated[int, Path(gt=0)], db: Annota
 
 
 @router.get('/title/{media_id}/images')
-async def title_images(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db)],
+async def title_images(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db, scope="function")],
                        viewer: Annotated[User, Depends(get_current_user)]) -> dict:
     media = await db.get(Media, media_id)
     if not media or media.media_type not in (MediaType.movie, MediaType.series):
@@ -1978,7 +1978,7 @@ async def title_images(media_id: Annotated[int, Path(gt=0)], db: Annotated[Async
 
 
 @router.post('/title/{media_id}/refresh-episodes')
-async def refresh_episodes(media_id: int, db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
+async def refresh_episodes(media_id: int, db: AsyncSession = Depends(get_db, scope="function"), viewer: User = Depends(get_current_user)):
     from core.tracking_metadata import hydrate_tracking_episodes
     media = await db.get(Media, media_id)
     if not media or media.media_type != MediaType.series:
@@ -2018,7 +2018,7 @@ class EpisodeProgressPatch(BaseModel):
 @router.patch('/entry/{media_id}/episode/{episode_id}')
 async def save_episode_progress(media_id: Annotated[int, Path(gt=0)], episode_id: Annotated[int, Path(gt=0)],
         body: EpisodeProgressPatch, background_tasks: BackgroundTasks,
-        db: Annotated[AsyncSession, Depends(get_db)], viewer: Annotated[User, Depends(get_current_user)]) -> dict:
+        db: Annotated[AsyncSession, Depends(get_db, scope="function")], viewer: Annotated[User, Depends(get_current_user)]) -> dict:
     return await _save_entry(media_id, EntryPatch(confirm_rollback=body.confirm_rollback), background_tasks, db, viewer,
         episode_change=(episode_id, body.watched), preserve_status=True, direct_episode=True)
 
@@ -2026,7 +2026,7 @@ async def save_episode_progress(media_id: Annotated[int, Path(gt=0)], episode_id
 @router.patch('/entry/{media_id}/season/{season_number}')
 async def save_season_progress(media_id: int, season_number: int, body: SeasonProgressPatch,
                                background_tasks: BackgroundTasks,
-                               db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
+                               db: AsyncSession = Depends(get_db, scope="function"), viewer: User = Depends(get_current_user)):
     media = await db.get(Media, media_id)
     if not media or media.media_type != MediaType.series or season_number <= 0:
         raise HTTPException(404, 'Regular season not found')
@@ -2042,7 +2042,7 @@ async def save_season_progress(media_id: int, season_number: int, body: SeasonPr
 
 @router.patch("/entry/{media_id}")
 async def save_entry(media_id: int, body: EntryPatch, background_tasks: BackgroundTasks,
-                     db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
+                     db: AsyncSession = Depends(get_db, scope="function"), viewer: User = Depends(get_current_user)):
     media = await db.get(Media, media_id)
     needs_episodes = body.progress is not None or body.mark_released_watched or body.status == 'completed'
     if (not body.series_editor and media and media.media_type == MediaType.series and needs_episodes
@@ -2545,7 +2545,7 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
 
 
 @router.get("/delivery/{job_id}")
-async def tracking_delivery_status(job_id: int, db: AsyncSession = Depends(get_db),
+async def tracking_delivery_status(job_id: int, db: AsyncSession = Depends(get_db, scope="function"),
                                    viewer: User = Depends(get_tracking_write_user)):
     job = (await db.execute(select(TrackingDeliveryJob).where(
         TrackingDeliveryJob.id == job_id,
@@ -2565,7 +2565,7 @@ async def tracking_delivery_status(job_id: int, db: AsyncSession = Depends(get_d
 
 
 @router.get("/activity")
-async def activity(cursor: str | None = None, db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
+async def activity(cursor: str | None = None, db: AsyncSession = Depends(get_db, scope="function"), viewer: User = Depends(get_current_user)):
     followed = select(Follow.following_id).where(Follow.follower_id == viewer.id)
     watermark = datetime.now(timezone.utc).replace(tzinfo=None)
     query = (select(TrackingActivity, Media, User, UserProfileData).join(Media, Media.id == TrackingActivity.media_id)

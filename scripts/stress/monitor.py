@@ -61,6 +61,15 @@ def monitor(args):
                 roles.update(zip((state/'pids').read_text().split(), ('backend', 'frontend', 'jellyfin')))
             if (state/'load-pid').exists():
                 roles[(state/'load-pid').read_text().strip()] = 'generator'
+            if (state/'catalogue-pid').exists():
+                roles[(state/'catalogue-pid').read_text().strip()] = 'catalogue'
+            for pid in (cgroup/'cgroup.procs').read_text().split():
+                try:
+                    command = Path(f'/proc/{pid}/cmdline').read_bytes()
+                    if b'multiprocessing.spawn' in command:
+                        roles[pid] = 'backend'
+                except FileNotFoundError:
+                    pass
             cgroup_cpu = key_values(cgroup/'cpu.stat')
             host_cpu = proc_cpu()
             by_process = process_cpu(cgroup, roles)

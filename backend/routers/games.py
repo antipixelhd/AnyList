@@ -24,7 +24,7 @@ from schemas_game_statistics import GameStatsResponse,GameStatsSection
 from core.limiter import limiter
 
 router = APIRouter(prefix='/tracking/games', tags=['games'], dependencies=[Depends(approved_games_viewer)])
-DB = Annotated[AsyncSession, Depends(get_db)]
+DB = Annotated[AsyncSession, Depends(get_db, scope="function")]
 Reader = Annotated[User, Depends(get_current_user_or_api_key)]
 Writer = Annotated[User, Depends(get_current_user)]
 Viewer = Annotated[User | None, Depends(get_optional_user_or_api_key)]

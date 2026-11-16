@@ -33,7 +33,7 @@ router = APIRouter()
 @router.get("")
 async def get_calendar(
     cached_only: bool = Query(False),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     if cached_only:
@@ -49,7 +49,7 @@ async def get_calendar(
 
 @router.post("/refresh")
 async def refresh_calendar(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     return await calendar_service._load_or_compute(db, current_user.id, force=True)

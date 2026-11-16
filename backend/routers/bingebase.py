@@ -99,7 +99,7 @@ async def run_bingebase_push(user_id: int, job_id: int) -> None:
 @router.post("/push")
 async def push_bingebase(
     background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     """Trigger a full background push of all historical watched items to Bingebase."""

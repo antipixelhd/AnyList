@@ -33,7 +33,7 @@ from core.translations import get_user_metadata_language
 
 from dependencies import get_current_user, get_current_user_or_api_key
 router = APIRouter()
-SyncDb = Annotated[AsyncSession, Depends(get_db)]
+SyncDb = Annotated[AsyncSession, Depends(get_db, scope="function")]
 SyncUser = Annotated[User, Depends(get_current_user)]
 
 
@@ -135,7 +135,7 @@ async def _get_connection_or_404(db: AsyncSession, connection_id: int, user_id: 
 @router.get("/connection/{connection_id}/plex-friends")
 async def get_plex_friends(
     connection_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     conn = await _get_connection_or_404(db, connection_id, current_user.id)
@@ -149,7 +149,7 @@ async def get_plex_friends(
 @router.get("/connection/{connection_id}/libraries")
 async def get_connection_libraries(
     connection_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     conn = await _get_connection_or_404(db, connection_id, current_user.id)
@@ -196,7 +196,7 @@ async def get_connection_libraries(
 async def trigger_library_scan(
     connection_id: int,
     background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     conn = await _get_connection_or_404(db, connection_id, current_user.id)
@@ -275,7 +275,7 @@ async def save_connection_libraries(
     connection_id: int,
     body: dict,
     background_tasks: BackgroundTasks = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     conn = await _get_connection_or_404(db, connection_id, current_user.id)
@@ -331,7 +331,7 @@ async def sync_connection(
     movie_limit: int = Query(default=0),
     show_limit: int = Query(default=0),
     full: bool = Query(default=False),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     conn = await _get_connection_or_404(db, connection_id, current_user.id)
@@ -400,7 +400,7 @@ async def sync_connection(
 async def push_upstream(
     connection_id: int,
     background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     conn = await _get_connection_or_404(db, connection_id, current_user.id)
@@ -433,7 +433,7 @@ async def push_upstream(
 async def clear_connection_data(
     connection_id: int,
     background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     conn = await _get_connection_or_404(db, connection_id, current_user.id)
@@ -530,7 +530,7 @@ async def sync_jellyfin(
     background_tasks: BackgroundTasks,
     movie_limit: int = Query(default=0),
     show_limit: int = Query(default=0),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     return await _start_server_sync("jellyfin", background_tasks, movie_limit, show_limit, db, current_user)
@@ -541,7 +541,7 @@ async def sync_emby(
     background_tasks: BackgroundTasks,
     movie_limit: int = Query(default=0),
     show_limit: int = Query(default=0),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     return await _start_server_sync("emby", background_tasks, movie_limit, show_limit, db, current_user)
@@ -552,7 +552,7 @@ async def sync_plex(
     background_tasks: BackgroundTasks,
     movie_limit: int = Query(default=0),
     show_limit: int = Query(default=0),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     return await _start_server_sync("plex", background_tasks, movie_limit, show_limit, db, current_user)
@@ -560,7 +560,7 @@ async def sync_plex(
 
 @router.get("/status")
 async def get_sync_status(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     # Keep the latest history bounded, but always include queued/running work.
@@ -590,7 +590,7 @@ async def get_sync_status(
 @router.post("/heal")
 async def heal_metadata(
     background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     """Re-enrich all collection items that are missing poster/date metadata."""
@@ -610,7 +610,7 @@ async def heal_metadata(
 
 @router.post("/abort")
 async def abort_sync(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     """Cancel active sync jobs, preserving destructive clears already running."""
@@ -644,7 +644,7 @@ async def abort_sync(
 @router.post("/{job_id}/cancel")
 async def cancel_sync_job(
     job_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     """Cancel a single pending or running sync job owned by the current user.
@@ -702,7 +702,7 @@ class SeasonOverrideBody(BaseModel):
 
 @router.get("/season-overrides")
 async def list_season_overrides(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     result = await db.execute(
@@ -748,7 +748,7 @@ async def list_season_overrides(
 @router.post("/season-overrides")
 async def create_season_override(
     body: SeasonOverrideBody,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     existing = await db.execute(
@@ -791,7 +791,7 @@ async def create_season_override(
 @router.delete("/season-overrides/{override_id}")
 async def delete_season_override(
     override_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     result = await db.execute(
@@ -811,7 +811,7 @@ async def delete_season_override(
 @router.post("/season-overrides/{override_id}/apply")
 async def apply_season_override(
     override_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     """Remap existing collection episodes to the target show/season and re-enrich metadata."""
@@ -994,7 +994,7 @@ class MatchUnmatchedBody(BaseModel):
 @router.post("/match-unmatched-show")
 async def match_unmatched_show(
     body: MatchUnmatchedBody,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     """Link unmatched local episodes (no tmdb_id/show_id) to a TMDB or TVDB show."""
@@ -1424,7 +1424,7 @@ async def match_unmatched_show(
 
 @router.post("/heal-stub-show-titles")
 async def heal_stub_show_titles(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     """Backfill tmdb_data['show_title'] for stub episodes that have it NULL,
@@ -1473,7 +1473,7 @@ async def heal_stub_show_titles(
 
 @router.post("/heal-push-echo-duplicates")
 async def heal_push_echo_duplicates(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     """Removes duplicate WatchEvents created by a Jellyfin/Emby mark-watched
@@ -1551,7 +1551,7 @@ class HealDuplicateHistoryBody(BaseModel):
 @router.post("/heal-duplicate-history")
 async def heal_duplicate_history(
     body: HealDuplicateHistoryBody,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     """Manually collapse this user's WatchEvent rows that are within
@@ -1619,7 +1619,7 @@ async def heal_duplicate_history(
 
 @router.post("/heal-stuck-unwatched")
 async def heal_stuck_unwatched(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     """Removes WatchEvent rows stuck as completed=False from the #253 sync bug -
@@ -1667,7 +1667,7 @@ class UnmatchShowBody(BaseModel):
 @router.post("/unmatch-show")
 async def unmatch_show(
     body: UnmatchShowBody,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     """Unlink stub episodes from their manually-matched Show row so they can be re-matched."""
@@ -1787,7 +1787,7 @@ class MatchUnmatchedMovieBody(BaseModel):
 @router.post("/match-unmatched-movie")
 async def match_unmatched_movie(
     body: MatchUnmatchedMovieBody,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     """Link unmatched local movies (no tmdb_id) to a TMDB movie."""
@@ -1875,7 +1875,7 @@ class UnmatchMovieBody(BaseModel):
 @router.post("/unmatch-movie")
 async def unmatch_movie(
     body: UnmatchMovieBody,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     """Clear TMDB link from locally-matched movies so they can be re-matched."""
@@ -1940,7 +1940,7 @@ async def unmatch_movie(
 
 @router.get("/matched-shows")
 async def list_matched_shows(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Return all matched shows (TMDB or TVDB) for the current user.

@@ -29,6 +29,8 @@ from models.playback_session import PlaybackSession
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from core.config import settings
+    from core.read_workers import read_workers
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
@@ -50,13 +52,19 @@ async def lifespan(app: FastAPI):
     await netflix_sessions.resume_incomplete_netflix_imports()
 
     try:
-        async with scheduler.background_jobs():
+        async with scheduler.background_jobs(), read_workers(app, settings.api_read_workers):
             yield
     finally:
-        from core import chronological_discovery, tmdb, tracking_episode_loading
-        await tracking_episode_loading.close()
-        await chronological_discovery.close()
-        await tmdb.close()
+        await close_clients()
+
+
+async def close_clients():
+    from core import chronological_discovery, game_metadata, tmdb, tracking_episode_loading
+
+    await game_metadata.close(engine)
+    await tracking_episode_loading.close()
+    await chronological_discovery.close()
+    await tmdb.close()
 
 from core.config import settings
 
@@ -70,6 +78,8 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
 from core.game_work import GameWorkMiddleware
 app.add_middleware(GameWorkMiddleware)
+from core.read_workers import ReadWorkerMiddleware
+app.add_middleware(ReadWorkerMiddleware)
 
 
 @app.get("/openapi.json", include_in_schema=False)

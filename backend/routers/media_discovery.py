@@ -84,7 +84,7 @@ async def _sync_trending(
 @router.get("/trending/movies")
 async def trending_movies(
     page: int = Query(1, ge=1),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
@@ -138,7 +138,7 @@ async def trending_movies(
 @router.get("/trending/shows")
 async def trending_shows(
     page: int = Query(1, ge=1),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
@@ -244,7 +244,7 @@ _FALLBACK_POSTERS: list[dict] = [
 @limiter.limit("20/minute")
 async def public_poster_wall(
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     _: User = Depends(get_current_user_or_api_key),
 ):
     """Decorative trending posters for the landing page.
@@ -288,7 +288,7 @@ async def public_poster_wall(
 @router.get("/on-air-today")
 async def on_air_today(
     page: int = Query(default=1, ge=1),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
@@ -325,7 +325,7 @@ async def on_air_today(
 
 @router.get("/airing-today/collected")
 async def airing_today_collected(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Return today's episodes for the user's collected/watched shows.
@@ -416,7 +416,7 @@ def recently_added_order(max_added):
 async def recently_added(
     type: MediaType | None = Query(None),
     limit: int = Query(default=20, le=100),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     # Subquery: latest added_at per media for this user (deduplicates movies in both Plex+Jellyfin)
@@ -475,7 +475,7 @@ async def get_person_details(
     genre: list[str] = Query(default=[]),  # OR'd together — any selected genre matches
     year: list[int] = Query(default=[]),  # OR'd together — any selected year matches
     min_rating: str | None = Query(None),  # "9".."5" (N+ stars) or "lt5" (under 5 stars)
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
@@ -627,7 +627,7 @@ async def get_person_details(
 @router.get("/collection/{collection_id}")
 async def get_collection_details(
     collection_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     try:
@@ -721,7 +721,7 @@ def _format_studio(data: dict) -> dict:
 @router.get("/network/{network_id}")
 async def get_network_details(
     network_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Header data for the /network/{id} browse page (its titles come from
@@ -743,7 +743,7 @@ async def get_network_details(
 @router.get("/company/{company_id}")
 async def get_company_details(
     company_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Header data for the /studio/{id} browse page (its titles come from
@@ -855,7 +855,7 @@ async def get_tmdb_list(
     arr: list[str] = Query(default=[]),
     # in_list = in|out: membership of any of the user's lists (#255).
     in_list: list[str] = Query(default=[]),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
@@ -1107,7 +1107,7 @@ async def _show_library_ids(db: AsyncSession, user_id: int, tmdb_ids: list[int])
 
 @router.get("/now-playing")
 async def now_playing(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
@@ -1130,7 +1130,7 @@ async def now_playing(
 
 @router.get("/trending/trailers")
 async def trending_trailers(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
@@ -1174,7 +1174,7 @@ async def trending_trailers(
 
 @router.get("/upcoming")
 async def upcoming_movies(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
@@ -1197,7 +1197,7 @@ async def upcoming_movies(
 
 @router.get("/on-air-this-week")
 async def on_air_this_week(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
@@ -1221,7 +1221,7 @@ async def on_air_this_week(
 @router.get("/hidden-gems")
 async def hidden_gems(
     type: MediaType = Query(MediaType.movie),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
@@ -1263,7 +1263,7 @@ async def hidden_gems(
 
 @router.get("/top-rated-movies")
 async def top_rated_movies(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
@@ -1286,7 +1286,7 @@ async def top_rated_movies(
 
 @router.get("/top-rated-shows")
 async def top_rated_shows(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
@@ -1312,7 +1312,7 @@ async def streaming(
     provider_id: int,
     type: MediaType = Query(MediaType.movie),
     watch_region: str = Query("US"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
@@ -1350,7 +1350,7 @@ async def streaming(
 
 @router.get("/new-episodes")
 async def new_episodes(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     tmdb_key = await settings_store.get_user_tmdb_key(db, current_user.id)
@@ -1381,7 +1381,7 @@ def _normalize_path(path: str | None, size: str = "w500") -> str | None:
 @router.get("/pick")
 async def pick_for_me(
     type: str = Query("movie"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     import random

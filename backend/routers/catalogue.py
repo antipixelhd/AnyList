@@ -38,7 +38,7 @@ from core.screen_characters import character_detail
 from core.game_access import require as require_games, allowed as games_allowed
 
 router = APIRouter(prefix="/catalogue", tags=["catalogue"])
-DB = Annotated[AsyncSession, Depends(get_db)]
+DB = Annotated[AsyncSession, Depends(get_db, scope="function")]
 Caller = Annotated[User, Depends(get_current_user)]
 OptionalCaller = Annotated[User | None, Depends(get_optional_user)]
 Admin = Annotated[User, Depends(require_admin)]

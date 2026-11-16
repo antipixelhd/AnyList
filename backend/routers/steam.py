@@ -21,7 +21,7 @@ from dependencies import get_current_user
 from models import CollectionSource, MediaServerConnection, SteamConnection, SyncJob, SyncStatus, User
 
 router = APIRouter(prefix='/connections/steam', tags=['steam'], dependencies=[Depends(approved_games_viewer)])
-DB = Annotated[AsyncSession, Depends(get_db)]
+DB = Annotated[AsyncSession, Depends(get_db, scope="function")]
 Viewer = Annotated[User, Depends(get_current_user)]
 
 

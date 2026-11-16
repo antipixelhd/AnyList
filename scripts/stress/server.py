@@ -13,6 +13,7 @@ from fastapi import FastAPI, Request, Response
 from fixture import GAME_BASE, TITLE_BASE, check_environment, game, screen_title
 
 provider_requests = Counter()
+igdb_games_returned = Counter()
 sql = Counter()
 provider_delay = int(os.environ.get('STRESS_PROVIDER_MS', '100')) / 1000
 media_server_delay = int(os.environ.get('STRESS_JELLYFIN_MS', '60')) / 1000
@@ -106,8 +107,10 @@ async def benchmark_transport(self, request):
         if path.endswith('/multiquery'):
             data = [{'name': name, 'result': igdb_rows(endpoint, body)} for endpoint, name, body in
                     re.findall(r'query\s+(\w+)\s+"([^"]+)"\s*\{([^}]+)\}', query)]
+            igdb_games_returned.update({row['id'] for group in data for row in group['result']})
         else:
             data = igdb_rows(path.rsplit('/', 1)[-1], query)
+            igdb_games_returned.update({row['id'] for row in data})
         return httpx.Response(200, json=data)
     if host == 'query.wikidata.org':
         return httpx.Response(200, json={'head': {'vars': ['item', 'id']}, 'results': {'bindings': []}})
@@ -151,6 +154,7 @@ def configure_app():
     from main import app
     from sqlalchemy import event
 
+    app.state.read_worker_factory = 'server:configure_app'
     original_lifespan = app.router.lifespan_context
     loop_lag = []
 
@@ -190,9 +194,34 @@ def configure_app():
     async def metrics():
         data = {'providers': dict(provider_requests), 'sql': dict(sql),
                 'pool_in_use': engine.pool.checkedout(), 'loop_lag_ms': list(loop_lag)}
+        readers = getattr(app.state, 'read_workers', None)
+        if readers:
+            data['read_workers'] = [{'pid': reader.process.pid, 'origin': reader.origin}
+                                    for reader in readers.readers]
         sql['peak_pool'] = data['pool_in_use']
         loop_lag.clear()
         return data
+
+    @app.get('/__stress/igdb/{native}')
+    async def game_provider_calls(native: int):
+        return {'calls': igdb_games_returned[native]}
+
+    @app.get('/__stress/tasks')
+    async def task_stacks():
+        stacks = Counter()
+        for task in asyncio.all_tasks():
+            coroutine = task.get_coro()
+            stack = []
+            for _ in range(80):
+                code = getattr(coroutine, 'cr_code', None) or getattr(coroutine, 'gi_code', None)
+                frame = getattr(coroutine, 'cr_frame', None) or getattr(coroutine, 'gi_frame', None)
+                if code is not None and frame is not None:
+                    stack.append(f'{code.co_name}:{frame.f_lineno}')
+                coroutine = getattr(coroutine, 'cr_await', None) or getattr(coroutine, 'gi_yieldfrom', None)
+                if coroutine is None:
+                    break
+            stacks[' / '.join(stack)] += 1
+        return dict(stacks)
 
     return app
 
@@ -203,6 +232,22 @@ if __name__ == '__main__':
     import uvicorn
 
     check_environment()
+    if sys.argv[1:] == ['catalogue']:
+        import logging
+        from pathlib import Path
+
+        import uvloop
+        from core.catalogue_worker import serve
+
+        logging.basicConfig(level=logging.INFO)
+        httpx.AsyncHTTPTransport.handle_async_request = benchmark_transport
+        try:
+            uvloop.run(serve())
+        finally:
+            metrics_path = Path(os.environ['DATA_DIR']).parent / os.getenv(
+                'STRESS_CATALOGUE_METRICS', 'catalogue-providers.json')
+            metrics_path.write_text(json.dumps(dict(provider_requests)))
+        raise SystemExit
     serving_jellyfin = sys.argv[1:] == ['jellyfin']
     uvicorn.run(jellyfin if serving_jellyfin else configure_app(), host='127.0.0.1',
                 port=57642 if serving_jellyfin else 57640, access_log=False, log_level='warning',

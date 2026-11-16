@@ -74,7 +74,7 @@ oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="auth/login", auto_error=
 ANON_USER_ID = -1
 
 async def get_current_user(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     token: str = Depends(oauth2_scheme)
 ) -> User:
     credentials_exception = HTTPException(
@@ -113,7 +113,7 @@ async def require_admin(current_user: User = Depends(get_current_user)) -> User:
 
 
 async def get_optional_user(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     token: Optional[str] = Depends(oauth2_scheme_optional)
 ) -> Optional[User]:
     if not token:
@@ -143,7 +143,7 @@ async def get_optional_user(
 
 
 async def get_tracking_write_user(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     token: Optional[str] = Depends(oauth2_scheme_optional),
 ) -> User:
     """Authenticate the AnyList tracking write API.
@@ -184,7 +184,7 @@ async def get_tracking_write_user(
 
 
 async def get_current_user_or_api_key(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     jwt_user: Optional[User] = Depends(get_optional_user),
     api_key: Optional[str] = Query(None, description="AnyList API key, as an alternative to a JWT Bearer token"),
     x_api_key: Optional[str] = Header(None, alias="X-Api-Key"),
@@ -210,7 +210,7 @@ async def get_current_user_or_api_key(
 
 
 async def get_optional_user_or_api_key(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     jwt_user: Optional[User] = Depends(get_optional_user),
     api_key: Optional[str] = Query(None, description="AnyList API key, as an alternative to a JWT Bearer token"),
     x_api_key: Optional[str] = Header(None, alias="X-Api-Key"),

@@ -233,7 +233,7 @@ async def oidc_authorize(
 @router.post("/exchange")
 async def oidc_exchange(
     payload: OidcExchangeRequest,
-    db: Annotated[AsyncSession, Depends(get_db)],
+    db: Annotated[AsyncSession, Depends(get_db, scope="function")],
     current_user: Annotated[User | None, Depends(get_optional_user)],
 ) -> dict[str, str]:
     """

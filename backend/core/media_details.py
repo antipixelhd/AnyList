@@ -2,6 +2,7 @@
 from core.game_release_dates import VERSION as GAME_RELEASE_VERSION
 from core.game_credit_roles import ACTING as GAME_ACTING
 import re
+from datetime import timedelta
 from fastapi import HTTPException
 from urllib.parse import urlsplit
 from sqlalchemy import or_, select
@@ -17,6 +18,26 @@ from models.catalogue import (
     BookEdition, CatalogueCredit, CatalogueEntity, CatalogueIdentity,
     CatalogueLegacyLink, GameRelease, MetadataSnapshot,
 )
+
+
+async def tmdb_movie_snapshot(engine, native, components, max_age):
+    from core.game_source_cache import session_factory, utcnow
+
+    stamp = utcnow()
+    ttl = timedelta(seconds=max_age)
+    async with session_factory(engine)() as db:
+        row = (await db.execute(select(MetadataSnapshot.payload, MetadataSnapshot.fetched_at,
+                                      MetadataSnapshot.expires_at).where(
+            MetadataSnapshot.provider == 'tmdb', MetadataSnapshot.kind == 'movie',
+            MetadataSnapshot.external_id == str(native), MetadataSnapshot.fetched_at > stamp-ttl,
+            MetadataSnapshot.expires_at > stamp, MetadataSnapshot.error_code.is_(None),
+        ))).one_or_none()
+    if row is None or not isinstance(row.payload, dict) or row.payload.get('id') != native:
+        return None
+    if not all(isinstance(row.payload.get(component), dict) for component in components):
+        return None
+    remaining = (min(row.expires_at, row.fetched_at+ttl)-utcnow()).total_seconds()
+    return (row.payload, remaining) if remaining > 0 else None
 
 
 def public_url(value):

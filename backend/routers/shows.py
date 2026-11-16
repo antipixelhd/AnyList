@@ -200,7 +200,7 @@ def format_show(show: ShowModel) -> dict:
 
 @router.get("")
 async def list_shows(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
     sort: str = Query(default="title"),
     page: int = Query(1, ge=1),
@@ -378,7 +378,7 @@ async def list_shows(
 
 @router.get("/years")
 async def list_show_years(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Distinct first-air-date years present in the user's show collection, for the year filter."""
@@ -522,7 +522,7 @@ async def _run_episode_order_mapping(
 @router.get("/episode-order/jobs/{job_id}")
 async def get_episode_order_job(
     job_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     result = await db.execute(
@@ -699,7 +699,7 @@ async def _resolve_ordered_season(
 @router.get("/{series_tmdb_id}/episode-orders")
 async def get_episode_orders(
     series_tmdb_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Every ordering offered for this show (#174) plus the user's current pick,
@@ -727,7 +727,7 @@ async def set_show_episode_order(
     series_tmdb_id: int,
     body: EpisodeOrderRequest,
     background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     try:
@@ -782,7 +782,7 @@ async def set_show_episode_order(
 @router.get("/{series_tmdb_id}/episode-order/job")
 async def get_active_episode_order_job(
     series_tmdb_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Look up an in-flight TVDB mapping job for this show, if any — lets the
@@ -804,7 +804,7 @@ async def get_active_episode_order_job(
 @router.get("/{series_tmdb_id}")
 async def get_show(
     series_tmdb_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
@@ -1329,7 +1329,7 @@ async def get_show(
 @router.get("/{series_tmdb_id}/recommendations")
 async def get_show_recommendations(
     series_tmdb_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Fetch series recommendations from TMDB and enrich with state."""
@@ -1369,7 +1369,7 @@ async def get_show_recommendations(
 async def get_show_season(
     series_tmdb_id: int,
     season_number: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
@@ -1794,7 +1794,7 @@ async def get_episode_detail(
     series_tmdb_id: int,
     season_number: int,
     episode_number: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
@@ -2021,7 +2021,7 @@ async def get_episode_detail(
 @router.post("/{series_tmdb_id}/refresh")
 async def refresh_show_metadata(
     series_tmdb_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     api_key = await settings_store.get_user_tmdb_key(db, current_user.id)
@@ -2184,7 +2184,7 @@ async def refresh_show_metadata(
 @router.get("/tvdb/{tvdb_id}")
 async def get_tvdb_show(
     tvdb_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
@@ -2520,7 +2520,7 @@ async def get_tvdb_show(
 async def get_tvdb_season(
     tvdb_id: int,
     season_number: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
@@ -2881,7 +2881,7 @@ async def get_tvdb_episode(
     tvdb_id: int,
     season_number: int,
     episode_number: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
@@ -3179,7 +3179,7 @@ async def get_tvdb_episode(
 @router.post("/tvdb/{tvdb_id}/refresh")
 async def refresh_tvdb_show_metadata(
     tvdb_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     api_key = await settings_store.get_user_tvdb_key(db, current_user.id)

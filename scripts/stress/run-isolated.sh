@@ -21,6 +21,16 @@ export PYTHONPATH="$root/backend" PGHOST=127.0.0.1 PGPORT=57639 PGUSER=anylist_s
 pg=/usr/lib/postgresql/16/bin
 python="$root/runtime/bin/python"
 state="$root/state"
+split_catalogue=0
+if [[ ${1:-} == '--split-catalogue' ]]; then
+    split_catalogue=1
+    shift
+fi
+if (( split_catalogue )); then
+    export CATALOGUE_WORKER_MODE=external
+else
+    export CATALOGUE_WORKER_MODE=embedded
+fi
 if [[ ${STRESS_REUSE:-0} == 1 ]]; then
     test -f "$state/fixture.json"
 else
@@ -28,7 +38,7 @@ else
 fi
 
 shutdown() {
-    for pid in ${load_pid:-} ${frontend_pid:-} ${app_pid:-} ${fixture_pid:-}; do
+    for pid in ${load_pid:-} ${frontend_pid:-} ${app_pid:-} ${fixture_pid:-} ${catalogue_pid:-}; do
         kill -TERM "$pid" 2>/dev/null || true
     done
     wait || true
@@ -54,6 +64,11 @@ fi
 fixture_pid=$!
 "$python" "$root/scripts/stress/server.py" >"$state/backend.log" 2>&1 &
 app_pid=$!
+if (( split_catalogue )); then
+    "$python" "$root/scripts/stress/server.py" catalogue >"$state/catalogue.log" 2>&1 &
+    catalogue_pid=$!
+    printf '%s\n' "$catalogue_pid" >"$state/catalogue-pid"
+fi
 (cd "$root/frontend" && exec node scripts/serve.mjs) >"$state/frontend.log" 2>&1 &
 frontend_pid=$!
 printf '%s %s %s\n' "$app_pid" "$frontend_pid" "$fixture_pid" >"$state/pids"
@@ -84,3 +99,9 @@ FROM stress_metrics.pg_stat_statements WHERE dbid = (SELECT oid FROM pg_database
   AND query !~* '^(INSERT INTO (users|media|tracked_entries|catalogue_entities|game_entries|user_profile_data)|CREATE|ALTER|ANALYZE)'
 ORDER BY total_exec_time DESC LIMIT 30;
 SQL
+if [[ ${API_READ_WORKERS:-0} != 0 ]]; then
+    "$python" "$root/scripts/stress/verify_read_workers.py" "$state" >"$state/read-worker-recovery.json"
+fi
+if (( split_catalogue )); then
+    "$python" "$root/scripts/stress/verify_catalogue_worker.py" "$state" "$catalogue_pid" >"$state/catalogue-recovery.json"
+fi

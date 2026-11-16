@@ -64,7 +64,7 @@ async def yamtrack_import_upload(
     collection: bool = Form(True),
     lists: bool = Form(True),
     comments: bool = Form(True),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     """Import watch history, ratings, collection, lists, and comments from a

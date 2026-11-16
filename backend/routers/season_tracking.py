@@ -18,7 +18,7 @@ from core.tracking_access import anime_is_visible
 from core.tracking_projection import is_anime
 
 router = APIRouter(prefix='/tracking/entry', tags=['tracking'])
-Database = Annotated[AsyncSession, Depends(get_db)]
+Database = Annotated[AsyncSession, Depends(get_db, scope="function")]
 Viewer = Annotated[User, Depends(get_tracking_write_user)]
 
 

@@ -34,10 +34,11 @@ def percentiles(values):
 
 
 class Stage:
-    def __init__(self, client, db, fixture, number, users, duration, think, calibration=False):
+    def __init__(self, client, db, fixture, number, users, duration, think, calibration=False, *, cold_fraction=.23):
         self.client, self.db, self.fixture = client, db, fixture
         self.number, self.users, self.duration, self.think = number, users, duration, think
         self.calibration = calibration
+        self.cold_fraction = cold_fraction
         self.latency = defaultdict(list)
         self.errors = defaultdict(Counter)
         self.examples = {}
@@ -170,7 +171,7 @@ class Stage:
                 await self.start_sync(user)
                 wants_sync = False
             action = rng.choices(JOURNEYS, WEIGHTS)[0]
-            await self.journey(user, action, rng, cold=rng.random() < .23)
+            await self.journey(user, action, rng, cold=rng.random() < self.cold_fraction)
             await asyncio.sleep(min(rng.uniform(.45, 1.55)*self.think, max(self.finished-time.perf_counter(), 0)))
 
     async def telemetry(self):
@@ -264,7 +265,8 @@ class Stage:
 async def main(args):
     check_environment()
     fixture = json.loads(args.fixture.read_text(encoding='utf-8'))
-    if not args.smoke and (not 1 <= max(args.users) <= len(fixture['users']) or min(args.users) < 1 or args.seconds < 5 or args.think < 1):
+    if not args.smoke and (not 1 <= max(args.users) <= len(fixture['users']) or min(args.users) < 1
+                           or args.seconds < 5 or args.think < 1 or not 0 <= args.cold_fraction <= 1):
         raise SystemExit('Invalid stage settings or insufficient synthetic accounts.')
     db = await asyncpg.connect(host='127.0.0.1', port=57639, user='anylist_stress', database='anylist_test_stress')
     limits = httpx.Limits(max_connections=max(args.users)*3+32, max_keepalive_connections=max(args.users)*2+32)
@@ -276,7 +278,8 @@ async def main(args):
                 await Stage(client, db, fixture, 0, 1, 30, args.think, calibration=True).prime_warm_set()
             with args.output.open('x', encoding='utf-8') as output:
                 for number, users in enumerate(args.users):
-                    result = await Stage(client, db, fixture, number+args.offset, users, args.seconds, args.think).run()
+                    result = await Stage(client, db, fixture, number+args.offset, users, args.seconds, args.think,
+                                         cold_fraction=args.cold_fraction).run()
                     print(json.dumps(result), file=output, flush=True)
                     print(json.dumps({k: result[k] for k in ('users', 'rps', 'p95', 'errors', 'sync_completed', 'sync_started')}), flush=True)
                     await asyncio.sleep(3)
@@ -290,6 +293,8 @@ if __name__ == '__main__':
     parser.add_argument('--users', type=int, nargs='+', default=[4, 12, 24, 48, 80, 120, 180, 260, 360])
     parser.add_argument('--seconds', type=int, default=40)
     parser.add_argument('--think', type=float, default=3.5)
+    parser.add_argument('--cold-fraction', type=float, default=.23,
+                        help='Fraction of journeys using an unprimed title or search key.')
     parser.add_argument('--offset', type=int, default=0)
     parser.add_argument('--prime', action='store_true', help='Read all hot search and detail keys before timing stages.')
     parser.add_argument('--smoke', action='store_true')

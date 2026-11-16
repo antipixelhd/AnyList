@@ -41,7 +41,7 @@ def _require_simkl_config(settings: UserSettings) -> None:
 
 @router.post("/auth/pin/start")
 async def simkl_pin_start(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     """Initiate PIN authentication. Returns user_code + url."""
@@ -87,7 +87,7 @@ async def simkl_pin_start(
 @router.post("/auth/pin/poll")
 async def simkl_pin_poll(
     background_tasks: BackgroundTasks = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     """Check if the user has authorised via PIN. Call repeatedly per the interval."""
@@ -124,7 +124,7 @@ async def simkl_pin_poll(
 
 @router.delete("/auth/disconnect")
 async def simkl_disconnect(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     """Clear stored Simkl token."""
@@ -146,7 +146,7 @@ async def simkl_disconnect(
 @router.post("/sync")
 async def sync_simkl(
     background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     from core.account_sync import start_account_pull
@@ -156,7 +156,7 @@ async def sync_simkl(
 @router.post("/push")
 async def push_simkl(
     background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     result = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))

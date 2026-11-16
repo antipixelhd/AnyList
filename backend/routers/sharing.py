@@ -9,7 +9,7 @@ from core.share_preview import card_data, description, image_bytes
 from db import get_db
 
 router = APIRouter(prefix='/sharing', tags=['sharing'])
-DB = Annotated[AsyncSession, Depends(get_db)]
+DB = Annotated[AsyncSession, Depends(get_db, scope="function")]
 SharePath = Annotated[str, Query(min_length=1, max_length=250)]
 
 

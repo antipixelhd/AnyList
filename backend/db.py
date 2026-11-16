@@ -5,8 +5,8 @@ from core.config import settings
 engine = create_async_engine(
     settings.db_url,
     echo=False,
-    pool_size=20,
-    max_overflow=10,
+    pool_size=settings.database_pool_size,
+    max_overflow=settings.database_pool_overflow,
     pool_timeout=30,
     pool_recycle=1800,
     pool_pre_ping=True,
@@ -20,5 +20,7 @@ class Base(DeclarativeBase):
     pass
 
 async def get_db() -> AsyncSession:
+    # JSON routes use function scope so independent background work starts
+    # after the response's session has returned its connection to the pool.
     async with AsyncSessionLocal() as session:
         yield session

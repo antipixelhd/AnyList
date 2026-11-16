@@ -80,8 +80,7 @@ class MetadataCredentialTests(unittest.IsolatedAsyncioTestCase):
         register.assert_not_called()
 
     async def test_fresh_user_lookup_ignores_request_cache_without_overwriting_it(self):
-        db = session(SimpleNamespace(tmdb_api_key="new-user-key"), None,
-                     SimpleNamespace(tmdb_api_key="new-global-key"))
+        db = session("new-user-key", None, SimpleNamespace(tmdb_api_key="new-global-key"))
         db.info.update(tmdb_key_7="old-user-key", global_settings=SimpleNamespace(tmdb_api_key="old-global-key"))
         self.assertEqual(await settings_store.get_user_tmdb_key(db, 7, cached=False), "new-user-key")
         self.assertEqual(await settings_store.get_user_tmdb_key(db, 7, cached=False), "new-global-key")
@@ -89,14 +88,14 @@ class MetadataCredentialTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(db.info["global_settings"].tmdb_api_key, "old-global-key")
 
     async def test_user_key_wins_without_querying_global_settings(self):
-        db = session(SimpleNamespace(tmdb_api_key="user-key"))
+        db = session("user-key")
         self.assertEqual(await settings_store.get_user_tmdb_key(db, 7), "user-key")
         self.assertEqual(await settings_store.get_user_tmdb_key(db, 7), "user-key")
         self.assertEqual(db.execute.await_count, 1)
         self.assertNotIn("global_settings", db.info)
 
     async def test_cached_keys_are_scoped_by_user(self):
-        db = session(SimpleNamespace(tmdb_api_key="first"), SimpleNamespace(tmdb_api_key="second"))
+        db = session("first", "second")
         self.assertEqual(await settings_store.get_user_tmdb_key(db, 7), "first")
         self.assertEqual(await settings_store.get_user_tmdb_key(db, 8), "second")
         self.assertEqual(await settings_store.get_user_tmdb_key(db, 7), "first")
@@ -104,7 +103,7 @@ class MetadataCredentialTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_empty_user_keys_share_the_cached_global_fallback(self):
         global_settings = SimpleNamespace(tmdb_api_key="global-key")
-        db = session(SimpleNamespace(tmdb_api_key=""), global_settings, None)
+        db = session("", global_settings, None)
         self.assertEqual(await settings_store.get_user_tmdb_key(db, 7), "global-key")
         self.assertEqual(await settings_store.get_user_tmdb_key(db, 8), "global-key")
         self.assertEqual(await settings_store.get_user_tmdb_key(db, 7), "global-key")

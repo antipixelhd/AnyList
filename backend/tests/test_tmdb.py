@@ -55,6 +55,20 @@ class SharedTransportTests(TransportTestCase):
             self.assertEqual(full['runtime'], 110)
             self.assertEqual((await tmdb.get_movie_light(42, api_key='key'))['runtime'], 110)
 
+    async def test_movie_reuses_local_snapshot_only_for_default_cached_language(self):
+        payload = {'id': 42, 'title': 'Stored', 'watch/providers': {'results': {'DE': {}}}}
+        load = AsyncMock(return_value=(payload, 60))
+        with patch.object(tmdb, '_request', AsyncMock(return_value={'id': 42, 'title': 'Remote'})) as request:
+            self.assertEqual((await tmdb.get_movie(42, load_local=load))['title'], 'Stored')
+            self.assertEqual((await tmdb.get_movie(42, load_local=load))['title'], 'Stored')
+            self.assertEqual(await tmdb.get_movie_watch_providers(42), payload['watch/providers'])
+            load.assert_awaited_once()
+            request.assert_not_awaited()
+            self.assertEqual((await tmdb.get_movie(42, language='de', load_local=load))['title'], 'Remote')
+            self.assertEqual((await tmdb.get_movie(42, cache_ttl=None, load_local=load))['title'], 'Remote')
+            self.assertEqual(request.await_count, 2)
+            load.assert_awaited_once()
+
     async def test_projected_cache_keeps_languages_separate_and_bypass_does_not_seed(self):
         with patch.object(tmdb, '_request', AsyncMock(return_value={'id': 42, 'title': 'Deutsch', 'runtime': 110})) as request:
             await tmdb._get(tmdb.TMDB_BASE + '/movie/42', params={'language': 'de', 'append_to_response': 'credits'})

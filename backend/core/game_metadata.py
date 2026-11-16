@@ -308,6 +308,14 @@ class GameMetadata:
         return False
 
 
+async def close(scope):
+    tasks = [flight.task for (owner, _), flight in list(_flights.items()) if owner == id(scope)]
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
 async def scheduler():
     from db import AsyncSessionLocal,engine
     service=GameMetadata(AsyncSessionLocal,scope=engine)
@@ -320,6 +328,4 @@ async def scheduler():
             except Exception:delay=30
             await asyncio.sleep(delay)
     finally:
-        tasks=[flight.task for (scope,_),flight in list(_flights.items()) if scope==id(service.scope)]
-        for task in tasks:task.cancel()
-        if tasks:await asyncio.gather(*tasks,return_exceptions=True)
+        await close(service.scope)

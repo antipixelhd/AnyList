@@ -44,8 +44,10 @@ async def get_user_tmdb_key(db: AsyncSession, user_id: int, *, cached: bool = Tr
     cache_key = f"tmdb_key_{user_id}"
     if cached and cache_key in db.info:
         return db.info[cache_key]
-    row = (await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))).scalar_one_or_none()
-    api_key = await get_effective_tmdb_key(db, row, cached_global=cached)
+    api_key = (await db.execute(select(UserSettings.tmdb_api_key)
+                               .where(UserSettings.user_id == user_id))).scalar_one_or_none()
+    if not api_key:
+        api_key = get_server_tmdb_key(await get_global_settings(db, cached=cached))
     if cached:
         db.info[cache_key] = api_key
     return api_key
