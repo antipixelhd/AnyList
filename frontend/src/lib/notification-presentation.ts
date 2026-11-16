@@ -56,11 +56,12 @@ function seasonReleaseDate(event: any) {
 }
 
 export const eventTitle = (event: any) => {
-  const title = event.media?.title || event.payload?.title || 'Connection reconciliation';
+  const title = event.payload?.episode_context?.series_title || event.media?.title || event.payload?.title || 'Connection reconciliation';
   const season = seasonLabel(event);
   return (isSeasonReleaseNotification(event) || isSeasonRating(event)) && season ? `${title} : ${season}` : title;
 };
-export const eventSource = (event: any) => isSeasonReleaseNotification(event) ? undefined
+const watchRemoval = (event: any) => event.payload?.watch_removal;
+export const eventSource = (event: any) => isSeasonReleaseNotification(event) || watchRemoval(event) ? undefined
   : event.provider ? `${event.provider} sync` : event.kind?.startsWith('initial_') ? 'First import' : 'Connection sync';
 export const eventVariant = (event: any) => event.state === 'pending'
   ? (event.kind?.includes('conflict') || event.kind === 'unmatched_import' ? 'warning' : 'info')
@@ -74,14 +75,40 @@ export const eventIcon = (event: any) => event.kind === 'rating_needed' ? 'star'
   : event.state === 'pending' ? 'inbox' : 'check';
 export const eventBadge = (event: any) => isSeasonReleaseNotification(event) ? undefined
   : event.kind === 'connection_failure' ? 'Connection issue' : event.state === 'pending' ? 'Needs review' : undefined;
-export const eventHref = (event: any) => event.media ? `/title/${event.media.id}` : event.payload?.resolve_url;
-export const eventImage = (event: any) => event.payload?.season_poster_path || event.media?.poster || null;
+export const eventHref = (event: any) => event.media?.type === 'episode' ? event.payload?.episode_context?.href
+  : event.media ? `/title/${event.media.id}` : event.payload?.resolve_url;
+export const eventImage = (event: any) => event.payload?.season_poster_path || event.payload?.episode_context?.poster || event.media?.poster || null;
 export const eventCanChooseStatus = (event: any) => Boolean(event.media && event.previous_status && event.proposed_status && event.previous_status !== event.proposed_status && !['rating_conflict', 'deletion_conflict'].includes(event.kind));
 export const eventCanKeepPrevious = (event: any) => event.kind === 'resume_conflict' || Boolean(event.media && !['rating_conflict', 'deletion_conflict'].includes(event.kind));
 export const eventConfirmLabel = (event: any) => event.kind === 'resume_conflict' ? 'Use incoming'
+  : watchRemoval(event) ? 'Remove watched status'
   : event.kind === 'deletion_conflict' ? 'Retry deletion' : event.kind?.startsWith('initial_') ? 'Approve import'
   : event.kind === 'rating_conflict' ? 'Use provider score' : 'Confirm';
-export const eventKeepLabel = (event: any) => event.kind === 'resume_conflict' ? 'Keep current' : 'Keep previous';
+export const eventKeepLabel = (event: any) => watchRemoval(event) ? 'Keep in AnyList'
+  : event.kind === 'resume_conflict' ? 'Keep current' : 'Keep previous';
+
+function watchRemovalMessage(event: any) {
+  const { providers, episodes } = watchRemoval(event);
+  const names: Record<string, string> = { nuvio: 'Nuvio', stremio: 'Stremio' };
+  const sources = providers.map((provider: string) => names[provider] || provider).join(' and ');
+  const episode = episodes[0];
+  const seasons = new Set(episodes.map((item: any) => item.season).filter((season: any) => season != null));
+  let subject = 'this title';
+  if (episodes.length === 1) {
+    const position = episode.season != null && episode.number != null ? `S${episode.season}E${episode.number}` : '';
+    const label = [position, episode.title].filter(Boolean).join(' · ');
+    subject = label ? `1 episode (${label})` : '1 episode';
+  } else if (episodes.length > 1) {
+    const location = seasons.size > 1 ? ` across ${seasons.size} seasons`
+      : seasons.size === 1 ? ` from Season ${episode.season}` : '';
+    subject = `${episodes.length} episodes${location}`;
+  }
+  const observed = `${sources.charAt(0).toUpperCase() + sources.slice(1)} no longer ${providers.length === 1 ? 'lists' : 'list'} ${subject} as watched.`;
+  if (event.state === 'pending') return `${observed} Remove the watched status from AnyList and connections that accept watched updates?`;
+  if (event.state === 'confirmed') return `${observed} Watched status removed from AnyList.`;
+  if (event.state === 'corrected') return `${observed} Watched status kept in AnyList.`;
+  return observed;
+}
 
 export function resumeChoices(event: any) {
   if (event.kind !== 'resume_conflict') return [];
@@ -97,14 +124,15 @@ export function resumeChoices(event: any) {
     return { name, time, position: [episode, position].filter(Boolean).join(' · ') };
   });
 }
-export const eventMessage = (event: any) => isNewSeasonReleaseDate(event)
+export const eventMessage = (event: any) => watchRemoval(event) ? watchRemovalMessage(event) : isNewSeasonReleaseDate(event)
   ? `Release date: ${seasonReleaseDate(event) || 'Date unavailable'}`
   : isNewSeasonRelease(event)
     ? `${seasonLabel(event) || 'New season'} is now releasing`
     : isSeasonReleaseNotification(event) || event.kind === 'rating_needed' || (event.state === 'pending' && (eventCanChooseStatus(event) || event.kind === 'rating_conflict')) ? undefined : event.message;
 export const seasonArtworkFallback = (event: any) => Boolean(isSeasonReleaseNotification(event) && event.payload?.season_artwork_fallback);
 export const seasonArtworkRetry = (event: any) => Boolean(isSeasonReleaseNotification(event) && event.payload?.artwork_retry);
-export const historyChanges = (event: any) => (event.payload?.changes || []).filter((change: any) => change.field !== 'status');
+export const historyChanges = (event: any) => watchRemoval(event) ? []
+  : (event.payload?.changes || []).filter((change: any) => change.field !== 'status');
 export const historyLabel = (field: string) => ({ start_date: 'Start date', finish_date: 'Finish date', progress: 'Progress', season: 'Season', episode: 'Episode', position: 'Playback position (ms)', duration: 'Duration (ms)' } as Record<string, string>)[field] || field;
 export const historyValue = (value: any, field?: string) => value == null || value === '' ? 'Not set'
   : field === 'start_date' || field === 'finish_date' ? formatDate(String(value)) || 'Not set' : String(value);

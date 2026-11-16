@@ -329,6 +329,49 @@ class CombinedDatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(review.kind, "watch_conflict")
             self.assertFalse(cycle.removed_watch_exclusions)
 
+    async def test_only_complete_snapshot_removals_clear_unlisted_watches(self):
+        from core.sync_reconciliation import _watches
+        from models import WatchEvent
+        from models.tracking import StreamBaseline, SyncReview, TrackedEntry
+        from sqlalchemy import select
+
+        listed, unlisted = self.media
+        conn = self.connections[0]
+        async with self.factory() as db:
+            db.add(TrackedEntry(user_id=self.user.id, media_id=listed.id, status="completed", progress=1))
+            for movie in self.media:
+                db.add(WatchEvent(user_id=self.user.id, media_id=movie.id, completed=True))
+            baseline = await db.get(StreamBaseline, conn.id)
+            baseline.snapshot = {
+                "mappings": {"listed": listed.tmdb_id, "unlisted": unlisted.tmdb_id},
+                "records": {"watched": [
+                    {"content_id": key, "content_type": "movie"} for key in ("listed", "unlisted")
+                ]},
+            }
+            await db.commit()
+            state = Reconciliation(self.user.id)
+            await initialize(db, state)
+            snapshot = dict(connection_id=conn.id, sync_watched=True, complete=False, watched=[], tmdb_ids={})
+            state.snapshots = [snapshot]
+            watched = select(WatchEvent.media_id).where(WatchEvent.user_id == self.user.id)
+            await _watches(db, state, PullCycleState(self.user.id))
+            self.assertEqual(set(await db.scalars(watched)), {listed.id, unlisted.id})
+
+            snapshot.update(complete=True, watched=[{"content_id": "alias", "content_type": "movie"}],
+                            tmdb_ids={"alias": unlisted.tmdb_id})
+            cycle = PullCycleState(self.user.id)
+            await _watches(db, state, cycle)
+            self.assertEqual(set(await db.scalars(watched)), {listed.id, unlisted.id})
+            review = (await db.scalars(select(SyncReview).where(SyncReview.user_id == self.user.id))).one()
+            self.assertEqual(review.media_id, listed.id)
+            self.assertEqual(review.payload["observations"][0]["value"], False)
+            self.assertFalse(cycle.removed_watch_exclusions)
+
+            snapshot.update(watched=[], tmdb_ids={})
+            await _watches(db, state, cycle)
+            self.assertEqual(list(await db.scalars(watched)), [listed.id])
+            self.assertEqual(cycle.removed_watch_exclusions, {unlisted.id: {conn.id}})
+
     async def test_unchanged_cloud_history_cannot_restore_removed_watch(self):
         from core.sync_reconciliation import _watches, _source, collect_watch
         from models import WatchEvent

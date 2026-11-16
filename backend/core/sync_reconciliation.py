@@ -989,11 +989,14 @@ async def _watches(db, state, cycle):
                 candidates.setdefault(media_id, []).append(Observation(source_key(conn.type, conn.id), True,
                     provider_changed_at(row), False if baseline and key not in old_watch_keys else _MISSING,
                     baseline.observed_at if baseline else None))
-        if baseline and snapshot["complete"]:
+        if baseline and baseline.approved and snapshot["complete"] and not snapshot.get("fresh_import"):
+            current_media_ids = {ids[key] for key in current_keys if key in ids}
+            removed = set()
             for row in old:
                 key = watch_key(row)
                 media_id = ids.get(key)
-                if media_id is not None and key not in current_keys:
+                if media_id is not None and media_id not in current_media_ids and media_id not in removed:
+                    removed.add(media_id)
                     candidates.setdefault(media_id, []).append(Observation(source_key(conn.type, conn.id), False,
                         None, True, baseline.observed_at))
     from models.tracking import TrackedEntry
@@ -1009,6 +1012,10 @@ async def _watches(db, state, cycle):
         protected = state.protected_fields.get(root_id, set()) & {"status", "progress"}
         if protected:
             decision = Decision(local, stale=True)
+        elif local and (decision.value is False or all(o.value is False for o in observations)):
+            from core.watch_removal_reviews import watch_is_listed
+            if entry or await watch_is_listed(db, state.user_id, media_id, root_id):
+                decision = Decision(True, conflict=True)
         elif decision.stale and local is True and all(o.value is True for o in observations):
             # Older distinct plays enrich history without competing with the
             # owner's newer current status or becoming a fresh outbound edit.
@@ -1023,25 +1030,9 @@ async def _watches(db, state, cycle):
             # Delete local viewing records only. Remote writes use watched-state
             # adapters; no file-system deletion is involved anywhere here.
             await db.execute(delete(WatchEvent).where(WatchEvent.user_id == state.user_id,
-                                                     WatchEvent.media_id == media_id))
+                WatchEvent.media_id == media_id, WatchEvent.completed.is_(True)))
             ids = {int(source.split(":")[1]) for source in decision.sources if source.startswith("connection:")}
             cycle.removed_watch_exclusions[media_id] = ids
-            if entry:
-                from core.status_provenance import mark_status_change
-                from models import Media
-                media = await db.get(Media, media_id)
-                if root_id != media_id and media.show_id:
-                    remaining = len(set((await db.execute(select(WatchEvent.media_id).join(Media, Media.id == WatchEvent.media_id)
-                        .where(WatchEvent.user_id == state.user_id, WatchEvent.completed.is_(True),
-                               Media.show_id == media.show_id, Media.season_number > 0))).scalars()))
-                    entry.progress = remaining
-                    if entry.status == "completed":
-                        entry.status = "watching" if remaining else "planning"
-                        entry.finish_date = None
-                    mark_status_change(entry, "combined", state.started_at)
-                elif entry.status == "completed":
-                    entry.status, entry.progress, entry.finish_date = "planning", 0, None
-                    mark_status_change(entry, "combined", state.started_at)
     # Keep observations separate from accepted state, also for pull-only clouds.
     updates = {}
     for media_id, sources in state.watch_evidence.items():
@@ -1145,12 +1136,17 @@ async def resolve_category_review(db, event, action):
         await set_library_intent(db, event.user_id, event.media_id,
                                  bool(proposed) if action == "confirm" else current["desired"])
     elif category == "watched state":
+        from core.watch_removal_reviews import watch_removal_sources
+        removal_sources = watch_removal_sources(event)
+        if removal_sources and action == "keep":
+            return True
         watched = bool((await db.execute(select(WatchEvent.id).where(WatchEvent.user_id == event.user_id,
             WatchEvent.media_id == event.media_id, WatchEvent.completed.is_(True)).limit(1))).first())
         if action == "confirm":
             watched = bool(proposed)
             if not watched:
-                await db.execute(delete(WatchEvent).where(WatchEvent.user_id == event.user_id, WatchEvent.media_id == event.media_id))
+                await db.execute(delete(WatchEvent).where(WatchEvent.user_id == event.user_id,
+                    WatchEvent.media_id == event.media_id, WatchEvent.completed.is_(True)))
             elif not (await db.execute(select(WatchEvent.id).where(WatchEvent.user_id == event.user_id,
                     WatchEvent.media_id == event.media_id, WatchEvent.completed.is_(True)).limit(1))).first():
                 db.add(WatchEvent(user_id=event.user_id, media_id=event.media_id, completed=True))
@@ -1186,7 +1182,7 @@ async def resolve_category_review(db, event, action):
                     entry.status, entry.finish_date = ("watching" if watched_ids else "planning"), None
             mark_status_change(entry, "local")
         await db.flush()
-        await queue_watch_intents(db, event.user_id, {event.media_id})
+        await queue_watch_intents(db, event.user_id, {event.media_id}, exclude_connection_ids=set(removal_sources))
     elif action == "confirm":
         row = (await db.execute(select(PlaybackProgress).where(PlaybackProgress.user_id == event.user_id,
             PlaybackProgress.media_id == event.media_id))).scalar_one_or_none()
@@ -1198,7 +1194,7 @@ async def resolve_category_review(db, event, action):
     return True
 
 
-async def deliver_category_review(user_id, media_id, category):
+async def deliver_category_review(user_id, media_id, category, *, additional_media_ids=()):
     if category == "library":
         from core.streaming_library import deliver_library_intent
         await deliver_library_intent(user_id, media_id)
@@ -1211,9 +1207,12 @@ async def deliver_category_review(user_id, media_id, category):
             from core.watch_delivery import push_watch_state
             from models import WatchEvent
             from sqlalchemy import select
-            watched = bool((await db.execute(select(WatchEvent.id).where(WatchEvent.user_id == user_id,
-                WatchEvent.media_id == media_id, WatchEvent.completed.is_(True)).limit(1))).first())
-            await push_watch_state(db, user_id, [media_id], watched=watched, skip_stream_watch_writes=True)
+            ids = {media_id, *additional_media_ids}
+            watched = set((await db.execute(select(WatchEvent.media_id).where(WatchEvent.user_id == user_id,
+                WatchEvent.media_id.in_(ids), WatchEvent.completed.is_(True)))).scalars())
+            for value, targets in ((True, watched), (False, ids - watched)):
+                if targets:
+                    await push_watch_state(db, user_id, sorted(targets), watched=value, skip_stream_watch_writes=True)
         else:
             from core.stream_actions import dispatch_stream_actions
             await dispatch_stream_actions(db, user_id)

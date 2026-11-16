@@ -352,7 +352,7 @@ async def recent_events(db: AsyncSession = Depends(get_db), viewer: User = Depen
     for review in expiring:
         if review_priority(review)=='low':review.dismissed_at=datetime.utcnow()
     query=select(SyncReview,Media).outerjoin(Media,Media.id==SyncReview.media_id).where(
-        SyncReview.user_id==viewer.id,SyncReview.dismissed_at.is_(None)).order_by(SyncReview.created_at.desc()).limit(100)
+        SyncReview.user_id==viewer.id,SyncReview.dismissed_at.is_(None)).order_by(SyncReview.created_at.desc(),SyncReview.id.desc()).limit(100)
     rows=(await db.execute(query)).all()
     if prefs and not prefs.low_priority_notifications:
         rows=[row for row in rows if review_priority(row[0])!='low' or row[0].state=='pending']
@@ -422,21 +422,24 @@ async def recent_events(db: AsyncSession = Depends(get_db), viewer: User = Depen
         |{media.id for _,media,_ in watch_intents})
     markers={row.media_id:row for row in (await db.execute(select(TrackingDeletion).where(
         TrackingDeletion.user_id==viewer.id,TrackingDeletion.media_id.in_(marker_media_ids)))).scalars()} if marker_media_ids else {}
-    connection_names={row.id:row.name for row in (await db.execute(select(MediaServerConnection.id,MediaServerConnection.name).where(
-        MediaServerConnection.user_id==viewer.id))).all()}
+    connections=(await db.execute(select(MediaServerConnection.id,MediaServerConnection.name,MediaServerConnection.type).where(
+        MediaServerConnection.user_id==viewer.id))).all()
+    connection_names={row.id:row.name for row in connections}
     recent_jobs=(await db.execute(select(SyncJob).where(SyncJob.user_id==viewer.id)
         .order_by(SyncJob.updated_at.desc(),SyncJob.id.desc()).limit(200))).scalars().all()
     failure_events=connection_failure_events(recent_jobs,connection_names)
     from core.import_notifications import active_import_events
     import_events = await active_import_events(db, viewer.id, datetime.utcnow())
-    pending=sum(1 for r,_ in rows if r.state=='pending' and r.kind!='outbound_pending')+len(failure_events)+len(import_events)
     outbound=group_outbound_delivery(actions,cloud_actions,outbound_review_rows,markers,connection_names,
         library_actions,watch_intents)
-    return {'pending':pending,'outbound':outbound,
-        'results':import_events+failure_events+[{'id':r.id,'kind':r.kind,'state':r.state,'provider':r.provider,'message':r.message,'previous_status':r.previous_status,'proposed_status':r.proposed_status,
+    from core.watch_removal_reviews import project_watch_reviews
+    results = [{'id':r.id,'kind':r.kind,'state':r.state,'provider':r.provider,'message':r.message,'previous_status':r.previous_status,'proposed_status':r.proposed_status,
                     'previous_score':r.previous_score,'proposed_score':r.proposed_score,'season_number':r.season_number,
                     'priority':review_priority(r),'dismissible':r.state!='pending' or r.kind in {'new_season_release_date','new_season_release'},'payload':r.payload or {},
-                    'media':tracking_projection.media_data(m) if m else None,'created_at':r.created_at} for r,m in rows]}
+                    'media':tracking_projection.media_data(m) if m else None,'created_at':r.created_at} for r,m in rows]
+    results = await project_watch_reviews(db, rows, results, {row.id: row.type for row in connections})
+    pending = sum(event['state'] == 'pending' for event in results) + len(failure_events) + len(import_events)
+    return {'pending':pending,'outbound':outbound,'results':import_events+failure_events+results}
 
 
 class SeenReviews(BaseModel):
@@ -483,6 +486,7 @@ class ReviewResolution(BaseModel):
     action: Literal['confirm','keep','change','match','ignore','add_watching','add_planning']
     status: TrackingStatus | None = None
     media_id: int | None = None
+    related_review_ids: list[int] = Field(default_factory=list, max_length=99)
 
 
 @router.post('/recent-events/{event_id}')
@@ -491,6 +495,19 @@ async def resolve_event(event_id:int,body:ReviewResolution,background_tasks:Back
     event=(await db.execute(select(SyncReview).where(SyncReview.id==event_id,SyncReview.user_id==viewer.id).with_for_update())).scalar_one_or_none()
     if not event:raise HTTPException(404,'Event not found')
     if event.state!='pending':raise HTTPException(409,'This event has already been resolved')
+    related = []
+    if body.related_review_ids:
+        from core.watch_removal_reviews import watch_removal_group
+        group = watch_removal_group(event, await db.get(Media, event.media_id)) if event.media_id else None
+        ids = set(body.related_review_ids)
+        if group is None or event_id in ids or body.action not in {'confirm', 'keep'}:
+            raise HTTPException(422, 'Choose one action for a group of watch removals')
+        pairs = (await db.execute(select(SyncReview, Media).join(Media, Media.id == SyncReview.media_id)
+            .where(SyncReview.user_id == viewer.id, SyncReview.id.in_(ids), SyncReview.state == 'pending')
+            .order_by(SyncReview.id).with_for_update(of=SyncReview))).all()
+        if len(pairs) != len(ids) or any(watch_removal_group(review, media) != group for review, media in pairs):
+            raise HTTPException(409, 'These watch removals changed. Refresh the notifications and try again.')
+        related = [review for review, _ in pairs]
     if event.kind == 'resume_conflict':
         if body.action not in {'confirm', 'keep'}:
             raise HTTPException(422, 'Choose one of the resume positions')
@@ -503,11 +520,17 @@ async def resolve_event(event_id:int,body:ReviewResolution,background_tasks:Back
     if event.provider == 'combined':
         from core.sync_reconciliation import resolve_category_review, deliver_category_review
         if await resolve_category_review(db, event, body.action):
-            event.state = 'confirmed' if body.action == 'confirm' else 'corrected'
+            from core.watch_removal_reviews import watch_removal_sources
+            state = 'confirmed' if body.action == 'confirm' else 'corrected'
+            event.state = state
+            for review in related:
+                await resolve_category_review(db, review, body.action)
+                review.state = state
             await db.commit()
-            background_tasks.add_task(deliver_category_review, viewer.id, event.media_id,
-                                      (event.payload or {}).get('category'))
-            return {'state': event.state}
+            if body.action != 'keep' or not watch_removal_sources(event):
+                background_tasks.add_task(deliver_category_review, viewer.id, event.media_id,
+                    (event.payload or {}).get('category'), additional_media_ids=[review.media_id for review in related])
+            return {'state': state}
     if event.kind in {'new_season_release_date','new_season_release'}:
         if event.kind != 'new_season_release' or body.action not in {'add_watching','add_planning'}:
             raise HTTPException(422,'Dismiss this season notice or choose a release action')
