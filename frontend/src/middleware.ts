@@ -179,7 +179,10 @@ export const onRequest = defineMiddleware(async (context, next) => {
   if (token) {
     try {
       // Verify token and get user info
-      const user = await api.auth.me(token);
+      const pageContext = !isStaticAsset && !pathname.startsWith('/api/')
+        ? await api.auth.pageContext(token).catch(() => undefined) : undefined;
+      const user = pageContext?.user ?? await api.auth.me(token);
+      context.locals.pageContext = pageContext;
       context.locals.user = user;
       context.locals.token = token;
 
@@ -227,7 +230,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
     // request-local promises after the settings needed by middleware arrive.
     void viewerMediaPreferences(context.locals);
     void viewerProfilePreferences(context.locals);
-    context.locals.settings = await api.auth.getSettings(token).catch(() => undefined);
+    context.locals.settings = context.locals.pageContext?.settings ?? await api.auth.getSettings(token).catch(() => undefined);
     context.locals.hasRpdbKey = !!context.locals.settings?.has_rpdb_key;
     for (const [name, value] of displayPreferenceCookies(context.locals.settings)) {
       context.cookies.set(name, value, {
@@ -240,6 +243,10 @@ export const onRequest = defineMiddleware(async (context, next) => {
   const response = await next();
   if (response.headers.get('Content-Type')?.includes('text/html')) {
     response.headers.set('Reporting-Endpoints', `csp="${context.url.origin}/api/csp-report"`);
+    if (context.locals.pageContext) {
+      response.headers.set('Cache-Control', 'private, no-store');
+      response.headers.append('Vary', 'Cookie');
+    }
   }
   if(profilePagePath.test(pathname)){
     response.headers.append('Vary',profilePanelHeader);

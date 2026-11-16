@@ -8,6 +8,7 @@ declare namespace App {
     token: string | undefined;
     settings?: import('./lib/api').UserSettings;
     hasRpdbKey?: boolean;
+    pageContext?: import('./lib/api').PageContext;
     mediaPreferences?: Promise<import('./lib/media-domains').MediaDomains>;
     profilePreferences?: Promise<import('./lib/api').UserPreferences|null>;
   }

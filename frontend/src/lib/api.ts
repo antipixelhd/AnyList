@@ -667,6 +667,14 @@ export interface PublicProfile {
 }
 
 // API calls
+export type PageContext = {
+  user: UserProfile;
+  settings: UserSettings;
+  preferences: Record<string, any>;
+  profile: UserPreferences;
+  notifications: import('./notification-store').NotificationSnapshot;
+};
+
 export const api = {
   auth: {
     login: (body: FormData) =>
@@ -685,6 +693,7 @@ export const api = {
       post<{ message: string }>(`/auth/reset-password/${token}`, { new_password }),
     me: (token: string) =>
       get<UserProfile>("/auth/me", undefined, token),
+    pageContext: (token: string) => get<PageContext>('/auth/page-context', undefined, token),
     devicePending: (userCode: string, token: string) =>
       get<DevicePending>("/auth/device/pending", { user_code: userCode }, token),
     deviceGrants: (token: string) =>

@@ -46,13 +46,30 @@ def health(url):
         return {'error': type(error).__name__, 'seconds': round(time.perf_counter()-start, 4)}
 
 
+def process_roles(state, cgroup):
+    # Reused runs replace these files after the monitor starts. Read them on
+    # every sample instead of retaining the previous run's primary PIDs.
+    roles = {}
+    if (state/'pids').exists():
+        roles.update(zip((state/'pids').read_text().split(), ('backend', 'frontend', 'jellyfin')))
+    for filename, role in (('load-pid', 'generator'), ('catalogue-pid', 'catalogue')):
+        if (state/filename).exists():
+            roles[(state/filename).read_text().strip()] = role
+    for pid in (cgroup/'cgroup.procs').read_text().split():
+        try:
+            if b'multiprocessing.spawn' in Path(f'/proc/{pid}/cmdline').read_bytes():
+                roles[pid] = 'api_reader'
+        except FileNotFoundError:
+            pass
+    return roles
+
+
 def monitor(args):
     if not args.unit.startswith('anylist-stress-') or '/' in args.unit:
         raise SystemExit('Pass a dedicated benchmark unit.')
     cgroup = Path('/sys/fs/cgroup/system.slice') / (args.unit+'.service')
     previous = None
     bad = 0
-    roles = {}
     with args.output.open('x', encoding='utf-8') as output:
         for iteration in range(args.seconds):
             started = time.monotonic()
@@ -62,19 +79,7 @@ def monitor(args):
                 time.sleep(1)
                 continue
             state = args.output.parent
-            if not roles and (state/'pids').exists():
-                roles.update(zip((state/'pids').read_text().split(), ('backend', 'frontend', 'jellyfin')))
-            if (state/'load-pid').exists():
-                roles[(state/'load-pid').read_text().strip()] = 'generator'
-            if (state/'catalogue-pid').exists():
-                roles[(state/'catalogue-pid').read_text().strip()] = 'catalogue'
-            for pid in (cgroup/'cgroup.procs').read_text().split():
-                try:
-                    command = Path(f'/proc/{pid}/cmdline').read_bytes()
-                    if b'multiprocessing.spawn' in command:
-                        roles[pid] = 'api_reader'
-                except FileNotFoundError:
-                    pass
+            roles = process_roles(state, cgroup)
             cgroup_cpu = key_values(cgroup/'cpu.stat')
             host_cpu = proc_cpu()
             by_process, processes = process_cpu(cgroup, roles)

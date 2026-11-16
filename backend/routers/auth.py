@@ -5,6 +5,7 @@ from core import trakt_auth
 import secrets
 import pyotp
 import logging
+from pydantic import BaseModel
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -395,6 +396,44 @@ async def bootstrap_restore(
 async def read_users_me(current_user: User = Depends(get_current_user)):
     return current_user
 
+
+class PageContext(BaseModel):
+    user: schemas.User
+    settings: schemas.UserSettings
+    preferences: dict
+    profile: schemas.UserProfileResponse
+    notifications: dict
+
+
+@router.get('/page-context', response_model=PageContext)
+async def page_context(
+    db: Annotated[AsyncSession, Depends(get_db, scope='function')],
+    current_user: Annotated[User, Depends(get_current_user)],
+    response: Response,
+) -> PageContext:
+    from core.notification_feed import notification_feed
+    from core.profile_images import configured_background_url
+    from core.viewer_preferences import preference_data
+    from models.tracking import TrackingPreferences
+
+    response.headers['Cache-Control'] = 'private, no-store'
+    settings, prefs, global_settings = (await db.execute(select(UserSettings, TrackingPreferences, GlobalSettings)
+        .select_from(User).outerjoin(UserSettings, UserSettings.user_id == User.id)
+        .outerjoin(TrackingPreferences, TrackingPreferences.user_id == User.id)
+        .outerjoin(GlobalSettings, GlobalSettings.id == 1).where(User.id == current_user.id))).one()
+    # Normal registration creates settings; retain legacy first-visit defaults.
+    settings_data = (_project_settings_response(settings, global_settings) if settings
+        else await get_user_settings(db, current_user))
+    profile = current_user.profile  # Already joined by strict session authentication.
+    profile_data = schemas.UserProfileResponse.model_validate(profile) if profile else schemas.UserProfileResponse()
+    if profile:
+        profile_data.background_url = configured_background_url(profile, global_settings)
+        if profile.avatar_path:
+            profile_data.avatar_url = f'/profile/avatar/{current_user.id}'
+    return PageContext(user=schemas.User.model_validate(current_user), settings=settings_data,
+        preferences=preference_data(prefs, settings), profile=profile_data,
+        notifications=await notification_feed(db, current_user.id, prefs))
+
 @router.delete("/me")
 async def delete_user_me(
     db: AsyncSession = Depends(get_db, scope="function"),
@@ -429,14 +468,17 @@ async def delete_user_list(
     return {'status': 'deleted', 'category': category}
 
 async def _settings_response(settings: UserSettings, db: AsyncSession) -> schemas.UserSettings:
-    """Build a UserSettings schema response, injecting computed fields."""
+    result = await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))
+    gs = result.scalar_one_or_none()
+    return _project_settings_response(settings, gs)
+
+
+def _project_settings_response(settings: UserSettings, gs: GlobalSettings | None) -> schemas.UserSettings:
     data = schemas.UserSettings.model_validate(settings)
     data.trakt_connected = bool(settings.trakt_access_token)
     data.simkl_connected = bool(settings.simkl_access_token)
     data.mdblist_connected = bool(settings.mdblist_api_key)
     data.bingebase_connected = bool(settings.bingebase_webhook_url or settings.bingebase_api_key)
-    gs_result = await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))
-    gs = gs_result.scalar_one_or_none()
     data.has_rpdb_key = bool(settings.rpdb_api_key)
     data.has_global_tmdb_key = bool((gs and gs.tmdb_api_key) or app_settings.tmdb_api_key)
     data.has_effective_tmdb_key = bool(settings.tmdb_api_key) or data.has_global_tmdb_key

@@ -12,7 +12,9 @@ GAME_BASE = 7_000_000
 TITLE_COUNT = 6000
 GAME_COUNT = 2000
 HOT = 12
-LIBRARY_SIZE = 80
+LIBRARY_SIZE = int(os.environ.get('STRESS_LIBRARY_SIZE', '80'))
+if not 1 <= LIBRARY_SIZE <= 500:
+    raise ValueError('STRESS_LIBRARY_SIZE must be between 1 and 500')
 NOW = datetime.now(timezone.utc).replace(tzinfo=None)
 
 

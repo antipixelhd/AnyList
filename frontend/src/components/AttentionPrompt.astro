@@ -1,7 +1,8 @@
 ---
 import Icon from "./Icon.astro";
+const preferences = Astro.locals.pageContext?.preferences;
 ---
-<aside class="attention-prompt" data-attention-prompt hidden aria-live="polite" aria-label="Notification requiring attention">
+<aside class="attention-prompt" data-attention-prompt data-rating-popups={preferences ? JSON.stringify({show_new_ratings_popup:preferences.show_new_ratings_popup,show_season_rating_popup:preferences.show_season_rating_popup}) : undefined} hidden aria-live="polite" aria-label="Notification requiring attention">
   <button class="attention-prompt-mobile-close" type="button" data-attention-close aria-label="Dismiss notification"><Icon name="close" /></button>
   <img draggable="false" class="attention-prompt-poster" data-attention-poster alt="" hidden />
   <div class="attention-prompt-content">
@@ -224,8 +225,10 @@ document.addEventListener('astro:page-load', () => {
     else showNewRatingsPopup=Boolean(detail?.enabled);
     if (lastSnapshot) renderPrompt(lastSnapshot);
   }, { signal: pageListeners.signal });
-  void fetch('/api/proxy/tracking/preferences', {cache: 'no-store', signal: pageListeners.signal})
+  const initialPreferences = prompt.dataset.ratingPopups;
+  void (initialPreferences ? Promise.resolve(JSON.parse(initialPreferences)) : fetch('/api/proxy/tracking/preferences', {cache: 'no-store', signal: pageListeners.signal})
     .then(response => response.ok ? response.json() : Promise.reject(new Error('Preferences unavailable')))
+  )
     .then(preferences => {
       if (pageListeners.signal.aborted) return;
       if (!preferencesChangedLocally.has('show_new_ratings_popup'))showNewRatingsPopup = preferences.show_new_ratings_popup !== false;

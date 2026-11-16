@@ -55,6 +55,13 @@ async def store(user_id,kind,content):
 def background_route(user_id):return f'/api/proxy/profile/background/{user_id}'
 
 
+def configured_background_url(profile, config):
+    if not profile or not profile.background_url:return None
+    from core.image_cache import parse_image_url
+    size,path=parse_image_url(profile.background_url)
+    return background_route(profile.user_id) if config and config.image_cache_enabled and size and path else profile.background_url
+
+
 async def background_url(db,profile):
     if not profile or not profile.background_url:return None
     value=profile.background_url
@@ -64,4 +71,4 @@ async def background_url(db,profile):
     size,path=parse_image_url(value)
     if not size or not path:return value
     config=await settings_store.get_global_settings(db)
-    return background_route(profile.user_id) if config and config.image_cache_enabled and size and path else value
+    return configured_background_url(profile,config)

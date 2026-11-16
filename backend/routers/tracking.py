@@ -25,7 +25,7 @@ from core.season_completion import membership_key
 from models import Media, User, UserSettings, UserProfileData, Follow, Rating, Show, WatchEvent, Collection, CollectionFile, PlaybackProgress, PlaybackSession, MediaServerConnection, List, ListItem, ShowRewatch
 from models.base import MediaType, PrivacyLevel
 from models.tracking import MediaFavorite, TrackedEntry, TrackingActivity, TrackingDeliveryJob, TrackingDeletion, TrackingPreferences, SyncReview, StreamBaseline, ProviderIgnore, ProviderMatch, StreamAction, CloudAction
-from models.sync import SyncJob, SyncStatus
+from models.sync import SyncJob
 from schemas_list_categories import CategoryPatch, CategoryPresentation
 from schemas_statistics import MediaScope, OverviewResponse, StudioDetail, PersonDetail, StatisticsRefresh
 from schemas_contributors import ContributorKind, ContributorMediaScope, ContributorPage, ContributorImages, ContributorAvailability, ListScope
@@ -145,33 +145,11 @@ class PreferencePatch(BaseModel):
 
 @router.get('/preferences')
 async def preferences(db: AsyncSession = Depends(get_db, scope="function"), viewer: User = Depends(get_current_user)):
-    from core.list_categories import resolve
-    from core.game_browse_policy import preferences as game_preferences
     row=await db.get(TrackingPreferences,viewer.id)
     from models.users import UserSettings
     settings=await db.scalar(select(UserSettings).where(UserSettings.user_id == viewer.id))
-    return {
-        'list_categories': {'game': resolve(preferences=settings.preferences if settings else None)},
-        **game_preferences(settings.preferences if settings else None),
-        'minimum_popularity': (settings.preferences or {}).get('minimum_popularity', 25) if settings else 25,
-        'include_rereleases': bool(settings and (settings.preferences or {}).get('include_rereleases', False)),
-        'auto_confirm': bool(row and row.auto_confirm),
-        'auto_approve_uncertain_resume': bool(settings and (settings.preferences or {}).get('auto_approve_uncertain_resume') is True),
-        'watch_state_sync': (settings.preferences or {}).get('watch_state_sync', 'conservative') if settings else 'conservative',
-        'combine_lists': True if row is None else row.combine_lists,
-        'show_movies_series': True if row is None else row.show_movies_series,
-        'show_games': True if row is None else row.show_games,
-        'show_game_achievements': True if row is None else row.show_game_achievements,
-        'hide_erotic_games': not settings or (settings.preferences or {}).get('hide_erotic_games',True) is not False,
-        'default_sort': 'title' if row is None else row.default_sort,
-        'low_priority_notifications': True if row is None else row.low_priority_notifications,
-        'low_priority_retention_days': 7 if row is None else row.low_priority_retention_days,
-        'show_new_ratings_popup': True if row is None else row.show_new_ratings_popup,
-        'show_season_rating_popup': True if row is None else row.show_season_rating_popup,
-        'new_season_release_dates': True if row is None else row.new_season_release_dates,
-        'new_season_releases': True if row is None else row.new_season_releases,
-        'remove_specials_seasons': True if row is None else row.remove_specials_seasons,
-    }
+    from core.viewer_preferences import preference_data
+    return preference_data(row, settings)
 
 
 @router.patch('/preferences')
@@ -202,6 +180,10 @@ async def set_preferences(body: PreferencePatch, background_tasks: BackgroundTas
     tracking_changes = {name:value for name,value in changes.items() if name not in json_fields}
     if tracking_changes:
         row = await db.get(TrackingPreferences,viewer.id)
+        old_retention = row.low_priority_retention_days if row else 7
+        if tracking_changes.get('low_priority_retention_days', old_retention) > old_retention:
+            from core.notification_feed import retire_expired_reviews
+            await retire_expired_reviews(db, viewer.id, old_retention)
         if row is None:
             row = TrackingPreferences(user_id=viewer.id)
             db.add(row)
@@ -230,69 +212,7 @@ async def upcoming_seasons(db: AsyncSession = Depends(get_db, scope="function"),
     return {'results': results}
 
 
-def review_priority(review: SyncReview) -> str:
-    if review.kind in {'initial_import','initial_cloud_import','conflict','cloud_conflict','rating_conflict','deletion_conflict','unmatched_import','library_conflict','watch_conflict','progress_conflict','resume_conflict'}:
-        return 'high'
-    if review.kind == 'outbound_pending':
-        return 'medium'
-    return review.priority or 'low'
-
-
-_AUTH_FAILURE_MARKERS = (
-    '401', '403', 'auth', 'forbidden', 'invalid token', 'permission',
-    'refresh token', 'token expired', 'unauthorized',
-)
-
-
-def connection_failure_events(jobs, connection_names):
-    """Project durable job history into one current alert per provider/connection."""
-    groups = {}
-    for job in jobs:
-        source = job.source.value if hasattr(job.source, 'value') else str(job.source)
-        if job.connection_id is not None:
-            key = f'connection:{job.connection_id}'
-            title = connection_names.get(job.connection_id, source.title())
-            resolve_url = f'/connections#conn-body-{job.connection_id}'
-        elif source in {'trakt', 'simkl', 'mdblist'}:
-            key = f'provider:{source}'
-            title = source.title() if source != 'mdblist' else 'MDBList'
-            resolve_url = f'/connections#{source}-body'
-        else:
-            continue
-        group = groups.setdefault(key, {
-            'title': title, 'provider': source, 'resolve_url': resolve_url,
-            'failures': [], 'closed': False,
-        })
-        if group['closed']:
-            continue
-        if job.status == SyncStatus.completed:
-            group['closed'] = True
-        elif job.status == SyncStatus.failed:
-            group['failures'].append(job)
-
-    results = []
-    for key, group in groups.items():
-        failures = group['failures']
-        if not failures:
-            continue
-        error = (failures[0].error_message or '').lower()
-        auth_failure = any(marker in error for marker in _AUTH_FAILURE_MARKERS)
-        if not auth_failure and len(failures) < 2:
-            continue
-        title = group['title']
-        message = (f'{title} needs authorization before AnyList can sync again.' if auth_failure else
-            f'{title} has failed to sync repeatedly. Check the connection and retry it.')
-        results.append({
-            'id': f'connection-failure:{key}', 'kind': 'connection_failure',
-            'state': 'pending', 'provider': group['provider'], 'message': message,
-            'previous_status': None, 'proposed_status': None, 'previous_score': None,
-            'proposed_score': None, 'season_number': None, 'priority': 'high',
-            'dismissible': False, 'payload': {
-                'title': title, 'resolve_url': group['resolve_url'],
-                'reason': 'authorization' if auth_failure else 'repeated_failure',
-            }, 'media': None, 'created_at': failures[0].updated_at,
-        })
-    return results
+from core.notification_feed import review_priority, connection_failure_events, review_data
 
 
 def group_outbound_delivery(stream_actions, cloud_actions, review_rows, markers, connection_names,
@@ -340,6 +260,13 @@ def group_outbound_delivery(stream_actions, cloud_actions, review_rows, markers,
         group['state']='conflict' if any(item['state']=='conflict' for item in deliveries) else 'pending'
         outbound.append(group)
     return outbound
+
+
+@router.get('/notifications')
+async def notifications(db: CategoryDB, viewer: CategoryViewer, response: Response) -> dict:
+    from core.notification_feed import notification_feed
+    response.headers['Cache-Control'] = 'private, no-store'
+    return await notification_feed(db, viewer.id, await db.get(TrackingPreferences, viewer.id))
 
 
 @router.get('/recent-events')
@@ -433,10 +360,7 @@ async def recent_events(db: AsyncSession = Depends(get_db, scope="function"), vi
     outbound=group_outbound_delivery(actions,cloud_actions,outbound_review_rows,markers,connection_names,
         library_actions,watch_intents)
     return {'pending':pending,'outbound':outbound,
-        'results':import_events+failure_events+[{'id':r.id,'kind':r.kind,'state':r.state,'provider':r.provider,'message':r.message,'previous_status':r.previous_status,'proposed_status':r.proposed_status,
-                    'previous_score':r.previous_score,'proposed_score':r.proposed_score,'season_number':r.season_number,
-                    'priority':review_priority(r),'dismissible':r.state!='pending' or r.kind in {'new_season_release_date','new_season_release'},'payload':r.payload or {},
-                    'media':tracking_projection.media_data(m) if m else None,'created_at':r.created_at} for r,m in rows]}
+        'results':import_events+failure_events+[review_data(r,m) for r,m in rows]}
 
 
 class SeenReviews(BaseModel):

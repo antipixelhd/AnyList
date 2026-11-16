@@ -48,6 +48,15 @@ test('app bar starts notifications while its shared preferences read is still pe
     viewerProfilePreferences:()=>{calls.push('profile');return Promise.resolve(null);},
     tracker:path=>{calls.push(path);return Promise.resolve({results:[]});},
   });
-  assert.deepEqual(calls,['recent-events','profile']);
+  assert.deepEqual(calls,['notifications','profile']);
   media.resolve({combine_lists:true});await pending;
+});
+
+test('page context supplies private preferences and profile without repeat API reads',async()=>{
+  const profileSource=stripTypeScriptTypes(read('../src/lib/viewer-profile-preferences.ts')).replace(/^import .*;$/gm,'').replace('export function','function');
+  const profile=runInNewContext(profileSource+';viewerProfilePreferences',{api:{profile:{get:()=>{throw new Error('duplicate profile read');}}}});
+  const value={avatar_url:'/private/1'},locals={token:'a',pageContext:{profile:value}};
+  assert.equal(await profile(locals),value);
+  const middleware=read('../src/middleware.ts');
+  assert(middleware.includes('context.locals.pageContext?.settings ??'));
 });
