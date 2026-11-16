@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import os
 import subprocess
 import time
 import urllib.request
@@ -80,6 +81,7 @@ def monitor(args):
             with Path('/proc/meminfo').open() as info:
                 available_kb = next(int(line.split()[1]) for line in info if line.startswith('MemAvailable:'))
             sample = {'unix': time.time(), 'host_mem_available_mib': round(available_kb/1024),
+                      'clock_ticks': os.sysconf('SC_CLK_TCK'), 'host_cpu_count': os.cpu_count(),
                       'cgroup_mem_mib': round(int((cgroup/'memory.current').read_text())/1048576),
                       'cgroup_cpu': cgroup_cpu, 'host_cpu': host_cpu, 'process_ticks': by_process,
                       'process_counters': processes,

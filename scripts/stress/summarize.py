@@ -3,6 +3,8 @@
 import argparse
 import json
 import math
+from collections import defaultdict
+from itertools import pairwise
 from pathlib import Path
 
 
@@ -17,6 +19,27 @@ def p95(values):
 
 def pressure(sample, field):
     return int(sample[field].splitlines()[0].rsplit('total=', 1)[1])
+
+
+def process_usage(resources):
+    """Attribute CPU to surviving PID pairs; aggregates lose exiting backends."""
+    a, b = resources[0], resources[-1]
+    wall = b['unix']-a['unix']
+    ticks = a.get('clock_ticks', 100)  # Historical Ubuntu samples used CLK_TCK=100.
+    if not all('process_counters' in sample for sample in resources):
+        return {role: round((b['process_ticks'][role]-a['process_ticks'][role])/(ticks*wall), 3)
+                for role in sorted(set(a['process_ticks']) & set(b['process_ticks']))
+                if b['process_ticks'][role] >= a['process_ticks'][role]}, 'legacy_aggregate'
+    usage = defaultdict(int)
+    for left, right in pairwise(resources):
+        for pid, previous in left['process_counters'].items():
+            current = right['process_counters'].get(pid)
+            if current is None or current['start_ticks'] != previous['start_ticks']:
+                continue
+            delta = current['user_ticks']+current['system_ticks']-previous['user_ticks']-previous['system_ticks']
+            if delta >= 0:
+                usage[previous['role']] += delta
+    return {role: round(value/(ticks*wall), 3) for role, value in sorted(usage.items())}, 'surviving_pid_pairs'
 
 
 def summary(stage, host):
@@ -58,13 +81,17 @@ def summary(stage, host):
         percentages = {key: (b['host_cpu'][key]-a['host_cpu'][key])*100/elapsed_ticks
                        for key in ('idle', 'iowait', 'steal')}
         periods = b_cpu['nr_periods']-a_cpu['nr_periods']
-        by_process = {}
-        for role in sorted(set(b['process_ticks']) & set(a['process_ticks'])):
-            if b['process_ticks'][role] >= a['process_ticks'][role]:
-                by_process[role] = round((b['process_ticks'][role]-a['process_ticks'][role])/(100*wall), 3)
+        by_process, cpu_method = process_usage(resources)
+        tick_seconds = a.get('clock_ticks', 100)*wall
+        host_busy_cores = (elapsed_ticks-sum(b['host_cpu'][key]-a['host_cpu'][key]
+            for key in ('idle', 'iowait', 'steal')))/tick_seconds
+        benchmark_cores = (b_cpu['usage_usec']-a_cpu['usage_usec'])/(1e6*wall)
         values.update(
-            benchmark_average_cpu_cores=round((b_cpu['usage_usec']-a_cpu['usage_usec'])/(1e6*wall), 3),
+            benchmark_average_cpu_cores=round(benchmark_cores, 3),
             process_average_cpu_cores=by_process,
+            process_cpu_method=cpu_method,
+            host_outside_benchmark_average_cpu_cores=round(host_busy_cores-benchmark_cores, 3),
+            benchmark_cpu_pressure_percent=round((pressure(b, 'cpu_pressure')-pressure(a, 'cpu_pressure'))/(wall*1e4), 2),
             throttle_period_percent=round((b_cpu['nr_throttled']-a_cpu['nr_throttled'])*100/max(1, periods), 2),
             host_busy_percent=round(100-sum(percentages.values()), 2),
             host_iowait_percent=round(percentages['iowait'], 2), host_steal_percent=round(percentages['steal'], 2),
