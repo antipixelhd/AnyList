@@ -84,6 +84,10 @@ for attempt in $(seq 1 40); do
 done
 test "$ready" = 1
 "$python" "$root/scripts/stress/load.py" "$state/fixture.json" "$state/unused.jsonl" --smoke
+if [[ ${STRESS_ACCOUNT_PREPARE:-0} == 1 ]]; then
+    "$python" "$root/scripts/stress/account_prepare_http.py" "$state/account-prepare-http.json"
+    exit 0
+fi
 if [[ ${1:-} == '--smoke' ]]; then exit 0; fi
 "$pg/psql" -X -q -d anylist_test_stress -c 'SELECT stress_metrics.pg_stat_statements_reset();' >/dev/null
 

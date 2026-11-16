@@ -175,6 +175,9 @@ def observe_database(engine):
     def statement_ended(conn, cursor, statement, params, context, executemany):
         sql['count'] += 1
         sql['ms'] += (time.perf_counter() - context.stress_start) * 1000
+        if os.getenv('STRESS_PROFILE') == '1':
+            from cpu_profile import task_origin
+            sql['origin:'+task_origin()] += 1
         if statement == 'SELECT pg_advisory_xact_lock(735903601)':
             origin = lock_origin()
             waited = (time.perf_counter()-context.stress_start)*1000
@@ -204,6 +207,9 @@ def configure_app():
     from cpu_profile import ProcessTelemetry, record_process
     from db import engine
     from main import app
+    if os.getenv('STRESS_ACCOUNT_PREPARE') == '1':
+        from account_prepare_http import install
+        install(app)
     app.add_middleware(ProcessTelemetry, finish=record_process(
         'api', lambda: {'providers': dict(provider_requests), 'sql': dict(sql)}))
     observe_database(engine)

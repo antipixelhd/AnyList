@@ -3,21 +3,57 @@ import asyncio
 import atexit
 import json
 import os
+import re
 import signal
 import time
 from collections import Counter
+from contextvars import ContextVar
 from multiprocessing.util import Finalize
 from pathlib import Path
 
 _started = False
 _finish = None
+_request_work = ContextVar('stress_request_work', default=None)
+
+
+def task_origin():
+    """Attribute CPU across ORM greenlets and post-response continuations."""
+    try:
+        task = asyncio.current_task()
+    except RuntimeError:
+        task = None
+    work = _request_work.get()
+    if work is not None:
+        route = work['scope'].get('route')
+        path = getattr(route, 'path', None) or re.sub(r'\d+', ':id', work['scope']['path'])
+        phase = ('http' if not work['sent'] else 'after_response') if task is work['owner'] else 'spawned'
+        return f'{phase}:{work["scope"]["method"]} {path}'
+    coroutine = task.get_coro() if task else None
+    code = getattr(coroutine, 'cr_code', None) or getattr(coroutine, 'gi_code', None)
+    if code is None:
+        return 'event_loop'
+    path = code.co_filename.replace('\\', '/')
+    return 'task:'+path.split('/backend/')[-1].rsplit('/site-packages/', 1)[-1]+':'+code.co_name
 
 
 class ProcessTelemetry:
     def __init__(self, app, finish):
         self.app, self.finish = app, finish
+        self.profiling = os.getenv('STRESS_PROFILE') == '1'
 
     async def __call__(self, scope, receive, send):
+        if scope['type'] == 'http' and self.profiling:
+            work = {'scope': scope, 'owner': asyncio.current_task(), 'sent': False}
+            token = _request_work.set(work)
+
+            async def response_sent(message):
+                await send(message)
+                if message['type'] == 'http.response.body' and not message.get('more_body', False):
+                    work['sent'] = True
+            try:
+                return await self.app(scope, receive, response_sent)
+            finally:
+                _request_work.reset(token)
         if scope['type'] != 'lifespan':
             return await self.app(scope, receive, send)
 
@@ -37,6 +73,7 @@ def record_process(role, metrics):
     folder = Path(os.environ['DATA_DIR']).parent
     profiling = os.getenv('STRESS_PROFILE') == '1'
     samples = Counter()
+    origins = Counter()
     cpu_start, wall_start = time.process_time(), time.monotonic()
     previous_handler = None
     if profiling:
@@ -63,6 +100,7 @@ def record_process(role, metrics):
                 if coroutine is None:
                     break
             samples[tuple(stack)] += 1
+            origins[(int(time.time()), task_origin())] += 1
 
         previous_handler = signal.signal(signal.SIGPROF, sample)
         signal.setitimer(signal.ITIMER_PROF, .01, .01)
@@ -80,6 +118,8 @@ def record_process(role, metrics):
                 'cpu_seconds': time.process_time()-cpu_start, 'wall_seconds': time.monotonic()-wall_start,
                 'interval_seconds': .01, 'stacks': [
                     {'frames': frames, 'samples': count} for frames, count in samples.most_common()],
+                'origins': [{'second': second, 'origin': origin, 'samples': count}
+                    for (second, origin), count in sorted(origins.items())],
             }))
         (folder / f'metrics-{role}-{os.getpid()}.json').write_text(json.dumps(metrics()))
 
