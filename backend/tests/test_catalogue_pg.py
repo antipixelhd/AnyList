@@ -823,6 +823,25 @@ class CatalogueDatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNotNone(state.next_attempt_at)
         self.assertEqual((await refresh())["status"], "last_good")
 
+    async def test_catalogue_write_lock_reacquires_after_a_savepoint_rollback(self):
+        test_lock = text("SELECT pg_try_advisory_xact_lock(735903601)")
+        async with self.Session() as writer, self.Session() as probe:
+            savepoint = await writer.begin_nested()
+            await catalogue.write_lock(writer)
+            self.assertFalse(await probe.scalar(test_lock))
+            await probe.rollback()
+            await savepoint.rollback()
+            self.assertTrue(await probe.scalar(test_lock))
+            await probe.rollback()
+
+            await catalogue.write_lock(writer)
+            async with writer.begin_nested():
+                await catalogue.write_lock(writer)
+            self.assertFalse(await probe.scalar(test_lock))
+            await probe.rollback()
+            await writer.commit()
+            self.assertTrue(await probe.scalar(test_lock))
+
     async def test_snapshot_claim_and_cancellation_do_not_wait_for_unrelated_catalogue_write(self):
         started = asyncio.Event()
         provider_wait = asyncio.Event()
@@ -1031,7 +1050,7 @@ class CatalogueDatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result["status"], "last_good")
             self.assertEqual(result["error_code"], "ingestion_failed")
             self.assertNotIn("private", str(result))
-            await db.refresh(state)
+            await db.refresh(state, attribute_names=["payload", "lease_token", "next_attempt_at"])
             self.assertEqual(state.payload, {"known": "payload"})
             self.assertIsNone(state.lease_token)
             self.assertIsNotNone(state.next_attempt_at)
@@ -1049,7 +1068,7 @@ class CatalogueDatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result["status"], "last_good")
             self.assertEqual(result["error_code"], "ingestion_failed")
             await db.refresh(work)
-            await db.refresh(state)
+            await db.refresh(state, attribute_names=["payload"])
             self.assertEqual(work.name, name)
             self.assertEqual(state.payload, {"known": "payload"})
 

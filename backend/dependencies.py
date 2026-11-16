@@ -4,7 +4,7 @@ from fastapi.security import OAuth2PasswordBearer
 from jose import jwt, JWTError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload
 
 from db import get_db
 from models.users import User
@@ -55,9 +55,7 @@ async def _user_from_device_grant(db: AsyncSession, payload: dict) -> Optional[U
     ):
         return None
 
-    # No selectinload(User.profile) here, matching the API-key branch of
-    # get_current_user_or_api_key - these non-session callers hit data
-    # endpoints, not the profile-rendering pages.
+    # Device grants and API keys load the account for data endpoints.
     user_result = await db.execute(select(User).where(User.id == user_id))
     return _work_user(user_result.scalar_one_or_none())
 
@@ -100,7 +98,7 @@ async def get_current_user(
     except (JWTError, TypeError, ValueError):
         raise credentials_exception
 
-    query = select(User).where(User.id == token_data.sub).options(selectinload(User.profile))
+    query = select(User).where(User.id == token_data.sub).options(joinedload(User.profile))
     result = await db.execute(query)
     user = result.scalar_one_or_none()
     
@@ -138,7 +136,7 @@ async def get_optional_user(
     except (JWTError, ValueError, TypeError):
         return None
 
-    query = select(User).where(User.id == user_id).options(selectinload(User.profile))
+    query = select(User).where(User.id == user_id).options(joinedload(User.profile))
     result = await db.execute(query)
     user = result.scalar_one_or_none()
     return _work_user(user) if user is not None and session_is_current(user, payload) else None
@@ -178,7 +176,7 @@ async def get_tracking_write_user(
     except (JWTError, TypeError, ValueError):
         raise credentials_exception
 
-    result = await db.execute(select(User).where(User.id == user_id).options(selectinload(User.profile)))
+    result = await db.execute(select(User).where(User.id == user_id).options(joinedload(User.profile)))
     user = result.scalar_one_or_none()
     if user is None or not session_is_current(user, payload):
         raise credentials_exception

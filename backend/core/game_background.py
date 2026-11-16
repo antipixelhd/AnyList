@@ -82,6 +82,35 @@ async def observe(db, games, *, category, source, user_id=None, ttl=timedelta(da
     wake_runner()
 
 
+_UPSERT_LIST_INTERESTS = text("""
+    INSERT INTO game_mapper_interests (source, game, category, user_id, expires_at)
+    SELECT 'list:' || incoming.user_id, incoming.game, 1, incoming.user_id, :expires_at
+    FROM jsonb_to_recordset(CAST(:interests AS jsonb)) AS incoming(user_id integer, game text)
+    ON CONFLICT (source, game) DO UPDATE
+    SET category = excluded.category, expires_at = excluded.expires_at
+    WHERE game_mapper_interests.category != 1 OR game_mapper_interests.expires_at <= :refresh_before
+    RETURNING game
+""")
+
+
+async def observe_list_batch(db, rows, *, removed):
+    works = {native: work for _, _, work, native in rows if native.isdigit()}
+    pairs = {(user, native) for _, user, _, native in rows if native in works}
+    changed = set()
+    if pairs:
+        expires_at = now() + timedelta(days=1)
+        changed = set(await db.scalars(_UPSERT_LIST_INTERESTS, {
+            'interests': json.dumps([{'user_id': user, 'game': native} for user, native in sorted(pairs)]),
+            'expires_at': expires_at,
+            'refresh_before': expires_at - timedelta(hours=1),
+        }))
+        await add_items(db, 'game', [(native, works[native]) for native in changed])
+    await refresh_weights(db, sorted(changed.union(removed)))
+    if changed:
+        wake()
+        wake_runner()
+
+
 async def refresh_weights(db, natives, *, extra_targets=()):
     if not natives:return
     await feed_lock(db)
@@ -172,7 +201,11 @@ class GameBackground:
 
     async def seed_lists(self,db,runner):
         payload=dict(runner.payload)
-        seed_due=payload.get('lists_due','')<=now().isoformat()
+        stamp=now().isoformat()
+        seed_due=payload.get('lists_due','')<=stamp
+        cleanup_due=payload.get('cleanup_due','')<=stamp
+        if not seed_due and not cleanup_due:
+            return False
         await feed_lock(db)
         from sqlalchemy import tuple_
         phase=payload.get('list_source',0)
@@ -190,7 +223,7 @@ class GameBackground:
             .order_by(*order).limit(250))).all() if seed_due else []
         # Validate removals from imports/account deletion too, without loading libraries.
         removed=[]
-        if payload.get('cleanup_due','')<=now().isoformat():
+        if cleanup_due:
             work=select(CatalogueIdentity.entity_id).where(CatalogueIdentity.namespace=='igdb.game',
                 CatalogueIdentity.external_id==GameMapperInterest.game).correlate(GameMapperInterest).scalar_subquery()
             existing=or_(select(GameEntry.id).where(GameEntry.user_id==GameMapperInterest.user_id,GameEntry.work_id==work).exists(),
@@ -207,12 +240,8 @@ class GameBackground:
                 removed=[native for _,native in stale]
             payload['cleanup_cursor']=[batch[-1].source,batch[-1].game] if len(batch)==250 else None
             payload['cleanup_due']=(now()+timedelta(seconds=0 if len(batch)==250 else 600)).isoformat()
-        await refresh_weights(db,removed)
+        await observe_list_batch(db, rows, removed=removed)
         if rows:
-            by_user={}
-            for _,user,work,native in rows:by_user.setdefault(user,[]).append((native,work))
-            for user,games in by_user.items():
-                await observe(db,games,category=1,source=f'list:{user}',user_id=user,ttl=timedelta(days=1))
             payload['list_cursor']=[rows[-1][1],rows[-1][2]] if phase==2 else rows[-1][0]
         if seed_due and len(rows)<250:
             payload.update(list_cursor=0,list_source=(phase+1)%3,

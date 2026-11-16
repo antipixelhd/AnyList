@@ -85,7 +85,13 @@ def validate_identity(namespace, external_id, kind=None):
 async def write_lock(db):
     # A small catalogue uses one short write lane. This also prevents races
     # between imports with disjoint native IDs but a common authoritative ID.
+    transaction = db.sync_session.get_transaction()
+    if transaction is not None and db.info.get('catalogue_write_transaction') is transaction:
+        return
     await db.execute(text("SELECT pg_advisory_xact_lock(735903601)"))
+    # Rolling back a savepoint releases any locks taken in that savepoint.
+    if not db.in_nested_transaction():
+        db.info['catalogue_write_transaction'] = db.sync_session.get_transaction()
 
 
 async def resolve_identity(db, namespace, external_id):
@@ -307,7 +313,10 @@ async def upsert(db, model, values, keys, preserve_missing=False):
         statement = statement.on_conflict_do_update(index_elements=keys, set_=update)
     else:
         statement = statement.on_conflict_do_nothing(index_elements=keys)
-    await db.execute(statement)
+    row = (await db.scalars(statement.returning(model),
+                            execution_options={"populate_existing": True})).one_or_none()
+    if row is not None:
+        return row
     return (
         await db.execute(
             select(model).where(*(getattr(model, k) == values[k] for k in keys)).execution_options(populate_existing=True)
