@@ -63,6 +63,7 @@ class Settings(BaseSettings):
     game_background_mapper_enabled: bool = True
     catalogue_worker_mode: Literal["embedded", "external"] = "embedded"
     api_read_workers: int = Field(default=0, ge=0, le=8)
+    sync_concurrency: int = Field(default=2, ge=1, le=8)
     registration_max_allowed_users: int = 0
 
     # Server defaults survive database resets; account/global DB overrides win.

@@ -19,7 +19,7 @@ install_access_log_redaction()
 
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from slowapi.middleware import SlowAPIMiddleware
+from core.limiter import GlobalRateLimitMiddleware
 from core.limiter import limiter
 
 from sqlalchemy import update, delete
@@ -75,7 +75,7 @@ from core.config import settings
 app = FastAPI(title="AnyList", version=settings.app_version, lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-app.add_middleware(SlowAPIMiddleware)
+app.add_middleware(GlobalRateLimitMiddleware)
 from core.game_work import GameWorkMiddleware
 app.add_middleware(GameWorkMiddleware)
 from core.read_workers import ReadWorkerMiddleware

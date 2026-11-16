@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from typing import Any, Literal
 
 from dateutil import parser
-from sqlalchemy import DateTime, bindparam, cast, delete, func, select, update
+from sqlalchemy import DateTime, bindparam, cast, delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import JSONB, insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -36,6 +36,8 @@ from core import (
 )
 from core.catalog_import import get_or_create_series_media
 from core.connection_identity import refresh_stream_connection
+from core.config import settings
+from core.sync_admission import SyncAdmission
 from core.db_queries import select_in_chunks as _select_in_chunks
 from core.enrichment import (
     apply_media_change_safely,
@@ -91,7 +93,7 @@ async def _record_full_push_visibility_echo(db, conn, written) -> None:
     await db.commit()
 
 
-_sync_semaphore = asyncio.Semaphore(1)
+_sync_admission = SyncAdmission(settings.sync_concurrency)
 
 
 BATCH_SIZE = 500
@@ -233,7 +235,7 @@ async def sync_shows_batch(
     Fetch and insert all shows in parallel (up to TMDB_CONCURRENCY concurrent requests).
     Returns (show_map: source_id→show.id, show_id_to_tmdb: show.id→series_tmdb_id).
     """
-    all_tmdb_ids = list({tid for tid in series_tmdb_map.values() if tid})
+    all_tmdb_ids = sorted({tid for tid in series_tmdb_map.values() if tid})
 
     # Bulk load already-known shows (chunked to stay under asyncpg's 32767-param limit)
     existing_shows: dict[int, Show] = {}
@@ -254,7 +256,7 @@ async def sync_shows_batch(
         tid for tid in all_tmdb_ids
         if tid in existing_shows and existing_shows[tid].status in ACTIVE_STATUSES
     ]
-    to_fetch = list({*missing, *stale})
+    to_fetch = sorted({*missing, *stale})
     print(f"    {len(existing_shows)} shows in DB, fetching {len(missing)} new + {len(stale)} active from TMDB...")
 
     semaphore = asyncio.Semaphore(TMDB_CONCURRENCY)
@@ -277,7 +279,7 @@ async def sync_shows_batch(
         # wants; the rest are left for link_show_ids to sort out later.
         wanted_tvdb: dict[int, int] = {}
         tvdb_claims: dict[int, int] = {}
-        for tmdb_id, d in fetched.items():
+        for tmdb_id, d in sorted(fetched.items()):
             ext_tvdb = coerce_id((d.get("external_ids") or {}).get("tvdb_id"))
             if ext_tvdb:
                 wanted_tvdb.setdefault(ext_tvdb, tmdb_id)
@@ -301,7 +303,7 @@ async def sync_shows_batch(
             return ext_tvdb
 
         values = []
-        for tmdb_id, d in fetched.items():
+        for tmdb_id, d in sorted(fetched.items()):
             values.append({
                 "tmdb_id": tmdb_id,
                 "tvdb_id": _claimable_tvdb_id(tmdb_id, d),
@@ -375,11 +377,18 @@ async def sync_shows_batch(
             stmt = stmt.on_conflict_do_update(
                 index_elements=["tmdb_id"],
                 set_=set_,
+                where=or_(*(getattr(Show, key).is_distinct_from(value) for key, value in set_.items())),
             )
             stmt = stmt.returning(Show)
-            res = await db.execute(stmt)
+            res = await db.execute(stmt.execution_options(populate_existing=True))
             for s in res.scalars().all():
                 existing_shows[s.tmdb_id] = s
+        # A racing insert with identical metadata is a no-op and has no
+        # RETURNING row, but must still appear in the source's show mapping.
+        raced = [native for native in fetched if native not in existing_shows]
+        if raced:
+            for show in await _select_in_chunks(db, lambda chunk: select(Show).where(Show.tmdb_id.in_(chunk)), raced):
+                existing_shows[show.tmdb_id] = show
 
     show_map: dict[str, int] = {}
     show_id_to_tmdb: dict[int, int] = {}
@@ -745,6 +754,14 @@ async def sync_items(
     full_resync: bool = False,
 ) -> list[dict]:  # returns warnings
     items = _expand_multi_episode_items(items, media_type, source)
+    def canonical_order(item):
+        native = (get_jellyfin_tmdb_id(item.get('ProviderIds', {}))
+                  if source in _MEDIA_BROWSER_ITEM_SOURCES else plex.extract_tmdb_id(item.get('Guid', [])))
+        return native or 2**63
+    # Concurrent accounts may import the same public identities in reverse
+    # provider order. Acquire their unique-index/row locks consistently;
+    # the stable sort retains the order of duplicate observations of one title.
+    items = sorted(items, key=canonical_order)
     from core.sync_reconciliation import collecting
     collection_stage = collecting(user_id) if sync_collection and connection_id else None
     if collection_stage:
@@ -938,17 +955,45 @@ async def sync_items(
     # collection_id → earliest add-date seen this run, applied in batches so a
     # large library costs one statement per batch rather than one per item.
     collection_heals: dict[int, datetime] = {}
+    allocated: dict[int, int] = {}
+    unclaimed: set[int] = set()
+    initial_dates: dict[int, datetime] = {}
 
     async def flush_collection_heals() -> None:
-        if not collection_heals:
-            return
-        await db.execute(
-            collection_added_at_heal_stmt(),
-            [{"b_id": cid, "b_added": dt} for cid, dt in collection_heals.items()],
-        )
+        if initial_dates:
+            # A first successful source observation may legitimately be future
+            # dated. Set it exactly before applying the normal earliest heal.
+            await db.execute(update(Collection.__table__).where(Collection.id == bindparam('b_id'))
+                .values(added_at=bindparam('b_added')),
+                [{'b_id': identifier, 'b_added': stamp} for identifier, stamp in initial_dates.items()])
+        if collection_heals:
+            await db.execute(
+                collection_added_at_heal_stmt(),
+                [{"b_id": cid, "b_added": dt} for cid, dt in collection_heals.items()],
+            )
         collection_heals.clear()
+        if unclaimed:
+            empty = list(await db.scalars(delete(Collection).where(Collection.id.in_(
+                [allocated[media_id] for media_id in unclaimed]),
+                ~select(CollectionFile.id).where(CollectionFile.collection_id == Collection.id).exists())
+                .returning(Collection.media_id)))
+            for media_id in empty:
+                existing_coll_by_media_id.pop(media_id, None)
+        allocated.clear()
+        unclaimed.clear()
+        initial_dates.clear()
 
     for i, item in enumerate(items):
+        if i % BATCH_SIZE == 0 and sync_collection and connection_id is not None and media_type == MediaType.movie:
+            from core.sync_collection import preallocate_memberships
+            natives = [get_jellyfin_tmdb_id(row.get('ProviderIds', {})) if source in _MEDIA_BROWSER_ITEM_SOURCES
+                       else plex.extract_tmdb_id(row.get('Guid', [])) for row in items[i:i+BATCH_SIZE]]
+            candidates = {media.id for native in natives if (media := media_by_tmdb.get((native, media_type)))
+                          and media.id not in existing_coll_by_media_id}
+            known, created = await preallocate_memberships(db, user_id, candidates)
+            existing_coll_by_media_id.update(known)
+            allocated.update(created)
+            unclaimed.update(created)
         if (
             i % BATCH_SIZE == 0
             and snapshot_started_at is not None
@@ -1373,6 +1418,13 @@ async def sync_items(
             # Savepoint committed, so queue the collection's add-date only now:
             # an item that rolled back must not leave a heal behind for work
             # that was undone.
+            if new_file_media_id in unclaimed:
+                unclaimed.remove(new_file_media_id)
+                stats['movies'] = stats.get('movies', 0)+1
+                if new_collected_ids is not None:
+                    new_collected_ids.add(new_file_media_id)
+                if added_at is not None:
+                    initial_dates[allocated[new_file_media_id]] = added_at
             if collection_stage and media_id_for_watch is not None:
                 collection_stage.collection_files[(connection_id, media_id_for_watch, source_id)] = (
                     connection_id, media_id_for_watch, source_id, source, added_at, dict(quality))
@@ -1465,12 +1517,12 @@ async def sync_items(
 
 
 async def run_jellyfin_sync(user_id: int, job_id: int, movie_limit: int, show_limit: int, connection_id: int | None = None):
-    async with _sync_semaphore:
+    async with _sync_admission.slot(user_id):
         await _run_media_browser_sync("jellyfin", user_id, job_id, movie_limit, show_limit, connection_id)
 
 
 async def run_emby_sync(user_id: int, job_id: int, movie_limit: int, show_limit: int, connection_id: int | None = None):
-    async with _sync_semaphore:
+    async with _sync_admission.slot(user_id):
         await _run_media_browser_sync("emby", user_id, job_id, movie_limit, show_limit, connection_id)
 
 
@@ -2101,7 +2153,7 @@ def plex_sync_needs_library_scan(conn) -> bool:
 
 
 async def run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit: int, connection_id: int | None = None):
-    async with _sync_semaphore:
+    async with _sync_admission.slot(user_id):
         await _run_plex_sync(user_id, job_id, movie_limit, show_limit, connection_id)
 
 
@@ -2888,7 +2940,7 @@ async def run_nuvio_sync(
     full_resync: bool = False,
     *, probe=None, probe_signature=None,
 ):
-    async with _sync_semaphore:
+    async with _sync_admission.slot(user_id):
         await _run_nuvio_sync(user_id, job_id, movie_limit, show_limit, connection_id, full_resync,
             probe=probe, probe_signature=probe_signature)
 
@@ -3560,7 +3612,7 @@ async def run_stremio_sync(
     full_resync: bool = False,
     *, probe=None, probe_signature=None,
 ) -> None:
-    async with _sync_semaphore:
+    async with _sync_admission.slot(user_id):
         await _run_stremio_sync(
             user_id,
             job_id,
@@ -4171,7 +4223,7 @@ async def run_arvio_sync(
     show_limit: int,
     connection_id: int | None = None,
 ) -> None:
-    async with _sync_semaphore:
+    async with _sync_admission.slot(user_id):
         await _run_arvio_sync(user_id, job_id, movie_limit, show_limit, connection_id)
 
 

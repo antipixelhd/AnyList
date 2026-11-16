@@ -1,7 +1,30 @@
 """Stage provider membership until the account reconciliation transaction."""
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 
 from models import Collection, CollectionFile, MediaServerConnection
+
+
+async def preallocate_memberships(db, user_id, media_ids):
+    """Allocate one bounded batch of cached titles without per-file SQL reads.
+
+    The caller retains per-item file savepoints and removes unused allocations
+    before committing the batch. A webhook that wins the unique-key race keeps
+    its existing membership and add-date.
+    """
+    if not media_ids:
+        return {}, {}
+    statement = insert(Collection).values([
+        {'user_id': user_id, 'media_id': media_id} for media_id in sorted(set(media_ids))])
+    created = {media: identifier for identifier, media in (await db.execute(
+        statement.on_conflict_do_nothing(constraint='uq_collection_user_media')
+        .returning(Collection.id, Collection.media_id))).all()}
+    known = dict(created)
+    missing = set(media_ids)-known.keys()
+    if missing:
+        known.update((await db.execute(select(Collection.media_id, Collection.id).where(
+            Collection.user_id == user_id, Collection.media_id.in_(missing)))).all())
+    return known, created
 
 
 async def apply_memberships(db, state):

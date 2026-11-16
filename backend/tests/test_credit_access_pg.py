@@ -77,7 +77,10 @@ class CreditAccessTests(unittest.IsolatedAsyncioTestCase):
                 await db.flush();await asyncio.sleep(.02);await db.commit()
         await asyncio.gather(*(add(work_id) for work_id in work_ids))
         async with self.Session() as db:
-            self.assertEqual((await db.get(ContributorSearch,person)).work_count,3)
+            # This test deliberately rebuilt the mt050 schema, before game
+            # summary columns existed. Read the screen contract it installed.
+            self.assertEqual(await db.scalar(select(ContributorSearch.work_count)
+                .where(ContributorSearch.entity_id==person)),3)
 
     async def test_refresh_preserves_credit_ids_links_and_skips_equal_credit_updates(self):
         async with self.Session() as db:
@@ -172,7 +175,7 @@ class CreditAccessTests(unittest.IsolatedAsyncioTestCase):
                 mixed['credits'].append(credit)
             queries=[]
             def record(conn,cursor,statement,parameters,context,executemany):queries.append(statement)
-            revision=await db.scalar(text('SELECT revision FROM stats_metadata_revision WHERE id=1'))
+            revision=await db.scalar(text('SELECT sum(revision) FROM stats_metadata_revision'))
             event.listen(self.engine.sync_engine,'before_cursor_execute',record)
             try:
                 await catalogue.ingest_document(db,mixed,'tvdb');await db.commit()
@@ -181,7 +184,7 @@ class CreditAccessTests(unittest.IsolatedAsyncioTestCase):
             self.assertLess(len(queries),80)
             # Counts statements actually fired by PostgreSQL, including those
             # hidden inside a driver's executemany event.
-            self.assertLess((await db.scalar(text('SELECT revision FROM stats_metadata_revision WHERE id=1')))-revision,60)
+            self.assertLess((await db.scalar(text('SELECT sum(revision) FROM stats_metadata_revision')))-revision,60)
             await db.refresh(alias)
             self.assertEqual(alias.canonical_person_id,root)
             self.assertEqual(await db.scalar(select(func.count()).select_from(CatalogueCredit).where(

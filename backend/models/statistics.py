@@ -10,6 +10,7 @@ from .base import Base
 
 
 class StatsMetadataRevision(Base):
+    """Transactional shards; their committed sum is the shared metadata cutoff."""
     __tablename__ = "stats_metadata_revision"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     revision: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")

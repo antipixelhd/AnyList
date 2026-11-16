@@ -7,6 +7,7 @@ import re
 import time
 from collections import Counter
 from contextlib import asynccontextmanager
+from weakref import WeakKeyDictionary
 
 import httpx
 from fastapi import FastAPI, Request, Response
@@ -147,13 +148,65 @@ async def jellyfin_request(path: str, request: Request):
     return {'Id': path.rsplit('/', 1)[-1], 'ServerName': 'Synthetic Jellyfin', 'Version': '10.11.0'}
 
 
+def observe_database(engine):
+    from sqlalchemy import event
+    lock_times = WeakKeyDictionary()
+
+    def lock_origin():
+        task = asyncio.current_task()
+        coroutine = task.get_coro() if task else None
+        names = []
+        for _ in range(100):
+            code = getattr(coroutine, 'cr_code', None)
+            if code and '/backend/' in code.co_filename.replace('\\', '/'):
+                if code.co_name == 'write_lock':
+                    break
+                names.append(code.co_filename.replace('\\', '/').split('/backend/')[-1]+':'+code.co_name)
+            coroutine = getattr(coroutine, 'cr_await', None)
+            if coroutine is None:
+                break
+        return ' > '.join(names[-2:]) or 'unattributed'
+
+    @event.listens_for(engine.sync_engine, 'before_cursor_execute')
+    def statement_started(conn, cursor, statement, params, context, executemany):
+        context.stress_start = time.perf_counter()
+
+    @event.listens_for(engine.sync_engine, 'after_cursor_execute')
+    def statement_ended(conn, cursor, statement, params, context, executemany):
+        sql['count'] += 1
+        sql['ms'] += (time.perf_counter() - context.stress_start) * 1000
+        if statement == 'SELECT pg_advisory_xact_lock(735903601)':
+            origin = lock_origin()
+            waited = (time.perf_counter()-context.stress_start)*1000
+            sql['catalogue_lock_count'] += 1
+            sql['catalogue_lock_wait_ms'] += waited
+            sql['catalogue_lock_wait_ms:'+origin] += waited
+            lock_times.setdefault(conn, (time.perf_counter(), origin))
+
+    @event.listens_for(engine.sync_engine, 'commit')
+    @event.listens_for(engine.sync_engine, 'rollback')
+    def transaction_ended(conn):
+        acquired = lock_times.pop(conn, None)
+        if acquired is not None:
+            held = (time.perf_counter()-acquired[0])*1000
+            sql['catalogue_lock_hold_ms'] += held
+            sql['catalogue_lock_max_hold_ms'] = max(sql['catalogue_lock_max_hold_ms'], held)
+            sql['catalogue_lock_hold_ms:'+acquired[1]] += held
+
+    @event.listens_for(engine.sync_engine, 'checkout')
+    def observe_pool(dbapi_connection, connection_record, connection_proxy):
+        sql['peak_pool'] = max(engine.pool.checkedout(), sql['peak_pool'])
+
+
 def configure_app():
     check_environment()
     httpx.AsyncHTTPTransport.handle_async_request = benchmark_transport
+    from cpu_profile import ProcessTelemetry, record_process
     from db import engine
     from main import app
-    from sqlalchemy import event
-
+    app.add_middleware(ProcessTelemetry, finish=record_process(
+        'api', lambda: {'providers': dict(provider_requests), 'sql': dict(sql)}))
+    observe_database(engine)
     app.state.read_worker_factory = 'server:configure_app'
     original_lifespan = app.router.lifespan_context
     loop_lag = []
@@ -176,19 +229,6 @@ def configure_app():
                 await asyncio.gather(probe, return_exceptions=True)
 
     app.router.lifespan_context = lifespan
-
-    @event.listens_for(engine.sync_engine, 'before_cursor_execute')
-    def statement_started(conn, cursor, statement, params, context, executemany):
-        context.stress_start = time.perf_counter()
-
-    @event.listens_for(engine.sync_engine, 'after_cursor_execute')
-    def statement_ended(conn, cursor, statement, params, context, executemany):
-        sql['count'] += 1
-        sql['ms'] += (time.perf_counter() - context.stress_start) * 1000
-
-    @event.listens_for(engine.sync_engine, 'checkout')
-    def observe_pool(dbapi_connection, connection_record, connection_proxy):
-        sql['peak_pool'] = max(engine.pool.checkedout(), sql['peak_pool'])
 
     @app.get('/__stress/metrics')
     async def metrics():
@@ -238,8 +278,12 @@ if __name__ == '__main__':
 
         import uvloop
         from core.catalogue_worker import serve
+        from cpu_profile import record_process
+        from db import engine
 
         logging.basicConfig(level=logging.INFO)
+        record_process('catalogue', lambda: {'providers': dict(provider_requests), 'sql': dict(sql)})
+        observe_database(engine)
         httpx.AsyncHTTPTransport.handle_async_request = benchmark_transport
         try:
             uvloop.run(serve())

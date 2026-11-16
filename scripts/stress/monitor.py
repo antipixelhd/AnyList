@@ -16,16 +16,20 @@ def proc_cpu():
 
 def process_cpu(cgroup, roles):
     result = Counter()
+    processes = {}
     for pid in (cgroup/'cgroup.procs').read_text().split():
         try:
             name = Path(f'/proc/{pid}/comm').read_text().strip()
             role = roles.get(pid, 'postgres' if name == 'postgres' else None)
             if role:
                 stat = Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()
-                result[role] += int(stat[11]) + int(stat[12])
+                user, system = int(stat[11]), int(stat[12])
+                result['backend' if role == 'api_reader' else role] += user + system
+                processes[pid] = {'role': role, 'user_ticks': user, 'system_ticks': system,
+                                  'start_ticks': int(stat[19])}
         except (ProcessLookupError, FileNotFoundError):
             pass
-    return result
+    return result, processes
 
 
 def key_values(path):
@@ -67,17 +71,18 @@ def monitor(args):
                 try:
                     command = Path(f'/proc/{pid}/cmdline').read_bytes()
                     if b'multiprocessing.spawn' in command:
-                        roles[pid] = 'backend'
+                        roles[pid] = 'api_reader'
                 except FileNotFoundError:
                     pass
             cgroup_cpu = key_values(cgroup/'cpu.stat')
             host_cpu = proc_cpu()
-            by_process = process_cpu(cgroup, roles)
+            by_process, processes = process_cpu(cgroup, roles)
             with Path('/proc/meminfo').open() as info:
                 available_kb = next(int(line.split()[1]) for line in info if line.startswith('MemAvailable:'))
             sample = {'unix': time.time(), 'host_mem_available_mib': round(available_kb/1024),
                       'cgroup_mem_mib': round(int((cgroup/'memory.current').read_text())/1048576),
                       'cgroup_cpu': cgroup_cpu, 'host_cpu': host_cpu, 'process_ticks': by_process,
+                      'process_counters': processes,
                       'loadavg': Path('/proc/loadavg').read_text().split()[:3],
                       'io_pressure': (cgroup/'io.pressure').read_text().strip(),
                       'cpu_pressure': (cgroup/'cpu.pressure').read_text().strip()}

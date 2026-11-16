@@ -118,21 +118,25 @@ async def bind_identity(db, entity_id, namespace, external_id, source, evidence=
                 "Identifier already belongs to another entity; review before merging"
             )
         return previous
+    row = identity_row(entity, namespace, external_id, source, evidence)
+    db.add(row)
+    await db.flush()
+    return row
+
+
+def identity_row(entity, namespace, external_id, source, evidence):
     if namespace=='imdb.title' and entity.kind=='game':
         from core.game_title_match import valid_binding_evidence
         supported=source in ('reviewed','wikidata') or source=='matched' and valid_binding_evidence(evidence or {},external_id)
         if not supported or (evidence or {}).get('title_type')!='videoGame':
             raise IdentityConflict('Game IMDb identity requires verified or reviewed videoGame evidence')
-    row = CatalogueIdentity(
-        entity_id=entity_id,
+    return CatalogueIdentity(
+        entity_id=entity.id,
         namespace=namespace,
         external_id=external_id,
         source=source,
         evidence=evidence or {},
     )
-    db.add(row)
-    await db.flush()
-    return row
 
 
 def source_rank(kind, source):
@@ -251,12 +255,12 @@ async def upsert_entity(db, values, source):
     elif values['kind'] == 'organization':
         from core.person_identities import reconcile_company_identities
         await reconcile_company_identities(db, ids, source)
-    matches = set()
+    keys = []
     for x in ids:
-        validate_identity(x["namespace"], x["external_id"], values["kind"])
-        found = await resolve_identity(db, x["namespace"], x["external_id"])
-        if found:
-            matches.add(found.entity_id)
+        keys.append((x['namespace'], validate_identity(x['namespace'], x['external_id'], values['kind'])))
+    found = {(mapping.namespace, mapping.external_id): mapping for mapping in await db.scalars(
+        select(CatalogueIdentity).where(tuple_(CatalogueIdentity.namespace, CatalogueIdentity.external_id).in_(keys)))}
+    matches = {mapping.entity_id for mapping in found.values()}
     if len(matches) > 1:
         raise IdentityConflict(
             "Provider cross-references disagree with existing mappings"
@@ -275,18 +279,28 @@ async def upsert_entity(db, values, source):
             field_sources={} if placeholder_name(values) else {"name": source},
             protected_fields=[],
         )
+    merge_fields(row, values, source)
+    if row.id is None:
         db.add(row)
         await db.flush()
-    merge_fields(row, values, source)
-    for x in ids:
-        await bind_identity(
-            db,
-            row.id,
-            x["namespace"],
-            x["external_id"],
-            source,
-            {"cross_reference": ids[0]},
-        )
+    transaction = db.sync_session.get_transaction()
+    locked = transaction is not None and db.info.get('catalogue_write_transaction') is transaction
+    pending = []
+    for namespace, native in keys:
+        if locked:
+            # The transaction's catalogue lock fences identity changes, so the
+            # batch lookup remains authoritative through this publication.
+            if (namespace, native) not in found:
+                mapping = identity_row(row, namespace, native, source, {'cross_reference': ids[0]})
+                found[(namespace, native)] = mapping
+                pending.append(mapping)
+        else:
+            # Standalone callers without the outer write lane retain a fresh
+            # ownership check, including savepoints whose locks can roll back.
+            await bind_identity(db, row.id, namespace, native, source, {'cross_reference': ids[0]})
+    if pending:
+        db.add_all(pending)
+        await db.flush()
     return row
 
 
