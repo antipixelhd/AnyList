@@ -47,7 +47,7 @@ async def notification_feed(db, user_id, prefs):
     rows = (await db.execute(select(SyncReview, Media).outerjoin(Media, Media.id == SyncReview.media_id)
         .where(SyncReview.user_id == user_id, SyncReview.dismissed_at.is_(None),
             or_(SyncReview.state == 'pending', SyncReview.state.is_(None), SyncReview.created_at >= cutoff, priority != 'low'))
-        .order_by(SyncReview.created_at.desc()).limit(100))).all()
+        .order_by(SyncReview.created_at.desc(), SyncReview.id.desc()).limit(100))).all()
     rows = [(r, m) for r, m in rows if r.kind != 'outbound_pending'
         and (not prefs or prefs.low_priority_notifications or review_priority(r) != 'low' or r.state == 'pending')]
     jobs = (await db.execute(select(SyncJob.source, SyncJob.status, SyncJob.connection_id,
@@ -59,8 +59,14 @@ async def notification_feed(db, user_id, prefs):
     names = {row.connection_id: row.name for row in jobs if row.name is not None}
     failures = connection_failure_events(jobs, names)
     imports = await active_import_events(db, user_id, now)
-    return {'pending': sum(r.state == 'pending' for r, _ in rows) + len(failures) + len(imports),
-        'results': imports + failures + [review_data(r, m) for r, m in rows], 'outbound': []}
+    from core.watch_removal_reviews import project_watch_reviews, watch_removal_sources
+    sources = {source for review, _ in rows for source in watch_removal_sources(review)}
+    connection_types = dict((await db.execute(select(MediaServerConnection.id, MediaServerConnection.type)
+        .where(MediaServerConnection.user_id == user_id, MediaServerConnection.id.in_(sources)))).all()) if sources else {}
+    events = await project_watch_reviews(db, rows, [review_data(r, m) for r, m in rows], connection_types)
+    return {'pending': sum(event['state'] == 'pending' for event in events) + len(failures) + len(imports),
+        'results': imports + failures + events, 'outbound': []}
+
 
 
 def review_priority(review: SyncReview) -> str:

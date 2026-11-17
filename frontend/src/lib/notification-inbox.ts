@@ -466,6 +466,7 @@ function mountInbox(
     card.dataset.notificationKind = event.kind || "";
     card.dataset.notificationPriority = event.priority || "";
     card.dataset.notificationState = event.state || "";
+    card.dataset.relatedReviewIds = event.payload?.watch_removal?.related_review_ids?.join(",") || "";
     card.dataset.seasonArtworkFallback = String(seasonArtworkFallback(event));
     card.dataset.seasonArtworkRetry = String(seasonArtworkRetry(event));
     replaceClass(card, "notice-", eventVariant(event));
@@ -862,6 +863,7 @@ function mountInbox(
               button.dataset.statusChoice === "true"
                 ? status
                 : undefined,
+            related_review_ids: card?.dataset.relatedReviewIds?.split(",").filter(Boolean).map(Number),
           });
           button.blur();
           flushDeferred();

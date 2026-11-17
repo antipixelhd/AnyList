@@ -5351,7 +5351,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         await self.db.refresh(fresh_intent)
         self.assertEqual((fresh_intent.state, fresh_intent.attempts), ('applied', 1))
 
-    async def test_approved_nuvio_unwatch_removes_canonical_episode_and_progress(self):
+    async def test_nuvio_unwatch_requires_review_for_tracked_series(self):
         from core.tracking_snapshot import observe_stream_snapshot, changed_watch_rows_from_source
 
         self.show.tmdb_id = 987654499
@@ -5363,20 +5363,22 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         conn = MediaServerConnection(user_id=self.owner.id, type='nuvio', name='Source',
             url='https://example.test', token='fixture', sync_watched=True,
             sync_playback=False, push_watched=True)
-        self.db.add_all([episode, conn, TrackedEntry(
-            user_id=self.owner.id, media_id=self.show.id, status='watching', progress=1,
+        second = Media(title='Second episode', media_type=MediaType.episode, show_id=show.id,
+                       season_number=1, episode_number=2, release_date='2020-01-01')
+        self.db.add_all([episode, second, conn, TrackedEntry(
+            user_id=self.owner.id, media_id=self.show.id, status='watching', progress=2,
         )])
         await self.db.flush()
-        self.db.add(WatchEvent(user_id=self.owner.id, media_id=episode.id,
-                               completed=True, watched_at=None))
+        for item in (episode, second):
+            self.db.add(WatchEvent(user_id=self.owner.id, media_id=item.id, completed=True))
         await self.db.commit()
         row = {'content_id': 'tt-unwatch', 'content_type': 'series',
                'season': 1, 'episode': 1, 'watched_at': None}
         baseline = StreamBaseline(user_id=self.owner.id, connection_id=conn.id,
             approved=True, observed_at=datetime.now(timezone.utc).replace(tzinfo=None),
             snapshot={'library': [], 'progress': {}, 'mappings': {'tt-unwatch': self.show.tmdb_id},
-                      'watched': ['tt-unwatch:1:1'],
-                      'records': {'library': [], 'progress': [], 'watched': [row]}})
+                      'watched': ['tt-unwatch:1:1', 'tt-unwatch:1:2'],
+                      'records': {'library': [], 'progress': [], 'watched': [row, {**row, 'episode': 2}]}})
         self.db.add(baseline)
         await self.db.commit()
 
@@ -5384,14 +5386,31 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         await observe_stream_snapshot(self.db, conn, [], [], [],
             {'tt-unwatch': self.show.tmdb_id}, sync_playback=False,
             removed_watched_ids=removed)
-        self.assertEqual(removed, {episode.id})
-        remaining = (await self.db.execute(select(WatchEvent.id).where(
-            WatchEvent.user_id == self.owner.id, WatchEvent.media_id == episode.id,
-        ))).scalars().all()
-        self.assertEqual(remaining, [])
+        self.assertEqual(removed, set())
+        watched = select(WatchEvent.media_id).where(WatchEvent.user_id == self.owner.id)
+        self.assertEqual(set(await self.db.scalars(watched)), {episode.id, second.id})
         entry = (await self.db.execute(select(TrackedEntry).where(
             TrackedEntry.user_id == self.owner.id, TrackedEntry.media_id == self.show.id,
         ))).scalar_one()
+        self.assertEqual(entry.progress, 2)
+        response = await self.client.get('/tracking/recent-events')
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()['pending'], 1)
+        review = response.json()['results'][0]
+        context = review['payload']['episode_context']
+        self.assertEqual(context['series_title'], show.title)
+        self.assertEqual(context['href'], f'/title/{self.show.id}?tab=seasons')
+        removal = review['payload']['watch_removal']
+        self.assertEqual(removal['providers'], ['nuvio'])
+        self.assertEqual([item['number'] for item in removal['episodes']], [1, 2])
+
+        with patch('core.sync_reconciliation.deliver_category_review', new_callable=AsyncMock) as deliver:
+            response = await self.client.post(f"/tracking/recent-events/{review['id']}", json={
+                'action': 'confirm', 'related_review_ids': removal['related_review_ids'],
+            })
+        self.assertEqual(response.status_code, 200, response.text)
+        deliver.assert_awaited_once()
+        self.assertEqual(list(await self.db.scalars(watched)), [])
         self.assertEqual(entry.progress, 0)
         # A peer still reporting its unchanged prior watch is not a new edit
         # and must not resurrect the just-removed canonical event.
@@ -5432,8 +5451,8 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             WatchEvent.user_id == self.owner.id, WatchEvent.media_id == episode.id,
         ))).scalars().all()), 1)
 
-        # A pull-only account cannot receive local corrections, so its later
-        # absence has no removal authority even after a prior watched row.
+        # Pull-only connections can still report a removal. Keeping the history
+        # leaves it in AnyList without writing the watch back to the provider.
         conn.push_watched = False
         baseline.snapshot = {**baseline.snapshot,
             'watched': ['tt-unwatch:1:1'],
@@ -5448,6 +5467,14 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len((await self.db.execute(select(WatchEvent.id).where(
             WatchEvent.user_id == self.owner.id, WatchEvent.media_id == episode.id,
         ))).scalars().all()), 1)
+        review = (await self.db.scalars(select(SyncReview).where(
+            SyncReview.user_id == self.owner.id, SyncReview.kind == 'watch_conflict',
+            SyncReview.state == 'pending'))).one()
+        with patch('core.sync_reconciliation.deliver_category_review', new_callable=AsyncMock) as deliver:
+            response = await self.client.post(f'/tracking/recent-events/{review.id}', json={'action': 'keep'})
+        self.assertEqual(response.status_code, 200, response.text)
+        deliver.assert_not_awaited()
+        self.assertEqual(list(await self.db.scalars(watched)), [episode.id])
 
     async def test_clear_success_projects_only_selected_scope_and_preserves_local_and_queued_truth(self):
         from core import stremio

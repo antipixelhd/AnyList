@@ -283,6 +283,48 @@ async def apply_series_observation(db, user_id, media, entry, row, finished, new
     return bool((media.tmdb_data or {}).get('tracking_catalogue_refreshed_at') and episodes and len(watched)==len(episodes))
 
 
+async def _apply_watch_removals(db, conn, mappings, old_rows, watched, prior_observed_at, tracked_ids):
+    from core.sync_reconciliation import Decision, Observation, Reconciliation, _lookup_tracking_root, _review
+    from core.watch_removal_reviews import watch_is_listed
+    from models.watch_intent import WatchIntent
+
+    old_keys = {watch_key(row) for row in old_rows}
+    current_keys = {watch_key(row) for row in watched}
+    if not old_keys - current_keys:
+        return set()
+    by_key = await media_ids_for_watch_rows(db, mappings, old_rows + watched)
+    missing_ids = {by_key[key] for key in old_keys if key in by_key} - {
+        by_key[key] for key in current_keys if key in by_key
+    }
+    if not missing_ids:
+        return set()
+    pending_local = set((await db.execute(select(WatchIntent.media_id).where(
+        WatchIntent.connection_id == conn.id, WatchIntent.media_id.in_(missing_ids),
+        WatchIntent.state == 'pending', WatchIntent.desired_watched.is_(True),
+    ))).scalars())
+    state = Reconciliation(conn.user_id)
+    removal = Observation(f"connection:{conn.id}", False)
+    removed = set()
+    for media_id in sorted(missing_ids - pending_local):
+        events = (await db.execute(select(WatchEvent).where(WatchEvent.user_id == conn.user_id,
+            WatchEvent.media_id == media_id, WatchEvent.completed.is_(True)))).scalars().all()
+        if not events:
+            continue
+        root_id = await _lookup_tracking_root(db, media_id)
+        if root_id in tracked_ids or media_id in tracked_ids or await watch_is_listed(db, conn.user_id, media_id, root_id):
+            await _review(db, state, media_id, "watched state", Decision(True, conflict=True), [removal])
+            continue
+        # An edit after the last source observation is newer than the undated absence.
+        if not prior_observed_at or any(event.created_at is None or event.created_at > prior_observed_at for event in events):
+            continue
+        for event in events:
+            await db.delete(event)
+        removed.add(media_id)
+    if removed:
+        await db.flush()
+    return removed
+
+
 async def observe_stream_snapshot(
     db, conn, library, watched, progress, tmdb_ids, *, complete=True, touched=None,
     removed_library=None, sync_playback=True, sync_watched=True,
@@ -411,6 +453,13 @@ async def observe_stream_snapshot(
     existing_ids = set((await db.execute(select(TrackedEntry.media_id).where(TrackedEntry.user_id == conn.user_id))).scalars())
     baseline=prior
     first=fresh_import or baseline is None
+    if (not first and baseline.approved and sync_watched and complete
+            and removed_watched_ids is not None and not replaying(conn.user_id)):
+        removed_ids = await _apply_watch_removals(db, conn, mappings,
+            previous_snapshot.get('records', {}).get('watched', []), watched, prior_observed_at, existing_ids)
+        removed_watched_ids.update(removed_ids)
+        if changed_media_ids is not None:
+            changed_media_ids.update(removed_ids)
     imported_ids = set()
     imported = await import_tracking_history(db,conn.user_id,imported_ids,initial_import=first)
     if changed_media_ids is not None:
@@ -853,62 +902,6 @@ async def observe_stream_snapshot(
     baseline.observed_at=datetime.now(timezone.utc).replace(tzinfo=None)
     propagated_watch_ids = set()
     if can_propagate_watches:
-        if sync_watched and conn.push_watched and removed_watched_ids is not None and not replaying(conn.user_id):
-            from models.watch_intent import WatchIntent
-            old_rows = previous.get('records', {}).get('watched', [])
-            now_keys = {watch_key(row) for row in watched_rows}
-            missing_rows = [row for row in old_rows if watch_key(row) not in now_keys]
-            missing_media = await media_ids_for_watch_rows(db, mappings, missing_rows)
-            pending_local = set((await db.execute(select(WatchIntent.media_id).where(
-                WatchIntent.connection_id == conn.id,
-                WatchIntent.media_id.in_(set(missing_media.values())),
-                WatchIntent.state == 'pending',
-                WatchIntent.desired_watched.is_(True),
-            ))).scalars()) if missing_media else set()
-            for media_id in set(missing_media.values()) - pending_local:
-                events = (await db.execute(select(WatchEvent).where(
-                    WatchEvent.user_id == conn.user_id,
-                    WatchEvent.media_id == media_id,
-                ))).scalars().all()
-                # An edit made after the last source observation is newer than
-                # this undated provider absence. Let its queued push win.
-                if not prior_observed_at or any(
-                    event.created_at is None or event.created_at > prior_observed_at
-                    for event in events
-                ):
-                    continue
-                if not any(event.completed for event in events):
-                    continue
-                for event in events:
-                    await db.delete(event)
-                removed_watched_ids.add(media_id)
-                if changed_media_ids is not None:
-                    changed_media_ids.add(media_id)
-            if removed_watched_ids:
-                await db.flush()
-                affected_shows = set()
-                for media_id in removed_watched_ids:
-                    episode = await db.get(Media, media_id)
-                    if episode and episode.media_type == MediaType.episode and episode.show_id:
-                        affected_shows.add(episode.show_id)
-                for show_id in affected_shows:
-                    show = await db.get(Show, show_id)
-                    series = lookup.get((show.tmdb_id, 'series')) if show else None
-                    if not series:
-                        continue
-                    entry = (await db.execute(select(TrackedEntry).where(
-                        TrackedEntry.user_id == conn.user_id,
-                        TrackedEntry.media_id == series.id,
-                    ))).scalar_one_or_none()
-                    if entry:
-                        entry.progress = len(set((await db.execute(select(WatchEvent.media_id).join(
-                            Media, Media.id == WatchEvent.media_id,
-                        ).where(
-                            WatchEvent.user_id == conn.user_id,
-                            WatchEvent.completed.is_(True),
-                            Media.show_id == show_id,
-                            Media.season_number > 0,
-                        ))).scalars()))
         source_watch_ids = await media_ids_for_watch_rows(db, mappings, accepted_watch_rows)
         propagated_watch_ids = set(source_watch_ids.values()) | inferred_watch_ids
         if propagated_watch_ids:
