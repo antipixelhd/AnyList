@@ -111,7 +111,7 @@ class MappingIndexTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_legacy_version_policy_revalidates_only_older_cross_version_wikidata_bindings(self):
         from core.game_mapping_lifecycle import invalidate
-        proof=await self.version_correction_fixture()
+        await self.version_correction_fixture()
         async with self.Session() as db:
             db.add(CatalogueIdentity(entity_id=self.base,namespace='imdb.title',external_id='tt2',source='wikidata',
                 evidence={'mapping_state':'active','imdb_identity':{'releaseYear':{'year':2000}}}))

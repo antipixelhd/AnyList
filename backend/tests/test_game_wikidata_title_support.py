@@ -8,7 +8,7 @@ os.environ.setdefault('DATABASE_URL','postgresql+asyncpg://test:test@localhost/t
 from core.game_wikidata_title_support import project,agrees,corroborate,discovery_candidate
 from core.game_title_match import decide,valid_binding_evidence,VERSION
 from core.catalogue_providers import ProviderError
-from test_game_credit_sources import item,claim,snak
+from test_game_credit_sources import item,claim
 from test_game_title_match import game
 from test_game_imdb_discovery_source import Cache
 

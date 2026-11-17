@@ -8,7 +8,7 @@ from sqlalchemy.orm import aliased
 from core import catalogue
 from core.game_imdb_enrichment import now,snapshot,request as admit
 from core.game_imdb_source import identifier
-from core.game_imdb_bindings import verified_bindings,BINDING_REVISION
+from core.game_imdb_bindings import BINDING_REVISION
 from models.catalogue import CatalogueEntity,CatalogueIdentity,MetadataSnapshot
 
 INDEX='game_person_index'
