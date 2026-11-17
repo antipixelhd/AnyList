@@ -69,6 +69,9 @@ def known_result_visible(item, media, media_type, *, show_anime, min_runtime=0, 
 async def enrich_search_runtimes(items, known, api_key, *, min_runtime=0, db=None):
     """Fill missing movie runtimes only when needed by saved search policy.
 
+    When supplied, db belongs to the search request: its read transaction is
+    committed before provider I/O. This service is not a write-unit-of-work helper.
+
     Reuse known catalogue metadata first and TMDB's shared request/cache layer.
     Unknown provider runtimes stay unknown; failures do not erase usable data.
     """
@@ -84,14 +87,16 @@ async def enrich_search_runtimes(items, known, api_key, *, min_runtime=0, db=Non
         missing = [str(item['id']) for item in items if title_runtime(item) is None
                    and not (item['id'] in known and (known[item['id']].runtime or title_runtime(known[item['id']].tmdb_data or {})))]
         if missing:
-            snapshots = await db.scalars(select(MetadataSnapshot).where(
+            snapshots = await db.execute(select(MetadataSnapshot.external_id, MetadataSnapshot.payload['runtime']).where(
                 MetadataSnapshot.provider == 'tmdb', MetadataSnapshot.kind == 'movie',
                 MetadataSnapshot.external_id.in_(missing),
                 MetadataSnapshot.expires_at > datetime.now(timezone.utc).replace(tzinfo=None)))
-            runtimes = {row.external_id: title_runtime(row.payload or {}) for row in snapshots}
+            runtimes = {native: title_runtime({'runtime': runtime}) for native, runtime in snapshots}
             for item in items:
                 if title_runtime(item) is None and runtimes.get(str(item['id'])):
                     item['runtime'] = runtimes[str(item['id'])]
+            if any(not runtimes.get(native) for native in missing):
+                await db.commit()
 
     async def load(item):
         if title_runtime(item) is not None:
@@ -163,10 +168,14 @@ def apply_result_filters(query, data, media_type, *, min_runtime=0, excluded_gen
     if media_type == 'movie' and min_runtime:
         duration = func.nullif(func.coalesce(runtime, data['runtime'].astext.cast(Float)), 0)
         query = query.where(or_(duration.is_(None), duration >= min_runtime))
+    excluded = []
     for native in excluded_genres:
-        excluded = or_(data['genre_ids'].contains([native]), data['genres'].contains([{'id': native}]),
-                       data['genres'].contains([GENRES[native]]), data['genres'].contains([{'name': GENRES[native]}]))
-        query = query.where(~func.coalesce(excluded, False))
+        excluded.extend((data['genre_ids'].contains([native]), data['genres'].contains([{'id': native}]),
+                         data['genres'].contains([GENRES[native]]), data['genres'].contains([{'name': GENRES[native]}])))
+    if excluded:
+        # One NULL-safe exclusion preserves missing metadata and avoids multiplying
+        # opaque COALESCE selectivities, which hid bounded ranking index scans.
+        query = query.where(~func.coalesce(or_(*excluded), False))
     return query
 
 

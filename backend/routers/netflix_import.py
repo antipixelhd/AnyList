@@ -291,7 +291,7 @@ def _schedule(background_tasks: BackgroundTasks, session_id: str, user_id: int, 
 
 @router.get("/active")
 async def get_active_import(
-    db: Annotated[AsyncSession, Depends(get_db)],
+    db: Annotated[AsyncSession, Depends(get_db, scope="function")],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> dict:
     from core.import_admission import active_import
@@ -304,7 +304,7 @@ async def upload_netflix_history(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     language: str | None = Form(None),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     extension = ".zip" if source == "amazon" else ".csv"
@@ -345,7 +345,7 @@ async def upload_netflix_history(
 async def get_netflix_import(
     session_id: str,
     background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     session = await _load_owned(db, session_id, current_user.id)
@@ -359,7 +359,7 @@ async def get_netflix_import(
 @router.get("/connections/{connection_id}")
 async def get_connection_import(
     connection_id: int,
-    db: Annotated[AsyncSession, Depends(get_db)],
+    db: Annotated[AsyncSession, Depends(get_db, scope="function")],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> dict:
     from models.tracking import StreamBaseline
@@ -399,7 +399,7 @@ async def update_netflix_import_item(
     session_id: str,
     item_id: str,
     patch: dict = Body(...),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     action = patch.get("action")
@@ -567,7 +567,7 @@ async def _apply_item_patch(db, current_user, item, patch, remapped_item=None):
 async def update_import_decisions(
     session_id: str,
     body: dict,
-    db: Annotated[AsyncSession, Depends(get_db)],
+    db: Annotated[AsyncSession, Depends(get_db, scope="function")],
     current_user: Annotated[User, Depends(get_current_user)],
 ):
     """Save a review step atomically, with one snapshot and one response."""
@@ -603,7 +603,7 @@ async def update_import_decisions(
 @router.delete("/{session_id}")
 async def cancel_netflix_import(
     session_id: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     # Signal the in-process transaction before waiting for its row lock. The
@@ -642,7 +642,7 @@ async def commit_netflix_import(
     session_id: str,
     background_tasks: BackgroundTasks,
     body: dict = Body(...),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     session = await _load_owned(db, session_id, current_user.id, lock=True)

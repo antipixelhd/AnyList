@@ -9,6 +9,8 @@ import { publicLegalPage } from './lib/legal-routes';
 import {anonymousGameDiscoveryRoute,approvedGamesPage} from './lib/game-public-routes';
 import {viewerMediaPreferences} from './lib/viewer-media-preferences';
 import {viewerProfilePreferences} from './lib/viewer-profile-preferences';
+import {viewerNotifications} from './lib/viewer-notifications';
+import {needsPageContext,resolveViewerContext} from './lib/viewer-context';
 import {profilePanelRequest,profilePanelHeader,profilePagePath} from './lib/profile-panel-request';
 
 const PUBLIC_ROUTES = ["/login", "/register", "/logout", "/oidc-callback", "/oidc-start", "/link", "/site.webmanifest", "/favicon-96x96.png", "/apple-touch-icon.png", "/sw.js", "/offline.html"];
@@ -179,7 +181,10 @@ export const onRequest = defineMiddleware(async (context, next) => {
   if (token) {
     try {
       // Verify token and get user info
-      const user = await api.auth.me(token);
+      const {user,pageContext} = await resolveViewerContext(api.auth, token, {
+        pathname, isStaticAsset, profilePanel: context.locals.profilePanel,
+      });
+      context.locals.pageContext = pageContext;
       context.locals.user = user;
       context.locals.token = token;
 
@@ -222,12 +227,13 @@ export const onRequest = defineMiddleware(async (context, next) => {
   // Resolve the viewer's settings once per page (reused by the layout and the
   // pages that need them, e.g. the RPDB rating-poster toggle - #377). One
   // failed lookup just leaves the normal artwork and session intact.
-  if (context.locals.user && token && !isStaticAsset && !pathname.startsWith('/api/')) {
+  if (context.locals.user && token && needsPageContext(pathname,isStaticAsset)) {
     // Start independent page reads together; layouts/components reuse these
     // request-local promises after the settings needed by middleware arrive.
     void viewerMediaPreferences(context.locals);
     void viewerProfilePreferences(context.locals);
-    context.locals.settings = await api.auth.getSettings(token).catch(() => undefined);
+    if (!context.locals.profilePanel) void viewerNotifications(context.locals);
+    context.locals.settings = context.locals.pageContext?.settings ?? await api.auth.getSettings(token).catch(() => undefined);
     context.locals.hasRpdbKey = !!context.locals.settings?.has_rpdb_key;
     for (const [name, value] of displayPreferenceCookies(context.locals.settings)) {
       context.cookies.set(name, value, {
@@ -240,6 +246,10 @@ export const onRequest = defineMiddleware(async (context, next) => {
   const response = await next();
   if (response.headers.get('Content-Type')?.includes('text/html')) {
     response.headers.set('Reporting-Endpoints', `csp="${context.url.origin}/api/csp-report"`);
+    if (context.locals.pageContext) {
+      response.headers.set('Cache-Control', 'private, no-store');
+      response.headers.append('Vary', 'Cookie');
+    }
   }
   if(profilePagePath.test(pathname)){
     response.headers.append('Vary',profilePanelHeader);

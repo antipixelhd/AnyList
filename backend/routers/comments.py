@@ -36,7 +36,7 @@ async def list_comments(
     tmdb_id: int,
     season_number: Optional[int] = None,
     episode_number: Optional[int] = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
@@ -96,7 +96,7 @@ async def list_comments(
 @router.post("")
 async def create_comment(
     body: CommentCreate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     if not body.content.strip():
@@ -137,7 +137,7 @@ async def create_comment(
 async def update_comment(
     comment_id: int,
     body: CommentUpdate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     result = await db.execute(select(Comment).where(Comment.id == comment_id))
@@ -168,7 +168,7 @@ async def update_comment(
 @router.delete("/{comment_id}")
 async def delete_comment(
     comment_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     query = select(Comment).where(Comment.id == comment_id)

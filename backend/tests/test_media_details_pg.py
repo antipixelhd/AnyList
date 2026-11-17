@@ -22,6 +22,32 @@ from routers.catalogue import router
 
 @unittest.skipUnless(fixture.URL, 'Requires explicit disposable statistics PostgreSQL')
 class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_movie_snapshot_requires_fresh_complete_provider_shape(self):
+        from datetime import timedelta
+
+        from core.game_source_cache import utcnow
+        from core.media_details import tmdb_movie_snapshot
+
+        stamp = utcnow()
+        components = ('credits', 'release_dates')
+        async with self.Session() as db:
+            db.add_all([
+                MetadataSnapshot(provider='tmdb', kind='movie', external_id=str(native),
+                    payload=payload, fetched_at=fetched, expires_at=stamp+timedelta(minutes=10))
+                for native, payload, fetched in (
+                    (51, {'id': 51, 'credits': {}, 'release_dates': {}}, stamp),
+                    (52, {'id': 52, 'credits': {}}, stamp),
+                    (53, {'id': 53, 'credits': {}, 'release_dates': {}}, stamp-timedelta(hours=1)),
+                    (54, {'id': 51, 'credits': {}, 'release_dates': {}}, stamp),
+                )
+            ])
+            await db.commit()
+        movie, remaining = await tmdb_movie_snapshot(self.engine, 51, components, 1800)
+        self.assertEqual(movie['id'], 51)
+        self.assertTrue(0 < remaining <= 600)
+        for native in (52, 53, 54, 55):
+            self.assertIsNone(await tmdb_movie_snapshot(self.engine, native, components, 1800))
+
     async def test_snapshot_entity_index_migration_round_trip(self):
         migration=importlib.import_module('migrations.versions.mt083_snapshot_entity')
         async with self.engine.begin() as conn:
@@ -94,8 +120,9 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
         data = response.json()
         self.assertEqual([card['user_id'] for card in data['activities']], [self.user_id])
         self.assertEqual([card['username'] for card in data['following_activities']], ['social-public'])
-        self.assertEqual(data['following_activities'][0]['payload']['finished_seasons'], [1])
-        self.assertEqual(data['following_activities'][0]['status'], 'watching')
+        self.assertTrue(data['following_activities'][0]['payload']['season_status'])
+        self.assertEqual(data['following_activities'][0]['payload']['season_number'], 1)
+        self.assertEqual(data['following_activities'][0]['status'], 'dropped')
         self.assertTrue(data['activities'][0]['payload']['episodes_watched'])
 
     async def test_preview_is_cached_without_gallery_downloads_and_preserves_existing_data(self):
@@ -423,10 +450,16 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(card.payload['episodes_watched'],count)
                     self.assertEqual(card.payload['position_start'],first)
                     self.assertEqual(card.payload['position'],last)
-                    self.assertEqual(card.payload['finished_seasons'],[])
+                    self.assertEqual(card.payload.get('finished_seasons', []),[])
+            # Establish progress before completing all released episodes; initial
+            # historical completion deliberately does not emit a daily activity.
+            first=await self.client.patch(url+str(ids[0]),json={'watched':True})
+            self.assertEqual(first.status_code,200,first.text)
+            self.assertEqual(first.json()['status'],'watching')
+            self.assertEqual(first.json()['progress'],1)
             response=await self.client.patch(url+str(ids[2]),json={'watched':True})
             self.assertEqual(response.status_code,200,response.text)
-            self.assertEqual(response.json()['status'],'completed')
+            self.assertEqual(response.json()['status'],'watching')
             self.assertEqual(response.json()['progress'],3)
             self.assertEqual(response.json()['season_position'],'S1E3')
             await check_activity(3,'S1E1','S1E3')
@@ -440,7 +473,7 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
                     TrackedEntry.user_id==self.user_id,TrackedEntry.media_id==series_id))).progress,3)
             for identifier in ids[:2]:
                 response=await self.client.patch(url+str(identifier),json={'watched':True})
-            self.assertEqual(response.json()['status'],'completed')
+            self.assertEqual(response.json()['status'],'watching')
             self.assertEqual(response.json()['progress'],3)
             await check_activity(3,'S1E1','S1E3')
             response=await self.client.patch(url+str(ids[0]),json={'watched':False})
@@ -449,7 +482,7 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
             await check_activity(3,'S1E1','S1E3')
             response=await self.client.patch(url+str(ids[0]),json={'watched':False,'confirm_rollback':True})
             self.assertEqual(response.status_code,200,response.text)
-            self.assertEqual(response.json()['status'],'completed')
+            self.assertEqual(response.json()['status'],'watching')
             self.assertEqual(response.json()['progress'],0)
             self.assertIsNone(response.json()['season_position'])
             await check_activity(0,None,None)
@@ -569,7 +602,8 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
         response = await self.client.get(f'/catalogue/entities/{game_id}/details?country=DE')
         self.assertEqual(response.status_code, 200)
         data = response.json()
-        self.assertEqual(data['artwork'], ['https://example.test/game.jpg'])
+        self.assertEqual(data['backdrop'], 'https://example.test/game.jpg')
+        self.assertEqual(data['artwork'], [])
         self.assertEqual(data['releases'][0]['platform'], 'PC')
         # Expansion relationships remain stored but belong to the lazy DLC
         # tab, rather than a duplicate generic Relations card.

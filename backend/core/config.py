@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import Field
 from pydantic_settings import BaseSettings
 
@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     postgres_db: Optional[str] = None
     postgres_host: str = "localhost"
     postgres_port: int = 5432
+    database_pool_size: int = Field(default=20, ge=1)
+    database_pool_overflow: int = Field(default=10, ge=0)
 
     secret_key: str
 
@@ -59,6 +61,9 @@ class Settings(BaseSettings):
     enable_registrations: bool = False
     new_accounts_games_access: bool = False
     game_background_mapper_enabled: bool = True
+    catalogue_worker_mode: Literal["embedded", "external"] = "embedded"
+    api_read_workers: int = Field(default=0, ge=0, le=8)
+    sync_concurrency: int = Field(default=1, ge=1, le=8)
     registration_max_allowed_users: int = 0
 
     # Server defaults survive database resets; account/global DB overrides win.

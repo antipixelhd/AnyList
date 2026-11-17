@@ -49,7 +49,7 @@ async def _get_or_create_global_settings(db: AsyncSession) -> GlobalSettings:
 
 @router.get("/settings", response_model=schemas.GlobalSettings)
 async def get_global_settings(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     _: User = Depends(require_admin),
 ):
     return await _get_or_create_global_settings(db)
@@ -58,7 +58,7 @@ async def get_global_settings(
 @router.patch("/settings", response_model=schemas.GlobalSettings)
 async def update_global_settings(
     body: schemas.GlobalSettings,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     _: User = Depends(require_admin),
 ):
     gs = await _get_or_create_global_settings(db)
@@ -81,7 +81,7 @@ async def update_global_settings(
 
 @router.get("/users", response_model=list[schemas.AdminUser])
 async def list_users(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     _: User = Depends(require_admin),
 ):
     result = await db.execute(
@@ -110,7 +110,7 @@ class GamesAccessPatch(BaseModel):
 
 @router.patch('/users/{user_id}/games-access')
 async def approve_games(user_id: int, body: GamesAccessPatch,
-    db: AsyncSession = Depends(get_db), current_user: User = Depends(require_admin)):
+    db: AsyncSession = Depends(get_db, scope="function"), current_user: User = Depends(require_admin)):
     target = await db.get(User, user_id)
     if not target:
         raise HTTPException(404, 'User not found')
@@ -126,7 +126,7 @@ async def approve_games(user_id: int, body: GamesAccessPatch,
 @router.post("/users", response_model=schemas.AdminUser, status_code=status.HTTP_201_CREATED)
 async def create_user(
     body: schemas.AdminUserCreate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     _: User = Depends(require_admin),
 ):
     """Manually provision a user. Unlike self-registration this ignores the
@@ -183,7 +183,7 @@ async def create_user(
 async def reset_user_password(
     user_id: int,
     body: schemas.AdminPasswordReset,
-    db: Annotated[AsyncSession, Depends(get_db)],
+    db: Annotated[AsyncSession, Depends(get_db, scope="function")],
     _: Annotated[User, Depends(require_admin)],
 ) -> dict[str, str]:
     """Recover a local login without requiring SMTP."""
@@ -202,7 +202,7 @@ async def reset_user_password(
 @router.patch("/users/{user_id}/toggle-admin", response_model=schemas.AdminUser)
 async def toggle_admin(
     user_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(require_admin),
 ):
     result = await db.execute(select(User).where(User.id == user_id))
@@ -230,7 +230,7 @@ async def toggle_admin(
 @router.delete("/users/{user_id}")
 async def delete_user(
     user_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(require_admin),
 ):
     if user_id == current_user.id:
@@ -294,7 +294,7 @@ async def backup_database(_: User = Depends(require_admin)):
 
 @router.get("/maintenance/cache-stats")
 async def get_cache_stats(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     _: User = Depends(require_admin),
 ):
     from models.image_cache import ImageCache
@@ -310,7 +310,7 @@ async def get_cache_stats(
 
 @router.post("/maintenance/clear-cache")
 async def admin_clear_cache(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(require_admin),
 ):
     """Delete all cached TMDB images on disk and clear their database records."""
@@ -322,7 +322,7 @@ async def admin_clear_cache(
 @router.post("/maintenance/heal")
 async def admin_heal_metadata(
     background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(require_admin),
 ):
     """Re-enrich all collection items server-wide that are missing poster/date metadata."""
@@ -412,7 +412,7 @@ async def run_admin_heal(api_key: str, user_id: int | None = None, job_id: int |
 @router.post("/restore")
 async def restore_database(
     file: UploadFile = File(...),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     _: User = Depends(require_admin),
 ):
     if not (file.filename or "").endswith(".bak"):
@@ -440,7 +440,7 @@ async def restore_database(
 
 @router.get("/requests/pending-count")
 async def pending_requests_count(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     _: User = Depends(require_admin),
 ):
     result = await db.execute(
@@ -451,7 +451,7 @@ async def pending_requests_count(
 
 @router.get("/requests")
 async def list_requests(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     _: User = Depends(require_admin),
 ):
     result = await db.execute(
@@ -484,7 +484,7 @@ async def list_requests(
 @router.post("/requests/{request_id}/approve")
 async def approve_request(
     request_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(require_admin),
 ):
     req_q = await db.execute(select(MediaRequest).where(MediaRequest.id == request_id))
@@ -550,7 +550,7 @@ async def approve_request(
 @router.post("/requests/{request_id}/reject")
 async def reject_request(
     request_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(require_admin),
 ):
     req_q = await db.execute(select(MediaRequest).where(MediaRequest.id == request_id))
@@ -569,7 +569,7 @@ async def reject_request(
 async def change_user_email(
     user_id: int,
     body: schemas.EmailChangeRequest,
-    db: Annotated[AsyncSession, Depends(get_db)],
+    db: Annotated[AsyncSession, Depends(get_db, scope="function")],
     _: Annotated[User, Depends(require_admin)],
 ) -> dict[str, str]:
     from core.account_security import invalidate_account_links, revoke_sessions

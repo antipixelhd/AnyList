@@ -36,7 +36,7 @@ def _require_key(settings: UserSettings | None) -> UserSettings:
 @router.post("/sync")
 async def sync_mdblist(
     background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     from core.account_sync import start_account_pull
@@ -46,7 +46,7 @@ async def sync_mdblist(
 @router.post("/push")
 async def push_mdblist(
     background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     result = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
@@ -71,7 +71,7 @@ async def push_mdblist(
 
 @router.delete("/auth/disconnect")
 async def mdblist_disconnect(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     """Clear the stored MDBList API key."""

@@ -1,6 +1,7 @@
 """Application periodic jobs and their lifespan."""
 
 import asyncio
+from builtins import ExceptionGroup
 from contextlib import asynccontextmanager
 
 from sqlalchemy import or_, select
@@ -834,11 +835,8 @@ async def _watchlist_poller():
 
 
 @asynccontextmanager
-async def background_jobs():
+async def catalogue_jobs():
     from core.game_background import scheduler as game_background
-    from core.season_completion import scheduler as season_completion
-    """Run periodic jobs for the application lifespan and cancel them on exit."""
-    from core.statistics_snapshots import scheduler as statistics_scheduler
     from core.contributor_evidence import scheduler as contributor_verification
     from core.game_imdb_enrichment import scheduler as game_credit_enrichment
     from core.game_imdb_person import scheduler as game_person_enrichment
@@ -854,9 +852,7 @@ async def background_jobs():
     from core.game_achievements import scheduler as game_achievements
     from core.game_mapping_scheduler import scheduler as game_mapping_index
 
-    jobs = (
-        season_completion,
-        statistics_scheduler,
+    async with running_jobs(
         contributor_verification,
         game_credit_enrichment,
         game_bulk,
@@ -872,6 +868,23 @@ async def background_jobs():
         game_achievements,
         game_mapping_index,
         game_background,
+    ):
+        yield
+
+
+@asynccontextmanager
+async def background_jobs():
+    """Run HTTP service maintenance and optionally host the catalogue worker."""
+    from core.catalogue_worker import run_catalogue_worker
+    from core.config import settings
+    from core.season_completion import scheduler as season_completion
+    from core.statistics_snapshots import scheduler as statistics_scheduler
+
+    catalogue = (run_catalogue_worker,) if settings.catalogue_worker_mode == "embedded" else ()
+    async with running_jobs(
+        *catalogue,
+        season_completion,
+        statistics_scheduler,
         _auto_sync_scheduler,
         _stream_action_retry_scheduler,
         _rating_push_scheduler,
@@ -879,14 +892,20 @@ async def background_jobs():
         _manual_session_completer,
         _emby_progress_poller,
         _show_metadata_refresher,
-    )
-    tasks = [asyncio.create_task(job(), name=job.__name__) for job in jobs]
-    try:
+    ):
         yield
-    finally:
-        for task in tasks:
-            task.cancel()
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        for result in results:
-            if isinstance(result, BaseException) and not isinstance(result, asyncio.CancelledError):
-                raise result
+
+
+@asynccontextmanager
+async def running_jobs(*jobs):
+    try:
+        async with asyncio.TaskGroup() as group:
+            tasks = [group.create_task(job(), name=job.__name__) for job in jobs]
+            try:
+                yield
+            finally:
+                for task in tasks:
+                    task.cancel()
+    except ExceptionGroup as errors:
+        # Keep the original lifespan error contract after all jobs finish cleanup.
+        raise errors.exceptions[0] from None

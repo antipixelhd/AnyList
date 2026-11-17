@@ -14,7 +14,7 @@ test('a failed replacement filter restores pagination and ignores the older page
   const data={has_more:true,page:1,source:'provider',list_count:null};
   const context=vm.createContext({
     Error,URL,URLSearchParams,AbortController,DOMException,structuredClone,FormData:class {forEach(){}},
-    signal:new AbortController().signal,writeVersion:0,gameEdits:new Map(),syncing:false,syncAgain:false,loading:{hidden:true},
+    switchView:Object.assign(apply=>apply(),{cancel(){}}),worksMotion:{cancel(){}},replaceContributorSelection:(_region,apply)=>apply(),syncDomainFields(){},paintListButton(){},signal:new AbortController().signal,writeVersion:0,gameEdits:new Map(),syncing:false,syncAgain:false,loading:{hidden:true},
     root:{dataset:{endpoint:'people/1'},querySelector:()=>({addEventListener(){}})},
     contributorSourceRefresh:()=>({update(){},stop(){}}),
     contributorPages,updateEmpty(){},
@@ -53,7 +53,7 @@ test('a game filter read waits for pending writes and retries stale membership/c
   const snippet=source.slice(source.indexOf('  const waitForGameWrites='),source.indexOf('  const prediction='));
   const pendingWrites=new Set(),network=[],invalidated=[],document=new EventTarget();
   const context=vm.createContext({document,DOMException,Error,URLSearchParams,Set,Map,Promise,structuredClone,
-    root:{dataset:{endpoint:'contributors/actor/1'},querySelector:()=>null},signal:new AbortController().signal,data:{},params:new URLSearchParams(),
+    root:{dataset:{endpoint:'contributors/actor/1'},querySelector:()=>null},switchView:Object.assign(apply=>apply(),{cancel(){}}),worksMotion:{cancel(){}},replaceContributorSelection:(_region,apply)=>apply(),syncDomainFields(){},paintListButton(){},signal:new AbortController().signal,data:{},params:new URLSearchParams(),
     contributorSourceRefresh:()=>({update(){},stop(){}}),
     contributorPages,
     writeVersion:0,gameEdits:new Map([[8,{}]]),items:new Map(),
@@ -104,7 +104,7 @@ test('cache invalidation during a tab switch retries the selected domain instead
   const node={hidden:false,textContent:'',removeAttribute(){},setAttribute(){}};
   const root={dataset:{endpoint:'contributors/actor/catalogue:1',mediaType:'all'},querySelector:selector=>selector==='.contributor-list-link'?null:node};
   const context=vm.createContext({Error,DOMException,AbortController,URL,URLSearchParams,
-    domain:()=> 'movies-series',retained:new Map(),retainCurrent:false,syncing:false,signal:lifetime.signal,pages,root,revision:0,filterRequest:undefined,prediction:{cancel(){}},
+    switchView:Object.assign(apply=>apply(),{cancel(){}}),worksMotion:{cancel(){}},replaceContributorSelection:(_region,apply)=>apply(),syncDomainFields(){},paintListButton(){},domain:()=> 'movies-series',retained:new Map(),retainCurrent:false,syncing:false,signal:lifetime.signal,pages,root,revision:0,filterRequest:undefined,prediction:{cancel(){}},
     form:{action:'https://example.test/person/1',querySelectorAll:()=>[],addEventListener:(name,handler)=>handlers[name]=handler},
     FormData:class{forEach(fn){fn('game','media_type');}},contributorParams:query=>query,
     params:new URLSearchParams('media_type=all'),data:{kind:'actor',list_count:0},
@@ -133,7 +133,7 @@ test('a write overlapping the final source revision queues another synchronizati
   const snippet=source.slice(start,source.indexOf('      // Reuse mounted cards',start))+
     ' } finally { syncing=false;if(syncAgain&&!filterRequest&&!signal.aborted)void synchronize();} };this.run=synchronize;';
   let resolve,reads=0;const context=vm.createContext({
-    signal:new AbortController().signal,pages:{forget(){}},syncing:false,syncAgain:false,
+    switchView:Object.assign(apply=>apply(),{cancel(){}}),worksMotion:{cancel(){}},replaceContributorSelection:(_region,apply)=>apply(),syncDomainFields(){},paintListButton(){},signal:new AbortController().signal,pages:{forget(){}},syncing:false,syncAgain:false,
     filterRequest:undefined,more:{disabled:false},prediction:{cancel(){}},clearTimeout(){},syncRetry:undefined,
     revision:0,writeVersion:0,data:{page:1},params:new URLSearchParams('media_type=game'),URLSearchParams,updateEmpty(){},
     pathFor:()=>'/games',requestPage:()=>{reads++;return new Promise(done=>resolve=done);},
@@ -145,7 +145,7 @@ test('a write overlapping the final source revision queues another synchronizati
   context.signal=new AbortController().signal;
 });
 
-test('returning to a contributor domain restores exact cards, filters and loaded window without a read',()=>{
+test('returning to a contributor domain restores exact cards, filters and loaded window without a read',async()=>{
   const source=readFileSync(new URL('../src/lib/contributor-page.ts',import.meta.url),'utf8');
   const start=source.indexOf("  form.addEventListener('submit',event=>{");
   const snippet=source.slice(start,source.indexOf('  let syncing=',start));
@@ -156,7 +156,7 @@ test('returning to a contributor domain restores exact cards, filters and loaded
   const region={childNodes:[screenNode],classList:{toggle(){}},setAttribute(){},removeAttribute(){},replaceChildren(...nodes){this.childNodes=nodes;}};
   const params=new URLSearchParams('media_type=movie'),data={kind:'actor',list_count:1};
   const context={Error,DOMException,AbortController,URL,URLSearchParams,Map,
-    signal:new AbortController().signal,pages:{get(){reads++;throw new Error('Unexpected read');}},revision:0,filterRequest:undefined,prediction:{cancel(){}},
+    switchView:Object.assign(apply=>apply(),{cancel(){}}),worksMotion:{cancel(){}},replaceContributorSelection:(_region,apply)=>apply(),syncDomainFields(){},paintListButton(){},signal:new AbortController().signal,pages:{get(){reads++;throw new Error('Unexpected read');}},revision:0,filterRequest:undefined,prediction:{cancel(){}},
     form:{action:'https://example.test/person/1',querySelectorAll:()=>[],elements:{namedItem:()=>node},addEventListener:(name,handler)=>submit=handler},
     FormData:class{forEach(fn){fn('game','media_type');}},contributorParams:query=>query,
     domain:()=> 'movies-series',retained,retainCurrent:true,syncing:false,scrollY:37,window:{scrollTo:(x,y)=>scrolls.push(y)},
@@ -164,7 +164,7 @@ test('returning to a contributor domain restores exact cards, filters and loaded
     sourceRefresh:{update(){}},more:{},requestedView:'timeline',append(){throw new Error('Cards must be retained');},updateEmpty(){},syncAgain:false,
     restoreFilterControls:()=>restores++,scrollToWorks(){},showError:message=>assert.fail(message),location:{href:'https://example.test/person/1'},history:{replaceState(){}},
   };
-  vm.runInNewContext(stripTypeScriptTypes(snippet),context);submit({preventDefault(){}});
+  vm.runInNewContext(stripTypeScriptTypes(snippet),context);submit({preventDefault(){}});await new Promise(setImmediate);
   assert.equal(reads,0);assert.equal(restores,1);assert.equal(region.childNodes[0],gameNode);assert.equal(items.get(gameNode),gameItem);
-  assert.equal(data.page,3);assert.equal(params.get('list_scope'),'in');assert.equal(retained.get('movies-series').nodes[0],screenNode);assert.deepEqual(scrolls,[94]);
+  assert.equal(data.page,3);assert.equal(params.get('list_scope'),'in');assert.equal(retained.get('movies-series').nodes[0],screenNode);assert.deepEqual(scrolls,[],'a cached domain keeps the current viewport');
 });

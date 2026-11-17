@@ -540,6 +540,7 @@ class StremioLinkReconnectTests(unittest.IsolatedAsyncioTestCase):
 
         db = SimpleNamespace(
             execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None, all=lambda: [])),
+            scalar=AsyncMock(return_value=None),
             add=MagicMock(),
             commit=AsyncMock(),
             refresh=AsyncMock(side_effect=_fake_refresh),
@@ -575,6 +576,7 @@ class StremioLinkReconnectTests(unittest.IsolatedAsyncioTestCase):
 
         db = SimpleNamespace(
             execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None, all=lambda: [])),
+            scalar=AsyncMock(return_value=None),
             add=MagicMock(),
             commit=AsyncMock(),
             refresh=AsyncMock(side_effect=_fake_refresh),

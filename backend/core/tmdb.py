@@ -283,19 +283,29 @@ async def validate_api_key(api_key: str) -> bool:
         return False
 
 
-async def get_movie(tmdb_id: int, api_key: str = None, language: str | None = None, cache_ttl: float | None = DEFAULT_CACHE_TTL) -> dict:
+async def get_movie(tmdb_id: int, api_key: str = None, language: str | None = None,
+                    cache_ttl: float | None = DEFAULT_CACHE_TTL, *, load_local=None) -> dict:
     params: dict = {
         "append_to_response": "credits,release_dates,recommendations,external_ids,keywords,watch/providers",
     }
     if language:
         params["language"] = language
-    data = await _get(
-        f"{TMDB_BASE}/movie/{tmdb_id}",
+    url = f"{TMDB_BASE}/movie/{tmdb_id}"
+    if load_local is not None and cache_ttl is not None and not language:
+        cached = _cached_response(url, params)
+        if cached is not None:
+            return cached
+        local = await load_local(tmdb_id, tuple(params["append_to_response"].split(",")), cache_ttl)
+        if local is not None:
+            data, remaining = local
+            _cache_response(url, params, data, remaining)
+            return data
+    return await _get(
+        url,
         headers=get_headers(api_key),
         params=params,
         cache_ttl=cache_ttl,
     )
-    return data
 
 
 def extract_credits_stingers(data: dict) -> tuple[bool, bool]:

@@ -7,7 +7,7 @@ from unittest.mock import patch
 from sqlalchemy import select
 import test_game_metadata_pg as fixture
 from core import game_credit_updates as updates
-from core.game_imdb_enrichment import now,request,JOB
+from core.game_imdb_enrichment import now,JOB
 from models import User
 from models.catalogue import MetadataSnapshot,CatalogueEntity,CatalogueCredit
 

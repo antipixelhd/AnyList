@@ -5,6 +5,8 @@ import httpx
 from datetime import datetime
 from typing import Optional, List, Dict
 
+from core.http_tls import default_verification
+
 TIMEOUT = httpx.Timeout(120.0)  # 120 second timeout
 
 _TMDB_PROVIDER_PATH_RE = re.compile(r"/(?:movie|tv)/(\d+)")
@@ -43,7 +45,7 @@ def _auth_headers(token: str) -> Dict[str, str]:
 
 
 async def _get(url: str, token: str, path: str, params: Optional[Dict] = None) -> Dict:
-    async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=False) as client:
+    async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=False, verify=default_verification()) as client:
         headers = _auth_headers(token)
         full_url = f"{url.rstrip('/')}/{path.lstrip('/')}"
         r = await client.get(full_url, headers=headers, params=params)

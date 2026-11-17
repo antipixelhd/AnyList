@@ -10,7 +10,7 @@ function fixture(fetcher){
   globalThis.clearTimeout=timer=>{const index=timers.indexOf(timer);if(index>=0)timers.splice(index,1);};
   const events=new EventTarget();
   watchAchievementCatalogue(7,controller.signal,data=>applied.push(data),events);
-  const settle=async()=>{for(let i=0;i<12;i++)await Promise.resolve();};
+  const settle=()=>new Promise(setImmediate);
   return {applied,timers,controller,settle,primary(id=7){events.dispatchEvent(new CustomEvent('anylist:game-primary',{detail:{type:'game',id}}));},async tick(){timers.shift()?.callback();await settle();},cleanup(){controller.abort();Object.assign(globalThis,original);}};
 }
 

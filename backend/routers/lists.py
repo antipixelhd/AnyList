@@ -170,7 +170,7 @@ async def _attach_season_show_info(db: AsyncSession, media: dict) -> None:
 
 @router.get("/public")
 async def get_public_lists(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
@@ -231,7 +231,7 @@ async def get_public_lists(
 
 @router.get("")
 async def get_lists(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     result = await db.execute(
@@ -247,7 +247,7 @@ async def get_lists(
 @router.post("", status_code=201)
 async def create_list(
     body: ListCreate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     lst = ListModel(
@@ -274,7 +274,7 @@ async def create_list(
 @router.get("/{list_id}")
 async def get_list(
     list_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     result = await db.execute(
@@ -371,7 +371,7 @@ async def get_list(
 async def update_list(
     list_id: int,
     body: ListUpdate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     result = await db.execute(
@@ -401,7 +401,7 @@ async def update_list(
 
 @router.delete("/all")
 async def clear_all_lists(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     # ListItem rows cascade via the FK's ondelete=CASCADE - no separate delete needed.
@@ -413,7 +413,7 @@ async def clear_all_lists(
 @router.delete("/{list_id}")
 async def delete_list(
     list_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     result = await db.execute(
@@ -627,7 +627,7 @@ async def _push_list_item_to_mdblist(
 async def add_list_item(
     list_id: int,
     body: ListItemAdd,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     list_result = await db.execute(
@@ -753,7 +753,7 @@ async def add_list_item(
 async def remove_list_item(
     list_id: int,
     item_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     result = await db.execute(

@@ -987,5 +987,5 @@ function mountInbox(
       const button=root.querySelector<HTMLButtonElement>(`[data-rating-request="${requestedRating}"]`);
       if(button){requestedRating=null;button.click();}
     }
-  }, { signal: listeners.signal });
+  }, { signal: listeners.signal, full: true });
 }

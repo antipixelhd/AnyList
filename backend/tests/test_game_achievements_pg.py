@@ -5,7 +5,7 @@ from datetime import timedelta,date
 from types import SimpleNamespace
 from unittest.mock import AsyncMock,patch
 
-from sqlalchemy import delete,select,func,text
+from sqlalchemy import delete,select,func
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 

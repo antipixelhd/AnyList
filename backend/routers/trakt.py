@@ -43,7 +43,7 @@ def _require_trakt_config(settings: UserSettings):
 
 @router.post("/auth/device/start")
 async def trakt_device_start(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     """Initiate device authentication. Returns user_code + verification_url."""
@@ -71,7 +71,7 @@ async def trakt_device_start(
 @router.post("/auth/device/poll")
 async def trakt_device_poll(
     background_tasks: BackgroundTasks = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     """Check if the user has authorized the device. Call repeatedly per the interval."""
@@ -115,7 +115,7 @@ async def trakt_device_poll(
 
 @router.delete("/auth/disconnect")
 async def trakt_disconnect(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     """Revoke the Trakt token and clear stored credentials."""
@@ -145,7 +145,7 @@ async def trakt_disconnect(
 async def sync_trakt(
     background_tasks: BackgroundTasks,
     full: bool = Query(default=False),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     if not full:
@@ -186,7 +186,7 @@ async def trakt_import_upload(
     sync_ratings: bool = Form(True),
     sync_lists: bool = Form(True),
     sync_comments: bool = Form(True),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     """Import watched history, ratings, lists, and/or comments from a Trakt data export zip.
@@ -247,7 +247,7 @@ async def trakt_import_upload(
 @router.post("/push")
 async def push_trakt(
     background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     result = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))

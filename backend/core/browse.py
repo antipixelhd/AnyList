@@ -164,6 +164,8 @@ async def iter_browse_sections(
     for values in filters:
         policy = policies[values['sort']]
         values.update(min_votes=policy.min_votes, min_popularity=policy.min_popularity)
+    # The feeds use the resolved policy values while the request waits.
+    await db.commit()
     # Fetch remote feeds concurrently, but use the shared database session sequentially.
     semaphore = asyncio.Semaphore(2)
 
@@ -204,6 +206,7 @@ async def iter_browse_sections(
             from core.tracking_editor import attach_editor_context
             if progressive:
                 await attach_editor_context(db, viewer, section['results'])
+            await db.commit()
             yield {'index': index, 'section': section, 'notice': page.get('notice')}
     finally:
         for task in tasks:
@@ -416,8 +419,9 @@ def local_query(
         if sort in IMDB_SORTS
         else []
     )
-    votes = data["imdb"]["votes"].astext.cast(Float)
-    rank = data["imdb"]["popularity_rank"].astext.cast(Float)
+    from core.browse_metrics import ImdbVotes, ImdbRank
+    votes = ImdbVotes(data)
+    rank = ImdbRank(data)
     score = Media.imdb_rating
     if cached:
         # One JSON parameter per mapping keeps broad feeds below PostgreSQL's
@@ -744,6 +748,11 @@ async def browse_page(
     attach_context=True,
     **filters,
 ):
+    """Compose one discovery response using a request-owned metadata session.
+
+    This service commits before provider waits and after metadata publication;
+    callers must finish unrelated writes before entering discovery.
+    """
     from core.browse_cursor import encode_search_cursor
 
     if filters['sort'] == 'upcoming':
@@ -773,6 +782,8 @@ async def browse_page(
     if source == "remote" and not available:
         raise ValueError("The metadata key is no longer available")
     if source != "local" and available:
+        if prefetched is None:
+            await db.commit()
         try:
             if isinstance(prefetched, BaseException):
                 raise prefetched

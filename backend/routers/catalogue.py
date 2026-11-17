@@ -1,5 +1,6 @@
 """Authenticated shared metadata API; admin-only identity corrections/backfills."""
 
+from core.api_roles import reader
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query, Request, Response
@@ -38,7 +39,7 @@ from core.screen_characters import character_detail
 from core.game_access import require as require_games, allowed as games_allowed
 
 router = APIRouter(prefix="/catalogue", tags=["catalogue"])
-DB = Annotated[AsyncSession, Depends(get_db)]
+DB = Annotated[AsyncSession, Depends(get_db, scope="function")]
 Caller = Annotated[User, Depends(get_current_user)]
 OptionalCaller = Annotated[User | None, Depends(get_optional_user)]
 Admin = Annotated[User, Depends(require_admin)]
@@ -232,6 +233,7 @@ async def refresh(
 
 
 @router.get("/entities/{entity_id}", response_model=EntityOut)
+@reader
 async def detail(entity_id: int, db: DB, current_user: Caller):
     row = await db.get(CatalogueEntity, entity_id)
     if not row:
@@ -300,6 +302,7 @@ async def screen_character(character_id: Annotated[int, Path(gt=0)], db: DB, cur
 
 
 @router.get("/entities/{entity_id}/details")
+@reader
 async def media_detail(entity_id: Annotated[int, Path(gt=0)], db: DB, current_user: OptionalCaller, response:Response, background:BackgroundTasks,
     country:Annotated[str|None,Query(pattern=r'^[A-Za-z]{2}$')]=None) -> dict:
     from core.media_details import catalogue_title
@@ -343,6 +346,7 @@ async def media_detail(entity_id: Annotated[int, Path(gt=0)], db: DB, current_us
 
 
 @router.get("/entities/{entity_id}/{section}")
+@reader
 async def related(
     entity_id: int,
     section: Literal[

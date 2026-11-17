@@ -53,6 +53,7 @@ from .game_runner import GameWorkDemand, GameProviderTicket, GameProviderTurn, G
 from .search_demand import SearchDemand
 
 __all__ = [
+    'GameMappingGeneration', 'GameMappingReference', 'SteamPlayerGame', 'SeriesSeason', 'SeasonTracking', 'SeasonReconcileJob', 'GameWorkDemand', 'GameProviderTicket', 'GameProviderTurn', 'GameMapperState', 'GameMapperItem', 'GameMapperInterest', 'GameMapperEdge', 'SearchDemand',
     "Base",
     "UserRole", "MediaType", "CollectionSource",
     "User", "UserSettings", "TotpBackupCode", "OidcIdentity", "EmailChangeToken",

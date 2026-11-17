@@ -322,6 +322,29 @@ class MediaCreditTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await fill_screen_credits(db, media, providers=self.providers), 'cached')
         self.providers.detail.assert_awaited_once()
 
+    async def test_cold_refresh_commits_credits_and_title_bridge_together(self):
+        from core import catalogue
+        from core.media_credits import VERSION
+
+        self.reply(movie_payload())
+        refresh = catalogue.refresh_metadata
+        async with self.Session() as db:
+            media = await self.new_movie(db)
+
+            async def observe_publication(*args, **kwargs):
+                receipt = await refresh(*args, **kwargs)
+                async with self.Session() as other:
+                    link = await other.get(CatalogueLegacyLink, media.id)
+                    snapshot = await other.scalar(select(MetadataSnapshot).where(
+                        MetadataSnapshot.external_id == str(media.tmdb_id)))
+                    self.assertEqual(link.entity_id, snapshot.entity_id)
+                    self.assertEqual(snapshot.coverage['detail_credits_version'], VERSION)
+                return receipt
+
+            with patch.object(catalogue, 'refresh_metadata', side_effect=observe_publication):
+                self.assertEqual(await fill_screen_credits(db, media, providers=self.providers), 'updated')
+        self.providers.detail.assert_awaited_once()
+
     async def test_provider_failure_retains_retry_backoff_and_title(self):
         self.providers.detail.side_effect = RuntimeError('Private request detail')
         async with self.Session() as db:

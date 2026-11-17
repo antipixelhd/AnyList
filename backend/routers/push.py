@@ -28,7 +28,7 @@ async def public_key(_: User = Depends(get_current_user)):
 
 
 @router.get("/status")
-async def status(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+async def status(db: AsyncSession = Depends(get_db, scope="function"), user: User = Depends(get_current_user)):
     count = (await db.execute(select(func.count()).select_from(WebPushSubscription).where(
         WebPushSubscription.user_id == user.id,
     ))).scalar_one()
@@ -36,7 +36,7 @@ async def status(db: AsyncSession = Depends(get_db), user: User = Depends(get_cu
 
 
 @router.post("/subscriptions")
-async def subscribe(body: PushSubscriptionIn, request: Request, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+async def subscribe(body: PushSubscriptionIn, request: Request, db: AsyncSession = Depends(get_db, scope="function"), user: User = Depends(get_current_user)):
     row = (await db.execute(select(WebPushSubscription).where(
         WebPushSubscription.endpoint == body.endpoint,
     ))).scalar_one_or_none()
@@ -53,7 +53,7 @@ async def subscribe(body: PushSubscriptionIn, request: Request, db: AsyncSession
 
 
 @router.delete("/subscriptions")
-async def unsubscribe(body: PushSubscriptionIn, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+async def unsubscribe(body: PushSubscriptionIn, db: AsyncSession = Depends(get_db, scope="function"), user: User = Depends(get_current_user)):
     await db.execute(delete(WebPushSubscription).where(
         WebPushSubscription.user_id == user.id,
         WebPushSubscription.endpoint == body.endpoint,

@@ -10,7 +10,7 @@ test('list shortcut submits with the works fragment, restores the form and prese
  const snippet=source.slice(start,source.indexOf("  root.querySelectorAll<HTMLButtonElement>('[data-contributor-view]')",start));
  let click;const submitted=[],scrolled=[],scope={checked:false},works={};
  const form={action:'https://example.test/person/1?media_type=movie',elements:{namedItem:()=>scope},requestSubmit:()=>submitted.push(form.action)};
- const context={signal:new AbortController().signal,root:{querySelector:selector=>selector==='.contributor-list-link'?{addEventListener:(_,handler)=>click=handler}:works},form,scrollToWorks:target=>scrolled.push(target)};
+ const context={switchView:Object.assign(apply=>apply(),{cancel(){}}),worksMotion:{cancel(){}},replaceContributorSelection:(_region,apply)=>apply(),syncDomainFields(){},paintListButton(){},signal:new AbortController().signal,root:{querySelector:selector=>selector==='.contributor-list-link'?{addEventListener:(_,handler)=>click=handler}:works},form,scrollToWorks:target=>scrolled.push(target)};
  vm.runInNewContext(stripTypeScriptTypes(snippet),context);
  const event=overrides=>({button:0,preventDefault(){this.prevented=true;},...overrides});
  const first=event();click(first);assert.equal(first.prevented,true);assert.equal(scope.checked,true);
@@ -27,8 +27,8 @@ test('explicit filtered results scroll only after the requested works render',as
  const snippet=source.slice(start,source.indexOf('  let syncing=',start));
  let submit,resolvePage;const order=[],works={},urls=[];
  const form={action:'https://example.test/person/1#contributor-works',querySelectorAll:()=>[],addEventListener:(_,callback)=>submit=callback};
- const context={form,signal:new AbortController().signal,prediction:{cancel(){}},filterRequest:undefined,revision:0,AbortController,URL,URLSearchParams,
-  domain:()=> 'movies-series',retained:new Map(),retainCurrent:false,syncing:false,sourceRefresh:{update(){},stop(){}},syncAgain:false,updateEmpty(){},pages:{get:()=>new Promise(resolve=>resolvePage=resolve)},
+ const context={form,switchView:Object.assign(apply=>apply(),{cancel(){}}),worksMotion:{cancel(){}},replaceContributorSelection:(_region,apply)=>apply(),syncDomainFields(){},paintListButton(){},signal:new AbortController().signal,prediction:{cancel(){}},filterRequest:undefined,revision:0,AbortController,URL,URLSearchParams,
+  switchView:Object.assign(apply=>apply(),{cancel(){}}),worksMotion:{cancel(){}},replaceContributorSelection:(_region,apply)=>apply(),syncDomainFields(){},paintListButton(){},domain:()=> 'movies-series',retained:new Map(),retainCurrent:false,syncing:false,sourceRefresh:{update(){},stop(){}},syncAgain:false,updateEmpty(){},pages:{get:()=>new Promise(resolve=>resolvePage=resolve)},
   error:{hidden:true},region:{setAttribute(){},removeAttribute(){},replaceChildren(){order.push('replace')}},
   FormData:class{forEach(callback){callback('in','list_scope');callback('movie','media_type')}},
   contributorParams:p=>p,requestPage:()=>new Promise(resolve=>resolvePage=resolve),root:{dataset:{endpoint:'people/1'},querySelector:s=>s==='.contributor-works'?works:s==='.contributor-list-link'?null:{}},

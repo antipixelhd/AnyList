@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import delete, select, text, tuple_, update
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.orm import defer
 
 from models.catalogue import (
     CatalogueEntity,
@@ -84,7 +85,13 @@ def validate_identity(namespace, external_id, kind=None):
 async def write_lock(db):
     # A small catalogue uses one short write lane. This also prevents races
     # between imports with disjoint native IDs but a common authoritative ID.
+    transaction = db.sync_session.get_transaction()
+    if transaction is not None and db.info.get('catalogue_write_transaction') is transaction:
+        return
     await db.execute(text("SELECT pg_advisory_xact_lock(735903601)"))
+    # Rolling back a savepoint releases any locks taken in that savepoint.
+    if not db.in_nested_transaction():
+        db.info['catalogue_write_transaction'] = db.sync_session.get_transaction()
 
 
 async def resolve_identity(db, namespace, external_id):
@@ -111,21 +118,25 @@ async def bind_identity(db, entity_id, namespace, external_id, source, evidence=
                 "Identifier already belongs to another entity; review before merging"
             )
         return previous
+    row = identity_row(entity, namespace, external_id, source, evidence)
+    db.add(row)
+    await db.flush()
+    return row
+
+
+def identity_row(entity, namespace, external_id, source, evidence):
     if namespace=='imdb.title' and entity.kind=='game':
         from core.game_title_match import valid_binding_evidence
         supported=source in ('reviewed','wikidata') or source=='matched' and valid_binding_evidence(evidence or {},external_id)
         if not supported or (evidence or {}).get('title_type')!='videoGame':
             raise IdentityConflict('Game IMDb identity requires verified or reviewed videoGame evidence')
-    row = CatalogueIdentity(
-        entity_id=entity_id,
+    return CatalogueIdentity(
+        entity_id=entity.id,
         namespace=namespace,
         external_id=external_id,
         source=source,
         evidence=evidence or {},
     )
-    db.add(row)
-    await db.flush()
-    return row
 
 
 def source_rank(kind, source):
@@ -244,12 +255,12 @@ async def upsert_entity(db, values, source):
     elif values['kind'] == 'organization':
         from core.person_identities import reconcile_company_identities
         await reconcile_company_identities(db, ids, source)
-    matches = set()
+    keys = []
     for x in ids:
-        validate_identity(x["namespace"], x["external_id"], values["kind"])
-        found = await resolve_identity(db, x["namespace"], x["external_id"])
-        if found:
-            matches.add(found.entity_id)
+        keys.append((x['namespace'], validate_identity(x['namespace'], x['external_id'], values['kind'])))
+    found = {(mapping.namespace, mapping.external_id): mapping for mapping in await db.scalars(
+        select(CatalogueIdentity).where(tuple_(CatalogueIdentity.namespace, CatalogueIdentity.external_id).in_(keys)))}
+    matches = {mapping.entity_id for mapping in found.values()}
     if len(matches) > 1:
         raise IdentityConflict(
             "Provider cross-references disagree with existing mappings"
@@ -268,18 +279,28 @@ async def upsert_entity(db, values, source):
             field_sources={} if placeholder_name(values) else {"name": source},
             protected_fields=[],
         )
+    merge_fields(row, values, source)
+    if row.id is None:
         db.add(row)
         await db.flush()
-    merge_fields(row, values, source)
-    for x in ids:
-        await bind_identity(
-            db,
-            row.id,
-            x["namespace"],
-            x["external_id"],
-            source,
-            {"cross_reference": ids[0]},
-        )
+    transaction = db.sync_session.get_transaction()
+    locked = transaction is not None and db.info.get('catalogue_write_transaction') is transaction
+    pending = []
+    for namespace, native in keys:
+        if locked:
+            # The transaction's catalogue lock fences identity changes, so the
+            # batch lookup remains authoritative through this publication.
+            if (namespace, native) not in found:
+                mapping = identity_row(row, namespace, native, source, {'cross_reference': ids[0]})
+                found[(namespace, native)] = mapping
+                pending.append(mapping)
+        else:
+            # Standalone callers without the outer write lane retain a fresh
+            # ownership check, including savepoints whose locks can roll back.
+            await bind_identity(db, row.id, namespace, native, source, {'cross_reference': ids[0]})
+    if pending:
+        db.add_all(pending)
+        await db.flush()
     return row
 
 
@@ -306,7 +327,10 @@ async def upsert(db, model, values, keys, preserve_missing=False):
         statement = statement.on_conflict_do_update(index_elements=keys, set_=update)
     else:
         statement = statement.on_conflict_do_nothing(index_elements=keys)
-    await db.execute(statement)
+    row = (await db.scalars(statement.returning(model),
+                            execution_options={"populate_existing": True})).one_or_none()
+    if row is not None:
+        return row
     return (
         await db.execute(
             select(model).where(*(getattr(model, k) == values[k] for k in keys)).execution_options(populate_existing=True)
@@ -650,11 +674,15 @@ def cached_refresh_status(row, now):
     return None
 
 
+_REFRESH_STATE_COLUMNS = ('entity_id', 'coverage', 'fetched_at', 'expires_at',
+                          'attempts', 'error_code', 'next_attempt_at', 'lease_token', 'lease_until')
+
+
 async def record_refresh_failure(db, row, token, error, base_delay):
-    # Use the same lock order as claims/publication, including after a rollback.
+    # Retry bookkeeping only changes this snapshot. Publication still takes
+    # the catalogue lock before locking the snapshot or changing identities.
     try:
-        await write_lock(db)
-        await db.refresh(row, with_for_update=True)
+        await db.refresh(row, attribute_names=_REFRESH_STATE_COLUMNS, with_for_update=True)
         if row.lease_token != token:
             return "refreshing", False
         code = (
@@ -677,7 +705,7 @@ async def record_refresh_failure(db, row, token, error, base_delay):
 
 async def refresh_metadata(
     db, providers, provider, kind, external_id, edition_page=None, *, additive=False, expected_entity_id=None,
-    credit_groups=None,on_primary=None,primary_only=False
+    credit_groups=None, on_primary=None, primary_only=False, publish_in_transaction=None,
 ):
     providers.validate(provider, kind)
     namespace = f"{provider}.{kind}"
@@ -697,7 +725,8 @@ async def refresh_metadata(
     snapshot_kind = "edition_page" if edition_page else kind
     snapshot_id = f"{external_id}:{edition_page}" if edition_page else external_id
     token = uuid.uuid4().hex
-    await write_lock(db)
+    # The unique provider key and the row lock below serialize competing
+    # claims. Commit before entering provider admission or publishing identities.
     await db.execute(
         insert(MetadataSnapshot)
         .values(provider=provider, kind=snapshot_kind, external_id=snapshot_id,
@@ -712,6 +741,8 @@ async def refresh_metadata(
                 MetadataSnapshot.kind == snapshot_kind,
                 MetadataSnapshot.external_id == snapshot_id,
             )
+            .options(defer(MetadataSnapshot.payload))
+            .execution_options(populate_existing=True)
             .with_for_update()
         )
     ).scalar_one()
@@ -737,7 +768,7 @@ async def refresh_metadata(
         # Commit the next interaction before fetching optional characters.
         # Established content remains intact until its full refresh succeeds.
         await write_lock(db)
-        await db.refresh(row,with_for_update=True)
+        await db.refresh(row, attribute_names=_REFRESH_STATE_COLUMNS, with_for_update=True)
         if row.lease_token!=token:raise IdentityConflict('Metadata lease changed')
         await verify_game(doc)
         if not row.fetched_at:
@@ -765,7 +796,7 @@ async def refresh_metadata(
             doc, payload = await providers.detail(provider, kind, external_id, **options)
         # Recheck ownership before publishing. Late workers cannot overwrite.
         await write_lock(db)
-        await db.refresh(row, with_for_update=True)
+        await db.refresh(row, attribute_names=_REFRESH_STATE_COLUMNS, with_for_update=True)
         if row.lease_token != token:
             result = refresh_result(row, "refreshing")
             await db.commit()
@@ -792,11 +823,15 @@ async def refresh_metadata(
             row.attempts = 0
             row.error_code = None
             row.next_attempt_at = None
+            if publish_in_transaction is not None:
+                # Database-only projection: this callback shares the publication
+                # transaction and short identity lock, before the final commit.
+                await publish_in_transaction(entity, row)
         status = "updated"
     except asyncio.CancelledError:
         await db.rollback()
-        await write_lock(db)
-        owned=await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.id==snapshot_row_id).with_for_update())
+        owned=await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.id==snapshot_row_id)
+            .options(defer(MetadataSnapshot.payload)).with_for_update())
         if owned and owned.lease_token==token:
             owned.lease_token=owned.lease_until=None;owned.next_attempt_at=datetime.now(timezone.utc).replace(tzinfo=None)
         await db.commit()

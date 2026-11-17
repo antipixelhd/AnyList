@@ -88,7 +88,8 @@ class TrackingScopeIntegrationTests(unittest.IsolatedAsyncioTestCase):
         game_write = await self.client.patch(
             f"/tracking/games/entries/{self.media.id}", headers=headers, json={"notes": "private"},
         )
-        self.assertEqual(game_write.status_code, 403)
+        # Games requires bearer authentication before inspecting write scopes.
+        self.assertEqual(game_write.status_code, 401)
 
         extra_field = await self.client.patch(
             f"/tracking/entry/{self.media.id}/external", headers=headers,

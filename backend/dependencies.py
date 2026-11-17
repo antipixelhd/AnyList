@@ -4,7 +4,7 @@ from fastapi.security import OAuth2PasswordBearer
 from jose import jwt, JWTError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload
 
 from db import get_db
 from models.users import User
@@ -55,9 +55,7 @@ async def _user_from_device_grant(db: AsyncSession, payload: dict) -> Optional[U
     ):
         return None
 
-    # No selectinload(User.profile) here, matching the API-key branch of
-    # get_current_user_or_api_key - these non-session callers hit data
-    # endpoints, not the profile-rendering pages.
+    # Device grants and API keys load the account for data endpoints.
     user_result = await db.execute(select(User).where(User.id == user_id))
     return _work_user(user_result.scalar_one_or_none())
 
@@ -76,7 +74,7 @@ oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="auth/login", auto_error=
 ANON_USER_ID = -1
 
 async def get_current_user(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     token: str = Depends(oauth2_scheme)
 ) -> User:
     credentials_exception = HTTPException(
@@ -100,7 +98,7 @@ async def get_current_user(
     except (JWTError, TypeError, ValueError):
         raise credentials_exception
 
-    query = select(User).where(User.id == token_data.sub).options(selectinload(User.profile))
+    query = select(User).where(User.id == token_data.sub).options(joinedload(User.profile))
     result = await db.execute(query)
     user = result.scalar_one_or_none()
     
@@ -115,7 +113,7 @@ async def require_admin(current_user: User = Depends(get_current_user)) -> User:
 
 
 async def get_optional_user(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     token: Optional[str] = Depends(oauth2_scheme_optional)
 ) -> Optional[User]:
     if not token:
@@ -138,14 +136,14 @@ async def get_optional_user(
     except (JWTError, ValueError, TypeError):
         return None
 
-    query = select(User).where(User.id == user_id).options(selectinload(User.profile))
+    query = select(User).where(User.id == user_id).options(joinedload(User.profile))
     result = await db.execute(query)
     user = result.scalar_one_or_none()
     return _work_user(user) if user is not None and session_is_current(user, payload) else None
 
 
 async def get_tracking_write_user(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     token: Optional[str] = Depends(oauth2_scheme_optional),
 ) -> User:
     """Authenticate the AnyList tracking write API.
@@ -178,7 +176,7 @@ async def get_tracking_write_user(
     except (JWTError, TypeError, ValueError):
         raise credentials_exception
 
-    result = await db.execute(select(User).where(User.id == user_id).options(selectinload(User.profile)))
+    result = await db.execute(select(User).where(User.id == user_id).options(joinedload(User.profile)))
     user = result.scalar_one_or_none()
     if user is None or not session_is_current(user, payload):
         raise credentials_exception
@@ -186,7 +184,7 @@ async def get_tracking_write_user(
 
 
 async def get_current_user_or_api_key(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     jwt_user: Optional[User] = Depends(get_optional_user),
     api_key: Optional[str] = Query(None, description="AnyList API key, as an alternative to a JWT Bearer token"),
     x_api_key: Optional[str] = Header(None, alias="X-Api-Key"),
@@ -212,7 +210,7 @@ async def get_current_user_or_api_key(
 
 
 async def get_optional_user_or_api_key(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     jwt_user: Optional[User] = Depends(get_optional_user),
     api_key: Optional[str] = Query(None, description="AnyList API key, as an alternative to a JWT Bearer token"),
     x_api_key: Optional[str] = Header(None, alias="X-Api-Key"),

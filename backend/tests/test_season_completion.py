@@ -7,7 +7,7 @@ from sqlalchemy import delete, select, text, update
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 import test_statistics_pg as fixture
-from core.season_completion import check_release_boundaries, completion_evidence, reconcile, run_batch
+from core.season_completion import check_release_boundaries, clear_unavailable_jobs, completion_evidence, reconcile, run_batch
 from models import Media, Show, TrackedEntry, TrackingActivity, WatchEvent, ShowEpisodePosition, UserShowEpisodeOrder
 from models.base import MediaType
 from models.seasons import SeasonTracking, SeasonReconcileJob
@@ -46,6 +46,10 @@ class EvidenceTests(unittest.TestCase):
 class SeasonDatabaseTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         await fixture.StatisticsDatabaseTests.asyncSetUp(self)
+        # Post-response delivery owns independent sessions. Keep those real
+        # sessions in this disposable schema as well as the route dependency.
+        self.enterContext(patch('core.local_outbound.engine', self.engine))
+        self.enterContext(patch('db.engine', self.engine))
         self.app.include_router(router)
         self.app.dependency_overrides[get_tracking_write_user] = lambda: self.viewer
         self.app.dependency_overrides[get_current_user] = lambda: self.viewer
@@ -91,6 +95,36 @@ class SeasonDatabaseTests(unittest.IsolatedAsyncioTestCase):
     async def rows(self, db):
         return list(await db.scalars(select(TrackingActivity).where(TrackingActivity.media_id == self.series_id,
             TrackingActivity.payload['season_completion_id'].as_integer().is_not(None)).order_by(TrackingActivity.id)))
+
+    async def test_unhydrated_receipts_are_batched_without_changing_private_dates_or_activity(self):
+        async with self.Session() as db:
+            empty = Media(title='Unhydrated series', tmdb_id=924100, media_type=MediaType.series)
+            protected = Media(title='Series with historical activity', tmdb_id=924101, media_type=MediaType.series)
+            db.add_all([empty, protected])
+            await db.flush()
+            db.add_all([TrackedEntry(user_id=self.user_id, media_id=empty.id, status='completed',
+                start_date=date(2020, 1, 2), finish_date=date(2020, 1, 3)),
+                TrackedEntry(user_id=self.user_id, media_id=protected.id, status='watching')])
+            db.add(TrackingActivity(user_id=self.user_id, media_id=protected.id, status='watching',
+                payload={'finished_seasons': [1]}))
+            await db.commit()
+            empty_id, protected_id = empty.id, protected.id
+        self.assertEqual(await clear_unavailable_jobs(self.Session, 20), 1)
+        async with self.Session() as db:
+            self.assertIsNone(await db.get(SeasonReconcileJob, (self.user_id, empty_id)))
+            self.assertIsNotNone(await db.get(SeasonReconcileJob, (self.user_id, protected_id)))
+            self.assertIsNotNone(await db.get(SeasonReconcileJob, (self.user_id, self.series_id)))
+            saved = await db.scalar(select(TrackedEntry).where(
+                TrackedEntry.user_id == self.user_id, TrackedEntry.media_id == empty_id))
+            self.assertEqual((saved.start_date, saved.finish_date), (date(2020, 1, 2), date(2020, 1, 3)))
+            # A later canonical episode publication must create a new receipt.
+            show = Show(title='Hydrated series', tmdb_id=924100)
+            db.add(show)
+            await db.flush()
+            db.add(Media(title='Episode', media_type=MediaType.episode, show_id=show.id,
+                season_number=1, episode_number=1, release_date='2020-01-01'))
+            await db.commit()
+            self.assertIsNotNone(await db.get(SeasonReconcileJob, (self.user_id, empty_id)))
 
     async def test_same_day_seasons_are_distinct_and_repeat_imports_and_rewatches_keep_first_date(self):
         self.assertEqual(await run_batch(self.Session), 1)

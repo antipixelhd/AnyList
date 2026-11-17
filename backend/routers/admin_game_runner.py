@@ -10,7 +10,7 @@ from db import get_db
 from dependencies import require_admin
 
 router=APIRouter(prefix='/admin/game-runner',tags=['admin'],dependencies=[Depends(require_admin)])
-DB=Annotated[AsyncSession,Depends(get_db)]
+DB=Annotated[AsyncSession,Depends(get_db, scope="function")]
 
 
 class RunnerControl(BaseModel):

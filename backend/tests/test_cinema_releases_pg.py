@@ -1,8 +1,9 @@
+import asyncio
 import unittest
 from types import SimpleNamespace
 from datetime import datetime,timedelta
 from unittest.mock import AsyncMock
-from sqlalchemy import select,func
+from sqlalchemy import select,func,text
 import test_statistics_pg as fixture
 from core.cinema_releases import backfill_cinema_releases
 from core.catalogue_providers import ProviderError
@@ -14,6 +15,43 @@ from models.catalogue import MetadataSnapshot
 class CinemaBackfillTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):await fixture.StatisticsDatabaseTests.asyncSetUp(self)
     async def asyncTearDown(self):await fixture.StatisticsDatabaseTests.asyncTearDown(self)
+
+    async def test_publication_proceeds_during_catalogue_work_and_collection_foreign_key_checks(self):
+        async with self.Session() as db:
+            movie=await db.get(Media,self.media_id);movie.tmdb_id=42
+            await db.commit()
+        # A collection insert holds KEY SHARE on its referenced media until its
+        # transaction ends. Neither it nor unrelated identity publication should
+        # stop this independent evidence cache from publishing JSON metadata.
+        async with self.Session() as holder, self.Session() as publisher:
+            await holder.execute(text('SELECT pg_advisory_xact_lock(735903601)'))
+            await holder.execute(select(Media.id).where(Media.id==self.media_id)
+                .with_for_update(read=True,key_share=True))
+            adapter=SimpleNamespace(tmdb_key='fixture',http=SimpleNamespace(request=AsyncMock(return_value={'results':[]})))
+            result=await asyncio.wait_for(backfill_cinema_releases(publisher,adapter),3)
+            self.assertEqual(result['updated'],1)
+            self.assertEqual(result['failed'],0)
+
+    async def test_competing_refreshers_share_one_live_lease(self):
+        async with self.Session() as db:
+            (await db.get(Media,self.media_id)).tmdb_id=42
+            await db.commit()
+        started=asyncio.Event();release=asyncio.Event()
+        async def request(*args,**kwargs):
+            started.set();await release.wait()
+            return {'results':[]}
+        adapter=SimpleNamespace(tmdb_key='fixture',http=SimpleNamespace(request=AsyncMock(side_effect=request)))
+        async with self.Session() as first,self.Session() as second:
+            pending=asyncio.create_task(backfill_cinema_releases(first,adapter))
+            try:
+                await asyncio.wait_for(started.wait(),3)
+                other=await asyncio.wait_for(backfill_cinema_releases(second,adapter),3)
+                self.assertEqual(other['examined'],0)
+            finally:
+                release.set()
+                result=await asyncio.wait_for(pending,3)
+            self.assertEqual(result['updated'],1)
+            self.assertEqual(adapter.http.request.await_count,1)
 
     async def test_cached_release_evidence_is_reused_without_changing_history(self):
         async with self.Session() as db:

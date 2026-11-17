@@ -177,6 +177,19 @@ def collect_watch(media_id, changed_at):
         values[source] = clock
 
 
+def baseline_library_memberships(connection_id, snapshot, media_rows):
+    """Match source identities in linear time, preserving movie/series scopes."""
+    by_native = {}
+    for media in media_rows:
+        by_native.setdefault(media.tmdb_id, []).append(media)
+    mappings = snapshot.get('mappings', {})
+    kinds = {str(row.get('content_id')): row.get('content_type')
+             for row in snapshot.get('records', {}).get('library', [])}
+    return {(connection_id, media.id) for key in snapshot['library']
+            for media in by_native.get(mappings.get(str(key)), ())
+            if not kinds.get(str(key)) or media.media_type.value == kinds[str(key)]}
+
+
 async def initialize(db, state):
     from sqlalchemy import select
     from models import Collection, CollectionFile, WatchEvent
@@ -185,8 +198,9 @@ async def initialize(db, state):
     state.connection_versions = {conn.id: conn.identity_version for conn in (await db.execute(
         select(MediaServerConnection).where(MediaServerConnection.user_id == state.user_id))).scalars()}
     state.entries_before = {entry.media_id: {field: getattr(entry, field) for field in
-        ("status", "progress", "start_date", "finish_date")} for entry in (await db.execute(select(TrackedEntry).where(
-            TrackedEntry.user_id == state.user_id))).scalars()}
+        ("status", "progress", "start_date", "finish_date")} for entry in (await db.execute(select(
+            TrackedEntry.media_id, TrackedEntry.status, TrackedEntry.progress, TrackedEntry.start_date,
+            TrackedEntry.finish_date).where(TrackedEntry.user_id == state.user_id))).all()}
     state.watch_before = set((await db.execute(select(WatchEvent.media_id).where(
         WatchEvent.user_id == state.user_id, WatchEvent.completed.is_(True)))).scalars())
     for baseline in (await db.execute(select(CloudBaseline).where(CloudBaseline.user_id == state.user_id))).scalars():
@@ -208,11 +222,9 @@ async def initialize(db, state):
         if "library" in snapshot:
             mappings = snapshot.get("mappings", {})
             tmdb_ids = {mappings.get(str(key)) for key in snapshot["library"]} - {None}
-            media_rows = (await db.execute(select(Media).where(Media.tmdb_id.in_(tmdb_ids),
-                Media.media_type.in_(("movie", "series"))))).scalars().all()
-            kinds = {str(row.get("content_id")): row.get("content_type") for row in snapshot.get("records", {}).get("library", [])}
-            prior = {(baseline.connection_id, media.id) for key in snapshot["library"] for media in media_rows
-                     if media.tmdb_id == mappings.get(str(key)) and (not kinds.get(str(key)) or media.media_type.value == kinds[str(key)])}
+            media_rows = (await db.execute(select(Media.id, Media.tmdb_id, Media.media_type).where(
+                Media.tmdb_id.in_(tmdb_ids), Media.media_type.in_(("movie", "series"))))).all()
+            prior = baseline_library_memberships(baseline.connection_id, snapshot, media_rows)
             state.library_before = {key: value for key, value in state.library_before.items() if key[0] != baseline.connection_id}
             state.library_before.update({key: True for key in prior})
             for _, media_id in prior:

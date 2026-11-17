@@ -32,7 +32,7 @@ async def export_data(
     media_connections: bool = Query(False),
     scrobble_connections: bool = Query(False),
     connections: bool = Query(False),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     """Personal data export — watch history, ratings, collection, lists, and
@@ -116,7 +116,7 @@ async def import_data(
     media_connections: bool = Form(False),
     scrobble_connections: bool = Form(False),
     connections: bool = Form(False),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     """Restore an AnyList or compatible Scrob data export into this account.

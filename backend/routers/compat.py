@@ -22,7 +22,7 @@ TMDB_CONCURRENCY = 5  # Max concurrent TMDB requests
 async def _user_by_api_key(
     x_api_key: str | None = Header(None, alias="X-Api-Key"),
     apikey: str | None = Query(None),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> User:
     key = x_api_key or apikey
     if not key:
@@ -45,7 +45,7 @@ async def _get_list(list_id: int, user: User, db: AsyncSession) -> UserList:
 async def radarr_list(
     list_id: int,
     user: User = Depends(_user_by_api_key),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     await _get_list(list_id, user, db)
 
@@ -87,7 +87,7 @@ async def radarr_list(
 async def sonarr_list(
     list_id: int,
     user: User = Depends(_user_by_api_key),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     await _get_list(list_id, user, db)
 

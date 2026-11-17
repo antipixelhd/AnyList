@@ -40,7 +40,7 @@ router = APIRouter()
 
 @router.get("/public-access-status")
 async def get_public_access_status(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Public display flags used before authenticating anonymous navigation.
 
@@ -115,7 +115,7 @@ def _latest_episode_per_show_subquery(user_id: int):
 @router.get("/me", response_model=schemas.UserProfileResponse)
 async def get_profile(
     current_user: User = Depends(get_current_user_or_api_key),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     result = await db.execute(
         select(UserProfileData).where(UserProfileData.user_id == current_user.id)
@@ -140,7 +140,7 @@ async def account_countries(current_user: Annotated[User, Depends(get_current_us
 async def update_profile(
     body: schemas.UserProfileUpdate,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     result = await db.execute(
         select(UserProfileData).where(UserProfileData.user_id == current_user.id)
@@ -163,7 +163,7 @@ async def update_profile(
 
 
 CurrentAccount = Annotated[User, Depends(get_current_user)]
-ProfileDB = Annotated[AsyncSession, Depends(get_db)]
+ProfileDB = Annotated[AsyncSession, Depends(get_db, scope="function")]
 
 
 @router.patch("/me/account-name", response_model=schemas.AccountNameResponse)
@@ -201,20 +201,20 @@ async def save_profile_upload(kind,file,crop,current_user,db):
 
 
 @router.post('/me/avatar')
-async def upload_avatar(file:Annotated[UploadFile,File()],db:Annotated[AsyncSession,Depends(get_db)],
+async def upload_avatar(file:Annotated[UploadFile,File()],db:Annotated[AsyncSession,Depends(get_db, scope="function")],
     current_user:Annotated[User,Depends(get_current_user)],crop:Annotated[str,Form()]='{}') -> dict:
     return await save_profile_upload('avatar',file,crop,current_user,db)
 
 
 @router.post('/me/background')
-async def upload_background(file:Annotated[UploadFile,File()],db:Annotated[AsyncSession,Depends(get_db)],
+async def upload_background(file:Annotated[UploadFile,File()],db:Annotated[AsyncSession,Depends(get_db, scope="function")],
     current_user:Annotated[User,Depends(get_current_user)],crop:Annotated[str,Form()]='{}') -> dict:
     return await save_profile_upload('background',file,crop,current_user,db)
 
 
 @router.put('/me/background')
 async def select_background(body:schemas.ProfileBackgroundSource,background_tasks:BackgroundTasks,
-    db:Annotated[AsyncSession,Depends(get_db)],current_user:Annotated[User,Depends(get_current_user)]) -> dict:
+    db:Annotated[AsyncSession,Depends(get_db, scope="function")],current_user:Annotated[User,Depends(get_current_user)]) -> dict:
     from core.image_cache import parse_image_url,upstream_image_url
     try:
         size,path=parse_image_url(body.image)
@@ -240,7 +240,7 @@ async def cache_profile_background(size,path,limit_gb):
 
 
 @router.delete('/me/background')
-async def delete_background(db:Annotated[AsyncSession,Depends(get_db)],current_user:Annotated[User,Depends(get_current_user)]) -> dict:
+async def delete_background(db:Annotated[AsyncSession,Depends(get_db, scope="function")],current_user:Annotated[User,Depends(get_current_user)]) -> dict:
     await db.execute(text(AVATAR_WRITE_LOCK_SQL))
     profile=await db.scalar(select(UserProfileData).where(UserProfileData.user_id==current_user.id).with_for_update())
     if profile:
@@ -252,7 +252,7 @@ async def delete_background(db:Annotated[AsyncSession,Depends(get_db)],current_u
 
 
 @router.get('/background/{user_id}')
-async def get_background(user_id:int,db:Annotated[AsyncSession,Depends(get_db)],
+async def get_background(user_id:int,db:Annotated[AsyncSession,Depends(get_db, scope="function")],
     current_user:Annotated[User|None,Depends(get_optional_user_or_api_key)]) -> Response:
     _,profile=await _check_profile_access(user_id,current_user,db)
     if not profile or not profile.background_url:raise HTTPException(404,'No profile background')
@@ -275,7 +275,7 @@ async def get_background(user_id:int,db:Annotated[AsyncSession,Depends(get_db)],
 @router.delete("/me/avatar")
 async def delete_avatar(
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     await db.execute(text(AVATAR_WRITE_LOCK_SQL))
     result = await db.execute(select(UserProfileData).where(UserProfileData.user_id == current_user.id))
@@ -298,7 +298,7 @@ _TRANSLATION_BACKFILL: dict[int, dict] = {}
 async def start_translation_backfill(
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     user_id = current_user.id
     if _TRANSLATION_BACKFILL.get(user_id, {}).get("running"):
@@ -518,7 +518,7 @@ async def _run_translation_backfill(user_id: int, language: str, tmdb_key: str) 
 @router.get("/avatar/{user_id}")
 async def get_avatar(
     user_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User | None = Depends(get_optional_user_or_api_key),
 ):
     user, _ = await _check_profile_access(user_id, current_user, db)
@@ -540,7 +540,7 @@ async def get_avatar(
 @router.get("/search")
 async def search_users(
     q: str = "",
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Unlike viewing a single profile/list by ID, this is a directory-style
@@ -643,7 +643,7 @@ async def search_users(
 async def follow_user(
     user_id: int,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     if current_user.id == user_id:
         raise HTTPException(status_code=400, detail="You cannot follow yourself.")
@@ -667,7 +667,7 @@ async def follow_user(
 async def unfollow_user(
     user_id: int,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     from sqlalchemy import delete as sa_delete
     await db.execute(
@@ -680,7 +680,7 @@ async def unfollow_user(
 @router.get("/{user_id}", response_model=schemas.PublicProfileResponse)
 async def get_public_profile(
     user_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     user, profile = await _check_profile_access(user_id, current_user, db)
@@ -1045,7 +1045,7 @@ _TOP_RATED_PAGE_SIZE = 24
 async def get_top_rated_movies(
     user_id: int,
     page: int = Query(1, ge=1),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     await _check_profile_access(user_id, current_user, db)
@@ -1090,7 +1090,7 @@ async def get_top_rated_movies(
 async def get_top_rated_shows(
     user_id: int,
     page: int = Query(1, ge=1),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     await _check_profile_access(user_id, current_user, db)
@@ -1139,7 +1139,7 @@ _RECENTLY_WATCHED_PAGE_SIZE = 24
 async def get_recently_watched_movies(
     user_id: int,
     page: int = Query(1, ge=1),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     await _check_profile_access(user_id, current_user, db)
@@ -1184,7 +1184,7 @@ async def get_recently_watched_movies(
 async def get_recently_watched_shows(
     user_id: int,
     page: int = Query(1, ge=1),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     await _check_profile_access(user_id, current_user, db)
@@ -1232,7 +1232,7 @@ async def get_user_stats(
     user_id: int,
     since: Optional[DateType] = None,
     until: Optional[DateType] = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     await _check_profile_access(user_id, current_user, db)

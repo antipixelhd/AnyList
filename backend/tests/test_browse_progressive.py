@@ -209,7 +209,7 @@ class PreviewTests(unittest.IsolatedAsyncioTestCase):
              patch.object(browse,'remote_page',side_effect=remote), \
              patch.object(browse,'browse_page',side_effect=compose), \
              patch('core.tracking_editor.attach_editor_context',AsyncMock()):
-            stream=browse.iter_browse_sections(None,None,media_type='series',region='DE',show_anime=True,key='fixture')
+            stream=browse.iter_browse_sections(AsyncMock(),None,media_type='series',region='DE',show_anime=True,key='fixture')
             first=await asyncio.wait_for(anext(stream),1)
             self.assertEqual(first['index'],0)
             await stream.aclose()

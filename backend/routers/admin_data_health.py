@@ -12,7 +12,7 @@ from models.users import User
 from schemas_data_health import DataHealth, HealthJob, RepairRequest
 
 router = APIRouter(prefix='/admin/data-health', tags=['admin'], dependencies=[Depends(require_admin)])
-DB = Annotated[AsyncSession, Depends(get_db)]
+DB = Annotated[AsyncSession, Depends(get_db, scope="function")]
 Admin = Annotated[User, Depends(require_admin)]
 
 

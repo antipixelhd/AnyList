@@ -7,7 +7,7 @@ const source=readFileSync(new URL('../src/scripts/steam-settings.ts',import.meta
 function fixture(){
  const nodes=new Map(),buttons=[{disabled:false},{disabled:false}],closed=[],removed=[];
  const get=name=>{if(!nodes.has(name))nodes.set(name,{hidden:false,textContent:'',querySelector:()=>null});return nodes.get(name);};
- const context={active:{id:42,generation:3},importing:false,leaving:false,saveTimer:null,timer:null,reviewEpoch:0,loadVersion:0,paused:false,reviewGames:null,writes:Promise.resolve(),signal:{aborted:false},
+ const context={combinedList:()=>false,active:{id:42,generation:3},importing:false,leaving:false,saveTimer:null,timer:null,reviewEpoch:0,loadVersion:0,paused:false,reviewGames:null,writes:Promise.resolve(),signal:{aborted:false},
   exitDialog:{querySelectorAll:()=>buttons},dialog:{},get,clearTimeout,save:()=>{},fetch:async()=>({ok:true}),
   sessionStorage:{removeItem:key=>removed.push(key)},closeDialog:async value=>{closed.push(value);},list:async()=>{}};
  const code=source.slice(source.indexOf('  async function leave('),source.indexOf("  listen(get('abort')"));

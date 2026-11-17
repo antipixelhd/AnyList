@@ -41,6 +41,24 @@ class SearchDemandTests(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as db:
             return bool(await db.scalar(select(demand.active(target))))
 
+    async def test_fresh_discovery_cache_does_not_claim_provider_demand(self):
+        from core.game_source_cache import GameSourceCache
+
+        cache = GameSourceCache(self.Session)
+        loader = AsyncMock(return_value={'rows': [{'id': 71}]})
+        context = await self.begin(1, 'warm-cache', 1)
+        with demand.context(context):
+            cold = await cache.get('igdb', 'game_browse_pages', 'new-page', loader)
+            self.assertTrue(await self.active('cache:igdb:game_browse_pages:new-page'))
+        other = await self.begin(2, 'warm-cache', 1)
+        with demand.context(other):
+            warm = await cache.get('igdb', 'game_browse_pages', 'new-page', loader)
+        self.assertEqual(warm, cold)
+        loader.assert_awaited_once()
+        async with self.Session() as db:
+            subscribers = await demand.subscribers(db, ['cache:igdb:game_browse_pages:new-page'])
+        self.assertEqual(len(subscribers), 1)
+
     async def test_polls_renew_the_lease_only_when_needed_without_losing_targets(self):
         started = demand.now()
         with patch.object(demand, 'now', return_value=started):

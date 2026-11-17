@@ -15,6 +15,7 @@ import httpx
 from sqlalchemy import update, func
 
 from core.config import settings
+from core.http_tls import default_verification
 from models.catalogue import MetadataProviderBudget
 from .catalogue_normalize import (
     GAME_ARTWORK_VERSION,
@@ -134,6 +135,7 @@ class ProviderHTTP:
             timeout=httpx.Timeout(15, connect=5),
             follow_redirects=False,
             headers={"User-Agent": "AnyList catalogue/1"},
+            verify=default_verification(),
         )
 
     @asynccontextmanager

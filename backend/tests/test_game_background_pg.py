@@ -826,6 +826,36 @@ class BackgroundMappingTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual({item.native for item in items},{'10','20','30'})
             self.assertTrue(all(item.category==1 and item.weight==1 for item in items))
 
+    async def test_list_seed_preserves_fresh_observations_and_counts_distinct_users(self):
+        from models.games import GameEntry
+
+        fresh = now() + timedelta(hours=23, minutes=30)
+        async with self.Session() as db:
+            await observe(db, [('10', self.base)], category=1, source=f'list:{self.user.id}',
+                          user_id=self.user.id, expires_at=fresh)
+            await observe(db, [('10', self.base)], category=1, source=f'list:{self.other.id}',
+                          user_id=self.other.id, expires_at=now() + timedelta(minutes=5))
+            db.add_all([GameEntry(user_id=user.id, work_id=self.base)
+                        for user in (self.user, self.other)])
+            await db.commit()
+
+        service = GameBackground(self.Session)
+        try:
+            async with self.Session() as db:
+                runner = await state(db)
+                await service.seed_lists(db, runner)
+                await db.commit()
+        finally:
+            await service.close()
+
+        async with self.Session() as db:
+            interests = {row.user_id: row.expires_at for row in
+                         await db.scalars(select(GameMapperInterest))}
+            self.assertEqual(interests[self.user.id], fresh)
+            self.assertGreater(interests[self.other.id], fresh)
+            item = await db.get(GameMapperItem, 'game:10')
+            self.assertEqual((item.category, item.weight, item.counts), (1, 2, {'1': 2}))
+
     async def test_foreground_prunes_obsolete_state_with_mapper_stopped(self):
         async with self.Session() as db:
             runner=await state(db);runner.enabled=False

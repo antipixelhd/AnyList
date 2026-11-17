@@ -118,7 +118,7 @@ class DataHealthTests(unittest.IsolatedAsyncioTestCase):
             db.add(TrackedEntry(user_id=user.id, media_id=self.media_id))
             db.add(MetadataSnapshot(provider='tmdb', kind='movie', external_id='1', error_code='PRIVATE_KEY', payload={'key':'PRIVATE_KEY'}))
             await db.commit()
-            revision = await db.scalar(select(StatsMetadataRevision.revision))
+            revision = await db.scalar(select(func.sum(StatsMetadataRevision.revision)))
         response = await self.client.get('/admin/data-health')
         self.assertEqual(response.status_code, 200, response.text)
         data = response.json()
@@ -132,7 +132,7 @@ class DataHealthTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('PRIVATE_KEY', response.text)
         self.assertNotIn('private@example.test', response.text)
         async with self.Session() as db:
-            self.assertEqual(await db.scalar(select(StatsMetadataRevision.revision)), revision)
+            self.assertEqual(await db.scalar(select(func.sum(StatsMetadataRevision.revision))), revision)
             self.assertEqual(await db.scalar(select(func.count()).select_from(WatchEvent)), 1)
 
     async def test_all_routes_require_admin_and_reject_unknown_operations(self):
@@ -150,6 +150,8 @@ class DataHealthTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_duplicate_candidates_and_conflicting_roots_are_not_merged(self):
         async with self.Session() as db:
+            # Deliberately model a legacy database predating identity uniqueness.
+            await db.execute(text('DROP INDEX uq_media_tmdb_type'))
             movie = await db.get(Media,self.media_id)
             movie.tmdb_id=42; movie.tvdb_id=43
             extra = Media(title='Duplicate',media_type=MediaType.movie,tmdb_id=42)

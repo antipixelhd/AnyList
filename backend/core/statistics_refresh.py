@@ -7,7 +7,7 @@ from datetime import timezone
 from sqlalchemy import select
 
 from core import statistics_snapshots as snapshots
-from models.statistics import StatsMetadataRevision, UserStatsSnapshot, UserStatsState
+from models.statistics import UserStatsSnapshot, UserStatsState
 from schemas_statistics import StatisticsRefresh
 
 
@@ -21,7 +21,7 @@ async def refresh_status(user_id: int, factory=None) -> StatisticsRefresh:
         if state is None:
             return StatisticsRefresh(status="pending")
         snapshot = await db.get(UserStatsSnapshot, state.active_snapshot_id) if state.active_snapshot_id else None
-        revision = await db.scalar(select(StatsMetadataRevision.revision).where(StatsMetadataRevision.id == 1))
+        revision = await snapshots.metadata_revision(db)
         if state.lease_token and state.lease_until and state.lease_until > snapshots.utcnow():
             status = "refreshing"
         elif state.error_code:

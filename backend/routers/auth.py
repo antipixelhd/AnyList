@@ -5,6 +5,7 @@ from core import trakt_auth
 import secrets
 import pyotp
 import logging
+from pydantic import BaseModel
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -133,7 +134,7 @@ async def _registration_allowed(db: AsyncSession) -> bool:
 
 
 @router.get("/registration-status")
-async def registration_status(db: AsyncSession = Depends(get_db)):
+async def registration_status(db: AsyncSession = Depends(get_db, scope="function")):
     allowed = await _registration_allowed(db)
     return {
         "enabled": allowed,
@@ -143,7 +144,7 @@ async def registration_status(db: AsyncSession = Depends(get_db)):
 
 @router.post("/forgot-password")
 @limiter.limit("5/minute")
-async def forgot_password(request: Request, body: schemas.ForgotPasswordRequest, db: AsyncSession = Depends(get_db)):
+async def forgot_password(request: Request, body: schemas.ForgotPasswordRequest, db: AsyncSession = Depends(get_db, scope="function")):
     """Always returns 200 to avoid leaking whether an email exists."""
     if not app_settings.smtp_address:
         raise HTTPException(status_code=503, detail="Password reset is not configured.")
@@ -171,7 +172,7 @@ async def reset_password(
     request: Request,
     token: str,
     body: schemas.ResetPasswordRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     result = await db.execute(select(PasswordResetToken).where(PasswordResetToken.token == token))
     record = result.scalar_one_or_none()
@@ -203,7 +204,7 @@ async def reset_password(
 
 @router.post("/register", response_model=schemas.User)
 @limiter.limit("10/minute")
-async def register(request: Request, user_in: schemas.UserCreate, db: AsyncSession = Depends(get_db)):
+async def register(request: Request, user_in: schemas.UserCreate, db: AsyncSession = Depends(get_db, scope="function")):
     # Acquire this before checking registration status or the user count so a
     # concurrent password or OIDC signup observes the committed first user.
     await lock_account_bootstrap(db)
@@ -268,7 +269,7 @@ async def register(request: Request, user_in: schemas.UserCreate, db: AsyncSessi
 
 @router.post("/login", response_model=schemas.Token)
 @limiter.limit("10/minute")
-async def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)):
+async def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db, scope="function")):
     if app_settings.oidc_enabled and app_settings.oidc_disable_password_login:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -306,7 +307,7 @@ async def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends
     return {"access_token": access_token, "token_type": "bearer"}
 
 @router.get("/activate/{token}", include_in_schema=False)
-async def activate_email(token: str, db: AsyncSession = Depends(get_db)):
+async def activate_email(token: str, db: AsyncSession = Depends(get_db, scope="function")):
     frontend = app_settings.server_url
     result = await db.execute(select(EmailActivation).where(EmailActivation.token == token))
     activation = result.scalar_one_or_none()
@@ -333,7 +334,7 @@ async def activate_email(token: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/activate/{token}", include_in_schema=False)
-async def activate_email_api(token: str, db: AsyncSession = Depends(get_db)):
+async def activate_email_api(token: str, db: AsyncSession = Depends(get_db, scope="function")):
     """JSON endpoint used by the frontend activation page."""
     result = await db.execute(select(EmailActivation).where(EmailActivation.token == token))
     activation = result.scalar_one_or_none()
@@ -360,7 +361,7 @@ async def activate_email_api(token: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/has-users")
-async def has_users(db: AsyncSession = Depends(get_db)):
+async def has_users(db: AsyncSession = Depends(get_db, scope="function")):
     result = await db.execute(select(func.count()).select_from(User))
     return {"has_users": result.scalar_one() > 0}
 
@@ -368,7 +369,7 @@ async def has_users(db: AsyncSession = Depends(get_db)):
 @router.post("/bootstrap-restore")
 async def bootstrap_restore(
     file: UploadFile = File(...),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     count_result = await db.execute(select(func.count()).select_from(User))
     if count_result.scalar_one() > 0:
@@ -395,9 +396,54 @@ async def bootstrap_restore(
 async def read_users_me(current_user: User = Depends(get_current_user)):
     return current_user
 
+
+class PageContext(BaseModel):
+    user: schemas.User
+    settings: schemas.UserSettings
+    preferences: dict
+    profile: schemas.UserProfileResponse
+    notifications: dict | None
+
+
+@router.get('/page-context', response_model=PageContext)
+async def page_context(
+    db: Annotated[AsyncSession, Depends(get_db, scope='function')],
+    current_user: Annotated[User, Depends(get_current_user)],
+    response: Response,
+    include_notifications: Annotated[bool, Query()] = True,
+) -> PageContext:
+    from core.notification_feed import notification_feed
+    from core.profile_images import configured_background_url
+    from core.viewer_preferences import preference_data
+    from models.tracking import TrackingPreferences
+
+    response.headers['Cache-Control'] = 'private, no-store'
+    settings, prefs, global_settings = (await db.execute(select(UserSettings, TrackingPreferences, GlobalSettings)
+        .select_from(User).outerjoin(UserSettings, UserSettings.user_id == User.id)
+        .outerjoin(TrackingPreferences, TrackingPreferences.user_id == User.id)
+        .outerjoin(GlobalSettings, GlobalSettings.id == 1).where(User.id == current_user.id))).one()
+    # Normal registration creates settings; retain legacy first-visit defaults.
+    settings_data = (_project_settings_response(settings, global_settings) if settings
+        else await get_user_settings(db, current_user))
+    profile = current_user.profile  # Already joined by strict session authentication.
+    profile_data = schemas.UserProfileResponse.model_validate(profile) if profile else schemas.UserProfileResponse()
+    if profile:
+        profile_data.background_url = configured_background_url(profile, global_settings)
+        if profile.avatar_path:
+            profile_data.avatar_url = f'/profile/avatar/{current_user.id}'
+    result = PageContext(user=schemas.User.model_validate(current_user), settings=settings_data,
+        preferences=preference_data(prefs, settings), profile=profile_data, notifications=None)
+    if include_notifications:
+        try:
+            result.notifications = await notification_feed(db, result.user.id, prefs)
+        except Exception:
+            logger.exception('Optional page notifications unavailable')
+            await db.rollback()
+    return result
+
 @router.delete("/me")
 async def delete_user_me(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user)
 ):
     if current_user.is_admin:
@@ -419,7 +465,7 @@ async def delete_user_me(
 @router.delete("/me/lists/{category}")
 async def delete_user_list(
     category: Literal['movies', 'series', 'games'],
-    db: Annotated[AsyncSession, Depends(get_db)],
+    db: Annotated[AsyncSession, Depends(get_db, scope="function")],
     current_user: Annotated[User, Depends(get_current_user)],
     confirm: Annotated[Literal['delete'], Query()],
 ) -> dict[str, str]:
@@ -429,14 +475,17 @@ async def delete_user_list(
     return {'status': 'deleted', 'category': category}
 
 async def _settings_response(settings: UserSettings, db: AsyncSession) -> schemas.UserSettings:
-    """Build a UserSettings schema response, injecting computed fields."""
+    result = await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))
+    gs = result.scalar_one_or_none()
+    return _project_settings_response(settings, gs)
+
+
+def _project_settings_response(settings: UserSettings, gs: GlobalSettings | None) -> schemas.UserSettings:
     data = schemas.UserSettings.model_validate(settings)
     data.trakt_connected = bool(settings.trakt_access_token)
     data.simkl_connected = bool(settings.simkl_access_token)
     data.mdblist_connected = bool(settings.mdblist_api_key)
     data.bingebase_connected = bool(settings.bingebase_webhook_url or settings.bingebase_api_key)
-    gs_result = await db.execute(select(GlobalSettings).where(GlobalSettings.id == 1))
-    gs = gs_result.scalar_one_or_none()
     data.has_rpdb_key = bool(settings.rpdb_api_key)
     data.has_global_tmdb_key = bool((gs and gs.tmdb_api_key) or app_settings.tmdb_api_key)
     data.has_effective_tmdb_key = bool(settings.tmdb_api_key) or data.has_global_tmdb_key
@@ -458,7 +507,7 @@ async def _settings_response(settings: UserSettings, db: AsyncSession) -> schema
 
 @router.get("/settings", response_model=schemas.UserSettings)
 async def get_user_settings(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user)
 ):
     query = select(UserSettings).where(UserSettings.user_id == current_user.id)
@@ -478,7 +527,7 @@ async def get_user_settings(
 async def update_user_settings(
     settings_in: schemas.UserSettings,
     background_tasks: BackgroundTasks = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user)
 ):
     from core import tmdb
@@ -550,7 +599,7 @@ async def update_user_settings(
 
 @router.get("/connections", response_model=list[schemas.MediaServerConnectionResponse])
 async def list_connections(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     result = await db.execute(
@@ -575,7 +624,7 @@ async def list_connections(
 async def create_connection(
     body: schemas.MediaServerConnectionCreate,
     background_tasks: BackgroundTasks = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     if body.type not in ("plex", "jellyfin", "emby", "nuvio", "stremio", "arvio"):
@@ -697,7 +746,7 @@ async def create_connection(
 async def update_connection(
     connection_id: int,
     body: schemas.MediaServerConnectionUpdate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     result = await db.execute(
@@ -845,7 +894,7 @@ async def _update_connection_fields(conn, body, db, current_user):
 @router.delete("/connections/{connection_id}")
 async def delete_connection(
     connection_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     result = await db.execute(
@@ -865,7 +914,7 @@ async def delete_connection(
 
 @router.get("/scrobble-connections", response_model=list[schemas.ScrobbleConnectionResponse])
 async def list_scrobble_connections(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     result = await db.execute(
@@ -879,7 +928,7 @@ async def list_scrobble_connections(
 @router.post("/scrobble-connections", response_model=schemas.ScrobbleConnectionResponse, status_code=201)
 async def create_scrobble_connection(
     body: schemas.ScrobbleConnectionCreate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     if body.type not in ("plex", "jellyfin", "emby"):
@@ -904,7 +953,7 @@ async def create_scrobble_connection(
 async def update_scrobble_connection(
     connection_id: int,
     body: schemas.ScrobbleConnectionUpdate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     result = await db.execute(
@@ -926,7 +975,7 @@ async def update_scrobble_connection(
 @router.delete("/scrobble-connections/{connection_id}")
 async def delete_scrobble_connection(
     connection_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     result = await db.execute(
@@ -946,7 +995,7 @@ async def delete_scrobble_connection(
 @router.post("/change-password")
 async def change_password(
     password_in: schemas.PasswordUpdate,
-    db: Annotated[AsyncSession, Depends(get_db)],
+    db: Annotated[AsyncSession, Depends(get_db, scope="function")],
     current_user: Annotated[User, Depends(get_current_user)],
     token: Annotated[str, Depends(oauth2_scheme)],
 ) -> dict[str, str]:
@@ -962,7 +1011,7 @@ async def change_password(
 
 @router.get("/account-security")
 async def account_security_status(
-    db: Annotated[AsyncSession, Depends(get_db)],
+    db: Annotated[AsyncSession, Depends(get_db, scope="function")],
     current_user: Annotated[User, Depends(get_current_user)],
     token: Annotated[str, Depends(oauth2_scheme)],
 ) -> dict:
@@ -983,7 +1032,7 @@ async def account_security_status(
 async def request_email_change(
     request: Request,
     body: schemas.EmailChangeRequest,
-    db: Annotated[AsyncSession, Depends(get_db)],
+    db: Annotated[AsyncSession, Depends(get_db, scope="function")],
     current_user: Annotated[User, Depends(get_current_user)],
     token: Annotated[str, Depends(oauth2_scheme)],
 ) -> dict[str, str]:
@@ -1016,7 +1065,7 @@ async def request_email_change(
 async def confirm_email_change(
     request: Request,
     body: schemas.EmailChangeConfirmation,
-    db: Annotated[AsyncSession, Depends(get_db)],
+    db: Annotated[AsyncSession, Depends(get_db, scope="function")],
 ) -> dict[str, str]:
     digest = hash_opaque_token(body.token)
     record = (await db.execute(select(EmailChangeToken).where(EmailChangeToken.token_hash == digest))).scalar_one_or_none()
@@ -1046,7 +1095,7 @@ async def confirm_email_change(
 
 @router.post("/api-key/regenerate", response_model=schemas.User)
 async def regenerate_api_key(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user)
 ):
     current_user.api_key = security.generate_opaque_token()
@@ -1183,7 +1232,7 @@ async def _get_plex_client_identifier(db: AsyncSession) -> str:
 
 @router.post("/plex/pin/start")
 async def plex_pin_start(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     """Begin the "Login with Plex" flow. Returns a PIN code, the URL the user
@@ -1210,7 +1259,7 @@ async def plex_pin_start(
 
 @router.post("/plex/pin/poll")
 async def plex_pin_poll(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     """Check whether the user has authorized the PIN. While pending, returns
@@ -1286,7 +1335,7 @@ async def start_stremio_link(
 async def poll_stremio_link(
     body: schemas.StremioLinkPollRequest,
     background_tasks: BackgroundTasks = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     from core import stremio
@@ -1501,7 +1550,7 @@ async def test_sonarr(
 
 @router.get("/connection-status")
 async def get_connection_status(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user)
 ):
     import asyncio
@@ -1687,7 +1736,7 @@ async def totp_setup(current_user: User = Depends(get_current_user)):
 async def totp_enable(
     request: Request,
     req: schemas.TotpEnableRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     if current_user.totp_enabled:
@@ -1716,7 +1765,7 @@ async def totp_enable(
 @router.post("/2fa/disable")
 async def totp_disable(
     req: schemas.TotpDisableRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     if not current_user.totp_enabled:
@@ -1747,7 +1796,7 @@ async def totp_disable(
 
 @router.get("/2fa/backup-codes", response_model=schemas.TotpBackupCodesResponse)
 async def get_backup_codes(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     if not current_user.totp_enabled:
@@ -1765,7 +1814,7 @@ async def get_backup_codes(
 async def verify_2fa_login(
     request: Request,
     req: schemas.TotpVerifyLoginRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -1880,7 +1929,7 @@ def _issue_device_access_token(grant: OAuthDeviceGrant) -> dict:
 async def device_code(
     request: Request,
     body: schemas.DeviceCodeRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     scope = (body.scope or "write").strip().lower()
     if scope not in SUPPORTED_DEVICE_SCOPES:
@@ -1937,7 +1986,7 @@ async def device_code(
 
 @router.post("/device/token")
 @limiter.limit("120/minute")
-async def device_token(request: Request, db: AsyncSession = Depends(get_db)):
+async def device_token(request: Request, db: AsyncSession = Depends(get_db, scope="function")):
     params = await _read_token_params(request)
     grant_type = (params.get("grant_type") or "").strip()
 
@@ -2057,7 +2106,7 @@ async def _load_pending_grant(db: AsyncSession, user_code: str) -> OAuthDeviceGr
 async def device_pending(
     request: Request,
     user_code: str = Query(...),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     """Describe a still-pending grant so the verification page can show the
@@ -2076,7 +2125,7 @@ async def device_pending(
 async def device_approve(
     request: Request,
     body: schemas.DeviceApproveRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     action = (body.action or "").strip().lower()
@@ -2099,7 +2148,7 @@ async def device_approve(
 
 @router.get("/device/grants", response_model=list[schemas.DeviceGrantItem])
 async def list_device_grants(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     result = await db.execute(
@@ -2117,7 +2166,7 @@ async def list_device_grants(
 @router.delete("/device/grants/{grant_id}")
 async def revoke_device_grant(
     grant_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     result = await db.execute(

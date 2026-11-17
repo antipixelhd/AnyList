@@ -55,7 +55,7 @@ def format_rating(rating: Rating, media: Media) -> dict:
 
 @router.delete("/all")
 async def clear_all_ratings(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     from models.tracking import TrackedEntry, TrackingActivity
@@ -79,7 +79,7 @@ async def clear_all_ratings(
 async def submit_rating(
     body: RatingIn,
     background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     try:
@@ -239,7 +239,7 @@ async def submit_rating(
 
 @router.get("")
 async def get_ratings(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     result = await db.execute(
@@ -254,7 +254,7 @@ async def get_ratings(
 @router.get("/{media_id}")
 async def get_media_rating(
     media_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     result = await db.execute(
@@ -277,7 +277,7 @@ async def delete_rating(
     media_id: Optional[int] = Query(None),
     season_number: Optional[int] = Query(None),
     episode_order: Optional[str] = Query(None),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     try:

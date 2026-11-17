@@ -65,3 +65,12 @@ class Media(Base):
     watch_events : Mapped[list["WatchEvent"]] = relationship(back_populates="media")
     ratings      : Mapped[list["Rating"]]     = relationship(back_populates="media")
     list_items   : Mapped[list["ListItem"]]   = relationship(back_populates="media")
+
+
+# Compute the public ordering in the index on writes, rather than scanning and
+# sorting every provider document for every warm browse request.
+from core.browse_metrics import ImdbVotes, ImdbRank
+Index('idx_media_imdb_votes', Media.media_type, ImdbVotes(Media.tmdb_data).desc().nulls_last(),
+    Media.id, postgresql_where=Media.adult.is_(False)).ddl_if(dialect='postgresql')
+Index('idx_media_imdb_rank', Media.media_type, ImdbRank(Media.tmdb_data).asc().nulls_last(),
+    Media.id, postgresql_where=Media.adult.is_(False)).ddl_if(dialect='postgresql')

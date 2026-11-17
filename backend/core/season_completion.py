@@ -9,7 +9,7 @@ import logging
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta
 
-from sqlalchemy import or_, select, update, func, tuple_
+from sqlalchemy import delete, or_, select, update, func, tuple_
 from fastapi import HTTPException
 from sqlalchemy.dialects.postgresql import insert
 
@@ -399,11 +399,40 @@ async def reconcile(db, user_id, media_id, *, groups_data=None, edits=(), series
     return result
 
 
+async def clear_unavailable_jobs(factory, limit):
+    """Consume receipts whose season projection cannot yet produce any state.
+
+    Keep every receipt with existing seasons, activity, or a release boundary
+    on the full reconciliation path. Future episode/metadata writes enqueue
+    new receipts through the existing transactional triggers.
+    """
+    if limit <= 0:
+        return 0
+    async with factory() as db:
+        pairs = (await db.execute(select(SeasonReconcileJob.user_id, SeasonReconcileJob.media_id)
+            .join(TrackedEntry, (TrackedEntry.user_id == SeasonReconcileJob.user_id)
+                  & (TrackedEntry.media_id == SeasonReconcileJob.media_id))
+            .join(Media, Media.id == SeasonReconcileJob.media_id)
+            .where(Media.media_type == MediaType.series, TrackedEntry.season_release_check_on.is_(None),
+                ~select(Show.id).where(or_(Show.tmdb_id == Media.tmdb_id, Show.tvdb_id == Media.tvdb_id)).exists(),
+                ~select(SeriesSeason.id).where(SeriesSeason.media_id == Media.id).exists(),
+                ~select(TrackingActivity.id).where(TrackingActivity.user_id == TrackedEntry.user_id,
+                    TrackingActivity.media_id == Media.id).exists())
+            .order_by(SeasonReconcileJob.user_id, SeasonReconcileJob.media_id).limit(limit)
+            .with_for_update(of=(SeasonReconcileJob, TrackedEntry), skip_locked=True))).all()
+        if pairs:
+            await db.execute(delete(SeasonReconcileJob).where(tuple_(
+                SeasonReconcileJob.user_id, SeasonReconcileJob.media_id).in_(pairs)))
+            await db.commit()
+        return len(pairs)
+
+
 async def run_batch(factory, limit=20):
-    count = 0
+    # Reserve a full reconciliation turn even under a large unhydrated backlog.
+    count = await clear_unavailable_jobs(factory, max(0, limit-1))
     failed = []
     # Each receipt commits separately, bounding locks and preserving retries.
-    for _ in range(limit):
+    for _ in range(limit-count):
         async with factory() as db:
             job = await db.scalar(select(SeasonReconcileJob).where(
                 tuple_(SeasonReconcileJob.user_id, SeasonReconcileJob.media_id).not_in(failed)).order_by(SeasonReconcileJob.user_id,

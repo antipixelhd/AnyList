@@ -36,6 +36,22 @@ URL = os.getenv('GAMES_TEST_DATABASE_URL')
 
 @unittest.skipUnless(URL, 'Requires explicit disposable games PostgreSQL')
 class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
+    async def test_background_mapping_starts_after_the_response_session_closes(self):
+        from routers import games
+
+        async def background_read(work_id, engine):
+            self.assertEqual(engine.pool.checkedout(), 0)
+            async with self.Session() as db:
+                self.assertIsNotNone(await db.scalar(select(GameEntry).where(
+                    GameEntry.user_id == self.user.id, GameEntry.work_id == work_id)))
+
+        with patch.object(games, 'request_game_metadata', side_effect=background_read) as metadata, \
+             patch('core.game_background.observe_work', AsyncMock()):
+            response = await self.client.patch(f'/tracking/games/entries/{self.base}',
+                                               json={'status': 'playing', 'notes': 'Closed request session'})
+        self.assertEqual(response.status_code, 200, response.text)
+        metadata.assert_awaited_once()
+
     async def test_mobile_background_uses_igdb_without_steamgriddb_and_preserves_pin(self):
         scene='https://images.igdb.com/igdb/image/upload/t_thumb/scene.jpg'
         async with self.Session() as db:
