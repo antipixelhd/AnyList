@@ -130,6 +130,7 @@ async def seed(destination, user_count):
             for u in configured
         ])
         connected = dict(zip((u.id for u in configured), connection_ids, strict=True))
+        await db.commit()
         for offset in range(0, len(users), 50):
             batch = users[offset:offset+50]
             await db.execute(insert(TrackedEntry), [dict(user_id=u.id,
@@ -139,7 +140,9 @@ async def seed(destination, user_count):
             await db.execute(insert(GameEntry), [dict(user_id=u.id, work_id=games[(u.id*7+j) % GAME_COUNT],
                 status=('planning', 'completed', 'playing')[j % 3], score=7.5, total_seconds=3600*j)
                 for u in batch for j in range(24)])
-        await db.commit()
+            # Bound revision-trigger update chains during setup. No application
+            # workers start until every batch and the fixture manifest complete.
+            await db.commit()
         async with engine.begin() as connection:
             await connection.execute(text('ANALYZE'))
         payload = {'users': [dict(username=u.username, token=create_session_token(u),

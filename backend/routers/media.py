@@ -1,3 +1,4 @@
+from core.api_roles import reader
 from core import media_presentation
 from core import arr_settings
 from core import outbound_sync
@@ -241,6 +242,7 @@ async def _apply_search_translations(db: AsyncSession, user_id: int, items: list
 
 
 @router.get("/search")
+@reader
 async def search_media(
     q: str = Query(..., min_length=2),
     type: str | None = Query(None),
@@ -1672,6 +1674,7 @@ async def refresh_movie_metadata(
 
 
 @router.get("/{type}/{tmdb_id}")
+@reader(type='movie')
 async def get_media_details(
     type: MediaType,
     tmdb_id: int,

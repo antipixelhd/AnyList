@@ -1,8 +1,80 @@
 """Stage provider membership until the account reconciliation transaction."""
-from sqlalchemy import select
+from dataclasses import dataclass, field
+from datetime import datetime
+
+from sqlalchemy import DateTime, bindparam, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import Collection, CollectionFile, MediaServerConnection
+
+
+def collection_added_at_heal_stmt():
+    """Lower add-dates atomically, preserving concurrent earlier observations."""
+    table = Collection.__table__
+    return update(table).where(table.c.id == bindparam('b_id')).values(
+        added_at=func.least(table.c.added_at, bindparam('b_added', type_=DateTime)))
+
+
+@dataclass
+class CollectionMembershipBatch:
+    """Own allocations, successful files and dates within one importer batch.
+
+    Record success only after the file's savepoint exits. Flush before the
+    importer's batch commit; this object never commits the supplied session.
+    """
+    db: AsyncSession
+    user_id: int
+    known: dict[int, int]
+    stats: dict[str, int]
+    collected: set[int] | None = None
+    _allocated: dict[int, int] = field(default_factory=dict, init=False)
+    _unclaimed: set[int] = field(default_factory=set, init=False)
+    _initial_dates: dict[int, datetime] = field(default_factory=dict, init=False)
+    _heals: dict[int, datetime] = field(default_factory=dict, init=False)
+
+    async def prepare(self, media_ids):
+        if self._allocated or self._heals:
+            raise RuntimeError('Flush membership changes before preparing another batch')
+        known, created = await preallocate_memberships(self.db, self.user_id, media_ids)
+        self.known.update(known)
+        self._allocated.update(created)
+        self._unclaimed.update(created)
+
+    def record_file(self, media_id, added_at):
+        if media_id not in self._unclaimed:
+            return
+        self._unclaimed.remove(media_id)
+        self.stats['movies'] = self.stats.get('movies', 0) + 1
+        if self.collected is not None:
+            self.collected.add(media_id)
+        if added_at is not None:
+            self._initial_dates[self._allocated[media_id]] = added_at
+
+    def heal_date(self, collection_id, added_at):
+        if collection_id is not None and added_at is not None:
+            self._heals[collection_id] = min(self._heals.get(collection_id, added_at), added_at)
+
+    async def flush(self):
+        if self._initial_dates:
+            # A first successful observation may legitimately be future dated.
+            await self.db.execute(update(Collection.__table__).where(Collection.id == bindparam('b_id'))
+                .values(added_at=bindparam('b_added')),
+                [{'b_id': key, 'b_added': stamp} for key, stamp in self._initial_dates.items()])
+        if self._heals:
+            await self.db.execute(collection_added_at_heal_stmt(),
+                [{'b_id': key, 'b_added': stamp} for key, stamp in self._heals.items()])
+        if self._unclaimed:
+            empty = await self.db.scalars(delete(Collection).where(
+                Collection.id.in_([self._allocated[media_id] for media_id in self._unclaimed]),
+                ~select(CollectionFile.id).where(CollectionFile.collection_id == Collection.id).exists())
+                .returning(Collection.media_id))
+            for media_id in empty:
+                self.known.pop(media_id, None)
+        self._allocated.clear()
+        self._unclaimed.clear()
+        self._initial_dates.clear()
+        self._heals.clear()
 
 
 async def preallocate_memberships(db, user_id, media_ids):

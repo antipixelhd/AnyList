@@ -69,6 +69,9 @@ def known_result_visible(item, media, media_type, *, show_anime, min_runtime=0, 
 async def enrich_search_runtimes(items, known, api_key, *, min_runtime=0, db=None):
     """Fill missing movie runtimes only when needed by saved search policy.
 
+    When supplied, db belongs to the search request: its read transaction is
+    committed before provider I/O. This service is not a write-unit-of-work helper.
+
     Reuse known catalogue metadata first and TMDB's shared request/cache layer.
     Unknown provider runtimes stay unknown; failures do not erase usable data.
     """

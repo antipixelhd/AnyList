@@ -201,15 +201,13 @@ def observe_database(engine):
         sql['peak_pool'] = max(engine.pool.checkedout(), sql['peak_pool'])
 
 
-def configure_app():
+def configure_app(*, role='primary'):
     check_environment()
     httpx.AsyncHTTPTransport.handle_async_request = benchmark_transport
     from cpu_profile import ProcessTelemetry, record_process
     from db import engine
-    from main import app
-    if os.getenv('STRESS_ACCOUNT_PREPARE') == '1':
-        from account_prepare_http import install
-        install(app)
+    from application import create_app
+    app = create_app(role=role)
     app.add_middleware(ProcessTelemetry, finish=record_process(
         'api', lambda: {'providers': dict(provider_requests), 'sql': dict(sql)}))
     observe_database(engine)

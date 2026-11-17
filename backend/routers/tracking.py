@@ -1,4 +1,5 @@
 """Tracked lists are independent of connected streaming-library membership."""
+from core.api_roles import reader
 from core.profile_images import background_url as profile_background_url
 import asyncio
 from core.catalog_search import result_filters, browse_preferences
@@ -776,6 +777,7 @@ async def reorder_favorites(body: FavoriteOrderBody, db: AsyncSession = Depends(
 
 
 @router.get('/quick-search/contributors')
+@reader
 async def quick_search_contributors(
     db: Annotated[AsyncSession, Depends(get_db, scope="function")],
     viewer: Annotated[User, Depends(get_current_user)],
@@ -1086,6 +1088,7 @@ def decode_activity_cursor(cursor: str) -> tuple[datetime, int]:
 
 
 @router.get("/profile/{username}/{media_type}")
+@reader
 async def profile_list(username: str, media_type: Literal["movie", "series", "all"], db: AsyncSession = Depends(get_db, scope="function"), viewer: User = Depends(get_current_user_or_api_key)):
     user, owner = await profile_access(db, username, viewer)
     from core.screen_list import rows_for_profile
@@ -1112,6 +1115,7 @@ ScreenListScope = Literal['movie', 'series', 'all']
 
 
 @router.get('/profile/{username}/{media_type}/list')
+@reader
 async def profile_list_page(username: str, media_type: ScreenListScope, db: ScreenListDB,
         viewer: ScreenListViewer, response: Response, status: TrackingStatus | None = None,
         sort: Literal['title', 'score', 'progress', 'updated'] = 'title',
@@ -1133,6 +1137,7 @@ async def profile_list_page(username: str, media_type: ScreenListScope, db: Scre
 
 
 @router.get('/profile/{username}/{media_type}/index')
+@reader
 async def profile_list_index(username: str, media_type: ScreenListScope, db: ScreenListDB,
         viewer: ScreenListViewer, response: Response):
     from core import list_categories
@@ -1145,6 +1150,7 @@ async def profile_list_index(username: str, media_type: ScreenListScope, db: Scr
 
 
 @router.get('/profile/{username}/{media_type}/rows')
+@reader
 async def profile_list_rows(username: str, media_type: ScreenListScope, db: ScreenListDB,
         viewer: ScreenListViewer, response: Response,
         ids: Annotated[list[Annotated[int, Field(gt=0, le=2147483647)]], Query(min_length=1, max_length=100)]):
@@ -1155,6 +1161,7 @@ async def profile_list_rows(username: str, media_type: ScreenListScope, db: Scre
 
 
 @router.get('/profile/{username}/series/{media_id}/seasons')
+@reader
 async def profile_series_seasons(username: str, media_id: Annotated[int, Path(gt=0, le=2147483647)],
         db: ScreenListDB, viewer: Annotated[User | None, Depends(get_optional_user_or_api_key)], response: Response):
     from core import screen_list, tracking_episode_loading
@@ -1204,6 +1211,7 @@ async def my_statistics_refresh_status(
 
 
 @router.get("/profile/{username}/stats/overview")
+@reader
 async def profile_stats_overview(
     username: str,
     response: Response,
@@ -1234,6 +1242,7 @@ async def profile_stats_overview(
 
 
 @router.get("/profile/{username}/stats/summary")
+@reader
 async def profile_stats(username: str, media_type: Literal["movie", "series", "all"] = "all",
                         year: int | None = Query(None, ge=1900, le=2200), db: AsyncSession = Depends(get_db, scope="function"),
                         viewer: User = Depends(get_current_user_or_api_key)):
@@ -1338,6 +1347,7 @@ async def browse_context(body: BrowseContextRequest, response: Response, db: Asy
 
 
 @router.get('/browse/facets')
+@reader
 async def browse_facets(media_type: Literal['movie', 'series'] = 'movie', region: str | None = Query(None, pattern='^[A-Z]{2}$'), genres: Annotated[str, Query(max_length=200)] = '', db: AsyncSession = Depends(get_db, scope="function"), viewer: User = Depends(get_current_user_or_api_key)):
     from core.browse import GENRES, MOVIE_GENRES, TV_GENRES, local_providers
     from core import tmdb
@@ -1389,6 +1399,7 @@ def browse_ids(value: str) -> list[int]:
 
 
 @router.get('/browse/sections')
+@reader
 async def browse_sections(media_type: Literal['movie', 'series'] = 'movie', region: str | None = Query(None, pattern='^[A-Z]{2}$'), min_score: Annotated[float, Query(ge=0, le=10)] = 0, unfiltered: Annotated[bool, Query()] = False, stream: Annotated[bool, Query()] = False, db: AsyncSession = Depends(get_db, scope="request"), viewer: User = Depends(get_current_user_or_api_key)):
     from core.browse import browse_sections as sections
     from core.external_scores import effective_mdblist_key
@@ -1419,6 +1430,7 @@ async def browse_sections(media_type: Literal['movie', 'series'] = 'movie', regi
 
 
 @router.get('/browse')
+@reader
 async def browse(q: str = Query('', max_length=200), media_type: Literal['movie', 'series'] = 'movie',
                  page: int = Query(1, ge=1, le=500), genres: str = Query('', max_length=200),
                  start: date | None = None, end: date | None = None, status: Literal['', 'airing', 'returning', 'finished', 'cancelled', 'upcoming', 'released'] = '',
@@ -1592,6 +1604,7 @@ async def detail_seasons(db, media, viewer, *, include_episodes=True):
 
 
 @router.get('/title/{media_id}/seasons')
+@reader
 async def title_seasons(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db, scope="function")],
         viewer: Annotated[User, Depends(get_current_user_or_api_key)], response: Response,
         revision: Annotated[str | None, Query(max_length=80)] = None):
@@ -1616,6 +1629,7 @@ async def title_seasons(media_id: Annotated[int, Path(gt=0)], db: Annotated[Asyn
 
 
 @router.get("/title/{media_id}")
+@reader
 async def title(media_id: int, db: AsyncSession = Depends(get_db, scope="function"), viewer: User = Depends(get_current_user_or_api_key),
         episodes: Annotated[bool, Query()] = True):
     await catalog_access(db, viewer)
@@ -1666,6 +1680,7 @@ async def title(media_id: int, db: AsyncSession = Depends(get_db, scope="functio
 
 
 @router.get('/title/{media_id}/related')
+@reader
 async def title_related(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db, scope="function")],
                         viewer: Annotated[User, Depends(get_current_user)]) -> dict:
     media = await db.get(Media, media_id)
@@ -1684,6 +1699,7 @@ async def title_related(media_id: Annotated[int, Path(gt=0)], db: Annotated[Asyn
 
 
 @router.get('/title/{media_id}/episode-images')
+@reader
 async def title_episode_images(media_id: Annotated[int, Path(gt=0)],
                                db: Annotated[AsyncSession, Depends(get_db, scope="function")],
                                viewer: Annotated[User, Depends(get_current_user_or_api_key)]) -> dict:
@@ -1751,6 +1767,7 @@ async def title_episode_images(media_id: Annotated[int, Path(gt=0)],
 
 
 @router.get('/title/{media_id}/social')
+@reader
 async def title_social(media_id: Annotated[int, Path(gt=0)],
                        db: Annotated[AsyncSession, Depends(get_db, scope="function")],
                        viewer: Annotated[User, Depends(get_current_user)]) -> dict:
@@ -1810,6 +1827,7 @@ async def title_social(media_id: Annotated[int, Path(gt=0)],
 
 
 @router.get('/title/{media_id}/people')
+@reader
 async def title_people(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db, scope="function")],
                        viewer: Annotated[User, Depends(get_current_user)],
                        characters: Annotated[bool, Query()] = False) -> dict:
@@ -1836,6 +1854,7 @@ async def title_people(media_id: Annotated[int, Path(gt=0)], db: Annotated[Async
 
 
 @router.get('/title/{media_id}/scores')
+@reader
 async def title_scores(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db, scope="function")],
                        viewer: Annotated[User, Depends(get_current_user)]) -> dict:
     media = await db.get(Media, media_id)
@@ -1851,6 +1870,7 @@ async def title_scores(media_id: Annotated[int, Path(gt=0)], db: Annotated[Async
 
 
 @router.get('/title/{media_id}/background')
+@reader
 async def title_background(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db, scope="function")],
                            viewer: Annotated[User, Depends(get_current_user_or_api_key)]) -> dict:
     await catalog_access(db,viewer)
@@ -1867,6 +1887,7 @@ async def title_background(media_id: Annotated[int, Path(gt=0)], db: Annotated[A
 
 
 @router.get('/title/{media_id}/artwork-preview')
+@reader
 async def title_artwork_preview(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db, scope="function")],
                                 viewer: Annotated[User, Depends(get_current_user_or_api_key)]) -> dict:
     await catalog_access(db,viewer)
@@ -1884,6 +1905,7 @@ async def title_artwork_preview(media_id: Annotated[int, Path(gt=0)], db: Annota
 
 
 @router.get('/title/{media_id}/images')
+@reader
 async def title_images(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db, scope="function")],
                        viewer: Annotated[User, Depends(get_current_user)]) -> dict:
     media = await db.get(Media, media_id)

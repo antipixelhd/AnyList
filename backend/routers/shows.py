@@ -1,3 +1,4 @@
+from core.api_roles import reader
 from core import media_presentation
 from core import arr_settings
 from core import show_metadata
@@ -802,6 +803,7 @@ async def get_active_episode_order_job(
 
 
 @router.get("/{series_tmdb_id}")
+@reader
 async def get_show(
     series_tmdb_id: int,
     db: AsyncSession = Depends(get_db, scope="function"),

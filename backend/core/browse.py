@@ -748,6 +748,11 @@ async def browse_page(
     attach_context=True,
     **filters,
 ):
+    """Compose one discovery response using a request-owned metadata session.
+
+    This service commits before provider waits and after metadata publication;
+    callers must finish unrelated writes before entering discovery.
+    """
     from core.browse_cursor import encode_search_cursor
 
     if filters['sort'] == 'upcoming':

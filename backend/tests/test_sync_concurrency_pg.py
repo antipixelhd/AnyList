@@ -13,6 +13,7 @@ os.environ.setdefault('DATABASE_URL', 'postgresql+asyncpg://test:test@localhost/
 
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.engine import make_url
 
 from core import server_sync
 from core.sync_admission import SyncAdmission
@@ -20,13 +21,13 @@ from models import Base, Collection, CollectionFile, Media, MediaServerConnectio
 from models.base import CollectionSource, MediaType
 from models.sync import SyncJob, SyncStatus
 
-URL = os.getenv('SYNC_TEST_DATABASE_URL')
+URL = os.getenv('SYNC_TEST_DATABASE_URL') or os.getenv('TRACKING_TEST_DATABASE_URL')
 
 
 @unittest.skipUnless(URL, 'Requires disposable sync PostgreSQL')
 class SyncConcurrencyTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        if ':55449/anylist_test_sync' not in URL:
+        if not (make_url(URL).database or '').startswith('anylist_test'):
             raise RuntimeError('Refusing non-disposable sync database')
         self.schema = 'sync_test_' + uuid.uuid4().hex
         self.admin = create_async_engine(URL)

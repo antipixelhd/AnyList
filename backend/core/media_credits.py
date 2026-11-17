@@ -157,7 +157,7 @@ async def fill_screen_credits(db, media, user_id=None, *, providers=None, author
 
                 receipt = await catalogue.refresh_metadata(db, providers, provider, kind, str(native),
                     additive=not authoritative, expected_entity_id=work.id if work else None,
-                    credit_groups=groups, on_publish=finish_projection)
+                    credit_groups=groups, publish_in_transaction=finish_projection)
                 if receipt['status'] != 'updated':
                     result = 'failed' if receipt.get('error_code') else 'deferred'
                     continue

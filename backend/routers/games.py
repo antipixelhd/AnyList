@@ -1,4 +1,5 @@
 """Catalogue-keyed game tracking. Visibility preferences are presentation only."""
+from core.api_roles import reader
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query,Response,Request
@@ -61,6 +62,7 @@ async def save_game_banner(work_id:WorkId,body:BannerChoice,db:DB,viewer:Writer)
 
 
 @router.get('/works/{work_id}/editions')
+@reader
 async def game_editions(work_id:WorkId,db:DB,viewer:Reader,response:Response) -> dict:
     from core.game_editions import GameEditions
     from core.game_source_cache import session_factory
@@ -74,6 +76,7 @@ async def game_editions(work_id:WorkId,db:DB,viewer:Reader,response:Response) ->
 
 
 @router.get('/works/{work_id}/background')
+@reader
 async def game_background(work_id:WorkId,db:DB,viewer:Reader,animated:bool=False,
         provider:Literal['steamgriddb','igdb']='steamgriddb') -> dict:
     from core.game_artwork import images,cycling
@@ -100,6 +103,7 @@ async def game_background(work_id:WorkId,db:DB,viewer:Reader,animated:bool=False
 
 
 @router.get('/works/{work_id}/images')
+@reader
 async def game_images(work_id:WorkId,db:DB,viewer:Reader) -> dict:
     from core.game_artwork import images
     from core.media_details import primary_details
@@ -115,6 +119,7 @@ async def game_images(work_id:WorkId,db:DB,viewer:Reader) -> dict:
 
 
 @router.get('/users/{username}/statistics')
+@reader
 async def game_statistics(username:str,response:Response,db:DB,viewer:Reader,section:GameStatsSection='overview',
     sort:Literal['count','mean_score','time']='count',page:Annotated[int,Query(ge=1,le=5000)]=1,
     generation:Annotated[int|None,Query(ge=1)]=None) -> GameStatsResponse:
@@ -130,6 +135,7 @@ async def game_statistics(username:str,response:Response,db:DB,viewer:Reader,sec
 
 
 @router.get('/works/{work_id}/offers')
+@reader
 async def game_offers(work_id:WorkId,db:DB,viewer:Reader,
     country:Annotated[str|None,Query(pattern=r'^[A-Za-z]{2}$')]=None) -> dict:
     from core.game_offers import view,notify_refresh
@@ -143,6 +149,7 @@ async def game_offers(work_id:WorkId,db:DB,viewer:Reader,
 
 
 @router.get('/works/{work_id}/ratings')
+@reader
 async def game_ratings(work_id:WorkId,db:DB,viewer:Reader) -> dict:
     from core.game_ratings import view
     result=await view(db,await tracking.work(db,work_id),enqueue=True)
@@ -151,6 +158,7 @@ async def game_ratings(work_id:WorkId,db:DB,viewer:Reader) -> dict:
 
 
 @router.get('/people/{native}/imdb')
+@reader
 async def imdb_person_status(native: Annotated[str,Path(pattern=r'^nm[0-9]+$',max_length=30)],db:DB,viewer:Reader,
     work_id:Annotated[list[Annotated[int,Field(gt=0)]],Query(max_length=100)]=[],
     kind:Literal['actor','staff']='actor') -> dict:
@@ -182,6 +190,7 @@ async def game_person_images(body:PersonImageBatch,db:DB,viewer:Reader) -> dict:
 
 
 @router.get('/companies/{company_id}/works/status')
+@reader
 async def company_works_status(company_id:Annotated[int,Path(gt=0)],db:DB,viewer:Reader) -> dict:
     from core.game_company_works import status
     result=await status(db,company_id)
@@ -191,6 +200,7 @@ async def company_works_status(company_id:Annotated[int,Path(gt=0)],db:DB,viewer
 
 
 @router.get('/people/{native}/imdb/titles')
+@reader
 async def imdb_person_titles(native: Annotated[str,Path(pattern=r'^nm[0-9]+$',max_length=30)],db:DB,viewer:Admin,
         page:Annotated[int,Query(ge=1,le=500)]=1,q:Annotated[str,Query(max_length=100)]='',
         scope:Literal['unmapped','all']='unmapped',
@@ -204,6 +214,7 @@ async def imdb_person_titles(native: Annotated[str,Path(pattern=r'^nm[0-9]+$',ma
 
 
 @router.get('/people/{native}/imdb/titles/{title_id}')
+@reader
 async def imdb_person_title(native: Annotated[str,Path(pattern=r'^nm[0-9]+$',max_length=30)],
         title_id:Annotated[str,Path(pattern=r'^tt[0-9]+$',max_length=30)],db:DB,viewer:Admin,
         generation:Annotated[str|None,Query(pattern=r'^[0-9a-f]{32}$')]=None) -> dict:
@@ -237,6 +248,7 @@ async def request_game_metadata(work_id,engine):
 
 
 @router.get('/works/{work_id}/time-to-beat')
+@reader
 async def game_completion_estimates(work_id:WorkId,db:DB,viewer:Reader) -> dict:
     from core.game_time_to_beat import view
     work=await tracking.work(db,work_id)
@@ -246,6 +258,7 @@ async def game_completion_estimates(work_id:WorkId,db:DB,viewer:Reader) -> dict:
 
 
 @router.get('/works/{work_id}/info')
+@reader
 async def game_store_info(work_id:WorkId,db:DB,viewer:Reader,country:Annotated[str|None,Query(min_length=2,max_length=2)]=None) -> dict:
     from core.game_info import view
     from core.game_offers import country as effective_country
@@ -258,6 +271,7 @@ async def game_store_info(work_id:WorkId,db:DB,viewer:Reader,country:Annotated[s
 
 
 @router.get('/works/{work_id}/credits')
+@reader
 async def game_credits(work_id: WorkId, db: DB, viewer: Reader, request_context:Request,
         revision:Annotated[str|None,Query(max_length=64)]=None) -> dict:
     from core.media_details import work_details
@@ -294,6 +308,7 @@ async def game_credits(work_id: WorkId, db: DB, viewer: Reader, request_context:
 
 
 @router.get('/works/{work_id}/metadata')
+@reader
 async def game_metadata_status(work_id:WorkId,db:DB,viewer:Reader,
     primary:bool=False,revision:Annotated[str|None,Query(max_length=100)]=None) -> dict:
     from core.game_metadata import GameMetadata
@@ -312,6 +327,7 @@ async def game_metadata_status(work_id:WorkId,db:DB,viewer:Reader,
 
 
 @router.get('/works/{work_id}/primary')
+@reader
 async def game_primary(work_id:WorkId,db:DB,viewer:Reader,response:Response) -> dict:
     from core.media_details import game_primary_details
     response.headers['Cache-Control']='private, no-store'
@@ -325,6 +341,7 @@ class IMDbBindingReview(BaseModel):
 
 
 @router.get('/works/{work_id}/imdb')
+@reader
 async def imdb_binding(work_id: WorkId, db: DB, viewer: Reader) -> dict:
     from core.game_imdb_bindings import context, binding_view
     from core.game_imdb_enrichment import status
@@ -341,6 +358,7 @@ async def imdb_binding(work_id: WorkId, db: DB, viewer: Reader) -> dict:
 
 
 @router.get('/works/{work_id}/imdb/candidates')
+@reader
 async def imdb_candidates(work_id: WorkId, db: DB, viewer: Admin,
         q: Annotated[str, Query(min_length=2,max_length=100)]) -> dict:
     from core.game_imdb_source import IMDbGameSource
@@ -354,6 +372,7 @@ async def imdb_candidates(work_id: WorkId, db: DB, viewer: Admin,
 
 
 @router.get('/works/{work_id}/imdb/candidates/{title_id}')
+@reader
 async def imdb_candidate(work_id: WorkId,title_id: Annotated[str,Path(pattern=r'^tt[0-9]+$',max_length=30)],
         db: DB,viewer: Admin) -> dict:
     from core.game_imdb_source import IMDbGameSource
@@ -389,6 +408,7 @@ async def review_imdb(work_id: WorkId,body:IMDbBindingReview,db:DB,viewer:Admin)
 
 
 @router.get('/search')
+@reader
 async def search_games(db: DB, viewer: Viewer, q: Annotated[str, Query(min_length=2, max_length=100)]) -> dict:
     from core import game_discovery
     from core.catalogue_providers import ProviderError
@@ -443,6 +463,7 @@ async def resolve_game(igdb_id: Annotated[int,Path(gt=0,le=2147483647)], db: DB,
 
 
 @router.get('/browse/facets')
+@reader
 async def browse_facets(db: DB, viewer: Viewer) -> dict:
     from core.game_browse_sources import GameBrowseSources
     from core.catalogue_providers import ProviderError
@@ -455,6 +476,7 @@ async def browse_facets(db: DB, viewer: Viewer) -> dict:
 
 
 @router.get('/browse')
+@reader
 async def browse_games(db: DB, viewer: Viewer, background:BackgroundTasks,
         category: Literal['trending','most_played','sellers','newest','popular','score'] = 'trending',
         genres: Annotated[str, Query(max_length=1000)] = '',
@@ -505,6 +527,7 @@ async def batch_state(body: GameStateBatch, db: DB, viewer: Reader) -> list[Game
 
 
 @router.get('/works/{work_id}')
+@reader
 async def editor_state(work_id: WorkId, db: DB, viewer: Reader) -> GameEntryOut:
     entity = await tracking.work(db, work_id)
     state = (await tracking.states(db, viewer.id, [work_id]))[0]
@@ -514,6 +537,7 @@ async def editor_state(work_id: WorkId, db: DB, viewer: Reader) -> GameEntryOut:
 
 
 @router.get('/works/{work_id}/steam-progress')
+@reader
 async def steam_progress(work_id: WorkId, db: DB, viewer: Writer, response: Response) -> dict:
     from core.game_steam_progress import context
     await tracking.work(db, work_id)
@@ -529,6 +553,7 @@ async def acknowledge_steam_warning(field: Literal['playtime', 'achievements'], 
 
 
 @router.get('/works/{work_id}/children')
+@reader
 async def game_children(work_id:WorkId,db:DB,viewer:Reader,
         offset:Annotated[int,Query(ge=0)]=0,limit:Annotated[int,Query(ge=1,le=50)]=24) -> dict:
     from core.game_children import children
@@ -602,6 +627,7 @@ async def set_favorite(work_id: WorkId, body: FavoritePatch, db: DB, viewer: Wri
 
 
 @router.get('/works/{work_id}/achievements')
+@reader
 async def achievement_page(work_id: WorkId, db: DB, viewer: Reader,
                             offset: Annotated[int, Query(ge=0)] = 0,
                             limit: Annotated[int, Query(ge=1, le=200)] = 50) -> AchievementPage:
@@ -622,6 +648,7 @@ async def achievement_page(work_id: WorkId, db: DB, viewer: Reader,
 
 
 @router.get('/works/{work_id}/achievement-catalogue')
+@reader
 async def achievement_catalogue(work_id:WorkId,db:DB,viewer:Reader) -> dict:
     from core.game_achievements import view
     result=await view(db,await tracking.work(db,work_id),enqueue=True)
@@ -639,6 +666,7 @@ def game_list_memberships(user_id):
 
 
 @router.get('/users/{username}/index')
+@reader
 async def game_list_index(username: str, db: DB, viewer: Viewer, response: Response,
     limit: Annotated[int, Query(ge=1, le=10000)] = 10000) -> GameListIndexOut:
     user, _ = await profile_access(db, username, viewer)
@@ -663,6 +691,7 @@ async def game_list_index(username: str, db: DB, viewer: Viewer, response: Respo
 
 
 @router.get('/users/{username}/rows')
+@reader
 async def game_list_rows(username: str, db: DB, viewer: Viewer, response: Response,
     ids: Annotated[list[Annotated[int, Field(gt=0, le=2147483647)]], Query(min_length=1, max_length=100)]) -> list[GameEntryOut]:
     user, owner = await profile_access(db, username, viewer)
@@ -674,6 +703,7 @@ async def game_list_rows(username: str, db: DB, viewer: Viewer, response: Respon
 
 
 @router.get('/users/{username}/list')
+@reader
 async def user_list(username: str, db: DB, viewer: Viewer,
                     status: GameStatus | None = None,
                     sort: Literal['title', 'score', 'progress', 'updated'] = 'title',
@@ -729,6 +759,7 @@ async def user_list(username: str, db: DB, viewer: Viewer,
 
 
 @router.get('/users/{username}/favorites')
+@reader
 async def favorites(username: str, db: DB, viewer: Viewer,
                     offset: Annotated[int, Query(ge=0)] = 0,
                     limit: Annotated[int, Query(ge=1, le=200)] = 50) -> GameListOut:
@@ -745,6 +776,7 @@ async def favorites(username: str, db: DB, viewer: Viewer,
 
 
 @router.get('/playing')
+@reader
 async def playing_games(db: DB, viewer: Reader,
                        limit: Annotated[int, Query(ge=1, le=50)] = 12) -> GamePlayingOut:
     # Dashboard is a small, focused main-game shelf; the complete Games list
@@ -757,12 +789,14 @@ async def playing_games(db: DB, viewer: Reader,
 
 
 @router.get('/activity')
+@reader
 async def following_activity(db: DB, viewer: Reader) -> dict:
     from core import game_activity
     return {'results': await game_activity.rows(db, game_activity.following_ids(viewer.id), public_only=True)}
 
 
 @router.get('/users/{username}/activity')
+@reader
 async def profile_activity(username: str, db: DB, viewer: Viewer,
                            limit: Annotated[int, Query(ge=1, le=60)] = 12) -> dict:
     from core import game_activity
@@ -771,6 +805,7 @@ async def profile_activity(username: str, db: DB, viewer: Viewer,
 
 
 @router.get('/works/{work_id}/social')
+@reader
 async def game_social(work_id: WorkId, db: DB, viewer: Reader) -> dict:
     from core import game_activity
     work=await tracking.work(db, work_id)
