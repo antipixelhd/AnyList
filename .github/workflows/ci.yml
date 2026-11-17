@@ -9,9 +9,18 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  backend:
+  backend-tests:
+    name: backend tests (${{ matrix.shard }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     services:
       postgres:
         image: postgres:16-alpine
@@ -47,10 +56,40 @@ jobs:
         run: uv run --no-sync alembic upgrade head
       - name: Run backend tests
         working-directory: backend
-        run: uv run --no-sync python -m unittest discover -s tests -q --durations 30
+        run: >-
+          uv run --no-sync python ../scripts/backend_ci.py run
+          --index ${{ strategy.job-index }} --count ${{ strategy.job-total }}
+          --manifest ../ci-results/backend/shard-${{ strategy.job-index }}.json
+      - name: Upload test inventory
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: backend-tests-${{ strategy.job-index }}
+          path: ci-results/backend/shard-${{ strategy.job-index }}.json
+          if-no-files-found: error
+          retention-days: 7
       - name: Lint backend
+        if: ${{ strategy.job-index == 0 }}
         working-directory: backend
         run: uvx ruff==0.16.8 check .
+
+  backend:
+    if: ${{ always() }}
+    needs: backend-tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every backend job to succeed
+        env:
+          RESULT: ${{ needs.backend-tests.result }}
+        run: test "$RESULT" = success
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: backend-tests-*
+          merge-multiple: true
+          path: ci-results/backend
+      - name: Verify complete test coverage
+        run: python scripts/backend_ci.py verify ci-results/backend
 
   frontend:
     runs-on: ubuntu-latest
