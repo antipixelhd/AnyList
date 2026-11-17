@@ -5404,6 +5404,12 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(removal['providers'], ['nuvio'])
         self.assertEqual([item['number'] for item in removal['episodes']], [1, 2])
 
+        feed = await self.client.get('/tracking/notifications')
+        self.assertEqual(feed.status_code, 200, feed.text)
+        self.assertEqual(feed.json()['pending'], 1)
+        self.assertEqual(feed.json()['results'][0]['payload'], review['payload'])
+        self.assertEqual(feed.headers['cache-control'], 'private, no-store')
+
         with patch('core.sync_reconciliation.deliver_category_review', new_callable=AsyncMock) as deliver:
             response = await self.client.post(f"/tracking/recent-events/{review['id']}", json={
                 'action': 'confirm', 'related_review_ids': removal['related_review_ids'],

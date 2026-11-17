@@ -15,7 +15,7 @@ class GameContentTests(unittest.TestCase):
         self.assertFalse(erotic_game(mature));self.assertFalse(search_candidate(mature)['is_erotic'])
         for themes in ([42],[{'id':42,'name':'Erotic'}]):
             erotic={**mature,'themes':themes}
-            self.assertTrue(erotic_game(erotic));self.assertTrue(card(erotic)['is_erotic'])
+            self.assertTrue(erotic_game(erotic));self.assertTrue(card({**erotic,'keywords':[]})['is_erotic'])
 
     def test_canonical_parent_supplies_content_classification_and_projection(self):
         original={'id':1,'name':'Original','game_type':{'id':0},'themes':[42]}

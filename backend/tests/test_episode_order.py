@@ -27,6 +27,9 @@ from routers.shows import _enrich_tvdb_seasons, _run_episode_order_mapping, get_
 
 
 class _EmptyResult:
+    def __iter__(self):
+        return iter(self.all())
+
     def scalars(self):
         return self
 
@@ -269,7 +272,9 @@ class EpisodeOrderMappingTests(unittest.IsolatedAsyncioTestCase):
             execute=AsyncMock(
                 side_effect=[
                     _ScalarOneResult(media),
+                    _ScalarOneResult(None),  # Account write lock.
                     _ScalarOneResult(rating),
+                    _EmptyResult(),  # No outstanding rating prompts.
                 ]
             ),
             add=MagicMock(),

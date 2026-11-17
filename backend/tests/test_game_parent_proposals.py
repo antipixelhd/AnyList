@@ -54,7 +54,7 @@ class ParentProposalTests(unittest.TestCase):
             lambda p:p['variant'].update(version=999),
             lambda p:p['variant']['parent'].update(id=11),
             lambda p:p['variant']['parent'].update(version_parent=99),
-            lambda p:p['variant']['parent'].update(game_type={'id':3}),
+            lambda p:p['variant']['parent'].update(game_type={'id':1}),
             lambda p:p['variant']['parent'].update(first_release_date=None),
             lambda p:p['variant']['parent'].update(first_release_date=game(year=2024)['first_release_date']),
             lambda p:p['variant']['child'].update(version_parent=20),

@@ -48,7 +48,8 @@ class GameEntry(Base):
 class GameFavorite(Base):
     __tablename__ = 'game_favorites'
     __table_args__ = (
-        UniqueConstraint('user_id', 'position', name='uq_game_favorite_position', deferrable=True, initially='DEFERRED'),
+        UniqueConstraint('user_id', 'position', name='uq_game_favorite_position', deferrable=True, initially='DEFERRED').ddl_if(dialect='postgresql'),
+        UniqueConstraint('user_id', 'position', name='uq_game_favorite_position').ddl_if(dialect='sqlite'),
         CheckConstraint('position IS NULL OR position >= 0', name='ck_game_favorite_position'),
     )
     user_id: Mapped[int] = mapped_column(ForeignKey('users.id', ondelete='CASCADE'), primary_key=True)

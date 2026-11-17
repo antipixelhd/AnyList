@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 os.environ.setdefault('SECRET_KEY', 'local-tests-only')
 os.environ.setdefault('DATABASE_URL', 'postgresql+asyncpg://test:test@localhost/test')
 
-from sqlalchemy import select
+from sqlalchemy import event, select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -24,6 +24,10 @@ def _jsonb_as_json(type_, compiler, **kw):
 class NuvioRemovalSnapshotTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.engine = create_async_engine('sqlite+aiosqlite:///:memory:')
+        @event.listens_for(self.engine.sync_engine, 'connect')
+        def sqlite_lock(dbapi_connection, _record):
+            # SQLite scenarios cover projection; real lock races use PostgreSQL.
+            dbapi_connection.create_function('pg_advisory_xact_lock', 2, lambda *_: None)
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         self.db = async_sessionmaker(self.engine, expire_on_commit=False)()
