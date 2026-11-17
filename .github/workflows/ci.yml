@@ -47,7 +47,7 @@ jobs:
         run: uv run --no-sync alembic upgrade head
       - name: Run backend tests
         working-directory: backend
-        run: uv run --no-sync python -m unittest discover -s tests -q
+        run: uv run --no-sync python -m unittest discover -s tests -q --durations 30
       - name: Lint backend
         working-directory: backend
         run: uvx ruff==0.16.8 check .
