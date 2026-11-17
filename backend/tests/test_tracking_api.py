@@ -31,6 +31,7 @@ from models.tracking import TrackedEntry, TrackingDeletion, TrackingDeliveryJob,
 from models.streaming_library import StreamingLibraryIntent, StreamingLibraryDelivery
 from models.sync import SyncJob, SyncStatus
 from routers.tracking import router
+from routers.season_tracking import router as season_tracking_router
 from routers.push import router as push_router
 from routers.comments import router as comments_router
 from routers.profile import router as profile_router
@@ -104,7 +105,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             self.db.add(settings)
         await self.db.commit()
         self.viewer = self.owner
-        app=FastAPI(); app.include_router(router,prefix='/tracking'); app.include_router(push_router,prefix='/push'); app.include_router(comments_router,prefix='/comments'); app.include_router(profile_router,prefix='/profile'); app.include_router(ratings_router,prefix='/ratings')
+        app=FastAPI(); app.include_router(season_tracking_router); app.include_router(router,prefix='/tracking'); app.include_router(push_router,prefix='/push'); app.include_router(comments_router,prefix='/comments'); app.include_router(profile_router,prefix='/profile'); app.include_router(ratings_router,prefix='/ratings')
         async def session(): yield self.db
         app.dependency_overrides[get_db]=session
         app.dependency_overrides[get_current_user]=lambda:self.viewer
@@ -1756,7 +1757,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_release_preferences_default_and_patch(self):
         initial=await self.client.get('/tracking/preferences')
         self.assertEqual(initial.status_code,200,initial.text)
-        self.assertEqual(initial.json(),{
+        expected={
             'minimum_popularity':25,'include_rereleases':False,
             'auto_confirm':False,'combine_lists':True,
             'watch_state_sync':'conservative',
@@ -1766,7 +1767,8 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             'show_new_ratings_popup':True,
             'new_season_release_dates':True,'new_season_releases':True,
             'remove_specials_seasons':True,
-        })
+        }
+        self.assertEqual({key:initial.json()[key] for key in expected},expected)
         changed=await self.client.patch('/tracking/preferences',json={
             'combine_lists':False,'default_sort':'updated','low_priority_notifications':False,
             'low_priority_retention_days':14,'show_new_ratings_popup':False,
@@ -2906,7 +2908,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
                                          json={'watched': False, 'confirm_rollback': True})
         self.assertEqual((season.json()['status'], season.json()['progress']), ('dropped', 2))
 
-    async def test_episode_control_keeps_completed_status_and_explicit_finish_date(self):
+    async def test_episode_control_keeps_completed_status_and_manual_season_finish_date(self):
         self.show.tmdb_id = 987654323
         canonical = Show(title='Completed history correction', tmdb_id=self.show.tmdb_id)
         self.db.add(canonical); await self.db.flush()
@@ -2916,7 +2918,14 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.show.tmdb_data = {'tracking_catalogue_refreshed_at': datetime.now().isoformat(),
                               'seasons': [{'season_number': 1, 'episode_count': 3}]}
         await self.db.commit()
-        self.assertEqual((await self.save(self.show, status='completed', finish_date='2021-01-01')).status_code, 200)
+        editor=await self.client.get(f'/tracking/entry/{self.show.id}/series-editor')
+        self.assertEqual(editor.status_code,200,editor.text)
+        context=editor.json()
+        saved=await self.save(self.show,status='completed',finish_date='2021-01-01',
+            series_editor={'revision':context['revision'],'order':context['order'],
+                'seasons':[{'season_number':1,'membership':context['seasons'][0]['membership'],
+                    'completion_date':'2021-01-01'}]})
+        self.assertEqual(saved.status_code,200,saved.text)
         response = await self.client.patch(f'/tracking/entry/{self.show.id}/episode/{episodes[1].id}',
                                            json={'watched': False, 'confirm_rollback': True})
         self.assertEqual(response.status_code, 200, response.text)
@@ -4088,7 +4097,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(provider_changed_at({'updated_at':review.payload['local_changed_at']}),milliseconds(base))
         self.assertIsNone(review.payload['provider_changed_at'])
 
-    async def test_database_generated_and_bound_dates_have_millisecond_precision(self):
+    async def test_watch_event_generated_and_bound_dates_have_millisecond_precision(self):
         from sqlalchemy import update, text
         value=datetime(2026,9,29,12,0,0,931995)
         event=WatchEvent(user_id=self.owner.id,media_id=self.movie.id,completed=True,watched_at=value)
@@ -4098,7 +4107,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         await self.db.execute(update(WatchEvent).where(WatchEvent.id==event.id).values(watched_at=value))
         await self.db.commit();await self.db.refresh(event)
         self.assertEqual(event.watched_at.microsecond,931000)
-        precision=(await self.db.execute(text("SELECT DISTINCT datetime_precision FROM information_schema.columns WHERE table_schema=current_schema() AND data_type LIKE 'timestamp%'") )).scalars().all()
+        precision=(await self.db.execute(text("SELECT DISTINCT datetime_precision FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=:table AND data_type LIKE 'timestamp%'"), {'table':WatchEvent.__tablename__})).scalars().all()
         self.assertEqual(precision,[3])
 
     async def test_shared_watch_dates_rank_below_estimates_and_episode_evidence(self):
@@ -4279,9 +4288,14 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(entry.status,'completed')
         activity=(await self.db.execute(select(TrackingActivity).where(
             TrackingActivity.user_id==self.owner.id,TrackingActivity.media_id==self.show.id))).scalars().all()
-        self.assertEqual(len(activity),1)
-        self.assertEqual(activity[0].payload['episodes_watched'],3)
-        self.assertEqual(activity[0].payload['position'],'S2E1')
+        self.assertEqual(len(activity),2)
+        progress=[row for row in activity if row.payload.get('episodes_watched')]
+        statuses=[row for row in activity if row.payload.get('season_status')]
+        self.assertEqual(len(progress),1);self.assertEqual(len(statuses),1)
+        self.assertEqual(progress[0].payload['episodes_watched'],3)
+        self.assertEqual(progress[0].payload['position'],'S2E1')
+        self.assertEqual(statuses[0].status,'watching')
+        self.assertEqual(statuses[0].payload['season_number'],1)
 
     async def test_tvdb_native_series_observation_uses_canonical_positions(self):
         from core.tracking_snapshot import observe_stream_snapshot

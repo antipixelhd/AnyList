@@ -1091,7 +1091,7 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(row["entry"]["favorite"])
         self.assertEqual(row["entry"]["start_date"], "2021-02-03")
         self.assertEqual(row["entry"]["rewatch_count"], 2)
-        self.assertEqual(row["backdrop"], "/background.jpg")
+        self.assertEqual(row["backdrop"], f"https://images.metahub.space/background/high/{self.movies[0].imdb_id}/img")
         self.assertFalse(row["editor_library"]["available"])
         self.viewer = self.other
         response = await self.client.get(f"/tracking/editor/{self.movies[0].id}")
@@ -1225,6 +1225,7 @@ class BrowseApiTests(unittest.IsolatedAsyncioTestCase):
         for value in (30, 0):
             saved = await self.client.patch('/tracking/preferences', json={'minimum_popularity': value})
             self.assertEqual(saved.status_code, 200, saved.text)
+            await self.db.refresh(settings)  # This fixture retains one session across requests.
             self.assertEqual((await self.client.get('/tracking/preferences')).json()['minimum_popularity'], value)
             self.assertEqual((await viewer_policy(self.db, self.owner, 'movie', 'search')).min_popularity, value)
             self.assertEqual((await viewer_policy(self.db, self.owner, 'series', 'newest')).min_popularity, value)
