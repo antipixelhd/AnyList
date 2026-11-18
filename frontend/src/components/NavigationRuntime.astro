@@ -335,11 +335,26 @@
       state.predictionBudget=(state.predictionBudget||0)+1;
       state.prediction!.prefetch(url.href);
     });
+    const cachedResponses=new WeakMap<AbortSignal,{href:string;html:string}>();
+    async function loadCachedPage(event:{to:URL;signal:AbortSignal},load:()=>Promise<void>,html:string){
+      // Let ClientRouter prepare route styles even when the response is already in memory.
+      cachedResponses.set(event.signal,{href:event.to.href,html});
+      try{await load();}finally{cachedResponses.delete(event.signal);}
+    }
     const navigationFetch:typeof fetch=async(input,init)=>{
       const request=input instanceof Request?input:null;
       const url=new URL(request?.url||String(input),location.href);
+      const method=String(init?.method||request?.method||'GET').toUpperCase();
+      const signal=init?.signal;
+      if(method==='GET'&&signal&&!signal.aborted){
+        const cached=cachedResponses.get(signal);
+        if(cached?.href===url.href){
+          cachedResponses.delete(signal);
+          return new Response(cached.html,{headers:{'Content-Type':'text/html'}});
+        }
+      }
       const target=state.predictionNavigation;
-      if(String(init?.method||request?.method||'GET').toUpperCase()==='GET'&&target?.key===keyFor(url)){
+      if(method==='GET'&&target?.key===keyFor(url)){
         let page=state.pages.get(target.key);
         if(!page||!page.predicted||Date.now()-page.storedAt>=30_000)page=await state.prediction!.consume(url.href,target.signal);
         if(page?.requiresGamesAccess&&!await authorizeGameSnapshot(state.user,target.signal,state.originalFetch,url)){
@@ -408,17 +423,20 @@
       if(retained){
         state.prediction?.cancel();
         pageEntrance=undefined;
-        const identity=returnViewIdentity(document.body);
+        const identity=returnViewIdentity(document.body),destination=event.to;
+        const stillRetained=()=>identity===returnViewIdentity(document.body)&&returnViews.get(retainedKey)===retained;
         const defaultLoader=event.loader;
         event.loader=async()=>{
           if(event.signal.aborted)return;
-          if(identity!==returnViewIdentity(document.body)||returnViews.get(retainedKey)!==retained){
+          if(!stillRetained()){await defaultLoader();return;}
+          if(lastBrowse&&retainedKey===browseKey)event.to=lastBrowse;
+          await loadCachedPage(event,defaultLoader,retained.html);
+          if(event.signal.aborted||event.defaultPrevented)return;
+          if(!stillRetained()){
+            event.to=destination;
             await defaultLoader();return;
           }
-          const next=new DOMParser().parseFromString(retained.html,'text/html');
-          next.body.dataset.returnView=retained.dirty?'dirty':event.navigationType==='traverse'?'history':'ready';
-          if(lastBrowse&&retainedKey===browseKey)event.to=lastBrowse;
-          event.newDocument=next;
+          event.newDocument.body.dataset.returnView=retained.dirty?'dirty':event.navigationType==='traverse'?'history':'ready';
         };
         return;
       }
@@ -446,15 +464,18 @@
       }
       if(cached.requiresGamesAccess)startProgress();
       const defaultLoader=event.loader,generation=state.generation,user=state.user;
+      const stillCached=()=>generation===state.generation&&user===currentUser();
       event.loader = async () => {
         const authorized=!cached.requiresGamesAccess||await authorizeGameSnapshot(user,event.signal,state.originalFetch,event.to);
         if(event.signal.aborted)return;
-        if(!authorized||generation!==state.generation||user!==currentUser()){
+        if(!authorized||!stillCached()){
           if(state.pages.get(key)===cached){state.pages.delete(key);state.bytes-=cached.bytes;}
           await defaultLoader();return;
         }
+        await loadCachedPage(event,defaultLoader,cached.html);
+        if(event.signal.aborted||event.defaultPrevented)return;
+        if(!stillCached()){await defaultLoader();return;}
         state.usedCached.add(key);
-        event.newDocument = new DOMParser().parseFromString(cached.html, 'text/html');
       };
     });
     document.addEventListener('astro:after-preparation', finishProgress);

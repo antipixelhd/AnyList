@@ -85,8 +85,8 @@ test('empty Games tab snapshots still require authorization before reuse',()=>{
 test('cached mixed navigation waits for approval and falls back on revocation, invalidation or viewer changes',async()=>{
   const start=runtime.indexOf("    document.addEventListener('astro:before-preparation'");
   const snippet=runtime.slice(start,runtime.indexOf("    document.addEventListener('astro:after-preparation'",start));
-  for(const outcome of ['approved','revoked','invalidated','other-viewer','aborted','ordinary']){
-    let authorize,handler,parsed=0,fallback=0;
+  for(const outcome of ['approved','revoked','invalidated','other-viewer','aborted','invalidated-during-load','ordinary']){
+    let authorize,handler,loadStyles,parsed=0,fallback=0;
     const controller=new AbortController(),page={html:'cached',bytes:6,requiresGamesAccess:outcome!=='ordinary'};
     const state={user:'7',pages:new Map([['/home',page]]),generation:1,bytes:6,usedCached:new Set()};
     const context={URL,Date,state,document:{querySelector:()=>null,addEventListener:(_name,callback)=>handler=callback},navigator:{onLine:true},
@@ -95,7 +95,7 @@ test('cached mixed navigation waits for approval and falls back on revocation, i
       currentUser:()=>outcome==='other-viewer'?'8':'7',startProgress(){},finishProgress(){},clearPreview:undefined,clearNavigationFeedback:undefined,detailDestination:()=>undefined,
       cancelLoadingReveals(){},pageEntrance:undefined,detailLayoutTop:undefined,profileTabPosition:undefined,
       authorizeGameSnapshot:()=>new Promise(resolve=>authorize=resolve),
-      DOMParser:class{parseFromString(){parsed++;return 'parsed';}},
+      loadCachedPage:async(_event,_load,html)=>{assert.equal(html,page.html);parsed++;await new Promise(resolve=>loadStyles=resolve);},
     };
     runInNewContext(stripTypeScriptTypes(snippet),context);
     const event={from:new URL('https://example.test/browse'),to:new URL('https://example.test/home'),signal:controller.signal,loader:async()=>fallback++};
@@ -103,12 +103,33 @@ test('cached mixed navigation waits for approval and falls back on revocation, i
     if(outcome!=='ordinary')assert.equal(parsed,0,'authorization must precede parsing/painting');
     if(outcome==='invalidated')state.generation++;
     if(outcome==='aborted')controller.abort();
-    authorize?.(outcome!=='revoked');await pending;
+    authorize?.(outcome!=='revoked');await new Promise(setImmediate);
+    if(outcome==='invalidated-during-load')state.generation++;
+    assert.equal(state.usedCached.size,0,'stylesheet preparation must finish before committing cached navigation');
+    loadStyles?.();await pending;
     const allowed=['approved','ordinary'].includes(outcome);
-    assert.equal(parsed,Number(allowed),outcome);
+    assert.equal(parsed,Number(allowed||outcome==='invalidated-during-load'),outcome);
     assert.equal(fallback,Number(!allowed&&outcome!=='aborted'),outcome);
     assert.equal(state.usedCached.size,Number(allowed),outcome);
   }
+});
+
+test('cached HTML goes through Astro preparation and only answers its matching navigation fetch',async()=>{
+  const start=runtime.indexOf('    const cachedResponses=');
+  const snippet=runtime.slice(start,runtime.indexOf('    window.fetch = mutationFetch',start));
+  const context={URL,Request,Response,state:{originalFetch:async()=>new Response('fresh')},keyFor:url=>url.href,location:{href:'https://example.test/browse'}};
+  const {loadCachedPage,navigationFetch}=runInNewContext(stripTypeScriptTypes(snippet)+';({loadCachedPage,navigationFetch});',context);
+  const to=new URL('https://example.test/browse?type=series'),signal=new AbortController().signal;
+  await loadCachedPage({to,signal},async()=>{
+    assert.equal(await (await navigationFetch(to,{signal:new AbortController().signal})).text(),'fresh');
+    assert.equal(await (await navigationFetch('/browse',{signal})).text(),'fresh');
+    const response=await navigationFetch(to,{signal});
+    assert.equal(response.headers.get('content-type'),'text/html');
+    assert.equal(await response.text(),'cached');
+    assert.equal(await (await navigationFetch(to,{signal})).text(),'fresh');
+  },'cached');
+  await assert.rejects(loadCachedPage({to,signal},async()=>{throw Error('loader failed');},'cached'),/loader failed/);
+  assert.equal(await (await navigationFetch(to,{signal})).text(),'fresh');
 });
 
 test('speculative mixed HTML goes through the same authorization before fetch interception can install it',async()=>{
@@ -119,7 +140,7 @@ test('speculative mixed HTML goes through the same authorization before fetch in
     const target={key:'/home',signal:controller.signal,generation:1},calls=[];
     const state={user:'7',pages:new Map([['/home',page]]),generation:1,bytes:6,predictionNavigation:target,
       originalFetch:async(input)=>{calls.push(input);return String(input).includes('/auth/me')?Response.json({id:7,can_access_games:approved}):new Response('fresh');}};
-    const context={URL,Date,Request,Response,state,authorizeGameSnapshot,keyFor:()=>'/home',location:{href:'https://example.test/home'}};
+    const context={URL,Date,Request,Response,state,cachedResponses:new WeakMap(),authorizeGameSnapshot,keyFor:()=>'/home',location:{href:'https://example.test/home'}};
     const fetcher=runInNewContext(stripTypeScriptTypes(snippet)+';navigationFetch;',context);
     const response=await fetcher('/home',{signal:controller.signal});
     assert.equal(await response.text(),approved?'cached':'fresh');
