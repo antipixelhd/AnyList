@@ -29,7 +29,8 @@ export function mountQuickSearch() {
   const searchReader=createQuickSearchReader(pageListeners.signal);
   document.addEventListener('anylist:cache-invalidated',()=>searchReader.clear(),{signal:pageListeners.signal});
   document.addEventListener('astro:before-swap',()=>pageListeners.abort(),{once:true,signal:pageListeners.signal});
-  const mobile=matchMedia('(max-width:650px)');
+  // A phone in landscape can be wider than the compact breakpoint while still using mobile navigation.
+  const mobile = matchMedia('(max-width:650px), (max-width:1040px) and (hover:none) and (pointer:coarse)');
   const reducedMotion=matchMedia('(prefers-reduced-motion:reduce)');
   const combined=()=>dialog.dataset.combined==='yes';
   const showMoviesSeries=()=>dialog.dataset.showMoviesSeries!=='false';
@@ -48,7 +49,7 @@ export function mountQuickSearch() {
   const input = dialog?.querySelector<HTMLInputElement>('#quick-search-input');
   if (input) wireSearchWordCapitalization(input, pageListeners.signal);
   const resultShell = dialog.querySelector<HTMLElement>('.quick-search-results')!;
-  const updateLayout = mountQuickSearchLayout(resultShell, pageListeners.signal);
+  const updateLayout = mountQuickSearchLayout(resultShell, mobile, pageListeners.signal);
   const panels = [...resultShell.querySelectorAll<HTMLElement>('[data-search-section]')];
   const skeletonTemplate = dialog.querySelector<HTMLTemplateElement>('[data-search-skeleton]')!;
   const panelContent = panels.map(panel => {
@@ -80,13 +81,16 @@ export function mountQuickSearch() {
   const exits = new Map<HTMLElement, Animation>();
   const skeletonExits = new Map<HTMLElement, Animation>();
   const panelOrder = () => quickSearchTabOrder(combined(), showMoviesSeries(), showGames());
-  const updatePlaceholder=()=>{input!.placeholder=mobile.matches?'Search titles, people, studios…':'Search titles, people and studios…';};
+  const updateViewport = () => {
+    dialog.toggleAttribute('data-search-phone', mobile.matches);
+    input!.placeholder = mobile.matches ? 'Search titles, people, studios…' : 'Search titles, people and studios…';
+  };
   const resultCounts=()=>({all:latest.all.length,movie:latest.movie.length,series:latest.series.length,game:latest.game.length,actor:contributors.actor.length,staff:contributors.staff.length,studio:contributors.studio.length});
   const availableTabs=()=>revealed ? availableQuickSearchTabs(panelOrder(),resultCounts(),pending) : panelOrder();
   const tabNav=dialog.querySelector<HTMLElement>('[data-search-tabs]')!;
-  function updateTabs(available=availableTabs(), keepSelection=false) {
-    if (!keepSelection) activeTab=resolvedQuickSearchTab(activeTab,available);
-    tabNav.hidden=!available.length&&!keepSelection;
+  function updateTabs(available=availableTabs()) {
+    activeTab=resolvedQuickSearchTab(activeTab,available);
+    tabNav.hidden=!available.length;
     tabTitle.textContent=tabs.find(tab=>tab.kind===activeTab)!.label;
     tabButtons.forEach(button=>{
       const next=steppedQuickSearchTab(activeTab,available,Number(button.dataset.searchTabStep));
@@ -100,7 +104,7 @@ export function mountQuickSearch() {
     });
   }
   updateTabs();
-  updatePlaceholder();
+  updateViewport();
 
   const resultUrl = (item: SearchResult) => item.type==='game'?gameResultHref(item):item.id ? `/title/${item.id}` : `/discover-title?type=${item.type}&id=${item.tmdb_id}`;
   function unique<T extends SearchResult>(items: T[]):T[] {
@@ -212,10 +216,10 @@ export function mountQuickSearch() {
     if (exit) { exit.cancel(); skeletonExits.delete(skeleton); }
     skeleton.hidden = !showSkeleton;
   }
-  function updatePanel(content: typeof panelContent[number], visible: boolean, animateChange: boolean, keepSelection: boolean) {
+  function updatePanel(content: typeof panelContent[number], visible: boolean, animateChange: boolean) {
     const {panel, skeleton} = content;
     const exit = exits.get(panel);
-    if (!visible && animateChange && (!mobile.matches || keepSelection) && !panel.hidden) {
+    if (!visible && animateChange && !mobile.matches && !panel.hidden) {
       if (!exit) {
         const fade = panel.animate({opacity: [Number(getComputedStyle(panel).opacity), 0]},
           {duration: 150, easing: 'ease-in', fill: 'forwards'});
@@ -230,7 +234,7 @@ export function mountQuickSearch() {
     if (!visible) {
       skeletonExits.get(skeleton)?.cancel();
       skeletonExits.delete(skeleton);
-    } else syncPanel(content, animateChange && !panel.hidden);
+    } else syncPanel(content, animateChange && !mobile.matches && !panel.hidden);
     panel.inert = false;
     panel.hidden = !visible;
   }
@@ -240,23 +244,21 @@ export function mountQuickSearch() {
     const available=availableTabs();
     const wasStale = resultShell.inert;
     const animateChange = !wasStale && !reducedMotion.matches;
-    const selectedPanel = panels.find(panel => panel.dataset.searchSection === activeTab);
-    const keepSelection = mobile.matches && animateChange &&
-      !available.includes(activeTab) && !!selectedPanel && !selectedPanel.hidden &&
-      exits.get(selectedPanel)?.playState !== 'finished';
-    if (mobile.matches && !keepSelection && !available.includes(activeTab)) {
+    const previousTab = activeTab;
+    if (mobile.matches && !available.includes(activeTab)) {
       activeTab = available.find(kind => counts[kind]) ?? activeTab;
     }
-    updateTabs(available, keepSelection);
+    updateTabs(available);
     const visible = mobile.matches ? available.filter(kind => kind === activeTab) : available;
     updateLayout(() => {
       resultShell.inert = false;
       tabNav.inert = false;
       for (const content of panelContent) {
-        updatePanel(content, visible.includes(content.kind), animateChange, keepSelection);
+        updatePanel(content, visible.includes(content.kind), animateChange);
       }
       resultShell.hidden = panels.every(panel => panel.hidden);
     });
+    if (mobile.matches && previousTab !== activeTab) resultShell.scrollTop = 0;
     const message = pending.size || exits.size ? '' : failed
       ? available.length ? 'Some search results are unavailable.' : 'Search is unavailable. Try again.'
       : available.length ? '' : partialCoverage ? 'Some matches could not be verified.' : 'No matching results.';
@@ -269,14 +271,15 @@ export function mountQuickSearch() {
     if (next===activeTab || tabNav.inert) return;
     direction??=tabs.findIndex(tab=>tab.kind===next)>tabs.findIndex(tab=>tab.kind===activeTab)?1:-1;
     activeTab=next;
+    resultShell.scrollTop = 0;
     if (revealed) render();
     else updateTabs();
     tabAnimations.forEach(control=>control.cancel());tabAnimations=[];
     if (!mobile.matches||reducedMotion.matches) return;
     const timing={duration:.22,ease:[.2,.7,.2,1] as [number,number,number,number]};
-    tabAnimations.push(animate(tabTitle,{opacity:[.45,1],transform:[`translateX(${direction*14}px)`,'translateX(0)']},timing));
-    const content=resultShell&&!resultShell.hidden?resultShell:state&&!state.hidden?state:null;
-    if(content)tabAnimations.push(animate(content,{opacity:[.5,1],transform:['translateY(6px)','translateY(0)']},timing));
+    const transform = [`translateX(${direction*14}px)`, 'translateX(0)'];
+    tabAnimations.push(animate(tabTitle,{opacity:[.45,1],transform},timing));
+    if (!resultShell.hidden) tabAnimations.push(animate(resultShell,{opacity:[.5,1],transform},timing));
   }
   function stopSearch() {
     clearTimeout(timer);
@@ -305,8 +308,8 @@ export function mountQuickSearch() {
     failed = false;
     partialCoverage = false;
     const query = input?.value.trim() || '';
-    // Preserve the layout during debounce while disabling links from the previous query.
-    const keepLayout = retainResults && query.length >= 2 && !resultShell.hidden;
+    // Preserve desktop panel placement during debounce while disabling links from the previous query.
+    const keepLayout = !mobile.matches && retainResults && query.length >= 2 && !resultShell.hidden;
     resultShell.inert = keepLayout;
     tabNav.inert = keepLayout;
     if (!keepLayout) {
@@ -394,7 +397,6 @@ export function mountQuickSearch() {
   }
   function open() {
     activeTab=combined()?'all':'movie';
-    updatePlaceholder();
     if (input) input.value = '';
     prepareSearch();
     dialog.scrollTop = 0;
@@ -473,24 +475,35 @@ export function mountQuickSearch() {
     const next=steppedQuickSearchTab(activeTab,availableTabs(),direction);
     if(next)setActiveTab(next,direction);
   },{signal:pageListeners.signal}));
-  let touchStart:{x:number;y:number}|null=null;
+  let touchStart: Touch | undefined;
   dialog.addEventListener('touchstart',event=>{
-    touchStart=null;
-    if((event.target as Element).closest('.quick-search-bar'))return;
-    const touch=event.changedTouches[0];touchStart={x:touch.clientX,y:touch.clientY};
+    const surface = (event.target as Element).closest('[data-search-tabs], .quick-search-results');
+    touchStart = mobile.matches && !tabNav.inert && surface && event.touches.length === 1 ? event.changedTouches[0] : undefined;
   },{passive:true,signal:pageListeners.signal});
   dialog.addEventListener('touchend',event=>{
-    if(!touchStart||!mobile.matches)return;
-    const touch=event.changedTouches[0];
-    const dx=touch.clientX-touchStart.x,dy=touch.clientY-touchStart.y;
-    touchStart=null;
+    const start = touchStart;
+    touchStart = undefined;
+    if (!start || !mobile.matches || tabNav.inert) return;
+    const touch = Array.from(event.changedTouches).find(touch => touch.identifier === start.identifier);
+    if (!touch) return;
+    const dx=touch.clientX-start.clientX,dy=touch.clientY-start.clientY;
     if(Math.abs(dx)<45||Math.abs(dx)<Math.abs(dy)*1.25)return;
     const direction=dx<0?1:-1;
     const next=steppedQuickSearchTab(activeTab,availableTabs(),direction);
     if(next){event.preventDefault();setActiveTab(next,direction);}
   },{passive:false,signal:pageListeners.signal});
-  dialog.addEventListener('touchcancel',()=>{touchStart=null;},{signal:pageListeners.signal});
-  mobile.addEventListener('change',()=>{updatePlaceholder();if(dialog.open)render();},{signal:pageListeners.signal});
+  dialog.addEventListener('touchcancel',()=>{touchStart=undefined;},{signal:pageListeners.signal});
+  mobile.addEventListener('change',()=>{
+    touchStart = undefined;
+    updateViewport();
+    if (!dialog.open) return;
+    if (mobile.matches && resultShell.inert) {
+      tabNav.inert = false;
+      resultShell.hidden = true;
+      updateTabs();
+    }
+    render();
+  },{signal:pageListeners.signal});
   reducedMotion.addEventListener('change',()=>{if(dialog.open)render();},{signal:pageListeners.signal});
   document.addEventListener('anylist:combine-lists-changed',event=>{
     dialog.dataset.combined=(event as CustomEvent<{combineLists:boolean}>).detail.combineLists?'yes':'no';

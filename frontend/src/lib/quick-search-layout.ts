@@ -10,8 +10,7 @@ export function quickSearchPanelPositions(heights: number[], columns: number, ga
 }
 
 /** Keep layout measurements separate from result fetching and respond to panel resizes. */
-export function mountQuickSearchLayout(shell: HTMLElement, signal: AbortSignal) {
-  const desktop = matchMedia('(min-width:651px)');
+export function mountQuickSearchLayout(shell: HTMLElement, phone: MediaQueryList, signal: AbortSignal) {
   const narrow = matchMedia('(max-width:1400px)');
   const reducedMotion = matchMedia('(prefers-reduced-motion:reduce)');
   const cards = [...shell.querySelectorAll<HTMLElement>(':scope > .quick-search-card')];
@@ -22,7 +21,7 @@ export function mountQuickSearchLayout(shell: HTMLElement, signal: AbortSignal) 
     for (const card of cards) { card.style.removeProperty('grid-column'); card.style.removeProperty('grid-row'); }
   };
   const layout = () => {
-    if (signal.aborted || shell.hidden || !desktop.matches) { clear(); return; }
+    if (signal.aborted || shell.hidden || phone.matches) { clear(); return; }
     const visible = cards.filter(card => !card.hidden);
     const columns = narrow.matches ? 2 : 3;
     if (visible.length <= columns) { clear(); return; }
@@ -41,7 +40,7 @@ export function mountQuickSearchLayout(shell: HTMLElement, signal: AbortSignal) 
   };
   const observer = new ResizeObserver(schedule);
   cards.forEach(card => observer.observe(card));
-  desktop.addEventListener('change', schedule, {signal});
+  phone.addEventListener('change', schedule, {signal});
   narrow.addEventListener('change', schedule, {signal});
   signal.addEventListener('abort', () => {
     observer.disconnect();
@@ -53,7 +52,7 @@ export function mountQuickSearchLayout(shell: HTMLElement, signal: AbortSignal) 
   return (change: () => void) => {
     // Measure the running transition too, so another response can move a panel from where it is now.
     const before = new Map<HTMLElement, DOMRect>();
-    if (desktop.matches && !reducedMotion.matches && !shell.hidden) {
+    if (!phone.matches && !reducedMotion.matches && !shell.hidden) {
       for (const card of cards) if (!card.hidden) before.set(card, card.getBoundingClientRect());
     }
     moves.forEach(move => move.cancel());
