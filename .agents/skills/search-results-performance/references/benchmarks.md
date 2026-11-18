@@ -90,6 +90,16 @@ Use a verified Git-ignored output folder. `.local-design/search-browse/` was use
 
 ## Select relevant cases
 
+Use `screen_actor_works` and `screen_crew_works` for filmography changes. They
+exercise the real contributor route with overlapping saved and provider series
+credits, including TVDB Talk Show evidence. The actor case seeds season cards for
+half the series; the crew case isolates category filtering. Compare totals and
+result identities as well as reads, provider calls, and response bytes. Season
+publication changes dates and ranks intentionally. Neither case runs background
+acquisition. The contributor PostgreSQL tests cover a provider rate limit,
+checkpoint recovery, excluded categories from either source, and stable
+pagination when a new season card is published.
+
 Trusted `--baseline-ref` comparisons load the affected contributor identity/details and IMDb person-component modules as well as search/evidence modules. This does not restore ProviderHTTP, shared provider admission, provider-discovery adapters or workers. For scheduler changes, replay the full task-start tree in an isolated archive/checkout with the same disposable fixtures; a mixed-module baseline cannot establish historical scheduling behavior. Run `game_person_cached` separately from `game_person_availability`: the latter adds a TMDB identity to the shared fixture, changing whether the former needs a TMDB profile request. Keep that fixture distinction explicit when interpreting cached-read checks.
 
 `game_person_cached` seeds the current person-component version, a fresh completed automatic-discovery attempt for its cached IMDb source generation and a fresh unresolved person-identity check. It measures repeat page reads after discovery, including a compact discovery-job header when source identities remain unresolved and a small identity-check field from the same component read; it does not measure first admission or provider mapping latency. The initial fetch-to-discovery/identity handoff, bounded continuation, cancellation, failures and identity/exclusion correctness are covered by `test_game_imdb_discovery_pg`, `test_game_imdb_discovery_source` and `test_game_person_identity_pg`. Keep initial admission separate from this zero-provider, zero-write cached-read workload.

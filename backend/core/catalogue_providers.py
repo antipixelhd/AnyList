@@ -328,6 +328,16 @@ class CatalogueProviders:
         if not all(required[provider]):
             raise ProviderError("not_configured")
 
+    async def tmdb_season_cast(self, series_id, seasons):
+        from core import tmdb
+
+        resources = [f"season/{number}/aggregate_credits" for number in seasons]
+        return await self.http.request(
+            "tmdb", "GET", f"{tmdb.TMDB_BASE}/tv/{series_id}",
+            headers=tmdb.get_headers(self.tmdb_key),
+            params={"append_to_response": ",".join(resources)}, cache=False, attempts=2,
+        )
+
     async def igdb(self, endpoint, query):
         token_key = hashlib.sha256(
             (

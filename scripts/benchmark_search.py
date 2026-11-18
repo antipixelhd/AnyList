@@ -174,6 +174,32 @@ async def main(args):
                     tmdb_id=900000 + index, runtime=100, release_date='2026-10-01',
                     tmdb_data=title(900000 + index)))
             screen_ids=[]
+            screen_person_id = None
+            if args.case and any(name in args.case for name in ('screen_actor_works', 'screen_crew_works')):
+                person = CatalogueEntity(kind='person', name='Screen benchmark contributor', image_url='https://example.test/actor.jpg')
+                db.add(person)
+                await db.flush()
+                screen_person_id = person.id
+                db.add(CatalogueIdentity(entity_id=person.id, namespace='tmdb.person', external_id='9900010', source='tmdb'))
+                works = [CatalogueEntity(kind='series', name=f'Screen series {i:03}', attributes={
+                    'release_date': f'{1950 + i % 50}-01-01',
+                    'genres': [{'id':23,'name':'Talk Show'}] if i % 11 == 0 else [{'id':18,'name':'Drama'}],
+                }) for i in range(args.credit_works)]
+                db.add_all(works)
+                await db.flush()
+                for i, work in enumerate(works):
+                    db.add(CatalogueIdentity(entity_id=work.id, namespace='tmdb.series', external_id=str(9910000 + i), source='tmdb'))
+                    for role in ('actor', 'director'):
+                        db.add(CatalogueCredit(work_id=work.id, contributor_id=person.id,
+                            provider='tmdb', source_key=role, role=role, character_label='Lead' if role=='actor' else None))
+                from models.screen_appearances import ScreenActorAppearance
+                db.add_all(ScreenActorAppearance(series_id=9910000 + i, person_id=9900010, projection={
+                    'poster':'/season-fixture.jpg',
+                    'seasons':[
+                        {'label':'Season 2','date':f'{1975 + i % 50}-02-03','roles':['Lead'],'role_keys':['lead']},
+                        {'label':'Season 4','date':f'{1977 + i % 50}-03-01','roles':['Lead','Guest']},
+                    ],
+                }) for i in range(0,args.credit_works,2))
             if args.case and any(name.startswith(('screen_list_', 'screen_activity_')) for name in args.case):
                 screen=[Media(title=f'Library {i:05}',media_type=MediaType.series if i%2 else MediaType.movie,
                     tmdb_id=500000+i,poster_path='/fixture.jpg',release_date=f'{2000+i%26}-01-01',
@@ -502,6 +528,12 @@ async def main(args):
                     {'id': 700000 + i, 'name': f'Benchmark {i}', 'known_for_department': 'Directing' if current_case == 'crew' or (current_case in ('people_combined', 'all_contributors') and i % 2) else 'Acting',
                      'popularity': 80, 'known_for': [title(1000 + i, search=True)], 'logo_path': '/logo.jpg'} for i in range(8)]}
             if path[0] == 'person':
+                if native == 9900010:
+                    series = [dict(title(9910000 + i, 'tv', search=True), media_type='tv',
+                        genre_ids=[] if i % 11 == 0 else [18]) for i in range(args.credit_works)]
+                    return {'id': native, 'name': 'Screen benchmark contributor', 'combined_credits': {
+                        'cast':[dict(row,character='Lead') for row in series],
+                        'crew':[dict(row,job='Director') for row in series]}}
                 return {'id': int(path[1]), 'combined_credits': {
                     'cast': [{**title(1000 + i, search=True), 'media_type': 'movie'} for i in range(args.credit_works)],
                     'crew': [{**title(1000 + i, search=True), 'media_type': 'movie', 'job': 'Director'} for i in range(args.credit_works)]}}
@@ -578,7 +610,7 @@ async def main(args):
                     items = [{'season': season['season_number'], **{key: episode[key] for key in
                         ('episode_number', 'title', 'air_date', 'runtime', 'watched', 'released')}}
                         for season in result['seasons'] for episode in season['episodes']]
-                if label.startswith('game_contributor') or label in ('game_person_cached','game_company_cached'):items=result['works']
+                if label.startswith('game_contributor') or label in ('game_person_cached','game_company_cached','screen_actor_works','screen_crew_works'):items=result['works']
                 if label=='game_credits':items=result['people']+result['game_characters']
                 if label=='game_person_roles':items=result['roles']
                 if label=='game_portraits':items=result['people']
@@ -802,6 +834,9 @@ async def main(args):
                 cases += [('game_person_availability',path+'/availability',{})]
             if args.case and 'game_person_review' in args.case:
                 cases += [('game_person_review','games/people/nm8000000/imdb/titles',{})]
+        if screen_person_id:
+            cases += [('screen_actor_works',f'contributors/actor/catalogue:{screen_person_id}',{}),
+                      ('screen_crew_works',f'contributors/staff/catalogue:{screen_person_id}',{})]
         cases += [
             *([('game_company_cached',f'contributors/studio/catalogue:{game_company_id}',{'media_type':'game'})] if game_company_id else []),
             *([('game_company_availability',f'contributors/studio/catalogue:{game_company_id}/availability',{})] if game_company_id else []),

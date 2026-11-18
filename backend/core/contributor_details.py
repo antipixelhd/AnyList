@@ -8,12 +8,12 @@ from datetime import date
 from types import SimpleNamespace
 from urllib.parse import urlsplit
 
-from sqlalchemy import or_, select
+from sqlalchemy import String, exists, func, literal, or_, select, tuple_, union_all
 
 from core import settings_store, tmdb, tracking_projection
 from core.browse import GENRES, anime_visible
 from core.countries import country_codes
-from core.catalog_search import result_filters, matches_result_filters
+from core.catalog_search import category_exclusion, result_filters, matches_result_filters
 from core.statistics_genres import poster
 from core.statistics_staff import ACTING, role_label, role_order
 from core.credit_roles import work_credit
@@ -21,7 +21,7 @@ from core.tracking_editor import attach_editor_context
 from core.studio_groups import studio_root, studio_members, studio_companies, studio_display_name, studio_entity_ids
 from models import Media
 from models.base import MediaType
-from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity, CatalogueLegacyLink
+from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity, CatalogueLegacyLink, MetadataSnapshot
 from models.title_credits import TitleCredits
 from models.tracking import TrackedEntry
 
@@ -50,6 +50,15 @@ def accepted_role(kind, acting):
     return kind == "studio" or acting == (kind == "actor")
 
 
+def merge_work_metadata(preferred, fallback):
+    metadata = {**fallback, **preferred}
+    for field in ('genres', 'genre_ids'):
+        original, alternate = preferred.get(field), fallback.get(field)
+        if alternate and alternate != original:
+            metadata[field] = [*(original or []), *(genre for genre in alternate if genre not in (original or []))]
+    return metadata
+
+
 def merge_works(rows):
     """Keep movie/series IDs distinct and retain every job and character."""
     merged = {}
@@ -62,7 +71,7 @@ def merge_works(rows):
             aliases[external] = key
         for field in ("roles", "characters"):
             item[field] = sorted(set(item[field]) | set(row.get(field) or []), key=lambda label: (role_order(label), label))
-        item["_metadata"] = {**(row.get("_metadata") or {}), **(item.get("_metadata") or {})}
+        item["_metadata"] = merge_work_metadata(item.get("_metadata") or {}, row.get("_metadata") or {})
         for field in ("id", "poster", "backdrop", "release_date", "year"):
             if not item.get(field) and row.get(field):
                 item[field] = row[field]
@@ -120,7 +129,7 @@ async def known_works(db, entity, native, kind, viewer):
             # Prefer the viewer's actual tracking row over an older metadata alias.
             candidates = sorted(media_candidates[work.id], key=lambda m: (m.id not in own, m.id))
             media = candidates[0] if candidates else None
-            data = {**(media.tmdb_data or {} if media else {}), **(work.attributes or {})}
+            data = merge_work_metadata(work.attributes or {}, media.tmdb_data or {} if media else {})
             if media and media.runtime:
                 data["runtime"] = media.runtime
             if media and media.adult:
@@ -161,6 +170,36 @@ async def known_works(db, entity, native, kind, viewer):
             rows.append({**item, "key": f"{media.media_type.value}:{media.tmdb_id or 'local-' + str(media.id)}",
                 "roles": [role for _, role in matches], "characters": [p["character"] for p, role in matches if role == "Actor" and p.get("character")], "_metadata": {**(media.tmdb_data or {}), "runtime": media.runtime or (media.tmdb_data or {}).get("runtime"), "adult": media.adult or (media.tmdb_data or {}).get("adult", False)}})
     return merge_works(rows)
+
+
+async def exclude_provider_categories(db, works, exclusions):
+    """Check linked title snapshots without transferring their metadata or credits."""
+    local_ids = []
+    provider_ids = []
+    for row in works:
+        if row['key'].startswith('catalogue:'):
+            local_ids.append(int(row['key'].removeprefix('catalogue:')))
+        elif row.get('tmdb_id'):
+            provider_ids.append((f"tmdb.{row['type']}", str(row['tmdb_id'])))
+    queries = []
+    if local_ids:
+        queries.append(select(CatalogueEntity.id.label('entity_id'),
+            (literal('catalogue:') + CatalogueEntity.id.cast(String)).label('work_key'))
+            .where(CatalogueEntity.id.in_(local_ids)))
+    if provider_ids:
+        identity = CatalogueIdentity
+        queries.append(select(identity.entity_id,
+            (func.replace(identity.namespace, 'tmdb.', '') + ':' + identity.external_id).label('work_key'))
+            .where(tuple_(identity.namespace, identity.external_id).in_(provider_ids)))
+    if not queries:
+        return works
+    candidates = (union_all(*queries) if len(queries) > 1 else queries[0]).subquery()
+    snapshot = MetadataSnapshot
+    excluded = set(await db.scalars(select(candidates.c.work_key).where(exists(select(1).where(
+        snapshot.entity_id == candidates.c.entity_id, snapshot.provider.in_(('tmdb', 'tvdb')),
+        snapshot.kind.in_(('movie', 'series')), category_exclusion(snapshot.payload, exclusions),
+    )))))
+    return [row for row in works if row['key'] not in excluded]
 
 
 async def studio_timeline(db, viewer, known, native, provider_key, *, media_type, list_scope, show_anime, cursor, scope, min_runtime=0, excluded_genres=()):
@@ -270,8 +309,14 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
         return None
     entity, native, identities = resolved
     games = media_type == "game"
-    if cursor and not games and (kind != 'studio' or source == 'local'):
-        raise ValueError('Invalid timeline cursor')
+    appearance_revision = None
+    if cursor and not games:
+        if kind == 'actor' and re.fullmatch(r'appearance:[0-9]{1,19}', cursor):
+            appearance_revision = int(cursor.removeprefix('appearance:'))
+            if appearance_revision > 2**63 - 1:
+                raise ValueError('Invalid appearance cursor')
+        elif kind != 'studio' or source == 'local':
+            raise ValueError('Invalid timeline cursor')
     local = [] if games else await known_works(db, entity, native, kind, viewer)
     if not games and entity and not native and not local and not allowed(viewer):
         return None
@@ -411,6 +456,8 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
         filters = await result_filters(db, viewer)
         all_known = [r for r in merge_works(local + (remote if kind != "studio" else []))
                      if matches_result_filters(r.get("_metadata") or {}, r["type"], **filters)]
+        if kind != 'studio' and filters['excluded_genres']:
+            all_known = await exclude_provider_categories(db, all_known, filters['excluded_genres'])
         for row in all_known + remote:
             row.update(entry=None, list_status=None, score=None, rating_mode="manual")
         await attach_editor_context(db, viewer, all_known)
@@ -439,12 +486,16 @@ async def contributor_page(db, viewer, *, kind, key, media_type="all", list_scop
         filtered = [r for r in all_known if (media_type == "all" or r["type"] == media_type)
                     and (list_scope == "all" or bool(r.get("list_status")) == (list_scope == "in"))
                     and (not status or r.get("list_status") == status)]
+        if kind == 'actor' and native and media_type != 'movie':
+            from core.screen_appearances import apply_appearances
+            appearance_revision = await apply_appearances(db, native, filtered, appearance_revision)
         filtered.sort(key=lambda r: (r.get("release_date") or "", r["title"], r["key"]), reverse=True)
         start = (page - 1) * PAGE_SIZE
         works = filtered[start:start + PAGE_SIZE]
         has_more = start + PAGE_SIZE < len(filtered)
         total = len(filtered)
-        next_cursor = None
+        next_cursor = (f'appearance:{appearance_revision}'
+                       if has_more and appearance_revision is not None else None)
         result_source = "local"
         if kind == "studio" and native and provider_key and profile and source != "local" and list_scope != "in" and not status:
             try:

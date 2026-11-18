@@ -6,6 +6,16 @@ export interface ContributorWork extends BrowseItem {
   key: string; href: string | null; release_date: string | null; roles: string[]; characters: string[];
   characters_pending?:boolean;
   credit_sources?:{kind:string;title:string}[];
+  appearance?:{label:string;poster?:string;seasons:AppearanceSeason[]};
+}
+interface AppearanceSeason {label:string;year:string;roles:string[]}
+
+export function contributorWorkTitle(work: Pick<ContributorWork, 'title'|'appearance'>) {
+  return work.appearance ? `${work.title} – ${work.appearance.label}` : work.title;
+}
+
+export function appearanceSeasonText(season: AppearanceSeason) {
+  return `${season.label}${season.year ? ` (${season.year})` : ''}${season.roles.length ? ` – ${season.roles.join(' / ')}` : ''}`;
 }
 export function contributorCreditScope(work: Pick<ContributorWork,'title'|'credit_sources'>) {
   const sources=work.credit_sources||[];

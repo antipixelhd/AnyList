@@ -692,6 +692,13 @@ async def _show_metadata_refresher():
                     "Season release notifications: "
                     f"{season_events['date_notices']} new dates, {season_events['release_notices']} releases"
                 )
+                from core.screen_appearance_backfill import backfill_screen_appearances
+                if api_key:
+                    async with ProviderHTTP.open_client() as client:
+                        appearance_coverage = await backfill_screen_appearances(db, CatalogueProviders(
+                            ProviderHTTP(client, session_factory=AsyncSessionLocal), tmdb_key=api_key,
+                        ), limit=12)
+                    log.info("Screen appearance refresh: %s", appearance_coverage)
         except Exception as e:
             log.error(f"Show metadata refresher: {e}")
 

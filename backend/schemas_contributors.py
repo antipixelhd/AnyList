@@ -37,6 +37,18 @@ class ContributorCreditSource(BaseModel):
     title: str
 
 
+class ContributorAppearanceSeason(BaseModel):
+    label: str
+    year: str
+    roles: list[str]
+
+
+class ContributorAppearance(BaseModel):
+    label: str
+    poster: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    seasons: list[ContributorAppearanceSeason]
+
+
 class ContributorWork(BaseModel):
     key: str
     id: int | None = None
@@ -55,6 +67,7 @@ class ContributorWork(BaseModel):
     characters: list[str] = Field(default_factory=list)
     characters_pending: bool = Field(default=False,exclude_if=lambda value:not value)
     credit_sources: list[ContributorCreditSource] = Field(default_factory=list,exclude_if=lambda value:not value)
+    appearance: ContributorAppearance | None = Field(default=None, exclude_if=lambda value: value is None)
     list_status: str | None = None
     score: float | None = None
     rating_mode: str = "manual"

@@ -4,7 +4,7 @@ import {viewerMediaPreferences} from '../lib/viewer-media-preferences';
 import {categoryName,defaultGameCategories} from '../lib/list-categories.ts';
 import { responsiveArtwork } from "../lib/responsive-artwork";
 import { formatDateTime, requestDateLocale } from '../lib/date-time';
-import { contributorMediaLabel,contributorCreditScope } from '../lib/contributor-page-data';
+import { appearanceSeasonText, contributorMediaLabel, contributorCreditScope, contributorWorkTitle, type ContributorWork } from '../lib/contributor-page-data';
 import {browseCardHref,browseCardKey,browseStatusLabel,browseActionLabel,browseCardCanEdit,browseCardQuickActions} from '../lib/browse-card-data';
 const {
   item = { title: "", type: "movie" },
@@ -12,7 +12,8 @@ const {
   template = false,
   credits = false,
 } = Astro.props;
-const image = responsiveArtwork(item.poster, {
+const appearance = item.appearance as ContributorWork['appearance'];
+const image = responsiveArtwork(appearance?.poster || item.poster, {
   size: "w342",
   sizes: "(max-width: 650px) 30vw, (max-width: 1000px) 22vw, 185px",
   route:'direct',
@@ -114,10 +115,18 @@ const href=browseCardHref(item);
     )}
   </div>
   <div class="browse-card-caption">
+  <div class="browse-card-title-row" data-appearance={credits && appearance ? '' : undefined}>
   <a class="browse-card-title" href={template ? "#" : href}>
-    <h2>{item.title}</h2>
+    <h2>{credits ? contributorWorkTitle(item) : item.title}</h2>
     {credits && <span class="contributor-credit-scope" data-work-scope hidden={!item.credit_sources?.length}>{contributorCreditScope(item)}</span>}
   </a>
+  {credits && (template || (appearance?.seasons.length || 0) > 1) &&
+    <button class="contributor-season-more" type="button" popovertarget={`appearance-${item.tmdb_id}`} popovertargetaction="show" aria-label="Show credited seasons" data-appearance-trigger hidden={template}>+</button>}
+  {credits && (template || (appearance?.seasons.length || 0) > 1) &&
+    <ul class="contributor-season-popover" id={`appearance-${item.tmdb_id}`} popover="auto" data-appearance-seasons>
+      {appearance?.seasons.map((season) => <li>{appearanceSeasonText(season)}</li>)}
+    </ul>}
+  </div>
   <div class="browse-card-meta">
     <span data-year title={item.release_event ? item.release_country ? `Release date · ${item.release_country}` : 'Worldwide release date' : undefined}>{item.year}</span>
     <span

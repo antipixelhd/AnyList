@@ -21,6 +21,7 @@ import {bindContributorTabIntent} from './contributor-tab-intent';
 import {createContributorWorksMotion, orderContributorNodes} from './contributor-works-motion';
 import {mountContributorBanner} from './contributor-banner';
 import {replaceContributorSelection} from './contributor-selection';
+import {mountContributorAppearances, paintWorkAppearance} from './contributor-appearances';
 
 export function initializeContributorPage(root: HTMLElement, signal: AbortSignal) {
   if(root.dataset.mediaType==='game')mountGamePersonImages(root,signal);
@@ -28,6 +29,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
   mountPortraitViewer(root, signal);
   const data: ContributorPage = JSON.parse(root.querySelector('[data-contributor-data]')!.textContent!);
   const region = root.querySelector<HTMLElement>('[data-contributor-works]')!;
+  if (data.kind === 'actor') mountContributorAppearances(region, signal);
   const switchView = createContentTransition(region, signal);
   const worksMotion = createContributorWorksMotion(region, signal);
   let requestedView = root.dataset.view;
@@ -202,7 +204,7 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
       const card = template.content.firstElementChild!.cloneNode(true) as HTMLElement;
       card.dataset.key = browseCardKey({...item,href:item.href||undefined});
       card.dataset.workKey = item.key;
-      card.querySelector('h2')!.textContent = item.title;
+      paintWorkAppearance(card, item);
       const scope=card.querySelector<HTMLElement>('[data-work-scope]');
       if(scope){scope.textContent=contributorCreditScope(item);scope.hidden=!item.credit_sources?.length;}
       card.querySelector('.browse-poster-link')!.setAttribute('aria-label', item.title);
@@ -213,10 +215,11 @@ export function initializeContributorPage(root: HTMLElement, signal: AbortSignal
       date.hidden = !item.release_date; setLocalDateTime(date, item.release_date, 'month-day');
       card.querySelector<HTMLElement>('[data-work-type]')!.textContent = contributorMediaLabel(item.type);
       const image = card.querySelector<HTMLImageElement>('[data-poster]')!;
-      image.hidden = !item.poster;
-      if (item.poster) applyResponsiveArtwork(image, item.poster, {size:'w342',sizes:'(max-width: 760px) 40vw, 185px',route:'auto'});
+      const poster = item.appearance?.poster || item.poster;
+      image.hidden = !poster;
+      if (poster) applyResponsiveArtwork(image, poster, {size:'w342',sizes:'(max-width: 760px) 40vw, 185px',route:'auto'});
       const placeholder = card.querySelector<HTMLElement>('.browse-placeholder')!;
-      placeholder.hidden = !!item.poster; placeholder.textContent = item.title.slice(0,1);
+      placeholder.hidden = !!poster; placeholder.textContent = item.title.slice(0,1);
       if (!item.id && !item.tmdb_id) card.querySelector('.browse-actions')?.remove();
       card.querySelectorAll<HTMLButtonElement>('[data-browse-action]').forEach(button => {
         const action = button.dataset.browseAction;

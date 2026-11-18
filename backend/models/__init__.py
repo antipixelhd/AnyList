@@ -12,6 +12,7 @@ from .email_activation import EmailActivation
 from .password_reset import PasswordResetToken
 from .show import Show
 from .seasons import SeriesSeason, SeasonTracking, SeasonReconcileJob
+from .screen_appearances import ScreenActorAppearance
 from .media import Media
 from .collection import Collection, CollectionFile
 from .events import WatchEvent

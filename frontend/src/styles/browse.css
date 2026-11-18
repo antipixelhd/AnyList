@@ -1035,3 +1035,4 @@
 
 [data-browse-shell]>[hidden] { display:none!important; }
 [data-browse-tab-slot] { display:contents; }
+.browse-card-title-row { display:contents; }

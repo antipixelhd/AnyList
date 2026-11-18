@@ -343,6 +343,137 @@ class ContributorDetailsTests(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as db:
             self.assertEqual(await db.scalar(select(func.count()).select_from(Media)), before)
 
+    async def test_actor_season_order_is_frozen_across_pages(self):
+        from models.screen_appearances import ScreenActorAppearance
+        async with self.Session() as db:
+            db.add(CatalogueIdentity(entity_id=self.person_id, namespace='tmdb.person', external_id='7710', source='tmdb'))
+            for number in range(25):
+                work = CatalogueEntity(kind='series', name=f'Series {number}', attributes={'release_date': f'{1950 + number}-01-01'})
+                db.add(work)
+                await db.flush()
+                db.add(CatalogueIdentity(entity_id=work.id, namespace='tmdb.series', external_id=str(7720 + number), source='tmdb'))
+                db.add(CatalogueCredit(work_id=work.id, contributor_id=self.person_id, provider='tmdb',
+                                       source_key='series', role='actor', character_label='Legacy'))
+            db.add(ScreenActorAppearance(person_id=7710, series_id=7721, projection={
+                'poster': '/first-season.jpg', 'seasons': [
+                    {'label':'New Cast','date':'2021-01-03','roles':['Lead'],'role_keys':['lead']},
+                    {'label':'Season 3','date':'2023-02-01','roles':['Lead','Guest']},
+                ],
+            }))
+            await db.commit()
+        with patch('core.tmdb.get_person', AsyncMock(side_effect=AssertionError('Actor page used a provider'))) as provider:
+            first = (await self.request(media_type='series')).json()
+            anchor = first['works'][0]
+            self.assertEqual((anchor['tmdb_id'], anchor['title'], anchor['release_date'], anchor['characters']),
+                             (7721, 'Series 1', '2021-01-03', ['Lead']))
+            self.assertEqual(anchor['appearance']['seasons'][1]['roles'], ['Guest'])
+            self.assertTrue(anchor['appearance']['poster'].endswith('/first-season.jpg'))
+            async with self.Session() as db:
+                db.add(ScreenActorAppearance(person_id=7710, series_id=7720, projection={
+                    'poster':None, 'seasons':[{'label':'Season 4','date':'2025-01-01','roles':[],'role_keys':[]}],
+                }))
+                await db.commit()
+            second = (await self.request(media_type='series', page=2, cursor=first['next_cursor'])).json()
+            self.assertEqual([(r['tmdb_id'], r['release_date']) for r in second['works']], [(7720, '1950-01-01')])
+            self.assertNotIn('appearance', second['works'][0])
+            fresh = (await self.request(media_type='series')).json()
+            self.assertEqual(fresh['works'][0]['tmdb_id'], 7720)
+            self.assertEqual(fresh['works'][0]['release_date'], '2025-01-01')
+            provider.assert_not_awaited()
+
+    async def test_actor_and_crew_exclude_category_evidence_from_either_source(self):
+        from models.catalogue import MetadataSnapshot
+
+        async with self.Session() as db:
+            db.add(CatalogueIdentity(entity_id=self.person_id, namespace='tmdb.person', external_id='7750', source='tmdb'))
+            for native, genres in [(7751, [{'id':23,'name':'Talk Show'}]), (7752, []), (7753, []), (7754, [{'id':18,'name':'Drama'}])]:
+                work = CatalogueEntity(kind='series', name=f'Show {native}', attributes={'genre_ids':[], 'genres':genres})
+                db.add(work)
+                await db.flush()
+                db.add(CatalogueIdentity(entity_id=work.id, namespace='tmdb.series', external_id=str(native), source='tmdb'))
+                db.add_all(CatalogueCredit(work_id=work.id, contributor_id=self.person_id, provider='tmdb',
+                    source_key=role, role=role) for role in ('actor','director'))
+                if native == 7754:
+                    db.add(MetadataSnapshot(provider='tvdb', kind='series', external_id='47754', entity_id=work.id,
+                                            payload={'genres':[{'id':23,'name':'Talk Show'}]}))
+            await db.commit()
+        self.result_policy.stop()
+        self.key_mock.return_value = 'fixture'
+        raw = [{'id':native,'name':f'Show {native}','media_type':'tv','genre_ids':genres}
+               for native, genres in [(7751, []),(7752,[10767]),(7753,[]),(7754,[18])]]
+        profile = {'id':7750,'name':'Contributor','combined_credits':{
+            'cast':raw,'crew':[dict(row,job='Director') for row in raw],
+        }}
+        with patch('core.tmdb.get_person', AsyncMock(return_value=profile)):
+            for kind in ('actor','staff'):
+                data = (await self.request(kind, media_type='series')).json()
+                self.assertEqual([r['tmdb_id'] for r in data['works']], [7753])
+                self.assertEqual(data['total'], 1)
+
+    async def test_season_cast_backfill_resumes_missing_batch_and_saves_public_projection(self):
+        from contextlib import asynccontextmanager
+        from datetime import datetime, timedelta, timezone
+        import httpx
+        from core.catalogue_providers import CatalogueProviders, ProviderHTTP
+        from core.screen_appearance_backfill import KIND, backfill_screen_appearances
+        from models.catalogue import MetadataSnapshot
+        from models.screen_appearances import ScreenActorAppearance
+
+        @asynccontextmanager
+        async def lane(_provider):
+            yield
+
+        native = 7760
+        seasons = [
+            {'id':number + 50,'season_number':number,'episode_count':6,'air_date':f'202{number}-01-01',
+             'name':f'Season {number}','poster_path':f'/season-{number}.jpg'}
+            for number in (1,2,3)
+        ]
+
+        def response(*numbers):
+            return {'id':native,'status':'Ended','seasons':seasons, **{
+                f'season/{number}/aggregate_credits':{'cast':[
+                    {'id':7710,'roles':[{'character':'Lead'}]} if number == 1 else
+                    {'id':7711,'roles':[{'character':'Guest' if number == 2 else 'Host'}]},
+                    {'id':7712,'roles':[{'character':'Regular'}]},
+                ]}
+                for number in numbers
+            }}
+
+        requests = []
+
+        def transport(request):
+            numbers = [int(resource.split('/')[1]) for resource in request.url.params['append_to_response'].split(',')]
+            requests.append(numbers)
+            if len(requests) == 2:
+                return httpx.Response(429, headers={'Retry-After':'60'})
+            return httpx.Response(200, json=response(*numbers))
+
+        async with self.Session() as db, httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
+            db.add(Media(media_type='series', title='Fixture series', tmdb_id=native))
+            await db.commit()
+            http = ProviderHTTP(client)
+            providers = CatalogueProviders(http, tmdb_key='fixture')
+            with patch.object(http, 'lane', lane), patch.object(http,'defer',AsyncMock()) as defer:
+                result = await backfill_screen_appearances(db, providers, limit=10)
+                self.assertEqual((result['published'],result['deferred']), (0,1))
+                defer.assert_awaited_once_with('tmdb', 60)
+                self.assertEqual(await db.scalar(select(func.count()).select_from(ScreenActorAppearance)), 0)
+                snapshot = await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.kind == KIND))
+                self.assertEqual(list(snapshot.payload['pending']['cast']), ['1'])
+                snapshot.next_attempt_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=1)
+                await db.commit()
+                result = await backfill_screen_appearances(db, providers, limit=10)
+                self.assertEqual((result['published'], result['cards_changed']), (1,2))
+                self.assertEqual(requests, [[1],[2,3],[2,3]])
+                last = await backfill_screen_appearances(db, providers, limit=10)
+                self.assertEqual(last['examined'], 0)
+                self.assertEqual(len(requests), 3)
+                saved = {row.person_id: row.projection for row in await db.scalars(select(ScreenActorAppearance))}
+                self.assertEqual(saved[7710]['seasons'][0]['label'], 'Season 1')
+                self.assertEqual([s['roles'] for s in saved[7711]['seasons']], [['Guest'],['Host']])
+                self.assertNotIn(7712, saved)
+
     async def test_roles_and_characters_merge_but_staff_excludes_cast(self):
         async with self.Session() as db:
             work_id = await db.scalar(select(CatalogueEntity.id).where(CatalogueEntity.kind == 'movie'))
