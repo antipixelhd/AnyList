@@ -378,7 +378,12 @@ document.addEventListener('astro:page-load',()=>{
       let card=existing;
       if(!card||signatures.get(activity.key)!==signature){
         const fresh=render(activity);
-        if(card)reconcileHomePanel(card,fresh);else card=fresh;
+        if(card){
+          const nextRating=fresh.querySelector<HTMLButtonElement>('[data-season-rating-toggle]');
+          if(nextRating&&!nextRating.disabled&&card.querySelector('[data-season-rating-toggle][aria-expanded="true"]'))
+            nextRating.setAttribute('aria-expanded','true');
+          reconcileHomePanel(card,fresh);
+        }else card=fresh;
       }
       signatures.set(activity.key,signature);
       if(card!==anchor)feed.insertBefore(card,anchor);

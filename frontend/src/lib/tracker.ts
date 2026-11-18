@@ -57,10 +57,26 @@ export function activityRating(activity: any) {
   const current = typeof activity.score === 'number' ? activity.score : null;
   const seasons = Object.entries(details.season_ratings || {}).map(([number, score]) =>
     ({number: Number(number), score: Number(score)})).filter(row => row.number > 0 && row.score > 0).sort((a,b)=>a.number-b.number);
+  const breakdown: {label: string; score: number}[] = [];
+  if (activity.media?.type === 'series') {
+    const ratings = activity.rating_breakdown;
+    if (ratings?.series_score > 0) breakdown.push({label: 'Series rating', score: ratings.series_score});
+    for (const [number, score] of Object.entries(ratings?.season_scores || {}).sort(([a], [b]) => Number(a) - Number(b))) {
+      if (Number(number) > 0 && typeof score === 'number' && score > 0) breakdown.push({label: `Season ${number}`, score});
+    }
+    // A historical card can outlive its list entry or come from an older feed.
+    if (!breakdown.length) {
+      if (seasons.length) breakdown.push(...seasons.map(({number, score}) => ({label: `Season ${number}`, score})));
+      else if (details.season_number > 0 && (details.rating_snapshot || details.season_rating_group))
+        breakdown.push({label: `Season ${details.season_number}`, score: current});
+      else breakdown.push({label: 'Series rating', score: current});
+    }
+  }
   const label = previous == null
     ? `Rated ${scoreLabel(current)} out of 10`
     : `Rating changed from ${scoreLabel(previous)} to ${scoreLabel(current)} out of 10`;
-  return { previous, current, label: seasons.length > 1 ? `Average ${scoreLabel(current)} out of 10. ${seasons.map(row=>`Season ${row.number}: ${scoreLabel(row.score)}`).join(', ')}` : label, seasons };
+  return { previous, current, label: seasons.length > 1 ? `Average ${scoreLabel(current)} out of 10. ${seasons.map(row=>`Season ${row.number}: ${scoreLabel(row.score)}`).join(', ')}` : label,
+    seasons, breakdown, breakdownId: breakdown.length && activity.key ? `activity-ratings-${encodeURIComponent(activity.key)}` : undefined };
 }
 
 export function seasonRange(numbers:number[]) {

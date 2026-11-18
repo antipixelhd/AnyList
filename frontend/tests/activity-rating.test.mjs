@@ -84,12 +84,30 @@ test('grouped ratings use ranges, average and per-season accessible scores',()=>
   assert.equal(activityRating({...activity,payload:{rating_snapshot:true,season_ratings:{2:7}}}).current,7);
 });
 
+test('rated series cards keep the event score and show the full current breakdown',()=>{
+  const activity={media:{type:'series'},score:7,payload:{rating_snapshot:true,season_ratings:{2:7},previous_score:6},
+    rating_breakdown:{series_score:9,season_scores:{10:8,2:7.5,3:0,4:null,1:6}}};
+  const rating=activityRating(activity);
+  assert.equal(rating.current,7);
+  assert.equal(rating.previous,6);
+  assert.deepEqual(rating.breakdown,[
+    {label:'Series rating',score:9},{label:'Season 1',score:6},{label:'Season 2',score:7.5},{label:'Season 10',score:8},
+  ]);
+  assert.deepEqual(activityRating({...activity,rating_breakdown:{series_score:null,season_scores:{4:8}}}).breakdown,
+    [{label:'Season 4',score:8}]);
+  assert.deepEqual(activityRating({...activity,rating_breakdown:undefined}).breakdown,[{label:'Season 2',score:7}]);
+  assert.deepEqual(activityRating({media:{type:'series'},score:8,payload:{rating_changed:true}}).breakdown,
+    [{label:'Series rating',score:8}]);
+  assert.deepEqual(activityRating({...activity,media:{type:'movie'}}).breakdown,[]);
+  assert.equal(activityRating({...activity,score:null}),null);
+});
+
 test('feed refresh updates scores without changing timestamps or order and removes deleted cards', () => {
   const source = readFileSync(new URL('../src/pages/home.astro', import.meta.url), 'utf8');
   const reconcileSource = source.slice(source.indexOf('  const reconcile='), source.indexOf('  const refresh=async'));
   const elements = [];
   function card(activity) {
-    const element = {dataset: {activityKey: activity.key, createdAt: activity.created_at}, score: activity.score};
+    const element = {dataset: {activityKey: activity.key, createdAt: activity.created_at}, score: activity.score, querySelector:()=>null};
     Object.defineProperty(element,'nextSibling',{get:()=>elements[elements.indexOf(element)+1]||null});
     element.remove = () => { const index = elements.indexOf(element); if (index >= 0) elements.splice(index, 1); };
     return element;

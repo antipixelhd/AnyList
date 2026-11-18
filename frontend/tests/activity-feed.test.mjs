@@ -21,3 +21,9 @@ test('browser activity seed contains card fields, excluding private notes and ev
   assert.equal(JSON.stringify(projected).includes('Private'),false);assert.equal('watched_start_ids' in projected.payload,false);
   assert.equal('provider_blob' in projected.media,false);
 });
+test('browser activity seed retains only the display fields from a rating breakdown',()=>{
+  const rating_breakdown={series_score:9,season_scores:{2:8},review:'private'};
+  const entry=activityPresentation({media:{id:7,type:'series'},score:7,rating_breakdown});
+  assert.deepEqual(entry.rating_breakdown,{series_score:9,season_scores:{2:8}});
+  assert.equal(entry.score,7);
+});

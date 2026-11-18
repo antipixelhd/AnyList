@@ -920,6 +920,46 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         invalid=await self.client.get('/tracking/activity',params={'cursor':'not-a-cursor'})
         self.assertEqual(invalid.status_code,422)
 
+    async def test_series_activity_breakdown_uses_the_card_owner_and_episode_order(self):
+        profile = await self.db.scalar(select(UserProfileData).where(UserProfileData.user_id == self.friend.id))
+        profile.privacy_level = PrivacyLevel.public
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        self.db.add_all([
+            Follow(follower_id=self.owner.id, following_id=self.friend.id),
+            TrackedEntry(user_id=self.owner.id, media_id=self.show.id, manual_score=10, season_scores={'1': 10}),
+            TrackedEntry(user_id=self.friend.id, media_id=self.show.id, manual_score=9,
+                         season_scores={'10': 8, '1': 6, '3': None}, notes='private fixture note'),
+            Rating(user_id=self.friend.id, media_id=self.show.id, season_number=2, rating=7.5, review='private fixture review'),
+            Rating(user_id=self.friend.id, media_id=self.show.id, season_number=2, episode_order='tvdb:official', rating=8.5),
+            TrackingActivity(user_id=self.owner.id, media_id=self.show.id, status='watching', score=8, created_at=now,
+                             payload={'window_key':'self-series', 'rating_changed':True}),
+            TrackingActivity(user_id=self.friend.id, media_id=self.show.id, status='watching', score=7, created_at=now,
+                             payload={'window_key':'aired', 'episode_order':'tmdb:aired', 'rating_changed':True,
+                                      'season_rating_group':True, 'season_ratings':{'2':7}, 'previous_score':6}),
+            TrackingActivity(user_id=self.friend.id, media_id=self.show.id, status='watching', score=8, created_at=now,
+                             payload={'window_key':'alternate', 'episode_order':'tvdb:official', 'rating_changed':True,
+                                      'season_rating_group':True, 'season_ratings':{'2':8}}),
+        ])
+        await self.db.commit()
+
+        feed = await self.client.get('/tracking/activity')
+        person = await self.client.get(f'/tracking/people/{self.friend.username}')
+        self.assertEqual(feed.status_code, 200, feed.text)
+        self.assertEqual(person.status_code, 200, person.text)
+        for response, field in [(feed, 'results'), (person, 'recent_activity')]:
+            cards = {card['payload']['episode_order']: card for card in response.json()[field]}
+            aired = cards['tmdb:aired']
+            self.assertEqual(aired['score'], 7)
+            self.assertEqual(aired['payload']['previous_score'], 6)
+            self.assertEqual(aired['rating_breakdown'], {'series_score':9, 'season_scores':{'1':6, '2':7.5, '10':8}})
+            self.assertEqual(cards['tvdb:official']['rating_breakdown'], {'series_score':9, 'season_scores':{'2':8.5}})
+            self.assertNotIn('private fixture', response.text)
+        title = await self.client.get(f'/tracking/title/{self.show.id}/social')
+        self.assertEqual(title.status_code, 200, title.text)
+        own, = title.json()['activities']
+        self.assertEqual(own['score'], 8)
+        self.assertEqual(own['rating_breakdown'], {'series_score':10, 'season_scores':{'1':10}})
+
     async def test_activity_fixed_window_crosses_midnight_and_survives_aging(self):
         from core.activity import record_daily_activity
 

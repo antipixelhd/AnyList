@@ -729,6 +729,8 @@ async def people_favorites(
 
 @router.get("/people/{username}")
 async def person(username: str, db: AsyncSession = Depends(get_db, scope="function"), viewer: User | None = Depends(get_optional_user_or_api_key)):
+    from core.activity_ratings import attach_series_ratings
+
     user, owner = await profile_access(db, username, viewer)
     entries = (await db.execute(select(TrackedEntry, Media).join(Media, Media.id == TrackedEntry.media_id).where(TrackedEntry.user_id == user.id))).all()
     if not await anime_is_visible(db):entries=[row for row in entries if not tracking_projection.is_anime(row[1])]
@@ -752,6 +754,8 @@ async def person(username: str, db: AsyncSession = Depends(get_db, scope="functi
     favorite_order = list((prefs.favorite_order if prefs else None) or [])
     order_index = {media_id: index for index, media_id in enumerate(favorite_order)}
     favorites = sorted(favorite_media.values(), key=lambda m: (order_index.get(m.id, len(order_index)), m.id))
+    recent_activity = tracking_projection.activity_data(activity_rows, limit=12)
+    await attach_series_ratings(db, recent_activity, entries=(entry for entry, _ in entries), owner_id=user.id)
     return {"id":user.id,"username":user.username,"display_name":user.display_name,"bio":user.profile.bio if user.profile else None,
         "profile_color": user.profile.profile_color if user.profile else "#3db4f2",
         "background_crop": user.profile.background_crop if user.profile else None,
@@ -765,7 +769,7 @@ async def person(username: str, db: AsyncSession = Depends(get_db, scope="functi
                   "favorites":len(favorites),"rated":len(scores)},
         "average_score":round(sum(scores)/len(scores),1) if scores else None,
         "favorites":[tracking_projection.media_data(m) for m in favorites],"people":visible,
-        "recent_activity":tracking_projection.activity_data(activity_rows,limit=12)}
+        "recent_activity":recent_activity}
 
 
 class FavoriteOrderBody(BaseModel):
@@ -1803,6 +1807,8 @@ async def title_episode_images(media_id: Annotated[int, Path(gt=0)],
 async def title_social(media_id: Annotated[int, Path(gt=0)],
                        db: Annotated[AsyncSession, Depends(get_db, scope="function")],
                        viewer: Annotated[User, Depends(get_current_user)]) -> dict:
+    from core.activity_ratings import attach_series_ratings
+
     media = await db.get(Media, media_id)
     if not media or media.media_type not in (MediaType.movie, MediaType.series):
         raise HTTPException(404, 'Title not found')
@@ -1853,9 +1859,11 @@ async def title_social(media_id: Annotated[int, Path(gt=0)],
         .join(User, User.id == TrackingActivity.user_id)
         .outerjoin(UserProfileData, UserProfileData.user_id == User.id)
         .order_by(TrackingActivity.created_at.desc(), TrackingActivity.id.desc()))).all()
+    activities = tracking_projection.activity_data(activity_rows, include_user=True, limit=30)
+    following_activities = tracking_projection.following_title_activity(following_rows, media)
+    await attach_series_ratings(db, [*activities, *following_activities], entries=(entry for entry, _, _ in entries))
     return {'type': media.media_type.value, 'people': people,
-            'activities': tracking_projection.activity_data(activity_rows, include_user=True, limit=30),
-            'following_activities': tracking_projection.following_title_activity(following_rows, media)}
+            'activities': activities, 'following_activities': following_activities}
 
 
 @router.get('/title/{media_id}/people')
@@ -2580,7 +2588,10 @@ async def tracking_delivery_status(job_id: int, db: AsyncSession = Depends(get_d
 
 
 @router.get("/activity")
-async def activity(cursor: str | None = None, db: AsyncSession = Depends(get_db, scope="function"), viewer: User = Depends(get_current_user)):
+async def activity(db: Annotated[AsyncSession, Depends(get_db, scope="function")],
+                   viewer: Annotated[User, Depends(get_current_user)], cursor: str | None = None) -> dict:
+    from core.activity_ratings import attach_series_ratings
+
     followed = select(Follow.following_id).where(Follow.follower_id == viewer.id)
     watermark = datetime.now(timezone.utc).replace(tzinfo=None)
     query = (select(TrackingActivity, Media, User, UserProfileData).join(Media, Media.id == TrackingActivity.media_id)
@@ -2605,5 +2616,6 @@ async def activity(cursor: str | None = None, db: AsyncSession = Depends(get_db,
         next_cursor = encode_activity_cursor(rows[-1][0].created_at, rows[-1][0].id)
     else:
         next_cursor = encode_activity_cursor(watermark, 0)
-    return {"results": tracking_projection.activity_data(presentation_rows,include_user=True,limit=60),
-            "cursor":next_cursor,"has_more":has_more}
+    cards = tracking_projection.activity_data(presentation_rows, include_user=True, limit=60)
+    await attach_series_ratings(db, cards)
+    return {"results":cards,"cursor":next_cursor,"has_more":has_more}
