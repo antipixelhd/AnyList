@@ -14,6 +14,18 @@ from models.tracking import TrackingActivity, TrackedEntry
 
 def season_target(context, *, rating=False, status=None):
     selected = context.selected_position()
+    if not rating and status in ('planning', 'paused', 'dropped'):
+        number = context.progress_season()
+        facts = {n: (sum(ep.id in context.watched for ep in members), expected or len(members))
+                 for n, members, expected in context.groups}
+        count, total = facts.get(number, (0, 0))
+        if status == 'planning' and number is not None and total and count >= total:
+            following = next((n for n in sorted(facts.keys() | context.metadata.keys()) if n > number and
+                (n not in facts or facts[n][0] < facts[n][1])), None)
+            if following is not None:
+                return following, False
+        if number is not None:
+            return number, 0 < count < total
     if selected:
         number,count = selected['season_number'],selected['episode_count']
         total = next(expected or len(members) for sn,members,expected in context.groups if sn == number)

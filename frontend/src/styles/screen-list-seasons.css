@@ -64,7 +64,7 @@
   --season-indent:32px;
   min-height:var(--list-row-height);
 }
-#entry-groups:not(.grid-view) .list-season-row .entry-thumbnail { translate:var(--season-indent) 0 }
+#entry-groups:not(.grid-view) .list-season-row .entry-thumbnail { translate:var(--season-indent) 0; z-index:2 }
 #entry-groups:not(.grid-view) .list-season-row .entry-title {
   display:grid;
   align-content:center;
@@ -73,7 +73,7 @@
 }
 .list-season-row [data-season-name] { overflow:hidden;text-overflow:ellipsis;white-space:nowrap }
 .list-season-row [data-season-year] { color:var(--muted);font-size:var(--type-caption-size);line-height:1.2 }
-.tracker #entry-groups:not(.grid-view) .entry-row.list-season-row:is(:hover,:has(:focus-visible)) { background:color-mix(in srgb,var(--blue) 12%,transparent) }
+.tracker #entry-groups .list-season-row:not([data-editor-deselected]):is(:hover,:has(:focus-visible)) [data-season-name] { font-weight:600 }
 .tracker #entry-groups .entry-row.list-season-row:is(:hover,:has(:focus-visible)) .entry-score-button:focus-visible {
   outline:none;
   color:#f7b731;

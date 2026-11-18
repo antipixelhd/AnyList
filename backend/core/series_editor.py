@@ -32,6 +32,8 @@ class SeriesEditorPatch(BaseModel):
     episode_id: int | None = Field(default=None, gt=0)
     season_number: int | None = Field(default=None, gt=0)
     episode_count: int | None = Field(default=None, ge=0)
+    progress_season: int | None = Field(default=None, gt=0)
+    list_placement: Literal['season', 'series'] | None = None
     watch_date: date | None = None
     seasons: list[SeasonEdit] = Field(default_factory=list, max_length=250)
 
@@ -79,6 +81,13 @@ class SeriesEditorContext:
         boundary = ids.index(cursor['episode_id'])+1 if cursor['episode_id'] in ids else 0
         return cursor if self.watched == set(ids[:boundary]) else None
 
+    def progress_season(self):
+        selected = self.selected_position()
+        if selected:
+            return selected['season_number']
+        return max((self.positions[ep][0] for ep in self.watched),
+                   default=self.positions[self.released[0].id][0] if self.released else None)
+
     def airing(self):
         released_ids = {ep.id for ep in self.released}
         for number, members, expected in reversed(self.groups):
@@ -106,11 +115,14 @@ class SeriesEditorContext:
         """Translate editor intent to a canonical watch delta under the user lock."""
         airing = self.airing()
         self.cursor_for(patch)
+        if patch.progress_season is not None and (patch.action != 'position'
+                or patch.progress_season != patch.season_number or patch.progress_season != self.progress_season()):
+            raise HTTPException(409, 'You can only change episode progress for your current season.')
         if (patch.action or needs_progress) and (not self.released or patch.revision != self.revision):
             raise HTTPException(409, {'code': 'series_editor_changed', 'airing': airing})
-        if needs_progress and status == 'completed' and airing and patch.action not in ('complete_previous', 'catch_up'):
+        if needs_progress and status == 'completed' and airing and patch.action not in ('complete_previous', 'catch_up', 'position'):
             raise HTTPException(409, {'code': 'series_editor_airing', 'airing': airing})
-        if needs_progress and patch.action not in (None, 'complete_previous', 'catch_up'):
+        if needs_progress and patch.action not in (None, 'complete_previous', 'catch_up', 'position'):
             raise HTTPException(422, 'Choose a series completion action')
         action, episode_id = patch.action, patch.episode_id
         if action in ('catch_up', 'complete_previous'):
@@ -191,7 +203,9 @@ async def editor_summary(db, media, user_id, context):
         Rating.episode_order == (None if context.order == 'tmdb:aired' else context.order)))).all())
     released = {ep.id for ep in context.released}
     seasons = []
-    for number, members, expected in context.groups:
+    groups = {number: (members, expected) for number, members, expected in context.groups}
+    for number in sorted(groups.keys() | context.metadata.keys()):
+        members, expected = groups.get(number, ([], context.metadata.get(number, {}).get('episode_count') or 0))
         key = membership_key(members)
         metadata = context.metadata.get(number, {})
         season = {'season_number': number, 'membership': key,

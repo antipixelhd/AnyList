@@ -3,7 +3,7 @@ export type ListIndexRow=[number,string,string,number|null,number|null,string|nu
 import type {CategoryPresentation} from './list-categories.ts';
 export type ListIndexResponse={category_presentation?:CategoryPresentation;complete:boolean;results:ListIndexRow[]};
 export type ListState=Record<string,any>;
-export const entryId=(state:ListState):number=>state.subject?.catalogue_id??state.id;
+export const entryId=(state:ListState):number=>state.subject?.catalogue_id??state.list_id??state.id;
 type Member={id:number;title:string;status:string;score:number|null;progress:number|null;updated:string;year:string|null;genres:string[];favorite:boolean;base:number|null;rank:number;listed:boolean};
 // Server timestamps are UTC. Preserve microprogress, which Date.parse discards.
 const timestamp=(value:string|null)=>value?value.replace(/(\.\d+)?(?:Z|\+00:00)?$/,(_match,fraction='')=>(fraction||'.').padEnd(7,'0')):'';

@@ -1149,12 +1149,13 @@ async def profile_list_page(username: str, media_type: ScreenListScope, db: Scre
     from core.tracking_access import profile_header
     user, owner = await profile_access(db, username, viewer)
     response.headers['Cache-Control'] = 'private, no-store'
-    members = await screen_list.members(db, user.id, media_type, progress=sort == 'progress')
+    placements = {}
+    members = await screen_list.members(db, user.id, media_type, progress=sort == 'progress', placements=placements)
     presentation = await list_categories.read(db, user.id, domain='screen')
     ids, page = screen_list.select_page(members, status=status, sort=sort, q=q, genre=genre, year=year,
         favorites=favorites, offset=offset, limit=limit,
         status_order={category.id: index for index, category in enumerate(presentation.categories)})
-    results = await screen_list.rows_for_profile(db, user.id, viewer, owner, media_type, ids)
+    results = await screen_list.rows_for_profile(db, user.id, viewer, owner, media_type, ids, placements=placements)
     return {**page, 'results': results, 'profile': await profile_header(db, user, owner, viewer),
         'category_presentation': presentation}
 
@@ -1176,8 +1177,10 @@ async def profile_list_index(username: str, media_type: ScreenListScope, db: Scr
 @reader
 async def profile_list_rows(username: str, media_type: ScreenListScope, db: ScreenListDB,
         viewer: ScreenListViewer, response: Response,
-        ids: Annotated[list[Annotated[int, Field(gt=0, le=2147483647)]], Query(min_length=1, max_length=100)]):
+        ids: Annotated[list[Annotated[int, Field(ge=-2147483647, le=2147483647)]], Query(min_length=1, max_length=100)]):
     from core.screen_list import rows_for_profile
+    if 0 in ids:
+        raise HTTPException(422, 'List row IDs cannot be zero')
     user, owner = await profile_access(db, username, viewer)
     response.headers['Cache-Control'] = 'private, no-store'
     return await rows_for_profile(db, user.id, viewer, owner, media_type, ids)
@@ -2094,9 +2097,7 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
         raise HTTPException(404, 'Series not found')
     if series_patch and (series_patch.action or series_patch.seasons or body.status in ('completed', 'watching') or finish_intent or body.progress is not None):
         series_context = await series_editor_context(db, media, viewer.id)
-        saved_position = series_context.selected_position()
-        previous_season_number = saved_position['season_number'] if saved_position else max(
-            (series_context.positions[ep][0] for ep in series_context.watched),default=1)
+        previous_season_number = series_context.progress_season()
         if series_patch.seasons and series_patch.order != series_context.order:
             raise HTTPException(409, {'code': 'series_editor_changed', 'airing': series_context.airing()})
         selected_status = body.status.value if body.status else previous
@@ -2108,11 +2109,14 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
             if series_patch.action == 'position' and series_patch.episode_count == 0:
                 observed_endpoint = None  # Prior coverage is not an observation of its finale.
         valid_groups = {(n, membership_key(episodes)) for n, episodes, _ in series_context.groups}
+        known_seasons = set(series_context.metadata)
         seen = set()
         scores = {}
         for edit in series_patch.seasons:
             key = edit.season_number, edit.membership
-            if key not in valid_groups or key in seen:
+            metadata_score = (edit.season_number in known_seasons and edit.membership == membership_key([])
+                and not {'start_date', 'completion_date'} & edit.model_fields_set)
+            if (key not in valid_groups and not metadata_score) or key in seen:
                 raise HTTPException(409, 'The season grouping changed. Reopen the editor and try again.')
             seen.add(key)
             if 'score' in edit.model_fields_set:
@@ -2122,7 +2126,8 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
                     raise HTTPException(422, str(exc)) from exc
         observed_season_finishes = set(series_context.finish_targets(
             [edit for edit in series_patch.seasons if not edit.completion_preset]))
-        date_endpoints = series_context.finish_targets(series_patch.seasons, body.finish_date if finish_intent else None)
+        date_endpoints = series_context.finish_targets(series_patch.seasons,
+            body.finish_date if finish_intent and series_patch.action != 'position' else None)
         if date_endpoints:
             if not (media.tmdb_data or {}).get('tracking_catalogue_refreshed_at'):
                 raise HTTPException(409, 'Episode metadata is still loading. Try again shortly.')
@@ -2167,6 +2172,12 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
         # A Watching transition belongs to the selected season, not always S1.
         entry.start_date = old_start_date
     entry.status = status
+    if series_patch and series_patch.list_placement:
+        if 'status' not in fields or status not in ('paused', 'dropped'):
+            raise HTTPException(422, 'Series list placement requires a paused or dropped status.')
+        entry.series_list_status = status if series_patch.list_placement == 'series' else None
+    elif 'status' in fields and status != previous:
+        entry.series_list_status = None
     for name in ("manual_score", "rating_mode", "favorite", "notes", "start_date", "finish_date", "rewatch_count"):
         if name in fields:
             value = getattr(body, name)
@@ -2274,7 +2285,7 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
             from core.tracking_rules import observed_status
             complete = target == len(episodes)
             entry.status = ('watching' if previous in (None, 'planning', 'paused', 'dropped') else previous
-                            ) if series_patch else observed_status(previous, complete, True)
+                            ) if series_patch and series_patch.action != 'episode' else observed_status(previous, complete, True)
             entry.start_date, entry.finish_date = default_dates(previous, entry.status, entry.start_date, entry.finish_date, today)
             if series_context and series_context.groups and 'start_date' not in fields:
                 entry.start_date = old_start_date
@@ -2397,7 +2408,7 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
         await reconcile(db, viewer.id, media_id, series_start_override=series_start_override)
     if media.media_type == MediaType.series:
         from core.activity import suppress_initial_import_rating
-        from core.season_activity import record_season_activity
+        from core.season_activity import record_season_activity, season_target
         season_changes = {int(number): (old_season_scores.get(str(number)) or None, value or None)
                           for number, value in entry.season_scores.items()
                           if (old_season_scores.get(str(number)) or None) != (value or None)}
@@ -2416,9 +2427,13 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
                               for number, value in alternate_scores.items()
                               if old_alternate_scores.get(number) != value}
         quiet_rating = previous == entry.status and suppress_initial_import_rating(entry)
+        advanced = False
+        if series_context and series_patch.action in ('position', 'episode'):
+            number, partial = season_target(series_context)
+            advanced = bool(number and number > (previous_season_number or 1) and
+                (partial or series_patch.action == 'position' and entry.season_cursor))
         handled = await record_season_activity(db, user_id=viewer.id, media=media, status=entry.status, score=score,
-            season_advanced=bool(series_context and series_patch.action == 'position' and entry.season_cursor
-                and entry.season_cursor['season_number'] > (previous_season_number or 1)),
+            season_advanced=advanced,
             status_changed=previous != entry.status and (not series_patch or series_patch.action != 'complete_previous'),
             explicit_status='status' in fields, previous_status=previous,
             rating_changed=old_score != score and not quiet_rating and not (season_changes and entry.rating_mode == 'average'), previous_score=old_score,

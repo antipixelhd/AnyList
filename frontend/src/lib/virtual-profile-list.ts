@@ -24,7 +24,8 @@ export type ListAdapter={
   updateState(title:EditorTitle,previous:ListState|undefined):ListState;
   paint(row:HTMLElement,state:ListState,template:HTMLTemplateElement):void;
   editorControls:string;
-  onClick?(target:Element,title:EditorTitle):void;
+  onClick?(target:Element,title:EditorTitle,state:ListState):void;
+  projected?(title:EditorTitle):boolean;
   mountRows?(root:HTMLElement,signal:AbortSignal):{observe?(row:HTMLElement):void;remove(row:HTMLElement):void}|undefined;
   removeChildren?:boolean;
 };
@@ -108,7 +109,7 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
   }
   function rememberRead(state:ListState){
     const pending=owner&&editorStore.hasPendingSubject(subjectFor(state))&&editorStore.findSubject(subjectFor(state));
-    remember(pending?fromTitle(pending):state);
+    remember(pending&&!adapter.projected?.(pending)?fromTitle(pending):state);
     staleRows.delete(entryId(state));
   }
   function pageIds(offset:number){
@@ -140,7 +141,7 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
     if(!checkedAt){
       for(const state of initial.results){
         const current=editorStore.findSubject(subjectFor(state));
-        if(!current||!adapter.accepts(current))continue;
+        if(!current||!adapter.accepts(current)||adapter.projected?.(current))continue;
         const id=entryId(state),updated=fromTitle(current);
         // Keep the restored order until the refresh can reconcile membership.
         remember({...state,...updated,status:state.status,listed:state.listed});
@@ -488,6 +489,7 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
   document.addEventListener('anylist:editor-state',event=>{
     const title=(event as CustomEvent<EditorTitle>).detail;if(!owner||!adapter.accepts(title))return;
     writeVersion++;warming?.abort();warmAttempts=0;
+    if(adapter.projected?.(title))return;
     const state=fromTitle(title);remember(state);index.update(state);
     // Reorder complete local membership immediately, preserving shared pending state.
     if(local)reset();
@@ -497,6 +499,11 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
     const title=(event as CustomEvent<{title:EditorTitle}>).detail.title;if(!owner||!adapter.accepts(title))return;
     writeVersion++;warming?.abort();warmAttempts=0;
     defaultPage=undefined;
+    if(adapter.projected?.(title)){
+      // One canonical edit can add, move or remove both display rows.
+      for(const id of [title.id!,-title.id!])if(states.has(id))staleRows.add(id);
+      index.invalidate();reset(true);return;
+    }
     const state=fromTitle(title);remember(state);index.update(state);
     if(adapter.removeChildren&&!title.entry)for(const child of [...states.values()])if(child.base_work_id===title.id){
       const removed={...child,listed:false};remember(removed);index.update(removed);
@@ -513,7 +520,7 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
     const state=row&&states.get(Number(row.dataset.listEntry));
     if(!state)return;
     const title=editorStore.seed(adapter.editorTitle(state));
-    if(event.type==='click')adapter.onClick?.(target,title);
+    if(event.type==='click')adapter.onClick?.(target,title,state);
   }
   for(const event of ['pointerover','focusin','click'])root.addEventListener(event,seedEditor,{signal});
   signal.addEventListener('abort',()=>{warming?.abort();clearTimeout(warmTimer);states.clear();stateSizes.clear();rowCache.clear();staleRows.clear();index.invalidate();requests.abort();rowSizes.disconnect();clearTimeout(searchTimer);clearTimeout(retryTimer);cancelAnimationFrame(frame);pages.clear();layouts.clear();},{once:true});

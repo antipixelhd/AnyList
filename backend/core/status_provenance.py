@@ -20,6 +20,8 @@ def status_changed_at(entry) -> datetime | None:
 def mark_status_change(entry, source: str, changed_at: datetime | None = None) -> None:
     entry.status_source = source[:64]
     entry.status_changed_at = naive_utc(changed_at or datetime.now(timezone.utc))
+    if getattr(entry, 'series_list_status', None) and entry.series_list_status != entry.status:
+        entry.series_list_status = None
 
 
 def provider_changed_at(row: dict | None) -> datetime | None:

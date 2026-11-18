@@ -1,8 +1,9 @@
 ---
+import Icon from './Icon.astro';
 const {owner,isCombined}=Astro.props;
 ---
 <div class:list={['entry-row','list-season-row',{'combined-row':isCombined}]}>
-  <div class="entry-thumbnail"><img class="entry-cover" alt="" loading="lazy" /></div>
+  <div class="entry-thumbnail"><img class="entry-cover" alt="" loading="lazy" />{owner&&<button class="row-menu" type="button" data-motion-static data-edit-entry><Icon name="ellipsis"/></button>}</div>
   <div class="entry-title"><span data-season-name></span><small data-season-year hidden></small></div>
   <span class="entry-score" role="group" aria-label="Score">
     {owner?<button type="button" class="entry-score-button" data-quick-rate-id data-quick-rate-season><span data-score-label></span></button>:<span data-score-label></span>}

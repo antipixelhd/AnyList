@@ -58,13 +58,15 @@ class SeasonDatabaseTests(unittest.IsolatedAsyncioTestCase):
             for table in ('season_reconcile_jobs', 'season_tracking', 'series_seasons'):
                 conn.execute(text(f'DROP TABLE {table}'))
             conn.execute(text('ALTER TABLE tracked_entries DROP COLUMN finish_date_source, '
-                              'DROP COLUMN season_release_check_on, DROP COLUMN start_date_source, DROP COLUMN season_cursor'))
+                              'DROP COLUMN season_release_check_on, DROP COLUMN start_date_source, DROP COLUMN season_cursor, '
+                              'DROP COLUMN series_list_status'))
             with Operations.context(MigrationContext.configure(conn)):
                 importlib.import_module('migrations.versions.mt086_season_completion').upgrade()
                 importlib.import_module('migrations.versions.mt088_series_editor').upgrade()
                 importlib.import_module('migrations.versions.mt089_link_series_start').upgrade()
                 importlib.import_module('migrations.versions.mt090_season_activity_context').upgrade()
                 importlib.import_module('migrations.versions.mt091_season_cursor').upgrade()
+                importlib.import_module('migrations.versions.mt097_series_list_status').upgrade()
         async with self.engine.begin() as conn:
             await conn.run_sync(migration)
         async with self.Session() as db:
@@ -125,6 +127,61 @@ class SeasonDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 season_number=1, episode_number=1, release_date='2020-01-01'))
             await db.commit()
             self.assertIsNotNone(await db.get(SeasonReconcileJob, (self.user_id, empty_id)))
+
+    async def test_series_list_projects_one_parent_and_moves_the_active_season(self):
+        root = f'/tracking/profile/{self.viewer.username}/series'
+        editor = f'/tracking/entry/{self.series_id}'
+        async with self.Session() as db:
+            media = await db.get(Media, self.series_id)
+            media.tmdb_data = {**media.tmdb_data, 'tracking_episode_ids': [923011, 923012, 923021, 923022],
+                'seasons': [{'season_number': 1, 'episode_count': 2},
+                            {'season_number': 2, 'name': 'The Second Campaign', 'episode_count': 2},
+                            {'season_number': 3, 'name': 'Next Campaign', 'episode_count': 3}]}
+            await db.commit()
+        summary = (await self.client.get(f'{editor}/series-editor')).json()
+        response = await self.client.patch(editor, json={'status': 'watching', 'confirm_rollback': True,
+            'series_editor': {'revision': summary['revision'], 'action': 'position', 'season_number': 1,
+                              'episode_count': 2, 'episode_id': self.episode_ids[1]}})
+        self.assertEqual(response.status_code, 200, response.text)
+        page = (await self.client.get(f'{root}/list')).json()
+        self.assertEqual(page['group_counts'], {'watching': 1, 'completed': 1})
+        active = next(row for row in page['results'] if row['status'] == 'watching')
+        self.assertEqual((active['list_id'], active['list_season']['number'], active['progress']), (-self.series_id, 1, 2))
+
+        summary = response.json()['series_editor']
+        response = await self.client.patch(editor, json={'series_editor': {
+            'revision': summary['revision'], 'action': 'episode', 'episode_id': self.episode_ids[2]}})
+        self.assertEqual(response.status_code, 200, response.text)
+        index = (await self.client.get(f'{root}/index')).json()['results']
+        self.assertEqual({(row[0], row[2], row[4]) for row in index},
+            {(self.series_id, 'completed', 2), (-self.series_id, 'watching', 1)})
+        rows = (await self.client.get(f'{root}/rows', params=[('ids', -self.series_id), ('ids', self.series_id)])).json()
+        self.assertEqual(rows[0]['title'], 'Two seasons - The Second Campaign')
+        self.assertEqual((rows[1]['status'], rows[1]['entry']['status'], rows[1]['entry']['progress']), ('completed', 'watching', 3))
+        filtered = (await self.client.get(f'{root}/list', params={'q': 'second campaign', 'limit': 1})).json()
+        self.assertEqual([row['list_id'] for row in filtered['results']], [-self.series_id])
+        summary = response.json()['series_editor']
+        earlier = await self.client.patch(editor, json={'confirm_rollback': True, 'series_editor': {
+            'revision': summary['revision'], 'action': 'position', 'season_number': 1, 'progress_season': 1,
+            'episode_count': 1, 'episode_id': self.episode_ids[0]}})
+        self.assertEqual(earlier.status_code, 409)
+        self.assertIn('current season', earlier.json()['detail'])
+
+        for status, placement, groups in [('paused', 'season', {'paused': 1, 'completed': 1}),
+                                          ('dropped', 'series', {'dropped': 1})]:
+            response = await self.client.patch(editor, json={'status': status, 'series_editor': {'list_placement': placement}})
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual((await self.client.get(f'{root}/list')).json()['group_counts'], groups)
+        response = await self.client.patch(editor, json={'status': 'completed', 'series_editor': {
+            'revision': summary['revision'], 'action': 'position', 'season_number': 2,
+            'episode_count': 2, 'episode_id': self.episode_ids[-1]}})
+        self.assertEqual(response.status_code, 200, response.text)
+        response = await self.client.patch(editor, json={'status': 'planning', 'series_editor': {}})
+        self.assertEqual(response.status_code, 200, response.text)
+        page = (await self.client.get(f'{root}/list')).json()
+        self.assertEqual(page['group_counts'], {'completed': 1, 'planning': 1})
+        self.assertEqual(next(row for row in page['results'] if row['status'] == 'planning')['title'],
+                         'Two seasons - Next Campaign')
 
     async def test_same_day_seasons_are_distinct_and_repeat_imports_and_rewatches_keep_first_date(self):
         self.assertEqual(await run_batch(self.Session), 1)

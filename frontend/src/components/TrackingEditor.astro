@@ -15,7 +15,7 @@ import SeriesEditorPanel from './SeriesEditorPanel.astro';
     <div class="editor-hero-actions">
       <button type="button" class="editor-library editor-icon-button" data-editor-library hidden aria-label="Add to library" aria-pressed="false"><Icon name="list" /></button>
       <label class="editor-favorite" title="Favorite"><input name="favorite" type="checkbox" form="tracking-form" aria-label="Favorite"/><Icon name="heart" /></label>
-      <button type="button" class="editor-seasons-button" data-editor-seasons aria-expanded="false" aria-controls="editor-season-list" hidden>Seasons</button>
+      <div class="editor-scope" data-editor-scope hidden><EditorSelect id="editor-series-scope" name="series_scope" label="Editing" floating/></div>
       <button type="submit" form="tracking-form" class="button-primary editor-save">Save</button>
     </div>
     <button type="button" class="editor-close editor-icon-button" aria-label="Close editor"><Icon name="close" /></button>
@@ -40,22 +40,23 @@ import SeriesEditorPanel from './SeriesEditorPanel.astro';
       </section>
       <div class="editor-start-date"><label for="editor-start-date">Start date</label><CalendarDateInput id="editor-start-date" name="start_date" label="Start date"/></div><div class="editor-finish-date"><label for="editor-finish-date">Finish date</label><CalendarDateInput id="editor-finish-date" name="finish_date" label="Finish date"/></div>
       <label class="wide editor-notes">Notes<textarea name="notes" rows="2"></textarea></label>
-      <label class="editor-rewatches editor-number-field" for="editor-rewatches">Total rewatches<NumberStepper id="editor-rewatches" name="rewatch_count" label="Total rewatches" max={10000}/></label>
+      <div class="editor-rewatches editor-number-field"><label for="editor-rewatches">Total rewatches</label><NumberStepper id="editor-rewatches" name="rewatch_count" label="Total rewatches" max={10000}/></div>
     </div>
+    <p class="series-scope-message" data-season-field-message role="status" hidden>Season dates and rewatches are preview fields.</p>
     <p id="editor-error" role="alert" class="error-message" hidden></p>
     <div class="editor-actions">
-      <button type="button" class="editor-delete-button" id="delete-tracked-entry"><Icon name="trash" />Delete entry</button>
+      <button type="button" class="editor-delete-button" id="delete-tracked-entry"><Icon name="trash" /><span data-editor-delete-label>Delete entry</span></button>
     </div>
   </form>
 </dialog>
-<dialog class="editor-confirmation series-airing-dialog" data-series-airing aria-labelledby="series-airing-title" aria-describedby="series-airing-info">
+<dialog class="editor-confirmation series-placement-dialog" data-series-placement aria-labelledby="series-placement-title" aria-describedby="series-placement-info">
   <form method="dialog">
-    <header><h2 id="series-airing-title">Season still airing</h2><button type="submit" value="cancel" class="editor-confirmation-close" aria-label="Cancel"><Icon name="close"/></button></header>
-    <p id="series-airing-info"></p>
+    <header><h2 id="series-placement-title">Move series?</h2></header>
+    <p id="series-placement-info">Choose whether to move the latest season or the whole series.</p>
     <div class="editor-confirmation-actions">
       <button type="submit" value="cancel" autofocus>Cancel</button>
-      <button type="submit" value="complete_previous"></button>
-      <button type="submit" value="catch_up"></button>
+      <button type="submit" value="series">Whole series</button>
+      <button type="submit" value="season">Latest season</button>
     </div>
   </form>
 </dialog>
@@ -90,7 +91,7 @@ import { setupScoreSteppers } from '../lib/scoreStepper';
 import {createSeriesEditor, type SeriesEditorSummary} from '../lib/series-editor';
 import { setupCalendarDateInputs } from '../lib/calendar-date-input';
 import { editorStore, seedEditorPage, type EditorTitle, type WorkSubject } from '../lib/editor-store';
-import { showDialog, closeDialog, showMenu, hideMenu } from '../lib/ui-motion';
+import { showDialog, closeDialog } from '../lib/ui-motion';
 import {showActionFailure} from '../lib/action-failure';
 import {markFailureHandled} from '../lib/handled-failures';
 import {createGameEditor} from '../lib/game-editor';
@@ -140,7 +141,7 @@ document.addEventListener('astro:page-load', () => {
   const error = document.querySelector<HTMLElement>('#editor-error')!;
   const seriesFields = createSeriesEditor(dialog,form,sessionSignal,message=>{
     error.textContent=message;
-    error.hidden=false;
+    error.hidden=!message;
   });
   const saveButton = dialog.querySelector<HTMLButtonElement>('.editor-save')!;
   const statusSelect=field('status') as unknown as HTMLSelectElement;
@@ -189,7 +190,7 @@ document.addEventListener('astro:page-load', () => {
       search?.open ? closeDialog(search) : Promise.resolve(),
     ]);
   }
-  function populateEditor(title: any, seriesSummary?:SeriesEditorSummary) {
+  function populateEditor(title: any, seriesSummary?:SeriesEditorSummary, season?:number) {
     movieDatePresets.clear();
     const entry = title.entry;
     const game=title.type==='game',child=game&&['expansion','dlc'].includes(title.game_class||'');
@@ -201,6 +202,7 @@ document.addEventListener('astro:page-load', () => {
     statusDomain(game);
     document.querySelector<HTMLButtonElement>('#delete-tracked-entry')!.hidden = game?!current.listed:!entry;
     document.querySelector<HTMLButtonElement>('#delete-tracked-entry')!.disabled = false;
+    dialog.querySelector('[data-editor-delete-label]')!.textContent=title.type==='series'?'Delete series entry':'Delete entry';
     document.querySelector('#editor-title')!.textContent = title.title;
     document.querySelector('#editor-media-type')!.textContent = game?(title.game_class==='expansion'?'Expansion':'Game'):title.type === 'series' ? 'TV series' : 'Movie';
     dialog.querySelector<HTMLElement>('.editor-rewatches')!.hidden=game;
@@ -226,7 +228,7 @@ document.addEventListener('astro:page-load', () => {
     displayedScore = field('manual_score').value;
     field('favorite').checked = Boolean(current.favorite);
     loadLibraryState(title);
-    seriesFields.open(title,seriesSummary);
+    seriesFields.open(title,seriesSummary,season);
     saveButton.disabled = false;
   }
   function paintBackdrop(title:EditorTitle){
@@ -276,10 +278,12 @@ document.addEventListener('astro:page-load', () => {
       // If the editor was opened while a progress write was pending, reconcile
       // its untouched fields when that write confirms or rolls back.
       if (current && title.entry && !dialog.hasAttribute('data-motion-closing')) {
+        const series=title.type==='series';
+        if(series)seriesFields.receiveDates(title.entry,current);
         for (const name of ['status','progress','start_date','finish_date']) {
           if (!(name in title.entry)) continue;
           const previous = current[name] ?? (name === 'progress' ? 0 : '');
-          if (name!=='progress' && field(name).value === String(previous)) field(name).value = String(title.entry[name] ?? '');
+          if ((name==='status'||!series&&name!=='progress') && field(name).value === String(previous)) field(name).value = String(title.entry[name] ?? '');
           current[name] = title.entry[name];
         }
         syncStatus(); refreshDateInputs();
@@ -332,7 +336,7 @@ document.addEventListener('astro:page-load', () => {
       const seriesSummary=await seriesFields.prepare(title,controller.signal);
       if(loadController!==controller||opener!==button||sessionSignal.aborted)return;
       const image = button.closest('.browse-card, .entry-row, .quick-search-result, .game-progress-card')?.querySelector<HTMLImageElement>('img') || document.querySelector<HTMLImageElement>('.media-cover img');
-      const posterSource=image?.currentSrc||image?.src;
+      const posterSource=button.dataset.editorSeason?undefined:image?.currentSrc||image?.src;
       const heroSource=document.querySelector<HTMLImageElement>('.lab-hero-image')?.currentSrc;
       const prepareArtwork=async()=>{
         await editorStore.prepareArtwork(title,posterSource,heroSource,sessionSignal).catch(()=>{});
@@ -342,7 +346,7 @@ document.addEventListener('astro:page-load', () => {
           artworkTimer=setTimeout(()=>void prepareArtwork(),Math.max(30,title.background_status?.retry_after||0)*1000);
       };
       if (loadController !== controller || opener !== button || sessionSignal.aborted) return;
-      populateEditor(title,seriesSummary);
+      populateEditor(title,seriesSummary,Number(button.dataset.editorSeason)||undefined);
       showDialog(dialog);
       void prepareArtwork();
     } catch(e) { if ((e as Error).name !== 'AbortError') showActionFailure('open', supplied?.title, e); }
@@ -411,7 +415,8 @@ document.addEventListener('astro:page-load', () => {
   document.querySelector<HTMLButtonElement>('#delete-tracked-entry')!.addEventListener('click',async event=>{
     const button=event.currentTarget as HTMLButtonElement;
     const editing = currentTitle;
-    const message=editing?.type==='game'&&!['expansion','dlc'].includes(editing.game_class||'')?'Remove this game and its listed expansions? Saved expansion details will be kept.':'Are you sure you want to delete this list entry?';
+    const message=editing?.type==='series'?'Remove this series from your list?':
+      editing?.type==='game'&&!['expansion','dlc'].includes(editing.game_class||'')?'Remove this game and its listed expansions? Saved expansion details will be kept.':'Are you sure you want to delete this list entry?';
     if(!current||!editing||!await confirmEntryAction(message))return;
     if(sessionSignal.aborted || currentTitle !== editing || !dialog.open)return;
     button.disabled=true;
@@ -440,7 +445,7 @@ document.addEventListener('astro:page-load', () => {
     event.target.blur();
   }, {signal:sessionSignal});
   form.addEventListener('submit', async event => {
-    event.preventDefault(); if (!current || saveButton.disabled || seriesFields.busy()) return;
+    event.preventDefault(); if (!current || saveButton.disabled) return;
     error.hidden = true;
     const status = field('status').value;
     if(currentTitle?.type==='game'&&!status){
@@ -485,29 +490,33 @@ document.addEventListener('astro:page-load', () => {
       }finally{if(!sessionSignal.aborted)saveButton.disabled=false;}
       return;
     }
+    const editing = currentTitle!;
+    const values=editing.type==='series'?seriesFields.fields():{
+      manual_score:field('manual_score').value,start_date:field('start_date').value,
+      finish_date:field('finish_date').value,rewatch_count:field('rewatch_count').value,
+    };
     const body: any = {status, notes:field('notes').value, favorite:field('favorite').checked,
-      rewatch_count:Number(field('rewatch_count').value || 0)};
-    const scoreChanged = field('manual_score').value !== displayedScore;
+      rewatch_count:Number(values.rewatch_count || 0)};
+    const scoreChanged = values.manual_score !== displayedScore;
     if (scoreChanged) {
       if (current.rating_mode === 'average' && ratedSeasonScores().length && !(await confirmScoreOverride())) {
-        field('manual_score').value = displayedScore;
         return;
       }
-      body.manual_score = Number(field('manual_score').value || 0);
+      body.manual_score = Number(values.manual_score || 0);
       if (current.rating_mode === 'average') body.rating_mode = 'manual';
     }
-    for (const name of ['start_date','finish_date']) {
+    for (const name of ['start_date','finish_date'] as const) {
       // An untouched empty date must not suppress a transition's automatic date.
-      if (field(name).value !== (current[name] || '')) body[name] = field(name).value || null;
+      if (values[name] !== (current[name] || '')) body[name] = values[name] || null;
     }
-    const editing = currentTitle!;
     if (editing.type==='series') {
       const explicitStatus = !editing.entry || status!==current.status;
       if (!explicitStatus) delete body.status;
       saveButton.disabled=true;
       try {
-        const patch=await seriesFields.patch(explicitStatus && status==='completed');
+        const patch=await seriesFields.patch(explicitStatus);
         if (!patch || currentTitle!==editing || !dialog.open || sessionSignal.aborted) return;
+        if (patch.action==='position') body.status=status;
         if (seriesFields.rollbackNeeded(patch)) {
           if (!await confirmEntryAction(watchRollbackWarning) || sessionSignal.aborted || currentTitle!==editing) return;
           body.confirm_rollback=true;
@@ -516,10 +525,6 @@ document.addEventListener('astro:page-load', () => {
           const ratingMode=scoreChanged?'manual':current.rating_mode==='average'?'average':await chooseSeasonScoreMode();
           if (!ratingMode || currentTitle!==editing || sessionSignal.aborted) return;
           body.rating_mode=ratingMode;
-        }
-        if (patch.action==='catch_up') {
-          body.status='watching';
-          delete body.finish_date;
         }
         body.series_editor=patch;
         const saved=await editorStore.write(editing,body,seriesFields.optimisticProgress(patch));
@@ -573,7 +578,7 @@ document.addEventListener('astro:page-load', () => {
     const image = button.closest('.entry-row')?.querySelector<HTMLImageElement>('img') || document.querySelector<HTMLImageElement>('.media-cover img');
     const title = game?editorStore.findSubject({kind:'game',catalogue_id:id}):editorStore.find(id);
     const warm=(title:EditorTitle)=>{
-      const poster=image?.currentSrc||image?.src,hero=document.querySelector<HTMLImageElement>('.lab-hero-image')?.currentSrc;
+      const poster=button.dataset.editorSeason?undefined:image?.currentSrc||image?.src,hero=document.querySelector<HTMLImageElement>('.lab-hero-image')?.currentSrc;
       if(!sessionSignal.aborted){
         void editorStore.warmArtwork(title,poster,hero,true);
         if(title.type==='series'&&title.id)void editorStore.prepareSeries(title.id,sessionSignal).catch(()=>{});

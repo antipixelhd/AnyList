@@ -7,7 +7,9 @@ type Season = {number:number; name:string|null; poster:string|null; year:string|
   total:number|null; watched:number; score:number|null; completed:boolean; upcoming:boolean};
 type Summary = {order:string; seasons:Season[]; pending:boolean; retry_after:number|null; unavailable:boolean};
 type Expansion = {entry:HTMLElement; toggle:HTMLButtonElement; panel:HTMLElement; title:string;
-  request?:AbortController; retry?:ReturnType<typeof setTimeout>; loading?:ReturnType<typeof setTimeout>; motion?:Animation; summary?:Summary};
+  request?:AbortController; retry?:ReturnType<typeof setTimeout>; loading?:ReturnType<typeof setTimeout>; motion?:Animation; summary?:Summary; filter?:string};
+
+const seasonFilter=(entry:HTMLElement)=>entry.hasAttribute('data-completed-seasons-only') ? entry.dataset.detachedSeason??'' : undefined;
 
 function paintScore(row:HTMLElement,score:number|null) {
   row.querySelector('[data-score-label]')!.textContent=scoreLabel(score);
@@ -86,9 +88,11 @@ export function mountScreenListSeasons(root:HTMLElement,profilePanel:HTMLElement
   function paint(item:Expansion,summary:Summary) {
     const height=item.panel.getBoundingClientRect().height;
     item.motion?.cancel();
-    item.panel.replaceChildren(...summary.seasons.map(season=>{
+    item.filter=seasonFilter(item.entry);
+    const seasons=item.filter===undefined?summary.seasons:summary.seasons.filter(season=>season.completed&&season.number!==Number(item.filter));
+    item.panel.replaceChildren(...seasons.map(season=>{
       const row=template.content.firstElementChild!.cloneNode(true) as HTMLElement;
-      const label=season.name||`Season ${season.number}`;
+      const label=season.name?.trim()||`Season ${season.number}`;
       row.dataset.listSeason=String(season.number);
       row.querySelector('[data-season-name]')!.textContent=label;
       const year=row.querySelector<HTMLElement>('[data-season-year]')!;
@@ -99,6 +103,12 @@ export function mountScreenListSeasons(root:HTMLElement,profilePanel:HTMLElement
         thumbnail.dataset.previewSrc=season.poster;
         applyResponsiveArtwork(image,season.poster,{size:'w185',sizes:'44px',route:'direct'});
       }else image.replaceWith(Object.assign(document.createElement('span'),{className:image.className}));
+      const edit=thumbnail.querySelector<HTMLButtonElement>('[data-edit-entry]');
+      if(edit){
+        edit.dataset.editEntry=item.entry.dataset.listEntry!;
+        edit.dataset.editorSeason=String(season.number);
+        edit.setAttribute('aria-label',`Edit ${item.title}, ${label}`);
+      }
       row.querySelector('[data-season-progress]')!.textContent=season.total==null?String(season.watched):`${season.watched}/${season.total}`;
       const status=row.querySelector('[data-season-status]');
       if(status)status.textContent=season.completed?'Completed':season.watched?'Watching':season.upcoming?'Upcoming':'Not started';
@@ -111,9 +121,9 @@ export function mountScreenListSeasons(root:HTMLElement,profilePanel:HTMLElement
       paintScore(row,season.score);
       return row;
     }));
-    if(!summary.seasons.length){
+    if(!seasons.length){
       if(summary.unavailable)message(item,'Unable to load seasons.',true);
-      else message(item,summary.pending?'Loading seasons…':'No seasons in progress yet.');
+      else message(item,summary.pending?'Loading seasons…':item.entry.hasAttribute('data-completed-seasons-only')?'No completed seasons.':'No seasons in progress yet.');
     }
     animate(item,height);
   }
@@ -130,7 +140,7 @@ export function mountScreenListSeasons(root:HTMLElement,profilePanel:HTMLElement
       const summary=await read(id,refresh);
       if(signal.aborted||request.signal.aborted||!panelActive(profilePanel)||!item.entry.isConnected)return;
       // A pending refresh can return the same usable summary several times.
-      if(!item.summary||item.summary.unavailable!==summary.unavailable||!summary.seasons.length&&item.summary.pending!==summary.pending||
+      if(!item.summary||item.filter!==seasonFilter(item.entry)||item.summary.unavailable!==summary.unavailable||!summary.seasons.length&&item.summary.pending!==summary.pending||
           item.summary.order!==summary.order||JSON.stringify(item.summary.seasons)!==JSON.stringify(summary.seasons))paint(item,summary);
       item.summary=summary;
       if(summary.pending)item.retry=setTimeout(()=>void load(item,true),Math.max(1,summary.retry_after||2)*1000);
@@ -240,6 +250,8 @@ export function mountScreenListSeasons(root:HTMLElement,profilePanel:HTMLElement
 
   return {
     observe(entry:HTMLElement){
+      const item=expanded.get(Number(entry.dataset.listEntry));
+      if(item?.summary&&item.filter!==seasonFilter(entry))paint(item,item.summary);
       if(observer&&entry.hasAttribute('data-season-auto')&&!observing.has(entry)&&!manual.has(Number(entry.dataset.listEntry))){
         observing.add(entry);observer.observe(entry);
       }
