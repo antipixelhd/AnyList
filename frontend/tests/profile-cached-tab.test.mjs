@@ -13,8 +13,8 @@ const tabs=['overview','movies','series','games','favorites','social','stats','s
 const settle=()=>new Promise(setImmediate);
 
 function fixture(owner=false){
-  const changes=[],requests=[],waiting=[],redirects=[],events=[];
-  const root=()=>({dataset:{},dispatchEvent(){},querySelector(){return null;},prepend(){}});
+  const changes=[],requests=[],waiting=[],redirects=[],events=[],motions=[];
+  const root=()=>({dataset:{},dispatchEvent(){},querySelector(){return null;},querySelectorAll(){return [];},prepend(){}});
   const outgoing={root:root(),ready:true,kind:'overview',summary:'saved'};
   const panels=new Map(tabs.map(key=>[key,{root:root(),ready:true,kind:key,title:key,checkedAt:Date.now()}]));
   panels.set('source',outgoing);
@@ -28,10 +28,11 @@ function fixture(owner=false){
     document:{body:{dataset:{cacheUser:'viewer'},toggleAttribute(){}},dispatchEvent:event=>events.push(event.type),title:'',
       createElement:()=>({dataset:{},setAttribute(){},addEventListener(){},append(){}})},
     fetch:(url,options)=>new Promise((resolve,reject)=>requests.push({url,options,resolve:(status=200,redirected=false)=>resolve({status,ok:status===200,redirected}),reject})),
-    show:node=>{context.shown=node;changes.push(node);},ProfileAccessChanged:class extends Error{},FrontendBuildChanged,routeAssetUnavailable,navigator:{onLine:true},
+    show:node=>{context.shown=node;changes.push(node);},settleNavigationContent:(node,kind,_signal,offset)=>motions.push([node,kind,offset]),
+    ProfileAccessChanged:class extends Error{},FrontendBuildChanged,routeAssetUnavailable,navigator:{onLine:true},
   };
   runInNewContext(stripTypeScriptTypes(select)+';this.select=select;',context);
-  return {context,outgoing,frame,changes,requests,waiting,redirects,events,
+  return {context,outgoing,frame,changes,requests,waiting,redirects,events,motions,
     switchTab:key=>context.select(key,`https://example.test/user/other/${key}`,false,true)};
 }
 
@@ -41,7 +42,16 @@ for(const tab of tabs)test(`a ready visitor ${tab} tab opens immediately without
   assert.deepEqual(f.changes,[f.context.panels.get(tab).root]);
   assert.equal(f.events.includes('anylist:route-progress-start'),false);
   assert.equal(f.requests.length,0);
+  assert.deepEqual(f.motions,[[f.context.shown,'tab',4]]);
   assert.deepEqual(f.waiting,[[f.outgoing.root,true],[f.outgoing.root,false]]);
+});
+
+test('a cached list animates its rows and reselecting the current tab does not replay motion',()=>{
+  const f=fixture(true),rows=[{},{}];
+  f.context.panels.get('series').root.querySelectorAll=()=>rows;
+  f.switchTab('series');f.switchTab('series');
+  assert.deepEqual(f.motions,rows.map(row=>[row,'tab',4]));
+  assert.equal(f.changes.length,1);
 });
 
 for(const [status,redirected] of [[401,false],[403,false],[404,false],[200,true]])test(`fresh tab reads still reject access response ${status}, redirected=${redirected}`,async()=>{

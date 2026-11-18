@@ -350,10 +350,10 @@ function setup(){
         if(statistics&&(!cached?.ready||!fromTab)&&panel.root.dataset.profileUrl!==url)statistics.dispatchEvent(new CustomEvent('anylist:statistics-open',{detail:{url}}));
         nav.removeAttribute('aria-busy');update();
         if(!loading)land();
-        if (changedPanel&&loading&&!cached?.ready) {
+        if (changedPanel&&(fromTab||loading&&!cached?.ready)) {
           const rows = Array.from(panel.root.querySelectorAll<HTMLElement>('.entry-table [data-list-window]'));
           if (rows.length) rows.forEach(row => settleNavigationContent(row,'tab',signal,4));
-          else settleNavigationContent(panel.root,'tab',signal);
+          else settleNavigationContent(panel.root,'tab',signal,fromTab?4:0);
         }
       };
       commit();

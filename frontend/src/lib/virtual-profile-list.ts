@@ -26,7 +26,7 @@ export type ListAdapter={
   editorControls:string;
   onClick?(target:Element,title:EditorTitle,state:ListState):void;
   projected?(title:EditorTitle):boolean;
-  mountRows?(root:HTMLElement,signal:AbortSignal):{observe?(row:HTMLElement):void;remove(row:HTMLElement):void}|undefined;
+  mountRows?(root:HTMLElement,signal:AbortSignal):{observe?(row:HTMLElement):void;remove(row:HTMLElement):void;resetSnapshot?(target:HTMLElement):void}|undefined;
   removeChildren?:boolean;
 };
 
@@ -461,6 +461,7 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
       ...visibleOffsets.flatMap(offset=>pageIds(offset)||[])]);
     const rows=[...ids].map(id=>states.get(id)).filter((row):row is ListState=>!!row);
     const target=capture.target;
+    rowLifecycle?.resetSnapshot?.(target);
     copyReturnForm(root,target.querySelector('[data-virtual-list]')!);
     const script=target.ownerDocument.createElement('script');
     script.id='virtual-list-page';script.type='application/json';target.append(script);

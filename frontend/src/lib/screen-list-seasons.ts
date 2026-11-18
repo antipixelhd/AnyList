@@ -17,16 +17,23 @@ function paintScore(row:HTMLElement,score:number|null) {
   if(control)control.dataset.quickRateScore=String(score??'');
 }
 
+function collapseMarkup(root:HTMLElement) {
+  root.querySelectorAll('.list-season-panel').forEach(panel=>panel.remove());
+  root.querySelectorAll('[data-season-toggle][aria-expanded="true"]').forEach(toggle=>{
+    toggle.setAttribute('aria-expanded','false');
+    toggle.removeAttribute('aria-controls');
+  });
+}
+
 export function mountScreenListSeasons(root:HTMLElement,profilePanel:HTMLElement,template:HTMLTemplateElement,signal:AbortSignal) {
   const owner=root.dataset.owner==='true';
   const profile=root.dataset.listEndpoint!.replace(/\/[^/]+$/,'');
   const expanded=new Map<number,Expansion>();
+  const openIds=new Set<number>();
   const cache=new Map<number,{summary:Summary;expires:number}>();
   const reads=new Map<number,Promise<Summary>>();
-  const manual=new Set<number>();
-  const automatic=new Set<HTMLElement>();
-  let observing=new WeakSet<HTMLElement>(),running=0;
   let warmTimer:ReturnType<typeof setTimeout>|undefined;
+  collapseMarkup(root);
 
   function read(id:number,refresh=false):Promise<Summary> {
     const saved=cache.get(id);
@@ -166,23 +173,6 @@ export function mountScreenListSeasons(root:HTMLElement,profilePanel:HTMLElement
     await load(item);
   }
 
-  function drain() {
-    if(signal.aborted||!panelActive(profilePanel))return;
-    while(running<2&&automatic.size){
-      const entry=automatic.values().next().value!;automatic.delete(entry);
-      const toggle=entry.querySelector<HTMLButtonElement>('[data-season-toggle]');
-      if(!entry.isConnected||!entry.getClientRects().length||manual.has(Number(entry.dataset.listEntry))||!toggle)continue;
-      running++;
-      void open(entry,toggle).finally(()=>{running--;drain();});
-    }
-  }
-  const observer=owner?undefined:new IntersectionObserver(entries=>{
-    for(const entry of entries){
-      if(entry.isIntersecting){observer!.unobserve(entry.target);automatic.add(entry.target as HTMLElement);}
-    }
-    drain();
-  });
-
   function warm(toggle:HTMLButtonElement) {
     const entry=toggle.closest<HTMLElement>('[data-list-entry]');
     if(entry&&panelActive(profilePanel)&&reads.size<2&&!expanded.has(Number(entry.dataset.listEntry)))
@@ -207,15 +197,15 @@ export function mountScreenListSeasons(root:HTMLElement,profilePanel:HTMLElement
     const entry=toggle?.closest<HTMLElement>('[data-list-entry]');
     if(!toggle||!entry)return;
     const id=Number(entry.dataset.listEntry),existing=expanded.get(id);
-    manual.add(id);
-    if(existing){close(existing,true);return;}
+    if(existing){openIds.delete(id);close(existing,true);return;}
+    openIds.add(id);
     void open(entry,toggle);
   },{signal});
   root.addEventListener('keydown',event=>{
     if(event.key!=='Escape')return;
     const row=(event.target as Element).closest<HTMLElement>('[data-list-entry]');
     const item=expanded.get(Number(row?.dataset.listEntry));
-    if(item){manual.add(Number(row!.dataset.listEntry));item.toggle.focus({preventScroll:true});close(item,true);}
+    if(item){openIds.delete(Number(row!.dataset.listEntry));item.toggle.focus({preventScroll:true});close(item,true);}
   },{signal});
 
   if(owner){
@@ -224,6 +214,7 @@ export function mountScreenListSeasons(root:HTMLElement,profilePanel:HTMLElement
       if(title.type!=='series'||!title.id)return;
       if(!patch||['progress','status','series_editor','finish_date'].some(key=>key in patch))invalidate(title.id);
       const item=expanded.get(title.id);
+      if(!title.entry)openIds.delete(title.id);
       if(!item)return;
       if(!title.entry)close(item,false);
       else if(patch&&['progress','status','series_editor','finish_date'].some(key=>key in patch))void load(item,true);
@@ -242,23 +233,32 @@ export function mountScreenListSeasons(root:HTMLElement,profilePanel:HTMLElement
     },{signal});
   }
   const clear=()=>{
-    clearTimeout(warmTimer);observer?.disconnect();observing=new WeakSet();automatic.clear();
+    clearTimeout(warmTimer);openIds.clear();
     for(const item of expanded.values())close(item,false);
+    collapseMarkup(root);
   };
   profilePanel.addEventListener('anylist:panel-inactive',clear,{signal});
+  window.addEventListener('pageshow',event=>{if(event.persisted)clear();},{signal});
   signal.addEventListener('abort',()=>{clear();cache.clear();reads.clear();},{once:true});
 
   return {
+    resetSnapshot:collapseMarkup,
     observe(entry:HTMLElement){
-      const item=expanded.get(Number(entry.dataset.listEntry));
-      if(item?.summary&&item.filter!==seasonFilter(entry))paint(item,item.summary);
-      if(observer&&entry.hasAttribute('data-season-auto')&&!observing.has(entry)&&!manual.has(Number(entry.dataset.listEntry))){
-        observing.add(entry);observer.observe(entry);
+      const id=Number(entry.dataset.listEntry),item=expanded.get(id);
+      if(item?.entry===entry){
+        if(item.summary&&item.filter!==seasonFilter(entry))paint(item,item.summary);
+        return;
+      }
+      if(openIds.has(id)){
+        const toggle=entry.querySelector<HTMLButtonElement>('[data-season-toggle]:not([hidden])');
+        if(toggle){
+          if(item)close(item,false);
+          void open(entry,toggle);
+        }
       }
     },
     remove(entry:HTMLElement){
       const id=Number(entry.dataset.listEntry),item=expanded.get(id);
-      observer?.unobserve(entry);observing.delete(entry);automatic.delete(entry);
       // A progress write can move the same node to another status group.
       if(item)queueMicrotask(()=>{if(!entry.isConnected&&expanded.get(id)===item)close(item,false);});
     },

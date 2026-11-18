@@ -40,7 +40,6 @@ export function paintScreenListRow(container:HTMLElement,state:ListState,templat
   container.dataset.listEntry=String(entryId(state));
   container.toggleAttribute('data-completed-seasons-only',state.completed_seasons_only===true);
   container.dataset.detachedSeason=String(state.detached_season??'');
-  container.toggleAttribute('data-season-auto',expandable&&state.has_season_ratings===true);
   const row=container.firstElementChild as HTMLElement;
   Object.assign(row.dataset,{title:title.toLowerCase(),score:String(state.score??-1),
     progress:String(state.progress??0),mediaType:type,updated:state.updated_at||''});
