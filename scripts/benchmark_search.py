@@ -183,12 +183,15 @@ async def main(args):
                 db.add(CatalogueIdentity(entity_id=person.id, namespace='tmdb.person', external_id='9900010', source='tmdb'))
                 works = [CatalogueEntity(kind='series', name=f'Screen series {i:03}', attributes={
                     'release_date': f'{1950 + i % 50}-01-01',
-                    'genres': [{'id':23,'name':'Talk Show'}] if i % 11 == 0 else [{'id':18,'name':'Drama'}],
+                    'genres': [{'id':23,'name':'Talk Show'}] if i % 22 == 0 else [{'id':18,'name':'Drama'}],
                 }) for i in range(args.credit_works)]
                 db.add_all(works)
                 await db.flush()
                 for i, work in enumerate(works):
                     db.add(CatalogueIdentity(entity_id=work.id, namespace='tmdb.series', external_id=str(9910000 + i), source='tmdb'))
+                    if i % 22 == 11:
+                        db.add(MetadataSnapshot(provider='tvdb',kind='series',external_id=str(9920000+i),entity_id=work.id,
+                            payload={'genres':[{'id':23,'name':'Talk Show'}]}))
                     for role in ('actor', 'director'):
                         db.add(CatalogueCredit(work_id=work.id, contributor_id=person.id,
                             provider='tmdb', source_key=role, role=role, character_label='Lead' if role=='actor' else None))
@@ -1075,6 +1078,7 @@ async def main(args):
                 stack.enter_context(patch.object(contributor_search, 'verified_studios', side_effect=unverified_studios))
                 stack.enter_context(patch.object(contributor_search, 'verified_people', AsyncMock(return_value=False)))
             for mode in ('curated', 'floor_disabled', 'show_all'):
+                exclusions = [] if mode == 'show_all' else [99]
                 async with fixture.Session() as db:
                     for reader in search_viewers:
                         saved = await db.scalar(select(UserSettings).where(UserSettings.user_id == reader.id))
@@ -1083,9 +1087,19 @@ async def main(args):
                         profile = await db.scalar(select(UserProfileData).where(UserProfileData.user_id == reader.id))
                         profile.minimum_votes = 0 if mode == 'show_all' else 250
                         profile.minimum_movie_runtime = 0 if mode == 'show_all' else 30
-                        profile.excluded_categories = [] if mode == 'show_all' else [99]
+                        profile.excluded_categories = exclusions
                     await db.commit()
+                installed_exclusions = exclusions
                 for label, path, values in cases:
+                    desired_exclusions = ([99,10767] if exclusions and label in ('screen_actor_works','screen_crew_works')
+                                          else exclusions)
+                    if desired_exclusions != installed_exclusions:
+                        async with fixture.Session() as db:
+                            for reader in search_viewers:
+                                profile = await db.scalar(select(UserProfileData).where(UserProfileData.user_id == reader.id))
+                                profile.excluded_categories = desired_exclusions
+                            await db.commit()
+                        installed_exclusions = desired_exclusions
                     current_case = label
                     search_generation += 1
                     if studio_fixture:

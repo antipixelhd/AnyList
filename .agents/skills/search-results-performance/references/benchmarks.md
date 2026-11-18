@@ -100,6 +100,14 @@ acquisition. The contributor PostgreSQL tests cover a provider rate limit,
 checkpoint recovery, excluded categories from either source, and stable
 pagination when a new season card is published.
 
+With 250 series and 50 ms simulated provider latency, the November 2026
+comparison removed all 23 excluded talk shows in both curated filmographies.
+Show all retained 250 works. Actor warm medians were 79.52 to 93.29 ms with
+14 to 16 reads, while crew was 89.78 to 90.15 ms with 15 to 16 reads. Both kept
+one cold profile request, zero warm provider requests, and zero writes. The
+season-rich actor response grew from 11,132 to 16,542 bytes. These are controlled
+ASGI timings. The browser still needs to download and decode selected artwork.
+
 Trusted `--baseline-ref` comparisons load the affected contributor identity/details and IMDb person-component modules as well as search/evidence modules. This does not restore ProviderHTTP, shared provider admission, provider-discovery adapters or workers. For scheduler changes, replay the full task-start tree in an isolated archive/checkout with the same disposable fixtures; a mixed-module baseline cannot establish historical scheduling behavior. Run `game_person_cached` separately from `game_person_availability`: the latter adds a TMDB identity to the shared fixture, changing whether the former needs a TMDB profile request. Keep that fixture distinction explicit when interpreting cached-read checks.
 
 `game_person_cached` seeds the current person-component version, a fresh completed automatic-discovery attempt for its cached IMDb source generation and a fresh unresolved person-identity check. It measures repeat page reads after discovery, including a compact discovery-job header when source identities remain unresolved and a small identity-check field from the same component read; it does not measure first admission or provider mapping latency. The initial fetch-to-discovery/identity handoff, bounded continuation, cancellation, failures and identity/exclusion correctness are covered by `test_game_imdb_discovery_pg`, `test_game_imdb_discovery_source` and `test_game_person_identity_pg`. Keep initial admission separate from this zero-provider, zero-write cached-read workload.
