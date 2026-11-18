@@ -5,9 +5,9 @@
 .game-achievement-editor,.game-achievement-controls{display:grid;gap:12px}
 .editor .game-achievement-editor{align-content:start;gap:0}
 .editor [data-game-achievement-controls]{padding-top:6px}
-.game-field-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:28px}
-.game-field-heading>span{font-size:var(--type-label-size);color:var(--muted)}
-.editor .game-field-heading label{margin:0}
+.editor-field-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:28px}
+.editor-field-heading>span{font-size:var(--type-label-size);color:var(--muted)}
+.editor .editor-field-heading label{margin:0}
 .editor .editor-category-info{display:inline-flex;align-items:center;justify-content:center;flex:none;width:1em;height:1em;padding:0;border:0;background:transparent;color:var(--muted);font:inherit;font-size:var(--type-label-size);cursor:pointer}
 .editor .editor-category-info :is(.ui-icon,.ui-icon-svg){width:1em;height:1em}
 .editor .editor-category-info:is(:hover,:focus-visible){color:var(--blue);background:transparent;outline:none}
@@ -923,11 +923,11 @@ body:has(#tracking-editor[open]) {
   outline:none;
   border-color:transparent;
   box-shadow:none;
-  background:var(--field);
+  background:var(--editor-input-focus-background,var(--field));
 }
 
- .editor .game-field-heading:has(.game-steam-sync){justify-content:flex-start;gap:6px}
-.editor .game-field-heading:has(.game-steam-sync) .game-value-button{margin-left:auto}
+ .editor .editor-field-heading:has(.game-steam-sync){justify-content:flex-start;gap:6px}
+.editor .editor-field-heading:has(.game-steam-sync) .game-value-button{margin-left:auto}
 .editor .game-steam-sync{display:inline-flex;align-items:center;justify-content:center;flex:none;width:22px;height:24px;padding:4px;background:transparent;color:var(--muted);border:0;cursor:pointer}
 .editor .game-steam-sync :is(.ui-icon,.ui-icon-svg){width:12px;height:12px}
 .editor .game-steam-sync.is-out-of-sync{color:#f59e0b}

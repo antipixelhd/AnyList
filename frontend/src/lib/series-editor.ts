@@ -10,6 +10,7 @@ type Season = {season_number:number; membership:string; name?:string|null; poste
   start_date?:string|null; completion_date?:string|null; start_source?:string|null;
   date_source?:string|null; start_manual?:boolean; date_manual?:boolean; completed?:boolean};
 export type SeriesEditorSummary = {ready:boolean; pending?:boolean; retry_after?:number; revision?:string;
+  next_progress_season?:number|null;
   selected_position?:{season_number:number;episode_count:number;episode_id:number|null}|null;
   order?:string; seasons:Season[]};
 export type EditorEpisodeMetadata = {id:number; title:string; runtime?:number|null; air_date?:string|null; image?:string|null};
@@ -114,20 +115,6 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     const choices=released(), index=current?choices.indexOf(current):-1;
     steps[0].disabled=input.disabled||(count>=Number(input.max)&&(!!scope||index===choices.length-1));
     steps[1].disabled=input.disabled||(count<=Number(input.min)&&(!!scope||index<=0));
-    const seasonStatus=find('status');
-    seasonStatus.hidden=!scope||!current;
-    if (scope&&current) {
-      const full=current.total>0&&count>=current.total;
-      const seriesStatus=status();
-      const activeSeason=seasons().find(season=>season.season_number===pos?.season_number);
-      const nextPlanned=seriesStatus==='planning'&&activeSeason&&activeSeason.total>0&&previewCount(activeSeason)>=activeSeason.total
-        ? seasons().find(season=>season.season_number>activeSeason.season_number&&previewCount(season)<season.total) : undefined;
-      const active=(nextPlanned?.season_number??pos?.season_number)===scope;
-      const inherits=active&&['planning','paused','dropped'].includes(seriesStatus);
-      const activeStatus=inherits?seriesStatus:full?'completed':count>0||active&&seriesStatus==='watching'?'watching':'';
-      seasonStatus.textContent=statuses.find(([key])=>key===activeStatus)?.[1]??'';
-      seasonStatus.hidden=!seasonStatus.textContent;
-    }
     refreshScopeMessage();
   }
   function refreshScopeMessage() {
@@ -182,7 +169,7 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     return request;
   }
   function setPosition(season:Season,count:number) {
-    if (scope && scope!==savedPosition()?.season_number) {
+    if (scope && scope!==savedPosition()?.season_number && scope!==summary?.next_progress_season) {
       failure('You can only change episode progress for your current season.');
       render();
       return;

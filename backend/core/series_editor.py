@@ -88,6 +88,17 @@ class SeriesEditorContext:
         return max((self.positions[ep][0] for ep in self.watched),
                    default=self.positions[self.released[0].id][0] if self.released else None)
 
+    def next_progress_season(self):
+        current = self.progress_season()
+        group = next(((members, expected) for number, members, expected in self.groups if number == current), None)
+        if group is None:
+            return None
+        members, expected = group
+        if not members or len(members) != (expected or len(members)) or any(ep.id not in self.watched for ep in members):
+            return None
+        return min((number for number in self.metadata.keys() | {n for n, _, _ in self.groups} if number > current),
+                   default=None)
+
     def airing(self):
         released_ids = {ep.id for ep in self.released}
         for number, members, expected in reversed(self.groups):
@@ -116,7 +127,8 @@ class SeriesEditorContext:
         airing = self.airing()
         self.cursor_for(patch)
         if patch.progress_season is not None and (patch.action != 'position'
-                or patch.progress_season != patch.season_number or patch.progress_season != self.progress_season()):
+                or patch.progress_season != patch.season_number
+                or patch.progress_season not in (self.progress_season(), self.next_progress_season())):
             raise HTTPException(409, 'You can only change episode progress for your current season.')
         if (patch.action or needs_progress) and (not self.released or patch.revision != self.revision):
             raise HTTPException(409, {'code': 'series_editor_changed', 'airing': airing})
@@ -219,4 +231,5 @@ async def editor_summary(db, media, user_id, context):
         seasons.append(season)
     return {'order': context.order, 'revision': context.revision, 'seasons': seasons,
             'selected_position': context.selected_position(),
+            'next_progress_season': context.next_progress_season(),
             'airing': context.airing(), 'ready': bool(context.released)}

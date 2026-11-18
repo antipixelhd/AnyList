@@ -2285,7 +2285,7 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
             from core.tracking_rules import observed_status
             complete = target == len(episodes)
             entry.status = ('watching' if previous in (None, 'planning', 'paused', 'dropped') else previous
-                            ) if series_patch and series_patch.action != 'episode' else observed_status(previous, complete, True)
+                            ) if series_patch else observed_status(previous, complete, True)
             entry.start_date, entry.finish_date = default_dates(previous, entry.status, entry.start_date, entry.finish_date, today)
             if series_context and series_context.groups and 'start_date' not in fields:
                 entry.start_date = old_start_date

@@ -276,7 +276,8 @@ export class EditorStore {
         entry.season_position = entry.progress > 0 ? record.title.progress_positions?.[entry.progress - 1] ?? null : null;
         if ('progress' in operation.patch && !('status' in operation.patch) && !finishIntent && entry.progress > 0) {
           const released = entry.released_episodes ?? (record.title.type === 'movie' ? 1 : null);
-          entry.status = previous === 'completed' || (released != null && released > 0 && entry.progress >= released)
+          entry.status = previous === 'completed' ||
+            (!operation.patch.series_editor && released != null && released > 0 && entry.progress >= released)
             ? 'completed' : 'watching';
         }
       }

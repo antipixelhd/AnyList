@@ -146,11 +146,14 @@ class SeasonDatabaseTests(unittest.IsolatedAsyncioTestCase):
         page = (await self.client.get(f'{root}/list')).json()
         self.assertEqual(page['group_counts'], {'watching': 1, 'completed': 1})
         active = next(row for row in page['results'] if row['status'] == 'watching')
-        self.assertEqual((active['list_id'], active['list_season']['number'], active['progress']), (-self.series_id, 1, 2))
+        self.assertEqual((active['list_id'], active['list_season']['number'], active['progress']), (-self.series_id, 2, 0))
+        self.assertTrue(response.json()['series_editor']['seasons'][0]['completed'])
 
         summary = response.json()['series_editor']
+        self.assertEqual(summary['next_progress_season'], 2)
         response = await self.client.patch(editor, json={'series_editor': {
-            'revision': summary['revision'], 'action': 'episode', 'episode_id': self.episode_ids[2]}})
+            'revision': summary['revision'], 'action': 'position', 'season_number': 2, 'progress_season': 2,
+            'episode_count': 1, 'episode_id': self.episode_ids[2]}})
         self.assertEqual(response.status_code, 200, response.text)
         index = (await self.client.get(f'{root}/index')).json()['results']
         self.assertEqual({(row[0], row[2], row[4]) for row in index},
@@ -172,10 +175,16 @@ class SeasonDatabaseTests(unittest.IsolatedAsyncioTestCase):
             response = await self.client.patch(editor, json={'status': status, 'series_editor': {'list_placement': placement}})
             self.assertEqual(response.status_code, 200, response.text)
             self.assertEqual((await self.client.get(f'{root}/list')).json()['group_counts'], groups)
-        response = await self.client.patch(editor, json={'status': 'completed', 'series_editor': {
-            'revision': summary['revision'], 'action': 'position', 'season_number': 2,
-            'episode_count': 2, 'episode_id': self.episode_ids[-1]}})
+        response = await self.client.patch(editor, json={'status': 'watching'})
         self.assertEqual(response.status_code, 200, response.text)
+        response = await self.client.patch(editor, json={'series_editor': {
+            'revision': summary['revision'], 'action': 'episode', 'episode_id': self.episode_ids[-1]}})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()['status'], 'watching')
+        self.assertTrue(response.json()['series_editor']['seasons'][1]['completed'])
+        page = (await self.client.get(f'{root}/list')).json()
+        self.assertEqual(next(row for row in page['results'] if row['status'] == 'watching')['title'],
+                         'Two seasons - Next Campaign')
         response = await self.client.patch(editor, json={'status': 'planning', 'series_editor': {}})
         self.assertEqual(response.status_code, 200, response.text)
         page = (await self.client.get(f'{root}/list')).json()

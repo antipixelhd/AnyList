@@ -3,16 +3,15 @@ import EditorSelect from './EditorSelect.astro';
 import Icon from './Icon.astro';
 ---
 <div class="series-editor-panel" data-series-editor hidden>
-  <div class="series-progress-heading">
+  <div class="editor-field-heading">
     <label id="series-progress-label" for="series-episode-count">Series Progress</label>
-    <span data-series-status hidden></span>
   </div>
   <p class="series-editor-message" data-series-loading role="status">Loading progress…</p>
   <button type="button" class="lab-text-button" data-series-retry hidden>Retry</button>
   <div class="series-progress-fields" data-series-content hidden>
     <EditorSelect id="series-season" name="series_season" label="Progress season" floating/>
     <span class="score-stepper series-episode-stepper">
-      <input id="series-episode-count" data-series-count type="number" min="1" step="1" inputmode="numeric" aria-label="Episode progress" aria-describedby="series-episode-total" required disabled/>
+      <input id="series-episode-count" data-series-count type="number" min="1" step="1" inputmode="numeric" aria-describedby="series-episode-total" required disabled/>
       <span id="series-episode-total" data-series-total></span>
       <span class="score-stepper-controls">
         <button type="button" data-series-step="1" aria-label="Increase episode progress"><Icon name="chevron-down" rotate={180}/></button>
@@ -34,8 +33,6 @@ import Icon from './Icon.astro';
   .editor[data-editor-domain=movies-series] .editor-fields > .editor-rewatches { grid-column:3; grid-row:3; }
   .editor[data-editor-domain=movies-series] .editor-notes textarea { min-height:46px; height:46px; }
   .editor .editor-fields > .series-editor-panel { grid-column:3; grid-row:1; min-width:0; }
-  .series-progress-heading { display:flex; align-items:baseline; justify-content:space-between; gap:6px; }
-  .series-progress-heading [data-series-status] { color:var(--muted); font-size:var(--type-caption-size); }
   .series-progress-fields { display:grid; grid-template-columns:minmax(0,1fr) minmax(100px,.85fr); gap:6px; margin-top:6px; }
   .series-progress-fields:has([data-editor-select][hidden]) { grid-template-columns:minmax(0,1fr); }
   .series-progress-fields .editor-status-trigger { margin:0; }
@@ -43,14 +40,15 @@ import Icon from './Icon.astro';
     display:flex; align-items:center; justify-content:flex-start; gap:4px;
     padding-inline:10px 26px; min-height:42px; min-width:0; border-radius:4px; background:var(--field);
     color:var(--muted); cursor:text; font-variant-numeric:tabular-nums;
+    --editor-input-focus-background:transparent;
   }
-  .series-episode-stepper:focus-within { background:var(--surface-hover,#21394a); }
   .editor .series-episode-stepper input {
     field-sizing:content; width:3ch; min-width:1.25ch; max-width:100%;
     margin:0; padding:0; border:0; background:transparent; outline:none;
     color:var(--bright); font-size:var(--type-control-size); font-weight:600;
   }
   @supports (field-sizing:content) { .editor .series-episode-stepper input { width:auto; } }
+  .editor .series-episode-stepper input:focus-visible { color:var(--blue); }
   .series-episode-stepper [data-series-total] { white-space:nowrap; font-size:var(--type-caption-size); }
   .series-editor-message { margin:8px 0 0; color:var(--muted); }
   .series-scope-message { color:var(--muted); margin:12px 0 0; font-size:var(--type-label-size); }

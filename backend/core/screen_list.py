@@ -281,10 +281,12 @@ def place_series(entry, data, reconciled, episodes, today):
         selected = latest or next(iter(ordered), None)
     if not selected or (entry.status != 'watching' and not completed):
         return SeriesPlacement(entry.status, completed)
-    if entry.status == 'planning' and selected.completed:
+    if entry.status in ('watching', 'planning') and selected.completed:
         following = next((season for season in ordered if season.number > selected.number and not season.completed), None)
         if following:
             selected = following
+        elif entry.status == 'watching':
+            return SeriesPlacement('completed', completed)
     if entry.status != 'watching' and selected.completed:
         completed = [season for season in completed if season.number != selected.number]
     return SeriesPlacement('completed' if completed else None, completed, selected)
