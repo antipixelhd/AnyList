@@ -8,9 +8,9 @@ from alembic.migration import MigrationContext
 from alembic.operations import Operations
 import test_statistics_pg as fixture
 from core.season_completion import check_release_boundaries, clear_unavailable_jobs, completion_evidence, reconcile, run_batch
-from models import Media, Show, TrackedEntry, TrackingActivity, WatchEvent, ShowEpisodePosition, UserShowEpisodeOrder
+from models import Media, PlaybackProgress, Rating, Show, TrackedEntry, TrackingActivity, WatchEvent, ShowEpisodePosition, UserShowEpisodeOrder
 from models.base import MediaType
-from models.seasons import SeasonTracking, SeasonReconcileJob
+from models.seasons import SeasonTracking, SeasonReconcileJob, SeriesSeason
 from core.tracking_projection import activity_data
 from routers.season_tracking import router
 from dependencies import get_current_user, get_tracking_write_user
@@ -97,6 +97,60 @@ class SeasonDatabaseTests(unittest.IsolatedAsyncioTestCase):
     async def rows(self, db):
         return list(await db.scalars(select(TrackingActivity).where(TrackingActivity.media_id == self.series_id,
             TrackingActivity.payload['season_completion_id'].as_integer().is_not(None)).order_by(TrackingActivity.id)))
+
+    async def test_delete_latest_season_keeps_earlier_evidence_and_the_series(self):
+        await run_batch(self.Session)
+        url = f'/tracking/entry/{self.series_id}'
+        async with self.Session() as db:
+            entry = await db.scalar(select(TrackedEntry).where(TrackedEntry.media_id == self.series_id,
+                TrackedEntry.user_id == self.user_id))
+            entry.notes, entry.season_scores = 'Keep this note', {'1': 8, '2': 9}
+            first, latest = await self.rows(db)
+            first_card = first.id
+            latest_tracking = await db.get(SeasonTracking, (self.user_id, latest.payload['season_completion_id']))
+            latest_tracking.start_date = date(2024, 1, 1)
+            latest_tracking.start_manual = True
+            latest_tracking.date_manual = True
+            db.add_all([PlaybackProgress(user_id=self.user_id, media_id=identifier, progress_seconds=60)
+                for identifier in (self.episode_ids[0], self.episode_ids[2])])
+            db.add(TrackingActivity(user_id=self.user_id, media_id=self.series_id, status='completed', score=8.5,
+                payload={'episode_order': 'tmdb:aired', 'season_rating_group': True, 'rating_changed': True,
+                         'season_ratings': {'1': 8, '2': 9}, 'season_rating_baselines': {'1': None, '2': None}}))
+            await db.commit()
+        summary = (await self.client.get(f'{url}/series-editor')).json()
+        intent = {'action': 'delete_season', 'season_number': 2, 'revision': summary['revision']}
+        self.assertEqual((await self.client.patch(url, json={'series_editor': intent})).status_code, 409)
+        old = await self.client.patch(url, json={'confirm_rollback': True,
+            'series_editor': {**intent, 'season_number': 1}})
+        self.assertEqual(old.status_code, 409)
+        self.assertIn('latest tracked season', old.json()['detail'])
+        deleted = await self.client.patch(url, json={'confirm_rollback': True, 'series_editor': intent})
+        self.assertEqual(deleted.status_code, 200, deleted.text)
+        saved = deleted.json()
+        self.assertEqual((saved['progress'], saved['status'], saved['notes']), (2, 'completed', 'Keep this note'))
+        first, latest = saved['series_editor']['seasons']
+        self.assertEqual((first['completed'], first['score']), (True, 8))
+        self.assertEqual((latest['completed'], latest['score'], latest['start_date'], latest['completion_date']),
+                         (False, None, None, None))
+        async with self.Session() as db:
+            self.assertEqual(set(await db.scalars(select(WatchEvent.media_id).where(
+                WatchEvent.media_id.in_(self.episode_ids)))), set(self.episode_ids[:2]))
+            self.assertEqual(list(await db.scalars(select(PlaybackProgress.media_id))),
+                             [self.episode_ids[0]])
+            self.assertEqual([card.id for card in await self.rows(db)], [first_card])
+            grouped = await db.scalar(select(TrackingActivity).where(
+                TrackingActivity.media_id == self.series_id,
+                TrackingActivity.payload['season_rating_group'].as_boolean().is_(True)))
+            self.assertEqual(grouped.payload['season_ratings'], {'1': 8})
+            self.assertEqual(list(await db.scalars(select(Rating.season_number).where(
+                Rating.media_id == self.series_id, Rating.season_number.is_not(None)))), [1])
+
+        all_deleted = await self.client.delete(f'{url}?confirmed=true')
+        self.assertEqual(all_deleted.status_code, 200, all_deleted.text)
+        async with self.Session() as db:
+            self.assertIsNone(await db.scalar(select(TrackedEntry).where(TrackedEntry.media_id == self.series_id)))
+            self.assertIsNone(await db.scalar(select(SeasonTracking.season_id).join(SeriesSeason).where(
+                SeriesSeason.media_id == self.series_id, SeasonTracking.user_id == self.user_id)))
 
     async def test_unhydrated_receipts_are_batched_without_changing_private_dates_or_activity(self):
         async with self.Session() as db:

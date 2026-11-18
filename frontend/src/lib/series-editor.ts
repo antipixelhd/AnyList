@@ -292,6 +292,7 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
       }
     },
     fields:()=>draft(0)??values(),
+    deleteTarget:()=>scope ? {season_number:scope,revision:summary?.revision} : null,
     statusChanged() {
       if (!title) return;
       if (writtenStatus!==status()) {

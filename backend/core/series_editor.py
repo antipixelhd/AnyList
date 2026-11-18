@@ -28,7 +28,7 @@ class SeriesEditorPatch(BaseModel):
     model_config = ConfigDict(extra='forbid')
     revision: str | None = Field(default=None, max_length=64)
     order: str | None = Field(default=None, max_length=40)
-    action: Literal['episode', 'through_season', 'position', 'catch_up', 'complete_previous'] | None = None
+    action: Literal['episode', 'through_season', 'position', 'catch_up', 'complete_previous', 'delete_season'] | None = None
     episode_id: int | None = Field(default=None, gt=0)
     season_number: int | None = Field(default=None, gt=0)
     episode_count: int | None = Field(default=None, ge=0)
@@ -87,6 +87,14 @@ class SeriesEditorContext:
             return selected['season_number']
         return max((self.positions[ep][0] for ep in self.watched),
                    default=self.positions[self.released[0].id][0] if self.released else None)
+
+    def season_deletion_ids(self, patch):
+        if patch.revision != self.revision:
+            raise HTTPException(409, {'code': 'series_editor_changed'})
+        number = patch.season_number
+        if number is None or number != self.progress_season():
+            raise HTTPException(409, 'You can only delete your latest tracked season.')
+        return {ep.id for sn, members, _ in self.groups if sn == number for ep in members}
 
     def next_progress_season(self):
         current = self.progress_season()

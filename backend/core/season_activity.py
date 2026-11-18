@@ -95,6 +95,22 @@ def put_rating(row, number, score, *, source, previous=None, now=None, event=Tru
     row.payload = details
 
 
+async def clear_season_activity(db, *, user_id, media_id, order, number):
+    from core.activity import has_activity_event
+
+    rows = await db.scalars(select(TrackingActivity).where(TrackingActivity.user_id == user_id,
+        TrackingActivity.media_id == media_id, TrackingActivity.payload['episode_order'].as_string() == order))
+    for row in rows:
+        details = row.payload or {}
+        if details.get('season_number') == number and (
+                details.get('season_status') or details.get('season_completion_id') or details.get('season_start_id')):
+            await db.delete(row)
+        elif str(number) in (details.get('season_ratings') or {}):
+            put_rating(row, number, None, source='season')
+            if not has_activity_event(row.status, row.payload):
+                await db.delete(row)
+
+
 async def remove_season_milestone(db, card, *, target=None):
     """Remove only the dated action; an actual rating remains independent."""
     from core.activity import has_activity_event

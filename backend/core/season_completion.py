@@ -13,10 +13,10 @@ from sqlalchemy import delete, or_, select, update, func, tuple_
 from fastapi import HTTPException
 from sqlalchemy.dialects.postgresql import insert
 
-from models import Media, Show, WatchEvent, UserShowEpisodeOrder, ShowEpisodePosition, Rating
+from models import Media, PlaybackProgress, PlaybackSession, Show, WatchEvent, UserShowEpisodeOrder, ShowEpisodePosition, Rating
 from models.base import MediaType
 from models.seasons import SeriesSeason, SeasonTracking, SeasonReconcileJob
-from models.tracking import TrackedEntry, TrackingActivity
+from models.tracking import SyncReview, TrackedEntry, TrackingActivity
 from core.episode_order import normalize_order_key
 
 log = logging.getLogger(__name__)
@@ -77,6 +77,23 @@ def completion_evidence(episodes, events, expected):
 
 def membership_key(episodes):
     return hashlib.sha256(','.join(map(str, sorted(ep.id for ep in episodes))).encode()).hexdigest()
+
+
+async def clear_season_evidence(db, entry, order, number, episode_ids):
+    """Clear private evidence for the selected grouping and its episode IDs."""
+    season_ids = select(SeriesSeason.id).where(SeriesSeason.media_id == entry.media_id,
+        SeriesSeason.season_number == number, SeriesSeason.episode_order == order)
+    await db.execute(delete(SeasonTracking).where(SeasonTracking.user_id == entry.user_id,
+        SeasonTracking.season_id.in_(season_ids)))
+    await db.execute(delete(SyncReview).where(SyncReview.user_id == entry.user_id,
+        SyncReview.media_id == entry.media_id, SyncReview.kind == 'rating_needed',
+        SyncReview.season_number == number,
+        func.coalesce(SyncReview.payload['episode_order'].as_string(), 'tmdb:aired') == order))
+    for model in (PlaybackProgress, PlaybackSession, Rating, TrackingActivity):
+        await db.execute(delete(model).where(model.user_id == entry.user_id, model.media_id.in_(episode_ids)))
+    removed = await db.execute(delete(WatchEvent).where(WatchEvent.user_id == entry.user_id,
+        WatchEvent.media_id.in_(episode_ids)).returning(WatchEvent.media_id, WatchEvent.completed))
+    return {media_id for media_id, completed in removed if completed}
 
 
 async def season_groups(db, media, user_id, *, display_positions=None, include_placeholders=False):
