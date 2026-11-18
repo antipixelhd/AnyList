@@ -279,7 +279,8 @@ export function mountQuickSearch() {
     const timing={duration:.22,ease:[.2,.7,.2,1] as [number,number,number,number]};
     const transform = [`translateX(${direction*14}px)`, 'translateX(0)'];
     tabAnimations.push(animate(tabTitle,{opacity:[.45,1],transform},timing));
-    if (!resultShell.hidden) tabAnimations.push(animate(resultShell,{opacity:[.5,1],transform},timing));
+    const panel = panels.find(panel => !panel.hidden);
+    if (panel) tabAnimations.push(animate(panel,{opacity:[.5,1],transform},timing));
   }
   function stopSearch() {
     clearTimeout(timer);

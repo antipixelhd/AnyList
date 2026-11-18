@@ -255,10 +255,26 @@
   inset:max(16px,env(safe-area-inset-top)) 0 auto;
   width:min(660px,calc(100vw - 28px));
   height:auto;
-  max-height:calc(100dvh - 32px - env(safe-area-inset-top) - env(safe-area-inset-bottom))
+  max-height:calc(100dvh - max(16px,env(safe-area-inset-top)) - max(16px,env(safe-area-inset-bottom)));
+  overflow:hidden;
+  overscroll-behavior:contain;
+}
+.quick-search-dialog[data-search-phone][open] {
+  display:flex;
+  flex-direction:column;
+}
+.quick-search-dialog[data-search-phone]::backdrop {
+  overflow:hidden;
+  overscroll-behavior:contain;
+}
+.quick-search-dialog[data-search-phone] .quick-search-bar {
+  flex:none;
+  width:100%;
+  margin-block:0;
 }
 .quick-search-dialog[data-search-phone] .quick-search-mobile-tabs {
   display:grid;
+  flex:none;
   grid-template-columns:42px minmax(0,1fr) 42px;
   align-items:center;
   gap:10px;
@@ -296,11 +312,14 @@
 .quick-search-dialog[data-search-phone] .quick-search-card h2 { display:none; }
 .quick-search-dialog[data-search-phone] .quick-search-results {
   display:block;
-  max-height:calc(100dvh - 162px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  max-height:none;
   margin-top:10px;
+  overflow:hidden auto;
+  overscroll-behavior:contain;
+  scrollbar-gutter:stable both-edges;
   touch-action:pan-y pinch-zoom;
 }
-.quick-search-dialog[data-search-phone] .quick-search-state { margin-top:10px; }
+.quick-search-dialog[data-search-phone] .quick-search-state { flex:none; margin-top:10px; }
 @media(prefers-reduced-motion:reduce) {
   .quick-search-dialog .quick-search-bar,
   .quick-search-dialog[data-search-phone] :is(.quick-search-mobile-tabs > button,.quick-search-tab-markers span) { transition:none; }
