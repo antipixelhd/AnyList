@@ -427,6 +427,9 @@ body:has(#tracking-editor[open]) {
   color:var(--muted);
   line-height:1
 }
+.score-stepper-controls button:disabled {
+  cursor:default
+}
 .score-stepper-controls button:hover,.score-stepper-controls button:focus-visible {
   outline:none;
   background:#244058;

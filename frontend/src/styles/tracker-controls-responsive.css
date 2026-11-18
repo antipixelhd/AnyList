@@ -204,6 +204,9 @@
   pointer-events:none;
   transition:opacity .12s
 }
+.progress-increment[hidden] {
+  display:none
+}
 .entry-row:not([data-editor-deselected]):hover .progress-increment,.entry-row:not([data-editor-deselected]):has(:focus-visible) .progress-increment,.progress-increment:focus-visible {
   opacity:1;
   pointer-events:auto
