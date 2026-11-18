@@ -73,6 +73,8 @@
   line-height:20px
 }
 :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-row {
+  /* Match the virtual list's first-paint spacing when content is shorter. */
+  min-height:var(--list-row-height,0px);
   font-weight:var(--type-row-weight)
 }
 :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-head>span:not(.entry-cover-column) {
