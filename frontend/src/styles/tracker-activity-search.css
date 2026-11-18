@@ -309,6 +309,10 @@
 .quick-search-dialog[data-search-phone] .quick-search-tab-markers { display:flex; align-items:center; gap:5px; }
 .quick-search-dialog[data-search-phone] .quick-search-tab-markers span { width:14px; height:3px; border-radius:3px; background:#3a5063; transition:background-color .18s,width .18s; }
 .quick-search-dialog[data-search-phone] .quick-search-tab-markers span[data-active] { width:22px; background:var(--blue); }
+.quick-search-dialog[data-search-phone] .quick-search-card {
+  overflow:hidden;
+  overflow:clip;
+}
 .quick-search-dialog[data-search-phone] .quick-search-card h2 { display:none; }
 .quick-search-dialog[data-search-phone] .quick-search-results {
   display:block;

@@ -59,7 +59,21 @@ import Icon from './Icon.astro';
     .editor[data-editor-type=series] .editor-heading { right:296px; }
     .editor-scope { width:132px; }
     .editor[data-editor-type=series] .editor-fields { grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
-    .editor .editor-fields > .series-editor-panel { grid-column:1 / -1; grid-row:2; }
+    .editor .editor-fields > .series-editor-panel {
+      display:grid;
+      grid-column:1 / -1;
+      grid-row:2;
+      grid-template-columns:repeat(2,minmax(0,1fr));
+      grid-template-columns:subgrid;
+      column-gap:inherit;
+    }
+    .series-editor-panel > * { grid-column:1 / -1; }
+    .series-editor-panel > [data-series-retry] { justify-self:start; }
+    .series-progress-fields {
+      grid-template-columns:repeat(2,minmax(0,1fr));
+      grid-template-columns:subgrid;
+      column-gap:inherit;
+    }
     .editor[data-editor-type=series] .editor-fields > .editor-start-date { grid-column:1; grid-row:3; }
     .editor[data-editor-type=series] .editor-fields > .editor-finish-date { grid-column:2; grid-row:3; }
     .editor[data-editor-domain=movies-series] .editor-fields > .editor-notes { grid-column:1; }
