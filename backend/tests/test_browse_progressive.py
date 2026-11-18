@@ -272,10 +272,10 @@ class BrowseStreamDatabaseTests(unittest.IsolatedAsyncioTestCase):
             await discovery.close()
             await fixture.asyncTearDown()
 
-    async def test_stream_keeps_session_open_private_state_fresh_and_authentication_required(self):
+    async def test_stream_keeps_private_state_scoped_and_respects_guest_browsing(self):
         import json
         from test_statistics_pg import StatisticsDatabaseTests
-        from models import User, Media
+        from models import GlobalSettings, Media, User
         fixture=StatisticsDatabaseTests(methodName='runTest')
         await fixture.asyncSetUp()
         try:
@@ -301,6 +301,18 @@ class BrowseStreamDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 rows=[row for line in response.text.splitlines() for row in json.loads(line)['section']['results']]
                 self.assertTrue(all(row['list_status'] is None and row['score'] is None for row in rows))
                 fixture.viewer=None
+                guest=await fixture.client.get('/tracking/browse/sections?stream=true')
+                self.assertEqual(guest.status_code,200,guest.text)
+                self.assertEqual(guest.headers['cache-control'],'private, no-store')
+                guest_sections=[json.loads(line) for line in guest.text.splitlines()]
+                self.assertEqual({update['index'] for update in guest_sections},set(range(4)))
+                guest_rows=[row for update in guest_sections for row in update['section']['results']]
+                self.assertTrue(guest_rows)
+                self.assertTrue(all(row.get('list_status') is None and row.get('score') is None for row in guest_rows))
+                async with fixture.Session() as db:
+                    settings=await db.get(GlobalSettings,1)
+                    settings.enable_logged_out_navigation=False
+                    await db.commit()
                 self.assertEqual((await fixture.client.get('/tracking/browse/sections?stream=true')).status_code,401)
         finally:
             await fixture.asyncTearDown()
