@@ -9,17 +9,19 @@ import hashlib
 import json
 from datetime import timedelta
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, case, func, select
 from sqlalchemy.orm import aliased
 
 from core import catalogue
 from core.catalogue_providers import ProviderError
 from core.game_browse_sources import GameBrowseSources
+from core.game_credit_roles import CREDIT_POLICY_VERSION, SOURCE_ACTING, source_role
 from core.game_imdb_discovery import JOB as DISCOVERY_JOB
 from core.game_imdb_enrichment import now, request as admit
-from core.game_imdb_person import JOB, COMPONENT
+from core.game_imdb_person import JOB, COMPONENT, VERSION as PERSON_VERSION
 from core.game_imdb_source import IMDbGameSource
 from core.game_source_cache import session_factory
+from core.game_work import job_key
 from db import AsyncSessionLocal
 from models.catalogue import CatalogueEntity, CatalogueIdentity, ContributorSearch, MetadataSnapshot
 
@@ -100,6 +102,18 @@ class GamePeopleDiscovery:
         if not natives:
             return {'ids': [], 'pending': False, 'partial': bool(cached.get('error'))}
         source, discovery, component = (aliased(MetadataSnapshot) for _ in range(3))
+        stamp = now()
+        # Source role totals can settle a role while title matching is still active.
+        # Only a fresh, complete connection under the current role rules proves absence.
+        complete_roles = and_(
+            source.coverage['complete'].as_boolean().is_(True),
+            component.expires_at > stamp,
+            component.coverage['source_complete'].as_boolean().is_(True),
+            component.coverage['person_version'].as_integer() == PERSON_VERSION,
+            component.coverage['credit_policy_version'].as_integer() == CREDIT_POLICY_VERSION,
+            component.coverage['omitted_rows'].as_integer() == 0,
+        )
+        role_coverage = component.coverage['role_coverage']
         async with self.sessions() as db:
             rows = (await db.execute(select(
                 CatalogueIdentity.external_id.label('native'),
@@ -112,6 +126,8 @@ class GamePeopleDiscovery:
                 component.coverage['unmapped_games'].as_integer().label('unmapped_games'),
                 ContributorSearch.game_actor_count.label('actor_works'),
                 ContributorSearch.game_staff_count.label('staff_works'),
+                case((complete_roles, role_coverage['actor']['raw_source'].as_integer())).label('actor_source'),
+                case((complete_roles, role_coverage['staff']['raw_source'].as_integer())).label('staff_source'),
             ).select_from(CatalogueEntity).join(CatalogueIdentity, CatalogueIdentity.entity_id == CatalogueEntity.id)
                 .outerjoin(source, and_(source.provider == 'imdb', source.kind == JOB,
                     source.external_id == CatalogueIdentity.external_id))
@@ -122,39 +138,37 @@ class GamePeopleDiscovery:
                 .outerjoin(ContributorSearch,ContributorSearch.entity_id==func.coalesce(
                     CatalogueEntity.canonical_person_id,CatalogueEntity.id))
                 .where(CatalogueIdentity.namespace == 'imdb.person', CatalogueIdentity.external_id.in_(natives)))).all()
-        qualified={row.native:{'actor':bool(row.actor_works),'staff':bool(row.staff_works)} for row in rows}
-        stamp = now()
+
         def active(due, lease):
             return bool(due or lease and lease > stamp)
-        requested=('actor','staff') if kind in ('people','all') else (kind,)
-        needs_verification={row.native for row in rows if any(
-            not qualified.get(row.native,{}).get(section,False) for section in requested)}
-        from core.game_credit_roles import SOURCE_ACTING, source_role
+
+        def may_have_role(raw_source, sample, section):
+            if raw_source is not None:
+                return raw_source != 0
+            return not sample or not sample['complete'] or any(role != 'thanks' and
+                (role in SOURCE_ACTING) == (section == 'actor') for role in map(source_role, sample['rows']))
+
         samples = cached['data'].get('samples', {}) if not cached.get('stale') and not cached.get('error') else {}
-        def pending_jobs(section):
-            if section not in requested:return []
-            from core.game_work import job_key
-            jobs=[]
-            for row in rows:
-                if qualified.get(row.native,{}).get(section,False):continue
-                if not (row.source_id is None or active(row.source_due, row.source_lease) or active(row.discovery_due, row.discovery_lease)):
-                    continue
-                sample = samples.get(row.native)
-                if not sample or not sample['complete'] or any(source_role(credit) != 'thanks' and
-                    (source_role(credit) in SOURCE_ACTING) == (section == 'actor') for credit in sample['rows']):
-                    jobs.append({'id':row.entity_id,'scopes':[job_key('imdb',JOB,row.native),
-                        job_key('imdb',DISCOVERY_JOB,row.native)]})
-            return jobs
-        waiting={section:pending_jobs(section) for section in ('actor','staff')}
-        pending=any(waiting.values())
-        unavailable = bool(cached.get('error')) or len(rows) != len(natives) or any(row.native in needs_verification and (
-            row.source_error or row.discovery_error
-            or not row.source_complete and row.source_id is not None
-                and not active(row.source_due, row.source_lease)) for row in rows)
-        unmapped = any(row.native in needs_verification and (row.unmapped_games or 0) > 0 for row in rows)
+        waiting = {'actor': [], 'staff': []}
+        needs_verification = set()
         delays = []
         for row in rows:
-            if row.native not in needs_verification:continue
+            sample = samples.get(row.native)
+            sections = [
+                section for section, works, raw_source in (
+                    ('actor', row.actor_works, row.actor_source), ('staff', row.staff_works, row.staff_source))
+                if kind in ('people', 'all', section) and not works and may_have_role(raw_source, sample, section)
+            ]
+            if not sections:
+                continue
+            needs_verification.add(row.native)
+            if not (row.source_id is None or active(row.source_due, row.source_lease)
+                    or active(row.discovery_due, row.discovery_lease)):
+                continue
+            job = {'id': row.entity_id, 'scopes': [job_key('imdb', JOB, row.native),
+                job_key('imdb', DISCOVERY_JOB, row.native)]}
+            for section in sections:
+                waiting[section].append(job)
             if row.source_id is None:
                 delays.append(2)
             for due, lease in ((row.source_due, row.source_lease), (row.discovery_due, row.discovery_lease)):
@@ -162,6 +176,13 @@ class GamePeopleDiscovery:
                     delays.append(2)
                 elif due:
                     delays.append(max(1, int((due - stamp).total_seconds()) + 1))
+
+        pending = any(waiting.values())
+        unavailable = bool(cached.get('error')) or len(rows) != len(natives) or any(row.native in needs_verification and (
+            row.source_error or row.discovery_error
+            or not row.source_complete and row.source_id is not None
+                and not active(row.source_due, row.source_lease)) for row in rows)
+        unmapped = any(row.native in needs_verification and (row.unmapped_games or 0) > 0 for row in rows)
         return {'ids': list({row.entity_id for row in rows}), 'pending': pending, 'partial': unavailable or unmapped,
             'samples': samples, 'pending_sections':{section:bool(jobs) for section,jobs in waiting.items()},
             'pending_jobs':waiting,

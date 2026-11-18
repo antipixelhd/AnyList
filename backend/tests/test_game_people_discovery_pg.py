@@ -11,11 +11,12 @@ import test_game_contributor_search_pg as fixture
 from test_game_imdb_person_pg import credit, page
 from test_game_imdb_discovery_pg import outcome
 from core import catalogue
-from core.game_imdb_discovery import GamePersonDiscovery
+from core.game_imdb_discovery import GamePersonDiscovery, JOB as DISCOVERY_JOB
 from core.game_imdb_enrichment import now, snapshot
-from core.game_imdb_person import GameIMDbPersonEnrichment, JOB
+from core.game_imdb_person import GameIMDbPersonEnrichment, COMPONENT, JOB
+from core.game_imdb_source import IMDbGameSource
 from core.game_people_discovery import GamePeopleDiscovery
-from models.catalogue import CatalogueEntity, CatalogueIdentity, MetadataSnapshot
+from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity, MetadataSnapshot
 
 
 @unittest.skipUnless(fixture.fixture.fixture.fixture.URL, 'Requires disposable PostgreSQL')
@@ -53,6 +54,7 @@ class ColdPeopleDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         worker, source = await self.portfolio([credit('tt2'), credit('tt3', role='composer')])
         pending = await self.query('Cold performer', 'people', 'game')
         self.assertTrue(pending['verification_pending'])
+        self.assertTrue(pending['section_pending']['staff'])
         self.assertFalse(pending['results']['actor'])
         discovery = GamePersonDiscovery(self.Session, source=SimpleNamespace(page=AsyncMock(return_value={
             'outcomes': [outcome(), outcome('tt3', 30)], 'stale': False})))
@@ -74,6 +76,55 @@ class ColdPeopleDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         self.source.people_candidates.assert_awaited_once()
         source.credits.assert_awaited_once()
         self.assertEqual(await self.count(CatalogueIdentity, CatalogueIdentity.namespace == 'imdb.person'), 1)
+
+    async def test_complete_acting_source_stops_crew_polling_during_game_mapping(self):
+        async with self.Session() as db:
+            game = CatalogueEntity(kind='game', name='Saved game', attributes={'game_class': 'game', 'igdb_id': '10'})
+            composer = CatalogueEntity(kind='person', name='Cold performer composer')
+            db.add_all([game, composer])
+            await db.flush()
+            db.add_all([
+                CatalogueIdentity(entity_id=game.id, namespace='igdb.game', external_id='10', source='igdb'),
+                CatalogueIdentity(entity_id=game.id, namespace='imdb.title', external_id='tt1', source='reviewed',
+                    evidence={'title_type': 'videoGame', 'igdb_id': '10'}),
+                CatalogueCredit(work_id=game.id, contributor_id=composer.id, provider='igdb',
+                    source_key='saved-composer', role='composer'),
+            ])
+            await db.commit()
+
+        self.service.source = IMDbGameSource()
+        self.service.source.people_candidates = self.source.people_candidates
+        sample = [credit(f'tt{i}') for i in range(1, 5)]
+        with patch('core.game_people_presence.presence', AsyncMock(
+                return_value={'total': 6, 'rows': sample, 'complete': False})):
+            cold = await self.query('Cold performer', 'people', 'game')
+        self.assertTrue(cold['section_pending']['staff'])
+        self.assertEqual([row['name'] for row in cold['results']['staff']], ['Cold performer composer'])
+
+        await self.portfolio([*sample, credit('tt5', role='archive_footage'), credit('tt6', role='thanks')])
+        async with self.Session() as db:
+            discovery = await db.scalar(snapshot(DISCOVERY_JOB, 'nm1'))
+            due = now().replace(microsecond=0) + timedelta(minutes=3)
+            discovery.next_attempt_at = due
+            await db.commit()
+
+        ready = await self.query('Cold performer', 'people')
+        self.assertEqual(ready['results']['staff'], cold['results']['staff'])
+        self.assertEqual([row['name'] for row in ready['results']['actor']], ['Cold performer'])
+        self.assertFalse(ready['section_pending']['staff'])
+        self.assertFalse(ready['verification_pending'])
+        self.assertFalse(ready['partial'])
+        self.assertNotIn('retry_after', ready)
+
+        async with self.Session() as db:
+            self.assertEqual(await db.scalar(snapshot(DISCOVERY_JOB, 'nm1').with_only_columns(
+                MetadataSnapshot.next_attempt_at)), due)
+            component = await db.scalar(snapshot(COMPONENT, 'nm1'))
+            component.expires_at = now() - timedelta(seconds=1)
+            await db.commit()
+        stale = await self.query('Cold performer', 'people')
+        self.assertTrue(stale['section_pending']['staff'])
+        self.assertTrue(stale['verification_pending'])
 
     async def test_suggestions_alone_do_not_prove_game_work_or_merge_namesakes(self):
         self.source.people_candidates.return_value += [{'id': 'nm2', 'name': 'Cold performer', 'image': None}]
