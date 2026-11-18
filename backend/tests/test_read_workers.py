@@ -16,6 +16,7 @@ os.environ.setdefault("SECRET_KEY", "read-worker-tests")
 from core.api_roles import ApiRole, ReaderRoutes, reader
 from core.limiter import ApiLimiter, GlobalRateLimitMiddleware
 from core.read_workers import ReadOnlyApp, ReadWorkerMiddleware
+from core.tmdb import foreground_pending
 
 
 def proxy(app, worker, **limits):
@@ -81,6 +82,7 @@ class ReadWorkerTests(unittest.IsolatedAsyncioTestCase):
         seen = []
 
         async def upstream(request):
+            self.assertTrue(foreground_pending())
             seen.append(
                 (
                     request.headers.get("authorization"),
@@ -132,6 +134,7 @@ class ReadWorkerTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(response.headers["etag"], '"current"')
                     self.assertEqual(response.headers["cache-control"], "private")
                     self.assertNotIn("x-hop", response.headers)
+                    self.assertFalse(foreground_pending())
                     client.cookies.clear()
         self.assertEqual(
             seen,

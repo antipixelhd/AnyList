@@ -292,8 +292,10 @@ async def load_evidence(job, api_key):
         if not isinstance(credits.get('cast'), list) or not isinstance(credits.get('crew'), list):
             raise ValueError('Incomplete person credits')
         from core.contributor_availability import person_domains
+        from core.screen_appearance_backfill import appearance_candidates
         return {'cast':credits['cast'], 'crew':credits['crew'], 'complete':True,
                 'person_identity':{key:profile.get(key) for key in ('id','name','imdb_id','profile_path')},
+                'appearance_candidates': appearance_candidates(credits['cast']),
                 'domain_availability':await asyncio.to_thread(person_domains,credits)}
     config = job['config']
     if config.get('scope')=='domain_availability':

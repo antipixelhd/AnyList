@@ -17,6 +17,7 @@ from db import AsyncSessionLocal
 
 logger = logging.getLogger(__name__)
 VERSION = 3
+SCREEN_GROUPS = frozenset({'cast', 'crew', 'organizations'})
 
 
 async def _screen_providers(db, user_id):
@@ -25,10 +26,10 @@ async def _screen_providers(db, user_id):
         tvdb_key=await settings_store.get_user_tvdb_key(db, user_id))
 
 
-def _credits_projected(snapshot, work, groups):
+def credits_projected(snapshot, work_id, groups=SCREEN_GROUPS):
     coverage = snapshot.coverage or {}
-    projected = coverage.get('detail_credit_groups', ('cast', 'crew', 'organizations'))
-    return (work is not None and snapshot.entity_id == work.id and
+    projected = coverage.get('detail_credit_groups', SCREEN_GROUPS)
+    return (work_id is not None and snapshot.entity_id == work_id and
             coverage.get('detail_credits_version') == VERSION and groups.issubset(projected))
 
 
@@ -102,7 +103,7 @@ async def fill_screen_credits(db, media, user_id=None, *, providers=None, author
         if not native:
             continue
         kind = media.media_type.value
-        requested = groups if groups is not None else {'cast', 'crew', 'organizations'}
+        requested = groups if groups is not None else SCREEN_GROUPS
         key = (MetadataSnapshot.provider == provider, MetadataSnapshot.kind == kind,
                MetadataSnapshot.external_id == str(native))
         try:
@@ -115,7 +116,7 @@ async def fill_screen_credits(db, media, user_id=None, *, providers=None, author
             if status in ('refreshing', 'retry_pending', 'last_good'):
                 result = 'deferred'
                 continue
-            if not authoritative and status == 'cached' and _credits_projected(header, work, requested):
+            if not authoritative and status == 'cached' and credits_projected(header, work.id if work else None, requested):
                 result = 'cached'
                 continue
             snapshot = None
@@ -126,7 +127,7 @@ async def fill_screen_credits(db, media, user_id=None, *, providers=None, author
                     await db.commit()
                     result = 'deferred'
                     continue
-                if not authoritative and _credits_projected(snapshot, work, requested):
+                if not authoritative and credits_projected(snapshot, work.id if work else None, requested):
                     await db.commit()
                     result = 'cached'
                     continue

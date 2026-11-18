@@ -3,6 +3,7 @@ import copy
 import hashlib
 import time
 import weakref
+from contextlib import contextmanager
 import httpx
 from core.config import settings
 
@@ -132,6 +133,7 @@ def _cache_response(url, params, data, ttl):
 # Each event loop owns its connections and cancellation state. Public payloads
 # are shared, but callers always receive independent mutable dictionaries.
 _transports = weakref.WeakKeyDictionary()
+_foreground = weakref.WeakKeyDictionary()
 _MAX_INFLIGHT = 128
 
 
@@ -148,6 +150,33 @@ def _transport():
     if loop not in _transports:
         _transports[loop] = _Transport()
     return _transports[loop]
+
+
+def foreground_pending():
+    return asyncio.get_running_loop() in _foreground
+
+
+async def wait_for_foreground():
+    loop = asyncio.get_running_loop()
+    while activity := _foreground.get(loop):
+        await activity[0].wait()
+
+
+@contextmanager
+def foreground_read():
+    """Count direct TMDB reads and screen requests proxied to API readers."""
+    loop = asyncio.get_running_loop()
+    activity = _foreground.get(loop)
+    if activity is None:
+        activity = _foreground[loop] = [asyncio.Event(), 0]
+    activity[1] += 1
+    try:
+        yield
+    finally:
+        activity[1] -= 1
+        if not activity[1]:
+            del _foreground[loop]
+            activity[0].set()
 
 
 async def close():
@@ -201,6 +230,14 @@ async def _get(
         raise TMDBUnavailable("TMDB circuit breaker open")
 
     state = _transport()
+    from core.game_work import Priority, current
+    if current.get().priority != Priority.DIRECT:
+        return await _load_uncached(state, url, headers, params, max_retries, cache_ttl, cache_key)
+    with foreground_read():
+        return await _load_uncached(state, url, headers, params, max_retries, cache_ttl, cache_key)
+
+
+async def _load_uncached(state, url, headers, params, max_retries, cache_ttl, cache_key):
     if cache_key is None:
         # Authentication validation and forced refreshes must neither share an
         # in-flight task nor populate the public response cache.

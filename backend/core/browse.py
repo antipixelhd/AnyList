@@ -125,6 +125,12 @@ def section_specs(today=None):
     ]
 
 
+def section_filters(region, min_score, min_runtime, excluded_genres, **values):
+    return dict(genres=[], start=None, end=None, status='', provider=None, region=region,
+                min_score=min_score, min_runtime=min_runtime, excluded_genres=excluded_genres,
+                min_votes=0, min_popularity=0, require_release=False, require_poster=False) | values
+
+
 async def browse_sections(
     db, viewer, **kwargs,
 ):
@@ -141,23 +147,9 @@ async def iter_browse_sections(
     min_score=0, min_runtime=0, excluded_genres=(), min_votes=0, min_popularity=0, require_release=False, require_poster=False, unfiltered=False, progressive=False,
 ):
     specs = section_specs()
-    filters = [
-        {
-            **dict(
-                genres=[],
-                start=None,
-                end=None,
-                status="",
-                provider=None,
-                region=region,
-                min_score=min_score,
-                min_runtime=min_runtime, excluded_genres=excluded_genres,
-                min_votes=min_votes, min_popularity=min_popularity, require_release=require_release, require_poster=require_poster,
-            ),
-            **values,
-        }
-        for _, values in specs
-    ]
+    filters = [section_filters(region, min_score, min_runtime, excluded_genres,
+        min_votes=min_votes, min_popularity=min_popularity, require_release=require_release,
+        require_poster=require_poster, **values) for _, values in specs]
     from core.discovery_policy import viewer_policies
     policies = await viewer_policies(db, viewer, media_type,
         tuple(values['sort'] for values in filters), unfiltered=unfiltered)
@@ -541,11 +533,15 @@ def anime_visible(item, show_anime):
 
 
 async def imdb_page(
-    media_type, key, filters, page, *, mdblist_key=None, show_anime=True, feed_offset=None
+    media_type, key, filters, page, *, mdblist_key=None, show_anime=True, feed_offset=None, cached_only=False
 ):
-    rows, stale = await mdblist_discovery.ranked_rows(
-        media_type, filters["sort"], mdblist_key
-    )
+    if cached_only:
+        rows = await asyncio.to_thread(mdblist_discovery.cached_rows, media_type, filters["sort"], mdblist_key, shared=True)
+        if not rows:
+            return None
+        stale = False
+    else:
+        rows, stale = await mdblist_discovery.ranked_rows(media_type, filters["sort"], mdblist_key)
     semaphore = asyncio.Semaphore(6)
     needs_details = filters["provider"] or filters.get('status') in ('airing', 'returning') or (media_type=='movie' and filters.get('cinema'))
     get = tmdb.get_movie if media_type == "movie" else tmdb.get_show

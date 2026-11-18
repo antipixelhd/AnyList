@@ -3,7 +3,7 @@ import asyncio
 import logging
 import multiprocessing
 import socket
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass
 
 import httpx
@@ -187,6 +187,16 @@ class ReadWorkerMiddleware:
             headers.append((b'x-forwarded-for', scope['client'][0].encode('ascii')))
         headers.append((b'x-forwarded-proto', scope.get('scheme', 'http').encode('ascii')))
         request = httpx.Request("GET", url, headers=headers)
+        # These provider-backed reads can run in another process. Hold primary
+        # background TMDB acquisition until the proxied read has finished.
+        from core.tmdb import foreground_read
+        path = scope['path']
+        screen_read = path.startswith(('/tracking/browse', '/tracking/title/', '/tracking/quick-search',
+            '/tracking/contributors/', '/tracking/catalog/'))
+        with foreground_read() if screen_read else nullcontext():
+            await self.proxy(pool, request, scope, receive, send)
+
+    async def proxy(self, pool, request, scope, receive, send):
         try:
             upstream = await pool.client.send(request, stream=True)
         except (httpx.NetworkError, httpx.RemoteProtocolError):

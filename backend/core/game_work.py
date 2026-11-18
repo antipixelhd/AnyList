@@ -319,6 +319,8 @@ class Dispatcher:
                 # Background can use two positions, but never the foreground
                 # reserve. Direct work takes its reserve first, then borrows.
                 indices=((2,0,1) if rank[0]==Priority.DIRECT else (0,1)) if ticket.provider=='igdb' else (0,)
+                if ticket.provider == 'tmdb' and rank[0] == Priority.DIRECT:
+                    indices = (1, 0)
                 for index in indices:
                     if await slot.scalar(text('SELECT pg_try_advisory_xact_lock(:key)'),
                             {'key':_lock_key(f'catalogue-{ticket.provider}-slot:{index}')}):
@@ -333,6 +335,10 @@ class Dispatcher:
                 budget = await db.get(MetadataProviderBudget, ticket.provider, populate_existing=True,with_for_update=True)
                 if budget.next_request_at and budget.next_request_at > now():
                     return .05
+                if ticket.provider == 'tmdb' and rank[0] >= Priority.RETRY:
+                    from core.tmdb import foreground_pending
+                    if foreground_pending():
+                        return .15
                 month=stamp.strftime('%Y-%m')
                 if budget.month!=month:budget.month,budget.request_count=month,0
                 from core.config import settings

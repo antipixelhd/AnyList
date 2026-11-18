@@ -886,6 +886,7 @@ async def background_jobs():
     from core.config import settings
     from core.season_completion import scheduler as season_completion
     from core.statistics_snapshots import scheduler as statistics_scheduler
+    from core.screen_highlights import scheduler as screen_highlights
 
     catalogue = (run_catalogue_worker,) if settings.catalogue_worker_mode == "embedded" else ()
     async with running_jobs(
@@ -899,6 +900,7 @@ async def background_jobs():
         _manual_session_completer,
         _emby_progress_poller,
         _show_metadata_refresher,
+        screen_highlights,
     ):
         yield
 

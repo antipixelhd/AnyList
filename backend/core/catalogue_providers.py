@@ -142,7 +142,10 @@ class ProviderHTTP:
     async def lane(self, provider):
         """Share budgets with reserved foreground capacity on database deployments."""
         if self.session_factory:
-            from core.game_work import provider_slot
+            from core.game_work import Priority, current, provider_slot
+            if provider == 'tmdb' and current.get().priority >= Priority.RETRY:
+                from core import tmdb
+                await tmdb.wait_for_foreground()
             async with provider_slot(self.session_factory, provider):
                 yield
             return

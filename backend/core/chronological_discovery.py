@@ -219,7 +219,7 @@ async def close():
     await asyncio.gather(*tasks, return_exceptions=True)
 
 
-async def page(media_type, key, filters, *, offset=0, show_anime=True, size=24, term='', preview=False):
+async def page(media_type, key, filters, *, offset=0, show_anime=True, size=24, term='', preview=False, cached_only=False):
     upcoming = filters.get('status') == 'upcoming' or filters['sort'] == 'upcoming'
     window_index, position = divmod(max(offset, 0), CURSOR_STRIDE)
     upper = filters.get('end')
@@ -244,8 +244,12 @@ async def page(media_type, key, filters, *, offset=0, show_anime=True, size=24, 
             if age < FRESH_SECONDS:
                 selected = result
                 _cache.set(cache_key, result, FRESH_SECONDS - age)
+            elif cached_only:
+                selected = result
             elif preview:
                 stale = result
+    if cached_only and (selected is None or selected.get('incomplete')):
+        return None
     if selected is None:
         loop = asyncio.get_running_loop()
         pending_key = (loop, cache_key, hashlib.sha256(str(key).encode()).digest())

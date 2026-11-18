@@ -5,19 +5,67 @@ import uuid
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 
-from sqlalchemy import String, func, insert, or_, select, union
+from sqlalchemy import Integer, String, column, func, insert, or_, select, union, update, values
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from core.catalogue_providers import ProviderError
 from core.credit_roles import work_credit
 from models import Media
-from models.catalogue import CatalogueIdentity, MetadataSnapshot
+from models.catalogue import CatalogueIdentity, ContributorEvidence, MetadataSnapshot
 from models.screen_appearances import ScreenActorAppearance
 
 
 KIND = 'screen_season_cast'
 BATCH_SEASONS = 8
 FINAL = {'Ended', 'Canceled'}
+
+
+def appearance_candidates(cast):
+    """Prefer brief credits on older series, which can move furthest in a filmography."""
+    from core.browse import anime_visible
+
+    best = {}
+    for credit in cast:
+        if not isinstance(credit, dict) or credit.get('media_type') != 'tv' or credit.get('adult'):
+            continue
+        native, premiere, count = credit.get('id'), credit.get('first_air_date'), credit.get('episode_count')
+        if (type(native) is not int or not 0 < native <= 2147483647 or not isinstance(premiere, str)
+                or not '0000' < premiere <= date.today().isoformat() or not work_credit('actor', credit.get('character'))):
+            continue
+        episodes = count if type(count) is int and count > 0 else 10000
+        rank = (episodes > 4, premiere, episodes, native)
+        if native not in best or rank < best[native][0]:
+            best[native] = rank, {'id': native, 'anime': not anime_visible(credit, False)}
+    return [row for _, row in sorted(best.values(), key=lambda item: item[0])[:12]]
+
+
+async def career_candidates(db, *, show_anime):
+    evidence = ContributorEvidence
+    conditions = (evidence.kind == 'person', evidence.expires_at > datetime.now(timezone.utc).replace(tzinfo=None),
+                  evidence.payload['complete'].as_boolean().is_(True))
+    # Fill compact hints for preexisting evidence once, with no new person call.
+    missing = ~evidence.payload.has_key('appearance_candidates')
+    old = (await db.execute(select(evidence.native_id, evidence.variant, evidence.expires_at, evidence.payload['cast'])
+        .where(*conditions, missing).order_by(evidence.expires_at.desc()).limit(8))).all()
+    for native, variant, expires, cast in old:
+        await db.execute(update(evidence).where(evidence.kind == 'person', evidence.native_id == native,
+            evidence.variant == variant, evidence.expires_at == expires, missing).values(
+            payload=evidence.payload.concat({'appearance_candidates': appearance_candidates(cast or [])})))
+    recent = (select(evidence.payload['appearance_candidates'].label('candidates'),
+        evidence.native_id, evidence.expires_at)
+        .where(*conditions, evidence.payload.has_key('appearance_candidates'))
+        .distinct(evidence.native_id).order_by(evidence.native_id,evidence.expires_at.desc())).subquery()
+    rows = list(await db.scalars(select(recent.c.candidates)
+        .order_by(recent.c.expires_at.desc(),recent.c.native_id).limit(48)))
+    await db.commit()
+    ordered = {}
+    for rank in range(12):
+        for row in rows:
+            if rank < len(row):
+                item = row[rank]
+                if show_anime or not item['anime']:
+                    ordered.setdefault(item['id'], None)
+    return list(ordered)
 
 
 def season_manifest(seasons):
@@ -235,19 +283,27 @@ async def acquire(db, providers, series_id, counts):
     await db.commit()
 
 
-async def backfill_screen_appearances(db, providers, *, limit):
+async def backfill_screen_appearances(db, providers, *, limit, priority_ids=None):
     counts = dict(examined=0, batches=0, published=0, deferred=0, seasons=0, cards_changed=0)
     if not providers.tmdb_key:
         return counts
     now = datetime.now(timezone.utc).replace(tzinfo=None)
-    series = union(
-        select(CatalogueIdentity.external_id.label('native')).where(CatalogueIdentity.namespace == 'tmdb.series'),
-        select(Media.tmdb_id.cast(String).label('native')).where(Media.media_type == 'series', Media.tmdb_id.is_not(None)),
-    ).subquery()
+    if priority_ids is not None:
+        if not priority_ids:
+            return counts
+        series = values(column('native', String), column('rank', Integer), name='appearance_demand').data(
+            [(str(native), rank) for rank, native in enumerate(priority_ids)])
+        order = (series.c.rank,)
+    else:
+        series = union(
+            select(CatalogueIdentity.external_id.label('native')).where(CatalogueIdentity.namespace == 'tmdb.series'),
+            select(Media.tmdb_id.cast(String).label('native')).where(Media.media_type == 'series', Media.tmdb_id.is_not(None)),
+        ).subquery()
+        order = (MetadataSnapshot.fetched_at.asc().nulls_first(), series.c.native)
     candidates = list(await db.scalars(select(series.c.native).outerjoin(MetadataSnapshot,
         (MetadataSnapshot.provider == 'tmdb') & (MetadataSnapshot.kind == KIND)
         & (MetadataSnapshot.external_id == series.c.native))
-        .where(*due(now)).order_by(MetadataSnapshot.fetched_at.asc().nulls_first(), series.c.native).limit(limit)))
+        .where(*due(now)).order_by(*order).limit(limit)))
     await db.commit()
     counts['examined'] = len(candidates)
     for native in candidates:
