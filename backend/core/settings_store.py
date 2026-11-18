@@ -40,7 +40,9 @@ async def get_effective_tmdb_key(
     return get_server_tmdb_key(global_settings)
 
 
-async def get_user_tmdb_key(db: AsyncSession, user_id: int, *, cached: bool = True) -> str | None:
+async def get_user_tmdb_key(db: AsyncSession, user_id: int | None, *, cached: bool = True) -> str | None:
+    if user_id is None:
+        return get_server_tmdb_key(await get_global_settings(db, cached=cached))
     cache_key = f"tmdb_key_{user_id}"
     if cached and cache_key in db.info:
         return db.info[cache_key]

@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from models import GlobalSettings, User
 from models.base import PrivacyLevel
+from core.settings_store import get_global_settings
 
 
 async def profile_header(db, user, owner, viewer):
@@ -28,7 +29,7 @@ async def profile_header(db, user, owner, viewer):
 async def catalog_access(db, viewer):
     if viewer:
         return
-    settings = await db.get(GlobalSettings, 1)
+    settings = await get_global_settings(db)
     if not settings or not settings.enable_logged_out_navigation:
         raise HTTPException(401, "Sign in to browse")
 

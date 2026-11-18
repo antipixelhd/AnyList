@@ -31,6 +31,7 @@ const PUBLIC_LEGACY_STATS_PAGE_RE = /^\/stats\/\d+\/?$/;
 const PUBLIC_AVATAR_PROXY_RE = /^\/api\/proxy\/profile\/(?:avatar|background)\/\d+$/;
 const PUBLIC_PROFILE_SOCIAL_RE = /^\/api\/proxy\/tracking\/people\/[^/]+\/social\/?$/;
 const PUBLIC_PROFILE_SEASONS_RE = /^\/api\/proxy\/tracking\/profile\/[^/]+\/series\/[1-9]\d*\/seasons\/?$/;
+const PUBLIC_TITLE_SEASONS_RE = /^\/(?:title\/[1-9]\d*\/seasons|api\/proxy\/tracking\/title\/[1-9]\d*\/episode-images)\/?$/;
 // Matches /list/{id} (someone else's public/friends-only list page). The list
 // itself still enforces its own privacy_level server-side; this only decides
 // whether a logged-out visitor gets past the gate at all.
@@ -156,7 +157,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
       PUBLIC_PROFILE_PAGE_RE.test(pathname) ||
       PUBLIC_LEGACY_STATS_PAGE_RE.test(pathname) ||
       PUBLIC_AVATAR_PROXY_RE.test(pathname) ||
-      (context.request.method === 'GET' && (PUBLIC_PROFILE_SOCIAL_RE.test(pathname)||PUBLIC_PROFILE_SEASONS_RE.test(pathname))) ||
+      (context.request.method === 'GET' && (PUBLIC_PROFILE_SOCIAL_RE.test(pathname)||PUBLIC_PROFILE_SEASONS_RE.test(pathname)||PUBLIC_TITLE_SEASONS_RE.test(pathname))) ||
       PUBLIC_LIST_PAGE_RE.test(pathname) ||
       PUBLIC_TOP_RATED_PAGE_RE.test(pathname) ||
       PUBLIC_RECENTLY_WATCHED_PAGE_RE.test(pathname) ||

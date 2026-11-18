@@ -45,7 +45,7 @@ from core import (
 )
 from core.game_release_dates import VERSION as RELEASE_VERSION
 from core.game_credit_roles import CREDIT_POLICY_VERSION
-from dependencies import get_current_user, get_current_user_or_api_key
+from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user
 from models import GlobalSettings, Media, User, UserProfileData
 from models.show import Show
 from models.base import MediaType
@@ -435,6 +435,7 @@ async def main(args):
         request_viewer = ContextVar('benchmark_search_viewer', default=viewer)
         fixture.app.dependency_overrides[get_current_user] = lambda: request_viewer.get()
         fixture.app.dependency_overrides[get_current_user_or_api_key] = lambda: request_viewer.get()
+        fixture.app.dependency_overrides[get_optional_user] = lambda: request_viewer.get()
 
         def sql_start(conn, cursor, statement, parameters, context, many):
             context.benchmark_started = time.perf_counter()

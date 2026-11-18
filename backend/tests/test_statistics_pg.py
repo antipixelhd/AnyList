@@ -35,6 +35,57 @@ URL = os.getenv("STATISTICS_TEST_DATABASE_URL") or os.getenv("TRACKING_TEST_DATA
 
 @unittest.skipUnless(URL, "Requires explicit disposable statistics PostgreSQL")
 class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
+    async def test_guest_browse_and_screen_lists_follow_the_public_setting(self):
+        username = self.viewer.username
+        async with self.Session() as db:
+            series = Media(title='Guest series', media_type=MediaType.series, release_date='2020-01-01')
+            db.add(series)
+            await db.flush()
+            db.add(TrackedEntry(user_id=self.user_id, media_id=series.id, status='planning'))
+            series_id = series.id
+            await db.commit()
+
+        self.viewer = None
+        profile = f'/tracking/profile/{username}'
+        lists = {'movie': {self.media_id}, 'series': {series_id}, 'all': {self.media_id, series_id}}
+        for scope, ids in lists.items():
+            response = await self.client.get(f'{profile}/{scope}/list')
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.headers['cache-control'], 'private, no-store')
+            payload = response.json()
+            self.assertFalse(payload['profile']['owner'])
+            self.assertEqual({row['id'] for row in payload['results']}, ids)
+            self.assertTrue(all(not row.get('entry') for row in payload['results']))
+
+        index = await self.client.get(f'{profile}/all/index')
+        self.assertEqual(index.status_code, 200, index.text)
+        rows = await self.client.get(f'{profile}/all/rows', params=[('ids', series_id)])
+        self.assertEqual(rows.status_code, 200, rows.text)
+        self.assertEqual([row['id'] for row in rows.json()], [series_id])
+
+        for scope, media_id in [('movie', self.media_id), ('series', series_id)]:
+            response = await self.client.get('/tracking/browse', params={
+                'media_type': scope, 'source': 'local', 'sort': 'title', 'unfiltered': 'true'})
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertIn(media_id, {row['id'] for row in response.json()['results']})
+
+            with patch('core.settings_store.get_server_tmdb_key', return_value=None):
+                facets = await self.client.get('/tracking/browse/facets', params={'media_type': scope})
+                self.assertEqual(facets.status_code, 200, facets.text)
+                self.assertTrue(facets.json()['genres'])
+                sections = await self.client.get('/tracking/browse/sections', params={
+                    'media_type': scope, 'stream': 'true'})
+                self.assertEqual(sections.status_code, 200, sections.text)
+                self.assertIn('"section":', sections.text)
+                self.assertNotIn('"error":', sections.text)
+
+        async with self.Session() as db:
+            await db.execute(update(GlobalSettings).values(enable_logged_out_navigation=False))
+            await db.commit()
+        for route in ('browse', 'browse/facets', 'browse/sections', f'profile/{username}/all/list'):
+            response = await self.client.get(f'/tracking/{route}')
+            self.assertEqual(response.status_code, 401, response.text)
+
     async def test_public_series_auto_expansion_uses_the_profile_owners_season_ratings(self):
         async with self.Session() as db:
             titles = [Media(title=f'Rating case {number}', media_type=MediaType.series) for number in range(4)]
@@ -151,6 +202,9 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.client.get(f'{root}/all/rows',params=[('ids',self.media_id)]*101)).status_code,422)
         self.assertEqual((await self.client.get(f'{root}/all/list',params={'limit':101})).status_code,422)
         self.viewer=None
+        async with self.Session() as db:
+            await db.execute(update(GlobalSettings).values(enable_logged_out_navigation=False))
+            await db.commit()
         self.assertEqual((await self.client.get(f'{root}/all/index')).status_code,401)
 
     async def asyncSetUp(self):
@@ -810,7 +864,7 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.viewer = await db.get(User, self.user_id)
         self.assertEqual((await self.client.get("/tracking/profile/statistics-fixture/stats/overview")).status_code, 200)
         self.viewer = None
-        self.assertEqual((await self.client.get("/tracking/profile/statistics-fixture/stats/overview")).status_code, 401)
+        self.assertEqual((await self.client.get("/tracking/profile/statistics-fixture/stats/overview")).status_code, 403)
         async with self.Session() as db:
             other = User(email='private-reader@example.test', username='private-reader', api_key='private-reader')
             db.add(other)

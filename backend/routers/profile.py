@@ -681,7 +681,7 @@ async def unfollow_user(
 async def get_public_profile(
     user_id: int,
     db: AsyncSession = Depends(get_db, scope="function"),
-    current_user: User = Depends(get_current_user_or_api_key),
+    current_user: User | None = Depends(get_optional_user_or_api_key),
 ):
     user, profile = await _check_profile_access(user_id, current_user, db)
     is_owner = current_user and current_user.id == user_id
