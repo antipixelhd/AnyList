@@ -192,6 +192,49 @@ class SeasonDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(next(row for row in page['results'] if row['status'] == 'planning')['title'],
                          'Two seasons - Next Campaign')
 
+    async def test_editor_displays_released_total_for_placeholder_schedule(self):
+        url = f'/tracking/entry/{self.series_id}/series-editor'
+        tomorrow = (date.today() + timedelta(days=1)).isoformat()
+        async with self.Session() as db:
+            series = await db.get(Media, self.series_id)
+            series.status = 'Returning Series'
+            series.tmdb_data = {**series.tmdb_data, 'seasons': [
+                {'season_number': 1, 'episode_count': 2}, {'season_number': 2, 'episode_count': 3}]}
+            future = await db.get(Media, self.episode_ids[-1])
+            future.title, future.release_date = 'Episode 2', tomorrow
+            db.add(Media(title='Episode 3', media_type=MediaType.episode, show_id=future.show_id,
+                tmdb_id=923023, season_number=2, episode_number=3, release_date=tomorrow))
+            await db.execute(delete(WatchEvent).where(WatchEvent.media_id == future.id))
+            await db.commit()
+        response = await self.client.get(url)
+        self.assertEqual(response.status_code, 200, response.text)
+        first, current = response.json()['seasons']
+        self.assertNotIn('progress_total', first)
+        self.assertEqual((current['total'], current['progress_total'], len(current['episodes'])), (3, 1, 1))
+
+        async with self.Session() as db:
+            series = await db.get(Media, self.series_id)
+            series.tmdb_data = {**series.tmdb_data, 'next_episode_to_air': {
+                'season_number': 2, 'episode_number': 3, 'episode_type': 'finale'}}
+            await db.commit()
+        self.assertNotIn('progress_total', (await self.client.get(url)).json()['seasons'][-1])
+
+        async with self.Session() as db:
+            series = await db.get(Media, self.series_id)
+            series.tmdb_data = {key: value for key, value in series.tmdb_data.items() if key != 'next_episode_to_air'}
+            future = await db.get(Media, self.episode_ids[-1])
+            future.title, future.runtime = 'An announced episode', 54
+            await db.commit()
+        self.assertNotIn('progress_total', (await self.client.get(url)).json()['seasons'][-1])
+
+        async with self.Session() as db:
+            future = await db.get(Media, self.episode_ids[-1])
+            future.title, future.runtime, future.release_date = 'Episode 2', None, None
+            released = await db.scalar(select(Media).where(Media.tmdb_id == 923023))
+            released.release_date = date.today().isoformat()
+            await db.commit()
+        self.assertNotIn('progress_total', (await self.client.get(url)).json()['seasons'][-1])
+
     async def test_same_day_seasons_are_distinct_and_repeat_imports_and_rewatches_keep_first_date(self):
         self.assertEqual(await run_batch(self.Session), 1)
         async with self.Session() as db:

@@ -170,7 +170,7 @@ class SeriesEditorContext:
 
 async def editor_context(db, media, user_id):
     positions = {}
-    data = await season_groups(db, media, user_id, display_positions=positions)
+    data = await season_groups(db, media, user_id, display_positions=positions, include_placeholders=True)
     watched = await watched_episode_ids(db, user_id, list(positions))
     cursor = await db.scalar(select(TrackedEntry.season_cursor).where(TrackedEntry.user_id==user_id,
         TrackedEntry.media_id==media.id))
@@ -202,6 +202,28 @@ async def intent_date_edits(db, media_id, user_id, context, edits, *, number, st
     return [replacement if item is edit else item for item in edits] if edit else [*edits, replacement]
 
 
+def provisional_season_total(media, context, number, members, expected, released_ids):
+    """Use released coverage when the latest aired season has only placeholder slots ahead."""
+    data = media.tmdb_data or {}
+    if (context.order != 'tmdb:aired' or not media.tmdb_id
+            or data.get('tracking_catalogue_provider', 'tmdb') != 'tmdb'
+            or (data.get('status') or media.status) != 'Returning Series' or len(members) != expected):
+        return None
+    upcoming = [ep for ep in members if ep.id not in released_ids]
+    released_count = expected - len(upcoming)
+    if not upcoming or not released_count or not all(ep.placeholder for ep in upcoming):
+        return None
+    if any(ep.episode_number != index or (ep.id in released_ids) != (index <= released_count)
+           for index, ep in enumerate(members, 1)):
+        return None
+    for key in ('next_episode_to_air', 'last_episode_to_air'):
+        marker = data.get(key)
+        if (isinstance(marker, dict) and marker.get('episode_type') == 'finale'
+                and marker.get('season_number') == number and marker.get('episode_number') == members[-1].episode_number):
+            return None
+    return released_count
+
+
 async def editor_summary(db, media, user_id, context):
     rows = (await db.execute(select(SeriesSeason.season_number, SeriesSeason.membership_key,
         SeasonTracking.start_date, SeasonTracking.start_source, SeasonTracking.start_manual,
@@ -216,7 +238,8 @@ async def editor_summary(db, media, user_id, context):
     released = {ep.id for ep in context.released}
     seasons = []
     groups = {number: (members, expected) for number, members, expected in context.groups}
-    for number in sorted(groups.keys() | context.metadata.keys()):
+    numbers = sorted(groups.keys() | context.metadata.keys())
+    for number in numbers:
         members, expected = groups.get(number, ([], context.metadata.get(number, {}).get('episode_count') or 0))
         key = membership_key(members)
         metadata = context.metadata.get(number, {})
@@ -228,6 +251,11 @@ async def editor_summary(db, media, user_id, context):
             'upcoming': [{'id': ep.id, 'number': context.positions[ep.id][1]}
                 for ep in members if ep.id not in released]}
         season.update(saved.get((number, key), {}))
+        # Keep earlier season totals when a later season is already catalogued.
+        if number == numbers[-1]:
+            progress_total = provisional_season_total(media, context, number, members, expected, released)
+            if progress_total is not None:
+                season['progress_total'] = progress_total
         seasons.append(season)
     return {'order': context.order, 'revision': context.revision, 'seasons': seasons,
             'selected_position': context.selected_position(),

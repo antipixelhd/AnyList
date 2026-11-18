@@ -79,7 +79,7 @@ def membership_key(episodes):
     return hashlib.sha256(','.join(map(str, sorted(ep.id for ep in episodes))).encode()).hexdigest()
 
 
-async def season_groups(db, media, user_id, *, display_positions=None):
+async def season_groups(db, media, user_id, *, display_positions=None, include_placeholders=False):
     identities = []
     if media.tmdb_id:
         identities.append(Show.tmdb_id == media.tmdb_id)
@@ -88,10 +88,19 @@ async def season_groups(db, media, user_id, *, display_positions=None):
     show = await db.scalar(select(Show).where(or_(*identities))) if identities else None
     if show is None:
         return 'tmdb:aired', [], {}
-    episodes = (await db.execute(select(Media.id, Media.tmdb_id, Media.tvdb_id, Media.season_number,
+    query = select(Media.id, Media.tmdb_id, Media.tvdb_id, Media.season_number,
         Media.episode_number, Media.release_date,
         Media.tmdb_data['tracking_import_released'].as_boolean().is_(True).label('imported_release')).where(
-        Media.show_id == show.id, Media.media_type == MediaType.episode, Media.season_number > 0))).all()
+        Media.show_id == show.id, Media.media_type == MediaType.episode, Media.season_number > 0)
+    if include_placeholders:
+        placeholder = (
+            (func.lower(func.btrim(Media.title)) == func.concat('episode ', Media.episode_number))
+            & (func.coalesce(func.btrim(Media.overview), '') == '')
+            & (func.coalesce(Media.runtime, 0) <= 0)
+            & Media.tmdb_data['episode_type'].as_string().is_distinct_from('finale')
+        )
+        query = query.add_columns(placeholder.label('placeholder'))
+    episodes = (await db.execute(query)).all()
     data = media.tmdb_data or {}
     ids = data.get('tracking_episode_ids')
     catalogue = set(ids) if ids is not None else None

@@ -6,6 +6,7 @@ import {closeDialog, showDialog} from './ui-motion';
 
 type Episode = {id:number; number:number; watched:boolean};
 type Season = {season_number:number; membership:string; name?:string|null; poster?:string|null; total:number;
+  progress_total?:number;
   episodes:Episode[]; upcoming?:Pick<Episode,'id'|'number'>[]; score?:number|null;
   start_date?:string|null; completion_date?:string|null; start_source?:string|null;
   date_source?:string|null; start_manual?:boolean; date_manual?:boolean; completed?:boolean};
@@ -111,7 +112,7 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     input.min=scope?'0':'1';
     input.max=String(current?.episodes.length??0);
     if (!keepInput) input.value=String(count);
-    find('total').textContent=current ? `/ ${current.total||current.episodes.length}` : '';
+    find('total').textContent=current ? `/ ${current.progress_total??(current.total||current.episodes.length)}` : '';
     const choices=released(), index=current?choices.indexOf(current):-1;
     steps[0].disabled=input.disabled||(count>=Number(input.max)&&(!!scope||index===choices.length-1));
     steps[1].disabled=input.disabled||(count<=Number(input.min)&&(!!scope||index<=0));
