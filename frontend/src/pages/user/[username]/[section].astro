@@ -10,7 +10,6 @@ import {profileListQuery} from '../../../lib/profile-list-query';
 import {viewerMediaPreferences} from '../../../lib/viewer-media-preferences';
 import {profileListPageSize} from '../../../lib/profile-list-window';
 import {categoryChoices,type CategoryPresentation} from '../../../lib/list-categories.ts';
-import '../../../styles/virtual-profile-list.css';
 import '../../../styles/screen-list-seasons.css';
 const {username,section}=Astro.params;
 if(!['movies','series','list'].includes(section!))return Astro.redirect('/404');
@@ -30,15 +29,15 @@ const count=Object.values(data?.status_counts||{}).reduce((sum:number,value)=>su
 <Tracker title={`${username}'s ${isCombined?'Movie/Series':section==='movies'?'Movie':'Series'} List`} listLanding={!!data} ownerProfileColor={data?.profile?.profile_color} ownerIsViewer={owner}>
   {data?<>
     <ProfileHeader profile={data.profile} active={section}/>
-    <div class="list-shell" data-category-presentation={JSON.stringify(categoryPresentation)} data-virtual-list data-list-domain="screen" data-screen-scope={mediaType} data-list-endpoint={endpoint} data-list-total={data.total} data-list-counts={JSON.stringify(data.group_counts)} data-owner={String(owner)} data-status-counts={JSON.stringify(data.status_counts)}>
+    <div class="list-shell" data-category-presentation={JSON.stringify(categoryPresentation)} data-virtual-list data-list-seeded data-list-domain="screen" data-screen-scope={mediaType} data-list-endpoint={endpoint} data-list-total={data.total} data-list-counts={JSON.stringify(data.group_counts)} data-owner={String(owner)} data-status-counts={JSON.stringify(data.status_counts)}>
       <ProfileListFilters {categoryPresentation} categoryOwner={owner} statuses={resolvedStatuses} counts={data.status_counts} genres={data.genres} years={data.years} status={query.get('status')||'all'} sort={query.get('sort')||'title'} {defaultSort} query={query.get('q')||''} genre={query.get('genre')||''} year={query.get('year')||''} favorites={query.has('favorites')}/>
       <div class="list-content">
         <div class="list-toolbar"><span id="result-count" class="sr-only" aria-live="polite">{data.total} entries</span><span id="progress-feedback" class="sr-only" aria-live="assertive"></span></div>
         <div id="entry-groups">
-          {resolvedStatuses.map(([status,label])=><section class="status-section" data-list-group={status} data-group={status} hidden={!data.group_counts[status]}><h2>{label}</h2><div class="entry-table">
+          {resolvedStatuses.map(([status,label])=>{const rows=entries.filter((entry:any)=>entry.status===status);return <section class="status-section" data-list-group={status} data-group={status} hidden={!data.group_counts[status]}><h2>{label}</h2><div class="entry-table">
             <ProfileListTableHead combined={isCombined}/>
-            <div data-list-window={status} style={`--list-rows:${data.group_counts[status]||0}`}><ScreenListRows entries={entries.filter((entry:any)=>entry.status===status)} {owner} {isCombined}/></div>
-          </div></section>)}
+            <div data-list-window={status} style={`--list-rows:${data.group_counts[status]||0};--list-seeded-rows:${rows.length}`}><ScreenListRows entries={rows} {owner} {isCombined}/></div>
+          </div></section>})}
         </div>
         <div id="list-empty" class="empty-state" hidden={!!data.total}><h2>{count?'No matching titles':'Every list starts with a story'}</h2><p>{count?'Try a different search or filter.':owner?'Find a movie or series and add it to your list.':'There are no entries in this list yet.'}</p>{owner&&<a class="button-primary" href="/browse">Browse titles</a>}</div>
       </div>

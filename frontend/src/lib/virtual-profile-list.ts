@@ -205,6 +205,24 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
   function render(){
     frame=0;if(signal.aborted||!panelActive(panel)||refreshing)return;
     const rowHeight=parseFloat(getComputedStyle(root!).getPropertyValue('--list-row-height'))||56;
+    // SSR rows start in flow. Carry their measured positions into virtualization
+    // in the same frame, including rows that are taller than the default slot.
+    if(root.hasAttribute('data-list-seeded')){
+      const seeded=groups.map(group=>{
+        const rows=[...group.querySelectorAll<HTMLElement>(':scope > [data-list-entry]')];
+        const layout=new ProfileListGeometry(rowHeight);
+        rows.forEach((row,index)=>{const height=row.getBoundingClientRect().height;if(height)layout.measure(index,height);});
+        return {group,rows,layout};
+      });
+      for(const {group,rows,layout} of seeded){
+        const key=group.dataset.listWindow!;
+        layouts.set(key,layout);
+        group.style.height=`${layout.offset(counts[key]||0)}px`;
+        rows.forEach((row,index)=>row.style.setProperty('--list-offset',`${layout.offset(index)}px`));
+        group.style.removeProperty('--list-seeded-rows');
+      }
+      root.removeAttribute('data-list-seeded');
+    }
     wanted.clear();let base=0;
     const active=document.activeElement?.closest<HTMLElement>('[data-list-entry]');
     const activeId=Number(active?.dataset.listEntry);
