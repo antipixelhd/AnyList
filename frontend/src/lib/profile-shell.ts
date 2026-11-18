@@ -225,6 +225,8 @@ function setup(){
         }
       }
       const top=scrollY;
+      // Refreshing activity or stats should not replay the Overview entrance.
+      if(panel.kind==='overview')next.removeAttribute('data-animate-genres');
       panel.lifetime.abort();panel.lifetime=new AbortController();
       previous.replaceWith(next);
       panel.summary=new Blob([html]).size<=summaryBudget?html:undefined;
@@ -341,6 +343,7 @@ function setup(){
       const commit=()=>{
         if(!isCurrent())return;
         const changedPanel=shown!==panel.root;
+        if(changedPanel&&panel.kind==='overview')panel.root.querySelector('[data-profile-tab-content]')?.setAttribute('data-animate-genres','');
         stopProgress();setPanelWaiting(source,false);show(panel.root);active=key;document.body.toggleAttribute('data-list-landing',isProfileList(key));
         if(outgoing!==panel&&isProfileSummary(outgoing.kind)&&outgoing.summary===undefined)forget(outgoing);
         pruneLists(panel);
@@ -393,6 +396,7 @@ function setup(){
   function snapshot(panel:Panel,compact=false){
     if(!panel.ready||panel.preparing||panel.root.querySelector('[data-profile-writing],[data-reordering="true"]'))return;
     const copy=document.createElement('template').content.ownerDocument.importNode(panel.root,true);
+    if(panel.kind==='overview')copy.querySelector('[data-profile-tab-content]')?.setAttribute('data-animate-genres','');
     copy.querySelectorAll('[data-token]').forEach(element=>element.removeAttribute('data-token'));
     copy.querySelectorAll('[data-list-row-key]').forEach(row=>row.removeAttribute('data-list-row-key'));
     if(isProfileList(panel.kind)){
