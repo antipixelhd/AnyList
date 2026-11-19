@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 os.environ.setdefault('SECRET_KEY', 'test-only-secret')
 os.environ.setdefault('DATABASE_URL', 'postgresql+asyncpg://test:test@localhost/test')
 
-from core.media_images import provider_images, unique_images, screen_images
+from core.media_images import IMAGE_POLICY_VERSION, provider_images, unique_images, screen_images
 from types import SimpleNamespace
 from core import tmdb
 
@@ -50,6 +50,29 @@ class ImageProjectionTests(unittest.TestCase):
         self.assertEqual(len(result['artwork']),1)
         self.assertTrue(all(url.startswith('https://artworks.thetvdb.com/') for rows in result.values() for url in rows))
 
+    def test_tvdb_original_language_is_only_a_fallback_for_textless_landscapes(self):
+        from core.screen_artwork import artwork_candidates
+
+        types = [{'id': 11, 'name': 'Background', 'recordType': 'series', 'width': 1920, 'height': 1080}]
+        base = 'https://artworks.thetvdb.com/banners/'
+        localized = {'type': 11, 'image': base + 'german.jpg', 'language': 'ger', 'includesText': False, 'score': 100}
+        rows = [localized,
+                {**localized, 'image': base + 'german-text.jpg', 'includesText': True},
+                {**localized, 'image': base + 'german-unknown.jpg', 'includesText': None},
+                {**localized, 'image': base + 'other.jpg', 'language': 'fra'},
+                {**localized, 'image': base + 'neutral-portrait.jpg', 'language': None, 'width': 500}]
+
+        def artwork(assets, language):
+            raw = artwork_candidates({'artworks': assets}, types, 'series', original_language=language)
+            return provider_images(raw, 'tvdb')['artwork']
+
+        self.assertEqual(artwork(rows, 'deu'), [localized['image']])
+        self.assertEqual(artwork(rows, None), [])
+        for preferred in (None, 'eng'):
+            with self.subTest(language=preferred):
+                landscape = {**localized, 'image': base + 'preferred.jpg', 'language': preferred, 'score': 1}
+                self.assertEqual(artwork([*rows, landscape], 'deu'), [landscape['image']])
+
     def test_english_text_posters_exclude_textless_and_other_languages(self):
         rows = provider_images({'posters': [{'file_path':'/neutral.jpg','iso_639_1':None},
             {'file_path':'/german.jpg','iso_639_1':'de'}, {'file_path':'/english.jpg','iso_639_1':'en'}]})
@@ -86,6 +109,60 @@ class ImageProjectionTests(unittest.TestCase):
 
 
 class ImageProviderTests(unittest.IsolatedAsyncioTestCase):
+    async def test_original_language_refreshes_cached_empty_preview_and_gallery_on_demand(self):
+        from core.media_images import fill_artwork_preview, fill_screen_images
+
+        expires = '2099-01-01T00:00:00+00:00'
+        scene = 'https://artworks.thetvdb.com/banners/german.jpg'
+        thumbnail = 'https://artworks.thetvdb.com/banners/german_t.jpg'
+        media = SimpleNamespace(id=7, tmdb_id=99, imdb_id=None, media_type=SimpleNamespace(value='series'),
+            poster_path='/primary.jpg', backdrop_path=None, tmdb_data={
+                'original_language': 'de-DE',
+                '_anylist_artwork_preview': {'image': None, 'expires_at': expires},
+                '_anylist_images': {'version': IMAGE_POLICY_VERSION, 'artwork': [], 'expires_at': expires},
+            })
+        db = SimpleNamespace(refresh=AsyncMock(), commit=AsyncMock())
+
+        async def execute(statement):
+            for value in statement.compile().params.values():
+                if isinstance(value, dict):
+                    media.tmdb_data.update(value)
+
+        db.execute = AsyncMock(side_effect=execute)
+        provider_responses = {
+            '/series/82495/artworks': {'data': {'id': 82495, 'artworks': [
+                {'type': 11, 'image': scene, 'thumbnail': thumbnail, 'language': 'deu', 'includesText': False}]}},
+            '/artwork/types': {'data': [{'id': 11, 'name': 'Background', 'recordType': 'series',
+                                        'width': 1920, 'height': 1080}]},
+        }
+
+        async def fetch(path, key):
+            return provider_responses[path]
+
+        self.assertEqual(screen_images(media, {})['preview_status']['state'], 'pending')
+        self.assertEqual(screen_images(media, {})['image_status']['state'], 'pending')
+        with (patch('core.screen_artwork.screen_sources', AsyncMock(return_value=[('tmdb', 99), ('tvdb', 82495)])),
+              patch('core.tvdb._get', AsyncMock(side_effect=fetch)) as provider,
+              patch('core.tmdb.get_show_light', AsyncMock(return_value={'poster_path': '/primary.jpg'})) as poster,
+              patch('core.tmdb.get_external_ids', AsyncMock()) as identities,
+              patch('core.media_image_analysis.inspect_image', AsyncMock(return_value=None)) as inspect):
+            await fill_artwork_preview(db, media, 'tmdb-key', 'tvdb-key')
+            await fill_artwork_preview(db, media, 'tmdb-key', 'tvdb-key')
+            self.assertEqual(provider.await_count, 2)
+            poster.assert_not_awaited()
+            inspect.assert_not_awaited()
+            await fill_screen_images(db, media, 'tmdb-key', 'tvdb-key')
+            await fill_screen_images(db, media, 'tmdb-key', 'tvdb-key')
+            self.assertEqual(provider.await_count, 4)
+            poster.assert_awaited_once_with(99, 'tmdb-key', language='en-US')
+            identities.assert_not_awaited()
+
+        result = screen_images(media, {})
+        self.assertEqual(result['artwork_preview'], {'image': scene, 'thumbnail': thumbnail})
+        self.assertEqual(result['artwork'], [scene])
+        self.assertEqual(result['preview_status']['state'], 'ready')
+        self.assertEqual(result['image_status']['state'], 'ready')
+
     async def test_missing_bridge_is_distinct_from_provider_failure(self):
         from core.screen_artwork import title_artwork, ArtworkIdentityUnavailable
         media=SimpleNamespace(media_type=SimpleNamespace(value='series'),tmdb_id=323132,imdb_id=None,
