@@ -460,10 +460,11 @@ class SeasonDatabaseTests(unittest.IsolatedAsyncioTestCase):
         first, current = response.json()['seasons']
         self.assertNotIn('progress_total', first)
         self.assertEqual((current['total'], current['progress_total'], len(current['episodes'])), (3, 1, 1))
-        rows = (await self.client.get(f'{profile}/rows', params=[('ids', -self.series_id)])).json()
+        active_id = season_row_id(self.series_id, 2)
+        rows = (await self.client.get(f'{profile}/rows', params=[('ids', active_id)])).json()
         self.assertEqual((rows[0]['progress'], rows[0]['list_season']['total']), (1, 1))
         page = (await self.client.get(f'{profile}/list')).json()
-        active = next(row for row in page['results'] if row['list_id'] == -self.series_id)
+        active = next(row for row in page['results'] if row.get('list_id') == active_id)
         self.assertEqual(active['list_season']['total'], 1)
         seasons = (await self.client.get(f'{profile}/{self.series_id}/seasons')).json()['seasons']
         self.assertEqual((seasons[-1]['total'], seasons[-1]['completed']), (1, False))
@@ -474,7 +475,7 @@ class SeasonDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 'season_number': 2, 'episode_number': 3, 'episode_type': 'finale'}}
             await db.commit()
         self.assertNotIn('progress_total', (await self.client.get(url)).json()['seasons'][-1])
-        rows = (await self.client.get(f'{profile}/rows', params=[('ids', -self.series_id)])).json()
+        rows = (await self.client.get(f'{profile}/rows', params=[('ids', active_id)])).json()
         self.assertEqual(rows[0]['list_season']['total'], 3)
 
         async with self.Session() as db:

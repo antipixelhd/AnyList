@@ -4363,7 +4363,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
                 await push_stremio_progress('token',record)
 
 
-    async def test_new_series_observation_advances_cumulatively_and_completed_stays_completed(self):
+    async def test_series_playback_and_completion_leave_earlier_episodes_unwatched(self):
         from core.tracking_snapshot import observe_stream_snapshot
         self.show.tmdb_id=987654311
         self.show.tmdb_data={'tracking_catalogue_refreshed_at':'fixture'}
@@ -4382,23 +4382,19 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         row={'content_id':'tt-series','content_type':'series','season':2,'episode':1,'position':30,'duration':100}
         await observe_stream_snapshot(self.db,conn,[],[],[row],{'tt-series':self.show.tmdb_id})
         entry=(await self.db.execute(select(TrackedEntry).where(TrackedEntry.user_id==self.owner.id))).scalar_one()
-        self.assertEqual(entry.progress,2);self.assertEqual(entry.status,'watching')
+        self.assertEqual((entry.progress, entry.status), (0, 'watching'))
         baseline.observed_at=datetime.now()+timedelta(seconds=1);await self.db.commit()
         await observe_stream_snapshot(self.db,conn,[],[],[{**row,'position':95}],{'tt-series':self.show.tmdb_id})
-        self.assertEqual(entry.progress,3);self.assertEqual(entry.status,'completed')
-        self.assertEqual(entry.finish_date,date.today())
+        self.assertEqual((entry.progress, entry.status), (1, 'watching'))
         watched=set((await self.db.execute(select(WatchEvent.media_id).where(WatchEvent.user_id==self.owner.id))).scalars())
-        self.assertEqual(watched,{e.id for e in episodes[1:4]})
-        baseline.observed_at=datetime.now()+timedelta(seconds=1);await self.db.commit()
-        await observe_stream_snapshot(self.db,conn,[],[],[row],{'tt-series':self.show.tmdb_id})
-        self.assertEqual(entry.status,'completed')
+        self.assertEqual(watched, {episodes[3].id})
         activity=(await self.db.execute(select(TrackingActivity).where(
             TrackingActivity.user_id==self.owner.id,TrackingActivity.media_id==self.show.id))).scalars().all()
         self.assertEqual(len(activity),2)
         progress=[row for row in activity if row.payload.get('episodes_watched')]
         statuses=[row for row in activity if row.payload.get('season_status')]
         self.assertEqual(len(progress),1);self.assertEqual(len(statuses),1)
-        self.assertEqual(progress[0].payload['episodes_watched'],3)
+        self.assertEqual(progress[0].payload['episodes_watched'],1)
         self.assertEqual(progress[0].payload['position'],'S2E1')
         self.assertEqual(statuses[0].status,'watching')
         self.assertEqual(statuses[0].payload['season_number'],1)
@@ -4425,11 +4421,11 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         await observe_stream_snapshot(self.db,conn,[],[],[row],{'tt-tvdb-series':self.show.tmdb_id})
         entry=(await self.db.execute(select(TrackedEntry).where(
             TrackedEntry.user_id==self.owner.id,TrackedEntry.media_id==self.show.id))).scalar_one()
-        self.assertEqual(entry.progress,3)
-        self.assertEqual(entry.status,'completed')
+        self.assertEqual(entry.progress,1)
+        self.assertEqual(entry.status,'watching')
         watched=set((await self.db.execute(select(WatchEvent.media_id).where(
             WatchEvent.user_id==self.owner.id,WatchEvent.completed.is_(True)))).scalars())
-        self.assertEqual(watched,{episode.id for episode in episodes})
+        self.assertEqual(watched, {episodes[-1].id})
 
     async def test_correcting_to_watching_discards_stale_saved_progress(self):
         from core.stream_actions import dispatch_stream_actions
@@ -5052,7 +5048,7 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(nuvio, '_pull_watched_items', AsyncMock(return_value=history)), \
                 patch.object(nuvio, '_pull_watch_progress', AsyncMock(side_effect=lambda *args: current_progress)), \
                 patch.object(nuvio, '_rpc', AsyncMock(side_effect=rpc)), \
-                patch('core.tracking_snapshot.apply_series_observation', AsyncMock(return_value=False)):
+                patch('core.tracking_snapshot.apply_series_observation', AsyncMock(return_value=(False, False))):
             for initial_status in ('paused', 'dropped'):
                 for origin in ('anylist', 'tv', 'mobile'):
                     with self.subTest(status=initial_status, origin=origin):

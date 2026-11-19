@@ -843,7 +843,7 @@ async def observe_stream_snapshot(
                         score=activity_score,status_changed=entry.status != previous_status or newly_tracked,
                         previous_status=None if newly_tracked else previous_status,
                         first_watching=newly_tracked or (previous_start_date is None and previous_status != 'watching'))
-            if playback_changed and baseline.approved:
+            if playback_changed and baseline.approved and (activity in new_completed or activity.get('synthetic_resume')):
                 from core.stream_actions import queue_restorations
                 await queue_restorations(db, conn.user_id, media, exclude_connection_id=conn.id)
             elif row in changed_active and baseline.approved:
