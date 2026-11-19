@@ -771,6 +771,7 @@ async def observe_stream_snapshot(
                         await queue_progress_update(db, conn, media, row)
                     continue
             playback_changed = False
+            new_series_watches = set()
             if media.media_type==MediaType.series and ordering=='apply':
                 finishes = [item for item in observation_rows if item in new_completed]
                 new_bits = [item for item in finishes if watch_key(item) not in old_watched]
@@ -781,8 +782,10 @@ async def observe_stream_snapshot(
                 is_complete, playback_changed = await apply_series_observation(
                     db, conn.user_id, media, entry, finishes, activity,
                     activity_finished=activity in finishes, infer_previous=first,
-                    newly_watched_ids=inferred_watch_ids if sync_watched else None,
+                    newly_watched_ids=new_series_watches,
                 )
+                if sync_watched:
+                    inferred_watch_ids.update(new_series_watches)
             proposed = observed_status(previous_status, is_complete, True)
             if ordering=='conflict':
                 # An unordered observation must not overwrite progress or fan
@@ -834,6 +837,7 @@ async def observe_stream_snapshot(
                 if media.media_type == MediaType.series:
                     await record_progress_activity(db,user_id=conn.user_id,media=media,
                         previous_progress=0 if newly_tracked else previous_progress,progress=entry.progress,
+                        added_episode_ids=new_series_watches,
                         status=entry.status,score=activity_score,
                         status_changed=(entry.status != previous_status or newly_tracked) and not (progress_changed or newly_tracked and entry.progress > 0),
                         previous_status=None if newly_tracked else previous_status,

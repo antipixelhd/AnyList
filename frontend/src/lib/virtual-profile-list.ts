@@ -270,6 +270,7 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
       if(anchor.row.isConnected){const shift=anchor.row.getBoundingClientRect().top-anchor.top;if(Math.abs(shift)>.5)window.scrollBy(0,shift);}
       anchor=undefined;
     }
+    preview.refresh();
     // Prefetch adjacent ranges, but put visible demand first after large jumps.
     const primary=[...wanted];primary.forEach(offset=>{if(offset+profileListPageSize<total)wanted.add(offset+profileListPageSize);if(offset>0)wanted.add(offset-profileListPageSize);});
     const nearbyIds=new Set<number>();

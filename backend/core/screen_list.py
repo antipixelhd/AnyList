@@ -295,7 +295,8 @@ def place_series(entry, data, reconciled, episodes, release):
                 if isinstance(info, dict) and (info.get('season_number') or 0) > 0} if order == 'tmdb:aired' else {}
     seasons = {number: list_season(number, info, score=scores.get(str(number))) for number, info in metadata.items()}
     for row in reconciled:
-        info = row.metadata_payload or metadata.get(row.season_number, {})
+        info = {**metadata.get(row.season_number, {}),
+                **{key: value for key, value in (row.metadata_payload or {}).items() if value}}
         score = row.rating if row.rating is not None else scores.get(str(row.season_number)) if order == 'tmdb:aired' else None
         seasons[row.season_number] = list_season(row.season_number, info, total=row.size,
             watched=row.watched_episodes, completed=row.completed, score=score, order=order)

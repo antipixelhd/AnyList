@@ -127,6 +127,7 @@ async def remove_season_milestone(db, card, *, target=None):
         await db.delete(card)
         return
     for key in ('season_start_id','season_completion_id','series_completed','finished_seasons','completion_date_source',
+                'watch_batch', 'completion_batch_date',
                 'started_watching','continued_watching'):
         details.pop(key,None)
     if card.status == 'watching':
@@ -192,7 +193,7 @@ def completion_covers_progress(target, window_start, activity_at, *, manual=Fals
             or manual and activity_at.date() >= target.created_at.date())
 
 
-async def absorb_completed_progress(db, cards, milestones, groups, order, *, manual_completions=()):
+async def absorb_completed_progress(db, cards, milestones, groups, order, *, manual_completions=(), bulk_watch=None):
     """Fold in overlapping activity and later progress in a manually completed season.
 
     Resolve by canonical episode identity so alternate orders and windows that
@@ -251,6 +252,7 @@ async def absorb_completed_progress(db, cards, milestones, groups, order, *, man
         if not pairs or not payload.get('episodes_watched'):
             return
         snapshot = {key: payload[key] for key in ('window_key', 'window_started_at', 'progress_order',
+            'progress_scope', 'progress_season', 'watch_batch',
             'watched_start_ids', 'progress_start', 'progress') if key in payload}
         snapshot.update(progress_episode_ids=[ep_id for ep_id, _ in pairs],
                         episode_positions=[label for _, label in pairs], created_at=activity_at.isoformat(),
@@ -276,8 +278,11 @@ async def absorb_completed_progress(db, cards, milestones, groups, order, *, man
         start = activity_window_start(card)
         local_at = datetime.fromisoformat(details['streaming_base_at']) if details.get('streaming_base_at') else card.created_at
         overlaps = [target for target in completions if completion_covers_progress(target, start, local_at)]
-        targets = [target for target in completions if completion_covers_progress(target, start, local_at,
-            manual=str(target.payload['season_number']) in manual_completions)]
+        from_bulk_edit = bulk_watch and details.get('watch_batch') == bulk_watch.key
+        targets = [target for target in completions if (
+            from_bulk_edit and members.get(target.payload['season_number'], set()) & bulk_watch.added_ids
+            or completion_covers_progress(target, start, local_at,
+                manual=str(target.payload['season_number']) in manual_completions))]
         if not targets:
             continue
         covered = set().union(*(members.get(target.payload['season_number'], set()) for target in targets))
@@ -331,6 +336,7 @@ def restore_absorbed_progress(db, cards, snapshots, *, user_id, media_id, watche
             continue
         row = next((card for card in cards if card not in db.deleted
             and not (card.payload or {}).get('episode_order') and
+            (card.payload or {}).get('progress_scope') == snapshot.get('progress_scope') and
             (card.payload or {}).get('window_started_at') == snapshot.get('window_started_at')), None)
         if row is None:
             row = TrackingActivity(user_id=user_id, media_id=media_id, status=snapshot['status'], score=snapshot.get('score'),
@@ -341,10 +347,12 @@ def restore_absorbed_progress(db, cards, snapshots, *, user_id, media_id, watche
         pairs = dict(zip(details.get('progress_episode_ids', []), details.get('episode_positions', []))) | dict(pairs)
         pairs = {key: label for key, label in pairs.items() if key in watched_ids and key not in completed_ids}
         pairs = sorted(pairs.items(), key=lambda pair: tuple(map(int,pair[1][1:].split('E'))))
-        baseline = set(snapshot.get('watched_start_ids') or []) | completed_ids
+        covered = completed_ids & set(snapshot['progress_episode_ids'])
+        baseline = set(snapshot.get('watched_start_ids') or []) | covered
         if details.get('watched_start_ids') is not None:
-            baseline &= set(details['watched_start_ids']) | completed_ids
-        details.update({key: snapshot[key] for key in ('window_key', 'window_started_at', 'progress_order') if key in snapshot})
+            baseline &= set(details['watched_start_ids']) | covered
+        details.update({key: snapshot[key] for key in ('window_key', 'window_started_at', 'progress_order',
+            'progress_scope', 'progress_season', 'watch_batch') if key in snapshot})
         details.update(progress_episode_ids=[key for key, _ in pairs], episode_positions=[label for _, label in pairs],
             episodes_watched=len(pairs), watched_start_ids=sorted(baseline), progress_start=len(baseline),
             progress=len(baseline | set(dict(pairs))), position_start=pairs[0][1], position=pairs[-1][1])
@@ -421,7 +429,7 @@ async def record_season_activity(db, *, user_id, media, status, score,
         for row in rows:
             payload = dict(row.payload or {})
             positions = payload.get('episode_positions') or []
-            if in_window(row, now) and payload.get('episodes_watched') and positions and all(
+            if not payload.get('progress_scope') and in_window(row, now) and payload.get('episodes_watched') and positions and all(
                     position.startswith(f'S{number}E') for position in positions):
                 payload.update(episodes_watched=0, finished_seasons=[])
                 row.payload = payload
@@ -510,10 +518,9 @@ def present_series_activity(activity, media, *, today=None):
                  for s in (media.tmdb_data or {}).get('seasons', []) if isinstance(s, dict)
                  and (s.get('season_number') or 0) > 0 and s.get('air_date')
                  and str(s['air_date'])[:10] <= today}
-    recorded = details.get('season_number') or max(details.get('finished_seasons') or [0])
-    import re
-    position = re.match(r'S(\d+)E\d+', str(details.get('position') or ''))
-    recorded = recorded or (int(position[1]) if position else 0)
+    position = activity_season_number(details.get('position'))
+    recorded = (details.get('season_number') or details.get('progress_season')
+                or max(details.get('finished_seasons') or [0]) or (position[0] if position else 0))
     if details.get('series_completed') and any(number > recorded for number in premieres):
         details['series_completed'] = False
         details['status_changed'] = False
@@ -526,3 +533,74 @@ def present_series_activity(activity, media, *, today=None):
             (activity.status == 'watching' and details.get('started_watching'))):
         details.update(season_status=True, season_number=recorded or 1)
     return details
+
+
+def activity_season_number(position):
+    import re
+    match = re.fullmatch(r'S(\d+)E(\d+)', position) if isinstance(position, str) else None
+    return tuple(map(int, match.groups())) if match else None
+
+
+def season_activity_parts(activity, details):
+    """Split older title-wide watch windows using their retained season evidence."""
+    if details.get('watch_batch') or details.get('progress_scope') or details.get('episode_order'):
+        yield details, activity.created_at, details.get('progress_scope')
+        return
+
+    from collections import defaultdict
+    positions = defaultdict(set)
+    event_times = defaultdict(list)
+    completions = set(details.get('finished_seasons') or [])
+    streaming = details.get('streaming_events') or {}
+    base = details.get('streaming_base', {} if streaming else details)
+    local_positions = list(base.get('episode_positions') or [])
+    counted_range = None
+    unsplit = None
+    if not local_positions and (count := base.get('episodes_watched')):
+        first = activity_season_number(base.get('position_start'))
+        last = activity_season_number(base.get('position'))
+        if first and last and first[0] == last[0]:
+            counted_range = (first[0], first[1], last[1], count)
+            local_positions = [base['position_start'], base['position']]
+        elif last and base.get('episodes_watched') == 1:
+            local_positions = [base['position']]
+        elif streaming or len(completions) > 1:
+            unsplit = {**base, 'finished_seasons': []}
+    local_time = datetime.fromisoformat(details['streaming_base_at']) if details.get('streaming_base_at') else activity.created_at
+    for label in local_positions:
+        if parsed := activity_season_number(label):
+            positions[parsed[0]].add(parsed[1])
+            event_times[parsed[0]].append(local_time)
+    for event in streaming.values():
+        if event.get('episodes_watched') and (parsed := activity_season_number(event.get('position'))):
+            positions[parsed[0]].add(parsed[1])
+            event_times[parsed[0]].append(datetime.fromisoformat(event['date']))
+        for number in event.get('finished_seasons') or []:
+            completions.add(number)
+            event_times[number].append(datetime.fromisoformat(event['date']))
+    seasons = positions.keys() | completions
+    if not seasons or len(seasons) == 1 and not streaming:
+        yield details, activity.created_at, f'watch:{next(iter(seasons))}' if seasons else None
+        return
+
+    if unsplit:
+        yield unsplit, local_time, 'legacy-watch'
+    recorded = details.get('season_number')
+    if recorded not in seasons:
+        recorded = max(seasons, key=lambda number: (max(event_times[number], default=activity.created_at), number))
+    for number in sorted(seasons, reverse=True):
+        episodes = sorted(positions[number])
+        labels = [f'S{number}E{episode}' for episode in episodes]
+        count = len(episodes)
+        if counted_range and number == counted_range[0]:
+            _, first, last, local_count = counted_range
+            inside = sum(first <= episode <= last for episode in episodes)
+            count += max(0, local_count - inside)
+        part = {key: value for key, value in details.items() if key not in ('streaming_events', 'streaming_base')}
+        part.update(progress_season=number, episodes_watched=count, episode_positions=labels,
+                    position_start=labels[0] if labels else None, position=labels[-1] if labels else None,
+                    finished_seasons=[number] if number in completions else [])
+        if number != recorded or unsplit:
+            part.update(status_changed=False, rating_changed=False, rating_first=False, rating_snapshot=False,
+                        series_completed=False, season_status=False, season_number=number)
+        yield part, max(event_times[number], default=activity.created_at), f'watch:{number}'

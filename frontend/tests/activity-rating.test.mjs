@@ -73,6 +73,20 @@ test('season status cards describe the season without episode clutter',()=>{
   assert.equal(activityAction({...activity,status:'planning'}),'Plans to watch Season 3 of');
 });
 
+test('season names appear in watch, completion and rating cards', () => {
+  const activity = {media: {type: 'series'}, status: 'watching', score: 7};
+  const names = {3: 'The Third Campaign'};
+  assert.equal(activityAction({...activity, payload: {
+    season_names: names, episodes_watched: 2, position_start: 'S3E4', position: 'S3E5',
+  }}), 'Watched The Third Campaign Episode 4–5 of');
+  assert.equal(activityAction({...activity, payload: {
+    season_names: names, finished_seasons: [2, 3], series_completed: true,
+  }}), 'Completed Season 2 and The Third Campaign of');
+  const rated = {...activity, payload: {season_names: names, rating_changed: true, season_rating_group: true, season_ratings: {3: 7}}};
+  assert.equal(activityAction(rated), 'Rated The Third Campaign of');
+  assert.equal(activityRating(rated).breakdown[0].label, 'The Third Campaign');
+});
+
 test('grouped ratings use ranges, average and per-season accessible scores',()=>{
   const activity={media:{type:'series'},score:7,payload:{season_rating_group:true,rating_changed:true,season_ratings:{1:6,2:8,3:7,5:7,8:7}}};
   assert.equal(activityAction(activity),'Rated Seasons 1–3, 5, 8 of');

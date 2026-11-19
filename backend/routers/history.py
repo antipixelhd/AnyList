@@ -2007,9 +2007,9 @@ async def mark_as_watched(
             if root_media.media_type == MediaType.series:
                 if entry.progress != previous_progress or next_status != previous_status:
                     await record_progress_activity(db,user_id=current_user.id,media=root_media,
-                        # Earlier episodes may be inferred from one explicit
-                        # episode write; only that written episode is today's activity.
-                        previous_progress=max(previous_progress, entry.progress - 1),progress=entry.progress,
+                        # Only the explicitly logged episode is today's activity.
+                        previous_progress=previous_progress,progress=entry.progress,
+                        added_episode_ids={media.id} if entry.progress != previous_progress else set(),
                         status=entry.status,score=activity_score,
                         status_changed=next_status != previous_status and entry.progress == previous_progress,
                         previous_status=previous_status,

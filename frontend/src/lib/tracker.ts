@@ -62,20 +62,20 @@ export function activityRating(activity: any) {
     const ratings = activity.rating_breakdown;
     if (ratings?.series_score > 0) breakdown.push({label: 'Series rating', score: ratings.series_score});
     for (const [number, score] of Object.entries(ratings?.season_scores || {}).sort(([a], [b]) => Number(a) - Number(b))) {
-      if (Number(number) > 0 && typeof score === 'number' && score > 0) breakdown.push({label: `Season ${number}`, score});
+      if (Number(number) > 0 && typeof score === 'number' && score > 0) breakdown.push({label: activitySeasonLabel(details,number), score});
     }
     // A historical card can outlive its list entry or come from an older feed.
     if (!breakdown.length) {
-      if (seasons.length) breakdown.push(...seasons.map(({number, score}) => ({label: `Season ${number}`, score})));
+      if (seasons.length) breakdown.push(...seasons.map(({number, score}) => ({label: activitySeasonLabel(details,number), score})));
       else if (details.season_number > 0 && (details.rating_snapshot || details.season_rating_group))
-        breakdown.push({label: `Season ${details.season_number}`, score: current});
+        breakdown.push({label: activitySeasonLabel(details,details.season_number), score: current});
       else breakdown.push({label: 'Series rating', score: current});
     }
   }
   const label = previous == null
     ? `Rated ${scoreLabel(current)} out of 10`
     : `Rating changed from ${scoreLabel(previous)} to ${scoreLabel(current)} out of 10`;
-  return { previous, current, label: seasons.length > 1 ? `Average ${scoreLabel(current)} out of 10. ${seasons.map(row=>`Season ${row.number}: ${scoreLabel(row.score)}`).join(', ')}` : label,
+  return { previous, current, label: seasons.length > 1 ? `Average ${scoreLabel(current)} out of 10. ${seasons.map(row=>`${activitySeasonLabel(details,row.number)}: ${scoreLabel(row.score)}`).join(', ')}` : label,
     seasons, breakdown, breakdownId: breakdown.length && activity.key ? `activity-ratings-${encodeURIComponent(activity.key)}` : undefined };
 }
 
@@ -87,6 +87,26 @@ export function seasonRange(numbers:number[]) {
     ranges.push(first===last?String(first):`${first}–${last}`);
   }
   return ranges.join(', ');
+}
+
+function activitySeasonLabel(details:any,number:number|string){
+  return details.season_names?.[number] || `Season ${number}`;
+}
+
+function activitySeasonList(details:any,numbers:number[],compact=false){
+  if(numbers.some(number=>details.season_names?.[number]))
+    return new Intl.ListFormat('en').format(numbers.map(number=>activitySeasonLabel(details,number)));
+  return `${numbers.length===1?'Season':'Seasons'} ${compact?seasonRange(numbers):numbers.join(' and ')}`;
+}
+
+function activityEpisodeLabel(details:any){
+  const startPosition=details.position_start || (details.episodes_watched===1?details.position:null);
+  const first=/^S(\d+)E(\d+)$/.exec(startPosition);
+  const last=/^S(\d+)E(\d+)$/.exec(details.position);
+  if(!first||!last)return null;
+  const label=`${activitySeasonLabel(details,first[1])} Episode ${first[2]}`;
+  if(first[1]===last[1])return first[2]===last[2]?label:`${label}–${last[2]}`;
+  return `${label} through ${activitySeasonLabel(details,last[1])} Episode ${last[2]}`;
 }
 
 export function activityCompletionSuffix(activity:any){
@@ -107,35 +127,26 @@ export function activityAction(activity: any) {
   }
   const finished = details.finished_seasons || [];
   if(activity.media?.type==='series'){
-    if(details.series_completed)return 'Completed';
+    if(details.series_completed&&finished.length<2)return 'Completed';
     if(details.season_status&&details.status_changed&&details.season_number){
       const verb=({planning:'Plans to watch',watching:details.continued_watching?'Continued watching':'Started watching',paused:'Paused',dropped:'Dropped'} as Record<string,string>)[activity.status];
-      if(verb)return `${verb} Season ${details.season_number} of`;
+      if(verb)return `${verb} ${activitySeasonLabel(details,details.season_number)} of`;
     }
     if(details.season_rating_group&&details.rating_changed){
       const seasons=Object.keys(details.season_ratings||{}).map(Number);
-      return `${firstRating(details)?'Rated':'Changed rating for'} ${seasons.length===1?'Season':'Seasons'} ${seasonRange(seasons)} of`;
+      return `${firstRating(details)?'Rated':'Changed rating for'} ${activitySeasonList(details,seasons,true)} of`;
     }
   }
   if (!details.season_completion_id && details.status_changed && ['completed', 'dropped', 'paused', 'planning'].includes(activity.status)) {
     return activity.status === 'planning' ? 'Plans to watch' : statuses.find(([status]) => status === activity.status)?.[1] || 'Updated';
   }
   if (activity.media?.type === 'series' && finished.length) {
-    const seasons = finished.join(finished.length > 1 ? ' and ' : '');
-    return `Completed ${finished.length === 1 ? 'Season' : 'Seasons'} ${seasons} of`;
-  }
-  const startPosition = details.position_start || (details.episodes_watched === 1 ? details.position : null);
-  if (activity.media?.type === 'series' && details.episodes_watched && startPosition && details.position) {
-    const first = /^S(\d+)E(\d+)$/.exec(startPosition);
-    const last = /^S(\d+)E(\d+)$/.exec(details.position);
-    if (first && last) {
-      if (first[1] === last[1]) {
-        return `Watched Season ${first[1]} Episode ${first[2]}${first[2] === last[2] ? '' : `–${last[2]}`} of`;
-      }
-      return `Watched Season ${first[1]} Episode ${first[2]} through Season ${last[1]} Episode ${last[2]} of`;
-    }
+    const watched=details.bulk_progress&&activityEpisodeLabel(details);
+    return `Completed ${activitySeasonList(details,finished)}${watched?` and watched ${watched}`:''} of`;
   }
   if (activity.media?.type === 'series' && details.episodes_watched) {
+    const episode = activityEpisodeLabel(details);
+    if (episode) return `Watched ${episode} of`;
     const count = Number(details.episodes_watched);
     const end = Number(details.progress);
     if (Number.isFinite(end) && end > 0) {

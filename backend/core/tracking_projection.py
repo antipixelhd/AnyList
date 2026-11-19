@@ -4,6 +4,7 @@ These functions read already-loaded values; they do not query or mutate state.
 """
 
 from models.media import Media
+from datetime import datetime
 from core.tracking_rules import effective_score
 from core.movie_financials import movie_financials
 
@@ -134,7 +135,7 @@ def activity_data(rows, *, include_user=False, limit=12, today=None):
     """Present fixed-window cards, retaining UTC-day grouping for legacy rows."""
     from core.activity import has_activity_event, merge_activity_payload
     from core.streaming_evidence import streaming_episode_span
-    from core.season_activity import present_series_activity
+    from core.season_activity import present_series_activity, season_activity_parts
 
     grouped = {}
     for row in rows:
@@ -142,14 +143,22 @@ def activity_data(rows, *, include_user=False, limit=12, today=None):
         details = present_series_activity(activity, media, today=today)
         user = row[2] if include_user else None
         profile = row[3] if include_user else None
-        key = (
-            user.id if user else activity.user_id,
-            media.id,
-            (activity.payload or {}).get("window_key")
-            or (activity.payload or {}).get("window_started_at")
-            or activity.created_at.date().isoformat(),
-        )
-        if key not in grouped:
+        window = (details.get('window_key') or details.get('window_started_at')
+                  or activity.created_at.date().isoformat())
+        parts = (season_activity_parts(activity, details) if media.media_type.value == 'series'
+                 else [(details, activity.created_at, None)])
+        for part, created_at, scope in parts:
+            batch = part.get('watch_batch')
+            action_window = f'bulk:{batch}' if batch else f'{window}:{scope}' if scope else window
+            key = (activity.user_id, media.id, action_window)
+            if key in grouped:
+                current = grouped[key]
+                combined = merge_activity_payload(current['payload'], part)
+                combined['series_completed'] = bool(current['payload'].get('series_completed') or part.get('series_completed'))
+                if batch and part.get('completion_batch_date'):
+                    combined['completion_batch_date'] = part['completion_batch_date']
+                current['payload'] = combined
+                continue
             grouped[key] = {
                 "key": f"{key[0]}:{key[1]}:{key[2]}",
                 **(
@@ -164,22 +173,27 @@ def activity_data(rows, *, include_user=False, limit=12, today=None):
                 ),
                 "status": activity.status,
                 "score": activity.score,
-                "payload": details,
-                "created_at": activity.created_at,
+                "payload": part,
+                "created_at": created_at,
                 "media": media_data(media),
+                "_media_record": media,
             }
-        else:
-            grouped[key]["payload"] = merge_activity_payload(
-                grouped[key]["payload"], details
-            )
     for activity in grouped.values():
-        if activity['payload'].get('series_completed'):
+        details = activity['payload']
+        media = activity.pop('_media_record')
+        if details.get('completion_batch_date') and activity['created_at'].date().isoformat() != details['completion_batch_date']:
+            activity['created_at'] = datetime.fromisoformat(details['completion_batch_date'])
+        if details.get('watch_batch') and details.get('finished_seasons') and details.get('episodes_watched'):
+            details['bulk_progress'] = True
+        if details.get('series_completed'):
             activity['status'] = 'completed'
-            activity['payload']['status_changed'] = True
-        if not activity['payload'].get('position_start'):
-            span = streaming_episode_span(activity['payload'])
+            details['status_changed'] = True
+        if not details.get('position_start'):
+            span = streaming_episode_span(details)
             if span:
-                activity['payload']['position_start'], activity['payload']['position'] = span
+                details['position_start'], details['position'] = span
+        if media.media_type.value == 'series':
+            present_season_artwork(activity, media)
         if activity["score"] is None:
             # A known previous score means the rating was cleared. A legacy row
             # with no old or new score cannot establish that an edit occurred.
@@ -188,9 +202,32 @@ def activity_data(rows, *, include_user=False, limit=12, today=None):
                 activity["payload"]["rating_changed"] = False
     return [
         item
-        for item in grouped.values()
+        for item in sorted(grouped.values(), key=lambda item: item['created_at'], reverse=True)
         if has_activity_event(item["status"], item["payload"])
     ][:limit]
+
+
+def present_season_artwork(card, media):
+    from core.media_images import tmdb_image_url
+    from core.season_activity import activity_season_number
+
+    details = card['payload']
+    order = details.get('episode_order') or details.get('progress_order')
+    if order not in (None, 'tmdb:aired'):
+        return  # Native season artwork doesn't describe an alternate grouping.
+    seasons = {season['season_number']: season for season in (media.tmdb_data or {}).get('seasons') or []
+               if isinstance(season, dict) and (season.get('season_number') or 0) > 0}
+    names = {str(number): name for number, season in seasons.items()
+             if (name := (season.get('name') or '').strip()) and name != f'Season {number}'}
+    if names:
+        details['season_names'] = names
+    position = activity_season_number(details.get('position'))
+    numbers = (details.get('finished_seasons') or [int(number) for number in details.get('season_ratings') or {}]
+               or [details.get('progress_season') or details.get('season_number') or (position[0] if position else 0)])
+    for number in sorted(numbers, reverse=True):
+        if poster := tmdb_image_url(seasons.get(number, {}).get('poster_path')):
+            card['media']['poster'] = poster
+            break
 
 
 def following_title_activity(rows, media, *, today=None, limit=30):

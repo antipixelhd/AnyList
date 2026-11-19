@@ -24,6 +24,143 @@ class SeasonActivityRegressionTests(unittest.IsolatedAsyncioTestCase):
     async def cards(self, db):
         return list(await db.scalars(select(TrackingActivity).where(TrackingActivity.media_id==self.series_id)))
 
+    async def projected_cards(self):
+        async with self.Session() as db:
+            media = await db.get(Media, self.series_id)
+            return activity_data([(card, media) for card in await self.cards(db)])
+
+    async def test_separate_season_watches_survive_completion_and_use_season_art(self):
+        async with self.Session() as db:
+            await db.execute(delete(WatchEvent).where(WatchEvent.media_id.in_(self.episode_ids)))
+            entry = await db.scalar(select(TrackedEntry).where(TrackedEntry.media_id == self.series_id))
+            entry.status, entry.progress = 'watching', 0
+            media = await db.get(Media, self.series_id)
+            data = dict(media.tmdb_data)
+            data['seasons'] = [
+                {**info, 'name': f'Campaign {number}', 'poster_path': f'/campaign-{number}.jpg'}
+                for number, info in enumerate(data['seasons'], 1)
+            ]
+            media.tmdb_data = data
+            await db.commit()
+
+        async def watch(episode):
+            summary = (await self.client.get(self.root + '/series-editor')).json()
+            response = await self.client.patch(self.root, json={'series_editor': {
+                'order': summary['order'], 'revision': summary['revision'],
+                'action': 'episode', 'episode_id': self.episode_ids[episode],
+            }})
+            self.assertEqual(response.status_code, 200, response.text)
+
+        await watch(0)
+        await watch(2)
+        watched = {card['payload']['position']: card for card in await self.projected_cards()
+                   if card['payload'].get('episodes_watched')}
+        self.assertEqual(set(watched), {'S1E1', 'S2E1'})
+        self.assertEqual(len({card['key'] for card in watched.values()}), 2)
+        result = watched['S2E1']
+        self.assertEqual(result['payload']['season_names']['2'], 'Campaign 2')
+        self.assertTrue(result['media']['poster'].endswith('/campaign-2.jpg'))
+
+        await watch(1)
+        cards = await self.projected_cards()
+        self.assertEqual([card['payload'].get('position') for card in cards
+                          if card['payload'].get('episodes_watched')], ['S2E1'])
+        completions = [card for card in cards if card['payload'].get('finished_seasons')]
+        self.assertEqual([card['payload']['finished_seasons'] for card in completions], [[1]])
+        self.assertTrue(completions[0]['media']['poster'].endswith('/campaign-1.jpg'))
+
+    async def test_bulk_completion_keeps_one_card_until_a_season_is_dated_separately(self):
+        async with self.Session() as db:
+            await db.execute(delete(WatchEvent).where(WatchEvent.media_id.in_(self.episode_ids)))
+            entry = await db.scalar(select(TrackedEntry).where(TrackedEntry.media_id == self.series_id))
+            entry.status, entry.progress = 'watching', 0
+            await db.commit()
+        summary = (await self.client.get(self.root + '/series-editor')).json()
+        response = await self.client.patch(self.root, json={'status': 'completed', 'series_editor': {
+            'order': summary['order'], 'revision': summary['revision'],
+        }})
+        self.assertEqual(response.status_code, 200, response.text)
+        cards = await self.projected_cards()
+        self.assertEqual([card['payload']['finished_seasons'] for card in cards], [[1, 2]])
+
+        day = date.today() - timedelta(days=20)
+        summary = (await self.client.get(self.root + '/series-editor')).json()
+        response = await self.client.patch(self.root, json={'series_editor': {
+            'order': summary['order'], 'seasons': [{'season_number': 1,
+                'membership': summary['seasons'][0]['membership'], 'completion_date': day.isoformat()}],
+        }})
+        self.assertEqual(response.status_code, 200, response.text)
+        cards = await self.projected_cards()
+        self.assertEqual([card['payload']['finished_seasons'] for card in cards], [[2], [1]])
+        self.assertEqual(cards[-1]['created_at'].date(), day)
+
+    async def test_streaming_watch_evidence_in_one_old_window_splits_by_season(self):
+        from core.streaming_activity import record_streaming_activity
+        events = [
+            {'key': f'episode:{number}:{episode}', 'date': timestamp, 'status': 'watching',
+             'episodes_watched': 1, 'position': f'S{number}E{episode}'}
+            for number, episode, timestamp in [(3, 4, '2024-01-01T09:00:00'),
+                (4, 39, '2024-01-01T10:00:00'), (3, 7, '2024-01-01T11:00:00')]
+        ]
+        async with self.Session() as db:
+            db.add(TrackingActivity(user_id=self.user_id, media_id=self.series_id, status='watching',
+                created_at=datetime(2024, 1, 1, 11), payload={'episodes_watched': 3,
+                    'streaming_events': {event['key']: event for event in events}}))
+            await db.commit()
+        cards = await self.projected_cards()
+        self.assertEqual([(card['payload']['position_start'], card['payload']['position'],
+                           card['created_at'].hour) for card in cards], [('S3E4', 'S3E7', 11), ('S4E39', 'S4E39', 10)])
+
+        async with self.Session() as db:
+            await db.execute(delete(TrackingActivity).where(TrackingActivity.media_id == self.series_id))
+            await record_streaming_activity(db, self.user_id, self.series_id, [*events, {
+                'key': 'episode:4:40', 'date': '2024-01-02T09:30:00', 'status': 'watching',
+                'episodes_watched': 1, 'position': 'S4E40',
+            }])
+            await db.commit()
+        cards = await self.projected_cards()
+        self.assertEqual([(card['payload']['position_start'], card['payload']['position'])
+                          for card in cards], [('S4E39', 'S4E40'), ('S3E4', 'S3E7')])
+
+    async def test_legacy_sparse_span_preserves_its_count_when_streamed_seasons_split(self):
+        async with self.Session() as db:
+            media = await db.get(Media, self.series_id)
+            row = TrackingActivity(user_id=self.user_id, media_id=self.series_id, status='watching',
+                created_at=datetime(2024, 1, 1, 11), payload={
+                    'episodes_watched': 3,
+                    'streaming_base': {'episodes_watched': 2, 'position_start': 'S3E4', 'position': 'S3E7'},
+                    'streaming_base_at': '2024-01-01T11:00:00',
+                    'streaming_events': {'episode:4:39': {'episodes_watched': 1, 'position': 'S4E39',
+                                                          'date': '2024-01-01T10:00:00'}},
+                })
+            cards = activity_data([(row, media)])
+            self.assertEqual([(card['payload']['position'], card['payload']['episodes_watched'])
+                              for card in cards], [('S3E7', 2), ('S4E39', 1)])
+            row.payload['streaming_base']['episodes_watched'] = 4
+            row.payload['streaming_events']['episode:3:5'] = {
+                'episodes_watched': 1, 'position': 'S3E5', 'date': '2024-01-01T10:05:00',
+            }
+            self.assertEqual(activity_data([(row, media)])[0]['payload']['episodes_watched'], 4)
+
+    async def test_cloud_history_ignores_a_replay_when_another_season_adds_progress(self):
+        from core.cloud_history_reconciliation import reconcile_cloud_watch_events
+        from core.status_provenance import mark_status_change
+        async with self.Session() as db:
+            await db.execute(delete(WatchEvent).where(WatchEvent.media_id.in_(self.episode_ids[2:])))
+            entry = await db.scalar(select(TrackedEntry).where(TrackedEntry.media_id == self.series_id))
+            entry.status, entry.progress = 'watching', 2
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            mark_status_change(entry, 'local', now - timedelta(days=1))
+            ids = {self.episode_ids[0], self.episode_ids[2]}
+            db.add_all(WatchEvent(user_id=self.user_id, media_id=episode_id, completed=True, watched_at=now)
+                       for episode_id in ids)
+            await db.commit()
+            result = await reconcile_cloud_watch_events(db, user_id=self.user_id, provider='combined', new_media_ids=ids,
+                                                        initial_import_override=False)
+            self.assertEqual(result['applied'], 1, result)
+        cards = await self.projected_cards()
+        self.assertEqual([card['payload']['position'] for card in cards if card['payload'].get('episodes_watched')], ['S2E1'])
+
     async def partial(self):
         async with self.Session() as db:
             await db.execute(delete(WatchEvent).where(WatchEvent.media_id.in_(self.episode_ids[1:])))

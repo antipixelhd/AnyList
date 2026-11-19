@@ -31,7 +31,7 @@ export function mountListCoverPreview(signal:AbortSignal,root:ParentNode=documen
   events.addEventListener('focusout',()=>{if(!hovered)hide();},{signal});
   events.addEventListener('click',event=>{
     const target=event.target as Element;
-    if(target.closest('[data-season-toggle]')){
+    if(target.closest('[data-season-toggle],[data-progress-increment]')){
       if(hovered)show(hovered);
     }else if(rowFor(event)!==hovered||!hovered||target.closest('a,button,input,select,textarea,[role="button"]'))hide();
   },{signal});
@@ -39,5 +39,8 @@ export function mountListCoverPreview(signal:AbortSignal,root:ParentNode=documen
   window.addEventListener('scroll',()=>{if(hovered?.matches(':hover'))show(hovered);else hide();},{capture:true,signal});
   window.addEventListener('resize',hide,{signal});
   signal.addEventListener('abort',hide,{once:true});
-  return {hide};
+  return {hide,refresh(){
+    if(shown?.matches(':hover,:focus-within'))show(shown);
+    else if(shown)hide();
+  }};
 }

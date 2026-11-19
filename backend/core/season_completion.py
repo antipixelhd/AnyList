@@ -7,6 +7,7 @@ import asyncio
 import hashlib
 import logging
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 
 from sqlalchemy import delete, or_, select, update, func, tuple_
@@ -21,6 +22,19 @@ from core.episode_release import EpisodeRelease
 from core.episode_order import normalize_order_key
 
 log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class BulkWatch:
+    recorded_at: datetime
+    day: date
+    added_ids: set[int]
+    observed_id: int | None
+    series_finish_season: int | None = None
+
+    @property
+    def key(self):
+        return self.recorded_at.isoformat()
 
 
 def reliable_watches(events):
@@ -171,7 +185,7 @@ async def watched_episode_ids(db, user_id, episode_ids):
 
 
 async def reconcile(db, user_id, media_id, *, groups_data=None, edits=(), series_hint=None,
-                    series_start_override=None, worker=False):
+                    series_start_override=None, bulk_watch=None, worker=False):
     entry = await db.scalar(select(TrackedEntry).where(TrackedEntry.user_id == user_id,
         TrackedEntry.media_id == media_id).with_for_update(nowait=worker))
     await db.execute(select(func.pg_advisory_xact_lock(user_id, media_id)))
@@ -221,11 +235,12 @@ async def reconcile(db, user_id, media_id, *, groups_data=None, edits=(), series
     for number, episodes, expected in groups:
         member_ids = sorted(ep.id for ep in episodes)
         fingerprint = membership_key(episodes)
+        info = {key: value for key, value in metadata.get(number, {}).items() if value is not None and value != ''}
         statement = insert(SeriesSeason).values(media_id=media_id, episode_order=order, season_number=number,
-            membership_key=fingerprint, episode_ids=member_ids, metadata_payload=metadata.get(number, {}))
+            membership_key=fingerprint, episode_ids=member_ids, metadata_payload=info)
         await db.execute(statement.on_conflict_do_update(
             index_elements=['media_id', 'episode_order', 'season_number', 'membership_key'],
-            set_={'metadata_payload': statement.excluded.metadata_payload}))
+            set_={'metadata_payload': SeriesSeason.metadata_payload.op('||')(statement.excluded.metadata_payload)}))
         season = await db.scalar(select(SeriesSeason).where(SeriesSeason.media_id == media_id,
             SeriesSeason.episode_order == order, SeriesSeason.season_number == number, SeriesSeason.membership_key == fingerprint))
         await db.execute(insert(SeasonTracking).values(user_id=user_id, season_id=season.id, completed=False,
@@ -233,6 +248,7 @@ async def reconcile(db, user_id, media_id, *, groups_data=None, edits=(), series
             activity_suppressed=order_changed or any(s.season_number == number and t.completed
                 and s.membership_key != fingerprint for s, t in previous)).on_conflict_do_nothing())
         tracking = await db.get(SeasonTracking, (user_id, season.id))
+        was_complete = tracking.completed
         completion = manual_completions.get(str(number))
         if completion and not tracking.date_manual:
             old_date = next((t for s, t in previous if s.episode_order == order
@@ -359,7 +375,27 @@ async def reconcile(db, user_id, media_id, *, groups_data=None, edits=(), series
             await remove_season_milestone(db,start_card,target=stronger if stronger is not start_card else None)
             if start_card in db.deleted:
                 cards.remove(start_card)
-        if not complete or not tracking.completion_date:
+        batch = (card.payload or {}).get('watch_batch') if card else None
+        batch_date = (card.payload or {}).get('completion_batch_date') if batch else None
+        manual_date_edit = edit is not None and 'completion_date' in edit.model_fields_set and not edit.completion_preset
+        independently_dated = tracking.completion_date and (tracking.completion_date.isoformat() != batch_date
+            or previous_finish[0] is None and tracking.evidence.get('episode_ids'))
+        if batch and (manual_date_edit or independently_dated):
+            batch = batch_date = None
+        if bulk_watch and not was_complete and complete and (
+                not manual_date_edit or number == bulk_watch.series_finish_season):
+            if bulk_watch.added_ids.intersection(member_ids) and (tracking.completion_date is None or (
+                    tracking.completion_date == bulk_watch.day and
+                    (tracking.evidence.get('rule') == 'series_finish_hint'
+                     or number == bulk_watch.series_finish_season and previous_finish[0] is None
+                     or edit and edit.completion_preset and previous_finish[0] is None
+                     or bulk_watch.observed_id in bulk_watch.added_ids
+                     and bulk_watch.observed_id in tracking.evidence.get('episode_ids', [])))):
+                batch, batch_date = bulk_watch.key, bulk_watch.day.isoformat()
+        # An aggregate edit dates the activity. The season's own date still
+        # requires season-specific evidence.
+        card_date = tracking.completion_date or (date.fromisoformat(batch_date) if batch_date else None)
+        if not complete or not card_date:
             if card:
                 restored_progress.extend((card.payload or {}).get('absorbed_progress', []))
                 card.payload = {key: value for key, value in card.payload.items() if key != 'absorbed_progress'}
@@ -375,14 +411,20 @@ async def reconcile(db, user_id, media_id, *, groups_data=None, edits=(), series
             if initial_score is not None:
                 put_rating(card, number, initial_score, source='season' if number in ratings else 'series',
                            now=max(reliable.values()) if tracking.date_source == 'episode' and reliable else
-                               datetime.combine(tracking.completion_date, time.min), event=False)
-        activity_at = max(reliable.values()) if tracking.date_source == 'episode' and reliable else datetime.combine(tracking.completion_date,time.min)
+                               datetime.combine(card_date, time.min), event=False)
+        activity_at = (datetime.fromisoformat(batch) if batch else max(reliable.values())
+                       if tracking.date_source == 'episode' and reliable else datetime.combine(card_date, time.min))
         window_start = (card.payload or {}).get('window_started_at')
-        date_changed = card.created_at is not None and card.created_at.date() != tracking.completion_date
+        date_changed = card.created_at is not None and (card.created_at.date() != card_date or
+                       (card.payload or {}).get('watch_batch') != batch)
         if date_changed:
             window_start = None
-        card.created_at = datetime.combine(tracking.completion_date, time.min)
-        card.payload = {**(card.payload or {}), 'window_key': f'season:{season.id}', 'season_completion_id': season.id,
+        card.created_at = datetime.combine(card_date, time.min)
+        payload = {key: value for key, value in (card.payload or {}).items()
+                   if key not in ('watch_batch', 'completion_batch_date')}
+        if batch:
+            payload.update(watch_batch=batch, completion_batch_date=batch_date)
+        card.payload = {**payload, 'window_key': f'season:{season.id}', 'season_completion_id': season.id,
                         'window_started_at': window_start or activity_at.isoformat(),
                         'season_number': number,
                         'episode_order': order, 'finished_seasons': [number],
@@ -414,7 +456,8 @@ async def reconcile(db, user_id, media_id, *, groups_data=None, edits=(), series
     milestones = [card for card in cards if ((card.payload or {}).get('season_completion_id') or (card.payload or {}).get('season_start_id'))
                   and card not in db.deleted and card.payload.get('episode_order') == order]
     absorbed = await absorb_season_actions(db, cards, milestones)
-    await absorb_completed_progress(db, cards, milestones, groups, order, manual_completions=manual_completions)
+    await absorb_completed_progress(db, cards, milestones, groups, order, manual_completions=manual_completions,
+                                    bulk_watch=bulk_watch)
     latest_complete = latest_started is not None and all(t.completed for s, t in result if s.season_number <= latest_started)
     for card in cards:
         if card in absorbed or card in db.deleted:

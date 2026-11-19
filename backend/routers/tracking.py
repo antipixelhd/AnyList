@@ -22,7 +22,7 @@ from dependencies import get_current_user, get_current_user_or_api_key, get_trac
 from core.tracking_rules import TrackingStatus, normalize_score, effective_score, default_dates
 from core.status_provenance import mark_status_change
 from core.series_editor import SeriesEditorContext, SeriesEditorPatch, editor_context as series_editor_context, editor_summary
-from core.season_completion import membership_key
+from core.season_completion import BulkWatch, membership_key
 from core.episode_release import EpisodeRelease
 from models import Media, User, UserSettings, UserProfileData, Follow, Rating, Show, WatchEvent, Collection, CollectionFile, PlaybackProgress, PlaybackSession, MediaServerConnection, List, ListItem, ShowRewatch
 from models.base import MediaType, PrivacyLevel
@@ -2468,6 +2468,23 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
         await reschedule_date_activity(db, viewer.id, media_id, start_date=entry.start_date,
                                        finish_date=entry.finish_date, changed=changed_dates, status=entry.status)
     progress_changed = entry.progress != old_progress or bool(added_watched_ids or removed_watched_ids)
+    bulk_watch = None
+    if media.media_type == MediaType.series and added_watched_ids and not episode_change and not scoped_progress and (
+            completing_series or body.mark_released_watched or body.progress is not None or
+            (series_patch and series_patch.action in ('position', 'through_season', 'catch_up', 'complete_previous'))):
+        positions = series_context.positions if series_context else {}
+        season_numbers = {positions.get(episode.id, (episode.season_number,))[0]
+                          for episode in marking if episode.id in added_watched_ids}
+        if len(season_numbers) > 1:
+            series_finish_season = None
+            if finish_intent and series_context and series_context.released:
+                number = positions[series_context.released[-1].id][0]
+                if not any(edit.season_number == number and 'completion_date' in edit.model_fields_set
+                           for edit in series_patch.seasons):
+                    series_finish_season = number
+            watch_day = body.finish_date if finish_intent else series_patch.watch_date if series_patch else None
+            bulk_watch = BulkWatch(datetime.now(timezone.utc).replace(tzinfo=None), watch_day or today,
+                                  added_watched_ids, observed_endpoint, series_finish_season)
     introductory_completion = media.media_type == MediaType.series and old_progress == 0 and entry.status == 'completed'
     if not deleting_season and old_score != score and score is None:
         from core.activity import clear_recent_rating_activity
@@ -2484,7 +2501,8 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
                 previous_progress=old_progress, progress=entry.progress, status=entry.status, score=score,
                 status_changed=activity_status_changed and 'status' in fields, rating_changed=rating_changed,
                 previous_status=previous, first_watching=old_start_date is None and previous != 'watching',
-                previous_score=old_score, previous_watched_ids=watched, watched_ids=desired, season_actions=False)
+                previous_score=old_score, previous_watched_ids=watched, watched_ids=desired, season_actions=False,
+                watch_batch=bulk_watch.key if bulk_watch else None)
         elif not introductory_completion and (status_changed or not suppress_initial_import_rating(entry)):
             position, finished = await series_activity_details(db, media, entry.progress, user_id=viewer.id)
             await record_daily_activity(db, user_id=viewer.id, media_id=media_id, media=media, status=entry.status, score=score,
@@ -2528,7 +2546,7 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
                 hint = (entry.finish_date, 'series' if entry.finish_date_source == 'series' else 'inferred')
             from core.season_completion import reconcile
             await reconcile(db, viewer.id, media_id, groups_data=series_context.data, edits=date_edits,
-                            series_hint=hint, series_start_override=series_start_override)
+                            series_hint=hint, series_start_override=series_start_override, bulk_watch=bulk_watch)
             if deleting_season:
                 from core.season_activity import clear_season_activity
                 await clear_season_activity(db, user_id=viewer.id, media_id=media_id,
@@ -2542,7 +2560,7 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
     elif media.media_type == MediaType.series and (series_start_override is not None or progress_changed or entry.status == 'completed'):
         from core.season_completion import reconcile
         await db.flush()
-        await reconcile(db, viewer.id, media_id, series_start_override=series_start_override)
+        await reconcile(db, viewer.id, media_id, series_start_override=series_start_override, bulk_watch=bulk_watch)
     if media.media_type == MediaType.series and not deleting_season:
         from core.activity import suppress_initial_import_rating
         from core.season_activity import record_season_activity, season_target
@@ -2565,7 +2583,7 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
                               if old_alternate_scores.get(number) != value}
         quiet_rating = previous == entry.status and suppress_initial_import_rating(entry)
         advanced = False
-        if series_context and series_patch.action in ('position', 'episode'):
+        if series_context and not added_watched_ids and series_patch.action in ('position', 'episode'):
             number, partial = season_target(series_context)
             advanced = bool(number and number > (previous_season_number or 1) and
                 (partial or series_patch.action == 'position' and entry.season_cursor))
