@@ -98,6 +98,26 @@ async def clear_season_evidence(db, entry, order, number, episode_ids):
     return {media_id for media_id, completed in removed if completed}
 
 
+def episode_placeholder(episode):
+    return (
+        (func.lower(func.btrim(episode.title)) == func.concat('episode ', episode.episode_number))
+        & (func.coalesce(func.btrim(episode.overview), '') == '')
+        & (func.coalesce(episode.runtime, 0) <= 0)
+        & episode.tmdb_data['episode_type'].as_string().is_distinct_from('finale')
+    )
+
+
+def catalogue_members(data, episodes):
+    ids = data.get('tracking_episode_ids')
+    if ids is None:
+        return episodes
+    catalogue = set(ids)
+    identity = f"{data.get('tracking_catalogue_provider', 'tmdb')}_id"
+    imported = set(data.get('tracking_import_episode_media_ids') or [])
+    return [ep for ep in episodes if getattr(ep, identity, None) in catalogue
+            or ep.id in imported or ep.imported_release]
+
+
 async def season_groups(db, media, user_id, *, display_positions=None, include_placeholders=False):
     identities = []
     if media.tmdb_id:
@@ -112,22 +132,9 @@ async def season_groups(db, media, user_id, *, display_positions=None, include_p
         Media.tmdb_data['tracking_import_released'].as_boolean().is_(True).label('imported_release')).where(
         Media.show_id == show.id, Media.media_type == MediaType.episode, Media.season_number > 0)
     if include_placeholders:
-        placeholder = (
-            (func.lower(func.btrim(Media.title)) == func.concat('episode ', Media.episode_number))
-            & (func.coalesce(func.btrim(Media.overview), '') == '')
-            & (func.coalesce(Media.runtime, 0) <= 0)
-            & Media.tmdb_data['episode_type'].as_string().is_distinct_from('finale')
-        )
-        query = query.add_columns(placeholder.label('placeholder'))
-    episodes = (await db.execute(query)).all()
+        query = query.add_columns(episode_placeholder(Media).label('placeholder'))
     data = media.tmdb_data or {}
-    ids = data.get('tracking_episode_ids')
-    catalogue = set(ids) if ids is not None else None
-    if catalogue is not None:
-        provider = data.get('tracking_catalogue_provider', 'tmdb')
-        imported = set(data.get('tracking_import_episode_media_ids') or [])
-        episodes = [ep for ep in episodes if getattr(ep, f'{provider}_id', None) in catalogue
-                    or ep.id in imported or ep.imported_release]
+    episodes = catalogue_members(data, (await db.execute(query)).all())
     order = await db.scalar(select(UserShowEpisodeOrder.episode_order).where(
         UserShowEpisodeOrder.user_id == user_id, UserShowEpisodeOrder.series_tmdb_id == media.tmdb_id)) if media.tmdb_id else None
     order = normalize_order_key(order)

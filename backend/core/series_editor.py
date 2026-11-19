@@ -213,15 +213,17 @@ async def intent_date_edits(db, media_id, user_id, context, edits, *, number, st
     return [replacement if item is edit else item for item in edits] if edit else [*edits, replacement]
 
 
-def provisional_season_total(media, context, number, members, expected, released_ids):
+def season_progress_total(media, order, number, members, expected, released_ids, release, *, latest):
     """Use released coverage when the latest aired season has only placeholder slots ahead."""
+    upcoming = [ep for ep in members if ep.id not in released_ids]
+    released_count = len(members) - len(upcoming)
+    if any(release.air_at(ep.release_date) for ep in upcoming):
+        return released_count
     data = media.tmdb_data or {}
-    if (context.order != 'tmdb:aired' or not media.tmdb_id
+    if (not latest or order != 'tmdb:aired' or not media.tmdb_id
             or data.get('tracking_catalogue_provider', 'tmdb') != 'tmdb'
             or (data.get('status') or media.status) != 'Returning Series' or len(members) != expected):
         return None
-    upcoming = [ep for ep in members if ep.id not in released_ids]
-    released_count = expected - len(upcoming)
     if not upcoming or not released_count or not all(ep.placeholder for ep in upcoming):
         return None
     if any(ep.episode_number != index or (ep.id in released_ids) != (index <= released_count)
@@ -262,13 +264,10 @@ async def editor_summary(db, media, user_id, context):
                 for ep in members if ep.id in released],
             'upcoming': [{'id': ep.id, 'number': context.positions[ep.id][1]} for ep in upcoming]}
         season.update(saved.get((number, key), {}))
-        if any(context.release.air_at(ep.release_date) for ep in upcoming):
-            season['progress_total'] = len(season['episodes'])
-        elif number == numbers[-1]:
-            # Keep earlier season totals when a later season is already catalogued.
-            progress_total = provisional_season_total(media, context, number, members, expected, released)
-            if progress_total is not None:
-                season['progress_total'] = progress_total
+        progress_total = season_progress_total(media, context.order, number, members, expected, released,
+                                                context.release, latest=number == numbers[-1])
+        if progress_total is not None:
+            season['progress_total'] = progress_total
         seasons.append(season)
     return {'order': context.order, 'revision': context.revision, 'seasons': seasons,
             'selected_position': context.selected_position(),

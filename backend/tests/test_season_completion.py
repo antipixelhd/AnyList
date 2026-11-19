@@ -248,12 +248,16 @@ class SeasonDatabaseTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_editor_displays_released_total_for_placeholder_schedule(self):
         url = f'/tracking/entry/{self.series_id}/series-editor'
+        profile = f'/tracking/profile/{self.viewer.username}/series'
         tomorrow = (date.today() + timedelta(days=1)).isoformat()
         async with self.Session() as db:
             series = await db.get(Media, self.series_id)
             series.status = 'Returning Series'
             series.tmdb_data = {**series.tmdb_data, 'seasons': [
-                {'season_number': 1, 'episode_count': 2}, {'season_number': 2, 'episode_count': 3}]}
+                {'season_number': 1, 'episode_count': 2}, {'season_number': 2, 'episode_count': 3}],
+                'tracking_episode_ids': [923011, 923012, 923021, 923022, 923023]}
+            tracked = await db.scalar(select(TrackedEntry).where(TrackedEntry.media_id == self.series_id))
+            tracked.status, tracked.progress = 'watching', 3
             future = await db.get(Media, self.episode_ids[-1])
             future.title, future.release_date = 'Episode 2', tomorrow
             db.add(Media(title='Episode 3', media_type=MediaType.episode, show_id=future.show_id,
@@ -265,6 +269,13 @@ class SeasonDatabaseTests(unittest.IsolatedAsyncioTestCase):
         first, current = response.json()['seasons']
         self.assertNotIn('progress_total', first)
         self.assertEqual((current['total'], current['progress_total'], len(current['episodes'])), (3, 1, 1))
+        rows = (await self.client.get(f'{profile}/rows', params=[('ids', -self.series_id)])).json()
+        self.assertEqual((rows[0]['progress'], rows[0]['list_season']['total']), (1, 1))
+        page = (await self.client.get(f'{profile}/list')).json()
+        active = next(row for row in page['results'] if row['list_id'] == -self.series_id)
+        self.assertEqual(active['list_season']['total'], 1)
+        seasons = (await self.client.get(f'{profile}/{self.series_id}/seasons')).json()['seasons']
+        self.assertEqual((seasons[-1]['total'], seasons[-1]['completed']), (1, False))
 
         async with self.Session() as db:
             series = await db.get(Media, self.series_id)
@@ -272,6 +283,8 @@ class SeasonDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 'season_number': 2, 'episode_number': 3, 'episode_type': 'finale'}}
             await db.commit()
         self.assertNotIn('progress_total', (await self.client.get(url)).json()['seasons'][-1])
+        rows = (await self.client.get(f'{profile}/rows', params=[('ids', -self.series_id)])).json()
+        self.assertEqual(rows[0]['list_season']['total'], 3)
 
         async with self.Session() as db:
             series = await db.get(Media, self.series_id)
