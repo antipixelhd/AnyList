@@ -24,7 +24,12 @@ import Icon from './Icon.astro';
   .editor[data-editor-type=series] .editor-heading { right:350px; }
   .editor-scope { width:158px; min-width:0; }
   .editor-scope[hidden], .series-editor-panel[hidden], .series-editor-panel [hidden] { display:none!important; }
-  .editor-scope .editor-status-trigger { margin:0; font-weight:600; }
+  .editor-scope .editor-status-trigger {
+    --editor-input-focus-background:var(--panel);
+    margin:0;
+    background:var(--panel);
+    font-weight:600;
+  }
   .editor-scope [data-editor-select-value], .series-progress-fields [data-editor-select-value] {
     min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
   }
