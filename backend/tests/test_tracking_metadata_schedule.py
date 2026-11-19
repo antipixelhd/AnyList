@@ -211,6 +211,23 @@ class TrackingCatalogueScheduleTests(unittest.TestCase):
             now,
         ))
 
+    def test_legacy_catalogue_refreshes_for_an_imminent_episode_with_a_tmdb_tvdb_id(self):
+        now = datetime(2026, 11, 19, 4, tzinfo=timezone.utc)
+        media = self._media((now - timedelta(hours=2)).isoformat())
+        media.tmdb_data.update(external_ids={'tvdb_id': 296861},
+                              next_episode_to_air={'air_date': '2026-11-19'})
+        self.assertFalse(tracking_catalogue_is_fresh(media, 'Returning Series', now))
+        self.assertTrue(tracking_catalogue_is_fresh(media, 'Ended', now))
+        media.tmdb_data['next_episode_to_air']['air_date'] = '2026-11-26'
+        self.assertTrue(tracking_catalogue_is_fresh(media, 'Returning Series', now))
+        media.tmdb_data['last_episode_to_air'] = {'air_date': '2026-11-19'}
+        self.assertFalse(tracking_catalogue_is_fresh(media, 'Returning Series', now))
+        media.tmdb_data['tracking_tvdb_airtime_checked'] = True
+        self.assertTrue(tracking_catalogue_is_fresh(media, 'Returning Series', now))
+        media.tmdb_data.pop('tracking_tvdb_airtime_checked')
+        media.tmdb_data['external_ids'] = {}
+        self.assertTrue(tracking_catalogue_is_fresh(media, 'Returning Series', now))
+
     def test_missing_or_invalid_timestamp_is_stale(self):
         self.assertFalse(tracking_catalogue_is_fresh(SimpleNamespace(tmdb_data={}), None))
         self.assertFalse(tracking_catalogue_is_fresh(self._media("not-a-date"), None))

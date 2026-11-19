@@ -3466,10 +3466,14 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             fetch.assert_not_called()
             self.assertEqual((await self.save(self.show, status='planning')).status_code, 200)
             await self.db.refresh(self.show)
-            self.show.tmdb_data = {**self.show.tmdb_data, 'tracking_catalogue_refreshed_at': '2026-01-01T00:00:00Z'}
+            details['external_ids'] = {'tvdb_id': 296861}
+            cache = {**self.show.tmdb_data, 'external_ids': details['external_ids'],
+                     'next_episode_to_air': {'season_number': 1, 'episode_number': 2, 'air_date': '2026-11-19'},
+                     'tracking_catalogue_refreshed_at': (clock_now - timedelta(hours=2)).isoformat()}
+            cache.pop('tracking_tvdb_airtime_checked')
+            self.show.tmdb_data = cache
             await self.db.commit()
 
-            details['external_ids'] = {'tvdb_id': 296861}
             result = await refresh_tracked_catalogues(self.db, 'fixture-tmdb', now=clock_now, tvdb_api_key='fixture-tvdb')
             self.assertEqual(result['refreshed'], 1, result)
             fetch.assert_awaited_once_with(296861, 'fixture-tvdb')
@@ -3485,11 +3489,16 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
             profile = f'/tracking/profile/{self.owner.username}/series'
             before = (await self.client.get(profile)).json()['entries'][0]
             self.assertEqual((before['released_episodes'], before['new_episodes']), (1, 0))
+            editor = f'/tracking/entry/{self.show.id}/series-editor'
+            editor_before = (await self.client.get(editor)).json()['seasons'][0]
+            self.assertEqual((editor_before['total'], editor_before['progress_total']), (2, 1))
 
             clock_now += timedelta(seconds=1)
             self.assertTrue((await self.client.get(path)).json()['seasons'][0]['episodes'][1]['released'])
             after = (await self.client.get(profile)).json()['entries'][0]
             self.assertEqual((after['released_episodes'], after['new_episodes']), (2, 1))
+            editor_after = (await self.client.get(editor)).json()['seasons'][0]
+            self.assertEqual((editor_after['total'], len(editor_after['episodes'])), (2, 2))
             progress = await self.save(self.show, progress=2)
             self.assertEqual(progress.json()['progress'], 2, progress.text)
 

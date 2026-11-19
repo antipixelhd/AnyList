@@ -45,14 +45,16 @@ async def read_series_editor(media_id: int, response: Response, db: Database, vi
     response.headers['Cache-Control'] = 'private, no-store'
     media = await editor_media(db, media_id)
     from core.tracking_episode_loading import complete, ensure
-    if not complete(media) and (media.tmdb_id or media.tvdb_id):
+    from core.tracking_metadata import airtime_cache_needs_refresh
+    awaiting_airtime = airtime_cache_needs_refresh(media, media.status)
+    if (not complete(media) or awaiting_airtime) and (media.tmdb_id or media.tvdb_id):
         try:
-            state = await asyncio.wait_for(ensure(db, media, viewer.id), timeout=.25)
+            state = await asyncio.wait_for(ensure(db, media, viewer.id, wait_for_refresh=awaiting_airtime), timeout=.25)
         except TimeoutError:
             state = {'pending': True, 'retry_after': 2}
         if state.get('ready'):
             await db.refresh(media)
-        if not complete(media):
+        if not complete(media) or (state.get('pending') and airtime_cache_needs_refresh(media, media.status)):
             return {'ready': False, 'retry_after': state.get('retry_after', 10), 'seasons': [],
                     'pending': state.get('pending', False)}
     context = await editor_context(db, media, viewer.id)

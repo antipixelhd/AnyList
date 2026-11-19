@@ -111,10 +111,30 @@ async def refresh_air_schedule(previous, tmdb_details, tvdb_api_key):
     return tvdb_schedule(tvdb_id, raw) if isinstance(raw, dict) else retained
 
 
-def tracking_catalogue_is_fresh(media, show_status: str | None, now: datetime | None = None) -> bool:
-    if (media.tmdb_data or {}).get('tracking_episode_details_version') != EPISODE_DETAILS_VERSION:
+def airtime_cache_needs_refresh(media, show_status=None, now=None):
+    data = media.tmdb_data or {}
+    show_status = show_status or data.get('status')
+    if (show_status in FINAL_SHOW_STATUSES or data.get('tracking_tvdb_airtime_checked')
+            or getattr(media, 'tvdb_air_schedule', None)
+            or data.get('tracking_catalogue_provider', 'tmdb') != 'tmdb'
+            or not external_ids_from_tmdb(data)[0]):
         return False
-    value = (media.tmdb_data or {}).get("tracking_catalogue_refreshed_at")
+    # Bring forward only an existing catalogue with an episode close to its
+    # release boundary. Others gain airtime on their normal refresh.
+    today = (now or datetime.now(timezone.utc)).date()
+    dates = {(today + timedelta(days=offset)).isoformat() for offset in (-1, 0, 1)}
+    for key in ('last_episode_to_air', 'next_episode_to_air'):
+        episode = data.get(key)
+        if isinstance(episode, dict) and episode.get('air_date') in dates:
+            return True
+    return False
+
+
+def tracking_catalogue_is_fresh(media, show_status: str | None, now: datetime | None = None) -> bool:
+    data = media.tmdb_data or {}
+    if data.get('tracking_episode_details_version') != EPISODE_DETAILS_VERSION:
+        return False
+    value = data.get("tracking_catalogue_refreshed_at")
     if not value:
         return False
     try:
@@ -125,7 +145,7 @@ def tracking_catalogue_is_fresh(media, show_status: str | None, now: datetime | 
         refreshed_at = refreshed_at.replace(tzinfo=timezone.utc)
     now = now or datetime.now(timezone.utc)
     max_age = timedelta(days=30) if show_status in FINAL_SHOW_STATUSES else timedelta(hours=20)
-    return now - refreshed_at < max_age
+    return now - refreshed_at < max_age and not airtime_cache_needs_refresh(media, show_status, now)
 
 
 async def hydrate_tracking_episodes(db, media, api_key=None, tvdb_api_key=None):
@@ -215,6 +235,7 @@ async def hydrate_tracking_episodes(db, media, api_key=None, tvdb_api_key=None):
     media.tmdb_data = {**(media.tmdb_data or {}), **tmdb_fields(details, media.tmdb_data), **air_metadata, 'seasons': seasons,
         'tracking_episode_ids': [data['id'] for _, data in fetched],
         'tracking_episode_details_version': EPISODE_DETAILS_VERSION,
+        'tracking_tvdb_airtime_checked': True,
         'tracking_catalogue_refreshed_at': datetime.now(timezone.utc).isoformat()}
     await db.flush()
     return len(fetched)

@@ -1656,8 +1656,10 @@ async def title_seasons(media_id: Annotated[int, Path(gt=0)], db: Annotated[Asyn
         raise HTTPException(404, 'Series not found')
     response.headers['Cache-Control'] = 'private, no-store'
     from core.tracking_episode_loading import ensure
+    from core.tracking_metadata import airtime_cache_needs_refresh
     status = await ensure(db, media, viewer.id if viewer else None,
-        wait_for_refresh=bool(revision and revision == (media.tmdb_data or {}).get('tracking_catalogue_refreshed_at')))
+        wait_for_refresh=airtime_cache_needs_refresh(media, media.status) or
+        bool(revision and revision == (media.tmdb_data or {}).get('tracking_catalogue_refreshed_at')))
     await db.refresh(media)
     entry = await db.scalar(select(TrackedEntry).where(TrackedEntry.user_id == viewer.id,
         TrackedEntry.media_id == media.id)) if viewer else None
@@ -2005,6 +2007,21 @@ class EpisodeProgressPatch(BaseModel):
     confirm_rollback: bool = False
 
 
+async def refresh_imminent_airtime_for_write(db, media, user_id):
+    from core.tracking_metadata import airtime_cache_needs_refresh
+    if not airtime_cache_needs_refresh(media, media.status):
+        return
+    from core.tracking_episode_loading import ensure
+    try:
+        state = await asyncio.wait_for(ensure(db, media, user_id, wait_for_refresh=True), timeout=12)
+    except TimeoutError:
+        raise HTTPException(409, 'Episode metadata is still loading. Try again shortly.') from None
+    if state.get('ready'):
+        await db.refresh(media)
+    if state.get('pending') and airtime_cache_needs_refresh(media, media.status):
+        raise HTTPException(409, 'Episode metadata is still loading. Try again shortly.')
+
+
 @router.patch('/entry/{media_id}/episode/{episode_id}')
 async def save_episode_progress(media_id: Annotated[int, Path(gt=0)], episode_id: Annotated[int, Path(gt=0)],
         body: EpisodeProgressPatch, background_tasks: BackgroundTasks,
@@ -2020,6 +2037,7 @@ async def save_season_progress(media_id: int, season_number: int, body: SeasonPr
     media = await db.get(Media, media_id)
     if not media or media.media_type != MediaType.series or season_number <= 0:
         raise HTTPException(404, 'Regular season not found')
+    await refresh_imminent_airtime_for_write(db, media, viewer.id)
     await db.execute(select(User.id).where(User.id == viewer.id).with_for_update())
     episodes = await released_episodes(db, media)
     positions = [i for i, e in enumerate(episodes) if e.season_number == season_number]
@@ -2065,6 +2083,9 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
         raise HTTPException(404, "Title not found")
     if episode_change and media.media_type != MediaType.series:
         raise HTTPException(404, 'Series not found')
+    if media.media_type == MediaType.series and (episode_change or body.series_editor or body.progress is not None
+                                                or body.mark_released_watched or body.status == 'completed'):
+        await refresh_imminent_airtime_for_write(db, media, viewer.id)
     # Serialize edits for this user, including first insertion of a title.
     await db.execute(select(User.id).where(User.id == viewer.id).with_for_update())
     entry = await db.scalar(select(TrackedEntry).where(
