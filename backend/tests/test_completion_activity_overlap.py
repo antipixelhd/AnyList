@@ -97,6 +97,21 @@ class CompletionOverlapTests(unittest.IsolatedAsyncioTestCase):
         await self.absorb(later)
         self.assertIn(later, self.db.deleted)
 
+    async def test_late_progress_is_retained_across_edits_to_a_mixed_window(self):
+        at = self.at + timedelta(days=4)
+        first = self.progress(at=at, episodes_watched=2, progress_episode_ids=[1, 3],
+                              episode_positions=['S1E1', 'S2E1'])
+        await absorb_completed_progress(self.db, [first], [self.target], self.groups, 'tmdb:aired',
+                                        manual_completions={'1'})
+        self.assertEqual(first.payload['progress_episode_ids'], [3])
+        first.created_at += timedelta(hours=1)
+        first.payload = {**first.payload, 'episodes_watched': 2,
+                         'progress_episode_ids': [2, 3], 'episode_positions': ['S1E2', 'S2E1']}
+        await absorb_completed_progress(self.db, [first], [self.target], self.groups, 'tmdb:aired',
+                                        manual_completions={'1'})
+        self.assertEqual(first.payload['progress_episode_ids'], [3])
+        self.assertEqual(self.target.payload['absorbed_progress'][0]['progress_episode_ids'], [1, 2])
+
     async def test_rating_and_other_status_actions_are_not_deleted_with_progress(self):
         card = self.progress(
             episodes_watched=2,

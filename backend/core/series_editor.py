@@ -187,7 +187,8 @@ class SeriesEditorContext:
         if series_finish is not None and self.released:
             dates.setdefault(self.positions[self.released[-1].id][0], series_finish)
         return {members[-1].id: dates[number] for number, _, _ in self.groups
-                if number in dates and (members := [ep for ep in self.released if self.positions[ep.id][0] == number])}
+                if number in dates and str(number) not in self.manual_completions
+                and (members := [ep for ep in self.released if self.positions[ep.id][0] == number])}
 
 
 async def editor_context(db, media, user_id):
@@ -278,8 +279,9 @@ async def editor_summary(db, media, user_id, context):
             'upcoming': [{'id': ep.id, 'number': context.positions[ep.id][1]} for ep in upcoming]}
         season.update(saved.get((number, key), {}))
         if str(number) in context.manual_completions:
-            season.update(completed=True, manual_completion=True,
-                          completion_date=season.get('completion_date') or context.manual_completions[str(number)])
+            season.update(completed=True, manual_completion=True)
+            if not season.get('date_manual') and not season.get('completion_date'):
+                season['completion_date'] = context.manual_completions[str(number)]
         progress_total = season_progress_total(media, context.order, number, members, expected, released,
                                                 context.release, latest=number == numbers[-1])
         if progress_total is not None:

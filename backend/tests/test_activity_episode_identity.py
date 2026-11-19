@@ -20,7 +20,7 @@ class EpisodeIdentityActivityTests(unittest.IsolatedAsyncioTestCase):
         async def groups(*args, display_positions, **kwargs):
             display_positions.update({ep.id: (ep.season_number, ep.episode_number) for ep in episodes})
             return 'tmdb:aired', [(ep.season_number, [ep], 1) for ep in episodes], {}
-        media = SimpleNamespace(id=10,media_type=MediaType.series)
+        media = SimpleNamespace(id=10,media_type=MediaType.series,tvdb_air_schedule=None)
         db = MagicMock()
         db.delete = AsyncMock()
         with (patch.object(activity,'_prepare_rating_activity',AsyncMock(return_value=(False,None))),

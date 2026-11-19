@@ -184,8 +184,16 @@ async def absorb_season_actions(db, cards, milestones):
     return removed
 
 
-async def absorb_completed_progress(db, cards, milestones, groups, order):
-    """A completion replaces overlapping episode/start evidence for its members.
+def completion_covers_progress(target, window_start, activity_at, *, manual=False):
+    from core.activity import activity_window_start
+    completion_start = activity_window_start(target)
+    window = timedelta(hours=24)
+    return (window_start < completion_start + window and completion_start < window_start + window
+            or manual and activity_at.date() >= target.created_at.date())
+
+
+async def absorb_completed_progress(db, cards, milestones, groups, order, *, manual_completions=()):
+    """Fold in overlapping activity and later progress in a manually completed season.
 
     Resolve by canonical episode identity so alternate orders and windows that
     cross a season boundary retain the other season's progress.
@@ -197,10 +205,7 @@ async def absorb_completed_progress(db, cards, milestones, groups, order):
     display = {f'S{sn}E{en}': ep.id for sn, members, _ in groups for en, ep in enumerate(members, 1)}
     first_season = groups[0][0] if groups else 1
     members = {sn: {ep.id for ep in eps} for sn, eps, _ in groups}
-
-    def overlaps(card, target):
-        a, b = activity_window_start(card), activity_window_start(target)
-        return a < b + timedelta(hours=24) and b < a + timedelta(hours=24)
+    completions = [target for target in milestones if target.payload.get('season_completion_id')]
 
     def trim(payload, covered):
         payload = dict(payload)
@@ -231,7 +236,7 @@ async def absorb_completed_progress(db, cards, milestones, groups, order):
         payload['progress_start'] = int(payload.get('progress_start') or 0) + len(removed)
         return payload
 
-    def retain(target, card, payload):
+    def retain(target, card, payload, activity_at):
         # Keep the encapsulated window, so undoing completion can reveal its
         # still-watched episodes instead of losing the correction baseline.
         lookup = display if payload.get('progress_order') == order else native
@@ -248,12 +253,17 @@ async def absorb_completed_progress(db, cards, milestones, groups, order):
         snapshot = {key: payload[key] for key in ('window_key', 'window_started_at', 'progress_order',
             'watched_start_ids', 'progress_start', 'progress') if key in payload}
         snapshot.update(progress_episode_ids=[ep_id for ep_id, _ in pairs],
-                        episode_positions=[label for _, label in pairs], created_at=card.created_at.isoformat(),
-                        status=card.status, score=card.score)
+                        episode_positions=[label for _, label in pairs], created_at=activity_at.isoformat(),
+                        status=(card.payload or {}).get('streaming_base_status', card.status), score=card.score)
         snapshot.setdefault('window_started_at', activity_window_start(card).isoformat())
         saved = [dict(item) for item in target.payload.get('absorbed_progress', [])]
         previous = next((item for item in saved if item.get('window_started_at') == snapshot.get('window_started_at')), None)
         if previous:
+            merged = dict(zip(previous['progress_episode_ids'], previous['episode_positions'])) | dict(pairs)
+            snapshot['progress_episode_ids'], snapshot['episode_positions'] = list(merged), list(merged.values())
+            snapshot['created_at'] = max(previous['created_at'], snapshot['created_at'])
+            snapshot['watched_start_ids'] = sorted(set(previous.get('watched_start_ids') or [])
+                                                   & set(snapshot.get('watched_start_ids') or []))
             previous.update(snapshot)
         else:
             saved.append(snapshot)
@@ -262,24 +272,29 @@ async def absorb_completed_progress(db, cards, milestones, groups, order):
     for card in cards:
         if card in db.deleted or (card.payload or {}).get('episode_order'):
             continue
-        targets = [target for target in milestones if target.payload.get('season_completion_id') and overlaps(card, target)]
+        details = dict(card.payload or {})
+        start = activity_window_start(card)
+        local_at = datetime.fromisoformat(details['streaming_base_at']) if details.get('streaming_base_at') else card.created_at
+        overlaps = [target for target in completions if completion_covers_progress(target, start, local_at)]
+        targets = [target for target in completions if completion_covers_progress(target, start, local_at,
+            manual=str(target.payload['season_number']) in manual_completions)]
         if not targets:
             continue
-        numbers = {target.payload['season_number'] for target in targets}
-        covered = set().union(*(members.get(sn, set()) for sn in numbers))
+        covered = set().union(*(members.get(target.payload['season_number'], set()) for target in targets))
+        numbers = {target.payload['season_number'] for target in overlaps}
+        overlapping_ids = set().union(*(members.get(sn, set()) for sn in numbers))
         def covers_start(payload):
             if payload.get('start_position'):
-                return native.get(payload['start_position']) in covered
+                return native.get(payload['start_position']) in overlapping_ids
             sn = payload.get('season_number') or first_season
-            return sn in numbers if order == 'tmdb:aired' else native.get(f'S{sn}E1') in covered
-        details = dict(card.payload or {})
+            return sn in numbers if order == 'tmdb:aired' else native.get(f'S{sn}E1') in overlapping_ids
         for target in targets:
-            retain(target, card, details.get('streaming_base', details))
+            retain(target, card, details.get('streaming_base', details), local_at)
         if 'streaming_base' in details:
             details['streaming_base'] = trim(details['streaming_base'], covered)
             events = {}
             for key, event in details.get('streaming_events', {}).items():
-                if event.get('episodes_watched') and native.get(event.get('position')) in covered:
+                if event.get('episodes_watched') and native.get(event.get('position')) in overlapping_ids:
                     continue
                 if key == 'start' and covers_start(event):
                     continue
@@ -486,6 +501,7 @@ async def record_season_activity(db, *, user_id, media, status, score,
 def present_series_activity(activity, media, *, today=None):
     """Cheap legacy/release compatibility using metadata already joined to feeds."""
     details = dict(activity.payload or {})
+    details.pop('absorbed_progress', None)
     if media.media_type.value != 'series':
         return details
     from datetime import date

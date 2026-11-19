@@ -302,6 +302,91 @@ class SeasonDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(reopened['completed'])
         self.assertEqual([ep['watched'] for ep in reopened['episodes']], [True, False])
 
+    async def test_completed_season_hides_late_progress_until_its_finish_date_moves(self):
+        entry_url = f'/tracking/entry/{self.series_id}'
+        editor_url = f'{entry_url}/series-editor'
+        today = date.today()
+        completion_day, watch_day = today - timedelta(days=7), today - timedelta(days=3)
+        last_episode = self.episode_ids[-1]
+        async with self.Session() as db:
+            series = await db.get(Media, self.series_id)
+            series.tmdb_data = {**series.tmdb_data, 'tracking_episode_details_version': 1,
+                'tracking_catalogue_refreshed_at': datetime.now().astimezone().isoformat()}
+            episode = await db.get(Media, last_episode)
+            episode.release_date = (today + timedelta(days=1)).isoformat()
+            entry = await db.scalar(select(TrackedEntry).where(TrackedEntry.media_id == self.series_id))
+            entry.status, entry.progress = 'watching', 2
+            await db.execute(delete(WatchEvent).where(WatchEvent.media_id.in_(self.episode_ids[-2:])))
+            await db.commit()
+
+        summary = (await self.client.get(editor_url)).json()
+        response = await self.client.patch(entry_url, json={'series_editor': {
+            'action': 'complete_season', 'season_number': 2, 'order': summary['order'],
+            'revision': summary['revision'], 'watch_date': completion_day.isoformat()}})
+        self.assertEqual(response.status_code, 200, response.text)
+        async with self.Session() as db:
+            episode = await db.get(Media, last_episode)
+            episode.release_date = watch_day.isoformat()
+            extra = Media(title='2.3', media_type=MediaType.episode, show_id=episode.show_id,
+                          tmdb_id=923023, season_number=2, episode_number=3, release_date=watch_day.isoformat())
+            db.add(extra)
+            await db.flush()
+            extra_id = extra.id
+            series = await db.get(Media, self.series_id)
+            series.tmdb_data = {**series.tmdb_data, 'seasons': [
+                {'season_number': 1, 'episode_count': 2}, {'season_number': 2, 'episode_count': 3}]}
+            await db.commit()
+
+        class ProgressClock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return cls(watch_day.year, watch_day.month, watch_day.day, 12, tzinfo=tz)
+
+        summary = (await self.client.get(editor_url)).json()
+        with patch('core.activity.datetime', ProgressClock):
+            response = await self.client.patch(entry_url, json={'series_editor': {
+                'action': 'position', 'season_number': 2, 'episode_count': 2, 'episode_id': last_episode,
+                'order': summary['order'], 'revision': summary['revision'], 'watch_date': watch_day.isoformat()}})
+        self.assertEqual(response.status_code, 200, response.text)
+        summary = response.json()['series_editor']
+        current = summary['seasons'][-1]
+        self.assertEqual([ep['watched'] for ep in current['episodes']], [True, True, False])
+        async with self.Session() as db:
+            cards = list(await db.scalars(select(TrackingActivity).where(TrackingActivity.media_id == self.series_id)))
+            completion = next(card for card in cards if card.payload.get('season_number') == 2)
+            completion_id = completion.id
+            self.assertEqual(completion.created_at.date(), completion_day)
+            self.assertIn([last_episode], [item['progress_episode_ids'] for item in completion.payload['absorbed_progress']])
+            self.assertFalse(any(last_episode in card.payload.get('progress_episode_ids', []) for card in cards))
+            watch = await db.scalar(select(WatchEvent).where(WatchEvent.media_id == last_episode))
+            original_watch = (watch.watched_at, watch.date_inferred)
+
+        async def move_completion(day):
+            result = await self.client.patch(entry_url, json={'series_editor': {
+                'order': summary['order'], 'revision': summary['revision'],
+                'seasons': [{'season_number': 2, 'membership': current['membership'],
+                             'completion_date': day.isoformat()}]}})
+            self.assertEqual(result.status_code, 200, result.text)
+            self.assertEqual(result.json()['series_editor']['seasons'][-1]['completion_date'], day.isoformat())
+
+        await move_completion(today)
+        async with self.Session() as db:
+            completion = await db.get(TrackingActivity, completion_id)
+            self.assertEqual(completion.created_at.date(), today)
+            cards = list(await db.scalars(select(TrackingActivity).where(TrackingActivity.media_id == self.series_id)))
+            progress = next(card for card in cards if card.payload.get('progress_episode_ids') == [last_episode])
+            media = await db.get(Media, self.series_id)
+            self.assertEqual(activity_data([(progress, media)])[0]['payload']['episodes_watched'], 1)
+            self.assertEqual(progress.created_at.date(), watch_day)
+            watch = await db.scalar(select(WatchEvent).where(WatchEvent.media_id == last_episode))
+            self.assertEqual((watch.watched_at, watch.date_inferred), original_watch)
+            self.assertIsNone(await db.scalar(select(WatchEvent).where(WatchEvent.media_id == extra_id)))
+
+        await move_completion(completion_day)
+        async with self.Session() as db:
+            cards = list(await db.scalars(select(TrackingActivity).where(TrackingActivity.media_id == self.series_id)))
+            self.assertFalse(any(last_episode in card.payload.get('progress_episode_ids', []) for card in cards))
+
     async def test_editor_displays_released_total_for_placeholder_schedule(self):
         url = f'/tracking/entry/{self.series_id}/series-editor'
         profile = f'/tracking/profile/{self.viewer.username}/series'

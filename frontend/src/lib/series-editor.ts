@@ -128,9 +128,14 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     refreshScopeMessage();
   }
   function refreshScopeMessage() {
-    const season=seasons().find(item=>item.season_number===scope);
+    const season=scopedSeason();
     const original=season && seasonFields(season);
-    scopeMessage.hidden=!original||!(['start_date','finish_date','rewatch_count'] as const).some(key=>field(key).value!==original[key]);
+    scopeMessage.textContent=season?.manual_completion
+      ?'Season start date and rewatches are preview fields.'
+      :'Season dates and rewatches are preview fields.';
+    const previewFields = season?.manual_completion
+      ? (['start_date','rewatch_count'] as const) : (['start_date','finish_date','rewatch_count'] as const);
+    scopeMessage.hidden=!original||!previewFields.some(key=>field(key).value!==original[key]);
   }
   function labelRewatches(label:string) {
     const container=form.querySelector('.editor-rewatches')!;
@@ -337,9 +342,14 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
         listPlacement=choice;
       }
       const edits=seasons().flatMap(season=>{
-        const score=draft(season.season_number)?.manual_score;
-        if (score===undefined || Number(score)===Number(season.score??0)) return [];
-        return [{season_number:season.season_number,membership:season.membership,score:Number(score)||null}];
+        const fields=draft(season.season_number);
+        if (!fields) return [];
+        const scoreChanged=Number(fields.manual_score)!==Number(season.score??0);
+        const finishChanged=season.manual_completion && fields.finish_date!==(season.completion_date??'');
+        if (!scoreChanged && !finishChanged) return [];
+        return [{season_number:season.season_number,membership:season.membership,
+          ...(scoreChanged?{score:Number(fields.manual_score)||null}:{}),
+          ...(finishChanged?{completion_date:fields.finish_date||null}:{})}];
       });
       return {revision:summary?.revision,order:summary?.order,watch_date:localToday(),seasons:edits,
         list_placement:listPlacement,...(seasonAction?{action:seasonAction,season_number:scope}
