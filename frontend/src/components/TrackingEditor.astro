@@ -49,17 +49,6 @@ import SeriesEditorPanel from './SeriesEditorPanel.astro';
     </div>
   </form>
 </dialog>
-<dialog class="editor-confirmation series-placement-dialog" data-series-placement aria-labelledby="series-placement-title" aria-describedby="series-placement-info">
-  <form method="dialog">
-    <header><h2 id="series-placement-title">Move series?</h2></header>
-    <p id="series-placement-info">Choose whether to move the latest season or the whole series.</p>
-    <div class="editor-confirmation-actions">
-      <button type="submit" value="cancel" autofocus>Cancel</button>
-      <button type="submit" value="series">Whole series</button>
-      <button type="submit" value="season">Latest season</button>
-    </div>
-  </form>
-</dialog>
 <dialog class="editor-confirmation" id="editor-confirmation" aria-labelledby="editor-confirmation-title" aria-describedby="editor-confirmation-body" data-motion-static>
   <form method="dialog">
     <header><h2 id="editor-confirmation-title">Warning</h2><button type="submit" class="editor-confirmation-close" value="cancel" aria-label="Close confirmation"><Icon name="close" /></button></header>
@@ -543,7 +532,7 @@ document.addEventListener('astro:page-load', () => {
         const patch=await seriesFields.patch(explicitStatus);
         if (!patch || currentTitle!==editing || !dialog.open || sessionSignal.aborted) return;
         if (patch.action==='position' && scopedStatus===undefined) body.status=status;
-        if (patch.action==='complete_season'||patch.action==='resume_season') delete body.status;
+        if (scopedStatus!==undefined) delete body.status;
         if (seriesFields.rollbackNeeded(patch)) {
           if (!await confirmEntryAction(watchRollbackWarning) || sessionSignal.aborted || currentTitle!==editing) return;
           body.confirm_rollback=true;

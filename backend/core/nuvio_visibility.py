@@ -1,5 +1,5 @@
 """Project list status onto Nuvio's independently synced Next Up visibility."""
-from sqlalchemy import select
+from sqlalchemy import case, select
 from models.media import Media
 from models.base import MediaType
 from models.tracking import TrackedEntry, StreamBaseline
@@ -130,7 +130,9 @@ def provider_content_ids(media, baseline=None, *, records=()):
 
 
 async def next_up_visibility(db, user_id, connection_id, records, *, seed_records=None):
-    rows = (await db.execute(select(Media, TrackedEntry.status).join(
+    from core.series_playback import active_playback_filter
+    status = case((active_playback_filter(TrackedEntry), 'watching'), else_='inactive')
+    rows = (await db.execute(select(Media, status).join(
         TrackedEntry, TrackedEntry.media_id == Media.id,
     ).where(TrackedEntry.user_id == user_id, Media.media_type == MediaType.series))).all()
     baseline = await db.get(StreamBaseline, connection_id)

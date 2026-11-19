@@ -1,21 +1,23 @@
 import {localToday} from './date-time';
 import {setupEditorSelect} from './editor-select';
 import {editorStore, type EditorTitle} from './editor-store';
-import {statuses} from './tracking-statuses';
-import {closeDialog, showDialog} from './ui-motion';
 
 type Episode = {id:number; number:number; watched:boolean};
 type Season = {season_number:number; membership:string; name?:string|null; poster?:string|null; total:number;
   progress_total?:number;
   episodes:Episode[]; upcoming?:Pick<Episode,'id'|'number'>[]; score?:number|null;
   start_date?:string|null; completion_date?:string|null; start_source?:string|null;
-  date_source?:string|null; start_manual?:boolean; date_manual?:boolean; completed?:boolean; manual_completion?:boolean};
+  date_source?:string|null; start_manual?:boolean; date_manual?:boolean; completed?:boolean; manual_completion?:boolean;
+  status?:'planning'|'watching'|'paused'|'dropped'|null};
 export type SeriesEditorSummary = {ready:boolean; pending?:boolean; retry_after?:number; revision?:string;
   next_progress_season?:number|null;
   selected_position?:{season_number:number;episode_count:number;episode_id:number|null}|null;
   order?:string; seasons:Season[]};
 export type EditorEpisodeMetadata = {id:number; title:string; runtime?:number|null; air_date?:string|null; image?:string|null};
 type Position = {season_number:number; episode_count:number; episode_id:number|null};
+type SeriesPatch = Partial<Position> & {action?:'position'|'complete_season'|'resume_season'; progress_season?:number;
+  revision?:string; order?:string; watch_date:string; season_statuses?:Record<number,string>;
+  seasons:{season_number:number;membership:string;score?:number|null;completion_date?:string|null}[]};
 const scopeFields = ['manual_score','start_date','finish_date','rewatch_count'] as const;
 type ScopeFields = Record<(typeof scopeFields)[number],string>;
 
@@ -33,14 +35,12 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
   const input = find<HTMLInputElement>('count');
   const steps = panel.querySelectorAll<HTMLButtonElement>('[data-series-step]');
   const scopeMessage = form.querySelector<HTMLElement>('[data-season-field-message]')!;
-  const placement = document.querySelector<HTMLDialogElement>('[data-series-placement]')!;
   const drafts = new Map<number,ScopeFields>();
   const statusDrafts = new Map<number,string>();
   let title:EditorTitle|null = null;
   let summary:SeriesEditorSummary|undefined;
   let scope = 0;
-  let staged:Position|undefined;
-  let progressScope:number|undefined;
+  const progressDrafts = new Map<number,Position>();
   let writtenStatus:string|undefined;
   let openingStatus:string|undefined;
   let initialStatus = '';
@@ -56,8 +56,11 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
   const scopeBaseline = () => {
     const season = scopedSeason();
     if (!season) return initialStatus;
+    if (season.status) return season.status;
     if (season.completed) return 'completed';
-    return initialStatus === 'completed' ? 'watching' : initialStatus;
+    const next = initialStatus==='watching'||initialStatus==='planning' ? summary?.next_progress_season : undefined;
+    if (season.season_number===(next??savedPosition()?.season_number) && initialStatus!=='completed') return initialStatus;
+    return watched(season)>0?'watching':'planning';
   };
   const name = (season:Season) => season.name?.trim() || `Season ${season.season_number}`;
   const watched = (season:Season) => season.episodes.filter(episode=>episode.watched).length;
@@ -71,10 +74,10 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     const season = released().findLast(item=>watched(item)>0) ?? released()[0];
     return season && position(season,season.episodes.findLastIndex(episode=>episode.watched)+1);
   };
-  function position(season:Season,count:number):Position {
+  function position(season:Season,count:number,independent=false):Position {
     const earlier = released().findLast(item=>item.season_number<season.season_number)?.episodes.at(-1);
     return {season_number:season.season_number,episode_count:count,
-      episode_id:count?season.episodes[count-1].id:earlier?.id??null};
+      episode_id:count?season.episodes[count-1].id:independent?null:earlier?.id??null};
   }
   function defaultPosition() {
     const saved = savedPosition();
@@ -84,13 +87,10 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     }
     return saved;
   }
-  const currentPosition = () => staged ?? defaultPosition();
+  const currentPosition = () => progressDrafts.get(scope) ?? defaultPosition();
   function previewCount(season:Season) {
-    const preview=staged??(status()==='completed'&&status()!==(scope?scopeBaseline():openingStatus)?defaultPosition():undefined);
-    if (!preview) return summary?.selected_position?.season_number===season.season_number
-      ? summary.selected_position.episode_count : watched(season);
-    if (season.season_number<preview.season_number) return season.episodes.length;
-    return season.season_number===preview.season_number ? preview.episode_count : 0;
+    if (status()==='completed' && scopeBaseline()!=='completed') return season.episodes.length;
+    return progressDrafts.get(season.season_number)?.episode_count ?? watched(season);
   }
   function syncOptions(select:HTMLSelectElement,options:[string,string][],value:string) {
     const signature = JSON.stringify(options);
@@ -174,9 +174,11 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
         if (signal.aborted) return;
         if (next.ready || !summary?.ready) summary=next;
         loadFailed=false;
-        if (staged) {
-          const season=released().find(item=>item.season_number===staged?.season_number);
-          staged=season && staged.episode_count<=season.episodes.length ? position(season,staged.episode_count) : undefined;
+        for (const [number,draft] of progressDrafts) {
+          const season=released().find(item=>item.season_number===draft.season_number);
+          if (season && draft.episode_count<=season.episodes.length) {
+            progressDrafts.set(number,position(season,draft.episode_count,number>0));
+          } else progressDrafts.delete(number);
         }
         if (!next.ready && next.pending) timer=setTimeout(()=>void read(),Math.max(1,next.retry_after||2)*1000);
       } catch {
@@ -188,13 +190,7 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     return request;
   }
   function setPosition(season:Season,count:number) {
-    if (scope && scope!==savedPosition()?.season_number && scope!==summary?.next_progress_season) {
-      failure('You can only change episode progress for your current season.');
-      render();
-      return;
-    }
-    staged=position(season,count);
-    progressScope=scope||undefined;
+    progressDrafts.set(scope,position(season,count,scope>0));
     failure('');
   }
   function step(direction:number) {
@@ -237,26 +233,6 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
   for(const event of ['input','change'])form.addEventListener(event,()=>{
     if (scope) refreshScopeMessage();
   },{signal:page});
-  placement.addEventListener('click',event=>{
-    if(event.target===placement)void closeDialog(placement,'');
-  },{signal:page});
-  function choosePlacement(value:string) {
-    const label=statuses.find(([key])=>key===value)?.[1]??value;
-    placement.querySelector('h2')!.textContent=`Move to ${label}?`;
-    return new Promise<'season'|'series'|null>(resolve=>{
-      const signal=active!.signal;
-      const abort=()=>placement.close('');
-      placement.returnValue='';
-      signal.addEventListener('abort',abort,{once:true});
-      placement.addEventListener('close',()=>{
-        signal.removeEventListener('abort',abort);
-        const result=placement.returnValue;
-        placement.returnValue='';
-        resolve(result==='series'||result==='season'?result:null);
-      },{once:true});
-      showDialog(placement);
-    });
-  }
   function reset() {
     if(title) {
       form.querySelector('.editor-score-field label')!.textContent='Score';
@@ -269,8 +245,7 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     title=null;
     summary=undefined;
     scope=0;
-    staged=undefined;
-    progressScope=undefined;
+    progressDrafts.clear();
     writtenStatus=undefined;
     openingStatus=undefined;
     drafts.clear();
@@ -317,30 +292,23 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     statusChanged() {
       if (!title) return;
       if (writtenStatus!==status()) {
-        staged=undefined;progressScope=undefined;writtenStatus=status();failure('');
+        if (!scope || status()==='completed') progressDrafts.delete(scope);
+        writtenStatus=status();failure('');
       }
       render();
     },
-    async patch(explicitStatus:boolean) {
+    async patch(explicitStatus:boolean):Promise<SeriesPatch|false> {
       const completing=explicitStatus&&status()==='completed';
       const seasonAction = scope && completing ? 'complete_season'
         : scope && explicitStatus && status()==='watching' && scopedSeason()?.manual_completion ? 'resume_season' : undefined;
       const first=released()[0];
-      const next=staged??(completing?defaultPosition():!openingStatus&&first?position(first,1):undefined);
+      const next=progressDrafts.get(scope)??(!scope&&(completing?defaultPosition():!openingStatus&&first?position(first,1):undefined)||undefined);
       if ((completing||next) && !summary?.ready) {
         failure('Episode progress is unavailable. Try again shortly.');
         void read();
         return false;
       }
-      const pausedOrDropped=status()==='paused'||status()==='dropped';
-      const completed=openingStatus==='completed'||seasons().some(season=>season.completed||
-        (season.total>0&&Math.max(watched(season),previewCount(season))>=season.total));
-      let listPlacement:'season'|'series'|undefined;
-      if (explicitStatus&&pausedOrDropped) {
-        const choice=!scope&&completed?await choosePlacement(status()):'season';
-        if (!choice) return false;
-        listPlacement=choice;
-      }
+      const seasonStatuses=scope&&explicitStatus&&!completing?{[scope]:status()}:undefined;
       const edits=seasons().flatMap(season=>{
         const fields=draft(season.season_number);
         if (!fields) return [];
@@ -352,16 +320,19 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
           ...(finishChanged?{completion_date:fields.finish_date||null}:{})}];
       });
       return {revision:summary?.revision,order:summary?.order,watch_date:localToday(),seasons:edits,
-        list_placement:listPlacement,...(seasonAction?{action:seasonAction,season_number:scope}
-          :next?{action:'position' as const,...next,progress_season:progressScope}:{})};
+        season_statuses:seasonStatuses,...(seasonAction?{action:seasonAction,season_number:scope}
+          :next?{action:'position' as const,...next,progress_season:scope||undefined}:{})};
     },
-    rollbackNeeded(patch:{action?:string;episode_id?:number|null}) {
+    rollbackNeeded(patch:{action?:string;episode_id?:number|null;progress_season?:number}) {
       if (patch.action!=='position') return false;
-      const episodes=seasons().flatMap(season=>season.episodes);
+      const episodes=seasons().filter(season=>!patch.progress_season||season.season_number===patch.progress_season)
+        .flatMap(season=>season.episodes);
       return episodes.slice(episodes.findIndex(episode=>episode.id===patch.episode_id)+1).some(episode=>episode.watched);
     },
-    optimisticProgress(patch:{action?:string;episode_id?:number|null}) {
+    optimisticProgress(patch:{action?:string;episode_id?:number|null;progress_season?:number;episode_count?:number}) {
       if (patch.action!=='position') return undefined;
+      if (patch.progress_season) return {progress:seasons().reduce((sum,season)=>sum+
+        (season.season_number===patch.progress_season?patch.episode_count??0:watched(season)),0)};
       return {progress:seasons().flatMap(season=>season.episodes).findIndex(episode=>episode.id===patch.episode_id)+1};
     },
     refresh:read,

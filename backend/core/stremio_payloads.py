@@ -165,6 +165,7 @@ def with_progress_state(
     state = {**default_state(), **(candidate.get("state") or {})}
     state["timeOffset"] = int(record["position"])
     state["duration"] = int(record["duration"])
+    previous_video = state.get('video_id')
     if record.get("content_type") == "movie":
         state["video_id"] = content_id
     else:
@@ -183,6 +184,9 @@ def with_progress_state(
             if matching_video
             else str(record.get("video_id") or "")
         )
+    if record.get('content_type') == 'series' and (record.get('synthetic_resume') or state['video_id'] != previous_video):
+        state['timeWatched'] = 0
+        state['flaggedWatched'] = 0
     last_watched_ms = record.get("last_watched")
     if last_watched_ms:
         state["lastWatched"] = datetime.fromtimestamp(

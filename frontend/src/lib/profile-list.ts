@@ -39,7 +39,7 @@ export function initializeProfileList(panel:HTMLElement,lifetime:AbortSignal){
         const episodes=summary.seasons.filter(season=>season.season_number>=state.list_season.number)
           .flatMap(season=>season.episodes);
         const next=episodes.find(episode=>!episode.watched);
-        if(!next)throw new Error('No further episodes are available.');
+        if(!next)return;
         return editorStore.write(title,{series_editor:{revision:summary.revision,order:summary.order,
           action:'episode',episode_id:next.id}},{progress:Number(title.entry?.progress??0)+1});
       };

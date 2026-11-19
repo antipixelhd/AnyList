@@ -89,7 +89,7 @@ async def rows_for_profile(db, user_id, viewer, owner, scope: ScreenScope, ids=N
     if ids is not None:
         if not ids:
             return []
-        query = query.where(Media.id.in_({abs(identifier) for identifier in ids}))
+        query = query.where(Media.id.in_({media_id_for_row(identifier) for identifier in ids}))
     loaded = (await db.execute(query.order_by(Media.title, Media.id))).all()
     if not await anime_is_visible(db):
         loaded = [row for row in loaded if not tracking_projection.is_anime(row[1])]
@@ -123,13 +123,16 @@ async def rows_for_profile(db, user_id, viewer, owner, scope: ScreenScope, ids=N
         candidates = [(media.id, tracked, media.tmdb_data or {}, media.tvdb_air_schedule) for tracked, media, *_ in loaded
                       if media.media_type == MediaType.series and can_detach(tracked)]
         placements = await series_placements(db, user_id, candidates, history=history)
-    detached_ids = {-identifier for identifier in ids if identifier < 0}
+    detached_ids = {identifier for identifier in ids if identifier < 0}
     season_totals = await displayed_season_totals(db, [
-        (media, placement.season) for _, media, *_ in loaded
-        if media.id in detached_ids and (placement := placements.get(media.id)) and placement.season
+        (media, season) for _, media, *_ in loaded if (placement := placements.get(media.id))
+        for season, _ in placement.active if season_row_id(media.id, season.number) in detached_ids
     ])
+    last_unwatched_season = {media.id: max((episode.season_number for episode in
+        released_episodes(history(media.tmdb_data or {}), EpisodeRelease(media.tvdb_air_schedule))
+        if not episode.watched), default=0) for _, media, *_ in loaded if media.id in placements}
     projected = (row for entry in entries for row in
-                 list_rows(entry, placements.get(entry['id']), season_totals.get(entry['id'])))
+                 list_rows(entry, placements.get(entry['id']), season_totals, last_unwatched_season.get(entry['id'])))
     by_id = {entry.get('list_id', entry['id']): {key: value for key, value in entry.items() if key in ROW_FIELDS}
              for entry in projected}
     return [by_id[identifier] for identifier in dict.fromkeys(ids) if identifier in by_id]
@@ -231,12 +234,26 @@ class ListSeason:
 class SeriesPlacement:
     parent_status: str | None
     completed: list[ListSeason]
-    season: ListSeason | None = None
+    active: list[tuple[ListSeason, str]]
+
+
+# Leave room for the season number while keeping PostgreSQL integer media IDs
+# within JavaScript's safe integer range.
+SEASON_ROW_STRIDE = 1 << 21
+
+
+def season_row_id(media_id, season_number):
+    return -(media_id * SEASON_ROW_STRIDE + season_number)
+
+
+def media_id_for_row(identifier):
+    if identifier < 0:
+        return -identifier // SEASON_ROW_STRIDE
+    return identifier
 
 
 def can_detach(entry):
-    return entry.status != 'completed' and entry.series_list_status != entry.status and (
-        entry.status == 'watching' or entry.progress > 0)
+    return bool(entry.season_list_statuses or (entry.status != 'completed' and (entry.progress or entry.status == 'watching')))
 
 
 def list_season(number, info, *, total=0, watched=0, completed=False, score=None, order='tmdb:aired'):
@@ -300,19 +317,20 @@ def place_series(entry, data, reconciled, episodes, release):
     selected = seasons.get(cursor.get('season_number')) if cursor.get('order') == order else None
     # A later playback/import can supersede a previously saved cursor.
     latest = next((season for season in reversed(ordered) if season.watched), None)
-    if not selected or selected.watched != cursor.get('episode_count') or latest and latest.number > selected.number:
+    if (not selected or cursor.get('progress_season') or selected.watched != cursor.get('episode_count')
+            or latest and latest.number > selected.number):
         selected = latest or next(iter(ordered), None)
-    if not selected or (entry.status != 'watching' and not completed):
-        return SeriesPlacement(entry.status, completed)
-    if entry.status in ('watching', 'planning') and selected.completed:
-        following = next((season for season in ordered if season.number > selected.number and not season.completed), None)
-        if following:
-            selected = following
-        elif entry.status == 'watching':
-            return SeriesPlacement('completed', completed)
-    if entry.status != 'watching' and selected.completed:
-        completed = [season for season in completed if season.number != selected.number]
-    return SeriesPlacement('completed' if completed else None, completed, selected)
+    statuses = (entry.season_list_statuses or {}).get(order, {})
+    active = [(season, statuses[str(season.number)]) for season in ordered if str(season.number) in statuses]
+    if selected and not active and entry.status != 'completed':
+        if selected.completed and entry.status in ('watching', 'planning'):
+            selected = next((season for season in ordered if season.number > selected.number and not season.completed), None)
+        if selected and not selected.completed and (entry.status == 'watching' or completed):
+            active.append((selected, entry.status))
+    elif selected and active and selected.watched and not selected.completed and str(selected.number) not in statuses:
+        if entry.status != 'completed':
+            active.append((selected, entry.status))
+    return SeriesPlacement('completed' if completed else None if active else entry.status, completed, active)
 
 
 async def displayed_season_totals(db, candidates):
@@ -329,7 +347,7 @@ async def displayed_season_totals(db, candidates):
     episode = aliased(Media)
     position = ShowEpisodePosition
     aired = requested.c.order_key == 'tmdb:aired'
-    rows = (await db.execute(select(requested.c.media_id, episode.id, episode.tmdb_id, episode.tvdb_id,
+    rows = (await db.execute(select(requested.c.media_id, requested.c.number, episode.id, episode.tmdb_id, episode.tvdb_id,
         episode.season_number, episode.episode_number, episode.release_date,
         episode.tmdb_data['tracking_import_released'].as_boolean().is_(True).label('imported_release'),
         season_completion.episode_placeholder(episode).label('placeholder'))
@@ -340,16 +358,16 @@ async def displayed_season_totals(db, candidates):
         .outerjoin(position, and_(~aired, position.series_tmdb_id == Media.tmdb_id,
             position.order_key == requested.c.order_key, position.display_season == requested.c.number,
             position.tmdb_episode_id == episode.tmdb_id))
-        .where(or_(and_(aired, episode.season_number >= requested.c.number), position.id.is_not(None)))
+        .where(or_(and_(aired, episode.season_number == requested.c.number), position.id.is_not(None)))
         .order_by(episode.episode_number))).all()
     by_media = defaultdict(dict)
     for row in rows:
-        by_media[row.media_id][row.id] = row
+        by_media[row.media_id, row.number][row.id] = row
 
     totals = {}
     for media, season in candidates:
         data = media.tmdb_data or {}
-        members = season_completion.catalogue_members(data, by_media[media.id].values())
+        members = season_completion.catalogue_members(data, by_media[media.id, season.number].values())
         metadata = {item['season_number']: item for item in data.get('seasons') or []
                     if isinstance(item, dict) and (item.get('season_number') or 0) > 0}
         latest = max([ep.season_number for ep in members] + list(metadata), default=season.number)
@@ -361,34 +379,33 @@ async def displayed_season_totals(db, candidates):
         total = season_progress_total(media, season.order, season.number, members, expected,
                                       released, release, latest=season.number == latest)
         if total is not None:
-            totals[media.id] = total
+            totals[media.id, season.number] = total
     return totals
 
 
-def list_rows(entry, placement, progress_total=None):
+def list_rows(entry, placement, progress_totals, last_unwatched_season):
     if not placement:
         yield {**entry, 'completed_seasons_only': True} if entry['status'] == 'completed' and entry['type'] == 'series' else entry
         return
-    season = placement.season
     if placement.parent_status:
         parent = {**entry, 'status': placement.parent_status,
                   'completed_seasons_only': placement.parent_status == 'completed'}
-        if placement.parent_status == 'completed':
+        if placement.completed:
             finished = placement.completed[-1]
             parent.update(progress=sum(item.watched for item in placement.completed),
-                season_position=f'S{finished.number}E{finished.watched}',
-                detached_season=season.number if season and season not in placement.completed else None)
+                season_position=f'S{finished.number}E{finished.watched}')
         yield parent
-    if season:
-        # One stable slot for the active season. Media IDs remain canonical
-        # for detail navigation, ratings and editor writes.
-        yield {**entry, 'list_id': -entry['id'], 'series_title': entry['title'], 'series_poster': entry['poster'],
+    for season, status in placement.active:
+        yield {**entry, 'list_id': season_row_id(entry['id'], season.number), 'status': status,
+            'series_title': entry['title'], 'series_poster': entry['poster'],
             'title': f"{entry['title']} - {season.name}", 'poster': season.poster or entry['poster'],
             'year': season.year or entry['year'], 'progress': season.watched, 'score': season.score,
             'rewatch_count': 0 if placement.parent_status else entry['rewatch_count'],
             'notes': None if placement.parent_status else entry['notes'],
             'list_season': {'number': season.number, 'order': season.order,
-                            'total': season.total if progress_total is None else progress_total}}
+                            'can_increment': last_unwatched_season >= season.number
+                                if last_unwatched_season is not None and season.order == 'tmdb:aired' else None,
+                            'total': progress_totals.get((entry['id'], season.number), season.total)}}
 
 
 @dataclass(slots=True)
@@ -418,12 +435,11 @@ async def members(db, user_id, scope: ScreenScope, *, progress=False, cap=None, 
         'tracking_catalogue_provider', 'tracking_catalogue_refreshed_at') if scope != 'movie' else ()
     season_keys = ('seasons',) if scope != 'movie' else ()
     keys = ('genres', *anime_keys, *history_keys, *season_keys)
-    detach_candidate = and_(TrackedEntry.status != 'completed',
-        TrackedEntry.series_list_status.is_distinct_from(TrackedEntry.status),
-        or_(TrackedEntry.status == 'watching', TrackedEntry.progress > 0))
+    detach_candidate = or_(TrackedEntry.season_list_statuses.is_not(None),
+        and_(TrackedEntry.status != 'completed', or_(TrackedEntry.status == 'watching', TrackedEntry.progress > 0)))
     columns = (Media.id, func.lower(Media.title).label('title'), Media.media_type, Media.release_date, Media.tvdb_air_schedule,
         TrackedEntry.status, TrackedEntry.rating_mode, TrackedEntry.manual_score, TrackedEntry.season_scores,
-        TrackedEntry.progress, TrackedEntry.updated_at, TrackedEntry.season_cursor, TrackedEntry.series_list_status,
+        TrackedEntry.progress, TrackedEntry.updated_at, TrackedEntry.season_cursor, TrackedEntry.season_list_statuses,
         (TrackedEntry.favorite | MediaFavorite.media_id.is_not(None)).label('favorite'),
         *(metadata[key].label(key) for key in ('genres', *anime_keys)),
         *(case((detach_candidate, metadata[key]), else_=None).label(key) for key in season_keys),
@@ -460,12 +476,12 @@ async def members(db, user_id, scope: ScreenScope, *, progress=False, cap=None, 
         placement = projected.get(row.id)
         parent_status = placement.parent_status if placement else row.status
         if parent_status:
-            if placement and parent_status == 'completed':
+            if placement and placement.completed:
                 count = sum(season.watched for season in placement.completed)
             result.append(Member(row.id, row.title, parent_status, effective_score(row.rating_mode, row.manual_score, row.season_scores),
                 count, row.updated_at, year, genres, bool(row.favorite), rank))
-        if placement and (season := placement.season):
-            result.append(Member(-row.id, f'{row.title} - {season.name.lower()}', row.status, season.score, season.watched,
+        for season, status in placement.active if placement else ():
+            result.append(Member(season_row_id(row.id, season.number), f'{row.title} - {season.name.lower()}', status, season.score, season.watched,
                 row.updated_at, season.year or year, genres, bool(row.favorite), rank))
     if cap is not None and len(result) > cap:
         return None

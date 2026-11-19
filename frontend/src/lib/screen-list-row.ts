@@ -10,7 +10,7 @@ const coverOptions={size:'w342',sizes:'(max-width:650px) 32px, 42px',route:'dire
 export function canIncrementScreenList(entry:ListState){
   if(entry.type==='movie')return entry.progress<1&&(!entry.release_date||entry.release_date.slice(0,10)<=new Date().toISOString().slice(0,10));
   if(entry.completed_seasons_only&&entry.entry?.status!=='completed')return false;
-  if(entry.list_season)return entry.released_episodes!=null&&entry.entry?.progress<entry.released_episodes;
+  if(entry.list_season)return entry.list_season.can_increment??(entry.released_episodes!=null&&entry.entry?.progress<entry.released_episodes);
   return entry.released_episodes!=null&&entry.progress<entry.released_episodes;
 }
 

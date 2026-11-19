@@ -9,7 +9,7 @@ import logging
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-from sqlalchemy import select
+from sqlalchemy import case, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core import nuvio, nuvio_payloads, tmdb
@@ -253,11 +253,12 @@ async def build_progress_items(
     next_up_for_watched_series: bool = False,
 ) -> list[dict]:
     from models.tracking import TrackedEntry
+    from core.series_playback import active_playback_filter, activity_resume, watching_episodes
 
     tracked_result = await db.execute(
         select(TrackedEntry, Media)
         .join(Media, Media.id == TrackedEntry.media_id)
-        .where(TrackedEntry.user_id == user_id, TrackedEntry.status == "watching")
+        .where(TrackedEntry.user_id == user_id, active_playback_filter(TrackedEntry))
         .order_by(Media.id)
     )
     tracked_rows = tracked_result.all()
@@ -310,7 +311,9 @@ async def build_progress_items(
         return updated_at >= changed_at
 
     fresh_progress: dict[int, PlaybackProgress] = {}
+    offsets = {}
     for progress, media in progress_result.all():
+        offsets[media.id] = progress
         owner = entries_by_media.get(media.id) or show_id_to_entry.get(media.show_id)
         if owner is not None and fresh_for(progress, owner):
             fresh_progress[media.id] = progress
@@ -324,6 +327,7 @@ async def build_progress_items(
         return value
 
     progress_by_media = dict(fresh_progress)
+    activity_targets = set()
     series_with_watched_history: set[int] = set()
     for media_id, entry in entries_by_media.items():
         media = media_by_id[media_id]
@@ -336,6 +340,21 @@ async def build_progress_items(
                 continue
             released = [episode for episode in episodes
                 if not episode.release_date or episode.release_date <= datetime.now(timezone.utc).date().isoformat()]
+            for episode in episodes:
+                progress_by_media.pop(episode.id, None)
+            if getattr(entry, 'latest_episode_activity', None):
+                target, offset, at = activity_resume(entry, released, offsets)
+                if target:
+                    activity_targets.add(target.id)
+                    progress_by_media[target.id] = SimpleNamespace(
+                        progress_seconds=offset.progress_seconds if offset else 1,
+                        progress_percent=offset.progress_percent if offset else 0.01,
+                        updated_at=at, synthetic_resume=offset is None,
+                    )
+                continue
+            if not released:
+                continue
+            released = watching_episodes(entry, released)
             if not released:
                 continue
             episode_ids = {episode.id for episode in released}
@@ -349,8 +368,6 @@ async def build_progress_items(
             # Sending that row as the show's resume position hides the next
             # episode from Continue Watching. Publish only one active resume
             # per series, or seed the next unwatched episode at one second.
-            for episode in episodes:
-                progress_by_media.pop(episode.id, None)
             active = [episode for episode in released
                 if episode.id in fresh_progress
                 and episode.id not in watched_ids
@@ -393,6 +410,10 @@ async def build_progress_items(
             preserve_fractional_seconds=next_up_for_watched_series,
         )
         if item:
+            if media_id in activity_targets:
+                item['series_activity'] = True
+                if getattr(progress, 'synthetic_resume', False):
+                    item['synthetic_resume'] = True
             if next_up_for_watched_series and getattr(progress, "synthetic_resume", False):
                 item["synthetic_resume"] = True
             items.append(nuvio_payloads.remap_payload(item, media, shows_by_id.get(media.show_id), baseline))
@@ -424,11 +445,12 @@ async def progress_keys_to_clear(db: AsyncSession, user_id: int, connection_id: 
                                         remote_rows: list[dict]) -> list[str]:
     """Find mapped Nuvio resumes whose local title is no longer Watching."""
     from models.tracking import StreamBaseline, TrackedEntry, TrackingDeletion
+    from core.series_playback import active_playback_filter
 
     baseline = await db.get(StreamBaseline, connection_id)
     mappings = (baseline.snapshot or {}).get("mappings", {}) if baseline else {}
     statuses_result = await db.execute(
-        select(Media, TrackedEntry.status)
+        select(Media, case((active_playback_filter(TrackedEntry), 'watching'), else_='inactive'))
         .join(TrackedEntry, TrackedEntry.media_id == Media.id)
         .where(TrackedEntry.user_id == user_id,
             Media.media_type.in_([MediaType.movie, MediaType.series]))
@@ -531,6 +553,8 @@ async def progress_keys_to_clear(db: AsyncSession, user_id: int, connection_id: 
                     for field in remote_timestamps
                 )
                 has_legacy_echo_time = bool(remote_timestamps) and timestamps_match
+                if prior.get('series_activity'):
+                    continue
                 explicit_seed = prior.get("synthetic_resume") is True
                 if fields_match and timestamps_match and (explicit_seed or has_legacy_echo_time):
                     if not key:

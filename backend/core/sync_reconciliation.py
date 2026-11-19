@@ -458,19 +458,16 @@ def reconcile_completions(observations, completions):
     """A newer completion covers resume evidence for that movie/episode only."""
     result = list(observations)
     for completion in completions:
-        def covers(observation):
-            return completion.value[0] == "completed" or (
-                observation.value[0] == "watching" and all(value is not None for value in observation.value[1:3])
-                and observation.value[1:3] <= completion.value[1:3])
-        # Earlier episode history enriches the series without replacing a later resume.
-        if completion.value[0] != "completed" and any(
-                o.value[0] == "watching" and all(value is not None for value in o.value[1:3])
-                and o.value[1:3] > completion.value[1:3] for o in result):
+        is_series = completion.value[0] != 'completed'
+        if is_series and any(o.value[0] == 'watching' and o.value[3] is not None
+                and o.value[1:3] != completion.value[1:3]
+                and o.changed_at and (not completion.changed_at or o.changed_at >= completion.changed_at) for o in result):
             continue
-        result = [o for o in result if not (covers(o) and (
-            o.changed_at and completion.changed_at and completion.changed_at > o.changed_at
-            or o.source == completion.source and (not o.changed_at or not completion.changed_at
-                                                  or completion.changed_at >= o.changed_at)))]
+        result = [o for o in result if not (
+            (not is_series or o.value[0] == 'watching') and (
+                o.changed_at and completion.changed_at and completion.changed_at > o.changed_at
+                or o.source == completion.source and (not is_series or o.value[1:3] == completion.value[1:3])
+                and (not o.changed_at or not completion.changed_at or completion.changed_at >= o.changed_at)))]
         result.append(completion)
     return result
 
@@ -485,6 +482,7 @@ async def _playback(db, state, cycle, added):
     candidates = {}
     completions = {}
     records = {}
+    additional_offsets = []
     tmdb_ids = {int(value) for snapshot in state.snapshots for value in snapshot["tmdb_ids"].values() if value is not None}
     series_tmdb_ids = set()
     for snapshot in state.snapshots:
@@ -514,10 +512,20 @@ async def _playback(db, state, cycle, added):
         old = previous.get("progress", {})
         mappings = {**previous.get("mappings", {}), **snapshot["tmdb_ids"]}
         completed = [*snapshot["watched"], *(completed_rows(snapshot["progress"]) if snapshot["sync_playback"] else [])]
-        previous_progress = {str(row.get("content_id")): row for row in previous.get("records", {}).get("progress", [])}
+        from core.tracking_snapshot import watch_key
+        previous_progress = {watch_key(row): row for row in previous.get("records", {}).get("progress", [])}
+        if conn.type == 'nuvio' and baseline and baseline.approved and snapshot['complete'] and snapshot['sync_playback']:
+            from core.tracking_snapshot import media_ids_for_watch_rows
+            secondary = [row for row in snapshot['progress'] if row.get('content_type') == 'series'
+                and active.get(str(row.get('content_id'))) != row and previous_progress.get(watch_key(row)) != row
+                and (root_id := lookup.get((mappings.get(str(row.get('content_id'))), 'series'))) in state.entries_before
+                and not state.protected_fields.get(root_id, set()) & {'status', 'progress'}]
+            if secondary:
+                resolved = await media_ids_for_watch_rows(db, mappings, secondary)
+                additional_offsets.extend((resolved[watch_key(row)], row) for row in secondary if watch_key(row) in resolved)
         for row in completed_rows(snapshot["progress"]) if snapshot["sync_playback"] else []:
             key = str(row.get("content_id"))
-            prior = previous_progress.get(key)
+            prior = previous_progress.get(watch_key(row))
             if prior and same_playback(prior, row) and provider_changed_at(prior) == provider_changed_at(row):
                 continue
             media_id = lookup.get((mappings.get(key), row.get("content_type")))
@@ -531,6 +539,9 @@ async def _playback(db, state, cycle, added):
         for key, row in active.items():
             prior = old.get(key)
             if prior and same_playback(prior, row) and prior.get("last_watched") == row.get("last_watched"):
+                continue
+            echo = previous.get('outbound', {}).get(key)
+            if echo and same_playback(echo, row) and provider_changed_at({'last_watched': echo.get('last_watched')}) == provider_changed_at({'last_watched': row.get('last_watched')}):
                 continue
             media_id = lookup.get((mappings.get(key), row.get("content_type")))
             if media_id is None:
@@ -696,6 +707,8 @@ async def _playback(db, state, cycle, added):
                 if await approved_source(db, state.user_id, source_key(conn.type, conn.id)):
                     from core.stream_actions import queue_progress_update
                     await queue_progress_update(db, conn, await db.get(Media, media_id), record)
+    if additional_offsets:
+        await _remember_episode_offsets(db, state.user_id, additional_offsets)
     await db.commit()
     # Only selected observations can mutate tracked state. All raw snapshots
     # still advance, including losing and pull-only providers.
@@ -866,6 +879,8 @@ async def _apply_playback(db, state, media_id, record, changed_at):
             Media.episode_number == record.get("episode")))).scalar_one_or_none() if show else None
     if media is None:
         return
+    if record.get('synthetic_resume') or float(record.get('position') or 0) < 1000:
+        return
     duration, position = float(record.get("duration") or 0), float(record.get("position") or 0)
     if duration <= 0 or not 0 < position < duration:
         return
@@ -881,8 +896,34 @@ async def _apply_playback(db, state, media_id, record, changed_at):
     row.updated_at = changed_at or state.started_at
 
 
+async def _remember_episode_offsets(db, user_id, observations):
+    """Keep additional episode resumes without changing the title's active episode."""
+    from sqlalchemy import select
+    from models import PlaybackProgress
+
+    existing = {row.media_id: row for row in (await db.execute(select(PlaybackProgress).where(
+        PlaybackProgress.user_id == user_id,
+        PlaybackProgress.media_id.in_({media_id for media_id, _ in observations}),
+    ))).scalars()}
+    for media_id, record in observations:
+        clock = provider_changed_at({'last_watched': record.get('last_watched')})
+        try:
+            position, duration = int(record.get('position') or 0), int(record.get('duration') or 0)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if not clock or duration <= 0 or position <= 1000 or not 0 < position / duration < 0.9:
+            continue
+        row = existing.get(media_id)
+        if row and row.updated_at and row.updated_at >= clock:
+            continue
+        if row is None:
+            row = existing[media_id] = PlaybackProgress(user_id=user_id, media_id=media_id)
+            db.add(row)
+        row.progress_seconds, row.progress_percent, row.updated_at = position // 1000, position / duration, clock
+
+
 async def _clear_completed_playback(db, state, media_id, decision):
-    from sqlalchemy import select, delete, or_, and_
+    from sqlalchemy import select, delete, or_
     from models import PlaybackProgress, Media, Show
     media = await db.get(Media, media_id)
     if media.media_type.value == "series":
@@ -891,8 +932,8 @@ async def _clear_completed_playback(db, state, media_id, decision):
             return
         shows = select(Show.id).where(or_(Show.tmdb_id == media.tmdb_id if media.tmdb_id else False,
             Show.tvdb_id == media.tvdb_id if media.tvdb_id else False))
-        ids = select(Media.id).where(Media.show_id.in_(shows), Media.season_number > 0,
-            or_(Media.season_number < season, and_(Media.season_number == season, Media.episode_number <= episode)))
+        ids = select(Media.id).where(Media.show_id.in_(shows),
+            Media.season_number == season, Media.episode_number == episode)
     else:
         ids = select(Media.id).where(Media.id == media_id)
     await db.execute(delete(PlaybackProgress).where(PlaybackProgress.user_id == state.user_id,

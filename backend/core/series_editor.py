@@ -35,26 +35,28 @@ class SeriesEditorPatch(BaseModel):
     season_number: int | None = Field(default=None, gt=0)
     episode_count: int | None = Field(default=None, ge=0)
     progress_season: int | None = Field(default=None, gt=0)
+    season_statuses: dict[int, Literal['planning', 'watching', 'paused', 'dropped']] = Field(default_factory=dict, max_length=250)
     list_placement: Literal['season', 'series'] | None = None
     watch_date: date | None = None
     seasons: list[SeasonEdit] = Field(default_factory=list, max_length=250)
 
 
 class SeriesEditorContext:
-    def __init__(self, data, positions, watched, cursor=None, *, release=None, manual_completions=None):
+    def __init__(self, data, positions, watched, cursor=None, *, release=None, manual_completions=None, season_statuses=None):
         self.data = data
         self.order, self.groups, self.metadata = data
         self.positions = positions
         self.watched = watched
         self.cursor = cursor
         self.manual_completions = (manual_completions or {}).get(self.order, {})
+        self.season_statuses = (season_statuses or {}).get(self.order, {})
         self.release = release or EpisodeRelease()
         self.today = self.release.today
         self.released = [ep for _, members, _ in self.groups for ep in members
                          if is_released(ep, self.today, release=self.release)]
         self.revision = hashlib.sha256(repr((self.order, [(n, [(ep.id, ep.release_date) for ep in episodes], expected)
             for n, episodes, expected in self.groups], [ep.id for ep in self.released], sorted(watched),
-            self.selected_position(), sorted(self.manual_completions.items()))).encode()).hexdigest()
+            self.selected_position(), sorted(self.manual_completions.items()), sorted(self.season_statuses.items()))).encode()).hexdigest()
 
     def cursor_for(self, patch):
         if patch.season_number is None and patch.episode_count is None:
@@ -65,24 +67,31 @@ class SeriesEditorContext:
         if not members or patch.episode_count > len(members):
             raise HTTPException(409, 'Choose a released season and episode')
         previous = [ep for ep in self.released if self.positions[ep.id][0] < patch.season_number]
-        endpoint = members[patch.episode_count-1] if patch.episode_count else (previous[-1] if previous else None)
+        endpoint = members[patch.episode_count-1] if patch.episode_count else (
+            previous[-1] if previous and patch.progress_season is None else None)
         if patch.episode_id != (endpoint.id if endpoint else None):
             raise HTTPException(422, 'The episode does not match the selected season position')
-        return {'order':self.order,'season_number':patch.season_number,'episode_count':patch.episode_count,
-                'episode_id':patch.episode_id}
+        cursor = {'order':self.order,'season_number':patch.season_number,'episode_count':patch.episode_count,
+                  'episode_id':patch.episode_id}
+        if patch.progress_season:
+            cursor['progress_season'] = patch.progress_season
+        return cursor
 
     def selected_position(self):
         if not isinstance(self.cursor,dict) or self.cursor.get('order') != self.order:
             return None
         try:
             patch = SeriesEditorPatch(action='position',**{k:self.cursor.get(k) for k in
-                ('season_number','episode_count','episode_id')})
+                ('season_number','episode_count','episode_id','progress_season')})
             cursor = self.cursor_for(patch)
             if cursor is None:
                 return None
         except (HTTPException, ValueError):
             return None
         ids = [ep.id for ep in self.released]
+        if patch.progress_season:
+            members = [ep.id for ep in self.released if self.positions[ep.id][0] == patch.progress_season]
+            return cursor if self.watched.intersection(members) == set(members[:patch.episode_count]) else None
         boundary = ids.index(cursor['episode_id'])+1 if cursor['episode_id'] in ids else 0
         return cursor if self.watched == set(ids[:boundary]) else None
 
@@ -97,8 +106,8 @@ class SeriesEditorContext:
         if patch.revision != self.revision:
             raise HTTPException(409, {'code': 'series_editor_changed'})
         number = patch.season_number
-        if number is None or number != self.progress_season():
-            raise HTTPException(409, 'You can only delete your latest tracked season.')
+        if number is None or number not in (self.metadata.keys() | {n for n, _, _ in self.groups}):
+            raise HTTPException(409, 'Choose a season in this series.')
         return {ep.id for sn, members, _ in self.groups if sn == number for ep in members}
 
     def next_progress_season(self):
@@ -148,10 +157,14 @@ class SeriesEditorContext:
                 return self.watched, None
             return self.watched | {ep.id for ep in members}, members[-1].id
         self.cursor_for(patch)
-        if patch.progress_season is not None and (patch.action != 'position'
-                or patch.progress_season != patch.season_number
-                or patch.progress_season not in (self.progress_season(), self.next_progress_season())):
-            raise HTTPException(409, 'You can only change episode progress for your current season.')
+        if patch.progress_season is not None:
+            if patch.action != 'position' or patch.progress_season != patch.season_number:
+                raise HTTPException(422, 'Choose the season whose progress is changing.')
+            if patch.revision != self.revision or patch.order not in (None, self.order):
+                raise HTTPException(409, {'code': 'series_editor_changed', 'airing': airing})
+            cursor = self.cursor_for(patch)
+            members = [ep.id for ep in self.released if self.positions[ep.id][0] == patch.progress_season]
+            return self.watched.difference(members) | set(members[:patch.episode_count]), cursor['episode_id']
         if (patch.action or needs_progress) and (not self.released or patch.revision != self.revision):
             raise HTTPException(409, {'code': 'series_editor_changed', 'airing': airing})
         if needs_progress and status == 'completed' and airing and patch.action not in ('complete_previous', 'catch_up', 'position'):
@@ -195,11 +208,45 @@ async def editor_context(db, media, user_id):
     positions = {}
     data = await season_groups(db, media, user_id, display_positions=positions, include_placeholders=True)
     watched = await watched_episode_ids(db, user_id, list(positions))
-    saved = (await db.execute(select(TrackedEntry.season_cursor, TrackedEntry.manual_season_completions)
+    saved = (await db.execute(select(TrackedEntry.season_cursor, TrackedEntry.manual_season_completions, TrackedEntry.season_list_statuses)
         .where(TrackedEntry.user_id == user_id, TrackedEntry.media_id == media.id))).first()
-    cursor, manual = saved if saved else (None, None)
+    cursor, manual, statuses = saved if saved else (None, None, None)
     return SeriesEditorContext(data, positions, watched, cursor, release=EpisodeRelease(media.tvdb_air_schedule),
-                               manual_completions=manual)
+                               manual_completions=manual, season_statuses=statuses)
+
+
+def update_season_statuses(entry, context, patch, desired, *, series_status=None):
+    """Keep explicit list states alongside the season counts derived from watches."""
+    statuses = dict(context.season_statuses)
+    if not statuses and entry.status == 'watching' and (patch.season_statuses or patch.progress_season):
+        previous = context.next_progress_season() or context.progress_season()
+        if previous and previous != patch.progress_season:
+            statuses[str(previous)] = 'watching'
+    statuses.update((str(number), status) for number, status in patch.season_statuses.items())
+    if patch.action in ('delete_season', 'complete_season'):
+        statuses.pop(str(patch.season_number), None)
+    elif patch.action == 'resume_season':
+        statuses[str(patch.season_number)] = 'watching'
+    if patch.action == 'episode':
+        number = context.positions[patch.episode_id][0]
+        statuses[str(number)] = 'watching'
+    if series_status and series_status != 'completed' and statuses:
+        number = patch.season_number or context.progress_season()
+        if number:
+            statuses[str(number)] = series_status
+    if patch.progress_season and patch.episode_count and patch.progress_season not in patch.season_statuses:
+        statuses.setdefault(str(patch.progress_season), 'watching')
+    if desired is not None and patch.action not in ('delete_season', 'resume_season'):
+        affected = ({patch.progress_season} if patch.progress_season else
+                    {context.positions[patch.episode_id][0]} if patch.action == 'episode' else
+                    {number for number, _, _ in context.groups})
+        for number, members, expected in context.groups:
+            if number in affected and members and len(members) == (expected or len(members)) and all(
+                    episode.id in desired for episode in members):
+                statuses.pop(str(number), None)
+    if statuses != context.season_statuses:
+        from core.series_playback import save_season_statuses
+        save_season_statuses(entry, context.order, statuses)
 
 
 async def intent_date_edits(db, media_id, user_id, context, edits, *, number, start, finish, day):
@@ -278,6 +325,7 @@ async def editor_summary(db, media, user_id, context):
                 for ep in members if ep.id in released],
             'upcoming': [{'id': ep.id, 'number': context.positions[ep.id][1]} for ep in upcoming]}
         season.update(saved.get((number, key), {}))
+        season['status'] = context.season_statuses.get(str(number))
         if str(number) in context.manual_completions:
             season.update(completed=True, manual_completion=True)
             if not season.get('date_manual') and not season.get('completion_date'):

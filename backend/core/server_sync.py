@@ -2608,6 +2608,7 @@ async def _apply_nuvio_watch_history(
     *,
     include_unknown_dates: bool = False,
     dedupe_by_media_id_only: bool = False,
+    episode_state_only: bool = False,
 ) -> set[int]:
     # Only movies are "standalone" watch targets. A show-level row (no
     # season/episode) is a rollup of its episodes and is skipped below, so it
@@ -2708,7 +2709,7 @@ async def _apply_nuvio_watch_history(
         ):
             existing_by_media.setdefault(media.id, []).append(watched_at)
             continue
-        if dedupe_by_media_id_only:
+        if dedupe_by_media_id_only or (episode_state_only and media.media_type == MediaType.episode):
             if times:
                 continue
         elif watched_at is None:
@@ -3173,6 +3174,7 @@ async def _run_nuvio_sync(
                         show_map,
                         tmdb_ids,
                         include_unknown_dates=True,
+                        episode_state_only=not full_resync,
                     )
                 )
 
@@ -3430,7 +3432,11 @@ async def _stremio_records(
         # Stremio can retain a stale timeOffset after the same episode has
         # already been marked watched. That offset is historical residue, not
         # active Continue Watching progress, so it must not recreate Watching.
-        if current_parts and current_video_id not in watched_ids and (position > 0 or watched_time > 0) and duration > 0:
+        native_next = position == 1 and watched_time == 0 and last_watched is not None
+        replaying_episode = (0 < watched_time < duration * 0.9 and 0 < position < duration * 0.9
+                             and not state.get('flaggedWatched'))
+        if (current_parts and duration > 0 and (position > 0 or watched_time > 0)
+                and (current_video_id not in watched_ids or native_next or replaying_episode)):
             season, episode = current_parts
             progress_records.append(
                 {
@@ -3442,6 +3448,7 @@ async def _stremio_records(
                     "watched_time": watched_time,
                     "duration": duration,
                     "last_watched": last_watched,
+                    "synthetic_resume": native_next,
                 }
             )
     return library_records, watched_records, progress_records, removed_ids
@@ -4515,9 +4522,13 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                                 if conn.push_playback else []
                             )
                             if conn.push_playback and progress_items:
+                                from core.stream_actions import obsolete_series_marker
+                                verified_resumes = (baseline.snapshot or {}).get('verified_nuvio_resumes', {}) if baseline else {}
                                 clear_keys = list(dict.fromkeys([
                                     *clear_keys,
                                     *nuvio_payloads.obsolete_progress_keys(remote_progress, progress_items),
+                                    *(key for item in progress_items if (key := obsolete_series_marker(
+                                        remote_progress, item, verified_resumes.get(str(item['content_id']))))),
                                 ]))
                             if clear_keys:
                                 await nuvio._rpc(client, conn.url, session.access_token,
@@ -4544,12 +4555,15 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                                     )
                             pushed_progress = []
                             synthetic_progress_keys: set[str] = set()
+                            series_activity_keys: set[str] = set()
                             for item in progress_items:
                                 payload = dict(item)
                                 payload.setdefault("progress_key", f"{payload['content_id']}_s{payload['season']}e{payload['episode']}"
                                     if payload.get("season") is not None else payload["content_id"])
                                 if payload.pop("synthetic_resume", False):
                                     synthetic_progress_keys.add(str(payload["progress_key"]))
+                                if payload.pop('series_activity', False):
+                                    series_activity_keys.add(str(payload['progress_key']))
                                 pushed_progress.append(payload)
                             for offset in range(0, len(pushed_progress), nuvio._PAGE_SIZE):
                                 await nuvio._rpc(client, conn.url, session.access_token,
@@ -4594,6 +4608,8 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                                         expected = nuvio_resume_signature(payload)
                                         if remote['last_watched'] == expected['last_watched']:
                                             verified[content_id] = {'observed_at': expected['last_watched'], 'remote': remote}
+                                            if str(payload['progress_key']) in series_activity_keys & synthetic_progress_keys:
+                                                verified[content_id]['series_marker'] = True
                                         outbound[str(payload["content_id"])] = {
                                             field: payload.get(field)
                                             for field in ("position", "duration", "season", "episode", "observed_at")
@@ -4603,6 +4619,8 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                                         outbound[str(payload["content_id"])]["synthetic_resume"] = (
                                             str(payload["progress_key"]) in synthetic_progress_keys
                                         )
+                                        if str(payload['progress_key']) in series_activity_keys:
+                                            outbound[content_id]['series_activity'] = True
                                         if payload.get("last_watched") is not None:
                                             outbound[str(payload["content_id"])]["last_watched"] = payload["last_watched"]
                                     snapshot["mappings"] = mappings

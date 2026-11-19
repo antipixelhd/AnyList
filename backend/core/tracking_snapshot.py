@@ -24,7 +24,10 @@ def _active(rows):
             position=float(row.get('position') or 0)
         except (ValueError,TypeError):continue
         if duration>0 and 0<position/duration<0.9:
-            result[str(row.get('content_id'))]=dict(row)
+            key = str(row.get('content_id'))
+            previous = result.get(key)
+            if not previous or (provider_changed_at(row) or datetime.min) >= (provider_changed_at(previous) or datetime.min):
+                result[key] = dict(row)
     return result
 
 
@@ -250,37 +253,72 @@ async def require_stream_reconciliation(db, conn, *, full_playback_push=False):
         raise HTTPException(409, 'Resolve this connection’s conflicts in Notifications before pushing')
 
 
-async def apply_series_observation(db, user_id, media, entry, row, finished, newly_watched_ids=None):
-    """Advance cumulative regular episodes only with a verified matching order."""
+async def apply_series_observation(db, user_id, media, entry, rows, activity, *,
+                                   activity_finished=False, infer_previous=False, newly_watched_ids=None):
+    """Apply exact watch evidence and independently select the current playback episode."""
     identities=[]
     if media.tmdb_id:
         identities.append(Show.tmdb_id==media.tmdb_id)
     if media.tvdb_id:
         identities.append(Show.tvdb_id==media.tvdb_id)
     show=(await db.execute(select(Show).where(or_(*identities)))).scalars().first() if identities else None
-    if not show:return False
+    if not show:return False, False
     episodes=(await db.execute(select(Media).where(Media.show_id==show.id,Media.media_type==MediaType.episode,
         Media.season_number>0,Media.release_date.is_not(None),Media.release_date<=date.today().isoformat())
         .order_by(Media.season_number,Media.episode_number))).scalars().all()
-    index=next((i for i,e in enumerate(episodes) if (e.season_number,e.episode_number)==(row.get('season'),row.get('episode'))),None)
-    if index is None:return False
-    through=index+1 if finished else index
+    if not episodes:
+        return False, False
+    indices = {(episode.season_number, episode.episode_number): i for i, episode in enumerate(episodes)}
     watched=set((await db.execute(select(WatchEvent.media_id).where(WatchEvent.user_id==user_id,
         WatchEvent.media_id.in_([e.id for e in episodes]),WatchEvent.completed.is_(True)))).scalars())
     from core.watch_dates import inferred_watch_datetime, normalize_watch_datetime
-    source_watch_at = normalize_watch_datetime(row.get('watched_at') or row.get('last_watched'))
-    evidence_watch_at = source_watch_at or inferred_watch_datetime(entry.finish_date)
-    for episode in episodes[:through]:
-        if episode.id not in watched:
-            db.add(WatchEvent(user_id=user_id,media_id=episode.id,completed=True,
-                watched_at=evidence_watch_at,
-                date_inferred=(source_watch_at is None or bool(row.get('date_shared')) or not (finished and episode.id==episodes[index].id)),
+    evidence = [(row, True) for row in rows]
+    if infer_previous and activity and not activity_finished:
+        evidence.append((activity, False))
+    for row, finished in evidence:
+        index = indices.get((row.get('season'), row.get('episode')))
+        if index is None:
+            continue
+        source_watch_at = normalize_watch_datetime(row.get('watched_at') or row.get('last_watched'))
+        for episode in episodes[:index + int(finished)] if infer_previous else (episodes[index],):
+            if episode.id in watched:
+                continue
+            db.add(WatchEvent(user_id=user_id, media_id=episode.id, completed=True,
+                watched_at=source_watch_at or inferred_watch_datetime(entry.finish_date),
+                date_inferred=source_watch_at is None or bool(row.get('date_shared')) or not finished or episode.id != episodes[index].id,
                 date_shared=bool(row.get('date_shared'))))
             watched.add(episode.id)
             if newly_watched_ids is not None:
                 newly_watched_ids.add(episode.id)
     entry.progress=len(watched)
-    return bool((media.tmdb_data or {}).get('tracking_catalogue_refreshed_at') and episodes and len(watched)==len(episodes))
+    index = indices.get((activity.get('season'), activity.get('episode'))) if activity else None
+    changed = False
+    if index is not None:
+        from core.series_playback import remember_episode, save_season_statuses
+        from core.episode_order import resolve_order_key, get_positions_for_series
+        activity_at = provider_changed_at({'last_watched': activity.get('last_watched') or activity.get('watched_at')})
+        if activity.get('synthetic_resume') and activity.get('modified_at'):
+            activity_at = provider_changed_at({'modified_at': activity['modified_at']}) or activity_at
+        changed = remember_episode(entry, episodes[index].id, activity_at or provider_changed_at(activity),
+                                   completed=activity_finished)
+        if changed and not infer_previous and media.tmdb_id:
+            order = await resolve_order_key(db, user_id, media.tmdb_id)
+            mappings = (await get_positions_for_series(db, [(media.tmdb_id, order)])).get((media.tmdb_id, order), {})
+            numbers = {episode.id: (mapping.display_season if (mapping := mappings.get(
+                (episode.season_number, episode.episode_number))) else episode.season_number) for episode in episodes}
+            number = numbers[episodes[index].id]
+            season = [episode for episode in episodes if numbers[episode.id] == number]
+            statuses = dict((entry.season_list_statuses or {}).get(order, {}))
+            source_metadata = (media.tmdb_data or {}).get('seasons') or []
+            expected = next((info.get('episode_count') for info in source_metadata
+                             if isinstance(info, dict) and info.get('season_number') == number), None) if not mappings else None
+            full = len(season) >= (expected or len(season)) and all(episode.id in watched for episode in season)
+            if full and activity_finished and episodes[index].id == season[-1].id:
+                statuses.pop(str(number), None)
+            elif not full or statuses.get(str(number)) in ('planning', 'paused', 'dropped'):
+                statuses[str(number)] = 'watching'
+            save_season_statuses(entry, order, statuses)
+    return bool((media.tmdb_data or {}).get('tracking_catalogue_refreshed_at') and len(watched)==len(episodes)), changed
 
 
 async def _apply_watch_removals(db, conn, mappings, old_rows, watched, prior_observed_at, tracked_ids):
@@ -611,7 +649,8 @@ async def observe_stream_snapshot(
             for row in previous.get('records', {}).get('watched', [])
         }
         dated_watch_keys = {key for key, _, _ in old_watch_observations}
-        old_progress_completed = set(previous.get('progress_completed', []))
+        old_progress_completed = {(watch_key(row), provider_changed_at(row))
+            for row in completed_rows(previous.get('records', {}).get('progress', []))}
         # A watch can change without changing its movie/episode identity (for
         # example, marking an already known title watched again). Use the same
         # date-aware delta as history import so its accepted watch also updates
@@ -624,7 +663,7 @@ async def observe_stream_snapshot(
         new_watched_rows = await current_watch_rows(db, conn, new_watched_rows,
                                                   imported_media_ids=imported_ids)
         new_progress_completed_rows = [row for row in progress_completed_rows
-            if watch_key(row) not in old_progress_completed]
+            if (watch_key(row), provider_changed_at(row)) not in old_progress_completed]
         new_completed_by_key = {watch_key(row): row for row in new_progress_completed_rows}
         new_completed_by_key.update({watch_key(row): row for row in new_watched_rows})
         new_completed = list(new_completed_by_key.values())
@@ -731,12 +770,19 @@ async def observe_stream_snapshot(
                         from core.stream_actions import queue_progress_update
                         await queue_progress_update(db, conn, media, row)
                     continue
+            playback_changed = False
             if media.media_type==MediaType.series and ordering=='apply':
-                for episode_row in [item for item in observation_rows if item in new_completed] + [row]:
-                    is_complete=await apply_series_observation(
-                        db,conn.user_id,media,entry,episode_row,episode_row in new_completed,
-                        newly_watched_ids=inferred_watch_ids if sync_watched else None,
-                    )
+                finishes = [item for item in observation_rows if item in new_completed]
+                new_bits = [item for item in finishes if watch_key(item) not in old_watched]
+                candidates = [item for item in observation_rows if item in changed_active or (
+                    sync_playback and item in finishes and (not item.get('date_shared') or new_bits == [item]))]
+                activity = max(candidates, key=lambda item: (provider_changed_at(item) or datetime.min,
+                    item in changed_active), default=None)
+                is_complete, playback_changed = await apply_series_observation(
+                    db, conn.user_id, media, entry, finishes, activity,
+                    activity_finished=activity in finishes, infer_previous=first,
+                    newly_watched_ids=inferred_watch_ids if sync_watched else None,
+                )
             proposed = observed_status(previous_status, is_complete, True)
             if ordering=='conflict':
                 # An unordered observation must not overwrite progress or fan
@@ -764,7 +810,7 @@ async def observe_stream_snapshot(
             if media.media_type == MediaType.movie:
                 entry.progress = 1 if proposed == 'completed' else 0
             mark_status_change(entry,f'{conn.type}:{conn.id}',provider_changed_at(row))
-            if entry.status in {'planning', 'paused', 'dropped', 'completed'} and (
+            if not playback_changed and entry.status in {'planning', 'paused', 'dropped', 'completed'} and (
                     entry.status != previous_status or newly_tracked):
                 # Inbound status changes must update Nuvio's independent Next
                 # Up preference too. For a Nuvio source, queue_dismissals
@@ -797,7 +843,10 @@ async def observe_stream_snapshot(
                         score=activity_score,status_changed=entry.status != previous_status or newly_tracked,
                         previous_status=None if newly_tracked else previous_status,
                         first_watching=newly_tracked or (previous_start_date is None and previous_status != 'watching'))
-            if row in changed_active and baseline.approved:
+            if playback_changed and baseline.approved:
+                from core.stream_actions import queue_restorations
+                await queue_restorations(db, conn.user_id, media, exclude_connection_id=conn.id)
+            elif row in changed_active and baseline.approved:
                 from core.stream_actions import queue_progress_update
                 await queue_progress_update(db, conn, media, row)
             season_completions = {(item.get('season'), item.get('episode')) for item in observation_rows

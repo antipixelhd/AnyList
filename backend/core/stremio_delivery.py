@@ -6,7 +6,7 @@ connection and playback changes are confirmed before returning.
 
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import case, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core import nuvio_payloads, nuvio_projection, stremio, stremio_payloads
@@ -219,13 +219,14 @@ async def push_connection(
         clear_progress_ids: set[str] = set()
         if conn.push_playback and not watch_only:
             from models.tracking import StreamBaseline, TrackedEntry, TrackingDeletion
+            from core.series_playback import active_playback_filter
 
             baseline = await db.get(StreamBaseline, conn.id)
             mappings = (baseline.snapshot or {}).get("mappings", {}) if baseline else {}
             status_by_media: dict[tuple[int, str], str] = {}
             status_by_external: dict[tuple[str, str], str] = {}
             status_result = await db.execute(
-                select(Media, TrackedEntry.status)
+                select(Media, case((active_playback_filter(TrackedEntry), 'watching'), else_='inactive'))
                 .join(TrackedEntry, TrackedEntry.media_id == Media.id)
                 .where(TrackedEntry.user_id == user_id,
                     Media.media_type.in_([MediaType.movie, MediaType.series]))
@@ -314,7 +315,17 @@ async def push_connection(
                 candidates[content_id] = updated
 
         for record in progress_records:
+            if record.get('series_activity') and record.get('synthetic_resume'):
+                record = {**record, 'position': 1}
             content_id = str(record["content_id"])
+            if record.get('series_activity'):
+                from core.status_provenance import provider_changed_at
+                remote = (remote_by_id.get(content_id) or {}).get('state') or {}
+                remote_at = provider_changed_at({'last_watched': remote.get('lastWatched')})
+                local_at = provider_changed_at({'last_watched': record.get('last_watched')})
+                if remote_at and local_at and remote_at > local_at:
+                    clear_progress_ids.discard(content_id)
+                    continue
             base_item = (
                 candidates.get(content_id)
                 or remote_by_id.get(content_id)

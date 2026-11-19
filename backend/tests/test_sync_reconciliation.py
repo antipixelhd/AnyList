@@ -77,6 +77,9 @@ class ResolutionTests(unittest.TestCase):
         self.assertEqual(reconcile_completions([later], [complete]), [later])
         unknown = Observation("a", ("watching", 1, 3, 20, 100))
         self.assertTrue(resolve(None, None, reconcile_completions([unknown], [complete])).conflict)
+        older_later_season = Observation('b', ('watching', 3, 4, 20, 100), self.now - timedelta(minutes=5))
+        earlier_rewatch = Observation('a', ('watching', 2, 3, None, None), self.now)
+        self.assertEqual(reconcile_completions([older_later_season], [earlier_rewatch]), [earlier_rewatch])
 
 
 @unittest.skipUnless(os.getenv("TRACKING_TEST_DATABASE_URL"), "Requires disposable PostgreSQL")

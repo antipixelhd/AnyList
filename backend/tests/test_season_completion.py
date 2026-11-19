@@ -12,6 +12,7 @@ from models import Media, PlaybackProgress, Rating, Show, TrackedEntry, Tracking
 from models.base import MediaType
 from models.seasons import SeasonTracking, SeasonReconcileJob, SeriesSeason
 from core.tracking_projection import activity_data
+from core.screen_list import season_row_id
 from routers.season_tracking import router
 from dependencies import get_current_user, get_tracking_write_user
 from unittest.mock import AsyncMock, patch
@@ -120,10 +121,9 @@ class SeasonDatabaseTests(unittest.IsolatedAsyncioTestCase):
         summary = (await self.client.get(f'{url}/series-editor')).json()
         intent = {'action': 'delete_season', 'season_number': 2, 'revision': summary['revision']}
         self.assertEqual((await self.client.patch(url, json={'series_editor': intent})).status_code, 409)
-        old = await self.client.patch(url, json={'confirm_rollback': True,
-            'series_editor': {**intent, 'season_number': 1}})
-        self.assertEqual(old.status_code, 409)
-        self.assertIn('latest tracked season', old.json()['detail'])
+        stale = await self.client.patch(url, json={'confirm_rollback': True,
+            'series_editor': {**intent, 'revision': 'old'}})
+        self.assertEqual(stale.status_code, 409)
         deleted = await self.client.patch(url, json={'confirm_rollback': True, 'series_editor': intent})
         self.assertEqual(deleted.status_code, 200, deleted.text)
         saved = deleted.json()
@@ -200,7 +200,8 @@ class SeasonDatabaseTests(unittest.IsolatedAsyncioTestCase):
         page = (await self.client.get(f'{root}/list')).json()
         self.assertEqual(page['group_counts'], {'watching': 1, 'completed': 1})
         active = next(row for row in page['results'] if row['status'] == 'watching')
-        self.assertEqual((active['list_id'], active['list_season']['number'], active['progress']), (-self.series_id, 2, 0))
+        second_id = season_row_id(self.series_id, 2)
+        self.assertEqual((active['list_id'], active['list_season']['number'], active['progress']), (second_id, 2, 0))
         self.assertTrue(response.json()['series_editor']['seasons'][0]['completed'])
 
         summary = response.json()['series_editor']
@@ -211,40 +212,89 @@ class SeasonDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200, response.text)
         index = (await self.client.get(f'{root}/index')).json()['results']
         self.assertEqual({(row[0], row[2], row[4]) for row in index},
-            {(self.series_id, 'completed', 2), (-self.series_id, 'watching', 1)})
-        rows = (await self.client.get(f'{root}/rows', params=[('ids', -self.series_id), ('ids', self.series_id)])).json()
+            {(self.series_id, 'completed', 2), (second_id, 'watching', 1)})
+        rows = (await self.client.get(f'{root}/rows', params=[('ids', second_id), ('ids', self.series_id)])).json()
         self.assertEqual(rows[0]['title'], 'Two seasons - The Second Campaign')
         self.assertEqual((rows[1]['status'], rows[1]['entry']['status'], rows[1]['entry']['progress']), ('completed', 'watching', 3))
         filtered = (await self.client.get(f'{root}/list', params={'q': 'second campaign', 'limit': 1})).json()
-        self.assertEqual([row['list_id'] for row in filtered['results']], [-self.series_id])
+        self.assertEqual([row['list_id'] for row in filtered['results']], [second_id])
         summary = response.json()['series_editor']
         earlier = await self.client.patch(editor, json={'confirm_rollback': True, 'series_editor': {
             'revision': summary['revision'], 'action': 'position', 'season_number': 1, 'progress_season': 1,
             'episode_count': 1, 'episode_id': self.episode_ids[0]}})
-        self.assertEqual(earlier.status_code, 409)
-        self.assertIn('current season', earlier.json()['detail'])
-
-        for status, placement, groups in [('paused', 'season', {'paused': 1, 'completed': 1}),
-                                          ('dropped', 'series', {'dropped': 1})]:
-            response = await self.client.patch(editor, json={'status': status, 'series_editor': {'list_placement': placement}})
-            self.assertEqual(response.status_code, 200, response.text)
-            self.assertEqual((await self.client.get(f'{root}/list')).json()['group_counts'], groups)
-        response = await self.client.patch(editor, json={'status': 'watching'})
-        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(earlier.status_code, 200, earlier.text)
+        summary = earlier.json()['series_editor']
+        self.assertEqual([[episode['watched'] for episode in season['episodes']] for season in summary['seasons']],
+                         [[True, False], [True, False], []])
         response = await self.client.patch(editor, json={'series_editor': {
-            'revision': summary['revision'], 'action': 'episode', 'episode_id': self.episode_ids[-1]}})
-        self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.json()['status'], 'watching')
-        self.assertTrue(response.json()['series_editor']['seasons'][1]['completed'])
-        page = (await self.client.get(f'{root}/list')).json()
-        self.assertEqual(next(row for row in page['results'] if row['status'] == 'watching')['title'],
-                         'Two seasons - Next Campaign')
-        response = await self.client.patch(editor, json={'status': 'planning', 'series_editor': {}})
+            'order': summary['order'], 'revision': summary['revision'],
+            'action': 'position', 'season_number': 1, 'progress_season': 1,
+            'episode_count': 2, 'episode_id': self.episode_ids[1], 'season_statuses': {'3': 'paused'}}})
         self.assertEqual(response.status_code, 200, response.text)
         page = (await self.client.get(f'{root}/list')).json()
-        self.assertEqual(page['group_counts'], {'completed': 1, 'planning': 1})
-        self.assertEqual(next(row for row in page['results'] if row['status'] == 'planning')['title'],
-                         'Two seasons - Next Campaign')
+        self.assertEqual(page['group_counts'], {'completed': 1, 'watching': 1, 'paused': 1})
+        self.assertEqual({(row['status'], row.get('list_id', row['id'])) for row in page['results']},
+                         {('completed', self.series_id), ('watching', second_id),
+                          ('paused', season_row_id(self.series_id, 3))})
+        self.assertFalse(next(row for row in page['results'] if row['status'] == 'paused')['list_season']['can_increment'])
+
+    async def test_replaying_earlier_episode_advances_resume_without_adding_watches(self):
+        from core.nuvio_projection import build_progress_items
+        from core.series_playback import activity_resume, remember_episode
+        from core.stremio_payloads import with_progress_state
+        from core.tracking_snapshot import apply_series_observation
+        async with self.Session() as db:
+            root = await db.get(Media, self.series_id)
+            entry = await db.scalar(select(TrackedEntry).where(TrackedEntry.media_id == self.series_id))
+            first = datetime(2026, 6, 1, 10)
+            second = first + timedelta(minutes=30)
+            remember_episode(entry, self.episode_ids[-1], first)
+            row = {'season': 1, 'episode': 1, 'watched_at': second.isoformat()}
+            complete, moved = await apply_series_observation(db, self.user_id, root, entry, [row], row,
+                                                              activity_finished=True)
+            self.assertTrue(complete and moved)
+            self.assertEqual(entry.progress, 4)
+            self.assertFalse(remember_episode(entry, self.episode_ids[-1], first))
+            episodes = [await db.get(Media, identifier) for identifier in self.episode_ids]
+            show = await db.get(Show, episodes[0].show_id)
+            show.tmdb_data = {'external_ids': {'imdb_id': 'tt9230000'}}
+            target, offset, at = activity_resume(entry, episodes, {})
+            self.assertEqual((target.id, offset, at), (self.episode_ids[1], None, second))
+            [nuvio] = await build_progress_items(db, self.user_id, next_up_for_watched_series=True)
+            self.assertEqual((nuvio['season'], nuvio['episode'], nuvio['position'], nuvio['synthetic_resume']),
+                             (1, 2, 1000, True))
+            stremio = with_progress_state({'state': {'watched': 'existing-history'}}, {**nuvio, 'position': 1},
+                                          {}, in_library=True)
+            self.assertEqual((stremio['state']['video_id'], stremio['state']['timeOffset'], stremio['state']['watched']),
+                             ('tt9230000:1:2', 1, 'existing-history'))
+            self.assertEqual(len(list(await db.scalars(select(WatchEvent).where(
+                WatchEvent.media_id.in_(self.episode_ids))))), 4)
+
+    async def test_routine_stream_snapshot_leaves_earlier_season_gaps(self):
+        from core.tracking_snapshot import observe_stream_snapshot
+        from models import MediaServerConnection
+        from models.tracking import StreamBaseline
+
+        async with self.Session() as db:
+            entry = await db.scalar(select(TrackedEntry).where(TrackedEntry.media_id == self.series_id))
+            before = datetime(2026, 6, 1)
+            entry.status, entry.status_changed_at, entry.progress = 'watching', before, 1
+            await db.execute(delete(WatchEvent).where(WatchEvent.media_id.in_(self.episode_ids[1:])))
+            conn = MediaServerConnection(user_id=self.user_id, type='nuvio', name='Fixture',
+                                         url='https://stream.example.test', token='fixture')
+            db.add(conn)
+            await db.flush()
+            content_id = 'tt9230000'
+            db.add(StreamBaseline(connection_id=conn.id, user_id=self.user_id, approved=True,
+                                  observed_at=before, snapshot={'mappings': {content_id: 923000}}))
+            await db.commit()
+            done = {'content_id': content_id, 'content_type': 'series', 'season': 2, 'episode': 2,
+                    'watched_at': (before + timedelta(hours=1)).isoformat()}
+            await observe_stream_snapshot(db, conn, [], [done], [], {content_id: 923000})
+            self.assertEqual(entry.progress, 2)
+            self.assertEqual(entry.latest_episode_activity['episode_id'], self.episode_ids[-1])
+            self.assertEqual(set(await db.scalars(select(WatchEvent.media_id).where(
+                WatchEvent.media_id.in_(self.episode_ids)))), {self.episode_ids[0], self.episode_ids[-1]})
 
     async def test_explicit_season_completion_survives_a_new_release_and_catalogue_membership(self):
         entry_url = f'/tracking/entry/{self.series_id}'
