@@ -88,7 +88,7 @@ const upcomingSeasonCards=upcomingSeasons.map((entry:any)=>({
 </Tracker>
 
 <script>
-import {localToday} from '../lib/date-time';
+import {localToday,timestamp} from '../lib/date-time';
 import {startVisibleRefresh, type VisibleRefreshHandle} from '../lib/visible-refresh';
 import {createHomePanelRefresh} from '../lib/home-panel-refresh';
 import {reconcileHomePanel} from '../lib/home-panel-reconcile';
@@ -153,11 +153,12 @@ function initializeHomeProgress() {
 
   const updateCountdowns = () => grid.querySelectorAll<HTMLElement>('[data-progress-card]').forEach(card => {
     const output = card.querySelector<HTMLElement>('[data-countdown]');
-    const date = card.dataset.nextAir;
+    const airAt = timestamp(card.dataset.nextAirAt);
+    const date = airAt ? localToday(airAt) : card.dataset.nextAir;
     if (!output || !date) return;
     const today = localToday();
+    if (date < today || (airAt && airAt.getTime() <= Date.now())) { output.textContent = 'Schedule updating'; return; }
     if (date === today) { output.textContent = 'Next episode today'; return; }
-    if (date < today) { output.textContent = 'Schedule updating'; return; }
     const days = Math.round((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000);
     output.textContent = `Next episode in ${days}d`;
   });
@@ -212,6 +213,7 @@ function initializeHomeProgress() {
       if (label) label.textContent = latest || 'Latest episode';
     }
     if ('next_release_date' in updated) card.dataset.nextAir = updated.next_release_date || '';
+    if ('next_release_at' in updated) card.dataset.nextAirAt = updated.next_release_at || '';
   };
 
   document.addEventListener('anylist:editor-state', event => {

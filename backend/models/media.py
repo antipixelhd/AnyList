@@ -52,6 +52,7 @@ class Media(Base):
     tagline        : Mapped[Optional[str]]   = mapped_column(Text)
     status         : Mapped[Optional[str]]   = mapped_column(String(100))
     tmdb_data      : Mapped[Optional[dict]]  = mapped_column(JSONB)
+    tvdb_air_schedule : Mapped[Optional[dict]] = mapped_column(JSONB(none_as_null=True))
     adult          : Mapped[bool]            = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     # Episodes only ↓
     show_id        : Mapped[Optional[int]]   = mapped_column(ForeignKey("shows.id", ondelete="SET NULL"))

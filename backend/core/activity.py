@@ -1,7 +1,8 @@
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import or_, select, update
 
+from core.episode_release import EpisodeRelease
 from models import Media, Show, WatchEvent
 from models.base import MediaType
 from models.tracking import TrackedEntry, TrackingActivity
@@ -209,10 +210,7 @@ async def _series_activity_catalog(db, media: Media):
         Media.show_id == show.id,
         Media.media_type == MediaType.episode,
         Media.season_number > 0,
-        or_(
-            (Media.release_date.is_not(None) & (Media.release_date <= date.today().isoformat())),
-            imported_release,
-        ),
+        EpisodeRelease(media.tvdb_air_schedule).sql_clause(Media.release_date, imported_release),
     )
     catalogue_ids = (media.tmdb_data or {}).get("tracking_episode_ids")
     if catalogue_ids is not None:
@@ -411,7 +409,8 @@ async def record_progress_activity(db, *, user_id: int, media: Media, previous_p
         positions = {}
         order, groups, _ = await season_groups(db, media, user_id, display_positions=positions)
     if media.media_type == MediaType.series and (groups or watched_ids is not None or 'watched_start_ids' in details):
-        episodes = [ep for _, members, _ in groups for ep in members if is_released(ep, now.date())]
+        release = EpisodeRelease(media.tvdb_air_schedule, today=now.date(), now=now.replace(tzinfo=timezone.utc))
+        episodes = [ep for _, members, _ in groups for ep in members if is_released(ep, release.today, release=release)]
         details['progress_order'] = order
         catalogue_ids = {episode.id for episode in episodes}
         if watched_ids is None:

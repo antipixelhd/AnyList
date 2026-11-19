@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
+from core.episode_release import EpisodeRelease
 from core.season_completion import is_released, membership_key, release_day, season_groups, watched_episode_ids
 from models import Rating
 from models.seasons import SeasonTracking, SeriesSeason
@@ -39,14 +40,16 @@ class SeriesEditorPatch(BaseModel):
 
 
 class SeriesEditorContext:
-    def __init__(self, data, positions, watched, cursor=None):
+    def __init__(self, data, positions, watched, cursor=None, *, release=None):
         self.data = data
         self.order, self.groups, self.metadata = data
         self.positions = positions
         self.watched = watched
         self.cursor = cursor
-        self.today = date.today()
-        self.released = [ep for _, members, _ in self.groups for ep in members if is_released(ep, self.today)]
+        self.release = release or EpisodeRelease()
+        self.today = self.release.today
+        self.released = [ep for _, members, _ in self.groups for ep in members
+                         if is_released(ep, self.today, release=self.release)]
         self.revision = hashlib.sha256(repr((self.order, [(n, [(ep.id, ep.release_date) for ep in episodes], expected)
             for n, episodes, expected in self.groups], [ep.id for ep in self.released], sorted(watched),
             self.selected_position())).encode()).hexdigest()
@@ -182,7 +185,7 @@ async def editor_context(db, media, user_id):
     watched = await watched_episode_ids(db, user_id, list(positions))
     cursor = await db.scalar(select(TrackedEntry.season_cursor).where(TrackedEntry.user_id==user_id,
         TrackedEntry.media_id==media.id))
-    return SeriesEditorContext(data, positions, watched, cursor)
+    return SeriesEditorContext(data, positions, watched, cursor, release=EpisodeRelease(media.tvdb_air_schedule))
 
 
 async def intent_date_edits(db, media_id, user_id, context, edits, *, number, start, finish, day):

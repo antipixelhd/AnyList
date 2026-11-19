@@ -2,6 +2,7 @@
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
+from core.episode_release import EpisodeRelease
 from core.season_completion import completion_evidence, season_groups
 from models import Rating, WatchEvent
 from models.tracking import SyncReview
@@ -24,8 +25,10 @@ async def queue_season_rating_prompts(db, *, user_id, media, entry, source, new_
         Rating.episode_order == (None if order == 'tmdb:aired' else order))))
     if order == 'tmdb:aired':
         rated.update(int(number) for number, score in (entry.season_scores or {}).items() if score and score > 0)
+    release = EpisodeRelease(media.tvdb_air_schedule)
     for number, members, expected in candidates:
-        if number in rated or not completion_evidence(members, [event for event in events if event.media_id in {ep.id for ep in members}], expected)[0]:
+        if number in rated or not completion_evidence(members, [event for event in events if event.media_id in {ep.id for ep in members}],
+                                                       expected, release=release)[0]:
             continue
         detail = metadata.get(number, {})
         key = f'rating:{media.id}:{order}:{number}'

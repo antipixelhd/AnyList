@@ -3,8 +3,9 @@ import asyncio
 import gc
 import weakref
 import unittest
-from unittest.mock import patch
-from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock, patch
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from types import SimpleNamespace
 
 os.environ.setdefault("SECRET_KEY", "test-secret")
@@ -14,6 +15,48 @@ os.environ.setdefault(
 )
 
 from core.tracking_metadata import fetch_tmdb_seasons, retain_episode_runtime, tracking_catalogue_is_fresh
+from core.tracking_metadata import refresh_air_schedule
+from core.episode_release import EpisodeRelease, tvdb_schedule
+
+
+class EpisodeReleaseTests(unittest.IsolatedAsyncioTestCase):
+    raw = {'airsTime': '22:00', 'originalCountry': 'usa', 'airsDays': {'thursday': True}}
+
+    def test_airtime_is_the_same_instant_across_midnight_and_imports_stay_released(self):
+        schedule = tvdb_schedule(296861, self.raw)
+        air_at = datetime(2026, 11, 20, 3, tzinfo=timezone.utc)
+        before = EpisodeRelease(schedule, today=date(2026, 11, 20), now=air_at - timedelta(seconds=1))
+        self.assertEqual(before.air_at('2026-11-19').astimezone(ZoneInfo('Europe/Berlin')).isoformat(),
+                         '2026-11-20T04:00:00+01:00')
+        self.assertFalse(before.is_released('2026-11-19'))
+        self.assertTrue(before.is_released('2026-11-19', imported=True))
+        self.assertTrue(before.is_released('2026-11-18'))  # Off the usual weekday.
+        self.assertTrue(EpisodeRelease(schedule, today=date(2026, 11, 19), now=air_at).is_released('2026-11-19'))
+
+    def test_daylight_saving_uses_the_origin_zone_and_ambiguous_clocks_fall_back(self):
+        schedule = tvdb_schedule(1, self.raw)
+        self.assertEqual(EpisodeRelease(schedule).air_at('2026-07-16').isoformat(), '2026-07-17T02:00:00+00:00')
+        ambiguous = tvdb_schedule(1, {**self.raw, 'airsTime': '01:30', 'airsDays': {'sunday': True}})
+        self.assertIsNone(EpisodeRelease(ambiguous).air_at('2026-11-01'))
+
+    async def test_only_tmdb_supplied_ids_are_fetched_and_removal_clears_the_schedule(self):
+        with patch('core.tvdb.get_series_airtime', AsyncMock(return_value=self.raw)) as fetch:
+            self.assertIsNone(await refresh_air_schedule(None, {'tvdb_id': 296861}, 'key'))
+            fetch.assert_not_called()
+            details = {'external_ids': {'tvdb_id': 296861}}
+            schedule = await refresh_air_schedule(None, details, 'key')
+            fetch.assert_awaited_once_with(296861, 'key')
+            self.assertEqual(schedule, tvdb_schedule(296861, self.raw))
+            self.assertIsNone(await refresh_air_schedule(schedule, {}, 'key'))
+            fetch.assert_awaited_once()
+
+    async def test_provider_failure_keeps_the_schedule_for_the_same_id_and_empty_success_clears_it(self):
+        schedule = tvdb_schedule(296861, self.raw)
+        with patch('core.tvdb.get_series_airtime', AsyncMock(side_effect=TimeoutError)):
+            self.assertEqual(await refresh_air_schedule(schedule, {'external_ids': {'tvdb_id': 296861}}, 'key'), schedule)
+            self.assertIsNone(await refresh_air_schedule(schedule, {'external_ids': {'tvdb_id': 3}}, 'key'))
+        with patch('core.tvdb.get_series_airtime', AsyncMock(return_value={'airsTime': ''})):
+            self.assertIsNone(await refresh_air_schedule(schedule, {'external_ids': {'tvdb_id': 296861}}, 'key'))
 
 
 class SeasonLoopLifetimeTests(unittest.TestCase):

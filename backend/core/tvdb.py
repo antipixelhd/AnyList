@@ -228,6 +228,15 @@ async def get_series(tvdb_id: int, api_key: str, cache_ttl: float | None = DEFAU
     return data.get("data") or {}
 
 
+async def get_series_airtime(tvdb_id: int, api_key: str) -> dict:
+    """Read the extended schedule without asking TVDB for its complete episode list."""
+    path = f"/series/{tvdb_id}/extended"
+    data = _cache.get((path, (("meta", "translations,episodes"),)))
+    if data is None:
+        data = await _get(path, api_key)
+    return data.get("data") or {}
+
+
 async def get_person(person_id: int, api_key: str) -> dict:
     data = await _get(f"/people/{person_id}/extended", api_key)
     return data.get("data") or {}

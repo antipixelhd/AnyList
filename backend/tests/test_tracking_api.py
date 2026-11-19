@@ -3436,6 +3436,63 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         result=(await self.client.get(f'/tracking/profile/{self.owner.username}/series')).json()['entries'][0]
         self.assertEqual(result['new_seasons'],0)
 
+    async def test_existing_refresh_discovers_tvdb_id_and_gates_progress_at_airtime(self):
+        from core.episode_release import EpisodeRelease
+        from core.tracking_metadata import refresh_tracked_catalogues
+
+        self.show.tmdb_id = 987654319
+        await self.db.commit()
+        details = {'status': 'Returning Series', 'seasons': [
+            {'season_number': 1, 'episode_count': 2, 'air_date': '2020-01-01'}]}
+        season = {'episodes': [
+            {'id': 987654310, 'episode_number': 1, 'name': 'Previous', 'air_date': '2020-01-01'},
+            {'id': 987654311, 'episode_number': 2, 'name': 'New', 'air_date': '2026-11-19'}]}
+        original_init = EpisodeRelease.__init__
+        now = datetime(2026, 11, 20, 2, 59, 59, tzinfo=timezone.utc)
+
+        def fixed_clock(instance, schedule=None, *, today=None, now=None):
+            original_init(instance, schedule, today=date(2026, 11, 20), now=clock_now)
+
+        clock_now = now
+        with (patch('core.settings_store.get_user_tmdb_key', AsyncMock(return_value='fixture-tmdb')),
+              patch('core.settings_store.get_user_tvdb_key', AsyncMock(return_value='fixture-tvdb')),
+              patch('core.tmdb.get_show', AsyncMock(return_value=details)),
+              patch('core.tmdb.get_season', AsyncMock(return_value=season)),
+              patch('core.tvdb.get_series_airtime', AsyncMock(return_value={
+                  'originalCountry': 'usa', 'airsTime': '22:00', 'airsDays': {'thursday': True}})) as fetch,
+              patch.object(EpisodeRelease, '__init__', fixed_clock)):
+            refresh = f'/tracking/title/{self.show.id}/refresh-episodes'
+            self.assertEqual((await self.client.post(refresh)).status_code, 200)
+            fetch.assert_not_called()
+            self.assertEqual((await self.save(self.show, status='planning')).status_code, 200)
+            await self.db.refresh(self.show)
+            self.show.tmdb_data = {**self.show.tmdb_data, 'tracking_catalogue_refreshed_at': '2026-01-01T00:00:00Z'}
+            await self.db.commit()
+
+            details['external_ids'] = {'tvdb_id': 296861}
+            result = await refresh_tracked_catalogues(self.db, 'fixture-tmdb', now=clock_now, tvdb_api_key='fixture-tvdb')
+            self.assertEqual(result['refreshed'], 1, result)
+            fetch.assert_awaited_once_with(296861, 'fixture-tvdb')
+            await self.db.refresh(self.show)
+            self.assertEqual(self.show.tvdb_air_schedule['zone'], 'America/New_York')
+
+            path = f'/tracking/title/{self.show.id}/seasons'
+            episode = (await self.client.get(path)).json()['seasons'][0]['episodes'][1]
+            self.assertEqual(episode['air_at'], '2026-11-20T03:00:00+00:00')
+            self.assertFalse(episode['released'])
+            progress = await self.save(self.show, status='completed', progress=2)
+            self.assertEqual(progress.json()['progress'], 1, progress.text)
+            profile = f'/tracking/profile/{self.owner.username}/series'
+            before = (await self.client.get(profile)).json()['entries'][0]
+            self.assertEqual((before['released_episodes'], before['new_episodes']), (1, 0))
+
+            clock_now += timedelta(seconds=1)
+            self.assertTrue((await self.client.get(path)).json()['seasons'][0]['episodes'][1]['released'])
+            after = (await self.client.get(profile)).json()['entries'][0]
+            self.assertEqual((after['released_episodes'], after['new_episodes']), (2, 1))
+            progress = await self.save(self.show, progress=2)
+            self.assertEqual(progress.json()['progress'], 2, progress.text)
+
     async def test_incomplete_metadata_does_not_enable_progress(self):
         self.show.tmdb_id=987654318
         await self.db.commit()

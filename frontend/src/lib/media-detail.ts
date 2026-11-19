@@ -25,7 +25,7 @@ import {mountGameOffers} from './game-offers';
 import {mountGameRatings} from './game-ratings';
 import {mountGameInfo} from './game-info';
 import {mountGameMetadata} from './game-metadata';
-import {localizeDateTimes} from './date-time-dom';
+import {localizeDateTimes,setLocalDateTime} from './date-time-dom';
 import {confirmEntryAction,episodeRollbackWarning} from './entry-confirmation';
 import {mountSeriesSeasons} from './series-seasons';
 
@@ -411,13 +411,24 @@ export function mountMediaDetail() {
       if (title && editorStore.hasPendingEntryWrites(title)) { seasonRefreshNeeded = true; return; }
       projectedSeasons = null;
       paint(editorStore.seed({...data,editor_library:title?.editor_library}));
-      for(const season of data.seasons||[]){
+      const seasons: DetailSeason[] = data.seasons || [];
+      for(const season of seasons){
         const number=season.season_number;
         for(const episode of season.episodes||[]){
           const row=root.querySelector<HTMLElement>(`[data-episode-row="${episode.id}"]`);if(!row)continue;
           row.dataset.watched=String(episode.watched);
+          const airDate = row.querySelector<HTMLElement>('[data-episode-air-date]');
+          const airTime = airDate?.querySelector('time');
+          if (airDate && airTime) {
+            const value = episode.air_at || episode.air_date;
+            airDate.hidden = !value;
+            if (!episode.air_at) airTime.removeAttribute('title');
+            setLocalDateTime(airTime, value, episode.air_at ? 'datetime' : 'date');
+          }
           const button=row.querySelector<HTMLButtonElement>('[data-watch-episode]');
-          if(button){button.setAttribute('aria-pressed',String(episode.watched));button.setAttribute('aria-label',`Mark season ${number} episode ${episode.episode_number} ${episode.watched?'unwatched':'watched'}`);button.disabled=!episode.released||season.released_count==null;}
+          if(button){button.setAttribute('aria-pressed',String(episode.watched));button.setAttribute('aria-label',`Mark season ${number} episode ${episode.episode_number} ${episode.watched?'unwatched':'watched'}`);button.disabled=!episode.released||season.released_count==null;
+            if (button.disabled) button.title = !episode.released ? 'Not released yet' : 'Refresh episode metadata';
+            else button.removeAttribute('title');}
         }
       }
       paintEpisodeTitles();

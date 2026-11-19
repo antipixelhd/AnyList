@@ -13,6 +13,7 @@ from models.base import MediaType
 from models.seasons import SeriesSeason, SeasonTracking
 from models.tracking import TrackedEntry
 from core.season_completion import reconcile
+from core.episode_release import EpisodeRelease
 from core.series_editor import editor_context, editor_summary
 from core.tracking_access import anime_is_visible
 from core.tracking_projection import is_anime
@@ -69,8 +70,8 @@ async def read_editor_episode(media_id: int, episode_id: int, response: Response
     row = (await db.execute(select(Media.id, Media.title, Media.runtime, Media.release_date,
         Media.poster_path, Media.tmdb_data['still_path'].as_string()).join(Show, Media.show_id == Show.id)
         .where(Media.id == episode_id, Media.media_type == MediaType.episode, Media.season_number > 0,
-               or_(*identities), or_(Media.release_date <= date.today().isoformat(),
-                   Media.tmdb_data['tracking_import_released'].as_boolean().is_(True))))).first()
+               or_(*identities), EpisodeRelease(media.tvdb_air_schedule).sql_clause(
+                   Media.release_date, Media.tmdb_data['tracking_import_released'].as_boolean().is_(True))))).first()
     if row is None:
         raise HTTPException(404, 'Episode not found')
     return {'id': row[0], 'title': row[1], 'runtime': row[2], 'air_date': row[3], 'image': row[4] or row[5]}

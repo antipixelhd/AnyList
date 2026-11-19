@@ -1,4 +1,4 @@
-export type DetailEpisode = {id:number;episode_number:number;title:string;air_date?:string|null;runtime?:number|null;image?:string|null;watched:boolean;released:boolean};
+export type DetailEpisode = {id:number;episode_number:number;title:string;air_date?:string|null;air_at?:string|null;runtime?:number|null;image?:string|null;watched:boolean;released:boolean};
 export type DetailSeason = {season_number:number;name?:string;air_date?:string|null;episode_count:number;released_count:number|null;watched_count:number;episodes?:DetailEpisode[]};
 
 export function visibleDetailSeasons(seasons:DetailSeason[], removeSpecials=true) {

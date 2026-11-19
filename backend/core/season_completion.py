@@ -17,6 +17,7 @@ from models import Media, PlaybackProgress, PlaybackSession, Show, WatchEvent, U
 from models.base import MediaType
 from models.seasons import SeriesSeason, SeasonTracking, SeasonReconcileJob
 from models.tracking import SyncReview, TrackedEntry, TrackingActivity
+from core.episode_release import EpisodeRelease
 from core.episode_order import normalize_order_key
 
 log = logging.getLogger(__name__)
@@ -44,19 +45,20 @@ def release_day(ep):
     return parse_release_day(ep.release_date)
 
 
-def is_released(ep, today):
+def is_released(ep, today, *, release=None):
     imported = getattr(ep, 'imported_release', None)
     if imported is None:
         imported = (getattr(ep, 'tmdb_data', None) or {}).get('tracking_import_released')
-    return bool(imported or
-                ((day := release_day(ep)) is not None and day <= today))
+    if release is not None and release.clock:
+        return release.is_released(ep.release_date, imported)
+    return bool(imported or ((day := release_day(ep)) is not None and day <= today))
 
 
-def completion_evidence(episodes, events, expected):
+def completion_evidence(episodes, events, expected, *, release=None):
     """Coverage proves completion; trustworthy season-local dates date it."""
     watched = len({event.media_id for event in events if event.completed})
     complete = bool(expected and len(episodes) == expected and watched == expected
-                    and all(is_released(ep, date.today()) for ep in episodes))
+                    and all(is_released(ep, release.today if release else date.today(), release=release) for ep in episodes))
     reliable = reliable_watches(events)
     if not complete:
         return False, watched, None, None, {}
@@ -195,7 +197,9 @@ async def reconcile(db, user_id, media_id, *, groups_data=None, edits=(), series
     order_changed = bool(previous_orders and order not in previous_orders)
     edits_by_key = {(edit.season_number, edit.membership): edit for edit in edits}
     today = date.today()
-    latest_started = max((number for number, episodes, _ in groups if any(is_released(ep, today) for ep in episodes)), default=None)
+    release = EpisodeRelease(media.tvdb_air_schedule, today=today)
+    latest_started = max((number for number, episodes, _ in groups if any(
+        is_released(ep, today, release=release) for ep in episodes)), default=None)
     maintains_finish = entry.status == 'completed' or entry.finish_date is not None or any(
         edit.season_number == latest_started and 'completion_date' in edit.model_fields_set for edit in edits)
     entry.season_release_check_on = min(
@@ -223,7 +227,7 @@ async def reconcile(db, user_id, media_id, *, groups_data=None, edits=(), series
         previous_finish = (tracking.completion_date, tracking.date_source, tracking.date_manual, tracking.evidence)
         tracking.current = True
         history = [event for ep in episodes for event in events_by_id[ep.id]]
-        complete, watched, day, source, evidence = completion_evidence(episodes, history, expected)
+        complete, watched, day, source, evidence = completion_evidence(episodes, history, expected, release=release)
         reliable = reliable_watches(history)
         if not tracking.start_manual:
             first = min(reliable, key=reliable.get, default=None)

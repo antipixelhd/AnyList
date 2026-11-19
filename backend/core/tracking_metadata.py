@@ -2,9 +2,12 @@
 import asyncio
 import weakref
 from datetime import date, datetime, timedelta, timezone
+import httpx
 from sqlalchemy import and_, or_, select
 from core import tmdb, tvdb
 from core.descriptive_metadata import tvdb_fields, tmdb_fields
+from core.episode_release import EpisodeRelease, tvdb_schedule
+from core.identity import external_ids_from_tmdb
 from core.tracking_episode_persistence import persist_tmdb_episodes
 from models import Media, Show
 from models.base import MediaType
@@ -78,10 +81,7 @@ async def released_episodes(db, media, *, include_unreleased=False, positions_on
         Media.season_number > 0,
     )
     if not include_unreleased:
-        query = query.where(or_(
-            (Media.release_date.is_not(None) & (Media.release_date <= date.today().isoformat())),
-            imported_release,
-        ))
+        query = query.where(EpisodeRelease(media.tvdb_air_schedule).sql_clause(Media.release_date, imported_release))
     catalogue_ids = (media.tmdb_data or {}).get('tracking_episode_ids')
     imported_ids = (media.tmdb_data or {}).get('tracking_import_episode_media_ids') or []
     if catalogue_ids is not None:
@@ -92,6 +92,23 @@ async def released_episodes(db, media, *, include_unreleased=False, positions_on
     if positions_only:
         return (await db.execute(query.with_only_columns(Media.season_number, Media.episode_number))).all()
     return (await db.execute(query)).scalars().all()
+
+
+async def refresh_air_schedule(previous, tmdb_details, tvdb_api_key):
+    tvdb_id, _ = external_ids_from_tmdb(tmdb_details)
+    if not tvdb_id:
+        return None
+    retained = previous if previous and previous.get('tvdb_id') == tvdb_id else None
+    if not tvdb_api_key:
+        return retained
+    try:
+        async with asyncio.timeout(8):
+            raw = await tvdb.get_series_airtime(tvdb_id, tvdb_api_key)
+    except httpx.HTTPStatusError as exc:
+        return None if exc.response.status_code == 404 else retained
+    except (httpx.RequestError, TimeoutError, ValueError, KeyError, TypeError):
+        return retained
+    return tvdb_schedule(tvdb_id, raw) if isinstance(raw, dict) else retained
 
 
 def tracking_catalogue_is_fresh(media, show_status: str | None, now: datetime | None = None) -> bool:
@@ -187,6 +204,7 @@ async def hydrate_tracking_episodes(db, media, api_key=None, tvdb_api_key=None):
     # Fetch everything before persisting: one failed season must not make a
     # partial catalogue look like a complete show.
     fetched = await fetch_tmdb_seasons(media.tmdb_id, seasons, api_key)
+    media.tvdb_air_schedule = await refresh_air_schedule(media.tvdb_air_schedule, details, tvdb_api_key)
     if show is None:
         show = Show(tmdb_id=media.tmdb_id, title=media.title, canonical_source='tmdb')
         db.add(show)
@@ -232,7 +250,7 @@ async def refresh_tracked_catalogues(db, api_key, now: datetime | None = None, t
             continue
         try:
             async with db.begin_nested():
-                if show is not None and show.canonical_source == "tvdb":
+                if tvdb_api_key:
                     stats["episodes"] += await hydrate_tracking_episodes(
                         db, media, api_key, tvdb_api_key,
                     )

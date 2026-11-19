@@ -8,6 +8,7 @@ from sqlalchemy import Integer, and_, any_, case, func, literal, or_, select
 from sqlalchemy.dialects.postgresql import ARRAY
 
 from core import list_categories, season_completion, season_releases, tracking_projection
+from core.episode_release import EpisodeRelease
 from core.tracking_access import anime_is_visible
 from core.tracking_rules import effective_score
 from models import Media, Rating, WatchEvent
@@ -68,8 +69,8 @@ async def episode_history(db, user_id, metadata):
     return episodes
 
 
-def released_episodes(episodes, today):
-    return [row for row in episodes if row.imported or row.release_date and row.release_date[:10] <= today]
+def released_episodes(episodes, release):
+    return [row for row in episodes if release.is_released(row.release_date, row.imported)]
 
 
 async def completed_movies(db, user_id, ids):
@@ -100,7 +101,7 @@ async def rows_for_profile(db, user_id, viewer, owner, scope: ScreenScope, ids=N
         entries.append(entry)
     watched_movies = await completed_movies(db, user_id, [row[1].id for row in loaded if row[1].media_type == MediaType.movie])
     history = await episode_history(db, user_id, [row[1].tmdb_data or {} for row in loaded if row[1].media_type == MediaType.series])
-    today = date.today().isoformat()
+    today = date.today()
     for entry, row in zip(entries, loaded):
         media = row[1]
         entry['availability_dot'], entry['availability_reason'] = False, None
@@ -117,7 +118,7 @@ async def rows_for_profile(db, user_id, viewer, owner, scope: ScreenScope, ids=N
     if ids is None:
         return entries
     if placements is None:
-        candidates = [(media.id, tracked, media.tmdb_data or {}) for tracked, media, *_ in loaded
+        candidates = [(media.id, tracked, media.tmdb_data or {}, media.tvdb_air_schedule) for tracked, media, *_ in loaded
                       if media.media_type == MediaType.series and can_detach(tracked)]
         placements = await series_placements(db, user_id, candidates, history=history)
     projected = (row for entry in entries for row in list_rows(entry, placements.get(entry['id'])))
@@ -128,6 +129,7 @@ async def rows_for_profile(db, user_id, viewer, owner, scope: ScreenScope, ids=N
 
 def project_series(entry, media, episodes, today, owner):
     data = media.tmdb_data or {}
+    release = EpisodeRelease(media.tvdb_air_schedule, today=today)
     pointer = data.get('last_episode_to_air') or {}
     entry['latest_released_position'] = (
         f"S{pointer['season_number']}E{pointer['episode_number']}"
@@ -137,13 +139,14 @@ def project_series(entry, media, episodes, today, owner):
     entry['next_episode_to_air'] = {key: upcoming.get(key) for key in ('season_number', 'episode_number', 'air_date')} if upcoming else None
     episode_dates = [(row.season_number, row.release_date, row.id, bool(row.imported)) for row in episodes]
     entry['currently_airing'], entry['next_release_date'] = season_releases.current_airing_details(
-        {**data, 'status': data.get('status') or media.status}, episode_dates)
-    watched = {row.id for row in episodes if row.watched and (row.imported or row.release_date and row.release_date[:10] <= today)}
+        {**data, 'status': data.get('status') or media.status}, episode_dates, release=release)
+    entry['next_release_at'] = release.air_at(entry['next_release_date'])
+    released = sorted(released_episodes(episodes, release), key=lambda row: (row.season_number or 0, row.episode_number or 0))
+    watched = {row.id for row in released if row.watched}
     entry['availability_dot'], entry['availability_reason'] = season_releases.availability_dot(
-        data, episode_dates, watched, entry['status'])
+        data, episode_dates, watched, entry['status'], release=release)
     if not data.get('tracking_catalogue_refreshed_at'):
         return
-    released = sorted(released_episodes(episodes, today), key=lambda row: (row.season_number or 0, row.episode_number or 0))
     entry['released_episodes'] = len(released)
     if owner:
         entry['progress_positions'] = [f'S{row.season_number}E{row.episode_number}' for row in released]
@@ -156,14 +159,15 @@ def project_series(entry, media, episodes, today, owner):
     entry.update(tracking_projection.release_annotations(released, watched, entry['status']))
 
 
-def visible_seasons(groups, metadata, watched_ids, scores, today, catalogue_complete):
+def visible_seasons(groups, metadata, watched_ids, scores, today, catalogue_complete, *, release=None):
+    release = release or EpisodeRelease(today=today)
     by_number = {number: (episodes, expected) for number, episodes, expected in groups}
     previous_completed = False
     seasons = []
     for number in sorted(by_number.keys() | metadata.keys()):
         info = metadata.get(number, {})
         episodes, expected = by_number.get(number, ([], info.get('episode_count') or 0))
-        released = [episode for episode in episodes if season_completion.is_released(episode, today)]
+        released = [episode for episode in episodes if season_completion.is_released(episode, today, release=release)]
         watched = sum(episode.id in watched_ids for episode in released)
         total = max(expected, len(episodes))
         completed = bool(total and (expected or catalogue_complete) and watched == total)
@@ -186,8 +190,9 @@ async def series_seasons(db, media, user_id, aired_scores):
     scores.update((await db.execute(select(Rating.season_number, Rating.rating).where(
         Rating.user_id == user_id, Rating.media_id == media.id, Rating.season_number.is_not(None),
         Rating.episode_order == (None if order == 'tmdb:aired' else order)))).all())
-    return {'order': order, 'seasons': visible_seasons(groups, metadata, watched, scores, date.today(),
-        bool((media.tmdb_data or {}).get('tracking_catalogue_refreshed_at')))}
+    release = EpisodeRelease(media.tvdb_air_schedule)
+    return {'order': order, 'seasons': visible_seasons(groups, metadata, watched, scores, release.today,
+        bool((media.tmdb_data or {}).get('tracking_catalogue_refreshed_at')), release=release)}
 
 
 @dataclass(slots=True)
@@ -234,21 +239,20 @@ async def series_placements(db, user_id, candidates, *, history=None):
         .select_from(season).join(SeasonTracking, SeasonTracking.season_id == season.id)
         .outerjoin(Rating, and_(Rating.media_id == season.media_id, Rating.user_id == SeasonTracking.user_id,
             Rating.season_number == season.season_number, Rating.episode_order.is_not_distinct_from(ratings_order)))
-        .where(season.media_id.in_([identifier for identifier, _, _ in candidates]),
+        .where(season.media_id.in_([identifier for identifier, _, _, _ in candidates]),
             SeasonTracking.user_id == user_id, SeasonTracking.current.is_(True)))).all()
     summaries = {}
     for row in rows:
         summaries.setdefault(row.media_id, []).append(row)
     if history is None:
-        history = await episode_history(db, user_id, [data for identifier, entry, data in candidates
+        history = await episode_history(db, user_id, [data for identifier, entry, data, _ in candidates
             if entry.progress and identifier not in summaries])
-    today = date.today().isoformat()
     return {identifier: place_series(entry, data, summaries.get(identifier, []),
-        history(data) if identifier not in summaries and entry.progress else (), today)
-        for identifier, entry, data in candidates}
+        history(data) if identifier not in summaries and entry.progress else (), EpisodeRelease(schedule))
+        for identifier, entry, data, schedule in candidates}
 
 
-def place_series(entry, data, reconciled, episodes, today):
+def place_series(entry, data, reconciled, episodes, release):
     order = reconciled[0].episode_order if reconciled else 'tmdb:aired'
     scores = entry.season_scores or {}
     metadata = {info['season_number']: info for info in data.get('seasons') or []
@@ -263,7 +267,7 @@ def place_series(entry, data, reconciled, episodes, today):
         counts = {}
         for episode in episodes:
             total, watched = counts.get(episode.season_number, (0, 0))
-            released = episode.imported or episode.release_date and episode.release_date[:10] <= today
+            released = release.is_released(episode.release_date, episode.imported)
             counts[episode.season_number] = total + 1, watched + int(bool(episode.watched and released))
         for number, (total, watched) in counts.items():
             info = metadata.get(number, {})
@@ -347,7 +351,7 @@ async def members(db, user_id, scope: ScreenScope, *, progress=False, cap=None, 
     detach_candidate = and_(TrackedEntry.status != 'completed',
         TrackedEntry.series_list_status.is_distinct_from(TrackedEntry.status),
         or_(TrackedEntry.status == 'watching', TrackedEntry.progress > 0))
-    columns = (Media.id, func.lower(Media.title).label('title'), Media.media_type, Media.release_date,
+    columns = (Media.id, func.lower(Media.title).label('title'), Media.media_type, Media.release_date, Media.tvdb_air_schedule,
         TrackedEntry.status, TrackedEntry.rating_mode, TrackedEntry.manual_score, TrackedEntry.season_scores,
         TrackedEntry.progress, TrackedEntry.updated_at, TrackedEntry.season_cursor, TrackedEntry.series_list_status,
         (TrackedEntry.favorite | MediaFavorite.media_id.is_not(None)).label('favorite'),
@@ -369,18 +373,17 @@ async def members(db, user_id, scope: ScreenScope, *, progress=False, cap=None, 
     history = await episode_history(db, user_id, [data for row, data in inputs if row.media_type == MediaType.series
         and (data.get('tracking_catalogue_refreshed_at') or can_detach(row))]) if progress else None
     projected = await series_placements(db, user_id,
-        [(row.id, row, data) for row, data in inputs if row.media_type == MediaType.series and can_detach(row)],
+        [(row.id, row, data, row.tvdb_air_schedule) for row, data in inputs if row.media_type == MediaType.series and can_detach(row)],
         history=history)
     if placements is not None:
         placements.update(projected)
-    today = date.today().isoformat()
     result = []
     for rank, (row, data) in enumerate(inputs):
         count = row.progress
         if row.media_type == MediaType.movie:
             count = int(bool(count or row.status == 'completed' or row.id in movies))
         elif history and data.get('tracking_catalogue_refreshed_at'):
-            count = sum(episode.watched for episode in released_episodes(history(data), today))
+            count = sum(episode.watched for episode in released_episodes(history(data), EpisodeRelease(row.tvdb_air_schedule)))
         year = (row.release_date or '')[:4]
         year = year if len(year) == 4 and year.isascii() and year.isdigit() else ''
         genres = tracking_projection.media_genres(data)

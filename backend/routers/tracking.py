@@ -23,6 +23,7 @@ from core.tracking_rules import TrackingStatus, normalize_score, effective_score
 from core.status_provenance import mark_status_change
 from core.series_editor import SeriesEditorContext, SeriesEditorPatch, editor_context as series_editor_context, editor_summary
 from core.season_completion import membership_key
+from core.episode_release import EpisodeRelease
 from models import Media, User, UserSettings, UserProfileData, Follow, Rating, Show, WatchEvent, Collection, CollectionFile, PlaybackProgress, PlaybackSession, MediaServerConnection, List, ListItem, ShowRewatch
 from models.base import MediaType, PrivacyLevel
 from models.tracking import MediaFavorite, TrackedEntry, TrackingActivity, TrackingDeliveryJob, TrackingDeletion, TrackingPreferences, SyncReview, StreamBaseline, ProviderIgnore, ProviderMatch, StreamAction, CloudAction
@@ -1618,24 +1619,27 @@ async def detail_seasons(db, media, viewer, *, include_episodes=True):
     seasons = [dict(s) for s in (media.tmdb_data or {}).get('seasons', [])]
     if not include_episodes:
         return [{**season, 'episodes': [], 'released_count': None, 'watched_count': 0} for season in seasons]
-    episodes = await released_episodes(db, media)
     from core.tracking_metadata import released_episodes as catalogue_episodes
     all_episodes = await catalogue_episodes(db, media, include_unreleased=True) if media.media_type == MediaType.series else []
-    released_ids = {episode.id for episode in episodes}
+    release = EpisodeRelease(media.tvdb_air_schedule)
+    released_ids = {episode.id for episode in all_episodes if release.is_released(
+        episode.release_date, (episode.tmdb_data or {}).get('tracking_import_released'))}
     watched = set()
     if viewer and all_episodes:
         watched = set((await db.execute(select(WatchEvent.media_id).where(
             WatchEvent.user_id == viewer.id, WatchEvent.media_id.in_([e.id for e in all_episodes]),
             WatchEvent.completed.is_(True)))).scalars())
     for season in seasons:
-        released = [e for e in episodes if e.season_number == season.get('season_number')]
+        season_episodes = [e for e in all_episodes if e.season_number == season.get('season_number')]
+        released = [e for e in season_episodes if e.id in released_ids]
         season['released_count'] = len(released) if (media.tmdb_data or {}).get('tracking_catalogue_refreshed_at') else None
         season['watched_count'] = sum(e.id in watched for e in released)
         season['episodes'] = [{'id':episode.id, 'episode_number':episode.episode_number,
             'title':episode.title, 'air_date':episode.release_date, 'runtime':episode.runtime,
+            'air_at':release.air_at(episode.release_date),
             'image':episode.poster_path or (episode.tmdb_data or {}).get('still_path'),
             'watched':episode.id in watched, 'released':episode.id in released_ids}
-            for episode in all_episodes if episode.season_number == season.get('season_number')]
+            for episode in season_episodes]
     return seasons
 
 
@@ -2408,7 +2412,8 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
         from core.season_activity import season_target
         from core.series_editor import intent_date_edits
         intent_context = SeriesEditorContext(series_context.data, series_context.positions,
-            desired_editor if desired_editor is not None else series_context.watched, entry.season_cursor)
+            desired_editor if desired_editor is not None else series_context.watched, entry.season_cursor,
+            release=series_context.release)
         number = series_context.positions[observed_endpoint][0] if observed_endpoint else season_target(intent_context)[0]
         if series_patch.action == 'position' and not date_endpoints:
             number = series_patch.season_number or number
@@ -2439,7 +2444,8 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
                 await reschedule_date_activity(db, viewer.id, media_id, start_date=entry.start_date,
                     finish_date=entry.finish_date, changed={'start_date'}, status=entry.status)
         if desired_editor is not None:
-            series_context = SeriesEditorContext(series_context.data, series_context.positions, desired_editor, entry.season_cursor)
+            series_context = SeriesEditorContext(series_context.data, series_context.positions, desired_editor,
+                entry.season_cursor, release=series_context.release)
         series_summary = await editor_summary(db, media, viewer.id, series_context)
     elif media.media_type == MediaType.series and (series_start_override is not None or progress_changed or entry.status == 'completed'):
         from core.season_completion import reconcile
