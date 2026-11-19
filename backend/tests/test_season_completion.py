@@ -246,6 +246,62 @@ class SeasonDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(next(row for row in page['results'] if row['status'] == 'planning')['title'],
                          'Two seasons - Next Campaign')
 
+    async def test_explicit_season_completion_survives_a_new_release_and_catalogue_membership(self):
+        entry_url = f'/tracking/entry/{self.series_id}'
+        editor_url = f'{entry_url}/series-editor'
+        profile = f'/tracking/profile/{self.viewer.username}/series'
+        future = (date.today() + timedelta(days=2)).isoformat()
+        async with self.Session() as db:
+            series = await db.get(Media, self.series_id)
+            series.status = 'Returning Series'
+            series.tmdb_data = {**series.tmdb_data, 'tracking_episode_details_version': 1,
+                'tracking_catalogue_refreshed_at': datetime.now().astimezone().isoformat()}
+            episode = await db.get(Media, self.episode_ids[-1])
+            episode.title, episode.release_date = 'Episode 2', future
+            tracked = await db.scalar(select(TrackedEntry).where(TrackedEntry.media_id == self.series_id))
+            tracked.status, tracked.progress = 'watching', 2
+            await db.execute(delete(WatchEvent).where(WatchEvent.media_id.in_(self.episode_ids[-2:])))
+            await db.commit()
+
+        summary = (await self.client.get(editor_url)).json()
+        response = await self.client.patch(entry_url, json={'series_editor': {
+            'action': 'complete_season', 'season_number': 2, 'order': summary['order'],
+            'revision': summary['revision'], 'watch_date': date.today().isoformat()}})
+        self.assertEqual(response.status_code, 200, response.text)
+        state = response.json()
+        self.assertEqual((state['status'], state['progress']), ('completed', 3))
+        current = state['series_editor']['seasons'][-1]
+        self.assertTrue(current['completed'])
+        self.assertTrue(current['manual_completion'])
+        self.assertEqual([ep['id'] for ep in current['episodes'] if ep['watched']], [self.episode_ids[-2]])
+
+        async with self.Session() as db:
+            episode = await db.get(Media, self.episode_ids[-1])
+            episode.release_date = date.today().isoformat()
+            db.add(Media(title='Episode 3', media_type=MediaType.episode, show_id=episode.show_id,
+                         tmdb_id=923023, season_number=2, episode_number=3, release_date=future))
+            series = await db.get(Media, self.series_id)
+            series.tmdb_data = {**series.tmdb_data, 'seasons': [
+                {'season_number': 1, 'episode_count': 2}, {'season_number': 2, 'episode_count': 3}]}
+            await db.flush()
+            await reconcile(db, self.user_id, self.series_id)
+            await db.commit()
+
+        summary = (await self.client.get(editor_url)).json()
+        current = summary['seasons'][-1]
+        self.assertTrue(current['manual_completion'])
+        self.assertTrue(current['completed'])
+        self.assertEqual(current['completion_date'], date.today().isoformat())
+        self.assertEqual([ep['watched'] for ep in current['episodes']], [True, False])
+        seasons = (await self.client.get(f'{profile}/{self.series_id}/seasons')).json()['seasons']
+        self.assertEqual((seasons[-1]['watched'], seasons[-1]['total'], seasons[-1]['completed']), (1, 2, True))
+        response = await self.client.patch(entry_url, json={'series_editor': {
+            'action': 'resume_season', 'season_number': 2, 'order': summary['order'], 'revision': summary['revision']}})
+        self.assertEqual(response.status_code, 200, response.text)
+        reopened = response.json()['series_editor']['seasons'][-1]
+        self.assertFalse(reopened['completed'])
+        self.assertEqual([ep['watched'] for ep in reopened['episodes']], [True, False])
+
     async def test_editor_displays_released_total_for_placeholder_schedule(self):
         url = f'/tracking/entry/{self.series_id}/series-editor'
         profile = f'/tracking/profile/{self.viewer.username}/series'

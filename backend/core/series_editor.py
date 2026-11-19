@@ -29,7 +29,8 @@ class SeriesEditorPatch(BaseModel):
     model_config = ConfigDict(extra='forbid')
     revision: str | None = Field(default=None, max_length=64)
     order: str | None = Field(default=None, max_length=40)
-    action: Literal['episode', 'through_season', 'position', 'catch_up', 'complete_previous', 'delete_season'] | None = None
+    action: Literal['episode', 'through_season', 'position', 'catch_up', 'complete_previous',
+                    'complete_season', 'resume_season', 'delete_season'] | None = None
     episode_id: int | None = Field(default=None, gt=0)
     season_number: int | None = Field(default=None, gt=0)
     episode_count: int | None = Field(default=None, ge=0)
@@ -40,19 +41,20 @@ class SeriesEditorPatch(BaseModel):
 
 
 class SeriesEditorContext:
-    def __init__(self, data, positions, watched, cursor=None, *, release=None):
+    def __init__(self, data, positions, watched, cursor=None, *, release=None, manual_completions=None):
         self.data = data
         self.order, self.groups, self.metadata = data
         self.positions = positions
         self.watched = watched
         self.cursor = cursor
+        self.manual_completions = (manual_completions or {}).get(self.order, {})
         self.release = release or EpisodeRelease()
         self.today = self.release.today
         self.released = [ep for _, members, _ in self.groups for ep in members
                          if is_released(ep, self.today, release=self.release)]
         self.revision = hashlib.sha256(repr((self.order, [(n, [(ep.id, ep.release_date) for ep in episodes], expected)
             for n, episodes, expected in self.groups], [ep.id for ep in self.released], sorted(watched),
-            self.selected_position())).encode()).hexdigest()
+            self.selected_position(), sorted(self.manual_completions.items()))).encode()).hexdigest()
 
     def cursor_for(self, patch):
         if patch.season_number is None and patch.episode_count is None:
@@ -136,6 +138,15 @@ class SeriesEditorContext:
     def resolve(self, patch, status, needs_progress):
         """Translate editor intent to a canonical watch delta under the user lock."""
         airing = self.airing()
+        if patch.action in ('complete_season', 'resume_season'):
+            if patch.revision != self.revision or patch.order != self.order:
+                raise HTTPException(409, {'code': 'series_editor_changed', 'airing': airing})
+            members = [ep for ep in self.released if self.positions[ep.id][0] == patch.season_number]
+            if not members or patch.episode_id is not None or patch.episode_count is not None:
+                raise HTTPException(422, 'Choose a season with released episodes')
+            if patch.action == 'resume_season':
+                return self.watched, None
+            return self.watched | {ep.id for ep in members}, members[-1].id
         self.cursor_for(patch)
         if patch.progress_season is not None and (patch.action != 'position'
                 or patch.progress_season != patch.season_number
@@ -183,9 +194,11 @@ async def editor_context(db, media, user_id):
     positions = {}
     data = await season_groups(db, media, user_id, display_positions=positions, include_placeholders=True)
     watched = await watched_episode_ids(db, user_id, list(positions))
-    cursor = await db.scalar(select(TrackedEntry.season_cursor).where(TrackedEntry.user_id==user_id,
-        TrackedEntry.media_id==media.id))
-    return SeriesEditorContext(data, positions, watched, cursor, release=EpisodeRelease(media.tvdb_air_schedule))
+    saved = (await db.execute(select(TrackedEntry.season_cursor, TrackedEntry.manual_season_completions)
+        .where(TrackedEntry.user_id == user_id, TrackedEntry.media_id == media.id))).first()
+    cursor, manual = saved if saved else (None, None)
+    return SeriesEditorContext(data, positions, watched, cursor, release=EpisodeRelease(media.tvdb_air_schedule),
+                               manual_completions=manual)
 
 
 async def intent_date_edits(db, media_id, user_id, context, edits, *, number, start, finish, day):
@@ -264,6 +277,9 @@ async def editor_summary(db, media, user_id, context):
                 for ep in members if ep.id in released],
             'upcoming': [{'id': ep.id, 'number': context.positions[ep.id][1]} for ep in upcoming]}
         season.update(saved.get((number, key), {}))
+        if str(number) in context.manual_completions:
+            season.update(completed=True, manual_completion=True,
+                          completion_date=season.get('completion_date') or context.manual_completions[str(number)])
         progress_total = season_progress_total(media, context.order, number, members, expected, released,
                                                 context.release, latest=number == numbers[-1])
         if progress_total is not None:

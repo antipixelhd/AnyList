@@ -203,6 +203,7 @@ async def reconcile(db, user_id, media_id, *, groups_data=None, edits=(), series
     previous_orders = {s.episode_order for s, t in previous}
     order_changed = bool(previous_orders and order not in previous_orders)
     edits_by_key = {(edit.season_number, edit.membership): edit for edit in edits}
+    manual_completions = (entry.manual_season_completions or {}).get(order, {})
     today = date.today()
     release = EpisodeRelease(media.tvdb_air_schedule, today=today)
     latest_started = max((number for number, episodes, _ in groups if any(
@@ -235,6 +236,8 @@ async def reconcile(db, user_id, media_id, *, groups_data=None, edits=(), series
         tracking.current = True
         history = [event for ep in episodes for event in events_by_id[ep.id]]
         complete, watched, day, source, evidence = completion_evidence(episodes, history, expected, release=release)
+        if completion := manual_completions.get(str(number)):
+            complete, day, source, evidence = True, date.fromisoformat(completion), 'manual', {'rule': 'manual_completion'}
         reliable = reliable_watches(history)
         if not tracking.start_manual:
             first = min(reliable, key=reliable.get, default=None)

@@ -2121,6 +2121,7 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
     old_season_scores = dict(entry.season_scores or {}) if entry else {}
     series_patch = body.series_editor
     deleting_season = series_patch is not None and series_patch.action == 'delete_season'
+    season_completion_action = series_patch is not None and series_patch.action in ('complete_season', 'resume_season')
     date_endpoints = {}
     observed_season_finishes = set()
     finish_intent = 'finish_date' in body.model_fields_set and body.finish_date is not None
@@ -2150,7 +2151,7 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
         if series_patch.seasons and series_patch.order != series_context.order:
             raise HTTPException(409, {'code': 'series_editor_changed', 'airing': series_context.airing()})
         selected_status = body.status.value if body.status else previous
-        completes_series = selected_status == 'completed' and body.status is not None
+        completes_series = selected_status == 'completed' and body.status is not None and not season_completion_action
         if completes_series or series_patch.action:
             if not (media.tmdb_data or {}).get('tracking_catalogue_refreshed_at'):
                 raise HTTPException(409, 'Episode metadata is still loading. Try again shortly.')
@@ -2199,6 +2200,23 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
             body.model_fields_set.discard('finish_date')
         elif series_patch.action == 'complete_previous':
             body.status = TrackingStatus('completed')
+        elif season_completion_action:
+            body.status = None
+            body.model_fields_set.discard('status')
+            if series_patch.action == 'resume_season':
+                body.status = TrackingStatus('watching')
+            else:
+                latest = max(series_context.positions[ep.id][0] for ep in series_context.released)
+                released_ids = {ep.id for ep in series_context.released}
+                other_in_progress = any(
+                    number != series_patch.season_number and str(number) not in series_context.manual_completions
+                    and members and any(ep.id in desired_editor for ep in members)
+                    and (len(members) != count or any(ep.id not in desired_editor or ep.id not in released_ids for ep in members))
+                    for number, members, count in series_context.groups)
+                if series_patch.season_number == latest and not other_in_progress:
+                    body.status = TrackingStatus('completed')
+                elif entry is None:
+                    body.status = TrackingStatus('watching')
         if series_patch.watch_date and series_patch.watch_date > date.today() + timedelta(days=1):
             raise HTTPException(422, 'Watch date cannot be in the future')
     added_watched_ids: set[int] = set()
@@ -2211,6 +2229,19 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
         entry = TrackedEntry(user_id=viewer.id, media_id=media_id, status="planning", rating_mode="manual", season_scores={}, progress=0, favorite=favorite_row is not None, rewatch_count=0)
         db.add(entry)
     fields = body.model_fields_set
+    if season_completion_action or deleting_season:
+        overrides = dict(entry.manual_season_completions or {})
+        dates = dict(series_context.manual_completions)
+        key = str(series_patch.season_number)
+        if series_patch.action == 'complete_season':
+            dates.setdefault(key, (series_patch.watch_date or date.today()).isoformat())
+        else:
+            dates.pop(key, None)
+        if dates:
+            overrides[series_context.order] = dates
+        else:
+            overrides.pop(series_context.order, None)
+        entry.manual_season_completions = overrides or None
     local_status_decision = 'status' in fields
     if body.season_scores is not None and media.media_type != MediaType.series:
         raise HTTPException(422, "Movies do not have season ratings")
@@ -2434,7 +2465,7 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
         from core.series_editor import intent_date_edits
         intent_context = SeriesEditorContext(series_context.data, series_context.positions,
             desired_editor if desired_editor is not None else series_context.watched, entry.season_cursor,
-            release=series_context.release)
+            release=series_context.release, manual_completions=entry.manual_season_completions)
         number = series_context.positions[observed_endpoint][0] if observed_endpoint else season_target(intent_context)[0]
         if series_patch.action == 'position' and not date_endpoints:
             number = series_patch.season_number or number
@@ -2466,7 +2497,7 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
                     finish_date=entry.finish_date, changed={'start_date'}, status=entry.status)
         if desired_editor is not None:
             series_context = SeriesEditorContext(series_context.data, series_context.positions, desired_editor,
-                entry.season_cursor, release=series_context.release)
+                entry.season_cursor, release=series_context.release, manual_completions=entry.manual_season_completions)
         series_summary = await editor_summary(db, media, viewer.id, series_context)
     elif media.media_type == MediaType.series and (series_start_override is not None or progress_changed or entry.status == 'completed'):
         from core.season_completion import reconcile

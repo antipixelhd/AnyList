@@ -168,7 +168,7 @@ def project_series(entry, media, episodes, today, owner):
 
 
 def visible_seasons(groups, metadata, watched_ids, scores, today, catalogue_complete, *, release=None,
-                    media=None, order='tmdb:aired'):
+                    media=None, order='tmdb:aired', manual_completions=None):
     from core.series_editor import season_progress_total
 
     release = release or EpisodeRelease(today=today)
@@ -182,8 +182,9 @@ def visible_seasons(groups, metadata, watched_ids, scores, today, catalogue_comp
         released = [episode for episode in episodes if season_completion.is_released(episode, today, release=release)]
         watched = sum(episode.id in watched_ids for episode in released)
         total = max(expected, len(episodes))
-        completed = bool(total and (expected or catalogue_complete) and watched == total)
-        if watched or previous_completed:
+        manual = str(number) in (manual_completions or {})
+        completed = manual or bool(total and (expected or catalogue_complete) and watched == total)
+        if watched or previous_completed or manual:
             progress_total = season_progress_total(media, order, number, episodes, expected,
                 {episode.id for episode in released}, release, latest=number == numbers[-1]) if media else None
             dates = [day for episode in episodes if (day := season_completion.release_day(episode))]
@@ -206,8 +207,11 @@ async def series_seasons(db, media, user_id, aired_scores):
         Rating.user_id == user_id, Rating.media_id == media.id, Rating.season_number.is_not(None),
         Rating.episode_order == (None if order == 'tmdb:aired' else order)))).all())
     release = EpisodeRelease(media.tvdb_air_schedule)
+    manual = await db.scalar(select(TrackedEntry.manual_season_completions).where(
+        TrackedEntry.user_id == user_id, TrackedEntry.media_id == media.id))
     return {'order': order, 'seasons': visible_seasons(groups, metadata, watched, scores, release.today,
-        bool((media.tmdb_data or {}).get('tracking_catalogue_refreshed_at')), release=release, media=media, order=order)}
+        bool((media.tmdb_data or {}).get('tracking_catalogue_refreshed_at')), release=release,
+        media=media, order=order, manual_completions=(manual or {}).get(order))}
 
 
 @dataclass(slots=True)

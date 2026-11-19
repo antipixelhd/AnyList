@@ -172,6 +172,7 @@ document.addEventListener('astro:page-load', () => {
     seriesFields.statusChanged();
   };
   statusSelect.addEventListener('change',syncStatus,{signal:sessionSignal});
+  form.addEventListener('anylist:series-status-sync',()=>statusControl.sync(),{signal:sessionSignal});
   form.addEventListener('change',event=>{
     if(currentTitle?.type!=='movie' || !(event.target instanceof HTMLInputElement))return;
     const name=event.target.closest('[data-calendar-input]')?.querySelector<HTMLInputElement>('[data-date-iso]')?.name;
@@ -534,13 +535,15 @@ document.addEventListener('astro:page-load', () => {
       if (values[name] !== (current[name] || '')) body[name] = values[name] || null;
     }
     if (editing.type==='series') {
-      const explicitStatus = !editing.entry || status!==current.status;
+      const scopedStatus = seriesFields.scopedStatusChange();
+      const explicitStatus = scopedStatus ?? (!editing.entry || status!==current.status);
       if (!explicitStatus) delete body.status;
       saveButton.disabled=true;
       try {
         const patch=await seriesFields.patch(explicitStatus);
         if (!patch || currentTitle!==editing || !dialog.open || sessionSignal.aborted) return;
-        if (patch.action==='position') body.status=status;
+        if (patch.action==='position' && scopedStatus===undefined) body.status=status;
+        if (patch.action==='complete_season'||patch.action==='resume_season') delete body.status;
         if (seriesFields.rollbackNeeded(patch)) {
           if (!await confirmEntryAction(watchRollbackWarning) || sessionSignal.aborted || currentTitle!==editing) return;
           body.confirm_rollback=true;
