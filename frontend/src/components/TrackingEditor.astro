@@ -534,7 +534,10 @@ document.addEventListener('astro:page-load', () => {
         if (patch.action==='position' && scopedStatus===undefined) body.status=status;
         if (scopedStatus!==undefined) delete body.status;
         if (seriesFields.rollbackNeeded(patch)) {
-          if (!await confirmEntryAction(watchRollbackWarning) || sessionSignal.aborted || currentTitle!==editing) return;
+          const warning=patch.progress_season
+            ? 'Reduce this season’s watched count? The removed episodes will lose their recorded watch dates and evidence.'
+            : watchRollbackWarning;
+          if (!await confirmEntryAction(warning) || sessionSignal.aborted || currentTitle!==editing) return;
           body.confirm_rollback=true;
         }
         if (patch.order==='tmdb:aired' && !ratedSeasonScores().length && patch.seasons.some(season=>Number(season.score)>0)) {

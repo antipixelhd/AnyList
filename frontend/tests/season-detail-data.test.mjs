@@ -15,11 +15,11 @@ test('current season follows watch history, ignoring older gaps, specials and fu
   assert.equal(currentDetailSeason([season(1,[true,true]),season(2,[false,false])]),2);
 });
 
-test('only the watching season displays progress; other seasons use a plain watched state',()=>{
+test('partial seasons display their own progress regardless of the current season or series status',()=>{
   const partial={season_number:2,watched_count:3,released_count:9};
   assert.equal(detailSeasonState(partial,2,true).label,'3 / 9 watched');
-  assert.equal(detailSeasonState(partial,1,true).label,'Not watched');
-  assert.equal(detailSeasonState(partial,2,false).label,'Not watched');
+  assert.equal(detailSeasonState(partial,1,true).label,'3 / 9 watched');
+  assert.equal(detailSeasonState(partial,2,false).label,'3 / 9 watched');
   assert.equal(detailSeasonState({...partial,watched_count:9},2,true).label,'Watched');
   for(const count of [0,null])assert.equal(detailSeasonState({...partial,released_count:count},2,true).label,'Not watched');
 });

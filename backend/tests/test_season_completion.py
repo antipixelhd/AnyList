@@ -19,6 +19,19 @@ from unittest.mock import AsyncMock, patch
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_older_season_count_preserves_out_of_order_watches_and_later_seasons(self):
+        from core.series_editor import SeriesEditorContext, SeriesEditorPatch
+
+        first, second, third, later = [SimpleNamespace(id=n, release_date='2020-01-01', tmdb_data={})
+                                      for n in range(1, 5)]
+        context = SeriesEditorContext(('tmdb:aired', [(1, [first, second, third], 3), (2, [later], 1)], {}),
+                                      {1: (1, 1), 2: (1, 2), 3: (1, 3), 4: (2, 1)}, {3, 4})
+        for count, expected, observed in ((0, {4}, None), (1, {3, 4}, None), (2, {1, 3, 4}, 1)):
+            with self.subTest(count=count):
+                patch = SeriesEditorPatch(action='position', order=context.order, revision=context.revision,
+                    season_number=1, progress_season=1, episode_count=count, episode_id=count or None)
+                self.assertEqual(context.resolve(patch, 'paused', False), (expected, observed))
+
     def test_invalid_persisted_cursor_is_ignored(self):
         from core.series_editor import SeriesEditorContext
         episode=SimpleNamespace(id=1,release_date='2020-01-01',tmdb_data={})

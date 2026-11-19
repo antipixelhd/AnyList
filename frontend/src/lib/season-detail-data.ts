@@ -15,7 +15,7 @@ export function currentDetailSeason(seasons:DetailSeason[],watching=false) {
 
 export function detailSeasonState(season:DetailSeason,current:number|null,watching:boolean) {
   const watched=!!season.released_count&&season.watched_count>=season.released_count;
-  const progress=watching&&season.season_number===current&&!watched&&!!season.released_count;
+  const progress=!watched&&!!season.released_count&&(season.watched_count>0||watching&&season.season_number===current);
   return {watched,progress,label:watched?'Watched':progress?`${season.watched_count} / ${season.released_count} watched`:'Not watched'};
 }
 

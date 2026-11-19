@@ -300,7 +300,7 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     async patch(explicitStatus:boolean):Promise<SeriesPatch|false> {
       const completing=explicitStatus&&status()==='completed';
       const seasonAction = scope && completing ? 'complete_season'
-        : scope && explicitStatus && status()==='watching' && scopedSeason()?.manual_completion ? 'resume_season' : undefined;
+        : scope && !progressDrafts.has(scope) && explicitStatus && status()==='watching' && scopedSeason()?.manual_completion ? 'resume_season' : undefined;
       const first=released()[0];
       const next=progressDrafts.get(scope)??(!scope&&(completing?defaultPosition():!openingStatus&&first?position(first,1):undefined)||undefined);
       if ((completing||next) && !summary?.ready) {
@@ -323,16 +323,17 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
         season_statuses:seasonStatuses,...(seasonAction?{action:seasonAction,season_number:scope}
           :next?{action:'position' as const,...next,progress_season:scope||undefined}:{})};
     },
-    rollbackNeeded(patch:{action?:string;episode_id?:number|null;progress_season?:number}) {
+    rollbackNeeded(patch:SeriesPatch) {
       if (patch.action!=='position') return false;
-      const episodes=seasons().filter(season=>!patch.progress_season||season.season_number===patch.progress_season)
-        .flatMap(season=>season.episodes);
+      if (patch.progress_season) {
+        const season=seasons().find(item=>item.season_number===patch.progress_season);
+        return season!=null && (patch.episode_count??0)<watched(season);
+      }
+      const episodes=seasons().flatMap(season=>season.episodes);
       return episodes.slice(episodes.findIndex(episode=>episode.id===patch.episode_id)+1).some(episode=>episode.watched);
     },
-    optimisticProgress(patch:{action?:string;episode_id?:number|null;progress_season?:number;episode_count?:number}) {
-      if (patch.action!=='position') return undefined;
-      if (patch.progress_season) return {progress:seasons().reduce((sum,season)=>sum+
-        (season.season_number===patch.progress_season?patch.episode_count??0:watched(season)),0)};
+    optimisticProgress(patch:SeriesPatch) {
+      if (patch.action!=='position'||patch.progress_season) return undefined;
       return {progress:seasons().flatMap(season=>season.episodes).findIndex(episode=>episode.id===patch.episode_id)+1};
     },
     refresh:read,

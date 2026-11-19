@@ -91,7 +91,7 @@ class SeriesEditorContext:
         ids = [ep.id for ep in self.released]
         if patch.progress_season:
             members = [ep.id for ep in self.released if self.positions[ep.id][0] == patch.progress_season]
-            return cursor if self.watched.intersection(members) == set(members[:patch.episode_count]) else None
+            return cursor if len(self.watched.intersection(members)) == patch.episode_count else None
         boundary = ids.index(cursor['episode_id'])+1 if cursor['episode_id'] in ids else 0
         return cursor if self.watched == set(ids[:boundary]) else None
 
@@ -162,9 +162,13 @@ class SeriesEditorContext:
                 raise HTTPException(422, 'Choose the season whose progress is changing.')
             if patch.revision != self.revision or patch.order not in (None, self.order):
                 raise HTTPException(409, {'code': 'series_editor_changed', 'airing': airing})
-            cursor = self.cursor_for(patch)
             members = [ep.id for ep in self.released if self.positions[ep.id][0] == patch.progress_season]
-            return self.watched.difference(members) | set(members[:patch.episode_count]), cursor['episode_id']
+            already_watched = [episode_id for episode_id in members if episode_id in self.watched]
+            unwatched = [episode_id for episode_id in members if episode_id not in self.watched]
+            # Lowering the count removes the highest watched numbers in this season.
+            kept = set((already_watched + unwatched)[:patch.episode_count])
+            observed = next((episode_id for episode_id in reversed(unwatched) if episode_id in kept), None)
+            return self.watched.difference(members) | kept, observed
         if (patch.action or needs_progress) and (not self.released or patch.revision != self.revision):
             raise HTTPException(409, {'code': 'series_editor_changed', 'airing': airing})
         if needs_progress and status == 'completed' and airing and patch.action not in ('complete_previous', 'catch_up', 'position'):

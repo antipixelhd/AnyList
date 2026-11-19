@@ -274,8 +274,17 @@ export function mountMediaDetail() {
     }
     const rawCatalogue=(state as EditorTitle & {seasons?:DetailSeason[]}).seasons||[];
     const nextProgress = state.entry?.progress ?? 0;
-    if (displayedProgress != null && nextProgress !== displayedProgress)
-      projectedSeasons = optimisticSeasonProgress(rawCatalogue, nextProgress);
+    if (displayedProgress != null && nextProgress !== displayedProgress) {
+      const summary = !acknowledge && editorStore.cachedSeries(state.id);
+      if (summary && state.entry) {
+        const watched = new Map(summary.seasons.flatMap(season=>season.episodes.map(episode=>[episode.id,episode.watched] as const)));
+        projectedSeasons = rawCatalogue.map(season=>{
+          if (!season.episodes?.length) return season;
+          const episodes = season.episodes.map(episode=>({...episode,watched:watched.get(episode.id)??episode.watched}));
+          return {...season,episodes,watched_count:episodes.filter(episode=>episode.released&&episode.watched).length};
+        });
+      } else projectedSeasons = optimisticSeasonProgress(rawCatalogue, nextProgress);
+    }
     displayedProgress = nextProgress;
     const catalogue = projectedSeasons || rawCatalogue;
     if (projectedSeasons) for (const season of projectedSeasons) for (const episode of season.episodes || []) {
