@@ -157,8 +157,11 @@
 .progress-card:is(:hover,:focus-within) .progress-card-quick-action {
   opacity:1
 }
-.progress-card:has(.progress-card-quick-action:enabled):is(:hover,:focus-within) .progress-card-airing-label {
-  bottom:33px
+@media(hover:hover) {
+  .progress-card:is(:hover,:focus-within) .progress-card-airing-label {
+    opacity:0;
+    visibility:hidden
+  }
 }
 .progress-card-details {
   position:absolute;
