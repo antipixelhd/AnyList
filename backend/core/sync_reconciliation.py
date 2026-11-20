@@ -10,7 +10,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any
 
-from core.status_provenance import naive_utc
+from core.status_provenance import naive_utc, provider_changed_at
 
 _MISSING = object()
 
