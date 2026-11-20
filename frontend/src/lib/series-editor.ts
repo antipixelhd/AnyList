@@ -1,11 +1,11 @@
 import {localToday} from './date-time';
 import {setupEditorSelect} from './editor-select';
 import {editorStore, type EditorTitle} from './editor-store';
-import {progressFill, setupSeriesProgressPicker} from './series-progress-picker';
+import {bindProgressRanges, releaseDateLabel, setupSeriesProgressPicker, syncProgressRange} from './series-progress-picker';
 
 type Episode = {id:number; number:number; watched:boolean};
 type Season = {season_number:number; membership:string; name?:string|null; poster?:string|null; total:number;
-  progress_total?:number;
+  progress_total?:number; release_date?:string|null;
   episodes:Episode[]; upcoming?:Pick<Episode,'id'|'number'>[]; score?:number|null;
   start_date?:string|null; completion_date?:string|null; start_source?:string|null;
   date_source?:string|null; start_manual?:boolean; date_manual?:boolean; completed?:boolean; manual_completion?:boolean;
@@ -32,6 +32,7 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
   const scopeSelect = scopeRoot.querySelector<HTMLSelectElement>('select')!;
   const scopeControl = setupEditorSelect(scopeRoot.querySelector<HTMLElement>('[data-editor-select]')!,page);
   const input = find<HTMLInputElement>('count');
+  const bar = find<HTMLInputElement>('bar');
   const steps = panel.querySelectorAll<HTMLButtonElement>('[data-series-step]');
   const scopeMessage = form.querySelector<HTMLElement>('[data-season-field-message]')!;
   const drafts = new Map<number,ScopeFields>();
@@ -43,6 +44,7 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
   const previousCounts = new Map<number,number>();
   const watchedCounts = new Map<number,number>();
   const progressPicker = setupSeriesProgressPicker(panel,dialog,page,editProgress);
+  bindProgressRanges(panel,page);
   let writtenStatus:string|undefined;
   let openingStatus:string|undefined;
   let initialStatus = '';
@@ -105,31 +107,37 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
   }
   function render(keepInput=false) {
     panel.hidden=scopeRoot.hidden=!title;
-    input.disabled=true;
+    input.disabled=bar.disabled=true;
     if (!title) {scopeControl.close(true);progressPicker.close();scopeMessage.hidden=true;return;}
     const current = scopedSeason();
-    const hasProgress = Boolean(current || seasons().length);
-    syncOptions(scopeSelect,[['0','All Seasons'],...seasons().map(season=>[String(season.season_number),name(season)] as [string,string])],String(scope));
+    const hasProgress = scope ? Boolean(current) : Boolean(seasons().length);
+    const options:[string,string][] = [['0','All Seasons'],...seasons().map(season=>[String(season.season_number),name(season)] as [string,string])];
+    if (scope && !current) options.push([String(scope),`Season ${scope}`]);
+    syncOptions(scopeSelect,options,String(scope));
     scopeControl.sync();
     find('loading').hidden=hasProgress && !loadFailed;
-    find('loading').textContent=loadFailed?'Progress is unavailable.':summary&&!summary.pending?'No released episodes.':'Loading progress…';
-    find('retry').hidden=!loadFailed;
+    const unavailable=loadFailed||Boolean(scope&&!current&&summary&&!summary.pending);
+    find('loading').textContent=unavailable?'Progress is unavailable.':summary&&!summary.pending?'No released episodes.':'Loading progress…';
+    find('retry').hidden=!unavailable;
     find('content').hidden=!hasProgress;
     const label=panel.querySelector('label')!;
-    label.textContent=scope?'Episode progress':'Progress';
-    label.htmlFor=scope?input.id:find('trigger').id;
+    const available=current?.episodes.length??0;
+    label.textContent=scope?(current&&!available?'Release date':'Episode progress'):'Progress';
+    label.htmlFor=scope?(available?input.id:''):find('trigger').id;
     find('trigger').hidden=Boolean(scope);
-    find('stepper').hidden=!scope;
+    find('stepper').hidden=!scope||!available;
+    find('release').hidden=!current||Boolean(available);
+    if (current&&!available) find('release').textContent=releaseDateLabel(current.release_date);
     if (!scope) renderPicker();
     else progressPicker.close();
-    input.disabled=!current?.episodes.length || !summary?.ready || (Boolean(scope) && completingScope());
+    input.disabled=bar.disabled=!available || !summary?.ready;
     const count=current ? previewCount(current) : 0;
-    input.max=String(current?.episodes.length??0);
+    input.max=String(available);
     if (!keepInput) input.value=String(count);
     const maximum=current ? total(current) : 0;
     find('total').textContent=current ? `/ ${maximum}` : '';
     find('remaining').textContent=current && maximum>count ? `${maximum-count} left` : '';
-    progressFill(find('bar'),count,maximum);
+    syncProgressRange(bar,count,available,maximum);
     steps[0].disabled=input.disabled||count>=Number(input.max);
     steps[1].disabled=input.disabled||count===0;
     refreshScopeMessage();
@@ -142,7 +150,7 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
       const released=season.episodes.length;
       const savedComplete=Boolean(season.completed && !progressDrafts.has(number));
       const canRestore=previousCounts.has(number);
-      return {number,name:name(season),count,total:maximum,released,
+      return {number,name:name(season),count,total:maximum,released,releaseDate:season.release_date,
         complete:savedComplete||Boolean(maximum && count>=maximum),
         canToggle:canRestore||(!savedComplete&&count<released),canRestore};
     }),Boolean(summary?.ready));
@@ -164,12 +172,14 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     container.querySelector('[data-score-step=up]')!.setAttribute('aria-label',`Increase ${label.toLowerCase()}`);
     container.querySelector('[data-score-step=down]')!.setAttribute('aria-label',`Decrease ${label.toLowerCase()}`);
   }
-  function switchScope(next:number) {
+  function switchScope(next:number, keepDraft=true) {
     failure('');
-    drafts.set(scope,values());
-    statusDrafts.set(scope,status());
-    const season=seasons().find(item=>item.season_number===next);
-    scope=season?.season_number??0;
+    if (keepDraft && (!scope || scopedSeason())) {
+      drafts.set(scope,values());
+      statusDrafts.set(scope,status());
+    }
+    scope=next;
+    const season=scopedSeason();
     field('status').value = statusDrafts.get(scope) ?? scopeBaseline();
     writtenStatus = status();
     form.dispatchEvent(new CustomEvent('anylist:series-status-sync'));
@@ -192,7 +202,9 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
       try {
         const next=await editorStore.readSeries(id,signal);
         if (signal.aborted) return;
+        const wasWaiting = scope && !scopedSeason();
         if (next.ready || !summary?.ready) setSummary(next);
+        if (wasWaiting && scopedSeason()) switchScope(scope,false);
         loadFailed=false;
         for (const [number,count] of progressDrafts) {
           const season=seasons().find(item=>item.season_number===number);
@@ -214,6 +226,11 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     return request;
   }
   function setCount(season:Season,count:number) {
+    if (scope && completingScope() && count<season.episodes.length) {
+      field('status').value=count?'watching':'planning';
+      writtenStatus=status();
+      form.dispatchEvent(new CustomEvent('anylist:series-status-sync'));
+    }
     if (count===baselineCount(season)) progressDrafts.delete(season.season_number);
     else progressDrafts.set(season.season_number,count);
     failure('');
@@ -252,7 +269,7 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     const button=target.closest<HTMLButtonElement>('button');
     if(button?.dataset.seriesStep)step(Number(button.dataset.seriesStep));
     if(button?.hasAttribute('data-series-retry')){loadFailed=false;render();void read();}
-    if(!button&&target!==input&&target.closest('.series-episode-stepper'))input.focus();
+    if(!button&&target!==input&&!target.closest('[data-series-range]')&&target.closest('.series-episode-stepper'))input.focus();
   },{signal:page});
   input.addEventListener('keydown',event=>{
     if (!['ArrowUp','ArrowDown'].includes(event.key)) return;
@@ -265,6 +282,16 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     previousCounts.delete(season.season_number);
     setCount(season,input.valueAsNumber);
     render(true);
+  },{signal:page});
+  input.addEventListener('blur',()=>{
+    if (!input.validity.valid) render();
+  },{signal:page});
+  bar.addEventListener('input',()=>{
+    const season=scopedSeason();
+    if (!season||bar.disabled) return;
+    previousCounts.delete(season.season_number);
+    setCount(season,bar.valueAsNumber);
+    render();
   },{signal:page});
   scopeSelect.addEventListener('change',()=>switchScope(Number(scopeSelect.value)),{signal:page});
   for(const event of ['input','change'])form.addEventListener(event,()=>{
@@ -312,9 +339,7 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
       openingStatus=editing.entry?.status;
       initialStatus=status();
       switchScope(season??0);
-      if (!summary?.ready) void read().then(()=>{
-        if (scope===0 && season && title===editing && seasons().some(item=>item.season_number===season))switchScope(season);
-      });
+      if (!summary?.ready || (scope&&!scopedSeason())) void read();
     },
     receiveDates(entry:Record<string,unknown>,previous:Record<string,unknown>) {
       const overall=draft(0);
@@ -340,6 +365,10 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     },
     async patch(explicitStatus:boolean):Promise<SeriesPatch|false> {
       const completing=explicitStatus&&status()==='completed';
+      if (scope && (!scopedSeason() || (completing&&!scopedSeason()?.episodes.length))) {
+        failure('Episode progress is unavailable for this season.');
+        return false;
+      }
       const seasonAction = scope && completing ? 'complete_season'
         : scope && !progressDrafts.has(scope) && explicitStatus && status()==='watching' && scopedSeason()?.manual_completion ? 'resume_season' : undefined;
       const last=!scope && completing ? released().at(-1) : undefined;

@@ -1,4 +1,5 @@
 import {placeDropdown} from './dropdown-position';
+import {formatDate} from './date-time';
 
 type SeasonProgress = {
   number: number;
@@ -6,6 +7,7 @@ type SeasonProgress = {
   count: number;
   total: number;
   released: number;
+  releaseDate?: string | null;
   complete: boolean;
   canToggle: boolean;
   canRestore: boolean;
@@ -13,6 +15,69 @@ type SeasonProgress = {
 
 export function progressFill(element: HTMLElement, count: number, total: number) {
   element.style.setProperty('--progress', `${total ? count / total * 100 : 0}%`);
+}
+
+export function syncProgressRange(slider: HTMLInputElement, count: number, released: number, total: number) {
+  if (slider.max !== String(released)) slider.max = String(released);
+  if (slider.valueAsNumber !== count) slider.value = String(count);
+  slider.setAttribute('aria-valuetext', `${count} of ${total} episodes watched`);
+  progressFill(slider, count, released);
+}
+
+export function bindProgressRanges(panel: HTMLElement, signal: AbortSignal) {
+  let drag: {slider: HTMLInputElement; id: number; left: number; width: number;
+    x: number; y: number; scrubbing: boolean} | undefined;
+
+  const scrub = (event: PointerEvent) => {
+    if (!drag || drag.slider.disabled) return;
+    const {slider, left, width} = drag;
+    const fraction = Math.min(1, Math.max(0, (event.clientX - left) / width));
+    const count = Math.round(fraction * Number(slider.max));
+    if (slider.valueAsNumber === count) return;
+    slider.valueAsNumber = count;
+    slider.dispatchEvent(new Event('input', {bubbles: true}));
+  };
+  panel.addEventListener('pointerdown', event => {
+    if (!event.isPrimary || event.button !== 0) return;
+    const target = (event.target as Element).closest<HTMLElement>('[data-series-range]');
+    const slider = target?.querySelector<HTMLInputElement>('input');
+    if (!target || !slider || slider.disabled) return;
+    const {left, width} = target.getBoundingClientRect();
+    if (!width) return;
+    drag = {slider, id: event.pointerId, left, width, x: event.clientX, y: event.clientY,
+      scrubbing: event.pointerType === 'mouse'};
+    target.setPointerCapture(event.pointerId);
+    if (drag.scrubbing) {
+      event.preventDefault();
+      slider.focus({preventScroll: true});
+      scrub(event);
+    }
+  }, {signal});
+  panel.addEventListener('pointermove', event => {
+    if (!drag || drag.id !== event.pointerId) return;
+    if (!drag.scrubbing) {
+      const dx = Math.abs(event.clientX - drag.x), dy = Math.abs(event.clientY - drag.y);
+      if (Math.max(dx, dy) < 5) return;
+      // Leave vertical movement to the native scroll container without changing the count.
+      if (dy >= dx) { drag = undefined; return; }
+      drag.scrubbing = true;
+    }
+    scrub(event);
+  }, {signal});
+  panel.addEventListener('pointerup', event => {
+    if (drag?.id !== event.pointerId) return;
+    scrub(event);
+    drag = undefined;
+  }, {signal});
+  for (const type of ['pointercancel', 'lostpointercapture'] as const) {
+    panel.addEventListener(type, event => {
+      if (drag?.id === event.pointerId) drag = undefined;
+    }, {signal});
+  }
+}
+
+export function releaseDateLabel(value?: string | null) {
+  return formatDate(value) || 'Release date TBD';
 }
 
 export function setupSeriesProgressPicker(panel: HTMLElement, editor: HTMLDialogElement, signal: AbortSignal,
@@ -65,6 +130,22 @@ export function setupSeriesProgressPicker(panel: HTMLElement, editor: HTMLDialog
     syncExpanded();
   }, {signal});
   picker.querySelector('[data-series-dismiss]')!.addEventListener('click', close, {signal});
+  if (!('closedBy' in HTMLDialogElement.prototype)) {
+    const outside = (event: PointerEvent) => {
+      if (!picker.open || event.target !== picker) return false;
+      const {left, right, top, bottom} = picker.getBoundingClientRect();
+      return event.clientX < left || event.clientX > right || event.clientY < top || event.clientY > bottom;
+    };
+    let backdropPointer: number | undefined;
+    picker.addEventListener('pointerdown', event => {
+      backdropPointer = outside(event) ? event.pointerId : undefined;
+    }, {signal});
+    picker.addEventListener('pointerup', event => {
+      if (backdropPointer === event.pointerId && outside(event)) close();
+      backdropPointer = undefined;
+    }, {signal});
+    picker.addEventListener('pointercancel', () => { backdropPointer = undefined; }, {signal});
+  }
   picker.addEventListener('toggle', () => {
     reposition();
     syncExpanded();
@@ -111,20 +192,25 @@ export function setupSeriesProgressPicker(panel: HTMLElement, editor: HTMLDialog
       segments.replaceChildren(...seasons.map(() => document.createElement('span')));
       scroll.scrollTop = 0;
     }
-    seasons.forEach(({name, count, total, released, complete, canToggle, canRestore}, index) => {
+    seasons.forEach(({name, count, total, released, releaseDate, complete, canToggle, canRestore}, index) => {
       const row = rows.children[index] as HTMLLIElement;
       const slider = row.querySelector<HTMLInputElement>('input')!;
       const counter = row.querySelector<HTMLButtonElement>('[data-row-counter]')!;
       const [minus, plus] = row.querySelectorAll<HTMLButtonElement>('[data-row-step]');
       row.querySelector('[data-row-season]')!.textContent = name;
       row.toggleAttribute('data-empty', count === 0);
-      slider.max = String(released);
-      if (slider.valueAsNumber !== count) slider.value = String(count);
-      slider.disabled = !enabled || !released;
-      slider.setAttribute('aria-label', `${name} episode progress`);
-      slider.setAttribute('aria-valuetext', `${count} of ${total} episodes watched`);
-      progressFill(slider, count, released);
+      row.toggleAttribute('data-unreleased', !released);
+      const date = row.querySelector<HTMLElement>('[data-row-release]')!;
+      date.hidden = Boolean(released);
+      for (const control of [slider.parentElement!, counter, minus, plus]) control.hidden = !released;
       progressFill(segments.children[index] as HTMLElement, count, total);
+      if (!released) {
+        date.textContent = releaseDateLabel(releaseDate);
+        return;
+      }
+      slider.disabled = !enabled;
+      slider.setAttribute('aria-label', `${name} episode progress`);
+      syncProgressRange(slider, count, released, total);
       counter.toggleAttribute('data-complete', complete);
       counter.textContent = complete ? `✓ ${count}` : `${count}/${total}`;
       counter.disabled = !enabled || !canToggle;

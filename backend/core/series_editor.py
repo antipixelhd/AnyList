@@ -9,6 +9,7 @@ from sqlalchemy import select
 
 from core.episode_release import EpisodeRelease
 from core.season_completion import is_released, membership_key, release_day, season_groups, watched_episode_ids
+from core.season_releases import parse_release_day
 from models import Rating
 from models.seasons import SeasonTracking, SeriesSeason
 from models.tracking import TrackedEntry
@@ -353,6 +354,10 @@ async def editor_summary(db, media, user_id, context):
             'episodes': [{'id': ep.id, 'number': context.positions[ep.id][1], 'watched': ep.id in context.watched}
                 for ep in members if ep.id in released],
             'upcoming': [{'id': ep.id, 'number': context.positions[ep.id][1]} for ep in upcoming]}
+        if not season['episodes']:
+            premiere = min((day for ep in upcoming if (day := release_day(ep)) is not None), default=None)
+            premiere = premiere or parse_release_day(metadata.get('air_date'))
+            season['release_date'] = premiere.isoformat() if premiere else None
         season.update(saved.get((number, key), {}))
         season['status'] = context.season_statuses.get(str(number))
         if str(number) in context.manual_completions:

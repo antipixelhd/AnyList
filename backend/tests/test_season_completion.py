@@ -645,6 +645,26 @@ class SeasonDatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(rows[1][1].completed)
             self.assertEqual(await self.rows(db), [])
 
+    async def test_editor_shows_premiere_for_seasons_without_released_episodes(self):
+        async with self.Session() as db:
+            media = await db.get(Media, self.series_id)
+            media.tmdb_data = {**media.tmdb_data,
+                'seasons': [*media.tmdb_data['seasons'],
+                    {'season_number': 3, 'episode_count': 1, 'air_date': '2099-02-03'},
+                    {'season_number': 4, 'episode_count': 1}]}
+            await db.execute(update(Media).where(Media.id.in_(self.episode_ids[2:])).values(release_date='2099-01-02'))
+            await db.commit()
+
+        response = await self.client.get(f'/tracking/entry/{self.series_id}/series-editor')
+        self.assertEqual(response.status_code, 200, response.text)
+        released, upcoming, metadata_only, unscheduled = response.json()['seasons']
+        self.assertTrue(released['episodes'])
+        self.assertNotIn('release_date', released)
+        self.assertEqual(upcoming['episodes'], [])
+        self.assertEqual(upcoming['release_date'], '2099-01-02')
+        self.assertEqual(metadata_only['release_date'], '2099-02-03')
+        self.assertIsNone(unscheduled['release_date'])
+
     async def test_ordinary_activity_never_merges_into_season_cards(self):
         from core.activity import record_daily_activity
         from core.streaming_activity import record_streaming_activity
