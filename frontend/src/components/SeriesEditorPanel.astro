@@ -89,7 +89,7 @@ import Icon from './Icon.astro';
   .editor .series-episode-stepper [data-series-count] {
     field-sizing:content; width:3ch; min-width:1.25ch; max-width:100%;
     margin:0; padding:0; border:0; background:transparent; outline:none;
-    color:var(--muted); font-size:var(--type-control-size); font-weight:var(--type-control-weight);
+    color:var(--text); font-size:var(--type-control-size); font-weight:var(--type-control-weight);
   }
   @supports (field-sizing:content) { .editor .series-episode-stepper [data-series-count] { width:auto; } }
   .editor .series-episode-stepper [data-series-count]:focus-visible { color:var(--blue); }
@@ -97,7 +97,7 @@ import Icon from './Icon.astro';
   .series-progress-trigger {
     position:relative; display:flex; align-items:center; justify-content:space-between; gap:8px;
     width:100%; min-height:42px; padding:0 12px 7px; border-radius:4px; text-align:start;
-    border:0; background:var(--field); color:var(--muted); font:inherit; font-variant-numeric:tabular-nums;
+    border:0; background:var(--field); color:var(--text); font:inherit; font-variant-numeric:tabular-nums;
     cursor:pointer;
   }
   .series-progress-trigger:is(:focus-visible,[aria-expanded=true]) { outline:none; color:var(--blue); }
