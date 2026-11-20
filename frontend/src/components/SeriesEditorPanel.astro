@@ -191,7 +191,7 @@ import Icon from './Icon.astro';
   .series-progress-picker .series-progress-counter[data-complete]:not(:is(:hover,:focus-visible)) { color:#72d74f; }
   .series-progress-counter:disabled { opacity:1; cursor:default; }
   .series-progress-pen {
-    position:absolute; z-index:1; inset-inline-end:calc(100% - 3px); inset-block-start:50%;
+    position:absolute; z-index:1; inset-inline-end:100%; inset-block-start:50%;
     display:grid; place-items:center; inline-size:24px; block-size:24px; translate:0 -50%;
     background:radial-gradient(circle closest-side,var(--series-progress-surface) 62%,transparent);
     color:var(--blue); opacity:0; pointer-events:none;

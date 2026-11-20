@@ -1,6 +1,5 @@
 import {placeDropdown} from './dropdown-position';
 import {formatDate} from './date-time';
-import {capNumberInput} from './scoreStepper';
 import type {ProgressMotion} from './series-progress-motion';
 
 type SeasonProgress = {
@@ -19,11 +18,16 @@ export function progressFill(element: HTMLElement, count: number, total: number,
   motion.fill(element,total ? count / total * 100 : 0);
 }
 
-export function syncProgressRange(slider: HTMLInputElement, count: number, max: number, total: number, motion:ProgressMotion) {
+export function syncProgressRange(slider: HTMLInputElement, count: number, max: number, total: number, motion:ProgressMotion, preview = count) {
   if (slider.max !== String(max)) slider.max = String(max);
   if (slider.valueAsNumber !== count) slider.value = String(count);
   slider.setAttribute('aria-valuetext', `${count} of ${total} episodes watched`);
-  progressFill(slider.parentElement!, count, max,motion);
+  progressFill(slider.parentElement!, preview, max,motion);
+}
+
+function typedEpisodeCount(input: HTMLInputElement) {
+  const count = Math.min(input.valueAsNumber, Number(input.max));
+  return Number.isInteger(count) && count >= 0 ? count : undefined;
 }
 
 export function bindProgressRanges(panel: HTMLElement, signal: AbortSignal, motion:ProgressMotion) {
@@ -112,7 +116,7 @@ export function setupSeriesProgressPicker(panel: HTMLElement, editor: HTMLDialog
   const completed = panel.querySelector<HTMLElement>('[data-series-completed]')!;
   const mobile = matchMedia('(max-width:760px)');
   const supportsPopover = typeof picker.showPopover === 'function';
-  let countEdit: {input: HTMLInputElement; button: HTMLButtonElement; season: number} | undefined;
+  let countEdit: {input: HTMLInputElement; button: HTMLButtonElement; slider: HTMLInputElement; season: number} | undefined;
   const isPopover = () => supportsPopover && picker.matches(':popover-open');
   const updateFades = () => {
     scroll.toggleAttribute('data-fade-top', scroll.scrollTop > 1);
@@ -190,9 +194,15 @@ export function setupSeriesProgressPicker(panel: HTMLElement, editor: HTMLDialog
   signal.addEventListener('abort', close, {once: true});
 
   rows.addEventListener('input', event => {
-    const slider = event.target as HTMLInputElement;
-    const row = slider.closest('li');
-    if (row && slider.matches('[data-row-slider]')) edit(Number(row.dataset.season), slider.valueAsNumber);
+    const input = event.target as HTMLInputElement;
+    if (countEdit?.input === input) {
+      const {slider} = countEdit;
+      // Preview the fill while keeping the slider value available for canceling the edit.
+      progressFill(slider.parentElement!, typedEpisodeCount(input) ?? slider.valueAsNumber, Number(slider.max), motion);
+      return;
+    }
+    const row = input.closest('li');
+    if (row && input.matches('[data-row-slider]')) edit(Number(row.dataset.season), input.valueAsNumber);
   }, {signal});
   rows.addEventListener('click', event => {
     const button = (event.target as Element).closest<HTMLButtonElement>('button');
@@ -203,7 +213,7 @@ export function setupSeriesProgressPicker(panel: HTMLElement, editor: HTMLDialog
     if (button.hasAttribute('data-row-counter')) {
       finishCountEdit(true);
       const input = row.querySelector<HTMLInputElement>('[data-row-count-input]')!;
-      countEdit = {input, button, season};
+      countEdit = {input, button, slider, season};
       input.value = slider.value;
       input.disabled = input.hidden = false;
       button.hidden = true;
@@ -228,13 +238,13 @@ export function setupSeriesProgressPicker(panel: HTMLElement, editor: HTMLDialog
 
   function finishCountEdit(commit: boolean, restoreFocus = false) {
     if (!countEdit) return;
-    const {input, button, season} = countEdit;
+    const {input, button, slider, season} = countEdit;
     countEdit = undefined;
-    if (commit) capNumberInput(input);
-    const value = commit && input.validity.valid ? input.valueAsNumber : NaN;
+    const value = commit ? typedEpisodeCount(input) : undefined;
     input.disabled = input.hidden = true;
     button.hidden = false;
-    if (Number.isFinite(value)) edit(season, value);
+    if (value !== undefined) edit(season, value);
+    else progressFill(slider.parentElement!, slider.valueAsNumber, Number(slider.max), motion);
     if (restoreFocus) button.focus({preventScroll: true});
   }
 
@@ -284,13 +294,13 @@ export function setupSeriesProgressPicker(panel: HTMLElement, editor: HTMLDialog
       }
       slider.disabled = !enabled;
       slider.setAttribute('aria-label', `${name} episode progress`);
-      syncProgressRange(slider, count, released, total,motion);
+      input.max = String(released);
+      syncProgressRange(slider, count, released, total, motion, countEdit?.input === input ? typedEpisodeCount(input) : undefined);
       counter.toggleAttribute('data-complete', complete);
       countField.dataset.rowTotal = String(total);
       counter.querySelector('[data-row-count-label]')!.textContent = complete ? `✓ ${count}` : `${count}/${total}`;
       counter.disabled = !enabled;
       counter.setAttribute('aria-label', `Edit ${name} episode count: ${count} of ${total} watched`);
-      input.max = String(released);
       input.setAttribute('aria-label', `Episodes watched for ${name}`);
       minus.disabled = slider.disabled || count === 0;
       plus.disabled = slider.disabled || count >= released;
