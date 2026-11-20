@@ -1,6 +1,14 @@
 ---
+import Icon from './Icon.astro';
 import '../styles/activity-card-rating.css';
 ---
+<dialog class="season-rating-dialog" aria-labelledby="season-rating-dialog-title" data-season-rating-dialog data-motion-static>
+  <form method="dialog">
+    <h2 id="season-rating-dialog-title">Rating breakdown</h2>
+    <button type="submit" aria-label="Close rating breakdown" autofocus><Icon name="close" /></button>
+  </form>
+  <div class="season-score-rows" role="region" aria-label="Scores" tabindex="0" data-season-rating-dialog-scores></div>
+</dialog>
 <script>
 import {activityAction,activityCompletionSuffix,activityRating,activityTime,scoreLabel} from '../lib/tracker';
 import {timestamp} from '../lib/date-time';
@@ -8,7 +16,8 @@ import {mountSeasonRatings} from '../lib/activity-rating';
 let listeners:AbortController|undefined;
 function mount(){
   listeners?.abort();listeners=new AbortController();const {signal}=listeners;
-  mountSeasonRatings(signal);
+  const ratingDialog=document.querySelector<HTMLDialogElement>('[data-season-rating-dialog]');
+  if(ratingDialog)mountSeasonRatings(signal,ratingDialog);
   const revisions=new Map<number,number>();
   document.addEventListener('click',event=>{
     const button=(event.target as Element).closest<HTMLButtonElement>('[data-activity-playtime]');
