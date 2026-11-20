@@ -1,9 +1,7 @@
 import {placeDropdown} from './dropdown-position';
 import {formatDate} from './date-time';
+import {capNumberInput} from './scoreStepper';
 import type {ProgressMotion} from './series-progress-motion';
-
-const zoomThreshold = 24;
-const zoomSpan = 20;
 
 type SeasonProgress = {
   number: number;
@@ -21,12 +19,11 @@ export function progressFill(element: HTMLElement, count: number, total: number,
   motion.fill(element,total ? count / total * 100 : 0);
 }
 
-export function syncProgressRange(slider: HTMLInputElement, count: number, max: number, total: number, motion:ProgressMotion, min = 0) {
-  if (slider.min !== String(min)) slider.min = String(min);
+export function syncProgressRange(slider: HTMLInputElement, count: number, max: number, total: number, motion:ProgressMotion) {
   if (slider.max !== String(max)) slider.max = String(max);
   if (slider.valueAsNumber !== count) slider.value = String(count);
   slider.setAttribute('aria-valuetext', `${count} of ${total} episodes watched`);
-  progressFill(slider.parentElement!, count - min, max - min,motion);
+  progressFill(slider.parentElement!, count, max,motion);
 }
 
 export function bindProgressRanges(panel: HTMLElement, signal: AbortSignal, motion:ProgressMotion) {
@@ -115,7 +112,7 @@ export function setupSeriesProgressPicker(panel: HTMLElement, editor: HTMLDialog
   const completed = panel.querySelector<HTMLElement>('[data-series-completed]')!;
   const mobile = matchMedia('(max-width:760px)');
   const supportsPopover = typeof picker.showPopover === 'function';
-  let zoomedRow: HTMLLIElement | undefined;
+  let countEdit: {input: HTMLInputElement; button: HTMLButtonElement; season: number} | undefined;
   const isPopover = () => supportsPopover && picker.matches(':popover-open');
   const updateFades = () => {
     scroll.toggleAttribute('data-fade-top', scroll.scrollTop > 1);
@@ -127,7 +124,7 @@ export function setupSeriesProgressPicker(panel: HTMLElement, editor: HTMLDialog
   };
   const syncExpanded = () => trigger.setAttribute('aria-expanded', String(picker.open || isPopover()));
   const close = () => {
-    collapseZoom();
+    finishCountEdit(false);
     if (isPopover()) picker.hidePopover();
     if (picker.open) picker.close();
     syncExpanded();
@@ -176,12 +173,12 @@ export function setupSeriesProgressPicker(panel: HTMLElement, editor: HTMLDialog
     picker.addEventListener('pointercancel', () => { backdropPointer = undefined; }, {signal});
   }
   picker.addEventListener('toggle', () => {
-    if (!picker.open && !isPopover()) collapseZoom();
+    if (!picker.open && !isPopover()) finishCountEdit(false);
     reposition();
     syncExpanded();
   }, {signal});
   picker.addEventListener('close', () => {
-    collapseZoom();
+    if (!picker.open && !isPopover()) finishCountEdit(false);
     syncExpanded();
   }, {signal});
   scroll.addEventListener('scroll', updateFades, {signal, passive: true});
@@ -195,60 +192,50 @@ export function setupSeriesProgressPicker(panel: HTMLElement, editor: HTMLDialog
   rows.addEventListener('input', event => {
     const slider = event.target as HTMLInputElement;
     const row = slider.closest('li');
-    if (row && slider.matches('[data-row-slider],[data-detail-slider]')) edit(Number(row.dataset.season), slider.valueAsNumber);
+    if (row && slider.matches('[data-row-slider]')) edit(Number(row.dataset.season), slider.valueAsNumber);
   }, {signal});
   rows.addEventListener('click', event => {
     const button = (event.target as Element).closest<HTMLButtonElement>('button');
     const row = button?.closest<HTMLLIElement>('li');
     if (!row || !button || button.disabled) return;
-    if (button.hasAttribute('data-row-zoom')) {
-      toggleZoom(row, event.detail === 0);
-      return;
-    }
+    const season = Number(row.dataset.season);
     const slider = row.querySelector<HTMLInputElement>('[data-row-slider]')!;
-    edit(Number(row.dataset.season), button.dataset.rowStep
-      ? slider.valueAsNumber + Number(button.dataset.rowStep) : 'toggle');
+    if (button.hasAttribute('data-row-counter')) {
+      finishCountEdit(true);
+      const input = row.querySelector<HTMLInputElement>('[data-row-count-input]')!;
+      countEdit = {input, button, season};
+      input.value = slider.value;
+      input.disabled = input.hidden = false;
+      button.hidden = true;
+      input.focus();
+      input.select();
+    } else if (button.hasAttribute('data-row-season')) {
+      edit(season, 'toggle');
+    } else if (button.dataset.rowStep) {
+      edit(season, slider.valueAsNumber + Number(button.dataset.rowStep));
+    }
+  }, {signal});
+  rows.addEventListener('focusout', event => {
+    if (event.target === countEdit?.input) finishCountEdit(true);
+  }, {signal});
+  rows.addEventListener('keydown', event => {
+    if (event.target !== countEdit?.input || (event.key !== 'Enter' && event.key !== 'Escape')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.isComposing || event.keyCode === 229) return;
+    finishCountEdit(event.key === 'Enter', true);
   }, {signal});
 
-  function collapseZoom() {
-    if (!zoomedRow) return;
-    zoomedRow.querySelector<HTMLElement>('[data-row-detail]')!.hidden = true;
-    zoomedRow.querySelector('[data-row-zoom]')!.setAttribute('aria-expanded', 'false');
-    zoomedRow = undefined;
-  }
-
-  function syncZoom(row: HTMLLIElement, overview: HTMLInputElement, total: number, reset = false) {
-    const slider = row.querySelector<HTMLInputElement>('[data-detail-slider]')!;
-    const count = overview.valueAsNumber, released = Number(overview.max);
-    let min = Number(slider.min), max = Number(slider.max);
-    // Keep the scale fixed while dragging in the zoomed range.
-    if (reset || count < min || count > max || max > released) {
-      min = Math.max(0, Math.min(count - zoomSpan / 2, released - zoomSpan));
-      max = min + zoomSpan;
-    }
-    syncProgressRange(slider, count, max, total, motion, min);
-    row.querySelector('[data-detail-min]')!.textContent = String(min);
-    row.querySelector('[data-detail-value]')!.textContent = String(count);
-    row.querySelector('[data-detail-max]')!.textContent = String(max);
-  }
-
-  function toggleZoom(row: HTMLLIElement, focus: boolean) {
-    const wasOpen = row === zoomedRow;
-    collapseZoom();
-    if (!wasOpen) {
-      const overview = row.querySelector<HTMLInputElement>('[data-row-slider]')!;
-      const detail = row.querySelector<HTMLElement>('[data-row-detail]')!;
-      zoomedRow = row;
-      row.querySelector('[data-row-zoom]')!.setAttribute('aria-expanded', 'true');
-      syncZoom(row, overview, Number(row.dataset.total), true);
-      detail.hidden = false;
-      reposition();
-      const visible = scroll.getBoundingClientRect();
-      const bottom = detail.getBoundingClientRect().bottom;
-      const padding = parseFloat(getComputedStyle(scroll).scrollPaddingBottom) || 0;
-      scroll.scrollTop += Math.max(0, bottom + padding - visible.bottom);
-      if (focus) detail.querySelector<HTMLInputElement>('input')!.focus({preventScroll: true});
-    } else reposition();
+  function finishCountEdit(commit: boolean, restoreFocus = false) {
+    if (!countEdit) return;
+    const {input, button, season} = countEdit;
+    countEdit = undefined;
+    if (commit) capNumberInput(input);
+    const value = commit && input.validity.valid ? input.valueAsNumber : NaN;
+    input.disabled = input.hidden = true;
+    button.hidden = false;
+    if (Number.isFinite(value)) edit(season, value);
+    if (restoreFocus) button.focus({preventScroll: true});
   }
 
   function render(seasons: SeasonProgress[], enabled: boolean) {
@@ -261,44 +248,35 @@ export function setupSeriesProgressPicker(panel: HTMLElement, editor: HTMLDialog
 
     const signature = seasons.map(season => season.number).join(',');
     if (rows.dataset.seasons !== signature) {
-      collapseZoom();
+      finishCountEdit(false);
       rows.dataset.seasons = signature;
       rows.replaceChildren(...seasons.map(season => {
         const row = template.content.firstElementChild!.cloneNode(true) as HTMLLIElement;
         row.dataset.season = String(season.number);
-        const detail = row.querySelector<HTMLElement>('[data-row-detail]')!;
-        detail.id = `${picker.id}-zoom-${season.number}`;
-        row.querySelector('[data-row-zoom]')!.setAttribute('aria-controls', detail.id);
         return row;
       }));
       segments.replaceChildren(...seasons.map(() => document.createElement('span')));
       scroll.scrollTop = 0;
     }
-    const hadZoom = Boolean(zoomedRow);
     seasons.forEach(({name, count, total, released, releaseDate, complete, canToggle, canRestore}, index) => {
       const row = rows.children[index] as HTMLLIElement;
-      row.dataset.total = String(total);
       const slider = row.querySelector<HTMLInputElement>('[data-row-slider]')!;
+      const countField = row.querySelector<HTMLElement>('[data-row-count]')!;
       const counter = row.querySelector<HTMLButtonElement>('[data-row-counter]')!;
-      const zoom = row.querySelector<HTMLButtonElement>('[data-row-zoom]')!;
+      const input = row.querySelector<HTMLInputElement>('[data-row-count-input]')!;
       const [minus, plus] = row.querySelectorAll<HTMLButtonElement>('[data-row-step]');
-      const label = row.querySelector<HTMLElement>('[data-row-season]')!;
+      const label = row.querySelector<HTMLButtonElement>('[data-row-season]')!;
+      const action = canRestore ? 'Restore previous progress' : canToggle ? 'Mark released episodes watched' : '';
       label.textContent = name;
-      label.hidden = released > zoomThreshold;
-      zoom.hidden = !label.hidden;
-      zoom.disabled = !enabled;
-      if (zoom.hidden || zoom.disabled) {
-        if (zoomedRow === row) collapseZoom();
-      } else {
-        zoom.querySelector('[data-row-zoom-name]')!.textContent = name;
-        zoom.setAttribute('aria-label', `Zoom episode progress for ${name}`);
-        row.querySelector('[data-detail-slider]')!.setAttribute('aria-label', `Fine episode progress for ${name}`);
-      }
+      label.disabled = !enabled || !released || !canToggle;
+      label.title = label.disabled ? '' : action;
+      label.setAttribute('aria-label', label.disabled ? name : `${name}: ${action}`);
+      if ((!enabled || !released) && countEdit?.input === input) finishCountEdit(false);
       row.toggleAttribute('data-empty', count === 0);
       row.toggleAttribute('data-unreleased', !released);
       const date = row.querySelector<HTMLElement>('[data-row-release]')!;
       date.hidden = Boolean(released);
-      for (const control of [slider.parentElement!, counter, minus, plus]) control.hidden = !released;
+      for (const control of [slider.parentElement!, countField, minus, plus]) control.hidden = !released;
       progressFill(segments.children[index] as HTMLElement, count, total,motion);
       if (!released) {
         date.textContent = releaseDateLabel(releaseDate);
@@ -307,20 +285,19 @@ export function setupSeriesProgressPicker(panel: HTMLElement, editor: HTMLDialog
       slider.disabled = !enabled;
       slider.setAttribute('aria-label', `${name} episode progress`);
       syncProgressRange(slider, count, released, total,motion);
-      if (zoomedRow === row) syncZoom(row, slider, total);
       counter.toggleAttribute('data-complete', complete);
-      counter.dataset.rowTotal = String(total);
+      countField.dataset.rowTotal = String(total);
       counter.querySelector('[data-row-count-label]')!.textContent = complete ? `✓ ${count}` : `${count}/${total}`;
-      counter.disabled = !enabled || !canToggle;
-      const action = canRestore ? 'Restore previous progress' : canToggle ? 'Mark released episodes watched' : '';
-      counter.setAttribute('aria-label', `${name}: ${count} of ${total} watched${action ? `. ${action}` : ''}`);
+      counter.disabled = !enabled;
+      counter.setAttribute('aria-label', `Edit ${name} episode count: ${count} of ${total} watched`);
+      input.max = String(released);
+      input.setAttribute('aria-label', `Episodes watched for ${name}`);
       minus.disabled = slider.disabled || count === 0;
       plus.disabled = slider.disabled || count >= released;
       minus.setAttribute('aria-label', `Decrease ${name} progress`);
       plus.setAttribute('aria-label', `Increase ${name} progress`);
     });
-    if (hadZoom && !zoomedRow) reposition();
-    else if (picker.open || isPopover()) updateFades();
+    if (picker.open || isPopover()) updateFades();
   }
 
   return {render, close};

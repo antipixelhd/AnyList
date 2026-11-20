@@ -38,27 +38,20 @@ import Icon from './Icon.astro';
     </dialog>
     <template data-series-row>
       <li class="series-progress-row">
-        <span data-row-season></span>
-        <button class="series-progress-zoom-toggle" type="button" data-row-zoom aria-expanded="false" hidden>
-          <span data-row-zoom-name></span><Icon name="zoom-in"/>
-        </button>
+        <button class="series-progress-season" type="button" data-row-season></button>
         <span class="series-progress-release" data-row-release hidden></span>
         <span class="series-range-target" data-series-range>
           <input class="series-range" type="range" min="0" step="1" data-row-slider/>
         </span>
-        <button type="button" class="series-progress-counter" data-row-counter>
-          <span data-row-count-label></span>
-        </button>
+        <div class="series-progress-count" data-row-count>
+          <button type="button" class="series-progress-counter" data-row-counter>
+            <span class="series-progress-pen" aria-hidden="true"><Icon name="edit"/></span>
+            <span data-row-count-label></span>
+          </button>
+          <input class="series-progress-count-input" type="number" min="0" step="1" inputmode="numeric" enterkeyhint="done" data-row-count-input required hidden disabled/>
+        </div>
         <button type="button" class="series-progress-step" data-row-step="-1">−</button>
         <button type="button" class="series-progress-step" data-row-step="1">+</button>
-        <div class="series-progress-zoom" data-row-detail hidden>
-          <div class="series-progress-zoom-labels" aria-hidden="true">
-            <span data-detail-min></span><strong data-detail-value></strong><span data-detail-max></span>
-          </div>
-          <span class="series-range-target" data-series-range>
-            <input class="series-range" type="range" step="1" data-detail-slider/>
-          </span>
-        </div>
       </li>
     </template>
   </div>
@@ -123,9 +116,10 @@ import Icon from './Icon.astro';
   .series-progress-picker {
     --series-progress-gap:16px;
     --series-progress-columns:fit-content(104px) minmax(36px,1fr) max-content 26px 26px;
+    --series-progress-surface:color-mix(in srgb,var(--panel) 94%,var(--white));
     box-sizing:border-box; container-type:inline-size; inset:0; width:min(400px,calc(100% - 16px)); max-width:none; max-height:290px;
     padding:0; border:0; border-radius:8px; overflow:hidden; color:var(--white);
-    background:color-mix(in srgb,var(--panel) 94%,var(--white)); box-shadow:0 12px 32px #0006;
+    background:var(--series-progress-surface); box-shadow:0 12px 32px #0006;
   }
   .series-progress-picker:is([open],:popover-open) { display:flex; flex-direction:column; }
   .series-progress-picker[open] { display:flex; flex-direction:column; overscroll-behavior:contain; }
@@ -176,41 +170,43 @@ import Icon from './Icon.astro';
     grid-template-columns:subgrid;
     align-items:center; column-gap:var(--series-progress-gap); row-gap:4px; min-height:42px; font-size:var(--type-label-size);
   }
-  .series-progress-row :is([data-row-season],[data-row-zoom]) {
-    overflow-wrap:anywhere; line-height:1.2; text-align:start; font-weight:600; padding-block:6px;
+  .series-progress-picker .series-progress-season {
+    min-height:36px; overflow-wrap:anywhere; line-height:1.2; text-align:start; font-weight:600; padding-block:6px;
   }
-  .series-progress-row[data-empty] :is([data-row-season],[data-row-zoom]) { color:var(--muted); }
-  .series-progress-zoom-toggle {
-    display:flex; min-width:0; min-height:36px; align-items:center; gap:4px;
-  }
-  .series-progress-zoom-toggle .ui-icon { flex:none; display:grid; place-items:center; color:var(--blue); }
-  .series-progress-zoom-toggle svg { width:11px; height:11px; }
-  .series-progress-picker .series-progress-zoom-toggle[aria-expanded=true] { color:var(--blue); }
-  .series-progress-zoom {
-    grid-column:1 / -1; margin-block:0 6px; padding:7px 12px 0; border-radius:6px;
-    background:color-mix(in srgb,var(--field) 70%,transparent); font-variant-numeric:tabular-nums;
-  }
-  .series-progress-zoom-labels {
-    display:grid; grid-template-columns:1fr auto 1fr; align-items:center;
-    color:var(--muted); font-size:var(--type-caption-size);
-  }
-  .series-progress-zoom-labels strong { color:var(--white); }
-  .series-progress-zoom-labels span:last-child { text-align:end; }
-  .series-progress-zoom .series-range { --track-height:5px; --thumb-size:10px; }
+  .series-progress-season:disabled { opacity:1; cursor:default; }
+  .series-progress-row[data-empty] .series-progress-season { color:var(--muted); }
   .series-progress-release { color:var(--muted); font-size:var(--type-label-size); white-space:nowrap; }
   .series-progress-row[data-unreleased] { grid-template-columns:minmax(0,1fr) auto; gap:12px; }
-  .series-progress-picker button:is(:hover,:focus-visible):not(:disabled):not(.series-progress-counter) { outline:none; color:var(--blue); }
+  .series-progress-picker button:is(:hover,:focus-visible):not(:disabled) { outline:none; color:var(--blue); }
   .series-progress-picker button:focus-visible { text-decoration:underline; }
-  .series-progress-picker .series-progress-counter {
-    display:grid; place-items:center start; justify-self:start; min-height:36px;
+  .series-progress-count {
+    position:relative; display:grid; align-items:center; min-height:36px; min-inline-size:24px;
     font-variant-numeric:tabular-nums; white-space:nowrap;
   }
-  .series-progress-counter > span, .series-progress-counter::before, .series-progress-counter::after { grid-area:1 / 1; }
+  .series-progress-counter, .series-progress-count::before, .series-progress-count::after { grid-area:1 / 1; }
   /* Reserve both count formats so changing progress cannot resize the shared tracks. */
-  .series-progress-counter::before { content:attr(data-row-total) '/' attr(data-row-total); visibility:hidden; }
-  .series-progress-counter::after { content:'✓ ' attr(data-row-total); visibility:hidden; }
-  .series-progress-picker .series-progress-counter[data-complete] { color:#72d74f; }
+  .series-progress-count::before { content:attr(data-row-total) '/' attr(data-row-total); visibility:hidden; }
+  .series-progress-count::after { content:'✓ ' attr(data-row-total); visibility:hidden; }
+  .series-progress-picker .series-progress-counter { min-height:inherit; text-align:start; }
+  .series-progress-picker .series-progress-counter[data-complete]:not(:is(:hover,:focus-visible)) { color:#72d74f; }
   .series-progress-counter:disabled { opacity:1; cursor:default; }
+  .series-progress-pen {
+    position:absolute; z-index:1; inset-inline-end:calc(100% - 3px); inset-block-start:50%;
+    display:grid; place-items:center; inline-size:24px; block-size:24px; translate:0 -50%;
+    background:radial-gradient(circle closest-side,var(--series-progress-surface) 62%,transparent);
+    color:var(--blue); opacity:0; pointer-events:none;
+  }
+  .series-progress-pen svg { display:block; inline-size:10px; block-size:10px; }
+  .series-progress-counter:not(:disabled):is(:hover,:focus-visible) .series-progress-pen { opacity:1; pointer-events:auto; }
+  @media(hover:none) {
+    .series-progress-counter:not(:disabled) .series-progress-pen { opacity:1; pointer-events:auto; }
+  }
+  .series-progress-count-input {
+    position:absolute; inset:0; margin:auto 0; box-sizing:border-box; inline-size:100%; block-size:30px;
+    min-inline-size:0; padding:0 3px; border:0; border-radius:4px; outline:none; appearance:textfield;
+    background:var(--field); color:var(--white); font:inherit;
+  }
+  .series-progress-count-input::-webkit-inner-spin-button { appearance:none; }
   .series-progress-picker .series-progress-step {
     justify-self:center; border-radius:4px; inline-size:26px; block-size:26px;
     background:var(--field); font-weight:600;
@@ -280,12 +276,13 @@ import Icon from './Icon.astro';
     }
     .series-progress-header { min-height:58px; }
     .series-progress-header button { inline-size:44px; block-size:44px; }
-    .series-progress-zoom-toggle { min-height:44px; }
+    .series-progress-picker .series-progress-season, .series-progress-count { min-height:44px; }
     .series-progress-row { min-height:50px; }
     .series-progress-picker .series-progress-step { position:relative; inline-size:36px; block-size:44px; border-radius:50%; background:none; }
     /* Use the grid gap for the touch target without giving the buttons wider columns. */
     .series-progress-step::after { content:''; position:absolute; inset:0 -4px; }
-    .series-progress-row input { min-height:44px; }
+    .series-progress-row .series-range { min-height:44px; }
+    .series-progress-count-input { block-size:36px; font-size:16px; }
     .editor[data-editor-type=series] .editor-fields > .editor-start-date { grid-column:1; grid-row:3; }
     .editor[data-editor-type=series] .editor-fields > .editor-finish-date { grid-column:2; grid-row:3; }
     .editor[data-editor-domain=movies-series] .editor-fields > .editor-notes { grid-column:1; }
@@ -295,9 +292,8 @@ import Icon from './Icon.astro';
   @media(prefers-reduced-motion:no-preference) {
     .series-progress-detail svg { transition:rotate .15s ease; }
     .series-progress-picker:modal { animation:series-progress-enter .16s ease-out; }
-    .series-progress-zoom:not([hidden]) { animation:series-progress-zoom-enter .15s ease-out; }
+    .series-progress-pen { transition:opacity .14s ease; }
     @keyframes series-progress-enter { from { opacity:0; translate:0 8px; } }
-    @keyframes series-progress-zoom-enter { from { opacity:0; translate:0 -3px; } }
   }
   @media(max-width:460px) {
     .editor[data-editor-type=series] .editor-heading { right:auto; }
