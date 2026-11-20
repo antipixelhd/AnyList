@@ -39,6 +39,9 @@ import Icon from './Icon.astro';
     <template data-series-row>
       <li class="series-progress-row">
         <span data-row-season></span>
+        <button class="series-progress-zoom-toggle" type="button" data-row-zoom aria-expanded="false" hidden>
+          <span data-row-zoom-name></span><Icon name="zoom-in"/>
+        </button>
         <span class="series-progress-release" data-row-release hidden></span>
         <span class="series-range-target" data-series-range>
           <input class="series-range" type="range" min="0" step="1" data-row-slider/>
@@ -46,6 +49,14 @@ import Icon from './Icon.astro';
         <button type="button" class="series-progress-counter" data-row-counter></button>
         <button type="button" class="series-progress-step" data-row-step="-1">−</button>
         <button type="button" class="series-progress-step" data-row-step="1">+</button>
+        <div class="series-progress-zoom" data-row-detail hidden>
+          <div class="series-progress-zoom-labels" aria-hidden="true">
+            <span data-detail-min></span><strong data-detail-value></strong><span data-detail-max></span>
+          </div>
+          <span class="series-range-target" data-series-range>
+            <input class="series-range" type="range" step="1" data-detail-slider/>
+          </span>
+        </div>
       </li>
     </template>
   </div>
@@ -142,8 +153,27 @@ import Icon from './Icon.astro';
     display:grid; grid-template-columns:minmax(66px,1fr) minmax(36px,1.8fr) minmax(56px,.85fr) 30px 30px;
     align-items:center; gap:4px; min-height:42px; font-size:var(--type-label-size);
   }
-  .series-progress-row [data-row-season] { overflow-wrap:anywhere; line-height:1.2; text-align:start; font-weight:600; padding-block:6px; }
-  .series-progress-row[data-empty] [data-row-season] { color:var(--muted); }
+  .series-progress-row :is([data-row-season],[data-row-zoom]) {
+    overflow-wrap:anywhere; line-height:1.2; text-align:start; font-weight:600; padding-block:6px;
+  }
+  .series-progress-row[data-empty] :is([data-row-season],[data-row-zoom]) { color:var(--muted); }
+  .series-progress-zoom-toggle {
+    display:flex; min-width:0; min-height:36px; align-items:center; gap:4px;
+  }
+  .series-progress-zoom-toggle .ui-icon { flex:none; display:grid; place-items:center; color:var(--blue); }
+  .series-progress-zoom-toggle svg { width:11px; height:11px; }
+  .series-progress-picker .series-progress-zoom-toggle[aria-expanded=true] { color:var(--blue); }
+  .series-progress-zoom {
+    grid-column:1 / -1; margin-block:0 6px; padding:7px 12px 0; border-radius:6px;
+    background:color-mix(in srgb,var(--field) 70%,transparent); font-variant-numeric:tabular-nums;
+  }
+  .series-progress-zoom-labels {
+    display:grid; grid-template-columns:1fr auto 1fr; align-items:center;
+    color:var(--muted); font-size:var(--type-caption-size);
+  }
+  .series-progress-zoom-labels strong { color:var(--white); }
+  .series-progress-zoom-labels span:last-child { text-align:end; }
+  .series-progress-zoom .series-range { --track-height:5px; --thumb-size:10px; }
   .series-progress-release { color:var(--muted); font-size:var(--type-label-size); white-space:nowrap; }
   .series-progress-row[data-unreleased] { grid-template-columns:minmax(0,1fr) auto; gap:12px; }
   .series-progress-picker button:is(:hover,:focus-visible):not(:disabled) { outline:none; color:var(--blue); }
@@ -211,6 +241,7 @@ import Icon from './Icon.astro';
     }
     .series-progress-header { min-height:58px; }
     .series-progress-header button { inline-size:44px; block-size:44px; }
+    .series-progress-zoom-toggle { min-height:44px; }
     .series-progress-row { min-height:50px; grid-template-columns:minmax(64px,1fr) minmax(28px,2fr) minmax(48px,.8fr) 44px 44px; }
     .series-progress-picker .series-progress-step { inline-size:44px; block-size:44px; border-radius:50%; background:none; }
     .series-progress-row input { min-height:44px; }
@@ -223,7 +254,9 @@ import Icon from './Icon.astro';
   @media(prefers-reduced-motion:no-preference) {
     .series-progress-detail svg { transition:rotate .15s ease; }
     .series-progress-picker:modal { animation:series-progress-enter .16s ease-out; }
+    .series-progress-zoom:not([hidden]) { animation:series-progress-zoom-enter .15s ease-out; }
     @keyframes series-progress-enter { from { opacity:0; translate:0 8px; } }
+    @keyframes series-progress-zoom-enter { from { opacity:0; translate:0 -3px; } }
   }
   @media(max-width:460px) {
     .editor[data-editor-type=series] .editor-heading { right:auto; }

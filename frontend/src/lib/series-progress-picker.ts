@@ -1,6 +1,9 @@
 import {placeDropdown} from './dropdown-position';
 import {formatDate} from './date-time';
 
+const zoomThreshold = 24;
+const zoomSpan = 20;
+
 type SeasonProgress = {
   number: number;
   name: string;
@@ -17,11 +20,12 @@ export function progressFill(element: HTMLElement, count: number, total: number)
   element.style.setProperty('--progress', `${total ? count / total * 100 : 0}%`);
 }
 
-export function syncProgressRange(slider: HTMLInputElement, count: number, released: number, total: number) {
-  if (slider.max !== String(released)) slider.max = String(released);
+export function syncProgressRange(slider: HTMLInputElement, count: number, max: number, total: number, min = 0) {
+  if (slider.min !== String(min)) slider.min = String(min);
+  if (slider.max !== String(max)) slider.max = String(max);
   if (slider.valueAsNumber !== count) slider.value = String(count);
   slider.setAttribute('aria-valuetext', `${count} of ${total} episodes watched`);
-  progressFill(slider, count, released);
+  progressFill(slider, count - min, max - min);
 }
 
 export function bindProgressRanges(panel: HTMLElement, signal: AbortSignal) {
@@ -32,7 +36,8 @@ export function bindProgressRanges(panel: HTMLElement, signal: AbortSignal) {
     if (!drag || drag.slider.disabled) return;
     const {slider, left, width} = drag;
     const fraction = Math.min(1, Math.max(0, (event.clientX - left) / width));
-    const count = Math.round(fraction * Number(slider.max));
+    const min = Number(slider.min), max = Number(slider.max);
+    const count = Math.round(min + fraction * (max - min));
     if (slider.valueAsNumber === count) return;
     slider.valueAsNumber = count;
     slider.dispatchEvent(new Event('input', {bubbles: true}));
@@ -93,6 +98,7 @@ export function setupSeriesProgressPicker(panel: HTMLElement, editor: HTMLDialog
   const completed = panel.querySelector<HTMLElement>('[data-series-completed]')!;
   const mobile = matchMedia('(max-width:760px)');
   const supportsPopover = typeof picker.showPopover === 'function';
+  let zoomedRow: HTMLLIElement | undefined;
   const isPopover = () => supportsPopover && picker.matches(':popover-open');
   const updateFades = () => {
     scroll.toggleAttribute('data-fade-top', scroll.scrollTop > 1);
@@ -104,6 +110,7 @@ export function setupSeriesProgressPicker(panel: HTMLElement, editor: HTMLDialog
   };
   const syncExpanded = () => trigger.setAttribute('aria-expanded', String(picker.open || isPopover()));
   const close = () => {
+    collapseZoom();
     if (isPopover()) picker.hidePopover();
     if (picker.open) picker.close();
     syncExpanded();
@@ -147,10 +154,14 @@ export function setupSeriesProgressPicker(panel: HTMLElement, editor: HTMLDialog
     picker.addEventListener('pointercancel', () => { backdropPointer = undefined; }, {signal});
   }
   picker.addEventListener('toggle', () => {
+    if (!picker.open && !isPopover()) collapseZoom();
     reposition();
     syncExpanded();
   }, {signal});
-  picker.addEventListener('close', syncExpanded, {signal});
+  picker.addEventListener('close', () => {
+    collapseZoom();
+    syncExpanded();
+  }, {signal});
   scroll.addEventListener('scroll', updateFades, {signal, passive: true});
   editor.addEventListener('scroll', reposition, {signal, passive: true});
   window.addEventListener('resize', reposition, {signal});
@@ -162,16 +173,60 @@ export function setupSeriesProgressPicker(panel: HTMLElement, editor: HTMLDialog
   rows.addEventListener('input', event => {
     const slider = event.target as HTMLInputElement;
     const row = slider.closest('li');
-    if (row && slider.matches('[data-row-slider]')) edit(Number(row.dataset.season), slider.valueAsNumber);
+    if (row && slider.matches('[data-row-slider],[data-detail-slider]')) edit(Number(row.dataset.season), slider.valueAsNumber);
   }, {signal});
   rows.addEventListener('click', event => {
     const button = (event.target as Element).closest<HTMLButtonElement>('button');
-    const row = button?.closest('li');
+    const row = button?.closest<HTMLLIElement>('li');
     if (!row || !button || button.disabled) return;
-    const slider = row.querySelector<HTMLInputElement>('input')!;
+    if (button.hasAttribute('data-row-zoom')) {
+      toggleZoom(row, event.detail === 0);
+      return;
+    }
+    const slider = row.querySelector<HTMLInputElement>('[data-row-slider]')!;
     edit(Number(row.dataset.season), button.dataset.rowStep
       ? slider.valueAsNumber + Number(button.dataset.rowStep) : 'toggle');
   }, {signal});
+
+  function collapseZoom() {
+    if (!zoomedRow) return;
+    zoomedRow.querySelector<HTMLElement>('[data-row-detail]')!.hidden = true;
+    zoomedRow.querySelector('[data-row-zoom]')!.setAttribute('aria-expanded', 'false');
+    zoomedRow = undefined;
+  }
+
+  function syncZoom(row: HTMLLIElement, overview: HTMLInputElement, total: number, reset = false) {
+    const slider = row.querySelector<HTMLInputElement>('[data-detail-slider]')!;
+    const count = overview.valueAsNumber, released = Number(overview.max);
+    let min = Number(slider.min), max = Number(slider.max);
+    // Keep the scale fixed while dragging in the zoomed range.
+    if (reset || count < min || count > max || max > released) {
+      min = Math.max(0, Math.min(count - zoomSpan / 2, released - zoomSpan));
+      max = min + zoomSpan;
+    }
+    syncProgressRange(slider, count, max, total, min);
+    row.querySelector('[data-detail-min]')!.textContent = String(min);
+    row.querySelector('[data-detail-value]')!.textContent = String(count);
+    row.querySelector('[data-detail-max]')!.textContent = String(max);
+  }
+
+  function toggleZoom(row: HTMLLIElement, focus: boolean) {
+    const wasOpen = row === zoomedRow;
+    collapseZoom();
+    if (!wasOpen) {
+      const overview = row.querySelector<HTMLInputElement>('[data-row-slider]')!;
+      const detail = row.querySelector<HTMLElement>('[data-row-detail]')!;
+      zoomedRow = row;
+      row.querySelector('[data-row-zoom]')!.setAttribute('aria-expanded', 'true');
+      syncZoom(row, overview, Number(row.dataset.total), true);
+      detail.hidden = false;
+      reposition();
+      const visible = scroll.getBoundingClientRect();
+      const bottom = detail.getBoundingClientRect().bottom;
+      scroll.scrollTop += Math.max(0, bottom + 14 - visible.bottom);
+      if (focus) detail.querySelector<HTMLInputElement>('input')!.focus({preventScroll: true});
+    } else reposition();
+  }
 
   function render(seasons: SeasonProgress[], enabled: boolean) {
     trigger.disabled = !seasons.length;
@@ -183,21 +238,39 @@ export function setupSeriesProgressPicker(panel: HTMLElement, editor: HTMLDialog
 
     const signature = seasons.map(season => season.number).join(',');
     if (rows.dataset.seasons !== signature) {
+      collapseZoom();
       rows.dataset.seasons = signature;
       rows.replaceChildren(...seasons.map(season => {
         const row = template.content.firstElementChild!.cloneNode(true) as HTMLLIElement;
         row.dataset.season = String(season.number);
+        const detail = row.querySelector<HTMLElement>('[data-row-detail]')!;
+        detail.id = `${picker.id}-zoom-${season.number}`;
+        row.querySelector('[data-row-zoom]')!.setAttribute('aria-controls', detail.id);
         return row;
       }));
       segments.replaceChildren(...seasons.map(() => document.createElement('span')));
       scroll.scrollTop = 0;
     }
+    const hadZoom = Boolean(zoomedRow);
     seasons.forEach(({name, count, total, released, releaseDate, complete, canToggle, canRestore}, index) => {
       const row = rows.children[index] as HTMLLIElement;
-      const slider = row.querySelector<HTMLInputElement>('input')!;
+      row.dataset.total = String(total);
+      const slider = row.querySelector<HTMLInputElement>('[data-row-slider]')!;
       const counter = row.querySelector<HTMLButtonElement>('[data-row-counter]')!;
+      const zoom = row.querySelector<HTMLButtonElement>('[data-row-zoom]')!;
       const [minus, plus] = row.querySelectorAll<HTMLButtonElement>('[data-row-step]');
-      row.querySelector('[data-row-season]')!.textContent = name;
+      const label = row.querySelector<HTMLElement>('[data-row-season]')!;
+      label.textContent = name;
+      label.hidden = released > zoomThreshold;
+      zoom.hidden = !label.hidden;
+      zoom.disabled = !enabled;
+      if (zoom.hidden || zoom.disabled) {
+        if (zoomedRow === row) collapseZoom();
+      } else {
+        zoom.querySelector('[data-row-zoom-name]')!.textContent = name;
+        zoom.setAttribute('aria-label', `Zoom episode progress for ${name}`);
+        row.querySelector('[data-detail-slider]')!.setAttribute('aria-label', `Fine episode progress for ${name}`);
+      }
       row.toggleAttribute('data-empty', count === 0);
       row.toggleAttribute('data-unreleased', !released);
       const date = row.querySelector<HTMLElement>('[data-row-release]')!;
@@ -211,6 +284,7 @@ export function setupSeriesProgressPicker(panel: HTMLElement, editor: HTMLDialog
       slider.disabled = !enabled;
       slider.setAttribute('aria-label', `${name} episode progress`);
       syncProgressRange(slider, count, released, total);
+      if (zoomedRow === row) syncZoom(row, slider, total);
       counter.toggleAttribute('data-complete', complete);
       counter.textContent = complete ? `✓ ${count}` : `${count}/${total}`;
       counter.disabled = !enabled || !canToggle;
@@ -221,7 +295,8 @@ export function setupSeriesProgressPicker(panel: HTMLElement, editor: HTMLDialog
       minus.setAttribute('aria-label', `Decrease ${name} progress`);
       plus.setAttribute('aria-label', `Increase ${name} progress`);
     });
-    if (picker.open || isPopover()) updateFades();
+    if (hadZoom && !zoomedRow) reposition();
+    else if (picker.open || isPopover()) updateFades();
   }
 
   return {render, close};
