@@ -89,6 +89,7 @@ const upcomingSeasonCards=upcomingSeasons.map((entry:any)=>({
 <script>
 import {calendarDate,localToday,timestamp} from '../lib/date-time';
 import {applyResponsiveArtwork} from '../lib/responsive-artwork';
+import {placeProgressCardDetails} from '../lib/progress-card-details';
 import {startVisibleRefresh, type VisibleRefreshHandle} from '../lib/visible-refresh';
 import {createHomePanelRefresh} from '../lib/home-panel-refresh';
 import {reconcileHomePanel} from '../lib/home-panel-reconcile';
@@ -144,6 +145,7 @@ function initializeHomeProgress() {
   }});
 
   const positionDetails = () => document.querySelectorAll<HTMLElement>('.series-progress-grid').forEach(cardGrid => cardGrid.querySelectorAll<HTMLElement>('.progress-card').forEach(card => {
+    if(card.hasAttribute('data-progress-card')){placeProgressCardDetails(card);return;}
     const right = card.getBoundingClientRect().right;
     const detailsWidth = card.querySelector<HTMLElement>('.progress-card-details')?.getBoundingClientRect().width || 290;
     card.classList.toggle('details-flipped', right + 16 + detailsWidth > window.innerWidth - 20);

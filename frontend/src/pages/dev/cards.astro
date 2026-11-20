@@ -104,15 +104,12 @@ const activities = [
   .lab{max-width:1280px;margin:auto;padding:32px 24px 80px}.lab-header{display:flex;justify-content:space-between;align-items:center;gap:24px}.lab-header p,section>p{color:var(--muted)}.lab-tools{display:flex;flex-wrap:wrap;gap:20px;padding:18px 0;align-items:center}.lab-tools label{display:flex;align-items:center;gap:8px}#feedback{position:sticky;top:0;z-index:20;background:var(--panel);border:1px solid var(--border);padding:12px;border-radius:6px}#canvas{max-width:100%;margin:auto}section{margin-top:36px}section>h2{margin-bottom:16px}.lab-poster-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:18px}.lab :global([hidden]){display:none!important}.lab-order{display:flex;justify-content:space-between;margin-top:8px}.lab-order button{padding:4px 12px;background:var(--panel);border:1px solid var(--border);cursor:pointer}.lab :global(.favorites-grid){grid-template-columns:repeat(auto-fill,minmax(108px,150px))}.lab :global(.series-progress-grid){justify-content:start;gap:22px;padding:24px}.lab :global(.lab-active){outline:2px solid var(--blue);outline-offset:-2px}.lab :global(input[type=number]){width:70px}.lab :global(.favorite-remove){cursor:pointer}@media(max-width:650px){.lab{padding:20px 14px}.lab-header{align-items:start;flex-direction:column}.lab-poster-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 </style>
 <script>
+  import {placeProgressCardDetails} from '../../lib/progress-card-details';
   const canvas = document.querySelector<HTMLElement>('#canvas')!;
   const positionDetails = () => {
     const bounds = canvas.getBoundingClientRect();
     canvas.querySelectorAll<HTMLElement>('[data-progress-card]').forEach(card => {
-      const details = card.querySelector<HTMLElement>('.progress-card-details')!;
-      const rect = card.getBoundingClientRect();
-      const availableRight = Math.min(bounds.right, window.innerWidth - 14);
-      const left = Math.max(bounds.left, Math.min(rect.right + 16, availableRight - details.getBoundingClientRect().width));
-      details.style.left = `${left - rect.left}px`;
+      placeProgressCardDetails(card,Math.max(bounds.left,14),Math.min(bounds.right,window.innerWidth-14));
     });
   };
   positionDetails();

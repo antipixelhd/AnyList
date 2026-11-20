@@ -181,10 +181,20 @@
   visibility:hidden;
   transition:opacity var(--progress-card-fade),visibility var(--progress-card-fade)
 }
-.progress-card:is(:hover,:focus-within) .progress-card-details {
+.progress-card:not([data-progress-card]):is(:hover,:focus-within) .progress-card-details {
   opacity:1;
   pointer-events:auto;
   visibility:visible
+}
+.progress-card[data-progress-card] .progress-card-details {
+  overflow-wrap:anywhere;
+  transition:none
+}
+@media(hover:hover) {
+  .progress-card[data-progress-card]:hover .progress-card-details {
+    opacity:1;
+    visibility:visible
+  }
 }
 .progress-card.details-flipped .progress-card-details {
   right:calc(100% + 16px);
