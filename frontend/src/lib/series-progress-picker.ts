@@ -170,6 +170,15 @@ export function setupSeriesProgressPicker(panel: HTMLElement, editor: HTMLDialog
     }, {signal});
     picker.addEventListener('pointercancel', () => { backdropPointer = undefined; }, {signal});
   }
+  picker.addEventListener('beforetoggle', event => {
+    if ((event as ToggleEvent).newState !== 'open') return;
+    // Opening finishes synchronously, but toggle is a later task and may miss first paint.
+    queueMicrotask(() => {
+      if (signal.aborted || (!picker.open && !isPopover())) return;
+      reposition();
+      syncExpanded();
+    });
+  }, {signal});
   picker.addEventListener('toggle', () => {
     if (!picker.open && !isPopover()) collapseZoom();
     reposition();
