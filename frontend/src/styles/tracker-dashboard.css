@@ -58,6 +58,7 @@
   background:var(--panel)
 }
 .progress-card {
+  --progress-card-fade:.26s ease-in-out;
   position:relative;
   z-index:0;
   width:85px;
@@ -98,7 +99,7 @@
   line-height:1.15;
   text-align:center;
   text-shadow:0 1px 3px rgba(0,0,0,.9);
-  transition:opacity .12s ease,visibility .12s ease
+  transition:opacity var(--progress-card-fade),visibility var(--progress-card-fade)
 }
 .progress-card-airing-label>span {
   font-size:var(--type-caption-size)
@@ -112,7 +113,7 @@
   left:0;
   height:5px;
   background:#e84b73;
-  transition:background-color .12s ease
+  transition:opacity var(--progress-card-fade),background-color .12s ease
 }
 .progress-card-catchup[data-caught-up="true"] {
   background:#45c66b
@@ -140,7 +141,7 @@
   font-weight:var(--type-action-weight);
   opacity:0;
   cursor:pointer;
-  transition:opacity .12s ease,background-color .12s ease
+  transition:opacity var(--progress-card-fade),background-color .12s ease
 }
 .progress-card-quick-action:not(:disabled):hover,.progress-card-quick-action:focus-visible {
   background:rgba(18,25,38,.96)
@@ -148,7 +149,6 @@
 .progress-card-quick-action:disabled {
   display:none
 }
-.progress-card.airing .progress-card-quick-action {bottom:5px}
 .progress-card-plus {
   color:var(--blue);
   font-size:var(--type-panel-size);
@@ -162,6 +162,7 @@
     opacity:0;
     visibility:hidden
   }
+  .progress-card:is(:hover,:focus-within) .progress-card-catchup {opacity:0}
 }
 .progress-card-details {
   position:absolute;
@@ -178,7 +179,7 @@
   opacity:0;
   pointer-events:none;
   visibility:hidden;
-  transition:opacity .12s ease
+  transition:opacity var(--progress-card-fade),visibility var(--progress-card-fade)
 }
 .progress-card:is(:hover,:focus-within) .progress-card-details {
   opacity:1;
@@ -621,6 +622,7 @@
   .progress-card-quick-action {
     opacity:1
   }
+  .progress-card.airing .progress-card-quick-action {bottom:5px}
   .progress-card:has(.progress-card-quick-action:enabled) .progress-card-airing-label {bottom:33px}
 }
 @media(prefers-reduced-motion:reduce) {

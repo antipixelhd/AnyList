@@ -173,7 +173,6 @@ const activities = [
       card.querySelector('[data-progress-count]')!.textContent=String(current);
       card.querySelector('[data-current-position]')!.textContent=`S1E${current}`;
       const caughtUp = current>=total;
-      card.querySelector('[data-episodes-behind]')!.textContent=caughtUp?'Caught up':`${total-current} ${total-current===1?'episode':'episodes'} behind`;
       card.querySelector<HTMLElement>('[data-catchup-bar]')!.dataset.caughtUp=String(caughtUp);
       button.disabled=caughtUp;button.setAttribute('aria-label',caughtUp?'Series is caught up':'Mark next episode watched');
       if(caughtUp)card.querySelector('.progress-card-plus')?.remove();report(`Progress: ${current}/${total}${caughtUp?' · Caught up':''}.`);

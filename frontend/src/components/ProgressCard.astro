@@ -2,7 +2,6 @@
 const {entry} = Astro.props;
 const season=entry.progress_season;
 const name=season?`${entry.title} - ${season.name}`:entry.title;
-const behind=(season?.released??entry.released_episodes)-(season?.watched??entry.progress);
 ---
 <article class={entry.airing?'progress-card airing':'progress-card'} data-progress-card data-detail-kind="series" data-media-id={entry.id} data-progress={entry.progress} data-released={entry.released_episodes??''} data-season-position={entry.season_position||''} data-season-scoped={String(!!season)} data-next-watch={season?.next_watch_id} data-next-air={entry.next_release_date||''} data-next-air-at={entry.next_release_at||''}>
         <a class="progress-card-poster" href={`/title/${entry.id}`} aria-label={`View ${entry.title}`}>
@@ -14,7 +13,6 @@ const behind=(season?.released??entry.released_episodes)-(season?.watched??entry
           <span data-current-position>{season?.position||entry.season_position||'0'}</span>{entry.canIncrement&&<span class="progress-card-plus" aria-hidden="true">+</span>}
         </button>
         <div class="progress-card-details" aria-label={`${name} progress`}>
-          <strong class="progress-card-behind" data-episodes-behind>{behind>0?`${behind} ${behind===1?'episode':'episodes'} behind`:entry.released_episodes!=null?'Caught up':'Progress unavailable'}</strong>
           <a class="progress-card-title" href={`/title/${entry.id}`}>{name}</a>
           <span class="progress-card-progress-label">Progress: <span data-progress-count>{season?.watched??entry.progress}</span>/<span data-released-count>{season?.released??entry.released_episodes??'?'}</span></span>
         </div>

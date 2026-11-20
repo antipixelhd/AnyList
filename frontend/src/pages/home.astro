@@ -201,9 +201,6 @@ function initializeHomeProgress() {
     card.querySelector<HTMLElement>('[data-current-position]')!.textContent = season?.position || updated.season_position || String(progress);
     card.querySelector<HTMLElement>('[data-progress-count]')!.textContent = String(season?.watched??progress);
     card.querySelector<HTMLElement>('[data-released-count]')!.textContent = String(season?.released??(hasReleased?released:'?'));
-    const behind=season?season.released-season.watched:released-progress;
-    card.querySelector<HTMLElement>('[data-episodes-behind]')!.textContent = behind>0
-      ? `${behind} ${behind===1?'episode':'episodes'} behind` : hasReleased ? 'Caught up' : 'Progress unavailable';
     card.querySelector<HTMLElement>('[data-catchup-bar]')?.setAttribute('data-caught-up', String(caughtUp));
     card.querySelector<HTMLElement>('[data-catchup-bar]')?.setAttribute('data-known', String(hasReleased));
     const button = card.querySelector<HTMLButtonElement>('[data-progress-action]')!;
