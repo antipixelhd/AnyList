@@ -15,6 +15,19 @@ from core.season_releases import (
 
 
 class UpcomingSeasonTests(unittest.TestCase):
+    def test_catalogue_stores_first_released_still_and_isolates_alternate_order(self):
+        from core.episode_release import EpisodeRelease
+        from core.season_artwork import collect_backdrops, season_backdrop
+
+        release = EpisodeRelease(today=date(2026, 10, 2))
+        stored = collect_backdrops([(1, 2, '2025-01-02', '/second.jpg'), (1, 1, '2025-01-01', '/first.jpg'),
+            (2, 1, '2026-10-03', '/future.jpg'), (3, 1, None, '/unknown.jpg')], release)
+        self.assertEqual(stored, {'1': '/first.jpg'})
+        data = {'tracking_season_backdrops': stored}
+        alternate = [SimpleNamespace(poster_path='/alternate.jpg')]
+        self.assertEqual(season_backdrop(data, 'tmdb:aired', 1, alternate), '/first.jpg')
+        self.assertEqual(season_backdrop(data, 'tvdb:dvd', 1, alternate), '/alternate.jpg')
+
     def test_season_dot_changes_at_the_scheduled_premiere(self):
         from core.episode_release import EpisodeRelease
 

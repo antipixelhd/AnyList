@@ -64,7 +64,17 @@ export function paintScreenListRow(container:HTMLElement,state:ListState,templat
   const edit=cover.querySelector<HTMLButtonElement>('[data-edit-entry]');
   if(edit){
     edit.dataset.editEntry=String(id);edit.setAttribute('aria-label',`Edit ${title}`);
-    if(season)edit.dataset.editorSeason=String(season.number);else delete edit.dataset.editorSeason;
+    if(season){
+      edit.dataset.editorSeason=String(season.number);
+      edit.dataset.editorSeasonOrder=season.order;
+      edit.dataset.editorSeasonPoster=state.poster||'';
+      edit.dataset.editorSeasonBackdrop=season.backdrop||'';
+    }else{
+      delete edit.dataset.editorSeason;
+      delete edit.dataset.editorSeasonOrder;
+      delete edit.dataset.editorSeasonPoster;
+      delete edit.dataset.editorSeasonBackdrop;
+    }
   }
   const score=row.querySelector('[data-score-label]')||row.querySelector('.entry-score');
   setFeedbackText(score,scoreLabel(state.score),acknowledge);

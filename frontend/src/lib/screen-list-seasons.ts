@@ -4,7 +4,7 @@ import {applyResponsiveArtwork} from './responsive-artwork';
 import {scoreLabel} from './tracker';
 import {paintEntryAvailability} from './entry-availability';
 
-type Season = {number:number; name:string|null; poster:string|null; year:string|null;
+type Season = {number:number; name:string|null; poster:string|null; backdrop?:string|null; year:string|null;
   total:number|null; watched:number; score:number|null; completed:boolean; upcoming:boolean; availability_reason?:string|null};
 type Summary = {order:string; seasons:Season[]; pending:boolean; retry_after:number|null; unavailable:boolean};
 type Expansion = {entry:HTMLElement; toggle:HTMLButtonElement; panel:HTMLElement; title:string;
@@ -117,6 +117,9 @@ export function mountScreenListSeasons(root:HTMLElement,profilePanel:HTMLElement
       if(edit){
         edit.dataset.editEntry=item.entry.dataset.listEntry!;
         edit.dataset.editorSeason=String(season.number);
+        edit.dataset.editorSeasonOrder=summary.order;
+        edit.dataset.editorSeasonPoster=season.poster||'';
+        edit.dataset.editorSeasonBackdrop=season.backdrop||'';
         edit.setAttribute('aria-label',`Edit ${item.title}, ${label}`);
       }
       row.querySelector('[data-season-progress]')!.textContent=season.total==null?String(season.watched):`${season.watched}/${season.total}`;

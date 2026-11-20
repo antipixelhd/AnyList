@@ -4,6 +4,7 @@ import { DecodedArtwork } from './decoded-artwork.ts';
 import {gameHeroChoice} from './game-hero-choice.ts';
 import {detailHeroArtwork} from './detail-artwork.ts';
 import type {EditorEpisodeMetadata, SeriesEditorSummary} from './series-editor';
+import type {ArtworkSources} from './season-editor-artwork';
 
 export type WorkSubject = {kind:'game'; catalogue_id:number}
   | {kind:'movie'|'series'; media_id:number; tmdb_id?:number|null};
@@ -462,6 +463,13 @@ export class EditorStore {
     if(signal.aborted)return;
     this.artworkListeners.add(listener);
     signal.addEventListener('abort',()=>this.artworkListeners.delete(listener),{once:true});
+  }
+  decodedImage(src?:string) { return this.decodedArtwork.get(src); }
+  warmSeasonImage(src?:string,priority=true) {
+    return src ? this.decodedArtwork.warm(src,priority) : Promise.resolve();
+  }
+  warmSeasonArtwork({poster,backdrop}:ArtworkSources, priority=true) {
+    return Promise.all([this.warmSeasonImage(poster,priority),this.warmSeasonImage(backdrop,priority)]);
   }
   private backdropURL(title:EditorTitle,path=title.backdrop) {
     return detailHeroArtwork(path)?.src;

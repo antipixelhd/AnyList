@@ -4,7 +4,7 @@ import {editorStore, type EditorTitle} from './editor-store';
 import {bindProgressRanges, releaseDateLabel, setupSeriesProgressPicker, syncProgressRange} from './series-progress-picker';
 
 type Episode = {id:number; number:number; watched:boolean};
-type Season = {season_number:number; membership:string; name?:string|null; poster?:string|null; total:number;
+type Season = {season_number:number; membership:string; name?:string|null; poster?:string|null; backdrop?:string|null; total:number;
   progress_total?:number; release_date?:string|null;
   episodes:Episode[]; upcoming?:Pick<Episode,'id'|'number'>[]; score?:number|null;
   start_date?:string|null; completion_date?:string|null; start_source?:string|null;
@@ -191,6 +191,7 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     labelRewatches(scope?'Rewatches':'Total rewatches');
     form.dispatchEvent(new CustomEvent('anylist:series-dates-sync',{bubbles:true}));
     render();
+    form.dispatchEvent(new Event('anylist:series-artwork'));
   }
   function read() {
     if (!title?.id || !active || active.signal.aborted) return Promise.resolve();
@@ -220,7 +221,7 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
       } catch {
         if (!signal.aborted) loadFailed=true;
       } finally {
-        if (!signal.aborted) {request=undefined;render();}
+        if (!signal.aborted) {request=undefined;render();form.dispatchEvent(new Event('anylist:series-artwork'));}
       }
     })();
     return request;
@@ -350,6 +351,7 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
       }
     },
     fields:()=>draft(0)??values(),
+    artworkScope:()=>({number:scope,summary}),
     scopedStatusChange:()=>scope ? status()!==scopeBaseline() : undefined,
     deleteTarget:()=>scope ? {season_number:scope,revision:summary?.revision} : null,
     statusChanged() {

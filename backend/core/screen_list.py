@@ -11,6 +11,7 @@ from sqlalchemy.orm import aliased
 
 from core import list_categories, season_completion, season_releases, tracking_projection
 from core.episode_release import EpisodeRelease
+from core.season_artwork import season_backdrop, stored_backdrop
 from core.tracking_access import anime_is_visible
 from core.tracking_rules import effective_score
 from models import Media, Rating, Show, ShowEpisodePosition, WatchEvent
@@ -222,6 +223,7 @@ def visible_seasons(groups, metadata, watched_ids, scores, today, catalogue_comp
                 len(released), release, completed=completed,
                 next_episode=next_season_episode(media.tmdb_data or {}, number, order) if media else None)
             seasons.append(dict(number=number, name=info.get('name'), poster=info.get('poster_path'),
+                backdrop=season_backdrop(media.tmdb_data or {}, order, number, released) if media else None,
                 year=air_date[:4] if air_date else None,
                 total=(total or None) if progress_total is None else progress_total, watched=watched,
                 score=scores.get(number) or None, completed=completed,
@@ -231,7 +233,8 @@ def visible_seasons(groups, metadata, watched_ids, scores, today, catalogue_comp
 
 
 async def series_seasons(db, media, user_id, aired_scores):
-    order, groups, metadata = await season_completion.season_groups(db, media, user_id, include_placeholders=True)
+    order, groups, metadata = await season_completion.season_groups(db, media, user_id,
+        include_placeholders=True, include_artwork=True)
     watched = await season_completion.watched_episode_ids(db, user_id,
         [episode.id for _, episodes, _ in groups for episode in episodes])
     scores = {int(number): score for number, score in (aired_scores or {}).items()} if order == 'tmdb:aired' else {}
@@ -373,7 +376,7 @@ async def read_displayed_season_members(db, candidates):
     position = ShowEpisodePosition
     aired = requested.c.order_key == 'tmdb:aired'
     rows = (await db.execute(select(requested.c.media_id, requested.c.number, episode.id, episode.tmdb_id, episode.tvdb_id,
-        episode.season_number, episode.episode_number, episode.release_date,
+        episode.season_number, episode.episode_number, episode.release_date, episode.poster_path,
         episode.tmdb_data['tracking_import_released'].as_boolean().is_(True).label('imported_release'),
         season_completion.episode_placeholder(episode).label('placeholder'))
         .select_from(requested).join(Media, Media.id == requested.c.media_id)
@@ -384,7 +387,7 @@ async def read_displayed_season_members(db, candidates):
             position.order_key == requested.c.order_key, position.display_season == requested.c.number,
             position.tmdb_episode_id == episode.tmdb_id))
         .where(or_(and_(aired, episode.season_number == requested.c.number), position.id.is_not(None)))
-        .order_by(episode.episode_number))).all()
+        .order_by(func.coalesce(position.display_episode, episode.episode_number)))).all()
     by_media = defaultdict(dict)
     for row in rows:
         by_media[row.media_id, row.number][row.id] = row
@@ -416,16 +419,18 @@ async def displayed_seasons(db, candidates, history):
             if season.order == 'tmdb:aired':
                 members = [ep for ep in members if ep.season_number == season.number]
             released = {ep.id for ep in members if season_completion.is_released(ep, release.today, release=release)}
+            backdrop = season_backdrop(data, season.order, season.number, (ep for ep in members if ep.id in released))
             expected = metadata.get(season.number, {}).get('episode_count') or 0
             total = season_progress_total(media, season.order, season.number, members, expected,
                                           released, release, latest=season.number == latest)
         else:
             members = [ep for ep in history(data) if ep.season_number == season.number]
             released = {ep.id for ep in released_episodes(members, release)}
+            backdrop = stored_backdrop(data, season.order, season.number)
         reason = season_releases.season_availability(info.get('air_date'),
             (ep.release_date for ep in members), len(released), release, completed=season.completed,
             next_episode=next_season_episode(data, season.number, season.order))
-        display[key] = (season.total if total is None else total, reason)
+        display[key] = (season.total if total is None else total, reason, backdrop)
     return display
 
 
@@ -442,7 +447,7 @@ def list_rows(entry, placement, season_display, last_unwatched_season):
                 season_position=f'S{finished.number}E{finished.watched}')
         yield parent
     for season, status in placement.active:
-        total, reason = season_display.get((entry['id'], season.number), (season.total, None))
+        total, reason, backdrop = season_display.get((entry['id'], season.number), (season.total, None, None))
         yield {**entry, 'list_id': season_row_id(entry['id'], season.number), 'status': status,
             'series_title': entry['title'], 'series_poster': entry['poster'],
             'title': f"{entry['title']} - {season.name}", 'poster': season.poster or entry['poster'],
@@ -453,7 +458,7 @@ def list_rows(entry, placement, season_display, last_unwatched_season):
             'list_season': {'number': season.number, 'order': season.order,
                             'can_increment': last_unwatched_season >= season.number
                                 if last_unwatched_season is not None and season.order == 'tmdb:aired' else None,
-                            'total': total}}
+                            'total': total, **({'backdrop': backdrop} if backdrop else {})}}
 
 
 @dataclass(slots=True)
