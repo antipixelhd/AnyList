@@ -45,7 +45,8 @@
 }
 .tracker[data-theme-active] .editor label input:focus,
 .tracker[data-theme-active] .editor label select:focus,
-.tracker[data-theme-active] .editor label textarea:focus {
+.tracker[data-theme-active] .editor label textarea:focus,
+.tracker[data-theme-active] .editor .editor-notes textarea:focus {
   border-color: var(--blue);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--blue) 12%, transparent);
 }

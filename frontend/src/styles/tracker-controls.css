@@ -353,11 +353,11 @@
   column-gap:28px;
   row-gap:16px
 }
-.editor label {
+.editor label,.editor .editor-field-label {
   font-size:var(--type-label-size);
   color:var(--muted)
 }
-.editor label input,.editor label select,.editor label textarea {
+.editor label input,.editor label select,.editor label textarea,.editor .editor-notes textarea {
   margin-top:6px;
   background:var(--field);
   border:1px solid transparent;
@@ -366,7 +366,7 @@
   color:var(--text);
   box-shadow:none
 }
-.editor label textarea {
+.editor label textarea,.editor .editor-notes textarea {
   min-height:54px;
   resize:vertical
 }
@@ -588,7 +588,7 @@
   }
 }
 @media(prefers-reduced-motion:reduce) {
-  .button-primary,.button-secondary,.button-quiet,.button-danger,.editor label input,.editor label select,.editor label textarea,.setting-switch-row input:before {
+  .button-primary,.button-secondary,.button-quiet,.button-danger,.editor label input,.editor label select,.editor label textarea,.editor .editor-notes textarea,.setting-switch-row input:before {
     transition:none
   }
 }

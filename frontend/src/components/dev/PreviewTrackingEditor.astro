@@ -29,20 +29,20 @@ const integrated = design==='popover' || design==='expand';
   </div>
   <form id="sp-form">
     <div class="editor-fields">
-      <div class="editor-status-field"><label for="sp-status-trigger">Status</label><EditorSelect id="sp-status" name="status" label="Status" options={statuses} value="watching"/></div>
-      <div class="editor-score-field"><label for="sp-score">Score</label><NumberStepper id="sp-score" name="score" label="Score" min={0} max={10} step={0.1} score/></div>
-      <div class="editor-number-field sp-progress-field" data-series-only><label for="sp-progress">Episode progress</label><NumberStepper id="sp-progress" name="progress" label="Episode progress" max={62}/></div>
-      <div class="editor-number-field sp-hours-field" data-game-only hidden><label for="sp-hours">Total time (hours)</label><NumberStepper id="sp-hours" name="hours" label="Total time in hours" step="any"/><div class="game-first-completion"><div class="editor-field-heading"><label for="sp-first-hours">First completion</label><button type="button" class="game-value-button" data-action="first-hours">Add</button></div><div data-first-hours hidden><NumberStepper id="sp-first-hours" name="firstHours" label="First completion time in hours" step="any"/></div></div></div>
-      <div class="editor-start-date"><label for="sp-start">Start date</label><CalendarDateInput id="sp-start" name="start" label="Start date"/></div>
+      <div class="editor-status-field"><span class="editor-field-label" id="sp-status-label">Status</span><EditorSelect id="sp-status" name="status" label="Status" labelledBy="sp-status-label" options={statuses} value="watching"/></div>
+      <div class="editor-score-field"><span class="editor-field-label" id="sp-score-label">Score</span><NumberStepper id="sp-score" name="score" label="Score" labelledBy="sp-score-label" min={0} max={10} step={0.1} score/></div>
+      <div class="editor-number-field sp-progress-field" data-series-only><span class="editor-field-label" id="sp-progress-label">Episode progress</span><NumberStepper id="sp-progress" name="progress" label="Episode progress" labelledBy="sp-progress-label" max={62}/></div>
+      <div class="editor-number-field sp-hours-field" data-game-only hidden><span class="editor-field-label" id="sp-hours-label">Total time (hours)</span><NumberStepper id="sp-hours" name="hours" label="Total time in hours" labelledBy="sp-hours-label" step="any"/><div class="game-first-completion"><div class="editor-field-heading"><span class="editor-field-label" id="sp-first-hours-label">First completion</span><button type="button" class="game-value-button" data-action="first-hours">Add</button></div><div data-first-hours hidden><NumberStepper id="sp-first-hours" name="firstHours" label="First completion time in hours" labelledBy="sp-first-hours-label" step="any"/></div></div></div>
+      <div class="editor-start-date"><span class="editor-field-label" id="sp-start-label">Start date</span><CalendarDateInput id="sp-start" name="start" label="Start date" labelledBy="sp-start-label"/></div>
       <div class:list={['editor-finish-date',{'sp-integrated-finish':integrated}]} data-finish-field={integrated?design:undefined}>
-        <div class="sp-finish-heading"><label for="sp-finish">Finish date</label>{integrated && <button class="sp-finish-trigger" type="button" data-finish-trigger data-series-only aria-label="Season finish dates" aria-controls="sp-finish-seasons" aria-expanded="false"><span>Seasons</span><Icon name="chevron-down"/></button>}</div>
-        <CalendarDateInput id="sp-finish" name="finish" label="Finish date"/>
+        <div class="sp-finish-heading"><span class="editor-field-label" id="sp-finish-label">Finish date</span>{integrated && <button class="sp-finish-trigger" type="button" data-finish-trigger data-series-only aria-label="Season finish dates" aria-controls="sp-finish-seasons" aria-expanded="false"><span>Seasons</span><Icon name="chevron-down"/></button>}</div>
+        <CalendarDateInput id="sp-finish" name="finish" label="Finish date" labelledBy="sp-finish-label"/>
         {integrated && <PreviewFinishDates design={design}/>}
       </div>
-      <label class="editor-rewatches editor-number-field" for="sp-rewatches" data-watch-only>Total rewatches<NumberStepper id="sp-rewatches" name="rewatches" label="Total rewatches" max={10000}/></label>
-      <div class="editor-number-field sp-replays-field" data-game-only hidden><label for="sp-replays">Replay count</label><NumberStepper id="sp-replays" name="replays" label="Replay count" max={2147483647}/></div>
+      <div class="editor-rewatches editor-number-field" data-watch-only><span class="editor-field-label" id="sp-rewatches-label">Total rewatches</span><NumberStepper id="sp-rewatches" name="rewatches" label="Total rewatches" labelledBy="sp-rewatches-label" max={10000}/></div>
+      <div class="editor-number-field sp-replays-field" data-game-only hidden><span class="editor-field-label" id="sp-replays-label">Replay count</span><NumberStepper id="sp-replays" name="replays" label="Replay count" labelledBy="sp-replays-label" max={2147483647}/></div>
       <section class="wide game-achievement-editor" data-game-only hidden><div class="editor-field-heading"><span>Achievements</span><button type="button" class="game-value-button" data-action="achievements">Add</button></div><div class="sp-achievement-input" data-achievements hidden><NumberStepper id="sp-achievements" name="achievements" label="Achievement progress" max={67}/><span>/ 67</span></div></section>
-      <label class="wide editor-notes">Notes<textarea name="notes" rows="2"></textarea></label>
+      <div class="wide editor-notes"><span class="editor-field-label" id="sp-notes-label">Notes</span><textarea name="notes" rows="2" aria-labelledby="sp-notes-label"></textarea></div>
       <details class="wide sp-seasons" data-series-only>
         <summary><span>Seasons</span><span class="sp-seasons-summary"><span data-season-count></span><Icon name="chevron-down"/></span></summary>
         <div class="sp-season-list">
@@ -50,7 +50,7 @@ const integrated = design==='popover' || design==='expand';
             <details class="sp-season-drawer" name="sp-season-drawer" data-season-row={season.number}>
               <summary><span class="sp-season-identity"><strong>Season {season.number}</strong><span data-season-progress={season.number}></span></span><span class="sp-drawer-date" data-date-label={season.number}></span><Icon name="chevron-down"/></summary>
               <div class="sp-drawer-body">
-                <div class="editor-score-field"><label for={`sp-season-score-${season.number}`}>Score</label><NumberStepper id={`sp-season-score-${season.number}`} name={`season_score_${season.number}`} label={`Season ${season.number} score`} min={0} max={10} step={0.1} score/></div>
+                <div class="editor-score-field"><span class="editor-field-label">Score</span><NumberStepper id={`sp-season-score-${season.number}`} name={`season_score_${season.number}`} label={`Season ${season.number} score`} min={0} max={10} step={0.1} score/></div>
                 <PreviewSeasonDate number={season.number}/>
                 <button class="sp-season-complete sp-text" type="button" data-complete-season={season.number} aria-pressed="false"><Icon name="check"/><span>Complete season</span></button>
               </div>

@@ -3,7 +3,7 @@ import Icon from './Icon.astro';
 ---
 <div class="series-editor-panel" data-series-editor hidden>
   <div class="editor-field-heading">
-    <label id="series-progress-label" for="series-progress-trigger">Progress</label>
+    <span class="editor-field-label" id="series-progress-label" data-series-label>Progress</span>
     <span class="series-progress-release" data-series-release hidden></span>
   </div>
   <p class="series-editor-message" data-series-loading role="status">Loading progress…</p>
@@ -15,7 +15,7 @@ import Icon from './Icon.astro';
       <span class="series-progress-segments" data-series-segments aria-hidden="true"></span>
     </button>
     <span class="score-stepper series-episode-stepper" data-series-stepper hidden>
-      <input id="series-episode-count" data-series-count type="number" min="0" step="1" inputmode="numeric" aria-describedby="series-episode-total" required disabled/>
+      <input id="series-episode-count" data-series-count type="number" min="0" step="1" inputmode="numeric" aria-labelledby="series-progress-label" aria-describedby="series-episode-total" required disabled/>
       <span id="series-episode-total" data-series-total></span>
       <span class="series-episode-remaining" data-series-remaining aria-hidden="true"></span>
       <span class="score-stepper-controls">

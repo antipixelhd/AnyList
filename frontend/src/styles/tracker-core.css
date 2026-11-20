@@ -457,12 +457,12 @@ button:disabled {
   grid-template-columns:repeat(3,1fr);
   gap:24px
 }
-.editor label {
+.editor label,.editor .editor-field-label {
   display:block;
   font-size:var(--type-label-size);
   color:var(--muted)
 }
-.editor label input,.editor label select,.editor label textarea {
+.editor label input,.editor label select,.editor label textarea,.editor .editor-notes textarea {
   margin-top:8px
 }
 .editor .wide {

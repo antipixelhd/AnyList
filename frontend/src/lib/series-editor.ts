@@ -124,9 +124,7 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     find('retry').hidden=!unavailable;
     const available=current?.episodes.length??0;
     find('content').hidden=!hasProgress||Boolean(current&&!available);
-    const label=panel.querySelector('label')!;
-    label.textContent=scope?(current&&!available?'Release date':'Episode progress'):'Progress';
-    label.htmlFor=scope?(available?input.id:''):find('trigger').id;
+    find('label').textContent=scope?(current&&!available?'Release date':'Episode progress'):'Progress';
     find('trigger').hidden=Boolean(scope);
     find('stepper').hidden=!scope||!available;
     find('release').hidden=!current||Boolean(available);
@@ -170,8 +168,7 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
   }
   function labelRewatches(label:string) {
     const container=form.querySelector('.editor-rewatches')!;
-    container.querySelector('label')!.textContent=label;
-    field('rewatch_count').setAttribute('aria-label',label);
+    container.querySelector('#editor-rewatches-label')!.textContent=label;
     container.querySelector('[data-score-step=up]')!.setAttribute('aria-label',`Increase ${label.toLowerCase()}`);
     container.querySelector('[data-score-step=down]')!.setAttribute('aria-label',`Decrease ${label.toLowerCase()}`);
   }
@@ -189,8 +186,7 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     const fields=drafts.get(scope)??(season&&seasonFields(season));
     if(fields)for(const key of scopeFields)field(key).value=fields[key];
     const scoreLabel=scope?'Season score':'Series score';
-    form.querySelector('.editor-score-field label')!.textContent=scoreLabel;
-    field('manual_score').setAttribute('aria-label',scoreLabel);
+    form.querySelector('#editor-score-label')!.textContent=scoreLabel;
     labelRewatches(scope?'Rewatches':'Total rewatches');
     form.dispatchEvent(new CustomEvent('anylist:series-dates-sync',{bubbles:true}));
     render();
@@ -305,8 +301,7 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
   function reset() {
     progressMotion.reset();
     if(title) {
-      form.querySelector('.editor-score-field label')!.textContent='Score';
-      field('manual_score').setAttribute('aria-label','Score');
+      form.querySelector('#editor-score-label')!.textContent='Score';
       labelRewatches('Total rewatches');
     }
     active?.abort();

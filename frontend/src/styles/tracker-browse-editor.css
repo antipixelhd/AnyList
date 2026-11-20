@@ -7,14 +7,13 @@
 .editor [data-game-achievement-controls]{padding-top:6px}
 .editor-field-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:28px}
 .editor-field-heading>span{font-size:var(--type-label-size);color:var(--muted)}
-.editor .editor-field-heading label{margin:0}
+.editor .editor-field-heading .editor-field-label{margin:0}
 .editor .editor-category-info{display:inline-flex;align-items:center;justify-content:center;flex:none;width:1em;height:1em;padding:0;border:0;background:transparent;color:var(--muted);font:inherit;font-size:var(--type-label-size);cursor:pointer}
 .editor .editor-category-info :is(.ui-icon,.ui-icon-svg){width:1em;height:1em}
 .editor .editor-category-info:is(:hover,:focus-visible){color:var(--blue);background:transparent;outline:none}
 .editor .game-value-button{padding:4px 0;min-height:28px;background:transparent;color:var(--blue);border:0;font:inherit;font-size:var(--type-control-size);cursor:pointer;transition:color .15s}
 .editor .game-value-button:hover,.editor .game-value-button:focus-visible{color:var(--bright)}
 .game-first-completion{display:grid;align-content:start;gap:6px;margin-top:10px}
-.editor .game-first-completion label{font-size:var(--type-label-size);color:var(--muted)}
 .editor[data-editor-domain=game] .game-achievement-editor{grid-column:1 / 3;max-width:480px;min-width:0}
 .editor[data-editor-domain=game] .game-achievement-editor:has([data-game-targeted]:not([hidden])){grid-column:1 / -1;max-width:none}
 .game-achievement-controls{grid-template-columns:minmax(0,1fr) minmax(0,190px);align-items:center}
@@ -263,11 +262,11 @@ body:has(#tracking-editor[open]) {
   grid-column:3;
   grid-row:2
 }
-.editor label,.editor-status-field>label {
+.editor label,.editor .editor-field-label {
   font-size:var(--type-label-size);
   color:var(--muted)
 }
-.editor label input,.editor label textarea,.editor-status-trigger {
+.editor label input,.editor label textarea,.editor .editor-notes textarea,.editor-status-trigger {
   margin-top:6px;
   min-height:42px;
   padding:8px 12px;
@@ -277,7 +276,7 @@ body:has(#tracking-editor[open]) {
   color:var(--text);
   font-size:var(--type-control-size)
 }
-.editor label textarea {
+.editor label textarea,.editor .editor-notes textarea {
   min-height:46px;
   height:46px;
   resize:vertical
@@ -376,10 +375,6 @@ body:has(#tracking-editor[open]) {
 .score-override-close:hover,.score-override-close:focus-visible {
   background:#ffffff12;
   color:var(--bright)
-}
-:is(.editor-score-field,.editor-number-field)>label {
-  font-size:var(--type-label-size);
-  color:var(--muted)
 }
 :is(.editor-score-field,.editor-number-field)>.score-stepper {
   margin-top:6px
@@ -491,10 +486,10 @@ body:has(#tracking-editor[open]) {
   .editor .editor-notes {
     max-width:none
   }
-  .editor label,.editor-status-field>label {
+  .editor label,.editor .editor-field-label {
     font-size:var(--type-label-size)
   }
-  .editor label input,.editor label textarea,.editor-status-trigger {
+  .editor label input,.editor label textarea,.editor .editor-notes textarea,.editor-status-trigger {
     font-size:var(--type-control-size)
   }
 }

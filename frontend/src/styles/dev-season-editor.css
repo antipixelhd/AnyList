@@ -86,7 +86,7 @@
 .season-preview-editor .sp-date-actions .sp-text{font-size:1.1rem;min-height:36px;color:var(--blue)}
 .sp-date-actions>[data-date-source]{margin-left:auto;color:var(--muted);font-size:1.1rem}
 .sp-inline-row{grid-template-columns:44px minmax(0,1fr) 76px 230px;padding:10px 0}
-.sp-date-inline>label{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+.sp-date-inline>.editor-field-label{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
 .sp-date-inline .calendar-input{margin-top:0}
 .sp-date-inline .sp-date-actions{min-height:0}
 .sp-date-inline .sp-date-actions>[data-today],.sp-date-inline .sp-date-actions>[data-date-source]{display:none}
@@ -121,7 +121,7 @@
 .sp-finish-panel[popover]:not(:popover-open){display:none}
 @starting-style{.sp-finish-panel[popover]:popover-open{opacity:0;transform:translateY(4px)}}
 .sp-finish-date-row{display:grid;grid-template-columns:minmax(84px,1fr) minmax(0,220px);align-items:center;gap:14px;min-height:50px;border-radius:5px}
-.sp-finish-date-row>label{display:flex;align-items:center;gap:9px;white-space:nowrap;color:var(--text);font-size:1.3rem}
+.sp-finish-date-row>.editor-field-label{display:flex;align-items:center;gap:9px;white-space:nowrap;color:var(--text);font-size:1.3rem}
 .sp-finish-state{width:5px;height:5px;border-radius:50%;background:#50687b;flex:none}
 .sp-finish-date-row[data-completed=true] .sp-finish-state{background:#78d5ad}
 .sp-finish-date-row .sp-date-inline{min-width:0}
@@ -176,7 +176,7 @@
   .sp-inline-row .sp-date-control{gap:0}.sp-inline-row .sp-date-actions{padding-left:0}
   .sp-finish-expansion{width:calc(200% + 15px);margin-left:calc(-100% - 15px)}
   .sp-finish-panel-inner{padding:10px 12px 12px}.sp-finish-date-row{grid-template-columns:80px minmax(0,1fr);gap:10px}
-  .sp-finish-date-row>label{font-size:1.2rem;gap:7px}.sp-finish-date-row .sp-date-control{gap:0}
+  .sp-finish-date-row>.editor-field-label{font-size:1.2rem;gap:7px}.sp-finish-date-row .sp-date-control{gap:0}
   .sp-rating-row{grid-template-columns:36px minmax(0,1fr) 62px;min-height:60px}
   .sp-drawer-body{grid-template-columns:80px minmax(0,1fr);gap:10px 16px;padding-left:4px;padding-right:0}
   .sp-season-drawer>summary{gap:12px;padding:0 4px}.sp-drawer-date{font-size:1.1rem}
