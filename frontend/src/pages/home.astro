@@ -60,11 +60,11 @@ const upcomingSeasonCards=upcomingSeasons.map((entry:any)=>({
     <section class="upcoming-releases" aria-labelledby="upcoming-releases-heading" data-upcoming-releases>
       <div class="section-heading"><h2 id="upcoming-releases-heading">Upcoming releases</h2></div>
       {upcomingSeasonCards.length ? <div class="series-progress-grid upcoming-releases-grid" data-upcoming-grid>{upcomingSeasonCards.map((entry:any)=><article class="progress-card upcoming-season-card" data-detail-title={entry.title} data-detail-kind="series" data-upcoming-card data-media-id={entry.id} data-season-number={entry.seasonNumber} data-release-date={entry.releaseDate} data-season-poster={entry.season_poster_path||''} data-artwork-fallback={String(entry.artworkFallback)} data-artwork-retry={String(entry.artwork_retry===true)}>
-        <a class="progress-card-poster" href={`/title/${entry.id}`} aria-label={`View ${entry.title}, Season ${entry.seasonNumber}`}>
+        <a class="progress-card-poster" href={`/title/${entry.id}`} aria-label={`View ${entry.title}, Season ${entry.seasonNumber}`} aria-describedby={`upcoming-details-${entry.id}-${entry.seasonNumber}`}>
           {entry.artwork?.src?<img src={entry.artwork.src} srcset={entry.artwork.srcset} sizes={entry.artwork.sizes} alt="" loading="lazy"/>:<span class="upcoming-poster-placeholder" aria-hidden="true">Season {entry.seasonNumber}</span>}
         </a>
-        <div class="progress-card-details" aria-label={`${entry.title}: Season ${entry.seasonNumber}`}>
-          <a class="progress-card-title" href={`/title/${entry.id}`}>{entry.title}: Season {entry.seasonNumber}</a>
+        <div class="progress-card-details" id={`upcoming-details-${entry.id}-${entry.seasonNumber}`}>
+          <span class="progress-card-title">{entry.title}: Season {entry.seasonNumber}</span>
           <span class="upcoming-release-date">Release date: <LocalDateTime value={entry.releaseDate}/></span>
           <strong class="upcoming-release-countdown" data-upcoming-countdown>Countdown unavailable</strong>
         </div>
@@ -144,12 +144,8 @@ function initializeHomeProgress() {
     if(expected!==gameShelf.dataset.playingRevisions)await refreshPanels();
   }});
 
-  const positionDetails = () => document.querySelectorAll<HTMLElement>('.series-progress-grid').forEach(cardGrid => cardGrid.querySelectorAll<HTMLElement>('.progress-card').forEach(card => {
-    if(card.hasAttribute('data-progress-card')){placeProgressCardDetails(card);return;}
-    const right = card.getBoundingClientRect().right;
-    const detailsWidth = card.querySelector<HTMLElement>('.progress-card-details')?.getBoundingClientRect().width || 290;
-    card.classList.toggle('details-flipped', right + 16 + detailsWidth > window.innerWidth - 20);
-  }));
+  const positionDetails = () => document.querySelectorAll<HTMLElement>('.series-progress-grid .progress-card')
+    .forEach(card=>placeProgressCardDetails(card));
   positionDetails();
   window.addEventListener('resize', positionDetails, {signal});
 
@@ -176,9 +172,9 @@ function initializeHomeProgress() {
     const today = localToday();
     const releaseDay = Date.parse(`${date}T00:00:00Z`);
     const todayDay = Date.parse(`${today}T00:00:00Z`);
-    if (!Number.isFinite(releaseDay)) { output.textContent = 'Countdown unavailable'; return; }
     const days = Math.ceil((releaseDay - todayDay) / 86_400_000);
-    output.textContent = days === 0 ? 'Releases today' : days > 0 ? `Releases in ${days} ${days === 1 ? 'day' : 'days'}` : 'Release date passed';
+    output.textContent = !Number.isFinite(days) ? 'Countdown unavailable' : days === 0 ? 'Releases today'
+      : days > 0 ? `Releases in ${days} ${days === 1 ? 'day' : 'days'}` : 'Release date passed';
   });
   updateCountdowns();
   updateUpcomingCountdowns();
@@ -210,11 +206,7 @@ function initializeHomeProgress() {
     button.disabled = !canIncrement;
     button.title = canIncrement ? 'Mark next episode watched' : caughtUp ? 'Caught up' : 'Progress unavailable';
     const titleLink = card.querySelector<HTMLElement>('.progress-card-title')!;
-    const nextTitle=updated.title&&(season?`${updated.title} - ${season.name}`:updated.title);
-    if(nextTitle&&nextTitle!==titleLink.textContent){
-      titleLink.textContent=nextTitle;
-      placeProgressCardDetails(card);
-    }
+    if(updated.title)titleLink.textContent=season?`${updated.title} - ${season.name}`:updated.title;
     const title=titleLink.textContent||'this series';
     button.setAttribute('aria-label', canIncrement ? `Mark next episode of ${title} watched` : caughtUp ? `${title} is caught up` : `Progress unavailable for ${title}`);
     let plus = button.querySelector<HTMLElement>('.progress-card-plus');

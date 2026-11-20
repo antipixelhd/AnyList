@@ -64,8 +64,11 @@
   width:85px;
   height:115px
 }
-.progress-card:is(:hover,:focus-within) {
+.progress-card:focus-within {
   z-index:4
+}
+.progress-card:hover {
+  z-index:5
 }
 .progress-card-poster {
   position:absolute;
@@ -170,7 +173,8 @@
   top:0;
   left:calc(100% + 16px);
   display:flex;
-  width:min(290px,calc(100vw - 150px));
+  width:23rem;
+  max-width:var(--progress-card-side-space,calc(100vw - 40px));
   min-height:100%;
   flex-direction:column;
   align-items:flex-start;
@@ -179,28 +183,16 @@
   opacity:0;
   pointer-events:none;
   visibility:hidden;
-  transition:opacity var(--progress-card-fade),visibility var(--progress-card-fade)
-}
-.progress-card:not([data-progress-card]):is(:hover,:focus-within) .progress-card-details {
-  opacity:1;
-  pointer-events:auto;
-  visibility:visible
-}
-.progress-card[data-progress-card] .progress-card-details {
-  width:max-content;
-  min-width:min(12rem,var(--progress-card-side-space,100vw));
-  max-width:min(23rem,var(--progress-card-side-space,100vw));
-  overflow-wrap:anywhere;
-  transition:none
+  overflow-wrap:anywhere
 }
 @media(hover:hover) {
-  .progress-card[data-progress-card]:hover .progress-card-details {
+  .progress-card:hover .progress-card-details {
     opacity:1;
     visibility:visible
   }
 }
 @media(hover:hover) and (prefers-reduced-motion:no-preference) {
-  .progress-card[data-progress-card]:hover .progress-card-details {
+  .progress-card:hover .progress-card-details {
     transition:opacity var(--progress-card-fade)
   }
 }
@@ -222,9 +214,6 @@
   color:var(--bright);
   font-size:var(--type-panel-size);
   line-height:1.15
-}
-.progress-card-title:hover,.progress-card-title:focus-visible {
-  color:var(--blue)
 }
 .progress-card-progress-label {
   margin-top:auto;
@@ -595,9 +584,6 @@
   .series-progress-grid {
     gap:18px;
     padding:18px
-  }
-  .progress-card-details {
-    width:min(290px,calc(100vw - 150px))
   }
   .event-cover {
     width:82px;
