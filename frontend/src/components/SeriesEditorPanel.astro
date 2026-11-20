@@ -178,7 +178,7 @@ import Icon from './Icon.astro';
   .series-progress-release { color:var(--muted); font-size:var(--type-label-size); white-space:nowrap; }
   .series-progress-row[data-unreleased] { grid-template-columns:minmax(0,1fr) auto; gap:12px; }
   .series-progress-picker button:is(:hover,:focus-visible):not(:disabled) { outline:none; color:var(--blue); }
-  .series-progress-picker button:focus-visible { text-decoration:underline; }
+  .series-progress-picker button:focus-visible:not(.series-progress-counter) { text-decoration:underline; }
   .series-progress-count {
     position:relative; display:grid; align-items:center; min-height:36px; min-inline-size:24px;
     font-variant-numeric:tabular-nums; white-space:nowrap;
