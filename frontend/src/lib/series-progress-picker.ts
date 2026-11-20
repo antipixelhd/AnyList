@@ -122,7 +122,7 @@ export function setupSeriesProgressPicker(panel: HTMLElement, editor: HTMLDialog
     scroll.toggleAttribute('data-fade-bottom', scroll.scrollHeight - scroll.clientHeight - scroll.scrollTop > 1);
   };
   const reposition = () => {
-    if (isPopover()) placeDropdown(trigger, picker, 364, true);
+    if (isPopover()) placeDropdown(trigger, picker, 400, true);
     updateFades();
   };
   const syncExpanded = () => trigger.setAttribute('aria-expanded', String(picker.open || isPopover()));
