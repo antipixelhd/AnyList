@@ -8,8 +8,10 @@ import SeriesEditorPanel from './SeriesEditorPanel.astro';
 ---
 <dialog class="editor" id="tracking-editor" aria-labelledby="editor-title" data-motion-static>
   <div class="editor-hero">
-    <img id="editor-backdrop" class="editor-backdrop" alt="" />
-    <div class="editor-hero-shade"></div>
+    <div class="editor-artwork" aria-hidden="true">
+      <img id="editor-backdrop" class="editor-backdrop" alt="" />
+      <div class="editor-hero-shade"></div>
+    </div>
     <img id="editor-poster" class="editor-poster" alt="" />
     <div class="editor-heading"><span id="editor-media-type">Entry</span><h2 id="editor-title">Edit entry</h2></div>
     <div class="editor-hero-actions">

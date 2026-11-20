@@ -14,8 +14,10 @@ const integrated = design==='popover' || design==='expand';
 <!-- Fixture version of TrackingEditor: the same shared controls, classes and field order. -->
 <dialog class="editor season-preview-editor" id="season-preview-editor" aria-labelledby="sp-editor-title" data-motion-static data-design={design}>
   <div class="editor-hero">
-    <img class="editor-backdrop" data-editor-backdrop alt=""/>
-    <div class="editor-hero-shade"></div>
+    <div class="editor-artwork" aria-hidden="true">
+      <img class="editor-backdrop" data-editor-backdrop alt=""/>
+      <div class="editor-hero-shade"></div>
+    </div>
     <img class="editor-poster" data-editor-poster alt=""/>
     <div class="editor-heading"><span data-editor-kind>TV series</span><h2 id="sp-editor-title">Edit entry</h2></div>
     <div class="editor-hero-actions">

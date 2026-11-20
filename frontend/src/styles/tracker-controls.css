@@ -288,6 +288,12 @@
   overflow:visible;
   background:linear-gradient(135deg,#263d52,#172638)
 }
+.editor-artwork {
+  position:absolute;
+  inset:0;
+  overflow:hidden;
+  pointer-events:none
+}
 .editor-backdrop {
   position:absolute;
   inset:0;
@@ -297,7 +303,8 @@
 }
 .editor-hero-shade {
   position:absolute;
-  inset:0;
+  /* Overscan within the shared clip so fractional rasterization cannot expose raw artwork. */
+  inset:-1px;
   background:linear-gradient(90deg,#172435e8 0%,#172435aa 55%,#172435d9 100%)
 }
 .editor-poster {
