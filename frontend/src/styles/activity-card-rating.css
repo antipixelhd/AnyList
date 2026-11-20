@@ -77,7 +77,7 @@
   .season-score-rows::-webkit-scrollbar-button{display:none}
 }
 @media(hover:hover) and (min-width:701px){
-  .activity-rating[data-rating-breakdown]:is(:has([aria-expanded="true"]),:not([data-rating-dismissed]):hover) .season-score-breakdown{
+  .activity-rating[data-rating-breakdown]:is(:has([aria-expanded="true"]),[data-rating-hover]:not([data-rating-dismissed]):hover) .season-score-breakdown{
     visibility:visible;opacity:1;transform:none;
   }
 }

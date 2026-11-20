@@ -6,6 +6,7 @@ export function mountSeasonRatings(signal:AbortSignal,dialog:HTMLDialogElement){
   const toggle=`${breakdown} [data-season-rating-toggle]`;
   const scoresSelector='[data-season-rating-scores]';
   const compact=matchMedia('(max-width:700px), (hover:none)');
+  let hoverTimer:ReturnType<typeof setTimeout>|undefined;
   const dialogScores=dialog.querySelector<HTMLElement>('[data-season-rating-dialog-scores]')!;
   const close=()=>document.querySelectorAll('[data-season-rating-toggle][aria-expanded="true"]').forEach(button=>button.setAttribute('aria-expanded','false'));
   function placeBreakdown(wrapper:HTMLElement){
@@ -18,14 +19,20 @@ export function mountSeasonRatings(signal:AbortSignal,dialog:HTMLDialogElement){
   }
   const positionOpenBreakdowns=()=>{
     if(!compact.matches&&!dialog.open)
-      document.querySelectorAll<HTMLElement>(`${breakdown}:is(:hover,:has([aria-expanded="true"]))`).forEach(placeBreakdown);
+      document.querySelectorAll<HTMLElement>(`${breakdown}:is([data-rating-hover]:hover,:has([aria-expanded="true"]))`).forEach(placeBreakdown);
   };
   window.addEventListener('scroll',positionOpenBreakdowns,{passive:true,signal});
   window.addEventListener('resize',positionOpenBreakdowns,{signal});
   document.addEventListener('pointerover',event=>{
     if(compact.matches||event.pointerType==='touch')return;
     const wrapper=(event.target as Element).closest<HTMLElement>(breakdown);
-    if(wrapper&&!wrapper.contains(event.relatedTarget as Node))placeBreakdown(wrapper);
+    if(!wrapper||wrapper.contains(event.relatedTarget as Node))return;
+    clearTimeout(hoverTimer);
+    hoverTimer=setTimeout(()=>{
+      if(compact.matches||dialog.open||!wrapper.matches(':hover')||wrapper.hasAttribute('data-rating-dismissed'))return;
+      placeBreakdown(wrapper);
+      wrapper.setAttribute('data-rating-hover','');
+    },300);
   },{signal});
   document.addEventListener('click',event=>{
     const target=event.target as Element;
@@ -55,7 +62,11 @@ export function mountSeasonRatings(signal:AbortSignal,dialog:HTMLDialogElement){
   },{signal});
   document.addEventListener('pointerout',event=>{
     const wrapper=(event.target as Element).closest<HTMLElement>(breakdown);
-    if(wrapper&&!wrapper.contains(event.relatedTarget as Node))delete wrapper.dataset.ratingDismissed;
+    if(wrapper&&!wrapper.contains(event.relatedTarget as Node)){
+      clearTimeout(hoverTimer);
+      wrapper.removeAttribute('data-rating-hover');
+      delete wrapper.dataset.ratingDismissed;
+    }
   },{signal});
   document.addEventListener('focusin',event=>{
     const target=event.target as Element;
@@ -77,7 +88,10 @@ export function mountSeasonRatings(signal:AbortSignal,dialog:HTMLDialogElement){
         wrapper.querySelector(toggle)?.setAttribute('aria-expanded','false');
     });
   },{signal});
-  signal.addEventListener('abort',()=>{if(dialog.open)dialog.close();},{once:true});
+  signal.addEventListener('abort',()=>{
+    clearTimeout(hoverTimer);
+    if(dialog.open)dialog.close();
+  },{once:true});
 }
 
 /** Populate the same rating control in refreshed home cards as SSR cards. */
