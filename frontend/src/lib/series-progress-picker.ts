@@ -147,9 +147,14 @@ export function setupSeriesProgressPicker(panel: HTMLElement, editor: HTMLDialog
   };
   syncMode();
 
-  trigger.addEventListener('click', () => {
-    if (trigger.hasAttribute('popovertarget')) return;
-    picker.showModal();
+  trigger.addEventListener('click', event => {
+    if (trigger.hasAttribute('popovertarget')) {
+      // Keep opening and placement in one script turn, including trusted drag-release clicks.
+      event.preventDefault();
+      if (isPopover()) {close();return;}
+      // The source option preserves native invoker focus order; older browsers ignore it.
+      (picker.showPopover as (options:{source:HTMLElement})=>void)({source:trigger});
+    } else picker.showModal();
     reposition();
     syncExpanded();
   }, {signal});
@@ -170,15 +175,6 @@ export function setupSeriesProgressPicker(panel: HTMLElement, editor: HTMLDialog
     }, {signal});
     picker.addEventListener('pointercancel', () => { backdropPointer = undefined; }, {signal});
   }
-  picker.addEventListener('beforetoggle', event => {
-    if ((event as ToggleEvent).newState !== 'open') return;
-    // Opening finishes synchronously, but toggle is a later task and may miss first paint.
-    queueMicrotask(() => {
-      if (signal.aborted || (!picker.open && !isPopover())) return;
-      reposition();
-      syncExpanded();
-    });
-  }, {signal});
   picker.addEventListener('toggle', () => {
     if (!picker.open && !isPopover()) collapseZoom();
     reposition();
