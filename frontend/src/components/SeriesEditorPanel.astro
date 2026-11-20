@@ -142,13 +142,25 @@ import Icon from './Icon.astro';
   }
   .series-progress-picker [data-series-dismiss] { color:var(--muted); }
   .series-progress-scroll {
+    --progress-fade-size:24px;
     --fade-top:0px; --fade-bottom:0px;
+    --scrollbar-thumb:var(--muted); --scrollbar-track:transparent;
     overflow:auto; overscroll-behavior:contain; min-height:0; scrollbar-width:thin;
-    scroll-padding-block:16px;
+    scrollbar-gutter:stable;
+    scrollbar-color:var(--scrollbar-thumb) var(--scrollbar-track);
+    scroll-padding-block:var(--progress-fade-size);
     mask-image:linear-gradient(to bottom,transparent,black var(--fade-top),black calc(100% - var(--fade-bottom)),transparent);
   }
-  .series-progress-scroll[data-fade-top] { --fade-top:16px; }
-  .series-progress-scroll[data-fade-bottom] { --fade-bottom:16px; }
+  @supports not (scrollbar-gutter:stable) {
+    .series-progress-scroll { overflow-y:scroll; }
+  }
+  @supports not (scrollbar-color:auto) {
+    .series-progress-scroll::-webkit-scrollbar { width:6px; height:6px; }
+    .series-progress-scroll::-webkit-scrollbar-thumb { background:var(--scrollbar-thumb); border-radius:999px; }
+    .series-progress-scroll::-webkit-scrollbar-track { background:var(--scrollbar-track); }
+  }
+  .series-progress-scroll[data-fade-top] { --fade-top:var(--progress-fade-size); }
+  .series-progress-scroll[data-fade-bottom] { --fade-bottom:var(--progress-fade-size); }
   .series-progress-rows { list-style:none; margin:0; padding:5px 16px; }
   .series-progress-row {
     display:grid; grid-template-columns:minmax(66px,1fr) minmax(36px,1.8fr) minmax(56px,.85fr) 30px 30px;

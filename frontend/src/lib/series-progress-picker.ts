@@ -245,7 +245,8 @@ export function setupSeriesProgressPicker(panel: HTMLElement, editor: HTMLDialog
       reposition();
       const visible = scroll.getBoundingClientRect();
       const bottom = detail.getBoundingClientRect().bottom;
-      scroll.scrollTop += Math.max(0, bottom + 14 - visible.bottom);
+      const padding = parseFloat(getComputedStyle(scroll).scrollPaddingBottom) || 0;
+      scroll.scrollTop += Math.max(0, bottom + padding - visible.bottom);
       if (focus) detail.querySelector<HTMLInputElement>('input')!.focus({preventScroll: true});
     } else reposition();
   }
