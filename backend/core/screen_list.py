@@ -110,7 +110,8 @@ async def rows_for_profile(db, user_id, viewer, owner, scope: ScreenScope, ids=N
         if media.media_type == MediaType.movie:
             entry['progress'] = int(bool(entry['progress'] or entry['status'] == 'completed' or media.id in watched_movies))
         else:
-            project_series(entry, media, history(media.tmdb_data or {}), today, owner)
+            project_series(entry, media, history(media.tmdb_data or {}), today, owner,
+                           latest_activity=row[0].latest_episode_activity)
     if owner:
         from core.tracking_editor import attach_editor_context
         await attach_editor_context(db, viewer, entries, media_rows=[row[1] for row in loaded])
@@ -138,7 +139,7 @@ async def rows_for_profile(db, user_id, viewer, owner, scope: ScreenScope, ids=N
     return [by_id[identifier] for identifier in dict.fromkeys(ids) if identifier in by_id]
 
 
-def project_series(entry, media, episodes, today, owner):
+def project_series(entry, media, episodes, today, owner, *, latest_activity=None):
     data = media.tmdb_data or {}
     release = EpisodeRelease(media.tvdb_air_schedule, today=today)
     pointer = data.get('last_episode_to_air') or {}
@@ -168,6 +169,24 @@ def project_series(entry, media, episodes, today, owner):
     last_watched = next((row for row in reversed(released) if row.watched), None)
     entry['season_position'] = f'S{last_watched.season_number}E{last_watched.episode_number}' if last_watched else None
     entry.update(tracking_projection.release_annotations(released, watched, entry['status']))
+    if owner and entry['status'] == 'watching':
+        active_id = (latest_activity or {}).get('episode_id')
+        active = next((row for row in released if row.id == active_id), None)
+        active = active or last_watched or next(iter(released), None)
+        if active:
+            from core.media_images import tmdb_image_url
+            number = active.season_number
+            members = [row for row in released if row.season_number == number]
+            season = next((item for item in data.get('seasons') or [] if isinstance(item, dict)
+                           and item.get('season_number') == number), {})
+            next_watch = next((row for row in released if row.season_number >= number and not row.watched), None)
+            last = next((row for row in reversed(members) if row.watched), None)
+            entry['progress_season'] = {
+                'number': number, 'name': (season.get('name') or '').strip() or f'Season {number}',
+                'poster': tmdb_image_url(season.get('poster_path')), 'watched': sum(row.watched for row in members),
+                'released': len(members), 'position': f'S{number} E{last.episode_number if last else 0}',
+                'next_watch_id': next_watch.id if next_watch else None,
+            }
 
 
 def visible_seasons(groups, metadata, watched_ids, scores, today, catalogue_complete, *, release=None,

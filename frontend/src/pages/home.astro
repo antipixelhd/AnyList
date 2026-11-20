@@ -40,10 +40,9 @@ const playingGamesTotal=gamesResult.status==='fulfilled'?gamesResult.value.total
 const seriesCards=seriesInProgress.map((entry:any)=>({
   ...entry,
   airing:entry.currently_airing===true,
-  canIncrement:entry.released_episodes!==undefined&&entry.progress<entry.released_episodes,
-  caughtUp:entry.released_episodes!==undefined&&entry.progress>=entry.released_episodes,
-  latest:entry.latest_released_position?.replace(/(S\d+)(E\d+)/,'$1 $2')||'',
-  artwork:responsiveArtwork(entry.poster,{size:'w185',sizes:'85px',route:imageRoute}),
+  canIncrement:entry.progress_season?!!entry.progress_season.next_watch_id:entry.released_episodes!==undefined&&entry.progress<entry.released_episodes,
+  caughtUp:entry.progress_season? !entry.progress_season.next_watch_id:entry.released_episodes!==undefined&&entry.progress>=entry.released_episodes,
+  artwork:responsiveArtwork(entry.progress_season?.poster||entry.poster,{size:'w185',sizes:'85px',route:imageRoute}),
 }));
 const upcomingSeasonCards=upcomingSeasons.map((entry:any)=>({
   ...entry,
@@ -88,7 +87,8 @@ const upcomingSeasonCards=upcomingSeasons.map((entry:any)=>({
 </Tracker>
 
 <script>
-import {localToday,timestamp} from '../lib/date-time';
+import {calendarDate,localToday,timestamp} from '../lib/date-time';
+import {applyResponsiveArtwork} from '../lib/responsive-artwork';
 import {startVisibleRefresh, type VisibleRefreshHandle} from '../lib/visible-refresh';
 import {createHomePanelRefresh} from '../lib/home-panel-refresh';
 import {reconcileHomePanel} from '../lib/home-panel-reconcile';
@@ -154,13 +154,18 @@ function initializeHomeProgress() {
   const updateCountdowns = () => grid.querySelectorAll<HTMLElement>('[data-progress-card]').forEach(card => {
     const output = card.querySelector<HTMLElement>('[data-countdown]');
     const airAt = timestamp(card.dataset.nextAirAt);
-    const date = airAt ? localToday(airAt) : card.dataset.nextAir;
-    if (!output || !date) return;
+    if (!output) return;
+    if (airAt) {
+      const minutes = Math.ceil((airAt.getTime()-Date.now())/60_000);
+      const parts = [Math.floor(minutes/1440), Math.floor(minutes/60)%24, minutes%60];
+      output.textContent = minutes<=0?'':parts.map((value,index)=>value?`${value}${'dhm'[index]}`:'').filter(Boolean).join(' ');
+      return;
+    }
+    const releaseDay = calendarDate(card.dataset.nextAir);
+    if (!releaseDay) {output.textContent='';return;}
     const today = localToday();
-    if (date < today || (airAt && airAt.getTime() <= Date.now())) { output.textContent = 'Schedule updating'; return; }
-    if (date === today) { output.textContent = 'Next episode today'; return; }
-    const days = Math.round((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000);
-    output.textContent = `Next episode in ${days}d`;
+    const days = (releaseDay.getTime()-calendarDate(today)!.getTime())/86_400_000;
+    output.textContent = days===0?'Today':days>0?`${days}d`:'';
   });
   const updateUpcomingCountdowns = () => document.querySelectorAll<HTMLElement>('[data-upcoming-card]').forEach(card => {
     const output = card.querySelector<HTMLElement>('[data-upcoming-countdown]');
@@ -181,39 +186,47 @@ function initializeHomeProgress() {
   signal.addEventListener('abort', () => window.clearInterval(upcomingCountdownTimer), {once:true});
 
   const syncCardProgress = (card:HTMLElement, updated:any) => {
+    const season=updated.progress_season;
+    if(card.dataset.seasonScoped==='true'&&!season)return;
     const progress = Number(updated.progress ?? card.dataset.progress ?? 0);
     const hasReleased = updated.released_episodes != null || card.dataset.released !== '';
     const released = Number(updated.released_episodes ?? card.dataset.released ?? 0);
-    const canIncrement = hasReleased && released > progress;
+    const canIncrement = season?!!season.next_watch_id:hasReleased && released > progress;
     const caughtUp = hasReleased && !canIncrement;
     card.dataset.progress = String(progress);
     if (hasReleased && Number.isFinite(released)) card.dataset.released = String(released);
     card.dataset.seasonPosition = updated.season_position || '';
-    card.querySelector<HTMLElement>('[data-current-position]')!.textContent = updated.season_position || String(progress);
-    card.querySelector<HTMLElement>('[data-progress-count]')!.textContent = String(progress);
-    card.querySelector<HTMLElement>('[data-released-count]')!.textContent = hasReleased ? String(released) : '?';
-    card.querySelector<HTMLElement>('[data-episodes-behind]')!.textContent = canIncrement
-      ? `${released-progress} ${released-progress===1?'episode':'episodes'} behind` : caughtUp ? 'Caught up' : 'Progress unavailable';
+    card.dataset.seasonScoped=String(!!season);
+    card.dataset.nextWatch=String(season?.next_watch_id||'');
+    card.querySelector<HTMLElement>('[data-current-position]')!.textContent = season?.position || updated.season_position || String(progress);
+    card.querySelector<HTMLElement>('[data-progress-count]')!.textContent = String(season?.watched??progress);
+    card.querySelector<HTMLElement>('[data-released-count]')!.textContent = String(season?.released??(hasReleased?released:'?'));
+    const behind=season?season.released-season.watched:released-progress;
+    card.querySelector<HTMLElement>('[data-episodes-behind]')!.textContent = behind>0
+      ? `${behind} ${behind===1?'episode':'episodes'} behind` : hasReleased ? 'Caught up' : 'Progress unavailable';
     card.querySelector<HTMLElement>('[data-catchup-bar]')?.setAttribute('data-caught-up', String(caughtUp));
     card.querySelector<HTMLElement>('[data-catchup-bar]')?.setAttribute('data-known', String(hasReleased));
     const button = card.querySelector<HTMLButtonElement>('[data-progress-action]')!;
     button.dataset.nextProgress = String(progress + 1);
     button.disabled = !canIncrement;
     button.title = canIncrement ? 'Mark next episode watched' : caughtUp ? 'Caught up' : 'Progress unavailable';
-    const title = card.querySelector<HTMLElement>('.progress-card-title')?.textContent || 'this series';
+    const titleLink = card.querySelector<HTMLElement>('.progress-card-title')!;
+    if(updated.title)titleLink.textContent=season?`${updated.title} - ${season.name}`:updated.title;
+    const title=titleLink.textContent||'this series';
     button.setAttribute('aria-label', canIncrement ? `Mark next episode of ${title} watched` : caughtUp ? `${title} is caught up` : `Progress unavailable for ${title}`);
     let plus = button.querySelector<HTMLElement>('.progress-card-plus');
     if (canIncrement && !plus) {
       plus = document.createElement('span'); plus.className = 'progress-card-plus'; plus.setAttribute('aria-hidden','true'); plus.textContent = '+'; button.append(plus);
     } else if (!canIncrement) plus?.remove();
-    if ('latest_released_position' in updated) {
-      const latest = String(updated.latest_released_position || '').replace(/(S\d+)(E\d+)/,'$1 $2');
-      card.dataset.latestPosition = latest;
-      const label = card.querySelector<HTMLElement>('[data-latest-episode]');
-      if (label) label.textContent = latest || 'Latest episode';
-    }
     if ('next_release_date' in updated) card.dataset.nextAir = updated.next_release_date || '';
     if ('next_release_at' in updated) card.dataset.nextAirAt = updated.next_release_at || '';
+    if(!('poster' in updated))return;
+    const artwork=season?.poster||updated.poster||'';
+    const poster=card.querySelector<HTMLImageElement>('.progress-card-poster img');
+    if(poster&&artwork!==poster.dataset.artworkPath){
+      applyResponsiveArtwork(poster,artwork,{size:'w185',sizes:'85px',route:'direct'});
+      poster.dataset.artworkPath=artwork;
+    }
   };
 
   document.addEventListener('anylist:editor-state', event => {
@@ -239,14 +252,27 @@ function initializeHomeProgress() {
     }
   }, {signal});
 
-  grid.querySelectorAll<HTMLButtonElement>('[data-progress-action]').forEach(button => button.addEventListener('click', () => {
+  const incrementing=new Set<HTMLButtonElement>();
+  grid.querySelectorAll<HTMLButtonElement>('[data-progress-action]').forEach(button => button.addEventListener('click', async () => {
     const title = editorStore.find(Number(button.dataset.progressAction));
-    if (!title || button.disabled) return;
+    if (!title || button.disabled || incrementing.has(button)) return;
+    incrementing.add(button);
     const progress = Number(title.entry?.progress ?? 0) + 1;
-    void editorStore.write(title,{progress}).catch(error => {
+    try {
+      const card=button.closest<HTMLElement>('[data-progress-card]')!;
+      const nextId=Number(card.dataset.nextWatch);
+      const finishesSeries=!card.classList.contains('airing')&&Number(card.dataset.released)-Number(card.dataset.progress)===1;
+      if(nextId&&!finishesSeries){
+        const summary=await editorStore.prepareSeries(title.id!,signal);
+        const next=summary.seasons.flatMap(season=>season.episodes).find(episode=>episode.id===nextId&&!episode.watched);
+        if(!next){void homeSeriesRefresh?.refresh();return;}
+        await editorStore.write(title,{series_editor:{order:summary.order,revision:summary.revision,
+          action:'episode',episode_id:next.id}},{progress});
+      }else await editorStore.write(title,{progress});
+    } catch(error) {
       if (signal.aborted) return;
       showActionFailure('progress', title.title, error);
-    });
+    } finally {incrementing.delete(button);}
   }, {signal}));
 
   const dashboard = document.querySelector<HTMLElement>('.home-dashboard');

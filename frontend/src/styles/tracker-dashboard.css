@@ -80,6 +80,7 @@
   height:100%;
   object-fit:cover
 }
+.progress-card-poster>img:not([src]) {visibility:hidden}
 .progress-card-airing-label {
   position:absolute;
   z-index:1;
@@ -102,6 +103,7 @@
 .progress-card-airing-label>span {
   font-size:var(--type-caption-size)
 }
+.progress-card-airing-label:has([data-countdown]:empty) {display:none}
 .progress-card-catchup {
   position:absolute;
   z-index:2;
@@ -144,8 +146,9 @@
   background:rgba(18,25,38,.96)
 }
 .progress-card-quick-action:disabled {
-  cursor:default
+  display:none
 }
+.progress-card.airing .progress-card-quick-action {bottom:5px}
 .progress-card-plus {
   color:var(--blue);
   font-size:var(--type-panel-size);
@@ -154,9 +157,8 @@
 .progress-card:is(:hover,:focus-within) .progress-card-quick-action {
   opacity:1
 }
-.progress-card:is(:hover,:focus-within) .progress-card-airing-label {
-  visibility:hidden;
-  opacity:0
+.progress-card:has(.progress-card-quick-action:enabled):is(:hover,:focus-within) .progress-card-airing-label {
+  bottom:33px
 }
 .progress-card-details {
   position:absolute;
@@ -616,6 +618,7 @@
   .progress-card-quick-action {
     opacity:1
   }
+  .progress-card:has(.progress-card-quick-action:enabled) .progress-card-airing-label {bottom:33px}
 }
 @media(prefers-reduced-motion:reduce) {
   .progress-card-airing-label,.progress-card-catchup,.progress-card-quick-action,.progress-card-details {
