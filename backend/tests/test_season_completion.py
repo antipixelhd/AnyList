@@ -277,6 +277,8 @@ class SeasonDatabaseTests(unittest.IsolatedAsyncioTestCase):
             db.add(WatchEvent(user_id=self.user_id, media_id=untouched_id, completed=True,
                 watched_at=datetime(2024, 1, 1)))
             await db.execute(delete(WatchEvent).where(WatchEvent.media_id.in_([first, fourth])))
+            entry = await db.scalar(select(TrackedEntry).where(TrackedEntry.media_id == self.series_id))
+            entry.latest_episode_activity = {'episode_id': third, 'completed': True, 'updated_at': '2024-01-01T00:00:00'}
             await db.commit()
 
         editor = f'/tracking/entry/{self.series_id}'
@@ -296,6 +298,8 @@ class SeasonDatabaseTests(unittest.IsolatedAsyncioTestCase):
         stale = await self.client.patch(editor, json={'confirm_rollback': True, 'series_editor': patch})
         self.assertEqual(stale.json()['detail']['code'], 'series_editor_changed')
         async with self.Session() as db:
+            entry = await db.scalar(select(TrackedEntry).where(TrackedEntry.media_id == self.series_id))
+            self.assertEqual(entry.latest_episode_activity['episode_id'], first)
             events = (await db.scalars(select(WatchEvent).where(WatchEvent.user_id == self.user_id,
                 WatchEvent.media_id.in_([first, second, third, fourth, untouched_id])))).all()
             self.assertEqual({event.media_id for event in events}, {first, second, untouched_id})

@@ -2431,12 +2431,16 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
         activity_season = series_context.positions.get(saved_activity.get('episode_id'), (None,))[0]
         stops_playback = (series_patch.season_statuses.get(activity_season) in ('paused', 'dropped', 'planning')
                           or 'status' in fields and entry.status != 'watching')
-        if stops_playback or saved_activity.get('episode_id') in removed_watched_ids:
+        if stops_playback:
             entry.latest_episode_activity = None
             playback_edited = bool(saved_activity)
-        elif observed_endpoint and not season_completion_action and (series_patch.action == 'episode'
-                or scoped_progress or series_patch.action == 'position' and entry.status == 'watching'):
+        elif (observed_endpoint and observed_endpoint not in removed_watched_ids and not season_completion_action
+                and (series_patch.action == 'episode' or scoped_progress
+                     or series_patch.action == 'position' and entry.status == 'watching')):
             playback_edited = remember_episode(entry, observed_endpoint, datetime.now(timezone.utc), completed=True)
+        elif saved_activity.get('episode_id') in removed_watched_ids:
+            entry.latest_episode_activity = None
+            playback_edited = bool(saved_activity)
         elif series_patch.season_statuses or series_patch.action == 'resume_season':
             number = (series_patch.season_number if series_patch.action == 'resume_season' else
                       next((number for number, state in series_patch.season_statuses.items() if state == 'watching'), None))
