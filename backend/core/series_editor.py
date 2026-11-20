@@ -10,7 +10,7 @@ from sqlalchemy import select
 from core.episode_release import EpisodeRelease
 from core.season_completion import is_released, membership_key, release_day, season_groups, watched_episode_ids
 from core.season_releases import parse_release_day
-from core.season_artwork import season_backdrop
+from core.season_artwork import stored_backdrop
 from models import Rating
 from models.seasons import SeasonTracking, SeriesSeason
 from models.tracking import TrackedEntry
@@ -235,7 +235,7 @@ class SeriesEditorContext:
 
 async def editor_context(db, media, user_id):
     positions = {}
-    data = await season_groups(db, media, user_id, display_positions=positions, include_placeholders=True, include_artwork=True)
+    data = await season_groups(db, media, user_id, display_positions=positions, include_placeholders=True)
     watched = await watched_episode_ids(db, user_id, list(positions))
     saved = (await db.execute(select(TrackedEntry.season_cursor, TrackedEntry.manual_season_completions, TrackedEntry.season_list_statuses)
         .where(TrackedEntry.user_id == user_id, TrackedEntry.media_id == media.id))).first()
@@ -356,7 +356,7 @@ async def editor_summary(db, media, user_id, context):
             'episodes': [{'id': ep.id, 'number': context.positions[ep.id][1], 'watched': ep.id in context.watched}
                 for ep in aired],
             'upcoming': [{'id': ep.id, 'number': context.positions[ep.id][1]} for ep in upcoming]}
-        if backdrop := season_backdrop(media.tmdb_data or {}, context.order, number, aired):
+        if backdrop := stored_backdrop(media.tmdb_data or {}, context.order, number):
             season['backdrop'] = backdrop
         if not season['episodes']:
             premiere = min((day for ep in upcoming if (day := release_day(ep)) is not None), default=None)

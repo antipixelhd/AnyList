@@ -132,7 +132,7 @@ def catalogue_members(data, episodes):
             or ep.id in imported or ep.imported_release]
 
 
-async def season_groups(db, media, user_id, *, display_positions=None, include_placeholders=False, include_artwork=False):
+async def season_groups(db, media, user_id, *, display_positions=None, include_placeholders=False):
     identities = []
     if media.tmdb_id:
         identities.append(Show.tmdb_id == media.tmdb_id)
@@ -147,8 +147,6 @@ async def season_groups(db, media, user_id, *, display_positions=None, include_p
         Media.show_id == show.id, Media.media_type == MediaType.episode, Media.season_number > 0)
     if include_placeholders:
         query = query.add_columns(episode_placeholder(Media).label('placeholder'))
-    if include_artwork:
-        query = query.add_columns(Media.poster_path)
     data = media.tmdb_data or {}
     episodes = catalogue_members(data, (await db.execute(query)).all())
     order = await db.scalar(select(UserShowEpisodeOrder.episode_order).where(

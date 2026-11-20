@@ -8,7 +8,7 @@ from core import tmdb, tvdb
 from core.descriptive_metadata import tvdb_fields, tmdb_fields
 from core.episode_release import EpisodeRelease, tvdb_schedule
 from core.identity import external_ids_from_tmdb
-from core.season_artwork import collect_backdrops
+from core.season_artwork import publish_season_artwork, refresh_tracked_season_artwork
 from core.tracking_episode_persistence import persist_tmdb_episodes
 from models import Media, Show
 from models.base import MediaType
@@ -210,9 +210,6 @@ async def hydrate_tracking_episodes(db, media, api_key=None, tvdb_api_key=None):
         air_metadata = {key: details[key] for key in ('status', 'last_episode_to_air', 'next_episode_to_air') if key in details}
         media.status = details.get('status') or media.status
         media.tmdb_data = {**(media.tmdb_data or {}), **tvdb_fields(details, media.tmdb_data), **air_metadata, 'seasons': details.get('seasons', []),
-            'tracking_season_backdrops': collect_backdrops(
-                ((item['season_number'], item['episode_number'], item.get('air_date'), item.get('image_url')) for item in fetched),
-                EpisodeRelease(media.tvdb_air_schedule)),
             'tracking_episode_ids': [item['tvdb_id'] for item in fetched],
             'tracking_catalogue_provider': 'tvdb',
             'tracking_episode_details_version': EPISODE_DETAILS_VERSION,
@@ -237,9 +234,6 @@ async def hydrate_tracking_episodes(db, media, api_key=None, tvdb_api_key=None):
     air_metadata = {key: details[key] for key in ('status', 'last_episode_to_air', 'next_episode_to_air') if key in details}
     media.status = details.get('status') or media.status
     media.tmdb_data = {**(media.tmdb_data or {}), **tmdb_fields(details, media.tmdb_data), **air_metadata, 'seasons': seasons,
-        'tracking_season_backdrops': collect_backdrops(
-            ((number, item['episode_number'], item.get('air_date'), item.get('still_path')) for number, item in fetched),
-            EpisodeRelease(media.tvdb_air_schedule)),
         'tracking_episode_ids': [data['id'] for _, data in fetched],
         'tracking_episode_details_version': EPISODE_DETAILS_VERSION,
         'tracking_tvdb_airtime_checked': True,
@@ -248,7 +242,7 @@ async def hydrate_tracking_episodes(db, media, api_key=None, tvdb_api_key=None):
     return len(fetched)
 
 
-async def refresh_tracked_catalogues(db, api_key, now: datetime | None = None, tvdb_api_key=None):
+async def refresh_tracked_catalogues(db, api_key, now: datetime | None = None, tvdb_api_key=None, *, refresh_artwork=False):
     """Refresh stale episode catalogues shared by any tracked series.
 
     Active shows refresh daily. Ended/canceled shows refresh monthly, but the
@@ -265,6 +259,11 @@ async def refresh_tracked_catalogues(db, api_key, now: datetime | None = None, t
         .where(Media.media_type == MediaType.series, or_(Media.tmdb_id.isnot(None), Media.tvdb_id.isnot(None)))
         .order_by(Media.id)
     )).unique().all()
+    if refresh_artwork:
+        artwork = await refresh_tracked_season_artwork(rows, tvdb_api_key, now or datetime.now(timezone.utc))
+        if artwork:
+            await publish_season_artwork(db, artwork)
+            await db.commit()
     stats = {"refreshed": 0, "episodes": 0, "skipped": 0, "failed": 0}
     for media, show in rows:
         if show is not None and show.canonical_source == "tvdb" and not tvdb_api_key:
