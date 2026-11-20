@@ -251,6 +251,47 @@ class SeasonDatabaseTests(unittest.IsolatedAsyncioTestCase):
                           ('paused', season_row_id(self.series_id, 3))})
         self.assertFalse(next(row for row in page['results'] if row['status'] == 'paused')['list_season']['can_increment'])
 
+    async def test_batch_progress_preserves_watch_evidence_and_requires_a_current_revision(self):
+        first, second, third, fourth = self.episode_ids
+        async with self.Session() as db:
+            series = await db.get(Media, self.series_id)
+            series.tmdb_data = {**series.tmdb_data,
+                'tracking_episode_ids': [923011, 923012, 923021, 923022, 923031],
+                'seasons': [*series.tmdb_data['seasons'], {'season_number': 3, 'episode_count': 1}]}
+            existing = await db.get(Media, first)
+            untouched = Media(title='3.1', tmdb_id=923031, media_type=MediaType.episode,
+                show_id=existing.show_id, season_number=3, episode_number=1, release_date='2020-01-01')
+            db.add(untouched)
+            await db.flush()
+            untouched_id = untouched.id
+            db.add(WatchEvent(user_id=self.user_id, media_id=untouched_id, completed=True,
+                watched_at=datetime(2024, 1, 1)))
+            await db.execute(delete(WatchEvent).where(WatchEvent.media_id.in_([first, fourth])))
+            await db.commit()
+
+        editor = f'/tracking/entry/{self.series_id}'
+        summary = (await self.client.get(f'{editor}/series-editor')).json()
+        patch = {'order': summary['order'], 'revision': summary['revision'], 'season_progress': {'1': 2, '2': 0}}
+        invalid = await self.client.patch(editor, json={'confirm_rollback': True, 'series_editor': {
+            **patch, 'season_progress': {'1': 2, '2': 3}}})
+        self.assertEqual(invalid.status_code, 409, invalid.text)
+        denied = await self.client.patch(editor, json={'series_editor': patch})
+        self.assertEqual(denied.json()['detail']['code'], 'watch_rollback_required')
+        self.assertEqual((await self.client.get(f'{editor}/series-editor')).json()['revision'], summary['revision'])
+
+        saved = await self.client.patch(editor, json={'confirm_rollback': True, 'series_editor': patch})
+        self.assertEqual(saved.status_code, 200, saved.text)
+        self.assertEqual(saved.json()['progress'], 3)
+        self.assertEqual(saved.json()['status'], 'completed')
+        stale = await self.client.patch(editor, json={'confirm_rollback': True, 'series_editor': patch})
+        self.assertEqual(stale.json()['detail']['code'], 'series_editor_changed')
+        async with self.Session() as db:
+            events = (await db.scalars(select(WatchEvent).where(WatchEvent.user_id == self.user_id,
+                WatchEvent.media_id.in_([first, second, third, fourth, untouched_id])))).all()
+            self.assertEqual({event.media_id for event in events}, {first, second, untouched_id})
+            self.assertEqual({event.watched_at for event in events if event.media_id != first},
+                {datetime(2024, 1, 1)})
+
     async def test_replaying_earlier_episode_advances_resume_without_adding_watches(self):
         from core.nuvio_projection import build_progress_items
         from core.series_playback import activity_resume, remember_episode

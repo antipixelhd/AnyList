@@ -1,7 +1,7 @@
 """Focused catalogue and watch projection for the series editor."""
 import hashlib
 from datetime import date
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field
@@ -35,10 +35,16 @@ class SeriesEditorPatch(BaseModel):
     season_number: int | None = Field(default=None, gt=0)
     episode_count: int | None = Field(default=None, ge=0)
     progress_season: int | None = Field(default=None, gt=0)
+    season_progress: dict[Annotated[int, Field(gt=0)], Annotated[int, Field(ge=0)]] = Field(
+        default_factory=dict, max_length=250)
     season_statuses: dict[int, Literal['planning', 'watching', 'paused', 'dropped']] = Field(default_factory=dict, max_length=250)
     list_placement: Literal['season', 'series'] | None = None
     watch_date: date | None = None
     seasons: list[SeasonEdit] = Field(default_factory=list, max_length=250)
+
+    @property
+    def progress_seasons(self) -> set[int]:
+        return {self.progress_season} if self.progress_season is not None else set(self.season_progress)
 
 
 class SeriesEditorContext:
@@ -162,13 +168,8 @@ class SeriesEditorContext:
                 raise HTTPException(422, 'Choose the season whose progress is changing.')
             if patch.revision != self.revision or patch.order not in (None, self.order):
                 raise HTTPException(409, {'code': 'series_editor_changed', 'airing': airing})
-            members = [ep.id for ep in self.released if self.positions[ep.id][0] == patch.progress_season]
-            already_watched = [episode_id for episode_id in members if episode_id in self.watched]
-            unwatched = [episode_id for episode_id in members if episode_id not in self.watched]
-            # Lowering the count removes the highest watched numbers in this season.
-            kept = set((already_watched + unwatched)[:patch.episode_count])
-            observed = next((episode_id for episode_id in reversed(unwatched) if episode_id in kept), None)
-            return self.watched.difference(members) | kept, observed
+            desired, observed = self.apply_season_progress({patch.progress_season: patch.episode_count}, self.watched)
+            return desired, observed.get(patch.progress_season)
         if (patch.action or needs_progress) and (not self.released or patch.revision != self.revision):
             raise HTTPException(409, {'code': 'series_editor_changed', 'airing': airing})
         if needs_progress and status == 'completed' and airing and patch.action not in ('complete_previous', 'catch_up', 'position'):
@@ -197,6 +198,28 @@ class SeriesEditorContext:
             return set(ids) | self.watched, ids[-1] if self.watched else None
         return self.watched, None
 
+    def apply_season_progress(self, counts, baseline):
+        """Apply independent counts while retaining out-of-order watch evidence."""
+        members_by_season = {number: [] for number in counts}
+        for episode in self.released:
+            number = self.positions[episode.id][0]
+            if number in members_by_season:
+                members_by_season[number].append(episode.id)
+        desired, observed = set(baseline), {}
+        for number, count in counts.items():
+            members = members_by_season[number]
+            if not members or count > len(members):
+                raise HTTPException(409, 'Choose a released season and episode')
+            watched = [episode_id for episode_id in members if episode_id in self.watched]
+            unwatched = [episode_id for episode_id in members if episode_id not in self.watched]
+            added = unwatched[:max(0, count - len(watched))]
+            desired.difference_update(members)
+            desired.update(watched[:count])
+            desired.update(added)
+            if added:
+                observed[number] = added[-1]
+        return desired, observed
+
     def finish_targets(self, edits, series_finish=None):
         """Dates imply watched coverage, independently of the list status."""
         dates = {edit.season_number: edit.completion_date for edit in edits
@@ -222,9 +245,9 @@ async def editor_context(db, media, user_id):
 def update_season_statuses(entry, context, patch, desired, *, series_status=None):
     """Keep explicit list states alongside the season counts derived from watches."""
     statuses = dict(context.season_statuses)
-    if not statuses and entry.status == 'watching' and (patch.season_statuses or patch.progress_season):
+    if not statuses and entry.status == 'watching' and (patch.season_statuses or patch.progress_seasons):
         previous = context.next_progress_season() or context.progress_season()
-        if previous and previous != patch.progress_season:
+        if previous and previous not in patch.progress_seasons:
             statuses[str(previous)] = 'watching'
     statuses.update((str(number), status) for number, status in patch.season_statuses.items())
     if patch.action in ('delete_season', 'complete_season'):
@@ -238,10 +261,12 @@ def update_season_statuses(entry, context, patch, desired, *, series_status=None
         number = patch.season_number or context.progress_season()
         if number:
             statuses[str(number)] = series_status
-    if patch.progress_season and patch.episode_count and patch.progress_season not in patch.season_statuses:
-        statuses.setdefault(str(patch.progress_season), 'watching')
+    counts = {patch.progress_season: patch.episode_count} if patch.progress_season else patch.season_progress
+    for number, count in counts.items():
+        if count and number not in patch.season_statuses:
+            statuses.setdefault(str(number), 'watching')
     if desired is not None and patch.action not in ('delete_season', 'resume_season'):
-        affected = ({patch.progress_season} if patch.progress_season else
+        affected = (patch.progress_seasons if patch.progress_seasons and not (patch.action and not patch.progress_season) else
                     {context.positions[patch.episode_id][0]} if patch.action == 'episode' else
                     {number for number, _, _ in context.groups})
         for number, members, expected in context.groups:
