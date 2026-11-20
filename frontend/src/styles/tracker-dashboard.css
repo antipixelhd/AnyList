@@ -187,6 +187,9 @@
   visibility:visible
 }
 .progress-card[data-progress-card] .progress-card-details {
+  width:max-content;
+  min-width:min(12rem,var(--progress-card-side-space,100vw));
+  max-width:min(23rem,var(--progress-card-side-space,100vw));
   overflow-wrap:anywhere;
   transition:none
 }
@@ -194,6 +197,11 @@
   .progress-card[data-progress-card]:hover .progress-card-details {
     opacity:1;
     visibility:visible
+  }
+}
+@media(hover:hover) and (prefers-reduced-motion:no-preference) {
+  .progress-card[data-progress-card]:hover .progress-card-details {
+    transition:opacity var(--progress-card-fade)
   }
 }
 .progress-card.details-flipped .progress-card-details {

@@ -210,7 +210,11 @@ function initializeHomeProgress() {
     button.disabled = !canIncrement;
     button.title = canIncrement ? 'Mark next episode watched' : caughtUp ? 'Caught up' : 'Progress unavailable';
     const titleLink = card.querySelector<HTMLElement>('.progress-card-title')!;
-    if(updated.title)titleLink.textContent=season?`${updated.title} - ${season.name}`:updated.title;
+    const nextTitle=updated.title&&(season?`${updated.title} - ${season.name}`:updated.title);
+    if(nextTitle&&nextTitle!==titleLink.textContent){
+      titleLink.textContent=nextTitle;
+      placeProgressCardDetails(card);
+    }
     const title=titleLink.textContent||'this series';
     button.setAttribute('aria-label', canIncrement ? `Mark next episode of ${title} watched` : caughtUp ? `${title} is caught up` : `Progress unavailable for ${title}`);
     let plus = button.querySelector<HTMLElement>('.progress-card-plus');
