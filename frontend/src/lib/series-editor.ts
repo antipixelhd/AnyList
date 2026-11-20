@@ -3,6 +3,7 @@ import {setupEditorSelect} from './editor-select';
 import {editorStore, type EditorTitle} from './editor-store';
 import {bindProgressRanges, releaseDateLabel, setupSeriesProgressPicker, syncProgressRange} from './series-progress-picker';
 import {createProgressMotion} from './series-progress-motion';
+import {capNumberInput} from './scoreStepper';
 
 type Episode = {id:number; number:number; watched:boolean};
 type Season = {season_number:number; membership:string; name?:string|null; poster?:string|null; total:number;
@@ -280,6 +281,7 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     step(event.key==='ArrowUp'?1:-1);
   },{signal:page});
   input.addEventListener('input',()=>{
+    capNumberInput(input);
     const season=scopedSeason();
     if (!season || !input.validity.valid) return;
     previousCounts.delete(season.season_number);

@@ -6,6 +6,12 @@ export function nextStepperValue(value: number, direction: 1 | -1, increment: nu
 
 const bindings = new WeakMap<HTMLInputElement, AbortController>();
 
+/** Apply the live field maximum before native validity checks or draft updates. */
+export function capNumberInput(input: HTMLInputElement): void {
+  if (input.disabled || input.readOnly || input.max === '') return;
+  if (input.valueAsNumber > Number(input.max)) input.value = input.max;
+}
+
 /** Typed scores use tenths; their controls move by halves. Counts use their own step. */
 export function setupScoreSteppers(root: ParentNode, signal?: AbortSignal): void {
   root.querySelectorAll<HTMLElement>('[data-score-stepper], [data-number-stepper]').forEach(stepper => {
@@ -16,10 +22,7 @@ export function setupScoreSteppers(root: ParentNode, signal?: AbortSignal): void
     bindings.set(input, controller);
     signal?.addEventListener('abort', () => controller.abort(), {once:true, signal:controller.signal});
 
-    const capValue = () => {
-      if (input.disabled || input.readOnly || input.max === '') return;
-      if (input.valueAsNumber > Number(input.max)) input.value = input.max;
-    };
+    const capValue = () => capNumberInput(input);
     input.addEventListener('input', capValue, {signal:controller.signal});
     input.addEventListener('change', capValue, {signal:controller.signal});
 

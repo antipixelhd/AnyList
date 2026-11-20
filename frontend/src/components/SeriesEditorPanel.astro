@@ -92,7 +92,6 @@ import Icon from './Icon.astro';
     color:var(--text); font-size:var(--type-control-size); font-weight:var(--type-control-weight);
   }
   @supports (field-sizing:content) { .editor .series-episode-stepper [data-series-count] { width:auto; } }
-  .editor .series-episode-stepper [data-series-count]:focus-visible { color:var(--blue); }
   .series-episode-stepper [data-series-total] { white-space:nowrap; font-size:var(--type-caption-size); }
   .series-progress-trigger {
     position:relative; display:flex; align-items:center; justify-content:space-between; gap:8px;
@@ -100,7 +99,8 @@ import Icon from './Icon.astro';
     border:0; background:var(--field); color:var(--text); font:inherit; font-variant-numeric:tabular-nums;
     cursor:pointer;
   }
-  .series-progress-trigger:is(:focus-visible,[aria-expanded=true]) { outline:none; color:var(--blue); }
+  .series-progress-trigger:is(:focus-visible,[aria-expanded=true]) { outline:none; }
+  .series-progress-trigger:is(:focus-visible,[aria-expanded=true]) svg { color:var(--blue); }
   .series-progress-trigger strong { font-weight:var(--type-control-weight); }
   .series-progress-trigger:disabled { cursor:default; }
   .series-progress-detail { display:flex; align-items:center; gap:6px; color:var(--muted); font-size:var(--type-caption-size); }
@@ -177,7 +177,7 @@ import Icon from './Icon.astro';
   .series-progress-zoom .series-range { --track-height:5px; --thumb-size:10px; }
   .series-progress-release { color:var(--muted); font-size:var(--type-label-size); white-space:nowrap; }
   .series-progress-row[data-unreleased] { grid-template-columns:minmax(0,1fr) auto; gap:12px; }
-  .series-progress-picker button:is(:hover,:focus-visible):not(:disabled) { outline:none; color:var(--blue); }
+  .series-progress-picker button:is(:hover,:focus-visible):not(:disabled):not(.series-progress-counter) { outline:none; color:var(--blue); }
   .series-progress-picker button:focus-visible { text-decoration:underline; }
   .series-progress-picker .series-progress-counter { justify-self:end; min-height:36px; padding-inline:2px; font-variant-numeric:tabular-nums; white-space:nowrap; }
   .series-progress-picker .series-progress-counter[data-complete] { color:#72d74f; }
