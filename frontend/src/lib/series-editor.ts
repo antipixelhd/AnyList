@@ -119,9 +119,9 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     const unavailable=loadFailed||Boolean(scope&&!current&&summary&&!summary.pending);
     find('loading').textContent=unavailable?'Progress is unavailable.':summary&&!summary.pending?'No released episodes.':'Loading progress…';
     find('retry').hidden=!unavailable;
-    find('content').hidden=!hasProgress;
-    const label=panel.querySelector('label')!;
     const available=current?.episodes.length??0;
+    find('content').hidden=!hasProgress||Boolean(current&&!available);
+    const label=panel.querySelector('label')!;
     label.textContent=scope?(current&&!available?'Release date':'Episode progress'):'Progress';
     label.htmlFor=scope?(available?input.id:''):find('trigger').id;
     find('trigger').hidden=Boolean(scope);

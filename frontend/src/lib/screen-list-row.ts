@@ -4,6 +4,7 @@ import {applyResponsiveArtwork} from './responsive-artwork';
 import {releaseAnnotation} from './release-annotation';
 import {compactListProgress,scoreLabel} from './tracker';
 import {setFeedbackText} from './state-feedback';
+import {paintEntryAvailability} from './entry-availability';
 
 const coverOptions={size:'w342',sizes:'(max-width:650px) 32px, 42px',route:'direct' as const};
 
@@ -59,8 +60,7 @@ export function paintScreenListRow(container:HTMLElement,state:ListState,templat
     cover.dataset.artworkPath=cover.dataset.previewSrc=path;
   }
   const dot=cover.querySelector<HTMLElement>('.entry-availability')!;
-  const availability=state.availability_reason==='airing'?'Currently airing':'New season available';
-  dot.hidden=state.availability_dot!==true;dot.title=availability;dot.setAttribute('aria-label',availability);
+  paintEntryAvailability(dot,state.availability_dot===true,state.availability_reason);
   const edit=cover.querySelector<HTMLButtonElement>('[data-edit-entry]');
   if(edit){
     edit.dataset.editEntry=String(id);edit.setAttribute('aria-label',`Edit ${title}`);

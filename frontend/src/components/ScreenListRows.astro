@@ -1,6 +1,7 @@
 ---
 import Icon from './Icon.astro';
 import EntryAnnotations from './EntryAnnotations.astro';
+import EntryAvailability from './EntryAvailability.astro';
 import {scoreLabel} from '../lib/tracker';
 import {responsiveArtwork} from '../lib/responsive-artwork';
 import {canIncrementScreenList,screenListProgress} from '../lib/screen-list-row';
@@ -8,11 +9,10 @@ const {entries,owner,isCombined,template=false}=Astro.props;
 const compactImageSizes='(max-width:650px) 32px, 42px';
 const imageRoute='direct';
 const quickRatePoster=(path:any)=>responsiveArtwork(path,{size:'w185',sizes:'42px',route:imageRoute})?.src || '';
-const availabilityLabel=(reason:string|undefined)=>reason==='airing'?'Currently airing':'New season available';
 ---
 {entries.map((entry:any,index:number)=>{const series=entry.type==='series', season=entry.list_season, expandable=series&&!season;return <div data-list-entry={entry.list_id??entry.id} data-completed-seasons-only={entry.completed_seasons_only||undefined} data-detached-season={entry.detached_season??undefined} style={`--list-row:${index}`}>
         <article class:list={['entry-row',{'combined-row':isCombined}]} data-title={entry.title.toLowerCase()} data-score={entry.score ?? -1} data-progress={entry.progress} data-media-type={entry.type} data-year={entry.year} data-genres={JSON.stringify(entry.genres)} data-favorite={entry.favorite?'yes':'no'} data-updated={entry.updated_at}>
-          <div class="entry-thumbnail" data-preview-src={entry.poster||undefined} data-artwork-path={entry.poster||undefined}><span class="entry-availability" role="img" aria-label={availabilityLabel(entry.availability_reason)} title={availabilityLabel(entry.availability_reason)} hidden={!entry.availability_dot}></span>{(() => {const image=responsiveArtwork(entry.poster,{size:'w342',sizes:compactImageSizes,route:imageRoute}); return image||template ? <img class="entry-cover" src={image?.src} srcset={image?.srcset} sizes={image?.sizes} alt="" loading="lazy"/> : <span class="entry-cover"/>})()}{owner&&<button class="row-menu" data-motion-static data-edit-entry={entry.id} data-editor-season={season?.number} aria-label={`Edit ${entry.title}`}><Icon name="ellipsis"/></button>}</div>
+          <div class="entry-thumbnail" data-preview-src={entry.poster||undefined} data-artwork-path={entry.poster||undefined}><EntryAvailability available={entry.availability_dot} reason={entry.availability_reason}/>{(() => {const image=responsiveArtwork(entry.poster,{size:'w342',sizes:compactImageSizes,route:imageRoute}); return image||template ? <img class="entry-cover" src={image?.src} srcset={image?.srcset} sizes={image?.sizes} alt="" loading="lazy"/> : <span class="entry-cover"/>})()}{owner&&<button class="row-menu" data-motion-static data-edit-entry={entry.id} data-editor-season={season?.number} aria-label={`Edit ${entry.title}`}><Icon name="ellipsis"/></button>}</div>
           <div class="entry-title">
             <div class="list-title-main">
               <a class="entry-title-link" href={`/title/${entry.id}`}><span data-list-title-label>{entry.title}</span><span class="row-favorite" data-list-favorite aria-label="Favorite" hidden={!entry.favorite}><Icon name="heart"/></span></a>

@@ -203,7 +203,7 @@ class SeasonDatabaseTests(unittest.IsolatedAsyncioTestCase):
             media.tmdb_data = {**media.tmdb_data, 'tracking_episode_ids': [923011, 923012, 923021, 923022],
                 'seasons': [{'season_number': 1, 'episode_count': 2},
                             {'season_number': 2, 'name': 'The Second Campaign', 'episode_count': 2},
-                            {'season_number': 3, 'name': 'Next Campaign', 'episode_count': 3}]}
+                            {'season_number': 3, 'name': 'Next Campaign', 'episode_count': 3, 'air_date': '2099-03-01'}]}
             await db.commit()
         summary = (await self.client.get(f'{editor}/series-editor')).json()
         response = await self.client.patch(editor, json={'status': 'watching', 'confirm_rollback': True,
@@ -249,7 +249,17 @@ class SeasonDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({(row['status'], row.get('list_id', row['id'])) for row in page['results']},
                          {('completed', self.series_id), ('watching', second_id),
                           ('paused', season_row_id(self.series_id, 3))})
-        self.assertFalse(next(row for row in page['results'] if row['status'] == 'paused')['list_season']['can_increment'])
+        upcoming = next(row for row in page['results'] if row['status'] == 'paused')
+        self.assertFalse(upcoming['list_season']['can_increment'])
+        self.assertEqual((upcoming['availability_dot'], upcoming['availability_reason']), (True, 'upcoming'))
+        async with self.Session() as db:
+            media = await db.get(Media, self.series_id)
+            seasons = media.tmdb_data['seasons']
+            media.tmdb_data = {**media.tmdb_data, 'seasons': [*seasons[:2],
+                {**seasons[2], 'air_date': date.today().isoformat()}]}
+            await db.commit()
+        started = (await self.client.get(f'{root}/rows', params={'ids': upcoming['list_id']})).json()[0]
+        self.assertEqual((started['availability_dot'], started['availability_reason']), (True, 'new_season'))
 
     async def test_batch_progress_preserves_watch_evidence_and_requires_a_current_revision(self):
         first, second, third, fourth = self.episode_ids

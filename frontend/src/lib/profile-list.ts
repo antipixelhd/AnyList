@@ -18,6 +18,7 @@ export function initializeProfileList(panel:HTMLElement,lifetime:AbortSignal){
     statuses:presentation?.categories.map(category=>[category.id,category.label] as const) ?? statuses,
     accepts:title=>(title.type==='movie'||title.type==='series')&&(scope==='all'||scope===title.type),
     projected:title=>title.type==='series',
+    revalidateRow:state=>Boolean(state.list_season&&state.availability_reason==='upcoming'),
     editorTitle:screenListEditorTitle,
     updateState:(title,previous)=>({...previous,...title,...title.entry,id:title.id,listed:!!title.entry,
       title:title.title,favorite:!!title.favorite}),

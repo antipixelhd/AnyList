@@ -142,6 +142,7 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.headers['cache-control'], 'private, no-store')
         self.assertEqual([(s['number'], s['watched'], s['score'], s['completed'], s['poster']) for s in response.json()['seasons']],
             [(1, 2, 8, True, '/s1.jpg'), (2, 0, None, False, '/s2.jpg')])
+        self.assertEqual([s['availability_reason'] for s in response.json()['seasons']], [None, 'airing'])
         async with self.Session() as db:
             db.add(WatchEvent(user_id=self.user_id, media_id=episode_two, completed=True))
             await db.commit()

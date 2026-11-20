@@ -287,7 +287,7 @@
     left:-9px;
     width:6px;
     height:6px;
-    box-shadow:0 0 5px rgba(114,216,79,.72)
+    box-shadow:0 0 5px rgb(var(--availability-rgb) / .72)
   }
   :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-title {
     grid-area:title;

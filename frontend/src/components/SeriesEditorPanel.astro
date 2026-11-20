@@ -4,6 +4,7 @@ import Icon from './Icon.astro';
 <div class="series-editor-panel" data-series-editor hidden>
   <div class="editor-field-heading">
     <label id="series-progress-label" for="series-progress-trigger">Progress</label>
+    <span class="series-progress-release" data-series-release hidden></span>
   </div>
   <p class="series-editor-message" data-series-loading role="status">Loading progress…</p>
   <button type="button" class="lab-text-button" data-series-retry hidden>Retry</button>
@@ -13,7 +14,6 @@ import Icon from './Icon.astro';
       <span class="series-progress-detail"><span id="series-progress-completed" data-series-completed></span><Icon name="chevron-down"/></span>
       <span class="series-progress-segments" data-series-segments aria-hidden="true"></span>
     </button>
-    <p class="series-progress-release" data-series-release hidden></p>
     <span class="score-stepper series-episode-stepper" data-series-stepper hidden>
       <input id="series-episode-count" data-series-count type="number" min="0" step="1" inputmode="numeric" aria-describedby="series-episode-total" required disabled/>
       <span id="series-episode-total" data-series-total></span>
@@ -144,8 +144,7 @@ import Icon from './Icon.astro';
   }
   .series-progress-row [data-row-season] { overflow-wrap:anywhere; line-height:1.2; text-align:start; font-weight:600; padding-block:6px; }
   .series-progress-row[data-empty] [data-row-season] { color:var(--muted); }
-  .series-progress-release { color:var(--muted); font-size:var(--type-label-size); }
-  .series-progress-fields > .series-progress-release { display:flex; align-items:center; min-height:42px; margin:0; }
+  .series-progress-release { color:var(--muted); font-size:var(--type-label-size); white-space:nowrap; }
   .series-progress-row[data-unreleased] { grid-template-columns:minmax(0,1fr) auto; gap:12px; }
   .series-progress-picker button:is(:hover,:focus-visible):not(:disabled) { outline:none; color:var(--blue); }
   .series-progress-picker button:focus-visible { text-decoration:underline; }
@@ -205,9 +204,10 @@ import Icon from './Icon.astro';
     .series-editor-panel > * { grid-column:1 / -1; }
     .series-editor-panel > [data-series-retry] { justify-self:start; }
     .series-progress-picker[open] {
-      inset:auto 0 max(8px, env(safe-area-inset-bottom));
-      width:min(100% - 12px, 36rem); height:auto; max-height:min(72vh, 38rem); max-height:min(72dvh, 38rem);
-      margin:0 auto; border-radius:14px; padding-block-end:4px;
+      inset:max(16px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right))
+        max(16px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left));
+      width:auto; max-width:36rem; height:max-content; max-height:min(72vh,38rem); max-height:min(72dvh,38rem);
+      margin:auto; border-radius:14px; padding-block-end:4px;
     }
     .series-progress-header { min-height:58px; }
     .series-progress-header button { inline-size:44px; block-size:44px; }

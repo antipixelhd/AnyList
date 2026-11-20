@@ -3,6 +3,7 @@
   position:relative
 }
 .entry-availability {
+  --availability-rgb:114 216 79;
   position:absolute;
   z-index:2;
   left:-18px;
@@ -11,9 +12,10 @@
   height:9px;
   transform:translateY(-50%);
   border-radius:50%;
-  background:#72d84f;
-  box-shadow:0 0 7px rgba(114,216,79,.82)
+  background:rgb(var(--availability-rgb));
+  box-shadow:0 0 7px rgb(var(--availability-rgb) / .82)
 }
+.entry-availability[data-availability="upcoming"] { --availability-rgb:238 75 89 }
 .grid-view .entry-availability {
   top:9px;
   left:9px;
@@ -24,6 +26,6 @@
     left:-8px;
     width:8px;
     height:8px;
-    box-shadow:0 0 6px rgba(114,216,79,.78)
+    box-shadow:0 0 6px rgb(var(--availability-rgb) / .78)
   }
 }
