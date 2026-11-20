@@ -46,7 +46,9 @@ import Icon from './Icon.astro';
         <span class="series-range-target" data-series-range>
           <input class="series-range" type="range" min="0" step="1" data-row-slider/>
         </span>
-        <button type="button" class="series-progress-counter" data-row-counter></button>
+        <button type="button" class="series-progress-counter" data-row-counter>
+          <span data-row-count-label></span>
+        </button>
         <button type="button" class="series-progress-step" data-row-step="-1">−</button>
         <button type="button" class="series-progress-step" data-row-step="1">+</button>
         <div class="series-progress-zoom" data-row-detail hidden>
@@ -199,7 +201,14 @@ import Icon from './Icon.astro';
   .series-progress-row[data-unreleased] { grid-template-columns:minmax(0,1fr) auto; gap:12px; }
   .series-progress-picker button:is(:hover,:focus-visible):not(:disabled):not(.series-progress-counter) { outline:none; color:var(--blue); }
   .series-progress-picker button:focus-visible { text-decoration:underline; }
-  .series-progress-picker .series-progress-counter { justify-self:start; min-height:36px; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .series-progress-picker .series-progress-counter {
+    display:grid; place-items:center start; justify-self:start; min-height:36px;
+    font-variant-numeric:tabular-nums; white-space:nowrap;
+  }
+  .series-progress-counter > span, .series-progress-counter::before, .series-progress-counter::after { grid-area:1 / 1; }
+  /* Reserve both count formats so changing progress cannot resize the shared tracks. */
+  .series-progress-counter::before { content:attr(data-row-total) '/' attr(data-row-total); visibility:hidden; }
+  .series-progress-counter::after { content:'✓ ' attr(data-row-total); visibility:hidden; }
   .series-progress-picker .series-progress-counter[data-complete] { color:#72d74f; }
   .series-progress-counter:disabled { opacity:1; cursor:default; }
   .series-progress-picker .series-progress-step {
@@ -263,7 +272,7 @@ import Icon from './Icon.astro';
     .series-editor-panel > [data-series-retry] { justify-self:start; }
     .series-progress-picker[open] {
       --series-progress-gap:8px;
-      --series-progress-columns:fit-content(80px) minmax(28px,1fr) max-content 44px 44px;
+      --series-progress-columns:fit-content(80px) minmax(28px,1fr) max-content repeat(2,36px);
       inset:max(16px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right))
         max(16px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left));
       width:auto; max-width:36rem; height:max-content; max-height:min(72vh,38rem); max-height:min(72dvh,38rem);
@@ -273,7 +282,9 @@ import Icon from './Icon.astro';
     .series-progress-header button { inline-size:44px; block-size:44px; }
     .series-progress-zoom-toggle { min-height:44px; }
     .series-progress-row { min-height:50px; }
-    .series-progress-picker .series-progress-step { inline-size:44px; block-size:44px; border-radius:50%; background:none; }
+    .series-progress-picker .series-progress-step { position:relative; inline-size:36px; block-size:44px; border-radius:50%; background:none; }
+    /* Use the grid gap for the touch target without giving the buttons wider columns. */
+    .series-progress-step::after { content:''; position:absolute; inset:0 -4px; }
     .series-progress-row input { min-height:44px; }
     .editor[data-editor-type=series] .editor-fields > .editor-start-date { grid-column:1; grid-row:3; }
     .editor[data-editor-type=series] .editor-fields > .editor-finish-date { grid-column:2; grid-row:3; }

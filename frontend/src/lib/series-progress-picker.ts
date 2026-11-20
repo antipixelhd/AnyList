@@ -309,7 +309,8 @@ export function setupSeriesProgressPicker(panel: HTMLElement, editor: HTMLDialog
       syncProgressRange(slider, count, released, total,motion);
       if (zoomedRow === row) syncZoom(row, slider, total);
       counter.toggleAttribute('data-complete', complete);
-      counter.textContent = complete ? `✓ ${count}` : `${count}/${total}`;
+      counter.dataset.rowTotal = String(total);
+      counter.querySelector('[data-row-count-label]')!.textContent = complete ? `✓ ${count}` : `${count}/${total}`;
       counter.disabled = !enabled || !canToggle;
       const action = canRestore ? 'Restore previous progress' : canToggle ? 'Mark released episodes watched' : '';
       counter.setAttribute('aria-label', `${name}: ${count} of ${total} watched${action ? `. ${action}` : ''}`);
