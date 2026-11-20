@@ -63,7 +63,8 @@ async def backfill_cinema_releases(db,providers,*,limit=50):
         if media is None:continue
         now=datetime.now(timezone.utc).replace(tzinfo=None)
         native=str(media.tmdb_id);token=uuid.uuid4().hex
-        await catalogue.write_lock(db)
+        # This independent evidence snapshot does not bind catalogue identities.
+        # Its unique row and lease fence claims without the global catalogue lane.
         await db.execute(insert(MetadataSnapshot).values(provider='tmdb',kind=kind,external_id=native).on_conflict_do_nothing())
         row=await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.provider=='tmdb',
             MetadataSnapshot.kind==kind,MetadataSnapshot.external_id==native).with_for_update())
@@ -84,10 +85,11 @@ async def backfill_cinema_releases(db,providers,*,limit=50):
                     headers=tmdb.get_headers(providers.tmdb_key))
             if not isinstance(raw,dict) or not isinstance(raw.get('results'),list):raise ProviderError('invalid_json')
             dates=theatrical_dates({'release_dates':raw})
-            await catalogue.write_lock(db)
             await db.refresh(row,with_for_update=True)
             if row.lease_token!=token:await db.commit();continue
-            await db.refresh(media,with_for_update=True)
+            # Only JSON metadata changes. Let collection foreign-key checks keep
+            # their KEY SHARE locks while still serializing competing row writers.
+            await db.refresh(media,with_for_update={'key_share':True})
             media.tmdb_data={**(media.tmdb_data or {}),'theatrical_release_dates':dates,
                 'theatrical_release_dates_by_country':theatrical_country_dates({'release_dates':raw})}
             row.payload=raw;row.fetched_at=now;row.expires_at=now+timedelta(days=30)

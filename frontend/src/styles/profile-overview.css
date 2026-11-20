@@ -128,7 +128,7 @@
 }
 @keyframes overview-bar-enter { from { transform: scaleX(0); } to { transform: scaleX(1); } }
 @media (prefers-reduced-motion: no-preference) {
-  .overview-genre-bar { animation: overview-bar-enter 450ms ease-out both; transform-origin: left; }
+  [data-animate-genres]:not([data-profile-preparing] *) .overview-genre-bar { animation: overview-bar-enter 450ms ease-out both; transform-origin: left; }
 }
 
 .overview-bio .profile-bio {

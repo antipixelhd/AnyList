@@ -4,7 +4,7 @@ from fastapi.security import OAuth2PasswordBearer
 from jose import jwt, JWTError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload
 
 from db import get_db
 from models.users import User
@@ -19,6 +19,15 @@ import schemas
 # get_current_user, which guards account/security endpoints (password, email,
 # 2FA, API key, connections, account deletion, admin).
 DEVICE_TOKEN_TYPE = "device"
+
+
+def _work_user(user):
+    """Different sessions/API credentials still share one user's provider turns."""
+    if user is not None and getattr(user,'id',None) is not None:
+        from dataclasses import replace
+        from core.game_work import current
+        current.set(replace(current.get(),owner=f'user:{user.id}'))
+    return user
 
 
 async def _user_from_device_grant(db: AsyncSession, payload: dict) -> Optional[User]:
@@ -46,11 +55,9 @@ async def _user_from_device_grant(db: AsyncSession, payload: dict) -> Optional[U
     ):
         return None
 
-    # No selectinload(User.profile) here, matching the API-key branch of
-    # get_current_user_or_api_key - these non-session callers hit data
-    # endpoints, not the profile-rendering pages.
+    # Device grants and API keys load the account for data endpoints.
     user_result = await db.execute(select(User).where(User.id == user_id))
-    return user_result.scalar_one_or_none()
+    return _work_user(user_result.scalar_one_or_none())
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="auth/login", auto_error=False)
@@ -67,7 +74,7 @@ oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="auth/login", auto_error=
 ANON_USER_ID = -1
 
 async def get_current_user(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     token: str = Depends(oauth2_scheme)
 ) -> User:
     credentials_exception = HTTPException(
@@ -91,13 +98,13 @@ async def get_current_user(
     except (JWTError, TypeError, ValueError):
         raise credentials_exception
 
-    query = select(User).where(User.id == token_data.sub).options(selectinload(User.profile))
+    query = select(User).where(User.id == token_data.sub).options(joinedload(User.profile))
     result = await db.execute(query)
     user = result.scalar_one_or_none()
     
     if user is None or not session_is_current(user, payload):
         raise credentials_exception
-    return user
+    return _work_user(user)
 
 async def require_admin(current_user: User = Depends(get_current_user)) -> User:
     if not current_user.is_admin:
@@ -106,7 +113,7 @@ async def require_admin(current_user: User = Depends(get_current_user)) -> User:
 
 
 async def get_optional_user(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     token: Optional[str] = Depends(oauth2_scheme_optional)
 ) -> Optional[User]:
     if not token:
@@ -129,14 +136,14 @@ async def get_optional_user(
     except (JWTError, ValueError, TypeError):
         return None
 
-    query = select(User).where(User.id == user_id).options(selectinload(User.profile))
+    query = select(User).where(User.id == user_id).options(joinedload(User.profile))
     result = await db.execute(query)
     user = result.scalar_one_or_none()
-    return user if user is not None and session_is_current(user, payload) else None
+    return _work_user(user) if user is not None and session_is_current(user, payload) else None
 
 
 async def get_tracking_write_user(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     token: Optional[str] = Depends(oauth2_scheme_optional),
 ) -> User:
     """Authenticate the AnyList tracking write API.
@@ -162,22 +169,22 @@ async def get_tracking_write_user(
             user = await _user_from_device_grant(db, payload)
             if user is None:
                 raise credentials_exception
-            return user
+            return _work_user(user)
         user_id = int(payload.get("sub"))
     except HTTPException:
         raise
     except (JWTError, TypeError, ValueError):
         raise credentials_exception
 
-    result = await db.execute(select(User).where(User.id == user_id).options(selectinload(User.profile)))
+    result = await db.execute(select(User).where(User.id == user_id).options(joinedload(User.profile)))
     user = result.scalar_one_or_none()
     if user is None or not session_is_current(user, payload):
         raise credentials_exception
-    return user
+    return _work_user(user)
 
 
 async def get_current_user_or_api_key(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     jwt_user: Optional[User] = Depends(get_optional_user),
     api_key: Optional[str] = Query(None, description="AnyList API key, as an alternative to a JWT Bearer token"),
     x_api_key: Optional[str] = Header(None, alias="X-Api-Key"),
@@ -186,14 +193,14 @@ async def get_current_user_or_api_key(
     X-Api-Key header) — the same key already used by webhooks and the Radarr/Sonarr
     compat endpoints — for callers that can't hold a JWT (e.g. external scripts)."""
     if jwt_user:
-        return jwt_user
+        return _work_user(jwt_user)
 
     key = api_key or x_api_key
     if key:
         result = await db.execute(select(User).where(User.api_key == key))
         user = result.scalar_one_or_none()
         if user:
-            return user
+            return _work_user(user)
 
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -203,7 +210,7 @@ async def get_current_user_or_api_key(
 
 
 async def get_optional_user_or_api_key(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     jwt_user: Optional[User] = Depends(get_optional_user),
     api_key: Optional[str] = Query(None, description="AnyList API key, as an alternative to a JWT Bearer token"),
     x_api_key: Optional[str] = Header(None, alias="X-Api-Key"),
@@ -213,13 +220,13 @@ async def get_optional_user_or_api_key(
     to treating the caller as an anonymous visitor rather than rejecting them
     outright (e.g. a list/profile page that may itself be public)."""
     if jwt_user:
-        return jwt_user
+        return _work_user(jwt_user)
 
     key = api_key or x_api_key
     if key:
         result = await db.execute(select(User).where(User.api_key == key))
         user = result.scalar_one_or_none()
         if user:
-            return user
+            return _work_user(user)
 
     return None

@@ -12,7 +12,7 @@ let dispose: (() => void) | undefined;
 function mount() {
   dispose?.();
   if (!document.querySelector("[data-connections-page]")) return;
-  const token = document.getElementById("app-data")?.dataset.token ?? "";
+
   const lifetime = new AbortController();
   const sessions: ReturnType<typeof createDeviceAuthorization>[] = [];
   dispose = () => {
@@ -33,7 +33,7 @@ function mount() {
     if (connect && provider.method) {
       const session = createDeviceAuthorization({
         provider: provider.name,
-        token,
+
         startUrl: `/api/proxy/${provider.id}/auth/${provider.method}/start`,
         pollUrl: `/api/proxy/${provider.id}/auth/${provider.method}/poll`,
         onCode(code) {
@@ -73,7 +73,7 @@ function mount() {
         disconnect.textContent = "Disconnecting…";
         try {
           const response = await fetch(`/api/proxy/${provider.id}/auth/disconnect`, {
-            method: "DELETE", headers: { Authorization: `Bearer ${token}` }, signal: lifetime.signal,
+            method: "DELETE", headers: { }, signal: lifetime.signal,
           });
           if (lifetime.signal.aborted) return;
           if (!response.ok) {

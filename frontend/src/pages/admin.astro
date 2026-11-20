@@ -1,5 +1,6 @@
 ---
 import Icon from "../components/Icon.astro";
+import AdminTabs from '../components/AdminTabs.astro';
 import TrackerSettings from "../layouts/TrackerSettings.astro";
 import { api } from "../lib/api";
 import type { AdminUser } from "../lib/api";
@@ -22,8 +23,9 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
 ---
 
 <TrackerSettings title="Administration">
+  <AdminTabs />
   <div id="app-data"
-    data-token={token}
+    data-authenticated={!!Astro.locals.user}
     data-current-user-id={user!.id}
     data-admin-count={adminCount}
     class="hidden" aria-hidden="true">
@@ -473,7 +475,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
                   <td class="px-4 py-3 text-right hidden md:table-cell">
                     <div class="flex items-center justify-end gap-2">
                       <button
-                        class="toggle-admin-btn px-3 py-1.5 text-xs font-semibold rounded-lg transition-all active:scale-95 cursor-pointer border"
+                        class="toggle-admin-btn px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer border"
                         class:list={[
                           u.is_admin
                             ? "bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-zinc-700"
@@ -484,7 +486,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
                       </button>
                       <button type="button" class="change-email-btn px-3 py-1.5 text-xs font-semibold rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 cursor-pointer">Change email</button>
                       <button type="button" class="reset-password-btn px-3 py-1.5 text-xs font-semibold rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 cursor-pointer">Reset password</button>
-                      <button class="delete-user-btn px-3 py-1.5 text-xs font-semibold rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 transition-all active:scale-95 cursor-pointer">
+                      <button class="delete-user-btn px-3 py-1.5 text-xs font-semibold rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 transition-all cursor-pointer">
                         Delete
                       </button>
                     </div>
@@ -501,6 +503,12 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
                     <div class="space-y-3">
                       <div class="md:hidden text-xs text-zinc-400">{u.email}</div>
                       <div>
+                        <button type="button" class="games-access-btn px-3 py-1.5 text-xs font-semibold rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors cursor-pointer disabled:opacity-50"
+                          data-approved={u.games_access} disabled={u.is_admin}>
+                          {u.is_admin ? 'Games access · Admin' : u.games_access ? 'Revoke Games access' : 'Grant Games access'}
+                        </button>
+                      </div>
+                      <div>
                         <div class="text-xs text-zinc-500 mb-1">API Key</div>
                         <div class="flex items-center gap-2">
                           <code class="user-api-key flex-1 block bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-300 font-mono break-all">{u.api_key}</code>
@@ -513,7 +521,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
                       </div>
                       <div class="flex flex-wrap gap-2 md:hidden">
                         <button
-                          class="toggle-admin-btn px-3 py-1.5 text-xs font-semibold rounded-lg transition-all active:scale-95 cursor-pointer border"
+                          class="toggle-admin-btn px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer border"
                           class:list={[
                             u.is_admin
                               ? "bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-zinc-700"
@@ -524,7 +532,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
                         </button>
                         <button type="button" class="change-email-btn px-3 py-1.5 text-xs font-semibold rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 cursor-pointer">Change email</button>
                       <button type="button" class="reset-password-btn px-3 py-1.5 text-xs font-semibold rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 cursor-pointer">Reset password</button>
-                      <button class="delete-user-btn px-3 py-1.5 text-xs font-semibold rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 transition-all active:scale-95 cursor-pointer">
+                      <button class="delete-user-btn px-3 py-1.5 text-xs font-semibold rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 transition-all cursor-pointer">
                           Delete
                         </button>
                       </div>
@@ -778,7 +786,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
   const appData = document.getElementById('app-data') as HTMLElement | null;
   if (!document.getElementById('global-settings-form') || !appData || appData.dataset.adminInitialized) return;
   appData.dataset.adminInitialized = 'true';
-  const token = appData.dataset.token!;
+
   const currentUserId = parseInt(appData.dataset.currentUserId!);
 
   function esc(s: string | null | undefined): string {
@@ -854,7 +862,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
   const postIntegrationCredentials = (path: string, credentials: { url: string; token: string }) =>
     fetch(path, {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(credentials),
     });
 
@@ -1027,7 +1035,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
         const pin = (document.getElementById('tvdb_subscriber_pin') as HTMLInputElement).value.trim();
         const response = await fetch(`/api/proxy/auth/test-${provider}`, {
           method: 'POST',
-          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ key, ...(provider === 'tvdb' ? { pin: pin || null } : {}) }),
         });
         const result = await response.json();
@@ -1047,7 +1055,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     const formElement = document.getElementById('global-settings-form');
     if (!formElement || formElement.dataset.initialized) return;
     formElement.dataset.initialized = 'true';
-    const token = document.getElementById('app-data')?.dataset.token ?? '';
+
     formElement.addEventListener('submit', async (e) => {
       e.preventDefault();
       const btn = document.getElementById('save-settings-btn') as HTMLButtonElement;
@@ -1082,7 +1090,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
       try {
         const res = await fetch('/api/proxy/admin/settings', {
           method: 'PATCH',
-          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
         });
         if (!res.ok) throw new Error((await res.json()).detail || 'Failed to save');
@@ -1116,7 +1124,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     try {
       const res = await fetch('/api/proxy/admin/settings', {
         method: 'PATCH',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
       if (!res.ok) throw new Error((await res.json()).detail || 'Failed to save');
@@ -1153,7 +1161,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     try {
       const res = await fetch('/api/proxy/admin/users', {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
       if (!res.ok) {
@@ -1178,7 +1186,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     btn.textContent = 'Preparing…';
     try {
       const res = await fetch('/api/proxy/admin/backup', {
-        headers: { 'Authorization': `Bearer ${token}` },
+        headers: { },
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -1238,7 +1246,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
       fd.append('file', file);
       const res = await fetch('/api/proxy/admin/restore', {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` },
+        headers: { },
         body: fd,
       });
       if (!res.ok) {
@@ -1296,10 +1304,15 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
       badge.className = 'inline-flex items-center px-2 py-0.5 rounded-md text-xs font-semibold bg-zinc-700/50 text-zinc-400 border border-zinc-700';
       badge.textContent = 'User';
     }
-    const adminClass = 'toggle-admin-btn px-3 py-1.5 text-xs font-semibold rounded-lg transition-all active:scale-95 cursor-pointer border bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-zinc-700';
-    const userClass = 'toggle-admin-btn px-3 py-1.5 text-xs font-semibold rounded-lg transition-all active:scale-95 cursor-pointer border bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border-amber-500/20';
+    const adminClass = 'toggle-admin-btn px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer border bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-zinc-700';
+    const userClass = 'toggle-admin-btn px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer border bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border-amber-500/20';
     const userId = row.dataset.userId!;
     const detailRow = document.querySelector<HTMLTableRowElement>(`tr.user-detail-row[data-detail-for="${userId}"]`);
+    const gamesButton=detailRow?.querySelector<HTMLButtonElement>('.games-access-btn');
+    if(gamesButton){
+      gamesButton.disabled=isAdmin;
+      gamesButton.textContent=isAdmin?'Games access · Admin':gamesButton.dataset.approved==='true'?'Revoke Games access':'Grant Games access';
+    }
     [row, detailRow].forEach(r => {
       const btn = r?.querySelector<HTMLButtonElement>('.toggle-admin-btn');
       if (!btn) return;
@@ -1371,7 +1384,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     btn.disabled = true;
     try {
       const res = await fetch(`/api/proxy/admin/users/${userId}`, {
-        method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` },
+        method: 'DELETE', headers: { },
       });
       if (!res.ok) throw new Error((await res.json()).detail || 'Failed');
       if (isSelf) {
@@ -1455,7 +1468,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
 
   async function pollAdminHealJob() {
     try {
-      const res = await fetch('/api/proxy/sync/status', { headers: { 'Authorization': `Bearer ${token}` } });
+      const res = await fetch('/api/proxy/sync/status', { headers: { } });
       if (!res.ok) return;
       const jobs: any[] = await res.json();
       const job = jobs.find((j: any) => j.source === 'tmdb' && j.job_type === 'heal');
@@ -1483,7 +1496,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
   // Resume active heal on page load
   (async () => {
     try {
-      const res = await fetch('/api/proxy/sync/status', { headers: { 'Authorization': `Bearer ${token}` } });
+      const res = await fetch('/api/proxy/sync/status', { headers: { } });
       if (!res.ok) return;
       const jobs: any[] = await res.json();
       const job = jobs.find((j: any) => j.source === 'tmdb' && j.job_type === 'heal');
@@ -1498,7 +1511,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     try {
       const res = await fetch('/api/proxy/admin/maintenance/heal', {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` },
+        headers: { },
       });
       if (!res.ok) throw new Error((await res.json()).detail || 'Failed to start heal');
       startAdminHealPoller();
@@ -1521,7 +1534,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     try {
       const res = await fetch('/api/proxy/admin/maintenance/clear-cache', {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` },
+        headers: { },
       });
       if (!res.ok) throw new Error((await res.json()).detail || 'Failed to clear cache');
       showMessage('Image cache cleared successfully.');
@@ -1549,13 +1562,37 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     if (!mainRow) return;
     const userId = parseInt(mainRow.dataset.userId!);
 
+    const gamesButton = target.closest<HTMLButtonElement>('.games-access-btn');
+    if (gamesButton) {
+      if (gamesButton.disabled) return;
+      const previous=gamesButton.dataset.approved==='true';
+      const paint=(approved:boolean)=>{
+        gamesButton.dataset.approved=String(approved);
+        gamesButton.textContent=approved?'Revoke Games access':'Grant Games access';
+      };
+      gamesButton.disabled=true;
+      paint(!previous);
+      try {
+        const response=await fetch(`/api/proxy/admin/users/${userId}/games-access`,{
+          method:'PATCH',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({approved:!previous}),
+        });
+        if(!response.ok)throw new Error((await response.json()).detail||'Could not update Games access');
+        paint((await response.json()).games_access===true);
+      } catch(error) {
+        paint(previous);
+        showMessage(error instanceof Error?error.message:'Could not update Games access','error');
+      } finally {gamesButton.disabled=false;}
+      return;
+    }
+
     if (target.closest('.toggle-admin-btn')) {
       const btn = target.closest('.toggle-admin-btn') as HTMLButtonElement;
       if (btn.disabled) return;
       btn.disabled = true;
       try {
         const res = await fetch(`/api/proxy/admin/users/${userId}/toggle-admin`, {
-          method: 'PATCH', headers: { 'Authorization': `Bearer ${token}` },
+          method: 'PATCH', headers: { },
         });
         if (!res.ok) throw new Error((await res.json()).detail || 'Failed');
         const updated = await res.json();
@@ -1610,7 +1647,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     try {
       const res = await fetch(`/api/proxy/admin/users/${resetUserId}/reset-password`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password: resetInput.value }),
       });
       if (!res.ok) throw new Error((await res.json()).detail || 'Could not reset password');
@@ -1662,7 +1699,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
     try {
       const res = await fetch(`/api/proxy/admin/users/${emailUserId}/email`, {
         method: 'PATCH',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: emailInput.value }),
       });
       if (!res.ok) throw new Error((await res.json()).detail || 'Could not change email');
@@ -1686,7 +1723,7 @@ const adminCount = users.filter((u: AdminUser) => u.is_admin).length;
   async function loadCacheStats() {
     try {
       const res = await fetch('/api/proxy/admin/maintenance/cache-stats', {
-        headers: { 'Authorization': `Bearer ${token}` },
+        headers: { },
       });
       if (!res.ok) return;
       const data = await res.json();

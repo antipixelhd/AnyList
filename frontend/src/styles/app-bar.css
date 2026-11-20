@@ -76,7 +76,12 @@ html.appbar-nav-transition-cursor {
     margin-bottom: -72px;
   }
 
-  .tracker .topbar.appbar-fade-capable.appbar-at-top {
+  /* A detail preview starts at the top even when the outgoing list is scrolled. */
+  .tracker .topbar:has(~ .route-detail-preview) {
+    transform:translateY(0);
+  }
+
+  .tracker .topbar:is(.appbar-fade-capable.appbar-at-top, :has(~ .route-detail-preview)) {
     background-color: rgb(20 33 49 / 12%);
     box-shadow: none;
   }
@@ -85,18 +90,17 @@ html.appbar-nav-transition-cursor {
     transition: transform .22s ease, background-color 0s, box-shadow 0s;
   }
 
-  .tracker .topbar.appbar-fade-capable.appbar-at-top .brand,
-  .tracker .topbar.appbar-fade-capable.appbar-at-top .appbar-icon-link:not(:hover, :focus-visible, .active) {
+  .tracker .topbar:is(.appbar-fade-capable.appbar-at-top, :has(~ .route-detail-preview)) .brand,
+  .tracker .topbar:is(.appbar-fade-capable.appbar-at-top, :has(~ .route-detail-preview)) .appbar-icon-link:not(:hover, :focus-visible, .active) {
     color: #e1effb;
     text-shadow: 0 1px 4px rgb(3 13 24 / 60%);
   }
 
-  .tracker .topbar.appbar-fade-capable.appbar-at-top .appbar-nav a.active {
+  .tracker .topbar:is(.appbar-fade-capable.appbar-at-top, :has(~ .route-detail-preview)) .appbar-nav a.active {
     color: #89d3fa;
   }
 
-  .tracker .topbar.appbar-fade-capable.appbar-at-top.appbar-pointer-active:not(.appbar-hidden),
-  .tracker .topbar.appbar-fade-capable.appbar-at-top:not(.appbar-hidden):focus-within {
+  .tracker .topbar:is(.appbar-fade-capable.appbar-at-top:not(.appbar-hidden), :has(~ .route-detail-preview)):is(.appbar-pointer-active, :focus-within) {
     background-color: rgb(20 33 49 / 96%);
     box-shadow: 0 2px 14px rgb(7 17 29 / 24%);
   }
@@ -111,5 +115,5 @@ html.appbar-nav-transition-cursor {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .tracker .topbar { transition: none; }
+  .tracker .topbar,.tracker .topbar:has(~ .route-detail-preview) { transition: none; }
 }

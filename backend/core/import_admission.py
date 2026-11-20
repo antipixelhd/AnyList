@@ -10,6 +10,12 @@ from models.tracking import StreamBaseline
 
 
 async def active_import(db, user_id):
+    from models.steam import SteamConnection
+    steam = await db.scalar(select(SteamConnection.connection_id).where(
+        SteamConnection.user_id == user_id, SteamConnection.imported.is_(False)).limit(1))
+    if steam is not None:
+        return {'import_id': None, 'connection_id': steam, 'title': 'Steam import',
+                'status': 'Select your Steam games', 'resolve_url': '/connections?steam=' + str(steam)}
     from core.import_notifications import active_import_events
 
     events = await active_import_events(db, user_id, netflix_sessions._now())

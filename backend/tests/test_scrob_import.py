@@ -441,7 +441,7 @@ class ImportEndpointValidationTests(unittest.IsolatedAsyncioTestCase):
             await export_router.import_data(
                 background_tasks=SimpleNamespace(add_task=lambda *a, **k: None),
                 file=SimpleNamespace(filename="export.zip"),
-                watched=False, ratings=False, collection=False, lists=False, comments=False,
+                games=False, watched=False, ratings=False, collection=False, lists=False, comments=False,
                 api_keys=False, media_connections=False, scrobble_connections=False, connections=False,
                 db=None, current_user=SimpleNamespace(id=1),
             )

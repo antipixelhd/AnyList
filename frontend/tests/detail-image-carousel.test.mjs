@@ -67,6 +67,15 @@ test('native swipe selection follows scroll position without forcing the row bac
   assert.equal(g.track.scrollLeft,390);
 });
 
+test('a smaller decoded artwork cannot select a neighboring slide before its resize is reconciled',()=>{
+  const g=gallery();g.paint(['one','two','three','four'],2);
+  g.track.clientWidth=280;
+  g.track.fire('scroll');g.flush();
+  assert.deepEqual(g.selected,[]);
+  g.resize();g.track.fire('scroll');g.flush();
+  assert.equal(g.track.scrollLeft,560);assert.deepEqual(g.selected,[]);
+});
+
 test('animated navigation ignores intermediate positions, but direct gestures can interrupt it',()=>{
   const g=gallery();g.paint(['one','two','three'],2,true,true);
   assert.equal(g.track.dataset.viewerNavigating,'');

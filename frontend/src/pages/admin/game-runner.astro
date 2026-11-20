@@ -1,0 +1,45 @@
+---
+import TrackerSettings from '../../layouts/TrackerSettings.astro';
+import AdminTabs from '../../components/AdminTabs.astro';
+if(!Astro.locals.user?.is_admin)return Astro.redirect('/');
+Astro.response.headers.set('Cache-Control','no-store');
+---
+<TrackerSettings title="Administration">
+  <AdminTabs />
+  <div id="game-runner" class="runner">
+    <div class="runner-heading"><div><h3>Background mapper</h3><p id="runner-state" role="status">Loading…</p></div><button id="runner-toggle" type="button" disabled>Stop</button></div>
+    <div class="runner-metrics">
+      <div><strong data-value="queued_games">—</strong><span>Games queued</span></div>
+      <div><strong data-value="people">—</strong><span>People</span></div>
+      <div><strong data-value="studios">—</strong><span>Studios</span></div>
+      <div><strong data-value="processed">—</strong><span>Checks completed</span></div>
+    </div>
+    <section aria-labelledby="runner-queue"><h3 id="runner-queue">Game queue</h3><dl>
+      <div><dt>In user lists</dt><dd data-category="1">—</dd></div>
+      <div><dt>Viewed games</dt><dd data-category="2">—</dd></div>
+      <div><dt>Browse highlights</dt><dd data-category="3">—</dd></div>
+    </dl></section>
+    <section aria-labelledby="runner-progress"><h3 id="runner-progress">Progress</h3><dl>
+      <div><dt>Games checked</dt><dd data-value="processed_games">—</dd></div>
+      <div><dt>Waiting to retry</dt><dd data-value="retries">—</dd></div>
+      <div><dt>Current work</dt><dd id="runner-current">—</dd></div>
+      <div><dt>Last active</dt><dd id="runner-heartbeat">—</dd></div>
+    </dl></section>
+    <p id="runner-error" role="alert" hidden></p>
+  </div>
+</TrackerSettings>
+<script>
+  import {installGameRunner} from '../../lib/game-runner';
+  installGameRunner();
+  document.addEventListener('astro:page-load',installGameRunner);
+</script>
+<style>
+  .runner{max-width:54rem}.runner-heading{display:flex;justify-content:space-between;align-items:center;margin-bottom:2rem;gap:1rem}
+  h3{font-size:1.8rem;font-weight:650;margin:0 0 .75rem}.runner-heading p{color:var(--text-muted,#9ca3af);margin:0}
+  button{padding:.6rem 1.2rem;background:var(--blue,#3b82f6);color:white;border-radius:999px;font-weight:650;cursor:pointer;transition:background .15s,opacity .15s}
+  button:hover,button:focus-visible{background:#2563eb;outline:none}button:disabled{opacity:.5;cursor:default}
+  .runner-metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:1.5rem;margin-bottom:2.5rem}.runner-metrics div{display:flex;flex-direction:column;gap:.35rem}
+  strong{font-size:3.2rem;font-weight:650;font-variant-numeric:tabular-nums}span,dt{color:var(--text-muted,#9ca3af);font-size:1.4rem}
+  section{margin-bottom:2rem}dl{margin:0}dl div{display:flex;justify-content:space-between;gap:1.5rem;padding:.65rem 0}dd{margin:0;font-variant-numeric:tabular-nums;text-align:right;overflow-wrap:anywhere}
+  #runner-error{color:#fca5a5}@media(max-width:600px){.runner-metrics{grid-template-columns:repeat(2,1fr)}strong{font-size:2.8rem}}
+</style>

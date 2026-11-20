@@ -9,10 +9,12 @@ let media = null, library = null, error = '', libraryError = '';
 let canUseLibrary = false;
 if (!id) { Astro.response.status = 404; error = 'Media not found.'; }
 else {
-  try { media = await tracker(`title/${id}`,Astro.locals.token); }
+  const connection = Astro.locals.user
+    ? hasStreamingLibraryConnection(Astro.locals.token) : Promise.resolve(false);
+  try { media = await tracker(`title/${id}?episodes=false`,Astro.locals.token); }
   catch (cause) { error = (cause as Error).message; Astro.response.status = error === 'Not found.' ? 404 : 503; }
   if (media && Astro.locals.user) {
-    canUseLibrary = await hasStreamingLibraryConnection(Astro.locals.token);
+    canUseLibrary = await connection;
     if (canUseLibrary) {
       try { library = await tracker(`library/${id}`,Astro.locals.token); }
       catch (cause) { libraryError = (cause as Error).message; }

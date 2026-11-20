@@ -1,13 +1,12 @@
-import { timelineGroups, type TimelineItem } from './browse-timeline-data';
+import { compareGamePeriods, compareTimelineYears, timelineGroups, type TimelineItem } from './browse-timeline-data';
 import { setLocalDateTime } from './date-time-dom';
 
-/** Provider pages share one chronological snapshot. Append new cards only;
- * existing cards/headings keep their DOM positions and interaction state. */
-export function appendBrowseTimeline<T extends TimelineItem>(root: HTMLElement, cards: HTMLElement[], items: Map<HTMLElement,T>, ascending = false) {
+/** Keep existing cards and headings attached as new periods arrive. */
+export function appendBrowseTimeline<T extends TimelineItem>(root: HTMLElement, cards: HTMLElement[], items: Map<HTMLElement,T>, ascending = false, game = false) {
   const byItem = new Map(cards.filter(card => !root.contains(card)).map(card => [items.get(card)!, card]));
   const years = new Map([...root.querySelectorAll<HTMLElement>('[data-timeline-year]')].map(year => [year.dataset.timelineYear!, year]));
   const months = new Map([...root.querySelectorAll<HTMLElement>('[data-timeline-month]')].map(month => [month.dataset.timelineMonth!, month]));
-  timelineGroups([...byItem.keys()].filter(Boolean), ascending).forEach(group => {
+  timelineGroups([...byItem.keys()].filter(Boolean), ascending, game).forEach(group => {
     let year = years.get(group.year);
     if (!year) {
       year = document.createElement('section');
@@ -19,7 +18,9 @@ export function appendBrowseTimeline<T extends TimelineItem>(root: HTMLElement, 
       const body = document.createElement('div');
       body.className = 'browse-timeline-months';
       year.append(heading, body);
-      root.append(year);
+      const following = game && [...root.children].find(child =>
+        compareTimelineYears(group.year, (child as HTMLElement).dataset.timelineYear!, ascending) < 0);
+      if (following) root.insertBefore(year, following); else root.append(year);
       years.set(group.year, year);
     }
     const body = year.querySelector<HTMLElement>('.browse-timeline-months')!;
@@ -35,7 +36,9 @@ export function appendBrowseTimeline<T extends TimelineItem>(root: HTMLElement, 
         const grid = document.createElement('div');
         grid.className = 'browse-grid';
         month.append(heading, grid);
-        body.append(month);
+        const following = game && [...body.children].find(child =>
+          compareGamePeriods(group.key, (child as HTMLElement).dataset.timelineMonth!, ascending) < 0);
+        if (following) body.insertBefore(month, following); else body.append(month);
         months.set(group.key, month);
       }
       const grid = month.querySelector<HTMLElement>('.browse-grid')!;

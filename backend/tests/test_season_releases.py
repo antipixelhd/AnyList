@@ -1,5 +1,5 @@
 import unittest
-from datetime import date
+from datetime import date, datetime, timezone
 from types import SimpleNamespace
 
 from core.season_releases import (
@@ -7,6 +7,7 @@ from core.season_releases import (
     SEASON_RELEASE_KIND,
     _season_art,
     observation_transition,
+    season_availability,
     season_event_dedupe_key,
     season_date_notice_is_current,
     upcoming_season,
@@ -14,6 +15,47 @@ from core.season_releases import (
 
 
 class UpcomingSeasonTests(unittest.TestCase):
+    def test_season_dot_changes_at_the_scheduled_premiere(self):
+        from core.episode_release import EpisodeRelease
+
+        premiere = '2026-10-02'
+        schedule = {'time': '20:00', 'zone': 'UTC'}
+        before = EpisodeRelease(schedule, today=date(2026, 10, 2),
+            now=datetime(2026, 10, 2, 19, 59, tzinfo=timezone.utc))
+        aired = EpisodeRelease(schedule, today=before.today,
+            now=datetime(2026, 10, 2, 20, tzinfo=timezone.utc))
+        episodes = [premiere, '2026-10-09']
+        self.assertEqual(season_availability(premiere, episodes, 0, before), 'upcoming')
+        self.assertEqual(season_availability(premiere, episodes, 1, aired), 'airing')
+        self.assertIsNone(season_availability(None, [], 0, before))
+        self.assertIsNone(season_availability(premiere, episodes, 1, aired, completed=True))
+
+    def test_home_progress_uses_current_season_until_increment_wraps(self):
+        from core.screen_list import project_series
+
+        media = SimpleNamespace(status='Returning Series', tvdb_air_schedule=None, tmdb_data={
+            'tracking_catalogue_refreshed_at': '2026-09-23',
+            'seasons': [{'season_number': 1, 'episode_count': 1, 'air_date': '2026-09-01', 'name': 'First Campaign'},
+                        {'season_number': 2, 'episode_count': 3, 'air_date': '2026-09-21', 'poster_path': '/campaign.jpg'}],
+            'next_episode_to_air': {'season_number': 2, 'episode_number': 3, 'air_date': '2026-10-01'},
+        })
+        episodes = [SimpleNamespace(id=n, season_number=season, episode_number=episode,
+                                    release_date=day, watched=watched, imported=False)
+                    for n, season, episode, day, watched in [(1, 1, 1, '2026-09-01', True),
+                        (2, 2, 1, '2026-09-21', False), (3, 2, 2, '2026-09-22', False),
+                        (4, 2, 3, '2026-10-01', False)]]
+        entry = {'status': 'watching'}
+        today = date(2026, 9, 23)
+        project_series(entry, media, episodes, today, True, latest_activity={'episode_id': 1})
+        self.assertEqual(entry['progress_season']['name'], 'First Campaign')
+        self.assertEqual(entry['progress_season']['next_watch_id'], 2)
+        episodes[1].watched = True
+        project_series(entry, media, episodes, today, True, latest_activity={'episode_id': 2})
+        self.assertEqual(entry['progress_season'], {'number': 2, 'name': 'Season 2',
+            'poster': 'https://image.tmdb.org/t/p/original/campaign.jpg', 'watched': 1,
+            'released': 2, 'position': 'S2 E1', 'next_watch_id': 3})
+        self.assertEqual(entry['next_release_date'], '2026-10-01')
+
     def test_first_season_is_not_a_new_season_release(self):
         season = {"season_number": 1, "name": "Season 1", "air_date": "2026-10-01", "episode_count": 0}
         self.assertIsNone(upcoming_season({"seasons": [season]}, date(2026, 9, 25)))

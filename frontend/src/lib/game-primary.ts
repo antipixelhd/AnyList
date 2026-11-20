@@ -1,0 +1,109 @@
+import {detailBrowseHref,detailFacts,detailSynopsis,prepareDetail} from './media-detail-data';
+import {mountContributorBiography,unmountContributorBiography} from './contributor-biography';
+import {publishDetailSources} from './detail-sources';
+import {formatDate} from './date-time';
+
+export type GameRelease={release_date:string;release_date_precision:string;release_quarter:number|null};
+/** Apply only the canonical release delta; leave artwork and editor state alone. */
+export function publishGameRelease(root:HTMLElement,release:GameRelease|null|undefined,signal:AbortSignal) {
+  if(signal.aborted||!release?.release_date)return;
+  root.dataset.gameRelease=JSON.stringify(release);
+  const title=prepareDetail({id:0,type:'game',...release});
+  const fact=detailFacts(title).find(row=>row.label==='Released'||row.label==='Releases');
+  if(!fact)return;
+  root.querySelectorAll<HTMLElement>('.lab-facts dl,.lab-inline-facts dl').forEach(list=>{
+    const row=[...list.children].find(child=>['Released','Releases'].includes(child.querySelector('dt')?.textContent||''));
+    if(row){row.querySelector('dt')!.textContent=fact.label;row.querySelector('dd')!.textContent=fact.value;}
+  });
+  const year=root.querySelector<HTMLElement>('[data-game-year]');
+  if(year){
+    year.hidden=false;const link=document.createElement('a');link.textContent=release.release_date.slice(0,4);
+    link.href=detailBrowseHref('game',{year:link.textContent})||'/browse/games';year.replaceChildren(link);
+  }
+  root.querySelectorAll<HTMLElement>('[data-game-releases] .media-releases p').forEach(row=>{
+    if(row.querySelector('strong')?.textContent!=='PC')return;
+    const time=row.querySelector('time');if(time){time.dateTime=release.release_date;time.textContent=formatDate(release.release_date);}
+  });
+}
+
+/** Publish public metadata into owned slots; never re-seed editor/private state. */
+export function publishGamePrimary(root:HTMLElement,data:Record<string,any>,id:number,signal:AbortSignal) {
+  if(signal.aborted||data.id!==id||data.type!=='game')return false;
+  root.dataset.gamePrimaryPending='false';
+  root.querySelectorAll('[data-game-primary-facts]').forEach(node=>node.remove());
+  const title=prepareDetail(data);
+  publishDetailSources(root,title.sources);
+  const releases=root.querySelector<HTMLElement>('[data-game-releases]');
+  if(releases){
+    releases.hidden=!title.releases.length;
+    releases.querySelector('.media-releases')?.replaceChildren(...title.releases.map(release=>{
+      const row=document.createElement('p'),platform=document.createElement('strong'),value=document.createElement('span');
+      platform.textContent=release.platform;
+      value.textContent=release.region||'';
+      if(release.release_date){
+        if(release.region)value.append(' · ');
+        const time=document.createElement('time');time.dateTime=release.release_date;time.dataset.localDateTime='date';
+        if(release.release_quarter){time.textContent=`Q${release.release_quarter} ${release.release_date}`;delete time.dataset.localDateTime;}
+        else time.textContent=formatDate(release.release_date);
+        value.append(time);
+      }
+      row.append(platform,value);return row;
+    }));
+  }
+  const heading=root.querySelector('.lab-heading h1');if(heading)heading.textContent=title.title;
+  const year=root.querySelector<HTMLElement>('[data-game-year]');
+  if(year){
+    year.hidden=!title.year;year.replaceChildren();
+    if(title.year){const link=document.createElement('a');link.textContent=title.year;link.href=detailBrowseHref('game',{year:title.year})||'/browse/games';year.append(link);}
+  }
+  const genres=root.querySelector<HTMLElement>('[data-game-genres]');
+  if(genres){
+    genres.replaceChildren(...title.genres.slice(0,6).map(genre=>{
+      const node=document.createElement('a');node.textContent=genre;
+      node.href=detailBrowseHref('game',{genre})||'/browse/games';return node;
+    }));genres.removeAttribute('aria-busy');
+  }
+  const synopsis=root.querySelector<HTMLElement>('[data-detail-synopsis]');
+  if(synopsis){
+    const text=synopsis.querySelector<HTMLElement>('[data-biography-text]')!;
+    const copy=detailSynopsis(title.overview,true);
+    const previous=(text.firstChild?.textContent||'')+(text.querySelector('[data-biography-rest]')?.textContent||'');
+    if(previous.trim()!==(copy.lead+copy.rest).trim()||text.classList.contains('detail-synopsis-skeleton')){
+      const expanded=synopsis.querySelector('[data-biography-toggle]')?.getAttribute('aria-expanded')==='true';
+      unmountContributorBiography(synopsis);
+      text.replaceChildren(document.createTextNode(copy.lead||'No synopsis available yet.'));
+      const ellipsis=document.createElement('span');ellipsis.dataset.biographyEllipsis='';ellipsis.hidden=true;
+      const rest=document.createElement('span');rest.dataset.biographyRest='';rest.hidden=true;rest.textContent=copy.rest;
+      text.append(ellipsis,rest);text.classList.remove('detail-synopsis-skeleton');text.removeAttribute('aria-busy');
+      synopsis.querySelector('[data-biography-toggle]')?.remove();
+      if(copy.expandable){
+        const button=document.createElement('button');button.type='button';button.className='lab-text-button';
+        button.dataset.biographyToggle='';button.textContent='Read more';button.setAttribute('aria-expanded','false');button.setAttribute('aria-controls','detail-synopsis');
+        synopsis.append(button);mountContributorBiography(synopsis,signal,expanded);
+      }
+    }
+  }
+  root.querySelectorAll<HTMLElement>('.lab-facts dl,.lab-inline-facts dl').forEach(list=>{
+    detailFacts(title).forEach(fact=>{
+      const row=document.createElement('div'),term=document.createElement('dt'),value=document.createElement('dd');
+      term.textContent=fact.label;value.textContent=fact.value;row.append(term,value);
+      const old=[...list.children].find(child=>child.querySelector('dt')?.textContent===fact.label);
+      if(old)old.replaceWith(row);else list.append(row);
+    });
+  });
+  const cover=root.querySelector<HTMLElement>('.media-cover-empty');
+  if(cover&&title.poster){
+    const button=document.createElement('button');button.type='button';button.className='lab-hero-poster lab-poster-button media-cover detail-image-skeleton';
+    button.dataset.detailGallery='posters';button.setAttribute('aria-label',`Expand ${title.title} cover`);
+    button.dataset.detailCaption=`${title.title} · Cover`;
+    const image=document.createElement('img');image.className='lab-poster';image.alt=`${title.title} cover`;image.fetchPriority='high';image.style.opacity='0';
+    image.addEventListener('load',()=>{button.classList.remove('detail-image-skeleton');image.style.removeProperty('opacity');},{once:true,signal});
+    image.addEventListener('error',()=>button.replaceWith(cover),{once:true,signal});
+    button.append(image);cover.replaceWith(button);
+  }
+  // The existing image controller owns decoding, selected art, responsive URLs,
+  // modal state and deferred gallery loading; this does not warm gallery extras.
+  root.dispatchEvent(new CustomEvent('anylist:game-primary',{detail:data}));
+  if(root.dataset.gameRelease)publishGameRelease(root,JSON.parse(root.dataset.gameRelease),signal);
+  return true;
+}

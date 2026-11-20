@@ -20,13 +20,13 @@ export function releaseYearLabel(start: string, end: string, min: number, max: n
   return `${start ? lower : 'Any'} – ${end ? upper : 'Any'}`;
 }
 
-export function initializeBrowseRanges(form: HTMLFormElement, signal: AbortSignal) {
+export function initializeBrowseRanges(form: HTMLFormElement, signal: AbortSignal,scoreName='min_score') {
   const start = form.elements.namedItem("start") as HTMLInputElement;
   const end = form.elements.namedItem("end") as HTMLInputElement;
   const year = form.querySelector<HTMLElement>("[data-year-range]")!;
   const lower = year.querySelector<HTMLInputElement>("[data-range-lower]")!;
   const upper = year.querySelector<HTMLInputElement>("[data-range-upper]")!;
-  const score = form.elements.namedItem("min_score") as HTMLInputElement;
+  const score = form.elements.namedItem(scoreName) as HTMLInputElement;
   const scoreRange = score.closest<HTMLElement>("[data-score-range]")!;
   const min = Number(lower.min), max = Number(upper.max);
   const paint = () => {

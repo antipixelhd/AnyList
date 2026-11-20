@@ -31,7 +31,7 @@ function thumbnail({complete=false,width=0}={}){
   Object.assign(image,{src:'https://example.test/art.jpg',hidden:true,complete,naturalWidth:width,
     getAttribute:()=>image.src,style:{opacity:'0',removeProperty(name){delete this[name];}}});
   const classes=new Set(['detail-image-skeleton']);
-  const button={querySelector:()=>image,classList:{add:name=>classes.add(name),remove:name=>classes.delete(name)}};
+  const button={querySelector:()=>image,matches:()=>false,classList:{add:name=>classes.add(name),remove:name=>classes.delete(name)}};
   return {image,button,classes};
 }
 test('cold lazy artwork keeps a layout box and skeleton until the image loads',()=>{
@@ -70,5 +70,20 @@ test('offscreen gallery thumbnails stay source-free until viewed and stop loadin
     callback([{target:button,isIntersecting:true}]);assert.equal(image.src,'https://example.test/thumbnail.jpg');assert.equal(loads,1);
     const later={dataset:{gallerySrc:'https://example.test/later.jpg'}},other={querySelector:()=>later};
     load(other);controller.abort();callback([{target:other,isIntersecting:true}]);assert.equal(later.src,undefined);assert.equal(disconnected,true);
+  }finally{if(previous===undefined)delete globalThis.IntersectionObserver;else globalThis.IntersectionObserver=previous;}
+});
+
+test('explicit viewer intent preloads strip previews once without exposing offscreen grid images',()=>{
+  const previous=globalThis.IntersectionObserver;let callback;
+  globalThis.IntersectionObserver=class {constructor(cb){callback=cb;} observe(){} unobserve(){} disconnect(){}};
+  try {
+    const controller=new AbortController(),started=[];
+    const strip={dataset:{gallerySrc:'strip'}},grid={dataset:{gallerySrc:'grid'}};
+    const stripButton={querySelector:()=>strip},gridButton={querySelector:()=>grid};
+    const load=createGalleryImageLoader(controller.signal,button=>started.push(button));
+    load(gridButton);load(stripButton,true);
+    assert.equal(strip.src,'strip');assert.equal(grid.src,undefined);
+    callback([{target:stripButton,isIntersecting:true}]);assert.equal(started.length,1);
+    controller.abort();load(gridButton,true);assert.equal(grid.src,undefined);
   }finally{if(previous===undefined)delete globalThis.IntersectionObserver;else globalThis.IntersectionObserver=previous;}
 });

@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import Media, Show, WatchEvent
 from core import tracking_projection
+from core.episode_release import EpisodeRelease
 from models.base import MediaType
 from models.tracking import (
     SyncReview,
@@ -33,13 +34,36 @@ def parse_release_day(value: object) -> date | None:
         return None
 
 
-def availability_dot(tmdb_data, episodes, watched_episode_ids, status, today=None):
+def season_availability(premiere, episode_dates, released_count, release, *, completed=False, next_episode=None):
+    """Project a dot from this season's schedule and released episode evidence."""
+    if completed:
+        return None
+    days = [day for value in episode_dates if (day := parse_release_day(value))]
+    next_day = parse_release_day(next_episode.get('air_date')) if next_episode else None
+    if next_day and next_episode.get('episode_number') == 1:
+        days.append(next_day)
+    first = min(days, default=None) or parse_release_day(premiere)
+    if not released_count:
+        if not first:
+            return None
+        if not release.is_released(first.isoformat()):
+            return 'upcoming'
+    if any(not release.is_released(day.isoformat()) for day in days) or (
+            next_day and not release.is_released(next_day.isoformat())):
+        return 'airing'
+    if first and first >= release.today - timedelta(days=30):
+        return 'new_season'
+    return None
+
+
+def availability_dot(tmdb_data, episodes, watched_episode_ids, status, today=None, *, release=None):
     """Return the availability indicator and reason from cached season/episode data.
 
     ``episodes`` is an iterable of ``(season_number, release_date, media_id)``
     rows. Incomplete or malformed catalogue data never produces a dot.
     """
-    today = today or date.today()
+    release = release or EpisodeRelease(today=today)
+    today = release.today
     data = tmdb_data if isinstance(tmdb_data, dict) else {}
     seasons = data.get('seasons')
     if not isinstance(seasons, list):
@@ -68,7 +92,7 @@ def availability_dot(tmdb_data, episodes, watched_episode_ids, status, today=Non
         released_day = parse_release_day(released_at)
         if released_day is None and not import_confirmed_release:
             continue
-        if import_confirmed_release or released_day <= today:
+        if release.is_released(released_at, import_confirmed_release):
             released_by_season.setdefault(season, []).append(media_id)
         else:
             future_by_season.setdefault(season, []).append(media_id)
@@ -78,7 +102,8 @@ def availability_dot(tmdb_data, episodes, watched_episode_ids, status, today=Non
     if isinstance(next_episode, dict):
         next_season = next_episode.get('season_number')
         next_day = parse_release_day(next_episode.get('air_date'))
-        if next_season in regular and next_day and next_day >= today:
+        next_at = release.air_at(next_day.isoformat()) if next_day else None
+        if next_season in regular and next_day and (next_at > release.now if next_at else next_day >= today):
             expected, premiered = regular[next_season]
             if premiered <= today and len(released_by_season.get(next_season, ())) < expected:
                 return True, 'airing'
@@ -98,14 +123,15 @@ def availability_dot(tmdb_data, episodes, watched_episode_ids, status, today=Non
     return False, None
 
 
-def current_airing_details(tmdb_data, episodes, today=None):
+def current_airing_details(tmdb_data, episodes, today=None, *, release=None):
     """Return active-release state and its next known date for a series.
 
     TMDB's broad status can stay at ``Returning Series`` between seasons, so
     require both that active status and the episode-level signal used by the
     availability indicator: a started season with a future scheduled episode.
     """
-    today = today or date.today()
+    release = release or EpisodeRelease(today=today)
+    today = release.today
     data = tmdb_data if isinstance(tmdb_data, dict) else {}
     status = str(data.get('status') or '').strip().casefold()
     if status != 'returning series':
@@ -122,7 +148,7 @@ def current_airing_details(tmdb_data, episodes, today=None):
             data = {**data}
             data.pop('next_episode_to_air', None)
             next_episode = None
-    _, reason = availability_dot(data, episode_rows, set(), 'watching', today)
+    _, reason = availability_dot(data, episode_rows, set(), 'watching', release=release)
     if reason != 'airing':
         return False, None
 
@@ -137,33 +163,31 @@ def current_airing_details(tmdb_data, episodes, today=None):
     next_episode = data.get('next_episode_to_air')
     next_day = parse_release_day(next_episode.get('air_date')) if isinstance(next_episode, dict) else None
     next_season = next_episode.get('season_number') if isinstance(next_episode, dict) else None
-    if next_day and next_day >= today and next_season in regular:
+    next_air_at = release.air_at(next_day.isoformat()) if next_day else None
+    if next_day and next_season in regular and (next_air_at > release.now if next_air_at else next_day >= today):
         return True, next_day.isoformat()
 
     last_episode = data.get('last_episode_to_air')
     active_season = last_episode.get('season_number') if isinstance(last_episode, dict) else None
+    future = [(row[0], day) for row in episode_rows if row[0] in regular and (day := parse_release_day(row[1]))
+              and not (len(row) > 3 and row[3]) and not release.is_released(row[1])]
     if active_season not in regular:
-        candidates = [number for number in regular if any(
-            len(row) > 1 and row[0] == number and parse_release_day(row[1]) and parse_release_day(row[1]) > today
-            for row in episode_rows
-        )]
-        active_season = max(candidates, default=None)
+        active_season = max((number for number, _ in future), default=None)
     if active_season not in regular:
         return True, None
-    future_days = [parse_release_day(row[1]) for row in episode_rows
-                   if len(row) > 1 and row[0] == active_season
-                   and parse_release_day(row[1]) and parse_release_day(row[1]) > today]
+    future_days = [day for number, day in future if number == active_season]
     return True, min(future_days).isoformat() if future_days else None
 
 
 async def media_availability_dot(db, user_id, media, status, today=None):
     data = media.tmdb_data or {}
     ids = data.get('tracking_episode_ids') or []
+    release = EpisodeRelease(media.tvdb_air_schedule, today=today)
     imported_ids = data.get('tracking_import_episode_media_ids') or []
     provider = data.get('tracking_catalogue_provider', 'tmdb')
     identity = Media.tvdb_id if provider == 'tvdb' else Media.tmdb_id
     if not ids and not imported_ids:
-        return availability_dot(data, [], set(), status, today)
+        return availability_dot(data, [], set(), status, release=release)
     identity_filters = []
     if ids:
         identity_filters.append(identity.in_(ids))
@@ -182,7 +206,7 @@ async def media_availability_dot(db, user_id, media, status, today=None):
         (row.season_number, row.release_date, row.id,
          bool((row.tmdb_data or {}).get('tracking_import_released')))
         for row in rows
-    ], watched, status, today)
+    ], watched, status, release=release)
 
 
 def _season_rows(metadata: dict | None) -> list[dict]:

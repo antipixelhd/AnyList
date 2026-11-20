@@ -16,6 +16,34 @@ def film(**values):
 
 
 class EvidenceTests(unittest.IsolatedAsyncioTestCase):
+    def test_people_existence_retains_full_summary_eligibility_and_skips_remaining_credits(self):
+        rows = [film(id=1, adult=True), film(id=2, runtime=2),
+                film(id=3, genre_ids=[99]), film(id=4, character='Self (archive footage)'),
+                film(id=5, genre_ids=[16], original_language='ja'),
+                film(id=6, runtime=90, job='Director'), film(id=7, runtime=100, job='Director')]
+        for section, field in (('actor', 'cast'), ('staff', 'crew')):
+            for complete in (False, True):
+                for size in range(len(rows) + 1):
+                    for filters in (FILTERS, {**FILTERS, 'excluded_genres': [99]},
+                                    {**FILTERS, 'min_runtime': 1000}):
+                        for anime in (False, True):
+                            payload = {field: rows[:size], 'complete': complete}
+                            full = evidence.work_summary(payload, section, filters, anime)
+                            existence = evidence.work_summary(payload, section, filters, anime, existence_only=True)
+                            self.assertEqual(existence is None, full is None)
+                            self.assertEqual(bool(existence and existence['works']), bool(full and full['works']))
+        with patch.object(evidence, 'eligible_work', wraps=evidence.eligible_work) as check:
+            evidence.work_summary({'cast': [film(), *rows]}, 'actor', FILTERS, True, existence_only=True)
+            self.assertEqual(check.call_count, 1)
+
+    def test_existence_cache_cannot_replace_full_counts_or_another_role(self):
+        evidence._summary_cache._store.clear()
+        payload = {'cast': [film(), film(id=2)], 'crew': [], 'complete': True,
+            '_fresh': True, '_cache_identity': ['person', 123, 'existence', 'expiry']}
+        self.assertEqual(evidence.work_summary(payload, 'actor', FILTERS, True, existence_only=True)['works'], 1)
+        self.assertEqual(evidence.work_summary(payload, 'actor', FILTERS, True)['works'], 2)
+        self.assertEqual(evidence.work_summary(payload, 'staff', FILTERS, True, existence_only=True)['works'], 0)
+
     def test_raw_evidence_is_shared_across_filters_and_company_groups(self):
         other = {**FILTERS, 'excluded_genres':[99], 'min_popularity':1000}
         self.assertEqual(evidence.evidence_key('person',1,FILTERS,True), evidence.evidence_key('person',1,other,False))
@@ -52,6 +80,16 @@ class EvidenceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(provider.await_count,1)
         self.assertEqual(evidence.work_summary(data,'actor',FILTERS,True)['works'],1)
         self.assertEqual(evidence.work_summary(data,'staff',FILTERS,True)['works'],1)
+
+    def test_cached_movie_candidate_joins_only_the_same_verified_game_provider_identity(self):
+        from core.contributor_search import merge_game_matches
+        groups={'actor':[{'key':'tmdb:10','name':'Actor','_native':10,'roles':['Actor'],'image':'portrait'},
+            {'key':'tmdb:20','name':'Actor','_native':20,'roles':['Actor'],'image':None}],'staff':[],'studio':[]}
+        games={'actor':[{'key':'catalogue:1','name':'Actor','_native':10,'roles':['Voice actor'],
+            'image':None,'url':'/actors/catalogue:1?media_type=game','_works':1}],'staff':[],'studio':[]}
+        result=merge_game_matches(groups,games)['actor']
+        self.assertEqual([row['key'] for row in result],['catalogue:1','tmdb:20'])
+        self.assertEqual((result[0]['url'],result[0]['image']),('/actors/catalogue:1','portrait'))
 
     async def test_studio_verification_is_two_calls_and_continues_instead_of_inventing_empty(self):
         key,config=evidence.evidence_key('studio',429,FILTERS,True)
@@ -117,9 +155,12 @@ class EvidenceTests(unittest.IsolatedAsyncioTestCase):
         from core import contributor_search as search
         groups = {section: [{'key': f'tmdb:{i}', '_native': i, '_known_for': [film(job='Director')]}
                            for i in range(1, 31)] for section in ('actor', 'staff')}
+        async def read(db,jobs,viewer,**options):
+            await options['established']({})
+            return {},True
         with patch.object(search, 'result_filters', AsyncMock(return_value=FILTERS)), \
              patch.object(search, 'local_evidence', AsyncMock(return_value={})) as local, \
-             patch.object(search, 'cached_evidence', AsyncMock(return_value=({}, True))) as cached:
+             patch.object(search, 'cached_evidence', AsyncMock(side_effect=read)) as cached:
             await search.verified_people(SimpleNamespace(get=AsyncMock(return_value=None)),
                 SimpleNamespace(id=1), groups, 'key')
         self.assertEqual(len(cached.await_args.args[1]), 8)

@@ -7,14 +7,17 @@ from models import GlobalSettings
 MAX_CANDIDATES = 8
 
 
-async def verified_studios(db, viewer, rows, api_key):
+async def verified_studios(db, viewer, rows, api_key, *, policy=None):
     if not rows:
         return [], False
-    filters = await result_filters(db, viewer)
-    policy = await browse_preferences(db, viewer, 'movie', 'search')
-    filters = {**filters, 'min_popularity': policy['min_popularity']}
-    settings = await db.get(GlobalSettings, 1)
-    show_anime = settings is None or settings.show_anime
+    if policy is None:
+        filters = await result_filters(db, viewer)
+        preferences = await browse_preferences(db, viewer, 'movie', 'search')
+        filters = {**filters, 'min_popularity': preferences['min_popularity']}
+        settings = await db.get(GlobalSettings, 1)
+        show_anime = settings is None or settings.show_anime
+    else:
+        filters, show_anime = policy['studio_filters'], policy['show_anime']
     # Prefer known contributors, then provider-branded matches; retain provider
     # order among equal candidates rather than sorting unverified names A-Z.
     rows = sorted(rows, key=lambda row: (row.get('_match', 2), -row.get('_works', 0), not bool(row.get('image'))))
@@ -48,25 +51,35 @@ async def verified_studios(db, viewer, rows, api_key):
         if row.get('_native'):
             key, config = evidence_key('studio', row['_native'], filters, show_anime)
             jobs[key] = config
+    local,values={},{}
+    async def established(evidence):
+        nonlocal local
+        unresolved=[]
+        for row in candidates:
+            key=evidence_key('studio',row['_native'],filters,show_anime)[0] if row.get('_native') else None
+            payload=evidence.get(key) or {}
+            value=work_summary(evidence.get(key),'studio',filters,show_anime)
+            if key:values[key]=value
+            if not (payload.get('_fresh') and (payload.get('complete') or value and value['works'])):
+                unresolved.append(row)
+        local_rows=[{'key':key} for row in unresolved for key in row['_local_keys']]
+        member_limit=MAX_CANDIDATES*max((len(studio_members(row['_native']))
+            if row.get('_native') else 1 for row in unresolved),default=1)
+        local=await local_evidence(db,local_rows,'studio',filters,show_anime,limit=member_limit) if local_rows else {}
+        settled=set()
+        for row in candidates:
+            if not row.get('_native'):continue
+            key=evidence_key('studio',row['_native'],filters,show_anime)[0]
+            value=values[key]
+            if any(key in local for key in row['_local_keys']) or value and value['works']:settled.add(key)
+        return settled
     evidence, pending = await cached_evidence(db, jobs, viewer.id if viewer else None, enqueue=bool(api_key),
-        summaries={key: (('studio', filters, show_anime),) for key in jobs})
-    # Fresh complete evidence is authoritative for this bounded sample, including
-    # negative decisions. Only unknown/stale candidates need local credit reads.
-    unresolved = [row for row in candidates if not (row.get('_native') and
-        (evidence.get(evidence_key('studio', row['_native'], filters, show_anime)[0]) or {}).get('_fresh') and
-        (evidence.get(evidence_key('studio', row['_native'], filters, show_anime)[0]) or {}).get('complete'))]
-    local_rows = [{'key': key} for row in unresolved for key in row['_local_keys']]
-    # At most eight groups, including their reviewed concurrent brands. This
-    # remains one bounded indexed read, never a query per company or credit.
-    member_limit = MAX_CANDIDATES * max((len(studio_members(row['_native']))
-        if row.get('_native') else 1 for row in unresolved), default=1)
-    local = await local_evidence(db, local_rows, 'studio', filters, show_anime,
-        limit=member_limit) if local_rows else {}
+        summaries={key: (('studio', filters, show_anime),) for key in jobs},established=established)
     output = []
     for row in candidates:
         row['_local'] = next((local[key] for key in row['_local_keys'] if key in local), None)
         key = evidence_key('studio', row['_native'], filters, show_anime)[0] if row.get('_native') else None
-        value = work_summary(evidence.get(key), 'studio', filters, show_anime)
+        value = values[key] if key in values else work_summary(evidence.get(key), 'studio', filters, show_anime)
         # Actual eligible local works remain useful even before remote verification.
         if row.get('_local'):
             value = {'works':max(row['_local']['works'], (value or {}).get('works', 0)),

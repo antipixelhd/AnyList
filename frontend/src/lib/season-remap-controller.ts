@@ -12,7 +12,7 @@ function applyResponsiveImages(root: ParentNode) {
   });
 }
 
-export function mountSeasonRemap(token: string, onSaved: () => void) {
+export function mountSeasonRemap(onSaved: () => void) {
   const modal = document.getElementById('season-remap-modal') as HTMLElement;
   if (!modal) return;
 
@@ -163,7 +163,7 @@ export function mountSeasonRemap(token: string, onSaved: () => void) {
       try {
         const showUrl = tvdbId ? `/api/proxy/shows/tvdb/${tvdbId}` : `/api/proxy/shows/${tmdbId}`;
         const showRes = await request(showUrl, {
-          headers: { 'Authorization': `Bearer ${token}` },
+          headers: { },
         });
         const showData = showRes.ok ? await showRes.json() : null;
         // >= 0, not > 0 - TVDB stores specials/OVAs in Season 0 for a lot of
@@ -213,7 +213,7 @@ export function mountSeasonRemap(token: string, onSaved: () => void) {
     try {
       const searchType = modalMode === 'match-movie' ? 'movie' : 'series';
       const res = await request(`/api/proxy/media/search?q=${encodeURIComponent(q)}&type=${searchType}`, {
-        headers: { 'Authorization': `Bearer ${token}` },
+        headers: { },
       });
       if (!res.ok) throw new Error('Search failed');
       const data = await res.json();
@@ -259,7 +259,7 @@ export function mountSeasonRemap(token: string, onSaved: () => void) {
     resultsEl.innerHTML = '<p class="text-xs text-zinc-500 py-2">Searching…</p>';
     try {
       const res = await request(`/api/proxy/media/search-tvdb?q=${encodeURIComponent(q)}`, {
-        headers: { 'Authorization': `Bearer ${token}` },
+        headers: { },
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -306,9 +306,9 @@ export function mountSeasonRemap(token: string, onSaved: () => void) {
   };
 
   searchBtn.addEventListener('click', doSearch, { signal: lifetime.signal });
-  searchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); }, { signal: lifetime.signal });
+  searchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) doSearch(); }, { signal: lifetime.signal });
   modal.querySelector<HTMLButtonElement>('#remap-tvdb-search-btn')?.addEventListener('click', doTvdbSearch, { signal: lifetime.signal });
-  (modal.querySelector<HTMLInputElement>('#remap-tvdb-input'))?.addEventListener('keydown', (e) => { if (e.key === 'Enter') doTvdbSearch(); }, { signal: lifetime.signal });
+  (modal.querySelector<HTMLInputElement>('#remap-tvdb-input'))?.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) doTvdbSearch(); }, { signal: lifetime.signal });
 
   modal.querySelector<HTMLButtonElement>('#remap-save')?.addEventListener('click', async () => {
     const saveBtn = modal.querySelector<HTMLButtonElement>('#remap-save') as HTMLButtonElement;
@@ -325,7 +325,7 @@ export function mountSeasonRemap(token: string, onSaved: () => void) {
         else body.tmdb_id = targetTmdbId;
         const res = await request('/api/proxy/sync/match-unmatched-show', {
           method: 'POST',
-          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
         });
         if (!res.ok) throw new Error(await res.text());
@@ -346,7 +346,7 @@ export function mountSeasonRemap(token: string, onSaved: () => void) {
       try {
         const res = await request('/api/proxy/sync/match-unmatched-movie', {
           method: 'POST',
-          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ movie_title: matchMovieTitle, tmdb_id: targetTmdbId }),
         });
         if (!res.ok) throw new Error(await res.text());
@@ -374,7 +374,7 @@ export function mountSeasonRemap(token: string, onSaved: () => void) {
       else remapBody.target_show_tmdb_id = targetTmdbId;
       const createRes = await request('/api/proxy/sync/season-overrides', {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(remapBody),
       });
       if (!createRes.ok) throw new Error(await createRes.text());
@@ -383,7 +383,7 @@ export function mountSeasonRemap(token: string, onSaved: () => void) {
       saveBtn.textContent = 'Applying…';
       const applyRes = await request(`/api/proxy/sync/season-overrides/${override.id}/apply`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` },
+        headers: { },
       });
       if (!applyRes.ok) throw new Error(await applyRes.text());
 
@@ -470,7 +470,7 @@ export function mountSeasonRemap(token: string, onSaved: () => void) {
       try {
         const res = await request(`/api/proxy/sync/${isMovie ? 'unmatch-movie' : 'unmatch-show'}`, {
           method: 'POST',
-          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(isMovie ? { movie_title: title } : { show_title: title }),
         });
         if (!res.ok) throw new Error(await res.text());
@@ -489,7 +489,7 @@ export function mountSeasonRemap(token: string, onSaved: () => void) {
     button.textContent = 'Removing…';
     try {
       const res = await request(`/api/proxy/sync/season-overrides/${overrideId}`, {
-        method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` },
+        method: 'DELETE', headers: { },
       });
       if (lifetime.signal.aborted) return;
       if (res.ok) {

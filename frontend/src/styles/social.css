@@ -5,7 +5,6 @@
   align-content: start;
   gap: var(--content-column-gap);
   max-width: var(--page-max-width);
-  min-height: 420px;
   padding-inline: var(--page-gutter);
 }
 

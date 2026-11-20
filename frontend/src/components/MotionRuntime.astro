@@ -1,80 +1,10 @@
 <script>
-  import { animate } from 'motion/mini';
+  import {cancelLoadingReveals} from '../lib/loading-reveal';
   import { cancelUiMotion, dismiss, reveal } from '../lib/ui-motion';
 
-  const active = new Map<HTMLElement, ReturnType<typeof animate>>();
-  const hovered = new Set<HTMLElement>();
-  const selector = 'button, [role="button"], input[type="button"], input[type="submit"], input[type="reset"], a.button-primary, a.button-secondary, a.button-quiet, a.button-danger, a.appbar-icon-link, [data-motion-press]';
-  const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const canHover = () => matchMedia('(hover: hover) and (pointer: fine)').matches && !reduced();
-
-  function targetFor(event: Event) {
-    const element = (event.target as Element | null)?.closest<HTMLElement>(selector);
-    return element && !element.matches(':disabled, [aria-disabled="true"], [aria-expanded]') && !element.closest('[data-motion-static]') && element.getClientRects().length ? element : null;
-  }
-
-  function animateScale(element: HTMLElement, scale: number, duration: number) {
-    const rendered = element.isConnected && element.getClientRects().length > 0;
-    const previous = active.get(element);
-    if (rendered) previous?.stop();
-    else previous?.cancel();
-    if (reduced() || !rendered) {
-      active.delete(element);
-      element.style.removeProperty('scale');
-      return;
-    }
-    const control = animate(element, { scale }, { duration, ease: 'easeOut' });
-    active.set(element, control);
-    if (scale === 1) void control.finished.then(() => {
-      if (active.get(element) === control) {
-        active.delete(element);
-        element.style.removeProperty('scale');
-      }
-    }).catch(() => {});
-  }
-
-  let pressed: HTMLElement | null = null;
-  function release() {
-    if (!pressed) return;
-    animateScale(pressed, hovered.has(pressed) && !pressed.matches(':disabled, [aria-disabled="true"]') ? 1.005 : 1, .14);
-    pressed = null;
-  }
-
-  document.addEventListener('pointerover', event => {
-    if (!canHover()) return;
-    const target = event.target as Element | null;
-    const related = event.relatedTarget as Node | null;
-    const element = target?.closest<HTMLElement>(selector);
-    if (!element || element.contains(related) || !element.getClientRects().length || element.matches(':disabled, [aria-disabled="true"]')) return;
-    if (element.matches('.quick-search-trigger, [aria-expanded], [aria-haspopup="menu"], [aria-haspopup="listbox"]') || element.closest('[data-motion-static]')) return;
-    if (element.closest('.list-shell .filters') || element.matches('.list-shell .mobile-filter-toggle')) return;
-    hovered.add(element);
-    if (element !== pressed) animateScale(element, 1.005, .17);
-  });
-  document.addEventListener('pointerout', event => {
-    const target = event.target as Element | null;
-    const related = event.relatedTarget as Node | null;
-    const element = target?.closest<HTMLElement>(selector);
-    if (!element || element.contains(related) || !hovered.delete(element)) return;
-    if (element !== pressed) animateScale(element, 1, .16);
-  });
-  document.addEventListener('pointerdown', event => {
-    if (event.button !== 0) return;
-    pressed = targetFor(event);
-    if (pressed) animateScale(pressed, .985, .09);
-  });
-  for (const eventName of ['pointerup', 'pointercancel']) {
-    document.addEventListener(eventName, release);
-  }
-  document.addEventListener('keydown', event => {
-    if (event.repeat || (event.key !== 'Enter' && event.key !== ' ')) return;
-    const element = targetFor(event);
-    if (element) { pressed = element; animateScale(element, .985, .09); }
-  });
-  document.addEventListener('keyup', event => {
-    if (event.key !== 'Enter' && event.key !== ' ') return;
-    release();
-  });
+  import {mountPressFeedback} from '../lib/press-feedback';
+  import {cancelStateFeedback} from '../lib/state-feedback';
+  mountPressFeedback(document, window);
 
   document.addEventListener('click', event => {
     const summary = (event.target as Element | null)?.closest<HTMLElement>('details[data-motion-details] > summary');
@@ -95,28 +25,14 @@
       });
     }
   });
-  // Filter updates can hide or replace a button while its press animation runs.
-  // Stop before Motion commits styles onto a detached/unrendered element.
-  const visibility = new MutationObserver(() => {
-    for (const [element, control] of active) {
-      if (element.isConnected && element.getClientRects().length) continue;
-      control.cancel();
-      active.delete(element);
-      hovered.delete(element);
-      element.style.removeProperty('scale');
-      if (pressed === element) pressed = null;
-    }
-  });
-  visibility.observe(document, {subtree:true, childList:true, attributes:true, attributeFilter:['class','hidden','open']});
   document.addEventListener('astro:before-swap', () => {
+    cancelStateFeedback();
+    cancelLoadingReveals();
     cancelUiMotion();
-    for (const [element, control] of active) {
-      if (element.isConnected && element.getClientRects().length) control.stop();
-      else control.cancel();
-      element.style.removeProperty('scale');
-    }
-    active.clear();
-    hovered.clear();
-    pressed = null;
   });
+  window.addEventListener('pagehide',()=>{cancelLoadingReveals();cancelStateFeedback();});
+  matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change',event=>{if(event.matches){cancelLoadingReveals();cancelStateFeedback();}});
 </script>
+<style is:global>
+  [data-score-label], [data-status-value] { display:inline-block; }
+</style>

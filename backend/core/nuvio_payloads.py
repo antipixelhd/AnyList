@@ -187,7 +187,8 @@ def progress_matches(left: dict, right: dict) -> bool:
 
 def obsolete_progress_keys(remote_rows: list[dict], desired_items: list[dict]) -> list[str]:
     """A full push keeps one active resume per locally Watching title."""
-    desired = {str(item["content_id"]): str(item["progress_key"]) for item in desired_items}
+    desired = {str(item["content_id"]): str(item["progress_key"]) for item in desired_items
+               if not item.get('series_activity')}
     obsolete = []
     for row in remote_rows:
         content_id = str(row.get("content_id") or "")

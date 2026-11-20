@@ -23,7 +23,8 @@ ROOT = Path("/srv/anylist-preview")
 ETC = Path("/etc/anylist-preview")
 STATE = Path("/var/lib/anylist-preview")
 REPOSITORY = "https://github.com/antipixelhd/AnyList.git"
-OPERATIONS = {"status", "restart", "redeploy", "reset-db-from-beta", "recreate-preview", "provision", "sync-config"}
+OPERATIONS = {"status", "restart", "redeploy", "reset-db-from-beta", "recreate-preview", "provision", "sync-config",
+              "public-beta-on", "public-beta-off", "public-beta-status"}
 DEPENDENCIES = {"backend": ["backend/pyproject.toml", "backend/uv.lock"],
                 "frontend": ["frontend/package.json", "frontend/package-lock.json"]}
 BACKUP_KEEP = 20
@@ -64,6 +65,8 @@ def validate(slots, branch, operation, sha=None, forced="false"):
         raise Refused("REFUSED: beta database reset is forbidden")
     if operation == "sync-config" and branch != "beta":
         raise Refused("Configuration additions must come from beta")
+    if operation.startswith("public-beta-") and branch != "beta":
+        raise Refused("Public access controls are only available for beta")
     if operation == "deploy" and not re.fullmatch(r"[0-9a-f]{40}", sha or ""):
         raise Refused("An exact 40-character commit SHA is required")
     if forced not in {"true", "false"}:
@@ -179,6 +182,30 @@ class Preview:
                 self.app(command, directory=component)
                 stamp.write_text(digest)
 
+    def build_frontend(self):
+        if self.branch == "beta":
+            self.app(["npm", "run", "build"], directory="frontend",
+                     env={**self.env(), "NODE_ENV": "production"})
+
+    def configure_services(self):
+        for part in ("frontend", "backend"):
+            template = (INSTALL / (part + ".service.in")).read_text()
+            substitutions = {
+                "@BRANCH@": self.branch, "@USER@": self.user,
+                "@FRONTEND_PORT@": str(self.slot["frontend_port"]),
+                "@BACKEND_PORT@": str(self.slot["backend_port"]),
+                "@NODE_ENV@": "production" if self.branch == "beta" else "development",
+                "@FRONTEND_COMMAND@": (
+                    "/usr/bin/node scripts/serve.mjs" if self.branch == "beta" else
+                    "/usr/bin/node node_modules/astro/bin/astro.mjs dev --host 127.0.0.1 --port "
+                    + str(self.slot["frontend_port"])
+                ),
+            }
+            for key, value in substitutions.items():
+                template = template.replace(key, value)
+            (Path("/etc/systemd/system") / f"anylist-preview-{self.branch}-{part}.service").write_text(template)
+        run(["systemctl", "daemon-reload"])
+
     def migration_state(self):
         # Root-owned helper, imported app modules run only with slot privileges.
         output = self.app([self.home / ".venv/bin/python", "-c",
@@ -259,6 +286,7 @@ class Preview:
         # Remove deleted source left untracked without touching venv/node_modules/data.
         self.git("clean", "-fd")
         self.dependencies(force=recreate)
+        self.build_frontend()
         if self.slot["persistent"]:
             with lock("beta-database"):
                 state = self.migration_state()
@@ -274,6 +302,7 @@ class Preview:
                 self.reset_database()
             else:
                 self.migrate()
+        self.configure_services()
         self.restart()
         marker.write_text(sha + "\n")
         print(f"DEPLOYED {self.branch} {sha}; forced={forced}; non-fast-forward={non_ff}", flush=True)
@@ -357,6 +386,7 @@ class Preview:
                 "DATABASE_URL": f"postgresql+asyncpg://{self.role}:{password}@127.0.0.1:5432/{self.role}",
                 "SERVER_URL": f"https://{host}:{self.slot['frontend_port']}",
                 "PREVIEW_HOSTNAME": host, "PREVIEW_SLOT": self.branch,
+                "NEW_ACCOUNTS_GAMES_ACCESS": "true" if self.branch == "beta" else "false",
                 "BACKEND_PORT": str(self.slot["backend_port"]),
                 "OIDC_REDIRECT_URL": f"https://{host}:{self.slot['frontend_port']}/oidc-callback",
                 "DATA_DIR": str(self.home / "data"),
@@ -379,15 +409,7 @@ class Preview:
             run(["/usr/sbin/runuser", "-u", self.user, "--", "git", "clone", "--no-checkout", REPOSITORY,
                  self.checkout], env={"PATH": "/usr/bin:/bin", "HOME": str(self.home)})
         run(["/usr/sbin/runuser", "-u", self.user, "--", "mkdir", "-p", self.home / "data"])
-        for part in ("frontend", "backend"):
-            template = (INSTALL / (part + ".service.in")).read_text()
-            substitutions = {"@BRANCH@": self.branch, "@USER@": self.user,
-                             "@FRONTEND_PORT@": str(self.slot["frontend_port"]),
-                             "@BACKEND_PORT@": str(self.slot["backend_port"])}
-            for key, value in substitutions.items():
-                template = template.replace(key, value)
-            (Path("/etc/systemd/system") / f"anylist-preview-{self.branch}-{part}.service").write_text(template)
-        run(["systemctl", "daemon-reload"])
+        self.configure_services()
         self.deploy(recreate=recreate)
         run(["tailscale", "serve", "--bg", f"--https={self.slot['frontend_port']}",
              f"http://127.0.0.1:{self.slot['frontend_port']}"])
@@ -409,7 +431,14 @@ def main(args=None):
     os.umask(0o077)
     with lock(branch):
         preview = Preview(branch, slots)
-        if operation == "status":
+        if operation.startswith("public-beta-"):
+            sys.path.insert(0, str(INSTALL))
+            import public_beta
+            if operation == "public-beta-status":
+                print("Public beta.anylist " + public_beta.configured_mode())
+            else:
+                public_beta.set_public(operation == "public-beta-on")
+        elif operation == "status":
             if not preview.status():
                 raise Refused("Status detected errors")
         elif operation == "restart":

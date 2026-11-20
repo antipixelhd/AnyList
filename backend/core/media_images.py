@@ -10,6 +10,7 @@ from sqlalchemy import func, literal, update
 from sqlalchemy.dialects.postgresql import JSONB
 
 from core.catalogue_normalize import image
+from core.screen_artwork import original_artwork_language
 from models import Media
 
 IMAGE_POLICY_VERSION = 6
@@ -21,17 +22,18 @@ logger = logging.getLogger(__name__)
 
 
 def image_key(url):
-    return re.sub(r'(https://image\.tmdb\.org/t/p/)[^/]+/', r'\1', url)
+    value=re.sub(r'(https://image\.tmdb\.org/t/p/)[^/]+/', r'\1', url)
+    return re.sub(r'(https://images\.igdb\.com/igdb/image/upload/)t_[^/]+/',r'\1',value)
 
 
-def unique_images(values):
+def unique_images(values, *, limit=10):
     result, seen = [], set()
     for value in values:
         url = image(value)
         if url and image_key(url) not in seen:
             seen.add(image_key(url))
             result.append(url)
-    return result[:10]
+    return result if limit is None else result[:limit]
 
 
 def tmdb_image_url(path):
@@ -44,13 +46,14 @@ def image_candidates(raw, provider='tmdb'):
     result = {'posters': [], 'artwork': []}
     if not isinstance(raw, dict):
         return result
+    fallback_artwork = []
     for field, target in [('posters', 'posters'), ('backdrops', 'artwork')]:
         for row in raw.get(field) or []:
             if not isinstance(row, dict):
                 continue
             if row.get('iso_639_1') not in ('en', None):
                 continue
-            # Only an explicit null language establishes textless artwork.
+            # TVDB supplies an explicit text flag; its textless rows are normalized to null.
             if field == 'backdrops' and ('iso_639_1' not in row or row['iso_639_1'] is not None):
                 continue
             ratio = row.get('aspect_ratio')
@@ -61,8 +64,12 @@ def image_candidates(raw, provider='tmdb'):
             path = row.get('file_path')
             url = tmdb_image_url(path) if provider == 'tmdb' else image(path)
             if url:
-                result[target].append({'url': url, 'thumbnail': row.get('thumbnail'), 'language': row.get('iso_639_1'),
+                candidates = (fallback_artwork if provider == 'tvdb' and field == 'backdrops'
+                              and row.get('original_language_fallback') else result[target])
+                candidates.append({'url': url, 'thumbnail': row.get('thumbnail'), 'language': row.get('iso_639_1'),
                     'width': row.get('width') or 0, 'votes': row.get('vote_count') or 0})
+    if not result['artwork']:
+        result['artwork'] = fallback_artwork
     for field, rows in result.items():
         if field == 'posters' and any(row['language'] == 'en' for row in rows):
             rows = [row for row in rows if row['language'] == 'en']
@@ -156,11 +163,20 @@ async def fill_screen_backdrop(db,media,api_key):
         await db.commit();await db.refresh(media)
 
 
+def artwork_language_checked(cache, language, field):
+    # Existing usable results already passed the preferred language policy.
+    if 'artwork_language' not in cache and cache.get(field):
+        return True
+    return cache.get('artwork_language') == language
+
+
 def screen_artwork_preview(media):
     cache=(media.tmdb_data or {}).get('_anylist_artwork_preview') or {}
     remaining=0
     try:remaining=max(0,int((datetime.fromisoformat(cache.get('expires_at',''))-datetime.now(timezone.utc)).total_seconds()))
     except (ValueError,TypeError):pass
+    if not cache.get('last_error') and not artwork_language_checked(cache, original_artwork_language(media), 'image'):
+        remaining = 0
     return {'artwork_preview':{'image':image(cache.get('image')),'thumbnail':image(cache.get('thumbnail'))},
             'preview_status':{'state':'deferred' if remaining and cache.get('last_error') else 'ready' if remaining else 'pending',
                               'retry_after':remaining if cache.get('last_error') else 0}}
@@ -174,18 +190,22 @@ async def fill_artwork_preview(db,media,api_key,tvdb_key):
         await db.refresh(media)
         cache=(media.tmdb_data or {}).get('_anylist_artwork_preview') or {}
         now=datetime.now(timezone.utc)
-        try:
-            if datetime.fromisoformat(cache.get('expires_at',''))>now:return
-        except (ValueError,TypeError):pass
+        language = original_artwork_language(media)
+        if cache.get('last_error') or artwork_language_checked(cache, language, 'image'):
+            try:
+                if datetime.fromisoformat(cache.get('expires_at',''))>now:return
+            except (ValueError,TypeError):pass
         from core.screen_artwork import title_artwork, ArtworkIdentityUnavailable
         try:
             raw=await title_artwork(db,media,tvdb_key,api_key)
             rows=image_candidates(raw,'tvdb')['artwork']
             first=next(iter(rows),{})
             cache={'image':first.get('url'),'thumbnail':image(first.get('thumbnail')),
+                   'artwork_language':language,
                    'expires_at':(now+timedelta(days=30)).isoformat()}
         except ArtworkIdentityUnavailable:
             cache={'image':cache.get('image'),'thumbnail':cache.get('thumbnail'),
+                   'artwork_language':language,
                    'expires_at':(now+timedelta(days=1)).isoformat()}
         except Exception as error:
             logger.warning('Artwork preview failed for media %s (%s)',media.id,type(error).__name__)
@@ -202,16 +222,18 @@ async def fill_artwork_preview(db,media,api_key,tvdb_key):
 
 def screen_images(media, details):
     cache = (media.tmdb_data or {}).get('_anylist_images') or {}
+    current_policy = cache.get('version') == IMAGE_POLICY_VERSION
+    ready = current_policy and artwork_language_checked(cache, original_artwork_language(media), 'artwork')
     retry = 0
     try:
         retry = max(0, int((datetime.fromisoformat(cache.get('retry_after', '')) - datetime.now(timezone.utc)).total_seconds()) + 1)
     except (TypeError, ValueError):
         pass
-    status = {'state': 'deferred' if retry else 'unavailable' if cache.get('unavailable') and cache.get('version') == IMAGE_POLICY_VERSION else 'ready' if cache.get('version') == IMAGE_POLICY_VERSION else 'pending',
+    status = {'state': 'deferred' if retry else 'unavailable' if current_policy and cache.get('unavailable') else 'ready' if ready else 'pending',
               'error': cache.get('last_error') if retry else None, 'retry_after': retry}
     primary = tmdb_image_url((media.tmdb_data or {}).get('poster_path') or media.poster_path)
     background={**screen_backdrop(media),**screen_artwork_preview(media)}
-    if cache.get('version') == IMAGE_POLICY_VERSION:
+    if current_policy:
         primary = image(cache.get('primary_poster')) or primary
         posters = unique_images([primary, *(cache.get('posters') or [])])
         artwork = unique_images(cache.get('artwork') or [])
@@ -236,7 +258,9 @@ async def _fill_screen_images(db, media, api_key, tvdb_key=None):
         return
     cache = dict((media.tmdb_data or {}).get('_anylist_images') or {})
     now = datetime.now(timezone.utc)
-    fields = ['expires_at'] if cache.get('version') == IMAGE_POLICY_VERSION else []
+    language = original_artwork_language(media)
+    covered = cache.get('unavailable') or artwork_language_checked(cache, language, 'artwork')
+    fields = ['expires_at'] if cache.get('version') == IMAGE_POLICY_VERSION and covered else []
     if cache.get('retry_version') == IMAGE_POLICY_VERSION:
         fields.append('retry_after')
     for field in fields:
@@ -269,7 +293,8 @@ async def _fill_screen_images(db, media, api_key, tvdb_key=None):
         selected['replacements'] = {source: target for selection in selections.values() for source, target in selection['replacements'].items()}
         thumbnails={row['url']:image(row.get('thumbnail')) for row in candidates['artwork'] if row.get('thumbnail')}
         cache = {**selected, 'primary_poster': primary, 'thumbnails':thumbnails,
-                 'version': IMAGE_POLICY_VERSION, 'expires_at': (now + timedelta(days=30)).isoformat()}
+                 'artwork_language': language, 'version': IMAGE_POLICY_VERSION,
+                 'expires_at': (now + timedelta(days=30)).isoformat()}
     except ArtworkIdentityUnavailable:
         # Keep usable images, and recheck the bridge tomorrow rather than
         # retrying a known missing match as though the provider were down.

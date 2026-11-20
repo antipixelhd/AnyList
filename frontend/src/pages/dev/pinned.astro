@@ -1,0 +1,37 @@
+---
+import Tracker from '../../layouts/Tracker.astro';
+import DevNavigation from '../../components/dev/DevNavigation.astro';
+import BrowseCard from '../../components/BrowseCard.astro';
+import {hamillWorks,hamillPosters} from '../../components/dev/pinned-fixtures';
+import {tmdbImage} from '../../components/dev/detail-fixtures';
+import '../../styles/browse.css';
+import '../../styles/contributor-details.css';
+import '../../styles/detail-background.css';
+import '../../styles/dev-pinned.css';
+if(Astro.url.searchParams.get('sample')!=='mark-hamill')return Astro.redirect('/dev/details?design=marquee-27&media=movie&pinned=true');
+const portrait=tmdbImage('2ZulC2Ccq1yv3pemusks6Zlfy2s.jpg','w342');
+const years=[...new Set(hamillWorks.map(row=>row[1]))];
+const series=new Set(['The Fall of the House of Usher','The Sandman','Masters of the Universe: Revelation','The Mandalorian','Batman: The Animated Series']);
+---
+<Tracker title="Mark Hamill · Pinned sidebars" preloadBodyFonts>
+  <DevNavigation slot="navigation"/>
+  <article class="contributor-page is-person" data-view="timeline" data-pinned-preview>
+    <nav class="pinned-preview-switch page-width" aria-label="Pinned sidebar samples"><a href="/dev/pinned">Tenet</a><a href="/dev/pinned?sample=mark-hamill" aria-current="page">Mark Hamill</a></nav>
+    <div class="contributor-banner"><img src={tmdbImage('db32LaOibwEliAmSL2jjDF6oDdj.jpg','w1280')} alt=""/><div class="contributor-banner-shade"></div></div>
+    <div class="page-width contributor-layout">
+      <aside class="contributor-sidebar">
+        <div class="contributor-portrait"><img src={portrait} alt="Mark Hamill"/></div>
+        <section class="contributor-facts"><h2>Information</h2><dl><div><dt>Born</dt><dd>25 September 1951</dd></div><div><dt>Place of birth</dt><dd>Oakland, California, USA</dd></div><div><dt>Department</dt><dd>Acting</dd></div></dl></section>
+        <nav class="contributor-links"><a href="https://www.themoviedb.org/person/2-mark-hamill" target="_blank" rel="noreferrer">TMDB</a><a href="https://www.imdb.com/name/nm0000434/" target="_blank" rel="noreferrer">IMDb</a></nav>
+      </aside>
+      <div class="contributor-main">
+        <header class="contributor-heading"><p class="contributor-kicker">Actor</p><h1>Mark Hamill</h1><p class="contributor-roles">Actor / Voice actor</p></header>
+        <section class="contributor-biography"><h2>Biography</h2><p>Mark Hamill is an American actor known for playing Luke Skywalker in Star Wars and voicing the Joker in Batman: The Animated Series. His work spans film, television, animation and games.</p></section>
+        <section class="contributor-works"><header class="contributor-works-heading"><h2>Works</h2></header><div class="contributor-works-grid">
+          {years.map(year=><section class="contributor-year" data-contributor-year={year}><h3>{year}</h3><div class="contributor-year-works">{hamillWorks.filter(row=>row[1]===year).map(([title,year,character])=><BrowseCard credits item={{id:null,type:series.has(title)?'series':'movie',title,year,release_date:`${year}-01-01`,roles:[],characters:[character],poster:hamillPosters[title]?tmdbImage(hamillPosters[title]):null,href:'https://www.themoviedb.org/person/2-mark-hamill'}}/>)}</div></section>)}
+        </div></section>
+      </div>
+    </div>
+  </article>
+</Tracker>
+<script>import '../../components/dev/pinned-sidebars';</script>

@@ -1,15 +1,14 @@
 import {createBrowseCache} from './browse-cache.ts';
 import {verifiedEmptySearch, broadSearchParams, type SearchPage} from './search-fallback.ts';
-export type SearchSection = 'all' | 'movie' | 'series' | 'actor' | 'staff' | 'studio';
-export type ResultSection = SearchSection;
+export type SearchSection = 'all' | 'movie' | 'series' | 'game' | 'actor' | 'staff' | 'studio';
 export type ContributorScope = 'people'|'actor'|'staff'|'studio';
-export type SearchRequest = {kind:'movie'|'series'|'contributors';url:string;scope?:ContributorScope};
+export type SearchRequest = {kind:'movie'|'series'|'game'|'contributors';url:string;scope?:ContributorScope};
 
-function verificationPause(signal:AbortSignal) {
+function verificationPause(signal:AbortSignal, delay=1500) {
   return new Promise<void>((resolve,reject)=>{
     if(signal.aborted){reject(signal.reason);return;}
     const aborted=()=>{clearTimeout(timer);reject(signal.reason);};
-    const timer=setTimeout(()=>{signal.removeEventListener('abort',aborted);resolve();},1500);
+    const timer=setTimeout(()=>{signal.removeEventListener('abort',aborted);resolve();},delay);
     signal.addEventListener('abort',aborted,{once:true});
   });
 }
@@ -19,16 +18,30 @@ function verificationPause(signal:AbortSignal) {
 export async function readQuickSearch(request:SearchRequest,signal:AbortSignal,onResult:(data:any)=>void,
   fetcher:typeof fetch=fetch,pause=verificationPause) {
   let previous:string|undefined;
-  for(let attempt=0;attempt<5;attempt++) {
-    const response=await fetcher(request.url,{signal});
-    if(!response.ok)throw new Error('Search unavailable');
+  let verifying = false, retries = 0;
+  while(!signal.aborted) {
+    const response=await fetcher(request.url,{signal}).catch(error => {
+      if (!verifying || !(error instanceof TypeError) || signal.aborted) throw error;
+      return null;
+    });
+    if (verifying && retries < 2 && (!response || [408, 502, 503, 504].includes(response.status))) {
+      await pause(signal, 1500 * 2 ** retries++);
+      continue;
+    }
+    if(!response?.ok)throw new Error('Search unavailable');
     const data=await response.json();
     if(signal.aborted)return;
-    const signature=JSON.stringify([data.results,data.partial,data.verification_pending]);
+    // A healthy cold career can take several worker turns. Pending evidence
+    // is not a provider failure, and must not become one after a poll count.
+    retries = 0;
+    const signature=JSON.stringify([data.results,data.partial,data.unavailable,data.verification_pending,data.section_pending]);
     if(signature!==previous){onResult(data);previous=signature;}
     if(signal.aborted)return;
-    if(request.kind!=='contributors'||!data.verification_pending||attempt===4)return;
-    await pause(signal);
+    if(request.kind!=='contributors'||!data.verification_pending)return;
+    verifying = true;
+    const delay=typeof data.retry_after==='number'&&Number.isFinite(data.retry_after)
+      ? Math.max(1500,Math.min(3600,data.retry_after)*1000) : 1500;
+    await pause(signal,delay);
   }
 }
 
@@ -36,6 +49,9 @@ export async function readQuickSearch(request:SearchRequest,signal:AbortSignal,o
 export function createQuickSearchReader(lifetime: AbortSignal, fetcher: typeof fetch = fetch, now = () => Date.now()) {
   const cache = createBrowseCache<any>(now, 60_000, 40);
   let generation=0;
+  const searchId = crypto.randomUUID();
+  let searchGeneration = 0, searchQuery = '';
+  const subscribed = new WeakSet<AbortSignal>();
   const clear=()=>{generation++;cache.clear();};
   lifetime.addEventListener('abort', clear, {once:true});
   return {
@@ -45,7 +61,26 @@ export function createQuickSearchReader(lifetime: AbortSignal, fetcher: typeof f
       const epoch=generation;
       const cached = cache.get(request.url);
       if (cached) { onResult(cached); return; }
-      await readQuickSearch(request, signal, data => {
+      let activeRequest = request;
+      if (request.kind === 'contributors') {
+        const url = new URL(request.url, 'https://search.invalid');
+        const query = JSON.stringify([url.searchParams.get('q'), url.searchParams.get('work_domain')]);
+        if (query !== searchQuery || !subscribed.has(signal)) { searchQuery = query; searchGeneration++; }
+        const ownGeneration = searchGeneration;
+        url.searchParams.set('search_id', searchId);
+        url.searchParams.set('search_generation', String(ownGeneration));
+        activeRequest = {...request, url: url.pathname + url.search};
+        if (!subscribed.has(signal)) {
+          subscribed.add(signal);
+          signal.addEventListener('abort', () => {
+            // Release this subscription only. A late cancellation cannot
+            // demote the next generation or another search window/viewer.
+            void fetcher(`/api/proxy/tracking/quick-search/demand/${searchId}?generation=${ownGeneration}`,
+              {method:'DELETE',keepalive:true}).catch(()=>{});
+          }, {once:true});
+        }
+      }
+      await readQuickSearch(activeRequest, signal, data => {
         if (signal.aborted || lifetime.aborted) return;
         // Degraded local-only results must not conceal a recovered remote source.
         if (generation === epoch && !data.verification_pending && !data.notice && !data.partial) cache.set(request.url, data);
@@ -54,9 +89,11 @@ export function createQuickSearchReader(lifetime: AbortSignal, fetcher: typeof f
     },
   };
 }
-export function quickSearchRequests(query:string,region?:string): SearchRequest[] {
-  const requests:SearchRequest[] = (['movie','series'] as const).map(kind=>({kind,url:`/api/proxy/tracking/catalog?${new URLSearchParams({media_type:kind,q:query,scan_empty:'true',...(region?{region}:{})})}`}));
-  for(const scope of ['people','studio'] as const)requests.push({kind:'contributors',scope,url:`/api/proxy/tracking/quick-search/contributors?${new URLSearchParams({q:query,kind:scope})}`});
+export function quickSearchRequests(query:string,region?:string,showMoviesSeries=true,showGames=true): SearchRequest[] {
+  const requests:SearchRequest[] = (showMoviesSeries?['movie','series'] as const:[]).map(kind=>({kind,url:`/api/proxy/tracking/catalog?${new URLSearchParams({media_type:kind,q:query,scan_empty:'true',...(region?{region}:{})})}`}));
+  if(showGames)requests.push({kind:'game',url:`/api/proxy/tracking/games/search?${new URLSearchParams({q:query})}`});
+  const work_domain=showGames?(showMoviesSeries?'all':'game'):'movies_series';
+  for(const scope of ['people','studio'] as const)requests.push({kind:'contributors',scope,url:`/api/proxy/tracking/quick-search/contributors?${new URLSearchParams({q:query,kind:scope,work_domain})}`});
   return requests;
 }
 
@@ -88,7 +125,8 @@ export async function readQuickTitles<T>(requests: SearchRequest[], signal: Abor
     result.failed += broad.failed;
     expand.forEach((request, index) => { result.pages[titles.indexOf(request)] = broad.pages[index]; });
   }
-  const rows = {movie: [] as T[], series: [] as T[], failed: result.failed};
+  const incomplete = result.pages.some(page => page && (page.notice || page.verification_pending || (!page.results?.length && page.has_more)));
+  const rows = {movie: [] as T[], series: [] as T[], failed: result.failed, incomplete};
   titles.forEach((request, index) => { rows[request.kind as 'movie'|'series'] = result.pages[index]?.results as T[] || []; });
   return rows;
 }
@@ -112,17 +150,11 @@ export function mergeContributorResults<T>(current:Record<'actor'|'staff'|'studi
     staff:scope==='studio'||scope==='actor'?current.staff:incoming.staff||[],
     studio:scope==='people'||scope==='actor'||scope==='staff'?current.studio:incoming.studio||[]};
 }
-export function visibleQuickSearchSections(mobile:boolean, selected:SearchSection, combined:boolean, counts:Record<ResultSection,number>): ResultSection[] {
-  const sections:ResultSection[] = mobile ? [resolvedQuickSearchTab(selected,quickSearchTabOrder(combined))] : quickSearchTabOrder(combined);
-  return sections.filter(section=>counts[section]>0);
+export function quickSearchTabOrder(combined:boolean,showMoviesSeries=true,showGames=true):SearchSection[] {
+  return [...(showMoviesSeries?(combined ? ['all' as const] : ['movie' as const,'series' as const]):[]),...(showGames?['game' as const]:[]),'actor','staff','studio'];
 }
-
-function quickSearchTabOrder(combined:boolean):SearchSection[] {
-  return [...(combined ? ['all' as const] : ['movie' as const,'series' as const]),'actor','staff','studio'];
-}
-export function availableQuickSearchTabs(counts:Record<ResultSection,number>, searching:boolean, mediaPending=false, combined=true):SearchSection[] {
-  const order=quickSearchTabOrder(combined);
-  return searching?order.filter(kind=>counts[kind]>0||(['all','movie','series'].includes(kind)&&mediaPending)):order;
+export function availableQuickSearchTabs(order: SearchSection[], counts: Partial<Record<SearchSection, number>>, pending: ReadonlySet<SearchSection>): SearchSection[] {
+  return order.filter(kind => (counts[kind] ?? 0) > 0 || pending.has(kind));
 }
 export function resolvedQuickSearchTab(selected:SearchSection, available:SearchSection[]):SearchSection {
   return available.includes(selected)?selected:available[0]??'all';

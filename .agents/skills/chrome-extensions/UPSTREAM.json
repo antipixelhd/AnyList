@@ -1,0 +1,32 @@
+{
+  "repository": "https://github.com/GoogleChrome/modern-web-guidance",
+  "revision": "4dd968349e54ca45a05dd5c818fb035c9054b022",
+  "path": "skills/chrome-extensions",
+  "license": "Apache-2.0",
+  "files": {
+    "SKILL.md": "c67d9e4ba9da93ed0da8b0147235e5890aa24e659548f65b7765c5af0a470c3f",
+    "references/extensions/api-calling.md": "0c34c9b231f3d767b6961de6d1e87c4ca9535a4f6c2ed4dfe60bb48b73626254",
+    "references/extensions/auth-identity.md": "0a79f08a39a1835b7b7b7bf95e05cd33c4e4691efe6b75b1c59057260101fbd0",
+    "references/extensions/content-scripts.md": "9439394dc38f49ba1147cde2508741f16825f8659c2c97925b71abe6af104d6c",
+    "references/extensions/context-menus.md": "c69c6d409e7a1adb00786541f3a857e0770867fb23bb7aa6bb76ed35fffb850b",
+    "references/extensions/csp-sandbox.md": "3169a8f2f636a912212cbd12636a58337b1df07b333ea5818aec6eea50398228",
+    "references/extensions/declarative-net-request.md": "4b986713921da1a1e12dd68da5ee8684e43b8a084f323cced503bcb8dc8b8b03",
+    "references/extensions/devtools.md": "816bd0e240a6814713b59f045461c6c24e54502b302425abe463c34f932babf7",
+    "references/extensions/icons.md": "a996281d5482fa145a7912c92f71fe4eb582a0e91e674f9fef02379aecb0fce3",
+    "references/extensions/media-capture.md": "c6bddb3c51c0b0f36d302e7dfde9558dea5eb5febccda315e911119a6e08cea3",
+    "references/extensions/message-passing.md": "d4c4d84caa6761a5afb31f013ac780c2db157f3a14a23b6c0070730141dbf254",
+    "references/extensions/omnibox.md": "e310ccccc673bb4cb4c4ed42a8eb821af30e271145ee06db79f62649def4bd5c",
+    "references/extensions/permissions.md": "b9d248c90380a31d171429b6bb1c007f897647acb83f83c98e0018260d6ae299",
+    "references/extensions/popup-ui.md": "2a9567e5b431910702542707a09357f2031969238bda7807155dbecb1a317fb4",
+    "references/extensions/prompt-api.md": "f376c73354ec804dc00dc1e14d0fec8f19da79f5d7c141bd5a6b40d6e49e0330",
+    "references/extensions/service-worker.md": "6149ec9e5a1185486ba7157d631a24525b41377d4d2c4af13058ea2f6e2715d1",
+    "references/extensions/side-panel.md": "7e6b68b9aff6532495b8d89af097bb3c0f72b3a329c92a598be3ca50a43ed15c",
+    "references/extensions/storage.md": "208736186cdc606d4d98efe64ea17f1087f13755415360d59035879e7580dde2",
+    "references/extensions/tab-management.md": "f16f568aaa5015985a6fc03c748f2f85ab66284e510ed0e782f637f3ae492622",
+    "references/extensions/user-scripts.md": "9f77cbd366392ad64be07bb566104c79ff6eb0fbc2b3629495376bc7e23cd83d",
+    "references/webstore/chromewebstore-template.md": "52aad75138110ffe1b4d21aa1abe702ad796b7627fbb027a482d939c30b29e1b",
+    "references/webstore/privacy-policy.md": "70dda79e2d5e2d574b10c0121c2f9ea7ab6d644229af570d93c69042f2ef3f98",
+    "references/webstore/review-checklist.md": "5d13e2a60b823f82411ec97c75736aa1395dc387e1354c0c05b52a109c22c45f",
+    "references/webstore/store-listing.md": "394978cc316486da9a35a30344e380bf072db7d25b54f89a9f285d98660fafb0"
+  }
+}

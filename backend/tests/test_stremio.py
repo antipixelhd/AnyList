@@ -237,6 +237,14 @@ class StremioSyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(progress, [])
         self.assertEqual(removed, set())
 
+        for offset, elapsed in ((120_000, 120_000), (1, 0)):
+            with self.subTest(offset=offset), patch.object(stremio, 'get_cinemeta_series',
+                    AsyncMock(return_value={'videos': videos})):
+                item['state'].update(timeOffset=offset, timeWatched=elapsed)
+                _, watched_records, progress, _ = await server_sync._stremio_records([item])
+                self.assertEqual(len(watched_records), 1)
+                self.assertEqual((progress[0]['season'], progress[0]['episode'], progress[0]['position']), (1, 2, offset))
+
 
     async def test_temporary_removed_movie_still_emits_watched_state(self) -> None:
         item = {
@@ -540,6 +548,7 @@ class StremioLinkReconnectTests(unittest.IsolatedAsyncioTestCase):
 
         db = SimpleNamespace(
             execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None, all=lambda: [])),
+            scalar=AsyncMock(return_value=None),
             add=MagicMock(),
             commit=AsyncMock(),
             refresh=AsyncMock(side_effect=_fake_refresh),
@@ -575,6 +584,7 @@ class StremioLinkReconnectTests(unittest.IsolatedAsyncioTestCase):
 
         db = SimpleNamespace(
             execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None, all=lambda: [])),
+            scalar=AsyncMock(return_value=None),
             add=MagicMock(),
             commit=AsyncMock(),
             refresh=AsyncMock(side_effect=_fake_refresh),

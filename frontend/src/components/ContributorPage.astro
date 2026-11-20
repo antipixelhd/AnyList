@@ -9,6 +9,8 @@ import { metadataKey } from '../lib/catalogue-key';
 import { personAge, personDate } from '../lib/person-page-data';
 import { countryLabel } from '../lib/stats-overview-data';
 import { biographyPreview, contributorParams, contributorYear, type ContributorPage } from '../lib/contributor-page-data';
+import {viewerMediaPreferences} from '../lib/viewer-media-preferences';
+import {contributorBanner} from '../lib/contributor-banner';
 import '../styles/browse.css';
 import '../styles/detail-background.css';
 import '../styles/contributor-details.css';
@@ -17,6 +19,11 @@ const { kind } = Astro.props;
 const key = metadataKey(Astro.params.id);
 const signedIn = !!Astro.locals.user;
 const params = contributorParams(Astro.url.searchParams, signedIn);
+const domains = await viewerMediaPreferences(Astro.locals);
+if (!Astro.url.searchParams.has('media_type') && !domains.show_movies_series && domains.show_games) params.set('media_type','game');
+const games = params.get('media_type') === 'game';
+const showMovies = domains.show_movies_series || !games;
+const showGames = domains.show_games || games;
 const view = Astro.url.searchParams.get('view') === 'grid' ? 'grid' : 'timeline';
 const endpoint = `contributors/${kind}/${encodeURIComponent(key || '')}`;
 Astro.response.headers.set('Cache-Control', 'private, no-store');
@@ -34,30 +41,37 @@ const facts = data ? [
   ['Country', data.countries.map(countryLabel).join(', ')], ['Headquarters', data.headquarters],
 ].filter(([,value]) => value) : [];
 const years = [...new Set(data?.works.map(contributorYear) || [])];
+const worksSource=data?.game_company_status||data?.game_person_status;
+const worksPending=games&&!!(worksSource?.works_pending??worksSource?.pending)&&!worksSource?.error;
+const worksCurrent=worksSource?.works_current??data?.known_works??0;
+const worksTotal=worksSource?.works_total;
 const imageRoute='direct';
 const portrait = artwork(data?.image || null, 'w342',imageRoute);
-const backdrop = artwork(data?.works.find(work => work.backdrop)?.backdrop || null, 'w1280',imageRoute);
-const banner = kind === 'studio' ? data?.banner : null;
+const banner = contributorBanner(data?.works||[],kind==='studio'?data?.banner:null,params.get('list_scope')==='in');
 const next = new URL(Astro.url);
 if (data) {
+  if (games) next.searchParams.set('media_type','game');
   next.searchParams.set('page', String(data.page + 1));
   next.searchParams.set('source', data.source);
   if (data.next_cursor) next.searchParams.set('cursor', data.next_cursor); else next.searchParams.delete('cursor');
 }
+const listLink = new URLSearchParams(params);
+listLink.delete('cursor'); listLink.delete('page'); listLink.delete('source');
+listLink.set('list_scope','in'); listLink.set('view',view);
 ---
-<Tracker title={data?.name || (kind === 'studio' ? 'Studio' : 'Person')} shareDescription={data?.roles.join(' · ')} preloadBodyFonts predictionArtwork={[portrait,banner||backdrop].filter(Boolean)}>
-  {data ? <article class:list={['contributor-page', {'is-person':kind !== 'studio'}]} data-contributor-page data-view={view} data-media-type={params.get('media_type') || 'all'} data-endpoint={endpoint}>
-    <div class:list={['contributor-banner', {'is-logo':!!banner}]} aria-hidden="true">{(banner || backdrop) && <img src={banner || backdrop} alt="" fetchpriority="high" data-contributor-banner data-banner-fallback={backdrop || undefined} />}{kind !== 'studio' && <div class="contributor-banner-shade"></div>}</div>
+<Tracker title={data?.name || (kind === 'studio' ? 'Studio' : 'Person')} shareDescription={data?.roles.join(' · ')} preloadBodyFonts predictionArtwork={[portrait,banner.src].filter(Boolean)} requiresGamesAccess={games}>
+  {data ? <article class:list={['contributor-page', {'is-person':kind !== 'studio'}]} data-contributor-page data-view={view} data-media-type={params.get('media_type') || 'all'} data-contributor-query={params.toString()} data-endpoint={endpoint} data-contributor-availability={domains.can_access_games?'true':undefined}>
+    <div class:list={['contributor-banner', {'is-logo':banner.isLogo}]} aria-hidden="true"><img src={banner.src||undefined} hidden={!banner.src} alt="" fetchpriority="high" data-contributor-banner />{kind !== 'studio' && <div class="contributor-banner-shade"></div>}</div>
     <div class="page-width contributor-layout">
       <aside class:list={['contributor-sidebar', {'is-studio':kind === 'studio'}]}>
-        <button class="contributor-portrait" type="button" data-portrait-image={artwork(data.image,'original',imageRoute)} data-portrait-caption={data.name} disabled={!portrait} aria-label={`Expand ${data.name} image`}>{portrait && <img src={portrait} alt={data.name} fetchpriority="high" />}<span data-contributor-portrait-fallback hidden={!!portrait}><Icon name={kind === 'studio' ? 'film' : 'user'} /></span></button>
+        <button class="contributor-portrait" type="button" data-game-person-portrait={games&&kind!=='studio'&&/^catalogue:\d+$/.test(data.key)?data.key.slice(10):undefined} data-portrait-image={artwork(data.image,'original',imageRoute)} data-portrait-caption={data.name} disabled={!portrait} aria-label={`Expand ${data.name} image`}>{portrait && <img src={portrait} alt={data.name} fetchpriority="high" />}<span data-contributor-portrait-fallback hidden={!!portrait}><Icon name={kind === 'studio' ? 'film' : 'user'} /></span></button>
         {facts.length > 0 && <section class="contributor-facts" aria-label="Information"><h2>Information</h2><dl>{facts.map(([label,value]) => <div><dt>{label}</dt><dd>{label==='Born'||label==='Died'?<LocalDateTime value={label==='Born'?data.birthday:data.deathday}/>:value}</dd></div>)}</dl></section>}
         {data.links.length > 0 && <nav class="contributor-links" aria-label="External links">{data.links.map(link => <a href={link.href} target="_blank" rel="noreferrer">{link.label}<Icon name="external" /></a>)}</nav>}
       </aside>
       <div class="contributor-main">
-        <header class="contributor-heading"><p class="contributor-kicker">{kind === 'studio' ? 'Production studio' : kind === 'actor' ? 'Actor' : 'Staff'}</p><h1>{data.name}</h1>
-          {data.roles.length > 0 && <p class="contributor-roles">{data.roles.slice(0,4).join(' / ')}</p>}
-          {signedIn && <a class="contributor-list-link" href={`${Astro.url.pathname}?list_scope=in&view=${view}#contributor-works`}><Icon name="list" /><span><strong data-contributor-list-count>{data.list_count || 0}</strong> in your list</span></a>}
+        <header class="contributor-heading"><p class="contributor-kicker" data-contributor-kicker>{kind === 'studio' ? games ? 'Game studio' : 'Production studio' : kind === 'actor' ? 'Actor' : 'Staff'}</p><h1>{data.name}</h1>
+          <p class="contributor-roles" data-contributor-roles hidden={!data.roles.length}>{data.roles.slice(0,4).join(' / ')}</p>
+          {signedIn && <a class="contributor-list-link" href={`${Astro.url.pathname}?${listLink}#contributor-works`}><Icon name="list" /><span><strong data-contributor-list-count>{data.list_count || 0}</strong> in your list</span></a>}
         </header>
         {data.description && <section class="contributor-biography" aria-labelledby="contributor-about-heading"><h2 id="contributor-about-heading">{kind === 'studio' ? 'About' : 'Biography'}</h2>
           {kind === 'studio' ? <p>{data.description}</p> : <>
@@ -68,20 +82,22 @@ if (data) {
         </section>}
         {data.aliases.length > 0 && <details class="contributor-aliases"><summary>Also known as</summary><p>{data.aliases.join(' · ')}</p></details>}
         <section id="contributor-works" class="contributor-works" aria-labelledby="contributor-works-heading">
-          <header class="contributor-works-heading"><h2 id="contributor-works-heading">Works</h2>
+          <header class="contributor-works-heading"><h2 id="contributor-works-heading">Works<span class="contributor-works-busy" data-contributor-busy data-active={String(worksPending)} aria-hidden="true"></span><span class="contributor-works-progress" data-contributor-progress title="Total adjusts as game candidates are checked" hidden={!worksPending} role="status" aria-live="polite">Fetching <span data-works-current>{worksCurrent}</span><span data-works-denominator hidden={worksTotal==null}> / <span data-works-total>{worksTotal??0}</span></span></span></h2>
             <div class="contributor-view-switch" role="group" aria-label="Works layout"><button type="button" data-contributor-view="timeline" aria-pressed={view === 'timeline'}><Icon name="list" /><span>Timeline</span></button><button type="button" data-contributor-view="grid" aria-pressed={view === 'grid'}><Icon name="grid" /><span>Compact</span></button></div>
           </header>
           <form method="get" class="contributor-filters" data-contributor-filters>
             <input type="hidden" name="view" value={view} />
-            <fieldset class="contributor-filter-switch"><legend>Media</legend><div>{[['all','All','All media'],['movie','Movies','Movies'],['series','Series','Series']].map(([value,label,description])=><label><input type="radio" name="media_type" value={value} checked={(params.get('media_type')||'all')===value} aria-label={description}/><span>{label}</span></label>)}</div></fieldset>
-            {signedIn && <label class="contributor-list-toggle"><input class="sr-only" type="checkbox" role="switch" name="list_scope" value="in" checked={params.get('list_scope')==='in'} aria-label="Only titles in my list"/><span><Icon name="list"/><span>In my list</span><span class="contributor-toggle-track" aria-hidden="true"><span></span></span></span></label>}
+            <fieldset class="contributor-filter-switch" hidden={!showMovies||!showGames}><legend>Media</legend><div>{[["movies-series","Movies & Series",showMovies],["game","Games",showGames]].filter(([, ,shown])=>shown).map(([value,label])=><label><input type="radio" name="domain" value={String(value)} checked={games?value==='game':value==='movies-series'}/><span>{label}</span></label>)}</div></fieldset>
+            <fieldset class="contributor-filter-switch" data-contributor-screen-types hidden={games} disabled={games}><legend>Movies & Series</legend><div>{[['all','All','All movies and series'],['movie','Movies','Movies'],['series','Series','Series']].map(([value,label,description])=><label><input type="radio" name="media_type" value={value} checked={(games?'all':params.get('media_type')||'all')===value} aria-label={description}/><span>{label}</span></label>)}</div></fieldset>
+            {signedIn && <><input type="checkbox" name="list_scope" value="in" checked={params.get('list_scope')==='in'} hidden/><button class="contributor-list-toggle" type="button" data-contributor-list-toggle aria-pressed={params.get('list_scope')==='in'}><Icon name="list"/><span>In my list</span></button></>}
             <button type="submit" class="contributor-apply">Apply</button>
           </form>
           <p class="contributor-notice" data-contributor-notice role="status" hidden={!data.notice}>{data.notice}</p>
           <div class:list={['contributor-works-grid', {'browse-grid':view === 'grid'}]} data-contributor-works>
             {years.map(year => <section class="contributor-year" data-contributor-year={year} aria-label={year}><h3>{year}</h3><div class="contributor-year-works">{data!.works.filter(work => contributorYear(work) === year).map(work => <BrowseCard item={work} signedIn={signedIn} credits />)}</div></section>)}
           </div>
-          <p class="contributor-empty" data-contributor-empty hidden={data.works.length > 0}>No works match these filters.</p>
+          <p class="contributor-loading" data-contributor-loading hidden={!worksPending||data.works.length>0} role="status">Fetching works…</p>
+          <p class="contributor-empty" data-contributor-empty hidden={worksPending||data.works.length > 0}>No works match these filters.</p>
           <div class="contributor-pagination"><a href={`${next.pathname}${next.search}`} data-contributor-next hidden={!data.has_more}>Next page <Icon name="arrow-right" /></a><button type="button" data-contributor-more hidden>Load more</button><p class="contributor-load-error" data-contributor-error role="alert" hidden></p></div>
           <template data-contributor-template><BrowseCard item={{title:'',type:'movie'}} signedIn={signedIn} template credits /></template>
         </section>

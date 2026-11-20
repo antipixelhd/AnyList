@@ -1,0 +1,375 @@
+"""Focused catalogue and watch projection for the series editor."""
+import hashlib
+from datetime import date
+from typing import Annotated, Literal
+
+from fastapi import HTTPException
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import select
+
+from core.episode_release import EpisodeRelease
+from core.season_completion import is_released, membership_key, release_day, season_groups, watched_episode_ids
+from core.season_releases import parse_release_day
+from models import Rating
+from models.seasons import SeasonTracking, SeriesSeason
+from models.tracking import TrackedEntry
+
+
+class SeasonEdit(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    season_number: int = Field(gt=0)
+    membership: str = Field(min_length=64, max_length=64)
+    start_date: date | None = None
+    completion_date: date | None = None
+    start_preset: bool = False
+    completion_preset: bool = False
+    score: float | None = None
+
+
+class SeriesEditorPatch(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    revision: str | None = Field(default=None, max_length=64)
+    order: str | None = Field(default=None, max_length=40)
+    action: Literal['episode', 'through_season', 'position', 'catch_up', 'complete_previous',
+                    'complete_season', 'resume_season', 'delete_season'] | None = None
+    episode_id: int | None = Field(default=None, gt=0)
+    season_number: int | None = Field(default=None, gt=0)
+    episode_count: int | None = Field(default=None, ge=0)
+    progress_season: int | None = Field(default=None, gt=0)
+    season_progress: dict[Annotated[int, Field(gt=0)], Annotated[int, Field(ge=0)]] = Field(
+        default_factory=dict, max_length=250)
+    season_statuses: dict[int, Literal['planning', 'watching', 'paused', 'dropped']] = Field(default_factory=dict, max_length=250)
+    list_placement: Literal['season', 'series'] | None = None
+    watch_date: date | None = None
+    seasons: list[SeasonEdit] = Field(default_factory=list, max_length=250)
+
+    @property
+    def progress_seasons(self) -> set[int]:
+        return {self.progress_season} if self.progress_season is not None else set(self.season_progress)
+
+
+class SeriesEditorContext:
+    def __init__(self, data, positions, watched, cursor=None, *, release=None, manual_completions=None, season_statuses=None):
+        self.data = data
+        self.order, self.groups, self.metadata = data
+        self.positions = positions
+        self.watched = watched
+        self.cursor = cursor
+        self.manual_completions = (manual_completions or {}).get(self.order, {})
+        self.season_statuses = (season_statuses or {}).get(self.order, {})
+        self.release = release or EpisodeRelease()
+        self.today = self.release.today
+        self.released = [ep for _, members, _ in self.groups for ep in members
+                         if is_released(ep, self.today, release=self.release)]
+        self.revision = hashlib.sha256(repr((self.order, [(n, [(ep.id, ep.release_date) for ep in episodes], expected)
+            for n, episodes, expected in self.groups], [ep.id for ep in self.released], sorted(watched),
+            self.selected_position(), sorted(self.manual_completions.items()), sorted(self.season_statuses.items()))).encode()).hexdigest()
+
+    def cursor_for(self, patch):
+        if patch.season_number is None and patch.episode_count is None:
+            return None
+        if patch.action != 'position' or patch.season_number is None or patch.episode_count is None:
+            raise HTTPException(422, 'Provide a season and episode count for the selected position')
+        members = [ep for ep in self.released if self.positions[ep.id][0] == patch.season_number]
+        if not members or patch.episode_count > len(members):
+            raise HTTPException(409, 'Choose a released season and episode')
+        previous = [ep for ep in self.released if self.positions[ep.id][0] < patch.season_number]
+        endpoint = members[patch.episode_count-1] if patch.episode_count else (
+            previous[-1] if previous and patch.progress_season is None else None)
+        if patch.episode_id != (endpoint.id if endpoint else None):
+            raise HTTPException(422, 'The episode does not match the selected season position')
+        cursor = {'order':self.order,'season_number':patch.season_number,'episode_count':patch.episode_count,
+                  'episode_id':patch.episode_id}
+        if patch.progress_season:
+            cursor['progress_season'] = patch.progress_season
+        return cursor
+
+    def selected_position(self):
+        if not isinstance(self.cursor,dict) or self.cursor.get('order') != self.order:
+            return None
+        try:
+            patch = SeriesEditorPatch(action='position',**{k:self.cursor.get(k) for k in
+                ('season_number','episode_count','episode_id','progress_season')})
+            cursor = self.cursor_for(patch)
+            if cursor is None:
+                return None
+        except (HTTPException, ValueError):
+            return None
+        ids = [ep.id for ep in self.released]
+        if patch.progress_season:
+            members = [ep.id for ep in self.released if self.positions[ep.id][0] == patch.progress_season]
+            return cursor if len(self.watched.intersection(members)) == patch.episode_count else None
+        boundary = ids.index(cursor['episode_id'])+1 if cursor['episode_id'] in ids else 0
+        return cursor if self.watched == set(ids[:boundary]) else None
+
+    def progress_season(self):
+        selected = self.selected_position()
+        if selected:
+            return selected['season_number']
+        return max((self.positions[ep][0] for ep in self.watched),
+                   default=self.positions[self.released[0].id][0] if self.released else None)
+
+    def season_deletion_ids(self, patch):
+        if patch.revision != self.revision:
+            raise HTTPException(409, {'code': 'series_editor_changed'})
+        number = patch.season_number
+        if number is None or number not in (self.metadata.keys() | {n for n, _, _ in self.groups}):
+            raise HTTPException(409, 'Choose a season in this series.')
+        return {ep.id for sn, members, _ in self.groups if sn == number for ep in members}
+
+    def next_progress_season(self):
+        current = self.progress_season()
+        group = next(((members, expected) for number, members, expected in self.groups if number == current), None)
+        if group is None:
+            return None
+        members, expected = group
+        if not members or len(members) != (expected or len(members)) or any(ep.id not in self.watched for ep in members):
+            return None
+        return min((number for number in self.metadata.keys() | {n for n, _, _ in self.groups} if number > current),
+                   default=None)
+
+    def airing(self):
+        released_ids = {ep.id for ep in self.released}
+        for number, members, expected in reversed(self.groups):
+            released = [ep for ep in members if ep.id in released_ids]
+            future = sorted((ep for ep in members if ep.id not in released_ids and
+                (day := release_day(ep)) and day > self.today), key=release_day)
+            if not (released and future and len(released) < expected):
+                continue
+            previous = next(((n, eps[-1].id) for n, eps, count in reversed(self.groups)
+                if n < number and eps and count == len(eps) and all(ep.id in released_ids for ep in eps)), None)
+            final_day = release_day(members[-1]) if len(members) == expected and members[-1] in future else None
+            return {
+                'season_number': number,
+                'latest_episode': self.positions[released[-1].id][1],
+                'latest_episode_id': released[-1].id,
+                'next_date': release_day(future[0]).isoformat(),
+                'final_date': final_day.isoformat() if final_day else None,
+                'watched': any(ep.id in self.watched for ep in released),
+                'previous_season': previous[0] if previous else None,
+                'previous_episode_id': previous[1] if previous else None,
+            }
+        return None
+
+    def resolve(self, patch, status, needs_progress):
+        """Translate editor intent to a canonical watch delta under the user lock."""
+        airing = self.airing()
+        if patch.action in ('complete_season', 'resume_season'):
+            if patch.revision != self.revision or patch.order != self.order:
+                raise HTTPException(409, {'code': 'series_editor_changed', 'airing': airing})
+            members = [ep for ep in self.released if self.positions[ep.id][0] == patch.season_number]
+            if not members or patch.episode_id is not None or patch.episode_count is not None:
+                raise HTTPException(422, 'Choose a season with released episodes')
+            if patch.action == 'resume_season':
+                return self.watched, None
+            return self.watched | {ep.id for ep in members}, members[-1].id
+        self.cursor_for(patch)
+        if patch.progress_season is not None:
+            if patch.action != 'position' or patch.progress_season != patch.season_number:
+                raise HTTPException(422, 'Choose the season whose progress is changing.')
+            if patch.revision != self.revision or patch.order not in (None, self.order):
+                raise HTTPException(409, {'code': 'series_editor_changed', 'airing': airing})
+            desired, observed = self.apply_season_progress({patch.progress_season: patch.episode_count}, self.watched)
+            return desired, observed.get(patch.progress_season)
+        if (patch.action or needs_progress) and (not self.released or patch.revision != self.revision):
+            raise HTTPException(409, {'code': 'series_editor_changed', 'airing': airing})
+        if needs_progress and status == 'completed' and airing and patch.action not in ('complete_previous', 'catch_up', 'position'):
+            raise HTTPException(409, {'code': 'series_editor_airing', 'airing': airing})
+        if needs_progress and patch.action not in (None, 'complete_previous', 'catch_up', 'position'):
+            raise HTTPException(422, 'Choose a series completion action')
+        action, episode_id = patch.action, patch.episode_id
+        if action in ('catch_up', 'complete_previous'):
+            if not airing or (action == 'complete_previous' and (airing['watched'] or not airing['previous_episode_id'])):
+                raise HTTPException(409, {'code': 'series_editor_changed', 'airing': airing})
+            episode_id = airing['latest_episode_id' if action == 'catch_up' else 'previous_episode_id']
+        ids = [ep.id for ep in self.released]
+        if action == 'position' and episode_id is None:
+            return set(), None
+        if action and episode_id not in ids:
+            raise HTTPException(409, 'Choose a released episode in this series')
+        if action == 'episode':
+            return self.watched | {episode_id}, episode_id
+        if action:
+            target = ids.index(episode_id) + 1
+            selected = set(ids[:target])
+            if action != 'position':
+                selected |= self.watched
+            return selected, episode_id
+        if needs_progress:
+            return set(ids) | self.watched, ids[-1] if self.watched else None
+        return self.watched, None
+
+    def apply_season_progress(self, counts, baseline):
+        """Apply independent counts while retaining out-of-order watch evidence."""
+        members_by_season = {number: [] for number in counts}
+        for episode in self.released:
+            number = self.positions[episode.id][0]
+            if number in members_by_season:
+                members_by_season[number].append(episode.id)
+        desired, observed = set(baseline), {}
+        for number, count in counts.items():
+            members = members_by_season[number]
+            if not members or count > len(members):
+                raise HTTPException(409, 'Choose a released season and episode')
+            watched = [episode_id for episode_id in members if episode_id in self.watched]
+            unwatched = [episode_id for episode_id in members if episode_id not in self.watched]
+            added = unwatched[:max(0, count - len(watched))]
+            desired.difference_update(members)
+            desired.update(watched[:count])
+            desired.update(added)
+            if added:
+                observed[number] = added[-1]
+        return desired, observed
+
+    def finish_targets(self, edits, series_finish=None):
+        """Dates imply watched coverage, independently of the list status."""
+        dates = {edit.season_number: edit.completion_date for edit in edits
+                 if 'completion_date' in edit.model_fields_set and edit.completion_date is not None}
+        if series_finish is not None and self.released:
+            dates.setdefault(self.positions[self.released[-1].id][0], series_finish)
+        return {members[-1].id: dates[number] for number, _, _ in self.groups
+                if number in dates and str(number) not in self.manual_completions
+                and (members := [ep for ep in self.released if self.positions[ep.id][0] == number])}
+
+
+async def editor_context(db, media, user_id):
+    positions = {}
+    data = await season_groups(db, media, user_id, display_positions=positions, include_placeholders=True)
+    watched = await watched_episode_ids(db, user_id, list(positions))
+    saved = (await db.execute(select(TrackedEntry.season_cursor, TrackedEntry.manual_season_completions, TrackedEntry.season_list_statuses)
+        .where(TrackedEntry.user_id == user_id, TrackedEntry.media_id == media.id))).first()
+    cursor, manual, statuses = saved if saved else (None, None, None)
+    return SeriesEditorContext(data, positions, watched, cursor, release=EpisodeRelease(media.tvdb_air_schedule),
+                               manual_completions=manual, season_statuses=statuses)
+
+
+def update_season_statuses(entry, context, patch, desired, *, series_status=None):
+    """Keep explicit list states alongside the season counts derived from watches."""
+    statuses = dict(context.season_statuses)
+    if not statuses and entry.status == 'watching' and (patch.season_statuses or patch.progress_seasons):
+        previous = context.next_progress_season() or context.progress_season()
+        if previous and previous not in patch.progress_seasons:
+            statuses[str(previous)] = 'watching'
+    statuses.update((str(number), status) for number, status in patch.season_statuses.items())
+    if patch.action in ('delete_season', 'complete_season'):
+        statuses.pop(str(patch.season_number), None)
+    elif patch.action == 'resume_season':
+        statuses[str(patch.season_number)] = 'watching'
+    if patch.action == 'episode':
+        number = context.positions[patch.episode_id][0]
+        statuses[str(number)] = 'watching'
+    if series_status and series_status != 'completed' and statuses:
+        number = patch.season_number or context.progress_season()
+        if number:
+            statuses[str(number)] = series_status
+    counts = {patch.progress_season: patch.episode_count} if patch.progress_season else patch.season_progress
+    for number, count in counts.items():
+        if count and number not in patch.season_statuses:
+            statuses.setdefault(str(number), 'watching')
+    if desired is not None and patch.action not in ('delete_season', 'resume_season'):
+        affected = (patch.progress_seasons if patch.progress_seasons and not (patch.action and not patch.progress_season) else
+                    {context.positions[patch.episode_id][0]} if patch.action == 'episode' else
+                    {number for number, _, _ in context.groups})
+        for number, members, expected in context.groups:
+            if number in affected and members and len(members) == (expected or len(members)) and all(
+                    episode.id in desired for episode in members):
+                statuses.pop(str(number), None)
+    if statuses != context.season_statuses:
+        from core.series_playback import save_season_statuses
+        save_season_statuses(entry, context.order, statuses)
+
+
+async def intent_date_edits(db, media_id, user_id, context, edits, *, number, start, finish, day):
+    """Preset only the season explicitly acted on; earlier coverage is undated."""
+    edits = list(edits)
+    if number is None or not (start or finish):
+        return edits
+    members = next((eps for sn, eps, _ in context.groups if sn == number), [])
+    if not members:
+        return edits
+    saved = (await db.execute(select(SeasonTracking).join(SeriesSeason).where(
+        SeriesSeason.media_id == media_id, SeriesSeason.episode_order == context.order,
+        SeriesSeason.season_number == number, SeriesSeason.membership_key == membership_key(members),
+        SeasonTracking.user_id == user_id))).scalar_one_or_none()
+    edit = next((edit for edit in edits if edit.season_number == number), None)
+    values = edit.model_dump(exclude_unset=True) if edit else {'season_number': number, 'membership': membership_key(members)}
+    for field, wanted, manual in (('start_date', start, 'start_manual'), ('completion_date', finish, 'date_manual')):
+        if field in values or not wanted:
+            continue
+        previous = getattr(saved, field) if saved else None
+        if previous is not None or not (saved and getattr(saved, manual)):
+            values[field] = previous or day
+            values['start_preset' if field == 'start_date' else 'completion_preset'] = True
+    replacement = SeasonEdit(**values)
+    return [replacement if item is edit else item for item in edits] if edit else [*edits, replacement]
+
+
+def season_progress_total(media, order, number, members, expected, released_ids, release, *, latest):
+    """Use released coverage when the latest aired season has only placeholder slots ahead."""
+    upcoming = [ep for ep in members if ep.id not in released_ids]
+    released_count = len(members) - len(upcoming)
+    if any(release.air_at(ep.release_date) for ep in upcoming):
+        return released_count
+    data = media.tmdb_data or {}
+    if (not latest or order != 'tmdb:aired' or not media.tmdb_id
+            or data.get('tracking_catalogue_provider', 'tmdb') != 'tmdb'
+            or (data.get('status') or media.status) != 'Returning Series' or len(members) != expected):
+        return None
+    if not upcoming or not released_count or not all(ep.placeholder for ep in upcoming):
+        return None
+    if any(ep.episode_number != index or (ep.id in released_ids) != (index <= released_count)
+           for index, ep in enumerate(members, 1)):
+        return None
+    for key in ('next_episode_to_air', 'last_episode_to_air'):
+        marker = data.get(key)
+        if (isinstance(marker, dict) and marker.get('episode_type') == 'finale'
+                and marker.get('season_number') == number and marker.get('episode_number') == members[-1].episode_number):
+            return None
+    return released_count
+
+
+async def editor_summary(db, media, user_id, context):
+    rows = (await db.execute(select(SeriesSeason.season_number, SeriesSeason.membership_key,
+        SeasonTracking.start_date, SeasonTracking.start_source, SeasonTracking.start_manual,
+        SeasonTracking.completion_date, SeasonTracking.date_source, SeasonTracking.date_manual,
+        SeasonTracking.completed).join(SeasonTracking, SeasonTracking.season_id == SeriesSeason.id).where(
+        SeriesSeason.media_id == media.id, SeriesSeason.episode_order == context.order,
+        SeasonTracking.user_id == user_id, SeasonTracking.current.is_(True)))).mappings().all()
+    saved = {(row['season_number'], row['membership_key']): dict(row) for row in rows}
+    ratings = dict((await db.execute(select(Rating.season_number, Rating.rating).where(
+        Rating.user_id == user_id, Rating.media_id == media.id, Rating.season_number.is_not(None),
+        Rating.episode_order == (None if context.order == 'tmdb:aired' else context.order)))).all())
+    released = {ep.id for ep in context.released}
+    seasons = []
+    groups = {number: (members, expected) for number, members, expected in context.groups}
+    numbers = sorted(groups.keys() | context.metadata.keys())
+    for number in numbers:
+        members, expected = groups.get(number, ([], context.metadata.get(number, {}).get('episode_count') or 0))
+        key = membership_key(members)
+        metadata = context.metadata.get(number, {})
+        upcoming = [ep for ep in members if ep.id not in released]
+        season = {'season_number': number, 'membership': key,
+            'name': metadata.get('name'), 'poster': metadata.get('poster_path'),
+            'total': expected or len(members), 'score': ratings.get(number),
+            'episodes': [{'id': ep.id, 'number': context.positions[ep.id][1], 'watched': ep.id in context.watched}
+                for ep in members if ep.id in released],
+            'upcoming': [{'id': ep.id, 'number': context.positions[ep.id][1]} for ep in upcoming]}
+        if not season['episodes']:
+            premiere = min((day for ep in upcoming if (day := release_day(ep)) is not None), default=None)
+            premiere = premiere or parse_release_day(metadata.get('air_date'))
+            season['release_date'] = premiere.isoformat() if premiere else None
+        season.update(saved.get((number, key), {}))
+        season['status'] = context.season_statuses.get(str(number))
+        if str(number) in context.manual_completions:
+            season.update(completed=True, manual_completion=True)
+            if not season.get('date_manual') and not season.get('completion_date'):
+                season['completion_date'] = context.manual_completions[str(number)]
+        progress_total = season_progress_total(media, context.order, number, members, expected, released,
+                                                context.release, latest=number == numbers[-1])
+        if progress_total is not None:
+            season['progress_total'] = progress_total
+        seasons.append(season)
+    return {'order': context.order, 'revision': context.revision, 'seasons': seasons,
+            'selected_position': context.selected_position(),
+            'next_progress_season': context.next_progress_season(),
+            'airing': context.airing(), 'ready': bool(context.released)}

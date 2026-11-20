@@ -9,12 +9,14 @@ const BACKEND = `http://127.0.0.1:${BACKEND_PORT}`;
 // Location would have the browser follow it unchecked. Today the only
 // backend route that redirects here is image serving, straight to TMDB or
 // TheTVDB when the local image cache is disabled or misses.
-const ALLOWED_REDIRECT_HOSTS = new Set(["image.tmdb.org", "artworks.thetvdb.com"]);
+const ALLOWED_REDIRECT_HOSTS = new Set(["image.tmdb.org", "artworks.thetvdb.com", "images.igdb.com", "cdn2.steamgriddb.com", "images.metahub.space"]);
 
 async function handle({ params, request, locals }: Parameters<APIRoute>[0]): Promise<Response> {
   const path = params.path ?? "";
   const search = new URL(request.url).search;
   const backendUrl = `${BACKEND}/${path}${search}`;
+  const creditWait=request.method==='GET'&&/^tracking\/games\/works\/[1-9]\d*\/credits$/.test(path)
+    &&new URL(request.url).searchParams.has('revision');
 
   const forwardHeaders = new Headers();
 
@@ -23,7 +25,7 @@ async function handle({ params, request, locals }: Parameters<APIRoute>[0]): Pro
     if (auth) {
       forwardHeaders.set("Authorization", auth);
     } else {
-      // Video elements use query tokens or the session verified by middleware.
+      // Video elements use query tokens or the session selected by middleware (verified by the backend).
       const tokenQuery = new URL(request.url).searchParams.get("token");
       if (tokenQuery) {
         forwardHeaders.set("Authorization", `Bearer ${tokenQuery}`);
@@ -50,7 +52,17 @@ async function handle({ params, request, locals }: Parameters<APIRoute>[0]): Pro
   if (apiKey) forwardHeaders.set("X-Api-Key", apiKey);
 
   const hasBody = request.method !== "GET" && request.method !== "HEAD";
-  const body = hasBody ? await request.arrayBuffer() : undefined;
+  let body:ArrayBuffer|undefined;
+  const profileUpload=request.method==='POST'&&/^profile\/me\/(avatar|background)$/.test(path);
+  if(profileUpload){
+    const megabytes=path.endsWith('/avatar')?3:6,max=megabytes*1024*1024+65536;
+    const tooLarge=()=>new Response(JSON.stringify({detail:`Maximum upload size is ${megabytes} MB.`}),{status:413,headers:{'Content-Type':'application/json'}});
+    if(Number(request.headers.get('Content-Length')||0)>max)return tooLarge();
+    const reader=request.body?.getReader(),chunks:Uint8Array[]=[];let size=0;
+    if(reader)while(true){const part=await reader.read();if(part.done)break;size+=part.value.byteLength;
+      if(size>max){await reader.cancel();return tooLarge();}chunks.push(part.value);}
+    const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.byteLength;}body=bytes.buffer;
+  }else body=hasBody?await request.arrayBuffer():undefined;
 
   let res: Response;
   try {
@@ -58,6 +70,7 @@ async function handle({ params, request, locals }: Parameters<APIRoute>[0]): Pro
       method: request.method,
       headers: forwardHeaders,
       body,
+      ...(creditWait?{signal:request.signal}:{}),
       // Some backend routes (e.g. image serving) 3xx-redirect straight to a
       // third-party host (TMDB) when nothing is locally cached. Following
       // that here would make this dev-server process itself open the
@@ -70,6 +83,7 @@ async function handle({ params, request, locals }: Parameters<APIRoute>[0]): Pro
       redirect: "manual",
     });
   } catch (e) {
+    if(creditWait&&request.signal.aborted)return new Response(null,{status:499});
     console.error(`Proxy request to /${path} failed (${e instanceof Error ? e.name : 'unknown error'})`);
     return new Response(null, { status: 502 });
   }

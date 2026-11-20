@@ -1,4 +1,4 @@
-export type DetailEpisode = {id:number;episode_number:number;title:string;air_date?:string|null;runtime?:number|null;image?:string|null;watched:boolean;released:boolean};
+export type DetailEpisode = {id:number;episode_number:number;title:string;air_date?:string|null;air_at?:string|null;runtime?:number|null;image?:string|null;watched:boolean;released:boolean};
 export type DetailSeason = {season_number:number;name?:string;air_date?:string|null;episode_count:number;released_count:number|null;watched_count:number;episodes?:DetailEpisode[]};
 
 export function visibleDetailSeasons(seasons:DetailSeason[], removeSpecials=true) {
@@ -15,7 +15,7 @@ export function currentDetailSeason(seasons:DetailSeason[],watching=false) {
 
 export function detailSeasonState(season:DetailSeason,current:number|null,watching:boolean) {
   const watched=!!season.released_count&&season.watched_count>=season.released_count;
-  const progress=watching&&season.season_number===current&&!watched&&!!season.released_count;
+  const progress=!watched&&!!season.released_count&&(season.watched_count>0||watching&&season.season_number===current);
   return {watched,progress,label:watched?'Watched':progress?`${season.watched_count} / ${season.released_count} watched`:'Not watched'};
 }
 

@@ -4,7 +4,7 @@ export const settingsGroups = [
     links: [
       { href: '/user-settings', label: 'Profile' },
       { href: '/settings', label: 'Account' },
-      { href: '/settings/media', label: 'Movies & series' },
+      { href: '/settings/media', label: 'Media' },
       { href: '/settings/lists', label: 'Lists' },
       { href: '/settings/notifications', label: 'Notifications' },
       { href: '/connections?section=imports', label: 'Import data' },

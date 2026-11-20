@@ -9,7 +9,7 @@ done
 [[ -x /usr/local/bin/uv && -x /usr/bin/node ]] || { echo 'Install uv at /usr/local/bin/uv and Node at /usr/bin/node' >&2; exit 1; }
 install -d -m 755 /opt/anylist-preview /etc/anylist-preview /srv/anylist-preview
 install -d -m 700 /var/lib/anylist-preview
-for name in controller.py migration_state.py gateway.py ci_entry.py production.py slots.json backend.service.in frontend.service.in; do
+for name in controller.py migration_state.py gateway.py ci_entry.py production.py public_beta.py public-beta.caddy.in slots.json backend.service.in frontend.service.in; do
   install -o root -g root -m 644 "$source_dir/$name" "/opt/anylist-preview/$name"
 done
 install -o root -g root -m 644 "$source_dir/production-recovery.service" /etc/systemd/system/anylist-production-recovery.service

@@ -189,7 +189,7 @@ class SearchMetadataLanguageTests(unittest.IsolatedAsyncioTestCase):
     """#417: search results showed TMDB's English title under a French poster."""
 
     def _fake_db(self, local_rows=()):
-        db = SimpleNamespace()
+        db = SimpleNamespace(commit=AsyncMock())
         db.execute = AsyncMock(side_effect=lambda *_a, **_k: _Rows(list(local_rows)))
         return db
 

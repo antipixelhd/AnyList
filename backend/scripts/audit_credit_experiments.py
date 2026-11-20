@@ -79,7 +79,7 @@ async def main(args):
 
     async def revision():
         async with engine.connect() as db:
-            return await db.scalar(text('SELECT revision FROM stats_metadata_revision WHERE id=1'))
+            return await db.scalar(text('SELECT sum(revision) FROM stats_metadata_revision'))
 
     try:
         pattern=next(v for v in principal_clause.__code__.co_consts

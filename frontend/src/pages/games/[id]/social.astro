@@ -1,0 +1,14 @@
+---
+import MediaDetailSocial from '../../../components/MediaDetailSocial.astro';
+import {localMediaId} from '../../../lib/media-detail-data';
+import {tracker} from '../../../lib/tracker';
+const id=localMediaId(Astro.params.id);
+Astro.response.headers.set('Cache-Control','private, no-store');
+let data={people:[],activities:[]};
+if(!id||!Astro.locals.user)Astro.response.status=404;
+else{
+  try{data=await tracker(`games/works/${id}/social`,Astro.locals.token);}
+  catch{Astro.response.status=503;}
+}
+---
+{Astro.response.status===200&&<MediaDetailSocial {data} type="game"/>}

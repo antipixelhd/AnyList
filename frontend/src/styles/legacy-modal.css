@@ -1,0 +1,6 @@
+/* Full-viewport native roots retain the existing backdrop and panel geometry. */
+dialog.legacy-modal { margin:0; padding:0; border:0; width:100%; height:100%; max-width:none; max-height:none; color:inherit; outline:none; overscroll-behavior:contain; }
+dialog.legacy-modal:not([open]) { display:none!important; }
+dialog.legacy-modal[open] { display:flex; }
+dialog.legacy-modal :focus-visible { outline:none!important; }
+dialog.legacy-modal::backdrop { background:transparent; overflow:hidden; overscroll-behavior:contain; }

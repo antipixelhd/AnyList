@@ -1,19 +1,31 @@
 import { responsiveArtwork,type ArtworkRoute } from "./responsive-artwork";
 import { formatDateTime, timestamp } from './date-time';
 
+export class TrackerRequestError extends Error {
+  readonly status:number;
+  constructor(status:number) {
+    super(status===403?'This profile is private.':status===404?'Not found.':'Unable to load this page. Please try again.');
+    this.name='TrackerRequestError';this.status=status;
+  }
+}
+
+/** Profile pages preserve access failures without treating upstream outages as content. */
+export function trackerFailure(cause:unknown) {
+  return {message:cause instanceof Error?cause.message:'Unable to load this page. Please try again.',
+    status:cause instanceof TrackerRequestError&&[401,403,404].includes(cause.status)?cause.status:503};
+}
+
 export async function tracker(path: string, token?: string) {
   const port = process.env.BACKEND_PORT ?? '7331';
   const response = await fetch(`http://127.0.0.1:${port}/tracking/${path}`, {
     headers: token ? {Authorization: `Bearer ${token}`} : {},
   });
-  if (!response.ok) throw new Error(response.status === 403 ? 'This profile is private.' : response.status === 404 ? 'Not found.' : 'Unable to load this page. Please try again.');
+  if (!response.ok) throw new TrackerRequestError(response.status);
   return response.json();
 }
 
-export const statuses = [
-  ['watching', 'Watching'], ['completed', 'Completed'], ['paused', 'Paused'],
-  ['dropped', 'Dropped'], ['planning', 'Planning'],
-];
+export {statuses} from './tracking-statuses.ts';
+import {statuses} from './tracking-statuses.ts';
 
 export function artwork(path: string | null, size = 'w342',route:ArtworkRoute='auto') {
   if (!path) return '';
@@ -28,6 +40,8 @@ export function artwork(path: string | null, size = 'w342',route:ArtworkRoute='a
 
 export const scoreLabel = (value: number | null) => value == null || value === 0 ? '—' : Number(value.toFixed(1)).toString();
 
+export const trackedWorkHref=(work:{id:number;type:string})=>`/${work.type==='game'?'games':'title'}/${work.id}`;
+
 export const compactListProgress = (entry: {type?: string; progress: number; released_episodes?: number | null}) =>
   `Progress ${entry.progress}/${entry.type === 'movie' ? 1 : entry.released_episodes ?? '?'}`;
 
@@ -38,37 +52,101 @@ function firstRating(details: any) {
 
 export function activityRating(activity: any) {
   const details = activity.payload || {};
-  if (!details.rating_changed || typeof activity.score !== 'number' || activity.score <= 0) return null;
+  if (!(details.rating_changed||details.rating_snapshot) || typeof activity.score !== 'number' || activity.score <= 0) return null;
   const previous = typeof details.previous_score === 'number' ? details.previous_score : null;
   const current = typeof activity.score === 'number' ? activity.score : null;
+  const seasons = Object.entries(details.season_ratings || {}).map(([number, score]) =>
+    ({number: Number(number), score: Number(score)})).filter(row => row.number > 0 && row.score > 0).sort((a,b)=>a.number-b.number);
+  const breakdown: {label: string; score: number}[] = [];
+  if (activity.media?.type === 'series') {
+    const ratings = activity.rating_breakdown;
+    if (ratings?.series_score > 0) breakdown.push({label: 'Series rating', score: ratings.series_score});
+    for (const [number, score] of Object.entries(ratings?.season_scores || {}).sort(([a], [b]) => Number(a) - Number(b))) {
+      if (Number(number) > 0 && typeof score === 'number' && score > 0) breakdown.push({label: activitySeasonLabel(details,number), score});
+    }
+    // A historical card can outlive its list entry or come from an older feed.
+    if (!breakdown.length) {
+      if (seasons.length) breakdown.push(...seasons.map(({number, score}) => ({label: activitySeasonLabel(details,number), score})));
+      else if (details.season_number > 0 && (details.rating_snapshot || details.season_rating_group))
+        breakdown.push({label: activitySeasonLabel(details,details.season_number), score: current});
+      else breakdown.push({label: 'Series rating', score: current});
+    }
+  }
   const label = previous == null
     ? `Rated ${scoreLabel(current)} out of 10`
     : `Rating changed from ${scoreLabel(previous)} to ${scoreLabel(current)} out of 10`;
-  return { previous, current, label };
+  return { previous, current, label: seasons.length > 1 ? `Average ${scoreLabel(current)} out of 10. ${seasons.map(row=>`${activitySeasonLabel(details,row.number)}: ${scoreLabel(row.score)}`).join(', ')}` : label,
+    seasons, breakdown, breakdownId: breakdown.length && activity.key ? `activity-ratings-${encodeURIComponent(activity.key)}` : undefined };
+}
+
+export function seasonRange(numbers:number[]) {
+  const sorted=[...new Set(numbers)].sort((a,b)=>a-b), ranges:string[]=[];
+  for(let i=0;i<sorted.length;i++){
+    const first=sorted[i];let last=first;
+    while(sorted[i+1]===last+1)last=sorted[++i];
+    ranges.push(first===last?String(first):`${first}–${last}`);
+  }
+  return ranges.join(', ');
+}
+
+function activitySeasonLabel(details:any,number:number|string){
+  return details.season_names?.[number] || `Season ${number}`;
+}
+
+function activitySeasonList(details:any,numbers:number[],compact=false){
+  if(numbers.some(number=>details.season_names?.[number]))
+    return new Intl.ListFormat('en').format(numbers.map(number=>activitySeasonLabel(details,number)));
+  return `${numbers.length===1?'Season':'Seasons'} ${compact?seasonRange(numbers):numbers.join(' and ')}`;
+}
+
+function activityEpisodeLabel(details:any){
+  const startPosition=details.position_start || (details.episodes_watched===1?details.position:null);
+  const first=/^S(\d+)E(\d+)$/.exec(startPosition);
+  const last=/^S(\d+)E(\d+)$/.exec(details.position);
+  if(!first||!last)return null;
+  const label=`${activitySeasonLabel(details,first[1])} Episode ${first[2]}`;
+  if(first[1]===last[1])return first[2]===last[2]?label:`${label}–${last[2]}`;
+  return `${label} through ${activitySeasonLabel(details,last[1])} Episode ${last[2]}`;
+}
+
+export function activityCompletionSuffix(activity:any){
+  const seconds=activity.payload?.completion_seconds;
+  return activity.media?.type==='game'&&activity.status==='completed'&&activity.payload?.status_changed&&seconds!=null
+    ? ` with ${new Intl.NumberFormat(undefined,{maximumFractionDigits:1}).format(seconds/3600)} hours` : '';
 }
 
 export function activityAction(activity: any) {
   const details = activity.payload || {};
+  if(activity.media?.type==='game'){
+    if(details.status_changed&&activity.status_label)return `Marked ${activity.status_label}`;
+    if(details.status_changed)return ({planning:'Plans to play',playing:'Started playing',played:'Played',completed:'Completed',paused:'Paused',dropped:'Dropped'} as Record<string,string>)[activity.status]||'Updated';
+    if(details.rating_changed)return activity.score==null?'Removed rating for':details.rating_first?'Rated':'Changed rating for';
+    if(details.hours_changed)return 'Updated playtime for';
+    if(details.achievements_changed)return 'Updated achievement progress for';
+    return details.added_to_list?'Added to list':'Updated';
+  }
   const finished = details.finished_seasons || [];
-  if (details.status_changed && ['completed', 'dropped', 'paused', 'planning'].includes(activity.status)) {
+  if(activity.media?.type==='series'){
+    if(details.series_completed&&finished.length<2)return 'Completed';
+    if(details.season_status&&details.status_changed&&details.season_number){
+      const verb=({planning:'Plans to watch',watching:details.continued_watching?'Continued watching':'Started watching',paused:'Paused',dropped:'Dropped'} as Record<string,string>)[activity.status];
+      if(verb)return `${verb} ${activitySeasonLabel(details,details.season_number)} of`;
+    }
+    if(details.season_rating_group&&details.rating_changed){
+      const seasons=Object.keys(details.season_ratings||{}).map(Number);
+      return `${firstRating(details)?'Rated':'Changed rating for'} ${activitySeasonList(details,seasons,true)} of`;
+    }
+  }
+  if (!details.season_completion_id && details.status_changed && ['completed', 'dropped', 'paused', 'planning'].includes(activity.status)) {
     return activity.status === 'planning' ? 'Plans to watch' : statuses.find(([status]) => status === activity.status)?.[1] || 'Updated';
   }
   if (activity.media?.type === 'series' && finished.length) {
-    const seasons = finished.join(finished.length > 1 ? ' and ' : '');
-    return `Watched ${finished.length === 1 ? 'season' : 'seasons'} ${seasons} of`;
-  }
-  const startPosition = details.position_start || (details.episodes_watched === 1 ? details.position : null);
-  if (activity.media?.type === 'series' && details.episodes_watched && startPosition && details.position) {
-    const first = /^S(\d+)E(\d+)$/.exec(startPosition);
-    const last = /^S(\d+)E(\d+)$/.exec(details.position);
-    if (first && last) {
-      if (first[1] === last[1]) {
-        return `Watched Season ${first[1]} Episode ${first[2]}${first[2] === last[2] ? '' : `–${last[2]}`} of`;
-      }
-      return `Watched Season ${first[1]} Episode ${first[2]} through Season ${last[1]} Episode ${last[2]} of`;
-    }
+    const watched=details.bulk_progress&&activityEpisodeLabel(details);
+    return `Completed ${activitySeasonList(details,finished)}${watched?` and watched ${watched}`:''} of`;
   }
   if (activity.media?.type === 'series' && details.episodes_watched) {
+    const episode = activityEpisodeLabel(details);
+    if (episode) return `Watched ${episode} of`;
     const count = Number(details.episodes_watched);
     const end = Number(details.progress);
     if (Number.isFinite(end) && end > 0) {

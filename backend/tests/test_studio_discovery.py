@@ -24,6 +24,11 @@ class StudioDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         self.db = SimpleNamespace(get=AsyncMock(return_value=None))
         self.viewer = SimpleNamespace(id=1)
         self.cached = AsyncMock(return_value=({}, True))
+        async def read(db,jobs,viewer,**options):
+            payloads,pending=self.cached.return_value
+            await options['established'](payloads)
+            return payloads,pending
+        self.cached.side_effect=read
         for name, mock in [('result_filters', AsyncMock(return_value=self.filters)),
                            ('local_evidence', AsyncMock(return_value={})), ('cached_evidence', self.cached)]:
             patcher=patch.object(discovery,name,mock);patcher.start();self.addCleanup(patcher.stop)

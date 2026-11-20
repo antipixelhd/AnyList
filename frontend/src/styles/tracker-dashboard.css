@@ -1,4 +1,5 @@
 /* Cover-led activity and private review inbox. */
+.home-playing-games{margin-top:28px}
 .page-intro {
   display:flex;
   justify-content:space-between;
@@ -57,13 +58,17 @@
   background:var(--panel)
 }
 .progress-card {
+  --progress-card-fade:.26s ease-in-out;
   position:relative;
   z-index:0;
   width:85px;
   height:115px
 }
-.progress-card:is(:hover,:focus-within) {
+.progress-card:focus-within {
   z-index:4
+}
+.progress-card:hover {
+  z-index:5
 }
 .progress-card-poster {
   position:absolute;
@@ -79,6 +84,7 @@
   height:100%;
   object-fit:cover
 }
+.progress-card-poster>img:not([src]) {visibility:hidden}
 .progress-card-airing-label {
   position:absolute;
   z-index:1;
@@ -96,11 +102,12 @@
   line-height:1.15;
   text-align:center;
   text-shadow:0 1px 3px rgba(0,0,0,.9);
-  transition:opacity .12s ease,visibility .12s ease
+  transition:opacity var(--progress-card-fade),visibility var(--progress-card-fade)
 }
 .progress-card-airing-label>span {
   font-size:var(--type-caption-size)
 }
+.progress-card-airing-label:has([data-countdown]:empty) {display:none}
 .progress-card-catchup {
   position:absolute;
   z-index:2;
@@ -109,7 +116,7 @@
   left:0;
   height:5px;
   background:#e84b73;
-  transition:background-color .12s ease
+  transition:opacity var(--progress-card-fade),background-color .12s ease
 }
 .progress-card-catchup[data-caught-up="true"] {
   background:#45c66b
@@ -137,13 +144,13 @@
   font-weight:var(--type-action-weight);
   opacity:0;
   cursor:pointer;
-  transition:opacity .12s ease,background-color .12s ease
+  transition:opacity var(--progress-card-fade),background-color .12s ease
 }
 .progress-card-quick-action:not(:disabled):hover,.progress-card-quick-action:focus-visible {
   background:rgba(18,25,38,.96)
 }
 .progress-card-quick-action:disabled {
-  cursor:default
+  display:none
 }
 .progress-card-plus {
   color:var(--blue);
@@ -153,9 +160,12 @@
 .progress-card:is(:hover,:focus-within) .progress-card-quick-action {
   opacity:1
 }
-.progress-card:is(:hover,:focus-within) .progress-card-airing-label {
-  visibility:hidden;
-  opacity:0
+@media(hover:hover) {
+  .progress-card:is(:hover,:focus-within) .progress-card-airing-label {
+    opacity:0;
+    visibility:hidden
+  }
+  .progress-card:is(:hover,:focus-within) .progress-card-catchup {opacity:0}
 }
 .progress-card-details {
   position:absolute;
@@ -163,7 +173,8 @@
   top:0;
   left:calc(100% + 16px);
   display:flex;
-  width:min(290px,calc(100vw - 150px));
+  width:23rem;
+  max-width:var(--progress-card-side-space,calc(100vw - 40px));
   min-height:100%;
   flex-direction:column;
   align-items:flex-start;
@@ -172,12 +183,18 @@
   opacity:0;
   pointer-events:none;
   visibility:hidden;
-  transition:opacity .12s ease
+  overflow-wrap:anywhere
 }
-.progress-card:is(:hover,:focus-within) .progress-card-details {
-  opacity:1;
-  pointer-events:auto;
-  visibility:visible
+@media(hover:hover) {
+  .progress-card:hover .progress-card-details {
+    opacity:1;
+    visibility:visible
+  }
+}
+@media(hover:hover) and (prefers-reduced-motion:no-preference) {
+  .progress-card:hover .progress-card-details {
+    transition:opacity var(--progress-card-fade)
+  }
 }
 .progress-card.details-flipped .progress-card-details {
   right:calc(100% + 16px);
@@ -197,9 +214,6 @@
   color:var(--bright);
   font-size:var(--type-panel-size);
   line-height:1.15
-}
-.progress-card-title:hover,.progress-card-title:focus-visible {
-  color:var(--blue)
 }
 .progress-card-progress-label {
   margin-top:auto;
@@ -571,9 +585,6 @@
     gap:18px;
     padding:18px
   }
-  .progress-card-details {
-    width:min(290px,calc(100vw - 150px))
-  }
   .event-cover {
     width:82px;
     min-height:145px
@@ -615,6 +626,8 @@
   .progress-card-quick-action {
     opacity:1
   }
+  .progress-card.airing .progress-card-quick-action {bottom:5px}
+  .progress-card:has(.progress-card-quick-action:enabled) .progress-card-airing-label {bottom:33px}
 }
 @media(prefers-reduced-motion:reduce) {
   .progress-card-airing-label,.progress-card-catchup,.progress-card-quick-action,.progress-card-details {

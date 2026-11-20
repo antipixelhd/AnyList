@@ -31,6 +31,7 @@ from models.media import Media
 from models.netflix_import import NetflixImportSession
 from models.streaming_library import StreamingLibraryDelivery
 from models.sync import SyncJob, SyncStatus
+from models.steam import SteamConnection
 from models.tracking import StreamAction, StreamBaseline, SyncReview
 from models.users import User, UserSettings
 from models.watch_intent import WatchIntent
@@ -52,6 +53,7 @@ class MultipleStreamConnectionsTests(unittest.IsolatedAsyncioTestCase):
             dbapi_connection.create_function("date_trunc", 2, lambda _precision, value: value)
         self.tables = [
             User.__table__,
+            SteamConnection.__table__,
             UserSettings.__table__,
             MediaServerConnection.__table__,
             Media.__table__,
@@ -648,11 +650,12 @@ class MultipleStreamConnectionsTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(stremio, 'logout', AsyncMock()):
             await auth.delete_connection(conn.id, db=self.db, current_user=self.owner)
         fresh = await self._connection(provider='stremio', account_id='readded')
+        fresh.sync_watched = True
         await self.db.commit()
         # SQLite may reuse the deleted integer ID: a new row still must not revive its draft.
         response = await get_connection_import(fresh.id, self.db, self.owner)
         self.assertIsNone(response['session'])
-        with patch('core.connection_imports.prepare_items', AsyncMock(return_value=[{'id': 'fresh-progress'}])), \
+        with patch('core.connection_imports.prepare_items', AsyncMock(return_value=[{'id': 'fresh-progress', 'kind': 'movie'}])), \
              patch('core.connection_imports.remove_covered_items', AsyncMock(side_effect=lambda db, uid, items: items)), \
              patch.object(netflix_sessions, 'hydrate_existing_items', AsyncMock()):
             await stage_first_snapshot(self.db, fresh, [], [], [], {}, 'fixture')
@@ -660,7 +663,7 @@ class MultipleStreamConnectionsTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotEqual(baseline.snapshot['import_session_id'], old.id)
         new = await self.db.get(NetflixImportSession, baseline.snapshot['import_session_id'])
         self.assertEqual(new.payload['connection_id'], fresh.id)
-        self.assertEqual(new.payload['items'], [{'id': 'fresh-progress'}])
+        self.assertEqual(new.payload['items'], [{'id': 'fresh-progress', 'kind': 'movie'}])
 
     async def test_changed_connection_identity_cancels_its_draft(self):
         conn = await self._connection(provider='nuvio', account_id='old-profile')

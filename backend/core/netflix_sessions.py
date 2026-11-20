@@ -473,6 +473,8 @@ async def _prepare_session(session_id: str, user_id: int, language: str | None) 
             ).with_for_update())).scalar_one_or_none()
             if session is None or session.status != "preparing" or session_id in _cancelled:
                 return
+            from core.watch_state_policy import filter_import_items
+            items = await filter_import_items(db, user_id, items, source)
             await hydrate_existing_items(db, user_id, items)
             from core.streaming_duplicates import remove_covered_items
             items, already_imported = await remove_covered_items(db, user_id, items)
@@ -794,7 +796,7 @@ async def _track_imported_root(
         from core.stream_actions import queue_local_dismissals
         await queue_local_dismissals(db, user_id, root)
     entry.progress = max(int(entry.progress or 0), progress_count)
-    if accepted_dates:
+    if accepted_dates and entry.start_date_source != 'manual':
         first = min(accepted_dates)
         entry.start_date = min(entry.start_date, first) if entry.start_date else first
     if "finish_date" in outcome and outcome["finish_date"] is None:
@@ -843,6 +845,10 @@ async def _record_import_activity(db, user_id, root, entry, item):
     from core.streaming_activity import record_streaming_activity
     outcome = item["outcome"]
     events = activity_plan(item, entry.finish_date)
+    if entry.start_date_source == 'manual':
+        # The canonical first-season start owns this action, including an
+        # explicitly cleared date. Imported watch evidence must not invent one.
+        events = [event for event in events if event['key'] != 'start']
     for event in events:
         if event["key"] == "start" and entry.start_date:
             event["date"] = entry.start_date.isoformat()
@@ -855,6 +861,10 @@ async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSe
     payload = dict(session.payload or {})
     items = deepcopy(payload.get("items", []))
     _resolve_draft_items(items)
+    from core.watch_state_policy import filter_import_items
+    admitted = await filter_import_items(db, user_id, items, payload.get('source'), for_commit=True)
+    policy_skipped = len(items) - len(admitted)
+    items = admitted
     errors = payload.get("errors", [])
     counts = payload.get("counts") or {}
     unresolved = []
@@ -878,7 +888,7 @@ async def _apply_import(db: AsyncSession, user_id: int, session: NetflixImportSe
         "movies": 0, "shows": 0, "new_entries": 0, "existing_entries": 0,
         "source_watches": 0, "source_episodes": 0, "duplicates": 0,
         "episodes": 0, "partial_shows": 0,
-        "inferred_episodes": 0, "skipped": 0, "unmatched": 0,
+        "inferred_episodes": 0, "skipped": policy_skipped, "unmatched": 0,
         "cutoff_exclusions": 0, "partial_progress": 0, "errors": len(errors),
         "excluded_rows": int(counts.get("excluded_rows", 0) or 0),
         "guessed_episodes": 0, "discarded_episodes": 0, "covered_episodes": 0,

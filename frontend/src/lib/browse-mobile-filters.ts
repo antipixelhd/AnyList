@@ -6,6 +6,7 @@ export function initializeMobileBrowseFilters(form: HTMLFormElement, signal: Abo
     '.browse-controls > .browse-filter, .browse-controls > .browse-sort',
   )].map(control => {
     const anchor = document.createComment('browse filter position');
+    control.dataset.browseFilterPosition='';
     control.before(anchor);
     return {control, anchor};
   });
@@ -20,7 +21,20 @@ export function initializeMobileBrowseFilters(form: HTMLFormElement, signal: Abo
     controls.forEach(({control, anchor}) => {
       anchor.after(control);
       anchor.remove();
+      delete control.dataset.browseFilterPosition;
     });
     form.removeAttribute('data-mobile-filters');
   }, {once: true});
+}
+
+export function resetSavedBrowseFilterPositions(root:HTMLElement) {
+  const controls=root.querySelector('.browse-controls');
+  if(!controls)return;
+  const anchors=[...controls.childNodes].filter((node):node is Comment=>node instanceof Comment&&node.data==='browse filter position');
+  if(root.querySelector('[data-mobile-filters]')){
+    const moved=[...root.querySelectorAll<HTMLElement>('.browse-secondary-filters > [data-browse-filter-position]')];
+    moved.forEach((control,index)=>anchors[index]?.after(control));
+  }
+  anchors.forEach(anchor=>anchor.remove());
+  root.querySelectorAll<HTMLElement>('[data-browse-filter-position]').forEach(control=>delete control.dataset.browseFilterPosition);
 }

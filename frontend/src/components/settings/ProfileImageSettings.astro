@@ -1,0 +1,29 @@
+---
+import '../../styles/profile-image-settings.css';
+import '../../styles/image-lightbox.css';
+const {prefs}=Astro.props;
+const choices=[{kind:'avatar',title:'Avatar',limit:3,dimensions:'400 × 400',url:prefs.avatar_url?`/api/proxy${prefs.avatar_url}`:null},
+  {kind:'background',title:'Banner',limit:6,dimensions:'1700 × 330',url:prefs.background_url}];
+---
+<div class="profile-image-settings" data-profile-image-settings>
+  {choices.map(item=><section data-profile-image={item.kind}>
+    <h3>{item.title}</h3>
+    <p class="profile-image-guidance">Static JPEG, PNG, WebP · Max {item.limit} MB · Best {item.dimensions}</p>
+    <div class="profile-image-row">
+      <button type="button" class="profile-upload-zone" data-profile-upload aria-label={`Upload ${item.title.toLowerCase()}`}>Drop image here or<br/>click to upload</button>
+      <input type="file" accept="image/jpeg,image/png,image/webp" data-profile-file hidden/>
+      <div class:list={['profile-image-preview',{'profile-banner-preview':item.kind==='background'}]} hidden={!item.url} data-profile-preview>
+        <div class="profile-image-thumb"><img src={item.url||undefined} alt={`${item.title} preview`} data-profile-preview-image
+          style={item.kind==='background'?{objectPosition:`${prefs.background_crop?.x??50}% ${prefs.background_crop?.y??50}%`,transform:`scale(${prefs.background_crop?.zoom??1})`,transformOrigin:`${prefs.background_crop?.x??50}% ${prefs.background_crop?.y??50}%`}:undefined}/></div>
+        <button type="button" data-profile-remove aria-label={`Remove ${item.title.toLowerCase()}`}>Remove</button>
+      </div>
+    </div>
+    <p class="profile-image-error" role="status" data-profile-image-error hidden></p>
+  </section>)}
+</div>
+<script>
+  import {mountProfileImageUploads} from '../../lib/profile-image-uploads';
+  let cleanup:(()=>void)|undefined;
+  const setup=()=>{cleanup?.();const root=document.querySelector<HTMLElement>('[data-profile-image-settings]');if(root)cleanup=mountProfileImageUploads(root);};
+  setup();document.addEventListener('astro:page-load',setup);document.addEventListener('astro:before-swap',()=>cleanup?.());
+</script>

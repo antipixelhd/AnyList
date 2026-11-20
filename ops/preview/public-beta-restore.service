@@ -1,0 +1,12 @@
+[Unit]
+Description=Restore AnyList public beta socket gate after boot
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I -c "import sys; sys.path.insert(0, '/opt/anylist-preview'); import public_beta; public_beta.command('systemctl', 'start', public_beta.SOCKET) if public_beta.configured_mode() == 'ON' else public_beta.disable_socket()"
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

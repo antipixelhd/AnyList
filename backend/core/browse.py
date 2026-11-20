@@ -125,83 +125,85 @@ def section_specs(today=None):
     ]
 
 
+def section_filters(region, min_score, min_runtime, excluded_genres, **values):
+    return dict(genres=[], start=None, end=None, status='', provider=None, region=region,
+                min_score=min_score, min_runtime=min_runtime, excluded_genres=excluded_genres,
+                min_votes=0, min_popularity=0, require_release=False, require_poster=False) | values
+
+
 async def browse_sections(
+    db, viewer, **kwargs,
+):
+    updates = [update async for update in iter_browse_sections(db, viewer, **kwargs)]
+    updates.sort(key=lambda update: update['index'])
+    from core.tracking_editor import attach_editor_context
+    await attach_editor_context(db, viewer, [row for update in updates for row in update['section']['results']])
+    return {'sections': [update['section'] for update in updates],
+            'notice': next((update['notice'] for update in updates if update.get('notice')), None)}
+
+
+async def iter_browse_sections(
     db, viewer, *, media_type, region, show_anime, key, mdblist_key=None,
-    min_score=0, min_runtime=0, excluded_genres=(), min_votes=0, min_popularity=0, require_release=False, require_poster=False, unfiltered=False,
+    min_score=0, min_runtime=0, excluded_genres=(), min_votes=0, min_popularity=0, require_release=False, require_poster=False, unfiltered=False, progressive=False,
 ):
     specs = section_specs()
-    filters = [
-        {
-            **dict(
-                genres=[],
-                start=None,
-                end=None,
-                status="",
-                provider=None,
-                region=region,
-                min_score=min_score,
-                min_runtime=min_runtime, excluded_genres=excluded_genres,
-                min_votes=min_votes, min_popularity=min_popularity, require_release=require_release, require_poster=require_poster,
-            ),
-            **values,
-        }
-        for _, values in specs
-    ]
+    filters = [section_filters(region, min_score, min_runtime, excluded_genres,
+        min_votes=min_votes, min_popularity=min_popularity, require_release=require_release,
+        require_poster=require_poster, **values) for _, values in specs]
     from core.discovery_policy import viewer_policies
     policies = await viewer_policies(db, viewer, media_type,
         tuple(values['sort'] for values in filters), unfiltered=unfiltered)
     for values in filters:
         policy = policies[values['sort']]
         values.update(min_votes=policy.min_votes, min_popularity=policy.min_popularity)
+    # The feeds use the resolved policy values while the request waits.
+    await db.commit()
     # Fetch remote feeds concurrently, but use the shared database session sequentially.
     semaphore = asyncio.Semaphore(2)
 
-    async def prefetch(values):
+    async def prefetch(index, values):
         async with semaphore:
-            return await remote_page(
-                "",
-                media_type,
-                key,
-                values,
-                1,
-                mdblist_key=mdblist_key,
-                show_anime=show_anime,
-            )
+            try:
+                if progressive and values['sort'] == 'newest' and key:
+                    from core.chronological_discovery import page as release_page
+                    remote = await release_page(media_type, key, values, show_anime=show_anime, size=6, preview=True)
+                else:
+                    remote = await remote_page('', media_type, key, values, 1,
+                        mdblist_key=mdblist_key, show_anime=show_anime) if key or mdblist_key else None
+                return index, remote
+            except Exception as cause:
+                return index, cause
 
-    prefetched = (
-        await asyncio.gather(
-            *(prefetch(values) for values in filters),
-            return_exceptions=True,
-        )
-        if key or mdblist_key
-        else [None] * len(specs)
-    )
-    sections, notices = [], []
-    for (title, values), full_filters, remote in zip(specs, filters, prefetched):
-        page = await browse_page(
-            db,
-            viewer,
-            term="",
-            media_type=media_type,
-            page=1,
-            source="",
-            show_anime=show_anime,
-            key=key,
-            mdblist_key=mdblist_key,
-            prefetched=remote,
-            attach_context=False,
-            **full_filters,
-        )
-        sections.append(
-            {"title": title, "filters": {**values, "min_score": f'{min_score:g}'}, "results": page["results"][:6]}
-        )
-        if page.get("notice"):
-            notices.append(page["notice"])
-    # Only six cards per section are rendered. Read viewer state once for those
-    # cards, rather than enriching four full pages and discarding most of them.
-    from core.tracking_editor import attach_editor_context
-    await attach_editor_context(db, viewer, [row for section in sections for row in section['results']])
-    return {"sections": sections, "notice": next(iter(notices), None)}
+    tasks = [asyncio.create_task(prefetch(index, values)) for index, values in enumerate(filters)]
+    try:
+        for ready in asyncio.as_completed(tasks):
+            index, remote = await ready
+            title, values = specs[index]
+            page = await browse_page(
+                db,
+                viewer,
+                term="",
+                media_type=media_type,
+                page=1,
+                source="",
+                show_anime=show_anime,
+                key=key,
+                mdblist_key=mdblist_key,
+                prefetched=remote,
+                attach_context=False,
+                **filters[index],
+            )
+            section = {"title": title, "filters": {**values, "min_score": f'{min_score:g}'}, "results": page["results"][:6]}
+            # The session is used sequentially; only the ready shelf gets private state.
+            from core.tracking_editor import attach_editor_context
+            if progressive:
+                await attach_editor_context(db, viewer, section['results'])
+            await db.commit()
+            yield {'index': index, 'section': section, 'notice': page.get('notice')}
+    finally:
+        for task in tasks:
+            if not task.done(): task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def metadata_fields(data):
@@ -409,8 +411,9 @@ def local_query(
         if sort in IMDB_SORTS
         else []
     )
-    votes = data["imdb"]["votes"].astext.cast(Float)
-    rank = data["imdb"]["popularity_rank"].astext.cast(Float)
+    from core.browse_metrics import ImdbVotes, ImdbRank
+    votes = ImdbVotes(data)
+    rank = ImdbRank(data)
     score = Media.imdb_rating
     if cached:
         # One JSON parameter per mapping keeps broad feeds below PostgreSQL's
@@ -530,11 +533,15 @@ def anime_visible(item, show_anime):
 
 
 async def imdb_page(
-    media_type, key, filters, page, *, mdblist_key=None, show_anime=True, feed_offset=None
+    media_type, key, filters, page, *, mdblist_key=None, show_anime=True, feed_offset=None, cached_only=False
 ):
-    rows, stale = await mdblist_discovery.ranked_rows(
-        media_type, filters["sort"], mdblist_key
-    )
+    if cached_only:
+        rows = await asyncio.to_thread(mdblist_discovery.cached_rows, media_type, filters["sort"], mdblist_key, shared=True)
+        if not rows:
+            return None
+        stale = False
+    else:
+        rows, stale = await mdblist_discovery.ranked_rows(media_type, filters["sort"], mdblist_key)
     semaphore = asyncio.Semaphore(6)
     needs_details = filters["provider"] or filters.get('status') in ('airing', 'returning') or (media_type=='movie' and filters.get('cinema'))
     get = tmdb.get_movie if media_type == "movie" else tmdb.get_show
@@ -737,6 +744,11 @@ async def browse_page(
     attach_context=True,
     **filters,
 ):
+    """Compose one discovery response using a request-owned metadata session.
+
+    This service commits before provider waits and after metadata publication;
+    callers must finish unrelated writes before entering discovery.
+    """
     from core.browse_cursor import encode_search_cursor
 
     if filters['sort'] == 'upcoming':
@@ -766,6 +778,8 @@ async def browse_page(
     if source == "remote" and not available:
         raise ValueError("The metadata key is no longer available")
     if source != "local" and available:
+        if prefetched is None:
+            await db.commit()
         try:
             if isinstance(prefetched, BaseException):
                 raise prefetched

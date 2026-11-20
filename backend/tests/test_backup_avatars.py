@@ -99,9 +99,9 @@ class BackupAvatarTests(unittest.IsolatedAsyncioTestCase):
 
             connection.close = close_after_swap
             with patch.object(backup.settings, "data_dir", root), patch.object(backup, "asyncpg_conn", AsyncMock(return_value=connection)):
-                await backup.restore_backup(archive(2, {"user_profiles": b"profile data"}, {"7.webp": b"new image"}))
+                await backup.restore_backup(archive(2, {"user_profiles": b"profile data"}, {"7.webp": b"new image","7.banner.webp":b"profile banner"}))
             self.assertEqual((avatars / "7.webp").read_bytes(), b"new image")
-            self.assertEqual(sorted(path.name for path in avatars.iterdir()), ["7.webp"])
+            self.assertEqual(sorted(path.name for path in avatars.iterdir()), ["7.banner.webp","7.webp"])
             self.assertEqual(connection.copied, [("user_profiles", b"profile data", "binary")])
             self.assertTrue(connection.closed)
 
@@ -183,13 +183,14 @@ class BackupAvatarTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(avatar.read_bytes(), b'current image')
                 return SimpleNamespace(scalar_one_or_none=lambda: row)
 
-            db = SimpleNamespace(execute=execute, commit=AsyncMock())
-            file = SimpleNamespace(content_type='image/png', read=AsyncMock(return_value=b'new image'))
+            db = SimpleNamespace(execute=execute, scalar=AsyncMock(return_value=row),commit=AsyncMock())
+            from test_profile_images import png
+            file = SimpleNamespace(content_type='image/png', read=AsyncMock(return_value=png()))
             with patch.object(profile.settings, 'data_dir', root):
                 await profile.upload_avatar(file=file, current_user=SimpleNamespace(id=7), db=db)
-            self.assertFalse(avatar.exists())
-            self.assertEqual((avatars / '7.png').read_bytes(), b'new image')
-            self.assertEqual(row.avatar_path, '7.png')
+            from PIL import Image
+            with Image.open(avatar) as image:self.assertEqual((image.format,image.size),('WEBP',(400,400)))
+            self.assertEqual(row.avatar_path, '7.webp')
             db.commit.assert_awaited_once()
 
     async def test_missing_approved_avatar_returns_default_image(self):

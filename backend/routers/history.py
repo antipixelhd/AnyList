@@ -104,7 +104,7 @@ async def get_history(
     page_size: int = Query(20, ge=1, le=100),
     type: str | None = Query(None),
     q: str | None = Query(None),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     offset = (page - 1) * page_size
@@ -187,7 +187,7 @@ async def get_history(
 
 @router.get("/now-playing")
 async def get_now_playing(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Active playback sessions for the current user."""
@@ -293,7 +293,7 @@ async def get_now_playing(
 
 @router.delete("/sessions")
 async def clear_now_playing_sessions(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Delete all active playback sessions for the current user."""
@@ -312,7 +312,7 @@ RATE_PROMPT_WINDOW = timedelta(minutes=15)
 @router.get("/rate-prompt")
 async def rate_prompt(
     media_id: int = Query(...),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Should the homepage show a "rate this" popup for a just-finished item? (#177)
@@ -388,7 +388,7 @@ async def rate_prompt(
 async def get_continue_watching(
     limit: int | None = Query(20),
     include_hidden: bool = Query(False),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Items currently in progress."""
@@ -433,7 +433,7 @@ async def get_continue_watching(
 @router.delete("/continue-watching")
 async def dismiss_continue_watching(
     media_id: int = Query(...),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Remove a single item from the continue-watching list."""
@@ -810,7 +810,7 @@ async def _next_up_remaining_stats(
 
 @router.get("/next-up")
 async def get_next_up(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
     limit: int | None = None,
     include_hidden: bool = Query(False),
@@ -1155,7 +1155,7 @@ class NextUpHideRequest(BaseModel):
 @router.post("/next-up/hide")
 async def hide_next_up_show(
     body: NextUpHideRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
@@ -1174,7 +1174,7 @@ async def hide_next_up_show(
 @router.delete("/next-up/hide")
 async def unhide_next_up_show(
     show_id: int = Query(...),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
@@ -1279,7 +1279,7 @@ async def _stream_next_up_refresh(user_id: int, api_key: str):
 
 @router.post("/next-up/refresh")
 async def refresh_next_up(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Streams NDJSON progress while re-checking TMDB for every show the user
@@ -1332,7 +1332,7 @@ class DropShowRequest(BaseModel):
 @router.post("/drop/show")
 async def drop_show(
     body: DropShowRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Drop a show: excluded from Next Up, Calendar, and Discover/
@@ -1358,7 +1358,7 @@ async def drop_show(
 @router.delete("/drop/show")
 async def undrop_show(
     show_id: int = Query(...),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
@@ -1421,7 +1421,7 @@ async def _resolve_movie_media_id(
 @router.post("/drop/movie")
 async def drop_movie(
     body: DropMovieRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Drop a movie: excluded from Continue Watching and Discover/
@@ -1452,7 +1452,7 @@ async def drop_movie(
 async def undrop_movie(
     media_id: int | None = Query(None),
     tmdb_id: int | None = Query(None),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
@@ -1470,7 +1470,7 @@ async def undrop_movie(
 
 @router.get("/dropped")
 async def list_dropped(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Every dropped show and movie, for the dedicated Dropped page (#330).
@@ -1534,7 +1534,7 @@ async def get_progress(
     hide_complete: bool = Query(False),
     page: int = Query(1, ge=1),
     page_size: int = Query(60, ge=1, le=200),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Per-show progress for the Progress dashboard (#374), as two independent
@@ -1710,7 +1710,7 @@ class ShowWatchRequest(BaseModel):
 @router.post("", response_model=dict)
 async def mark_as_watched(
     event_in: schemas.WatchEventCreate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     # A watch event is only ever a movie or an episode. Marking a whole show or
@@ -2007,9 +2007,9 @@ async def mark_as_watched(
             if root_media.media_type == MediaType.series:
                 if entry.progress != previous_progress or next_status != previous_status:
                     await record_progress_activity(db,user_id=current_user.id,media=root_media,
-                        # Earlier episodes may be inferred from one explicit
-                        # episode write; only that written episode is today's activity.
-                        previous_progress=max(previous_progress, entry.progress - 1),progress=entry.progress,
+                        # Only the explicitly logged episode is today's activity.
+                        previous_progress=previous_progress,progress=entry.progress,
+                        added_episode_ids={media.id} if entry.progress != previous_progress else set(),
                         status=entry.status,score=activity_score,
                         status_changed=next_status != previous_status and entry.progress == previous_progress,
                         previous_status=previous_status,
@@ -2039,7 +2039,7 @@ async def get_item_events(
     media_id: int | None = Query(None),
     series_tmdb_id: int | None = Query(None),
     series_tvdb_id: int | None = Query(None),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Return all completed watch events for a specific movie or episode,
@@ -2108,7 +2108,7 @@ async def get_item_events(
 @router.delete("/event/{event_id}")
 async def delete_single_event(
     event_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Delete a single watch event by its ID."""
@@ -2146,7 +2146,7 @@ async def delete_single_event(
 
 @router.delete("")
 async def clear_history(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     # Any active rewatch is meaningless once its underlying history is gone -
@@ -2178,7 +2178,7 @@ async def unwatch_item(
     tvdb_id: int | None = Query(None),
     media_id: int | None = Query(None, alias="id"),
     media_type: MediaType = Query(...),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Remove all watch events for a specific item."""
@@ -2202,7 +2202,7 @@ async def unwatch_item(
 @router.post("/season")
 async def mark_season_watched(
     body: SeasonWatchRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Mark all aired episodes of a season as watched, fetching from TMDB if needed."""
@@ -2439,7 +2439,7 @@ async def unwatch_season(
     series_tmdb_id: int = Query(...),
     season_number: int = Query(...),
     episode_order: str | None = Query(None),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Remove all watch events for a season."""
@@ -2492,7 +2492,7 @@ async def unwatch_season(
 @router.post("/show-all")
 async def mark_show_watched(
     body: ShowWatchRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Mark all aired episodes of all seasons as watched."""
@@ -2741,7 +2741,7 @@ async def mark_show_watched(
 @router.delete("/show-all")
 async def unwatch_show(
     series_tmdb_id: int = Query(...),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Remove all watch events for all episodes of a show."""
@@ -2780,7 +2780,7 @@ async def unwatch_show(
 @router.post("/rewatch")
 async def start_rewatch(
     series_tmdb_id: int = Query(...),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Start (or restart) a rewatch cycle for a show. Watch history is never
@@ -2807,7 +2807,7 @@ async def start_rewatch(
 @router.delete("/rewatch")
 async def cancel_rewatch(
     series_tmdb_id: int = Query(...),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Cancel an active rewatch cycle without finishing it. Watch history is
@@ -2908,7 +2908,7 @@ async def _get_or_create_media_for_session(
 @router.post("/session/start")
 async def start_manual_session(
     body: schemas.ManualSessionStart,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Start a manual scrobble session for any movie or episode."""
@@ -2944,7 +2944,7 @@ async def start_manual_session(
 async def update_manual_session(
     session_key: str,
     body: schemas.ManualSessionUpdate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Heartbeat / pause / resume for a manual session."""
@@ -2997,7 +2997,7 @@ async def update_manual_session(
 @router.delete("/session/{session_key}")
 async def dismiss_session(
     session_key: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Discard a single Now Playing session without marking it as watched.
@@ -3032,7 +3032,7 @@ async def dismiss_session(
 @router.post("/session/{session_key}/complete")
 async def complete_manual_session(
     session_key: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Mark as fully watched and end the session."""

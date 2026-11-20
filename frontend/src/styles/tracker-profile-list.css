@@ -8,6 +8,10 @@
   margin-top: var(--profile-content-gap);
 }
 
+[data-profile-tab-content] {
+  min-block-size: calc(100svh - var(--profile-content-gap));
+}
+
 @media (max-width: 650px) {
   :root {
     --profile-content-gap: 24px;
@@ -33,6 +37,20 @@
 .profile-identity h1 {
   margin-bottom:0
 }
+/* Keep profile identity geometry available on cached history returns. */
+.profile-heading{display:flex;align-items:center;gap:12px;flex-wrap:wrap;transform:translateY(-15px)}
+.profile-heading h1{margin:0}
+.follows-you-tag{display:inline-flex;align-items:center;padding:3px 8px;border:1px solid #48708c;border-radius:4px;background:#203c52;color:#acd9f3;font-size:var(--type-badge-size);font-weight:var(--type-badge-weight);white-space:nowrap}
+.profile-follow-action{position:relative;align-self:end;margin:0 0 19px auto;flex:none}
+.profile-follow-button{min-width:110px}
+.profile-follow-button .following-label,.profile-follow-button .unfollow-label,.profile-follow-button[data-following="yes"] .follow-label{display:none}
+.profile-follow-button[data-following="yes"] .following-label{display:inline}
+.profile-follow-button[data-following="yes"]{background:var(--blue);color:#fff}
+.profile-follow-button[data-following="yes"]:not([data-recent-follow]):is(:hover,:focus-visible){background:#613341;color:#ffe5eb}
+.profile-follow-button[data-following="yes"]:not([data-recent-follow]):is(:hover,:focus-visible) .following-label{display:none}
+.profile-follow-button[data-following="yes"]:not([data-recent-follow]):is(:hover,:focus-visible) .unfollow-label{display:inline}
+.profile-follow-error{position:absolute;top:100%;left:0;width:220px;margin-top:6px;color:#ffbeca;font-size:var(--type-caption-size);line-height:1.3}
+@media(max-width:650px){.profile-heading{gap:6px;align-content:center;min-width:0}.profile-follow-action{margin-bottom:10px}.follows-you-tag{font-size:var(--type-caption-size)}.profile-follow-button{min-width:92px;padding:8px 12px;font-size:var(--type-meta-size)}.profile-follow-error{width:160px;right:0;left:auto}}
 .profile-bio {
   max-width:850px;
   margin:0 0 22px;
@@ -149,6 +167,9 @@
   align-items:center;
   gap:12px
 }
+.list-filter-form {
+  display:contents
+}
 .list-filter-search-row .filter-search {
   flex:1;
   min-width:0
@@ -218,18 +239,32 @@
 .filters h2 {
   margin:10px 0 0
 }
-.filters .filter-search input,.filters .filter-control select {
+.list-shell .filters {
+  z-index:3;
+  font-family:var(--font-body);
+  font-size:13px;
+  font-weight:400
+}
+.list-shell .filters h2,
+.list-shell .filters :is(.filter-control,.filter-year-heading output) {
+  font:inherit
+}
+.list-shell .filters h2 { line-height:1.15 }
+.list-shell .filters .filter-search input {
+  height:40px;
   min-height:40px;
-  padding:8px 12px
+  padding:0 15px 0 35px;
+  border:0;
+  border-radius:4px;
+  font:400 14px var(--font-body)
 }
-.filters .filter-search input {
-  padding-left:34px
-}
+.list-shell .filter-search > .ui-icon { font-size:14px }
 .list-shell .filter-search input:focus {
   outline:none
 }
-.list-shell .filters {
-  z-index:3
+.list-shell .filters .filter-search input::placeholder {
+  color:var(--text);
+  opacity:1
 }
 .filter-select-native {
   display:none!important
@@ -243,20 +278,23 @@
   justify-content:space-between;
   gap:10px;
   width:100%;
-  min-height:40px;
-  padding:8px 12px;
+  min-height:32px;
+  padding:0 12px 0 15px;
   border:1px solid transparent;
   border-radius:4px;
   background:#151f2e;
   color:var(--text);
   text-align:left;
   font:inherit;
-  font-size:var(--type-control-size);
+  font-family:var(--font-body);
+  font-size:13px;
+  font-weight:400;
   cursor:pointer
 }
 .filter-dropdown-trigger:focus-visible {
-  border-color:var(--blue);
-  outline:2px solid color-mix(in srgb,var(--blue) 20%,transparent)
+  outline:none;
+  background:color-mix(in srgb,var(--blue) 12%,var(--dropdown-bg));
+  color:var(--bright)
 }
 .filter-dropdown-trigger .ui-icon {
   color:var(--muted);
@@ -306,7 +344,9 @@
   background:transparent;
   color:var(--text);
   text-align:left;
-  font-size:var(--type-control-size);
+  font-family:var(--font-body);
+  font-size:13px;
+  font-weight:400;
   cursor:pointer
 }
 .filter-dropdown-options button:hover,.filter-dropdown-options button:focus-visible {
@@ -325,10 +365,7 @@
   align-items:center;
   justify-content:space-between
 }
-.filter-year-heading output {
-  color:var(--muted);
-  font-size:var(--type-caption-size)
-}
+.filter-year-heading output { color:var(--muted) }
 .filter-year input[type="range"] {
   width:100%;
   height:28px;
@@ -339,42 +376,78 @@
   cursor:pointer
 }
 .filter-year input[type="range"]::-webkit-slider-runnable-track {
-  height:8px;
-  border-radius:4px;
-  background:var(--panel)
+  height:6px;
+  border-radius:3px;
+  background:linear-gradient(to right,var(--blue) var(--year-fill,0%),var(--panel) var(--year-fill,0%))
 }
 .filter-year input[type="range"]::-moz-range-track {
-  height:8px;
-  border-radius:4px;
+  height:6px;
+  border-radius:3px;
   background:var(--panel)
 }
+.filter-year input[type="range"]::-moz-range-progress {
+  height:6px;
+  border-radius:3px;
+  background:var(--blue)
+}
 .filter-year input[type="range"]::-webkit-slider-thumb {
-  width:20px;
-  height:20px;
-  margin-top:-6px;
+  width:16px;
+  height:16px;
+  margin-top:-5px;
   appearance:none;
   border:2px solid var(--blue);
   border-radius:50%;
-  background:var(--bg)
+  background:var(--bg);
+  transition:transform .2s ease,background-color .2s ease
 }
 .filter-year input[type="range"]::-moz-range-thumb {
-  width:16px;
-  height:16px;
+  width:12px;
+  height:12px;
   border:2px solid var(--blue);
   border-radius:50%;
-  background:var(--bg)
+  background:var(--bg);
+  transition:transform .2s ease,background-color .2s ease
+}
+.filter-year input[type="range"]:enabled:is(:hover,:active,:focus-visible)::-webkit-slider-thumb { transform:scale(1.2) }
+.filter-year input[type="range"]:enabled:is(:hover,:active,:focus-visible)::-moz-range-thumb { transform:scale(1.2) }
+.filter-year input[type="range"]:enabled::-webkit-slider-thumb { cursor:grab }
+.filter-year input[type="range"]:enabled::-moz-range-thumb { cursor:grab }
+.filter-year input[type="range"]:enabled:active::-webkit-slider-thumb { cursor:grabbing }
+.filter-year input[type="range"]:enabled:active::-moz-range-thumb { cursor:grabbing }
+@media (prefers-reduced-motion:reduce) {
+  .filter-year input[type="range"]::-webkit-slider-thumb { transition:none }
+  .filter-year input[type="range"]::-moz-range-thumb { transition:none }
 }
 .filter-year input[type="range"]:focus-visible {
-  outline:2px solid var(--blue);
-  outline-offset:3px
+  outline:none
+}
+.filter-year input[type="range"]:focus-visible::-webkit-slider-thumb {
+  background:var(--blue)
+}
+.filter-year input[type="range"]:focus-visible::-moz-range-thumb {
+  background:var(--blue)
 }
 .filter-year input[type="range"]:disabled {
   cursor:not-allowed;
   opacity:.55
 }
-.status-filters button {
+.list-shell .status-filters button {
   padding:5px 10px;
-  line-height:1.35
+  border-radius:3px;
+  font:400 14px/1.15 var(--font-body);
+  color:var(--muted)
+}
+.list-shell .status-filters button[aria-pressed="true"] {
+  background:color-mix(in srgb,var(--panel) 80%,transparent);
+  color:var(--text);
+  font-weight:500
+}
+@media (min-width:651px) {
+  .list-shell .filters { gap:20px }
+  .list-shell .list-filter-panel { gap:10px }
+  .list-shell .filters .category-heading { height:15px }
+  .list-shell .filters .category-heading h2 { margin:0 }
+  .list-shell .status-filters { gap:8px }
 }
 .status-section {
   margin-bottom:30px
@@ -453,7 +526,7 @@
   .mobile-filter-toggle {
     display:flex
   }
-  .filters .filter-search input {
+  .list-shell .filters :is(.filter-search input,.filter-dropdown-trigger) {
     min-height:44px
   }
   .list-filter-panel {
@@ -481,7 +554,7 @@
   .filter-year input[type="range"] {
     height:44px
   }
-  .status-filters button {
+  .list-shell .status-filters button {
     min-height:44px;
     padding:9px 12px
   }
@@ -508,7 +581,7 @@
 /* The view selector floats above the first section; filters retain the shared profile gap. */
 
 @media(max-width:650px) {
-  #entry-groups:not(.grid-view) .entry-title>a {
+  :is(#entry-groups,[data-loading-entry-groups]):not(.grid-view) .entry-title>a {
     display:flex;
     align-items:center
   }
@@ -679,3 +752,10 @@
 .profile-background,.profile-shadow { position:absolute; inset:0; width:100%; height:100%; }
 .profile-background { object-fit:cover; object-position:center; }
 .profile-shadow { background:linear-gradient(rgba(6,13,34,0) 40%,rgba(6,13,34,.6)); pointer-events:none; }
+
+.profile-background-frame { position:absolute; inset:0; overflow:hidden; }
+
+/* Mobile shows the center of the same desktop-framed background. */
+@media(max-width:650px) {
+  .profile-background { width:calc(220px * var(--profile-background-aspect)); left:50%; right:auto; translate:-50% 0; max-width:none; }
+}

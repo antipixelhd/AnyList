@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, func, Index, text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, Integer, String, func, Index, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -11,6 +11,7 @@ from .base import Base
 class MediaServerConnection(Base):
     __tablename__ = "media_server_connections"
     __table_args__ = (
+        CheckConstraint("type IN ('plex','jellyfin','emby','nuvio','stremio','arvio','steam')", name='ck_msc_type'),
         Index(
             "uq_msc_user_stremio_account",
             "user_id", "provider_account_id", unique=True,
@@ -27,7 +28,7 @@ class MediaServerConnection(Base):
 
     id               : Mapped[int]           = mapped_column(Integer, primary_key=True)
     user_id          : Mapped[int]           = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    type             : Mapped[str]           = mapped_column(String(50), nullable=False)   # plex | jellyfin | emby | nuvio | stremio | arvio
+    type             : Mapped[str]           = mapped_column(String(50), nullable=False)   # plex | jellyfin | emby | nuvio | stremio | arvio | steam
     name             : Mapped[str]           = mapped_column(String(255), nullable=False)
     url              : Mapped[str]           = mapped_column(String(500), nullable=False)
     token            : Mapped[str]           = mapped_column(String(500), nullable=False)

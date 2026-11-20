@@ -27,6 +27,10 @@ class User(Base):
     api_key       : Mapped[str]            = mapped_column(String(64), unique=True, nullable=False)
     role          : Mapped[UserRole]       = mapped_column(Enum(UserRole), nullable=False, default=UserRole.user)
     is_admin      : Mapped[bool]           = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    games_access: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    games_approved_by: Mapped[Optional[int]] = mapped_column(ForeignKey('users.id', ondelete='SET NULL', name='fk_users_games_approver'))
+    games_approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
     email_confirmed : Mapped[bool]           = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     totp_enabled  : Mapped[bool]           = mapped_column(Boolean, nullable=False, default=False)
     totp_secret   : Mapped[Optional[str]]  = mapped_column(String(255))
@@ -39,6 +43,10 @@ class User(Base):
     @property
     def display_name(self) -> str:
         return self.username
+
+    @property
+    def can_access_games(self) -> bool:
+        return self.is_admin or self.games_access
 
     @property
     def has_password(self) -> bool:

@@ -1,0 +1,22 @@
+---
+import Tracker from '../layouts/Tracker.astro';
+import DetailLoadingFrame from '../components/DetailLoadingFrame.astro';
+const id=Number(Astro.url.searchParams.get('id'));
+if(!Number.isSafeInteger(id)||id<=0)return Astro.redirect('/browse');
+---
+<Tracker title="Loading game"><div data-resolve-game={id}><DetailLoadingFrame kind="game"/></div></Tracker>
+<script>
+import {navigate} from 'astro:transitions/client';
+import {resolveGameId} from '../lib/game-discovery';
+import {mountDetailResolution} from '../lib/detail-resolution';
+let controller:AbortController|undefined;
+document.addEventListener('astro:page-load',()=>{
+  controller?.abort();
+  const host=document.querySelector<HTMLElement>('[data-resolve-game]');
+  if(!host)return;
+  const current=new AbortController();controller=current;
+  mountDetailResolution(host,async signal=>`/games/${await resolveGameId(Number(host.dataset.resolveGame),signal)}`,
+    url=>navigate(url,{history:'replace'}),current.signal);
+  document.addEventListener('astro:before-preparation',()=>current.abort(),{once:true,signal:current.signal});
+});
+</script>

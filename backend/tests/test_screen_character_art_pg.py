@@ -16,6 +16,20 @@ from models.catalogue import CatalogueCredit,CatalogueEntity,MetadataSnapshot
 
 @unittest.skipUnless(fixture.URL,'Requires disposable statistics PostgreSQL')
 class CharacterArtTests(unittest.IsolatedAsyncioTestCase):
+    async def test_known_tvdb_identity_can_supply_art_when_optional_imdb_remote_is_missing(self):
+        async with self.Session() as db:
+            media,work=await self.seed(db);media.tvdb_id=377;await db.commit()
+            original=self.replies()
+            def reply(providers,path):
+                raw=original(providers,path)
+                if path.startswith('/movies/'):
+                    raw['remoteIds']=[{'sourceName':'TheMovieDB.com','id':'42'}]
+                return raw
+            with patch('core.screen_character_art.request_tvdb',AsyncMock(side_effect=reply)):
+                result=await fill_character_art(db,media,providers=SimpleNamespace(tvdb_key='fixture'))
+            self.assertEqual(result['state'],'ready');self.assertIsNone(result['error'])
+            self.assertEqual(result['images'],2)
+
     async def asyncSetUp(self):
         await fixture.StatisticsDatabaseTests.asyncSetUp(self)
 

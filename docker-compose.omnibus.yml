@@ -23,6 +23,7 @@ services:
       # ── Registrations ────────────────────────────────────────────────────────
       # Registrations are disabled by default. Set to true to allow additional users.
       # ENABLE_REGISTRATIONS: "true"
+      NEW_ACCOUNTS_GAMES_ACCESS: ${NEW_ACCOUNTS_GAMES_ACCESS:-false}
       # REGISTRATION_MAX_ALLOWED_USERS: "0"  # 0 = unlimited
 
       # ── Nuvio (optional) ───────────────────────────────────────────────────

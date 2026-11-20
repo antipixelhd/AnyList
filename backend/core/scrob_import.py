@@ -71,6 +71,7 @@ class ScrobImportData:
     api_keys: dict | None = None
     media_connections: list[dict] | None = None
     scrobble_connections: list[dict] | None = None
+    games: object | None = None
     connections: dict | None = None
 
 
@@ -154,7 +155,11 @@ def parse_scrob_export(content: bytes) -> ScrobImportData:
         if slug and fname:
             list_items[slug] = _load_list(fname)
 
+    from core.game_backup import Backup
+    games = Backup.model_validate(_load_dict("games.json")) if "games.json" in names else None
+
     return ScrobImportData(
+        games=games,
         history_movies=history_movies,
         history_episodes=history_episodes,
         ratings=ratings,
@@ -209,6 +214,7 @@ async def apply_scrob_import(
     include_media_connections: bool,
     include_scrobble_connections: bool,
     include_connections: bool,
+    include_games: bool = True,
 ) -> dict:
     """Restores a Scrob data export into the current user's account.
 
@@ -230,6 +236,11 @@ async def apply_scrob_import(
         "lists": 0, "list_items": 0, "comments": 0, "connections": 0,
         "skipped": 0, "errors": 0,
     }
+    if include_games and data.games is not None:
+        from core.game_backup import restore_games
+        result = await restore_games(db, user_id, data.games, cancelled=lambda: raise_if_cancelled(db, job_id))
+        stats.update(games=result["games"])
+        stats["errors"] += result["errors"]
     processed = 0
     # Shared for the whole import run: a (show_tmdb_id, season_number) TMDB season
     # fetch is expensive and covers every episode in that season, so without this

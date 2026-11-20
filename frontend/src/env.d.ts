@@ -3,10 +3,15 @@
 
 declare namespace App {
   interface Locals {
+    profilePanel?: boolean;
     user: import('./lib/api').UserProfile | null;
     token: string | undefined;
     settings?: import('./lib/api').UserSettings;
     hasRpdbKey?: boolean;
+    pageContext?: import('./lib/api').PageContext;
+    notifications?: Promise<import('./lib/notification-store').NotificationSnapshot|null>;
+    mediaPreferences?: Promise<import('./lib/media-domains').MediaDomains>;
+    profilePreferences?: Promise<import('./lib/api').UserPreferences|null>;
   }
 }
 

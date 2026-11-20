@@ -1,7 +1,7 @@
 """Connection removal shared by account settings and import cancellation."""
 import logging
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from models.connections import MediaServerConnection
 from models.users import User
@@ -10,6 +10,13 @@ logger = logging.getLogger(__name__)
 
 
 async def delete_connection(db, conn):
+    if conn.type == 'steam':
+        await db.execute(select(User.id).where(User.id == conn.user_id).with_for_update())
+        from models.sync import SyncJob, SyncStatus
+        await db.execute(update(SyncJob).where(SyncJob.connection_id == conn.id,
+            SyncJob.user_id == conn.user_id, SyncJob.status.in_((SyncStatus.pending, SyncStatus.running)))
+            .values(status=SyncStatus.cancelled, error_message='Steam disconnected'))
+        return await _delete_connection_fields(db, conn)
     if conn.type in ("stremio", "nuvio"):
         from core import stremio, nuvio
         from core.connection_identity import reset_stream_connection_state

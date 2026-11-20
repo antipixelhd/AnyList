@@ -1,29 +1,35 @@
 import {detailBackground, type DetailLoadState} from './detail-background.ts';
 
-type PeopleData = {people:{kind:string}[];credits_status?:string;character_status:DetailLoadState};
+type PeopleData = {people:{kind:string}[];credits_status?:string;character_status:DetailLoadState;primary_status?:DetailLoadState;game_credit_status?:DetailLoadState;credit_updates?:{revision:string;waitable:boolean}};
 
 /** Repair credits independently; optional role artwork follows the usable preview. */
 export function detailPeopleLoading<T extends PeopleData>(id:number, signal:AbortSignal,
   apply:(data:T)=>DetailLoadState|void, status:(state:'loading'|'ready'|'retry',error?:string)=>void,
-  options:{selected:()=>boolean;needed:()=>boolean;primaryReady:()=>Promise<void>;warm:()=>void}) {
+  options:{selected:()=>boolean;needed:()=>boolean;primaryReady:()=>Promise<void>;warm:()=>void;
+    source?:{people:string;characters?:string}}) {
   let primarySettled=false;
-  const path=`/api/proxy/tracking/title/${id}/people`;
+  const path=options.source?.people||`/api/proxy/tracking/title/${id}/people`;
+  const separateCharacters=!options.source||!!options.source.characters;
   const credits=detailBackground<T>(path,signal,data=>{
-    apply(data);
+    const state=apply(data);
+    // Optional game characters must not keep a settled cast/crew loading.
+    if(!separateCharacters&&data.game_credit_status&&!options.selected())return data.game_credit_status;
+    if(data.primary_status?.pending)return data.primary_status;
     if(!data.people.some(person=>person.kind==='actor')&&['failed','deferred'].includes(data.credits_status||''))
       return {state:'deferred',pending:true,retry_after:60,error:'unavailable'};
-    return {state:'ready'};
-  },status);
-  const characters=detailBackground<T>(`${path}?characters=true`,signal,data=>{
+    return separateCharacters?{state:'ready'}:state;
+  },status,!separateCharacters&&/\/games\/works\/[1-9]\d*\/credits$/.test(path)?data=>data.credit_updates:undefined);
+  const characters=separateCharacters?detailBackground<T>(options.source?.characters||`${path}?characters=true`,signal,data=>{
     const state=apply(data);
     if(primarySettled&&!signal.aborted)options.warm();
     return state;
   },(state,error)=>{
     if(options.selected())status(state,error);
-  });
+  }):credits;
   const loadCharacters=async()=>{
+    if(!separateCharacters){await credits.retry();return;}
     await credits.load();
-    if(!signal.aborted&&options.selected()&&options.needed())await characters.load();
+    if(separateCharacters&&!signal.aborted&&options.selected()&&options.needed())await characters.load();
   };
   const start=async(missing:boolean)=>{
     if(!missing)await options.primaryReady();
@@ -34,7 +40,7 @@ export function detailPeopleLoading<T extends PeopleData>(id:number, signal:Abor
     if(signal.aborted)return;
     primarySettled=true;
     options.warm();
-    if(options.needed())await characters.load();
+    if(separateCharacters&&options.needed())await characters.load();
   };
   return {start:(missing:boolean)=>void start(missing),
     characters:loadCharacters,retry:()=>options.selected()?characters.retry():credits.retry()};

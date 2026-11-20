@@ -10,9 +10,10 @@ import json
 import logging
 import uuid
 from datetime import date, datetime, timedelta, timezone
+from types import SimpleNamespace
 
-from sqlalchemy import func, or_, select, tuple_, update
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import String, case, func, or_, select, tuple_, update
+from sqlalchemy.dialects.postgresql import array, insert
 from sqlalchemy.orm import aliased, defer
 
 from core import settings_store, tmdb
@@ -24,6 +25,7 @@ from db import AsyncSessionLocal
 from models.catalogue import CatalogueCredit, CatalogueEntity, ContributorEvidence
 
 MAX_PENDING = 256
+PROVIDER_SLOTS = 4
 VERSION = 3
 log = logging.getLogger(__name__)
 _wake = asyncio.Event()
@@ -32,6 +34,10 @@ _summary_cache = tmdb._TTLCache(maxsize=512)
 
 def now():
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def demand_scope(kind, native, variant):
+    return f'evidence:{kind}:{native}:{variant}'
 
 
 def evidence_key(kind, native, filters, show_anime):
@@ -56,13 +62,13 @@ def eligible_work(raw, kind, filters, show_anime, *, released=False):
     return policy.accepts(raw) and matches_result_filters(raw, kind, **personal) and anime_visible(raw, show_anime)
 
 
-def _summary_key(identity, section, filters, show_anime):
-    return (tuple(identity), section, json.dumps(filters, sort_keys=True), show_anime)
+def _summary_key(identity, section, filters, show_anime, existence_only=False):
+    return (tuple(identity), section, json.dumps(filters, sort_keys=True), show_anime, existence_only)
 
 
-def work_summary(payload, section, filters, show_anime):
-    identity = payload.get('_cache_identity') if payload and payload.get('_fresh') and payload.get('complete') else None
-    key = _summary_key(identity, section, filters, show_anime) if identity else None
+def work_summary(payload, section, filters, show_anime, *, existence_only=False):
+    identity = payload.get('_cache_identity') if payload and payload.get('_fresh') else None
+    key = _summary_key(identity, section, filters, show_anime, existence_only) if identity else None
     if payload and '_cached_summaries' in payload:
         # Retain the request's snapshot even if its shared TTL expires between
         # reading the evidence header and applying the result policy.
@@ -70,14 +76,14 @@ def work_summary(payload, section, filters, show_anime):
     if key:
         cached = _summary_cache.get(key)
         if cached is not None:
-            return cached
-    value = _work_summary(payload, section, filters, show_anime)
+            return cached['value']
+    value = _work_summary(payload, section, filters, show_anime, existence_only=existence_only)
     if key and value is not None:
-        _summary_cache.set(key, value, 60)
+        _summary_cache.set(key, {'value': value, 'complete': payload.get('complete', True)}, 60)
     return value
 
 
-def _work_summary(payload, section, filters, show_anime):
+def _work_summary(payload, section, filters, show_anime, *, existence_only=False):
     if payload is None:
         return None
     rows = payload.get('works', []) if section == 'studio' else (payload.get('cast', []) if section == 'actor' else payload.get('crew', []))
@@ -89,18 +95,48 @@ def _work_summary(payload, section, filters, show_anime):
         if section == 'staff' and str(row.get('job', '')).casefold() in ('actor', 'acting'):
             continue
         if eligible_work(row, kind, filters, show_anime, released=section == 'studio'):
+            # People search consumes eligibility only. Keep full counts for
+            # studio ranking and callers that explicitly request a summary.
+            if existence_only:
+                return {'works': 1, 'popularity': float(row.get('popularity') or 0),
+                        'latest': row.get('release_date') or row.get('first_air_date') or ''}
             visible[(kind, row['id'])] = row
     if not visible and not payload.get('complete', True):
         return None
     return {'works': len(visible), 'popularity': max((float(r.get('popularity') or 0) for r in visible.values()), default=0), 'latest': max((r.get('release_date') or r.get('first_air_date') or '' for r in visible.values()), default='')}
 
 
-async def cached_evidence(db, jobs, viewer_id, *, enqueue=True, summaries=None):
+async def verification_policy(db, viewer):
+    """One request-owned policy read for people and studios; no private cache."""
+    from sqlalchemy import Integer, literal
+    from core.discovery_policy import tuning
+    from core.result_categories import default_excluded_categories
+    from models import GlobalSettings
+    from models.profile import UserProfileData
+    from models.users import UserSettings
+
+    owner = select(literal(viewer.id if viewer else None, Integer).label('id')).subquery()
+    row = (await db.execute(select(UserProfileData.user_id, UserProfileData.minimum_movie_runtime,
+        UserProfileData.excluded_categories, UserProfileData.minimum_votes, UserSettings.preferences,
+        select(GlobalSettings.show_anime).where(GlobalSettings.id == 1).scalar_subquery().label('show_anime'))
+        .select_from(owner).outerjoin(UserProfileData, UserProfileData.user_id == owner.c.id)
+        .outerjoin(UserSettings, UserSettings.user_id == owner.c.id))).one()
+    filters = (dict(min_runtime=row.minimum_movie_runtime, excluded_genres=row.excluded_categories or [])
+        if row.user_id is not None else dict(min_runtime=30, excluded_genres=default_excluded_categories()))
+    policy = tuning(row.preferences or {}, 'movie', 'search',
+        row.minimum_votes if row.minimum_votes is not None else 250)
+    return {'filters': filters, 'studio_filters': {**filters, 'min_popularity': policy.min_popularity},
+        'show_anime': row.show_anime is not False}
+
+
+async def cached_evidence(db, jobs, viewer_id, *, enqueue=True, summaries=None, established=None):
     """Read headers once, uncached payloads only, and admit bounded refresh work."""
     if not jobs:
+        if established:await established({})
         return {}, False
     table = ContributorEvidence
     current = now()
+    from core.search_demand import mark, current as search_context
     statement = select(table).where(tuple_(table.kind, table.native_id, table.variant).in_(jobs))
     if summaries:
         statement = statement.options(defer(table.payload))
@@ -110,14 +146,15 @@ async def cached_evidence(db, jobs, viewer_id, *, enqueue=True, summaries=None):
         requests = (summaries or {}).get(key, ())
         if requests and row.expires_at and row.expires_at > current:
             resolved = {}
-            for section, filters, show_anime in requests:
-                cache_key = _summary_key([*key, row.expires_at.isoformat()], section, filters, show_anime)
+            for section, filters, show_anime, *options in requests:
+                cache_key = _summary_key([*key, row.expires_at.isoformat()], section, filters, show_anime,
+                    options[0] if options else False)
                 value = _summary_cache.get(cache_key)
                 if value is None:
                     break
-                resolved[cache_key] = value
+                resolved[cache_key] = value['value']
             else:
-                payloads[key] = {'complete': True, '_cached_summaries': resolved}
+                payloads[key] = {'complete': value['complete'], '_cached_summaries': resolved}
                 continue
         if summaries:
             missing.append(key)
@@ -127,38 +164,68 @@ async def cached_evidence(db, jobs, viewer_id, *, enqueue=True, summaries=None):
         # Only uncached policies/evidence need the potentially huge JSON credits.
         # Cache hits still read expiry/queue state, so edits and invalidation are
         # observed without transferring the same filmographies on every poll.
+        # A mixed people search needs cast for its actors and crew for its staff,
+        # not both complete careers for every candidate. Leave the stored public
+        # evidence intact for other roles, policies and contributor pages.
+        shapes = {}
+        fields = {'actor': 'cast', 'staff': 'crew', 'studio': 'works'}
+        for key in missing:
+            if key[0] != 'person':
+                continue
+            requested = frozenset(fields[request[0]] for request in summaries.get(key, ()))
+            if requested:
+                shapes.setdefault(requested, []).append(key)
+        projections = [(tuple_(table.kind, table.native_id, table.variant).in_(keys),
+            table.payload.op('-')(array(sorted({'cast', 'crew', 'works', 'person_identity',
+                'domain_availability'} - requested)))) for requested, keys in shapes.items()]
+        payload = case(*projections, else_=table.payload) if projections else table.payload
         payloads.update({(kind, native, variant): payload for kind, native, variant, payload in await db.execute(
-            select(table.kind, table.native_id, table.variant, table.payload).where(
+            select(table.kind, table.native_id, table.variant, payload).where(
                 tuple_(table.kind, table.native_id, table.variant).in_(missing)))})
+    views={key: {**payload, '_fresh': bool(existing[key].expires_at and existing[key].expires_at > current),
+                 '_cache_identity': [*key, existing[key].expires_at.isoformat() if existing[key].expires_at else None]}
+           for key,payload in payloads.items() if payload is not None}
+    settled=await established(views) if established else set()
+    # A useful partial studio sample can rest without acquiring more pages.
+    # A different viewer whose policy has no witness resumes the same public
+    # sample. Failed checks retain their ordinary cooldown, never a negative.
     due = [key for key in jobs if key not in existing or
-           ((existing[key].expires_at is None or existing[key].expires_at <= current)
+           ((existing[key].expires_at is None or existing[key].expires_at <= current or
+             (key not in settled and (payloads.get(key) or {}).get('complete') is False and existing[key].attempts == 0
+              and existing[key].next_attempt_at is None))
             and (existing[key].next_attempt_at is None or existing[key].next_attempt_at <= current)
             and (existing[key].lease_until is None or existing[key].lease_until <= current))]
-    pending = any(row.next_attempt_at is not None and row.next_attempt_at <= current + timedelta(seconds=8)
-                  for row in existing.values())
+    active = [key for key, row in existing.items()
+              if row.next_attempt_at is not None and row.next_attempt_at <= current + timedelta(seconds=8)]
+    foreground=set(active+due)-settled
+    pending = bool(set(active)-settled or (set(due)-settled if enqueue else set()))
+    if enqueue and search_context.get() is not None and foreground:
+        await mark(db, [demand_scope(*key) for key in foreground])
+        await db.commit()
     if enqueue and due:
         # A competing admission or a full queue is temporary. Let the bounded
         # client refresh retry rather than leaving a fresh query empty forever.
-        pending = True
         # Serialize admission only, never hold the lock over network requests.
         if await db.scalar(select(func.pg_try_advisory_xact_lock(724052))):
             count = await db.scalar(select(func.count()).select_from(table).where(table.next_attempt_at.is_not(None)))
-            due = due[:max(0, MAX_PENDING - count)]
+            due = sorted(due,key=lambda key:key in settled)[:max(0, MAX_PENDING - count)]
             if due:
                 statement = insert(table).values([dict(kind=k[0], native_id=k[1], variant=k[2], config=jobs[k],
                     requested_by=viewer_id, next_attempt_at=current) for k in due])
                 await db.execute(statement.on_conflict_do_update(
                     index_elements=['kind', 'native_id', 'variant'],
                     set_={'next_attempt_at':current, 'requested_by':viewer_id},
-                    where=(table.expires_at.is_(None) | (table.expires_at <= current)) &
+                    where=(table.expires_at.is_(None) | (table.expires_at <= current) |
+                           (table.payload['complete'].as_boolean().is_(False) & (table.attempts == 0) &
+                            table.next_attempt_at.is_(None))) &
                           (table.lease_until.is_(None) | (table.lease_until <= current)) &
                           (table.next_attempt_at.is_(None) | (table.next_attempt_at <= current))))
-                pending = True
             await db.commit()
             _wake.set()
-    return {key: {**payload, '_fresh': bool(existing[key].expires_at and existing[key].expires_at > current),
-                           '_cache_identity': [*key, existing[key].expires_at.isoformat() if existing[key].expires_at else None]}
-            for key, payload in payloads.items() if payload is not None}, pending
+    if established:
+        for key in foreground:views.setdefault(key,{'complete':False,'_fresh':False})
+    for key,value in views.items():value['_pending']=enqueue and key in foreground
+    return views, pending
 
 
 async def local_evidence(db, rows, section, filters, show_anime, *, limit=8):
@@ -224,8 +291,22 @@ async def load_evidence(job, api_key):
         credits = profile['combined_credits']
         if not isinstance(credits.get('cast'), list) or not isinstance(credits.get('crew'), list):
             raise ValueError('Incomplete person credits')
-        return {'cast':credits['cast'], 'crew':credits['crew'], 'complete':True}
+        from core.contributor_availability import person_domains
+        from core.screen_appearance_backfill import appearance_candidates
+        return {'cast':credits['cast'], 'crew':credits['crew'], 'complete':True,
+                'person_identity':{key:profile.get(key) for key in ('id','name','imdb_id','profile_path')},
+                'appearance_candidates': appearance_candidates(credits['cast']),
+                'domain_availability':await asyncio.to_thread(person_domains,credits)}
     config = job['config']
+    if config.get('scope')=='domain_availability':
+        async def domain(kind):
+            response=await (tmdb.discover_movies if kind=='movie' else tmdb.discover_shows)(
+                page=1,with_companies=config['companies'],vote_count_min=0,api_key=api_key)
+            rows=response.get('results');total=response.get('total_results')
+            if not isinstance(rows,list) or type(total) is not int or total<0 or bool(rows)!=(total>0):
+                raise ValueError('Incomplete company domain evidence')
+            return kind,'available' if total else 'empty'
+        return {'complete':True,'domain_availability':{'studio':dict(await asyncio.gather(domain('movie'),domain('series')))}}
     previous = job.get('payload') or {}
     pages = previous.get('pages', {'movie':1, 'series':1}) if not previous.get('complete') else {'movie':1, 'series':1}
     async def discover(kind):
@@ -257,16 +338,47 @@ async def load_evidence(job, api_key):
 
 
 async def run_batch(factory=AsyncSessionLocal):
-    """Two jobs, at most four concurrent provider calls; durable cross-worker leases."""
+    """Admit a fair prefix costing at most four concurrent provider calls.
+
+    People need one combined-credit request; studios use remaining media pages.
+    Keep the same upstream ceiling without leaving half of it idle for people.
+    """
     table, current = ContributorEvidence, now()
+    from core.search_demand import active, fair_order, serve
+    target = 'evidence:' + table.kind + ':' + table.native_id.cast(String) + ':' + table.variant
     async with factory() as db, db.begin():
         rows = list(await db.scalars(select(table).where(table.next_attempt_at <= current,
             or_(table.lease_until.is_(None), table.lease_until <= current))
-            .order_by(table.next_attempt_at).limit(2).with_for_update(skip_locked=True)))
+            .order_by(case((active(target), 0), else_=1), fair_order(target), table.next_attempt_at)
+            .limit(PROVIDER_SLOTS).with_for_update(skip_locked=True)))
         jobs = []
+        remaining = PROVIDER_SLOTS
         for row in rows:
+            # A refresh restarts page one; it must not renew old observations.
+            payload = row.payload if row.expires_at is None or row.expires_at > current else None
+            cost = 1 if row.kind == 'person' else 2
+            if row.kind == 'studio' and payload and not payload.get('complete') and row.config.get('scope') != 'domain_availability':
+                pages = payload.get('pages', {'movie': 1, 'series': 1})
+                cost = max(1, sum(pages.get(kind) is not None for kind in ('movie', 'series')))
+            if cost > remaining:
+                break  # Do not jump over an older/fairer studio for cheap work.
+            remaining -= cost
             row.lease_token, row.lease_until = str(uuid.uuid4()), current + timedelta(seconds=45)
-            jobs.append({field:getattr(row, field) for field in ('kind', 'native_id', 'variant', 'config', 'payload', 'requested_by', 'lease_token', 'attempts')})
+            job = {field:getattr(row, field) for field in ('kind', 'native_id', 'variant', 'config', 'payload', 'requested_by', 'lease_token', 'attempts')}
+            job['payload'] = payload
+            jobs.append(job)
+        await serve(db, [demand_scope(job['kind'], job['native_id'], job['variant']) for job in jobs])
+    policies = {}
+    policy_lock = asyncio.Lock()
+    async def policy_for(viewer_id):
+        # Batch-owned private projections, never shared with another batch or
+        # persisted in public evidence. Concurrent jobs for one viewer reuse it.
+        async with policy_lock:
+            if viewer_id not in policies:
+                async with factory() as db:
+                    viewer = SimpleNamespace(id=viewer_id) if viewer_id is not None else None
+                    policies[viewer_id] = await verification_policy(db, viewer)
+            return policies[viewer_id]
     async def process(job):
         values = {}
         try:
@@ -276,9 +388,16 @@ async def run_batch(factory=AsyncSessionLocal):
                 raise ValueError('Provider unavailable')
             async with asyncio.timeout(20):
                 payload = await load_evidence(job, key)
+                continuation = False
+                if job['kind'] == 'studio' and not payload['complete']:
+                    policy = await policy_for(job['requested_by'])
+                    value = work_summary(payload, 'studio', policy['studio_filters'], policy['show_anime'])
+                    continuation = not (value and value['works'])
             values = dict(payload=payload, attempts=0,
                 expires_at=now() + timedelta(days=7 if any(payload.get(k) for k in ('works', 'cast', 'crew')) else 1),
-                next_attempt_at=None if payload['complete'] else now() + timedelta(seconds=2))
+                # Finish unresolved checks without waiting for a client poll.
+                # Useful samples park; a stricter later viewer can resume them.
+                next_attempt_at=now() if continuation else None)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -289,9 +408,16 @@ async def run_batch(factory=AsyncSessionLocal):
                 # slot forever. A later search can retry after the cooldown.
                 values.update(next_attempt_at=None, expires_at=now() + timedelta(hours=6))
         async with factory() as db, db.begin():
-            await db.execute(update(table).where(table.kind == job['kind'], table.native_id == job['native_id'],
+            accepted=await db.execute(update(table).where(table.kind == job['kind'], table.native_id == job['native_id'],
                 table.variant == job['variant'], table.lease_token == job['lease_token'])
-                .values(**values, lease_token=None, lease_until=None))
+                .values(**values, lease_token=None, lease_until=None).returning(table.native_id))
+            if accepted.scalar_one_or_none() is not None and job['kind']=='person' and 'payload' in values:
+                from core.person_identities import verified_tmdb_person
+                from core.catalogue import IdentityConflict
+                raw=values['payload'].get('person_identity')
+                if raw:
+                    try:await verified_tmdb_person(db,job['native_id'],raw)
+                    except IdentityConflict:log.warning('Conflicting verified contributor identifiers left unresolved')
     await asyncio.gather(*(process(job) for job in jobs))
     return len(jobs)
 

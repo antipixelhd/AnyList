@@ -3,11 +3,19 @@
 Commit changes for completed features, tests, verifications etc, leave specific smaller edits requested by the user open until the user confirms them. Always commit bug fixes.
 Push any commits
 
+## Branches and runtime modes
+
+- `main` deploys the public production site at anylist.win using the production build.
+- `beta` is the persistent staging site. It builds the frontend for production and serves compressed responses so interaction and loading tests resemble main. Do work on beta and push to beta unless the user directs otherwise.
+- `development-1` and `development-2` are optional isolated development slots. They use Astro development mode for automatic reloads and source debugging, with disposable databases copied from beta.
+- Local `npm run dev` supports active editing. Use `npm run build` followed by `node scripts/serve.mjs` for production-like frontend verification.
+
 if you make changes to the database apply the migration before ending the turn
 
 Avoid cluttering UIs with excessive micro-copy, subtitles, helper text, badges, and tiny metadata. Prefer clean layouts with strong hierarchy, spacing, and obvious controls. If text is not necessary for understanding or action, leave it out.
 For UI use subtle motion where possible that stays consistent with the rest of the design language
 Do not use outlines for active or focused UI states; use color and background changes instead.
+Keep list editor controls on the shared field background during focus and selection, including composite controls.
 Disable native touch tap highlights globally; preserve intentional control states and keyboard focus feedback.
 
 Dont prefer bandade fixes but prefer concrete systems that fix the problem or implement the features
@@ -52,9 +60,8 @@ Optional references:
 - docs/agents/BACKEND.md: backend structure and important behavior.
 - docs/agents/FRONTEND-STYLES.md: shared styles and layout conventions.
 
-Treat docs/media-tracker/ as historical specifications and implementation records.
-Search a relevant section only when a requirement or past decision is unclear.
-Do not read the entire STATUS.md or phase plans by default.
+## VPS access
+- Can be found in the local .env variable if needed
 
 ## Testing
 Tests use a separate disposable database. Never point tests at a preview or

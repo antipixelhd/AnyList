@@ -926,7 +926,7 @@ async def _handle_jellyfin_webhook(request: Request, db: AsyncSession, api_key: 
 @router.post("/jellyfin")
 async def jellyfin_webhook(
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     api_key: str = Query(..., description="AnyList user API key"),
 ):
     return await _handle_jellyfin_webhook(request, db, api_key)
@@ -936,7 +936,7 @@ async def jellyfin_webhook(
 async def jellyfin_scrobble_webhook(
     connection_id: int,
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     api_key: str = Query(..., description="AnyList user API key"),
 ):
     return await _handle_jellyfin_scrobble_webhook(request, db, api_key, connection_id, source="jellyfin")
@@ -946,7 +946,7 @@ async def jellyfin_scrobble_webhook(
 async def jellyfin_webhook_connection(
     connection_id: int,
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     api_key: str = Query(..., description="AnyList user API key"),
 ):
     return await _handle_jellyfin_webhook(request, db, api_key, connection_id)
@@ -1324,7 +1324,7 @@ async def _handle_jellyfin_scrobble_webhook(
 @router.post("/emby")
 async def emby_webhook(
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     api_key: str = Query(..., description="AnyList user API key"),
 ):
     return await _handle_emby_webhook(request, db, api_key)
@@ -1334,7 +1334,7 @@ async def emby_webhook(
 async def emby_scrobble_webhook(
     connection_id: int,
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     api_key: str = Query(..., description="AnyList user API key"),
 ):
     return await _handle_jellyfin_scrobble_webhook(request, db, api_key, connection_id, source="emby")
@@ -1344,7 +1344,7 @@ async def emby_scrobble_webhook(
 async def emby_webhook_connection(
     connection_id: int,
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     api_key: str = Query(..., description="AnyList user API key"),
 ):
     return await _handle_emby_webhook(request, db, api_key, connection_id)
@@ -2426,7 +2426,7 @@ async def _handle_plex_scrobble_webhook(request: Request, db: AsyncSession, api_
 @router.post("/plex")
 async def plex_webhook(
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     api_key: str = Query(..., description="AnyList user API key"),
 ):
     return await _handle_plex_webhook(request, db, api_key)
@@ -2436,7 +2436,7 @@ async def plex_webhook(
 async def plex_scrobble_webhook(
     connection_id: int,
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     api_key: str = Query(..., description="AnyList user API key"),
 ):
     return await _handle_plex_scrobble_webhook(request, db, api_key, connection_id)
@@ -2446,7 +2446,7 @@ async def plex_scrobble_webhook(
 async def plex_webhook_connection(
     connection_id: int,
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     api_key: str = Query(..., description="AnyList user API key"),
 ):
     return await _handle_plex_webhook(request, db, api_key, connection_id)
@@ -2731,7 +2731,7 @@ async def _handle_kodi_webhook(request: Request, db: AsyncSession, user: User):
 @router.post("/kodi")
 async def kodi_webhook(
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     user: User = Depends(get_current_user_or_api_key),
 ):
     return await _handle_kodi_webhook(request, db, user)
@@ -2739,7 +2739,7 @@ async def kodi_webhook(
 
 @router.get("/kodi/history")
 async def kodi_library_history(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     user: User = Depends(get_current_user_or_api_key),
 ):
     movie_rows = (await db.execute(
@@ -2774,7 +2774,7 @@ async def kodi_library_history(
 
 @router.get("/kodi/ratings")
 async def kodi_library_ratings(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     user: User = Depends(get_current_user_or_api_key),
 ):
     """Item-level ratings for the signed-in user, shaped for the Kodi add-on to
@@ -2836,7 +2836,7 @@ class KodiRatingPayload(BaseModel):
 @router.post("/kodi/rating")
 async def kodi_rating(
     payload: KodiRatingPayload,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     user: User = Depends(get_current_user_or_api_key),
 ):
     settings_result = await db.execute(select(UserSettings).where(UserSettings.user_id == user.id))

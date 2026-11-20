@@ -77,7 +77,7 @@ test("widgets share one authenticated request and active jobs take precedence ov
       job(2, "simkl"),
     ]);
   });
-  const monitor = createSyncJobMonitor("test-token");
+  const monitor = createSyncJobMonitor();
   await Promise.all([
     monitor.watch("trakt", {
       matches: (j) => j.source === "trakt",
@@ -90,7 +90,7 @@ test("widgets share one authenticated request and active jobs take precedence ov
   ]);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, "/api/proxy/sync/status");
-  assert.equal(calls[0].options.headers.Authorization, "Bearer test-token");
+  assert.equal(calls[0].options.headers.Authorization, undefined);
   assert.equal(calls[0].options.cache, "no-store");
   assert.deepEqual(first, [1]);
   assert.deepEqual(second, [2]);
@@ -113,7 +113,7 @@ test("HTTP and network outages preserve running-job locks and retry until comple
     if (response instanceof Error) throw response;
     return response;
   });
-  const monitor = createSyncJobMonitor("token");
+  const monitor = createSyncJobMonitor();
   await monitor.watch("trakt", {
     matches: (j) => j.source === "trakt",
     render: (j) => rendered.push(j?.status ?? null),
@@ -141,7 +141,7 @@ test("known completion remains visible after a background delay and other widget
   const ids = [];
   let jobs = [job(1, "mdblist"), job(2, "simkl")];
   t.mock.method(globalThis, "fetch", async () => Response.json(jobs));
-  const monitor = createSyncJobMonitor("token");
+  const monitor = createSyncJobMonitor();
   await monitor.watch("mdblist", {
     matches: (j) => j.source === "mdblist",
     render: (j) => {
@@ -179,7 +179,7 @@ test("fresh terminal timestamps accept UTC and explicit offsets while stale unre
       job(3, "mdblist", "completed", "2026-09-29T00:00:00"),
     ]),
   );
-  const monitor = createSyncJobMonitor("token");
+  const monitor = createSyncJobMonitor();
   await Promise.all(
     ["trakt", "simkl", "mdblist"].map((source) =>
       monitor.watch(source, {
@@ -200,7 +200,7 @@ test("queued and tracked jobs missing from a snapshot retain their watch until t
     rendered = [];
   let jobs = [];
   t.mock.method(globalThis, "fetch", async () => Response.json(jobs));
-  const monitor = createSyncJobMonitor("token");
+  const monitor = createSyncJobMonitor();
   await monitor.watch("import", {
     matches: () => true,
     jobId: 4,
@@ -229,7 +229,7 @@ test("navigation aborts in-flight requests, timers and visibility wake listeners
       finish = resolve;
     });
   });
-  const monitor = createSyncJobMonitor("token");
+  const monitor = createSyncJobMonitor();
   const pending = monitor.watch("trakt", {
     matches: () => true,
     render: (j) => rendered.push(j),
@@ -251,7 +251,7 @@ test('persistent account watch notices a later scheduled cycle while the page st
   const env = environment(t), rendered = [];
   const responses = [[], [job(1, 'manual')], [job(1, 'manual', 'completed')], [], [job(2, 'manual')]];
   t.mock.method(globalThis, 'fetch', async () => Response.json(responses.shift() || []));
-  const monitor = createSyncJobMonitor('token');
+  const monitor = createSyncJobMonitor();
   await monitor.watch('account', { matches: () => true, persistent: true, render: value => rendered.push(value?.id) });
   await env.tick();
   await env.tick();

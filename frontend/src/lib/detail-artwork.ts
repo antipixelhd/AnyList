@@ -1,8 +1,9 @@
 import { artworkIdentity, responsiveArtwork, type ArtworkRoute, type ResponsiveArtworkAttributes } from './responsive-artwork.ts';
 
-/** Detail heroes use the original provider image; compact views keep their buckets. */
+/** Editors and detail heroes share the same provider URL and browser cache entry. */
 export function detailHeroArtwork(path: string | null | undefined, route: ArtworkRoute = 'auto') {
-  return responsiveArtwork(path, {size:'original',route});
+  const size=path&&artworkIdentity(path).startsWith('tmdb:')?'w1280':'original';
+  return responsiveArtwork(path, {size,route});
 }
 
 /** Related cards use the same provider buckets and disk policy as Browse. */

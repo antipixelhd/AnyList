@@ -10,6 +10,7 @@ from core import catalogue, settings_store, tvdb, tmdb
 from core.catalogue_providers import CatalogueProviders, ProviderHTTP, ProviderError, retry_after_seconds
 from core.catalogue_normalize import normalize_tvdb
 from core.principal_credits import principal_clause
+from core.enrichment_retry import schedule_failure
 from core.person_identities import canonical_people
 from core.media_details import screen_work
 from core.screen_characters import project_characters
@@ -105,7 +106,9 @@ async def fill_character_art(db, media, user_id=None, *, providers=None, person_
             if not isinstance(raw, dict) or str(raw.get('id')) != str(native):
                 raise ProviderError('identity_conflict')
             remotes = {r.get('sourceName'): str(r.get('id')) for r in raw.get('remoteIds') or []}
-            if ids.get('imdb.title') and remotes.get('IMDB') != ids['imdb.title']:
+            if ids.get('imdb.title') and remotes.get('IMDB') and remotes['IMDB'] != ids['imdb.title']:
+                raise ProviderError('identity_conflict')
+            if not remotes.get('IMDB') and ids.get('imdb.title') and not (media.tvdb_id or ids.get('tvdb.'+work.kind)):
                 raise ProviderError('identity_conflict')
         payload.update(native=native, title=raw, people=dict(payload.get('people') or {}))
         principal_ids = {str(c['contributor']['identities'][0]['external_id'])
@@ -223,12 +226,9 @@ async def fill_character_art(db, media, user_id=None, *, providers=None, person_
             return result(row, 'deferred')
         # Keep progress/last-good credits and publish a durable, redacted retry.
         row.payload = payload
-        row.attempts += 1
-        row.error_code = error.code if isinstance(error, ProviderError) else 'unavailable'
-        row.next_attempt_at = now + timedelta(seconds=max(min(21600, 60 * 2 ** min(row.attempts, 8)),
-                                                        getattr(error, 'retry_after', 0) or 0))
-        row.coverage = {**(row.coverage or {}), 'pending': True}
-        row.expires_at = None
+        row.coverage = {**(row.coverage or {}), 'pending': True, 'version': VERSION}
+        schedule_failure(row,error.code if isinstance(error,ProviderError) else 'unavailable',now,
+                         work=work,retry_after=getattr(error,'retry_after',None),base_delay=120,max_delay=21600)
         state = 'deferred'
     row.lease_token = None
     row.lease_until = None

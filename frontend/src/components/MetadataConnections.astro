@@ -9,7 +9,7 @@ const { settings } = Astro.props;
           <!-- TMDB Read Access Token -->
           <div class="space-y-2">
             <label for="tmdb_api_key" class="block text-sm font-medium text-zinc-400">TMDB Read Access Token</label>
-            
+
             <div class="flex gap-2">
               <div class="relative flex-1 group/field">
                 <ConnectionSecretInput
@@ -49,7 +49,7 @@ const { settings } = Astro.props;
           <!-- TVDB API Key -->
           <div class="space-y-2">
             <label for="tvdb_api_key" class="block text-sm font-medium text-zinc-400">TVDB API Key</label>
-            
+
             <div class="flex gap-2">
               <div class="relative flex-1 group/field">
                 <ConnectionSecretInput
@@ -120,12 +120,12 @@ const { settings } = Astro.props;
     const form = document.querySelector<HTMLFormElement>('#metadata-settings-form');
     if (!form || form.dataset.initialized) return;
     form.dataset.initialized = 'true';
-    const token = document.querySelector<HTMLElement>('#app-data')?.dataset.token ?? '';
+
     const fields = ['tmdb_api_key', 'tvdb_api_key', 'tvdb_subscriber_pin'];
     // Use server-rendered defaults so autofill cannot become the saved baseline.
     const saved = Object.fromEntries(fields.map(field => [field, (form.elements.namedItem(field) as HTMLInputElement).defaultValue.trim() || null]));
     const feedback = form.querySelector<HTMLElement>('[data-metadata-feedback]')!;
-    const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+    const headers = { 'Content-Type': 'application/json' };
     form.addEventListener('submit', async event => {
       event.preventDefault();
       const button = form.querySelector<HTMLButtonElement>('[type="submit"]')!;

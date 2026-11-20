@@ -72,3 +72,14 @@ test('season header and native summary share disclosure state and stop respondin
   header.dispatchEvent(new Event('click'));
   assert.equal(details.open,true);
 });
+
+
+test('a retained list can replace a cancelled statistics transition without inheriting its inert or reveal state',async t=>{
+  const previous=globalThis.matchMedia;t.after(()=>globalThis.matchMedia=previous);
+  const reduced=new EventTarget();reduced.matches=false;globalThis.matchMedia=()=>reduced;
+  const lifetime=new AbortController(),stage={inert:false,getClientRects:()=>[{}]},changes=[],reveals=[];let finish;
+  const transition=createContentTransition(stage,lifetime.signal,{dismiss:()=>new Promise(resolve=>finish=resolve),reveal:()=>reveals.push('revealed'),cancel(){}});
+  const pending=transition(()=>changes.push('Games Stats'));assert.equal(stage.inert,true);
+  transition.cancel();changes.push('Movie List');assert.equal(stage.inert,false);
+  finish(true);await pending;assert.deepEqual(changes,['Movie List']);assert.deepEqual(reveals,[]);
+});

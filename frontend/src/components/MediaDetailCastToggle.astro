@@ -1,4 +1,10 @@
-<div class="media-cast-toggle" role="group" aria-label="Cast display">
-  <button type="button" data-cast-mode="actors" aria-pressed="true">Actors</button>
-  <button type="button" data-cast-mode="characters" aria-pressed="false">Characters</button>
+---
+import type {GameCastData} from '../lib/game-cast-data';
+interface Props {gameCast?:GameCastData|null}
+const {gameCast}=Astro.props;
+const mode=gameCast?.mode||'actors';
+---
+<div class="media-cast-toggle" role="group" aria-label="Cast display" hidden={!!gameCast&&(Object.values(gameCast.availability).some(value=>value==='unknown')||!gameCast.actors.length&&!gameCast.characters.length)}>
+  <button type="button" data-cast-mode="actors" aria-pressed={mode==='actors'} disabled={gameCast?.availability.actors==='empty'}>Actors</button>
+  <button type="button" data-cast-mode="characters" aria-pressed={mode==='characters'} disabled={gameCast?.availability.characters==='empty'}>Characters</button>
 </div>

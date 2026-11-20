@@ -22,27 +22,24 @@ const resuming = !!activeImport?.import_id && Astro.url.searchParams.get("import
 <section>
   <h2 class="section-headline mb-4 border-b border-zinc-800 pb-2">Others</h2>
   <div class="flex items-center gap-1 mb-4 bg-zinc-900 border border-zinc-800 rounded-xl p-1 w-fit">
-    <button type="button" data-import-tab="scrob" class="import-tab-btn px-4 py-1.5 rounded-lg text-sm font-semibold bg-blue-600 text-white transition-colors cursor-pointer active:scale-95 active:opacity-70">AnyList</button>
-    <button type="button" data-import-tab="trakt" class="import-tab-btn px-4 py-1.5 rounded-lg text-sm font-medium text-zinc-400 transition-colors cursor-pointer active:scale-95 active:opacity-70">Trakt</button>
-    <button type="button" data-import-tab="yamtrack" class="import-tab-btn px-4 py-1.5 rounded-lg text-sm font-medium text-zinc-400 transition-colors cursor-pointer active:scale-95 active:opacity-70">Yamtrack</button>
+    <button type="button" data-import-tab="scrob" class="import-tab-btn px-4 py-1.5 rounded-lg text-sm font-semibold bg-blue-600 text-white transition-colors cursor-pointer active:opacity-70">AnyList</button>
+    <button type="button" data-import-tab="trakt" class="import-tab-btn px-4 py-1.5 rounded-lg text-sm font-medium text-zinc-400 transition-colors cursor-pointer active:opacity-70">Trakt</button>
+    <button type="button" data-import-tab="yamtrack" class="import-tab-btn px-4 py-1.5 rounded-lg text-sm font-medium text-zinc-400 transition-colors cursor-pointer active:opacity-70">Yamtrack</button>
   </div>
 
   <div data-import-panel="scrob">
-    <input type="file" id="scrob_export_file" accept=".zip" class="hidden" disabled={!hasTmdbKey} />
+    <input type="file" id="scrob_export_file" accept=".zip" class="hidden" />
     <div
       id="scrob-import-dropzone"
-      class:list={[
-        "flex flex-col items-center justify-center gap-2 text-center border-2 border-dashed rounded-2xl px-6 py-10 transition-colors",
-        hasTmdbKey ? "border-zinc-700 hover:border-zinc-600 cursor-pointer bg-zinc-900/40" : "border-zinc-800 bg-zinc-900/20 opacity-50 cursor-not-allowed",
-      ]}
+      class="flex flex-col items-center justify-center gap-2 text-center border-2 border-dashed rounded-2xl px-6 py-10 transition-colors border-zinc-700 hover:border-zinc-600 cursor-pointer bg-zinc-900/40"
     >
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-8 h-8 text-zinc-500">
         <path stroke-linecap="round" stroke-linejoin="round" d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z" />
       </svg>
       <p class="text-sm text-zinc-300 font-medium">
-        {hasTmdbKey ? "Drop an AnyList data export .zip here, or click to browse" : "TMDB Read Access Token is required for import"}
+        Drop an AnyList data export .zip here, or click to browse
       </p>
-      <p class="text-xs text-zinc-500">From <span class="text-zinc-400">Account settings → Export Data</span> on this or another AnyList account. Restores watch history, ratings, collection, lists, and comments.</p>
+      <p class="text-xs text-zinc-500">From <span class="text-zinc-400">Account settings → Export Data</span> on this or another AnyList account. Restores games, watch history, ratings, collection, lists, and comments.</p>
     </div>
     <div id="scrob-import-progress" class="hidden border border-zinc-800 rounded-2xl px-6 py-8 bg-zinc-900/40">
       <div class="flex justify-between items-center mb-2">

@@ -7,9 +7,9 @@ interface Props {
 }
 const { token = '', isAdmin, radarrCustomizeOnAdd, sonarrCustomizeOnAdd } = Astro.props;
 ---
-<script define:vars={{ __layoutAuthToken: token, __isAdmin: isAdmin, __radarrCustomizeOnAdd: radarrCustomizeOnAdd, __sonarrCustomizeOnAdd: sonarrCustomizeOnAdd }}>
-    // Expose the server-side token for the card action script (httpOnly cookie is not JS-readable)
-    window.__AUTH_TOKEN__ = __layoutAuthToken;
+<script define:vars={{ __signedIn: !!token, __isAdmin: isAdmin, __radarrCustomizeOnAdd: radarrCustomizeOnAdd, __sonarrCustomizeOnAdd: sonarrCustomizeOnAdd }}>
+    // Browser requests use the HttpOnly session cookie through the same-origin proxy.
+    window.__SIGNED_IN__ = __signedIn;
     window.__IS_ADMIN__ = __isAdmin;
     window.__RADARR_CUSTOMIZE_ON_ADD__ = __radarrCustomizeOnAdd;
     window.__SONARR_CUSTOMIZE_ON_ADD__ = __sonarrCustomizeOnAdd;
@@ -213,7 +213,7 @@ const { token = '', isAdmin, radarrCustomizeOnAdd, sonarrCustomizeOnAdd } = Astr
       if (!container) return;
       try {
         const res = await fetch('/api/proxy/history/now-playing', {
-          headers: { 'Authorization': `Bearer ${window.__AUTH_TOKEN__}` },
+          headers: { },
         });
         if (!res.ok) return;
         const data = await res.json();
@@ -259,13 +259,13 @@ const { token = '', isAdmin, radarrCustomizeOnAdd, sonarrCustomizeOnAdd } = Astr
       try {
         await fetch(`/api/proxy/history/session/${encodeURIComponent(btn.dataset.npdismiss)}`, {
           method: 'DELETE',
-          headers: { Authorization: `Bearer ${window.__AUTH_TOKEN__}` },
+          headers: { },
         });
       } catch { /* ignore, next poll reconciles either way */ }
       pollNowPlaying();
     });
 
-    if (window.__AUTH_TOKEN__) {
+    if (window.__SIGNED_IN__) {
       const isHome = () => window.location.pathname === '/';
 
       const runPoll = () => {

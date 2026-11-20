@@ -11,7 +11,7 @@ import asyncpg
 
 from core.config import settings
 
-_AVATAR_NAME = re.compile(r"^[1-9][0-9]*\.(?:jpg|png|webp)$")
+_AVATAR_NAME = re.compile(r"^[1-9][0-9]*\.(?:banner\.)?(?:jpg|png|webp)$")
 _MAX_AVATAR_BYTES = 5 * 1024 * 1024
 
 
@@ -23,18 +23,16 @@ def avatar_backup_files(avatar_dir: Path, rows: list) -> dict[str, bytes]:
     """Only include files referenced by a profile in the database snapshot."""
     files = {}
     for row in rows:
-        name = row["avatar_path"]
-        if not name or not _AVATAR_NAME.fullmatch(name) or not name.startswith(f'{row["user_id"]}.'):
-            continue
-        path = avatar_dir / name
-        try:
-            if path.is_symlink() or not path.is_file() or path.stat().st_size > _MAX_AVATAR_BYTES:
-                continue
-            data = path.read_bytes()
-        except OSError:
-            continue  # An upload/removal may race with the backup.
-        if len(data) <= _MAX_AVATAR_BYTES:
-            files[name] = data
+        names=[row['avatar_path']]
+        if row.get('background_url')==f'/api/proxy/profile/background/{row["user_id"]}':names.append(f'{row["user_id"]}.banner.webp')
+        for name in names:
+            if not name or not _AVATAR_NAME.fullmatch(name) or not name.startswith(f'{row["user_id"]}.'):continue
+            path=avatar_dir/name
+            try:
+                if path.is_symlink() or not path.is_file() or path.stat().st_size>_MAX_AVATAR_BYTES:continue
+                data=path.read_bytes()
+            except OSError:continue
+            if len(data)<=_MAX_AVATAR_BYTES:files[name]=data
     return files
 
 

@@ -1,3 +1,6 @@
+/* Avoid whole-page capture and crossfades; component motion stays independent. */
+:root { view-transition-name:none; }
+
 /* Stable shared app bar: fixed geometry keeps navigation aligned on every page. */
 .topbar {
   --bright:var(--white);

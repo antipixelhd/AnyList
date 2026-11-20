@@ -42,6 +42,18 @@ def nuvio_resume_signature(row):
     }
 
 
+def obsolete_series_marker(rows, desired, verified):
+    """Retire only a synthetic marker whose provider values still match our write."""
+    if not verified or not verified.get('series_marker') or not desired.get('series_activity'):
+        return None
+    signature = verified['remote']
+    for row in rows:
+        key = row.get('progress_key')
+        if key and key != desired.get('progress_key') and nuvio_resume_signature(row) == signature:
+            return key
+    return None
+
+
 def check_nuvio_resume(record, remote, verified, auto_approve):
     signature = nuvio_resume_signature(remote)
     incoming_at = provider_changed_at({'updated_at': record.get('observed_at')})
@@ -160,6 +172,9 @@ async def push_stremio_progress(token, record):
         raise RemotePlaybackChanged()
     state['timeOffset'] = record['position']
     state['duration'] = record['duration']
+    if record.get('season') is not None and (record.get('synthetic_resume') or not matching_video):
+        state['timeWatched'] = 0
+        state['flaggedWatched'] = 0
     if record.get('season') is not None:
         state['video_id'] = record.get('video_id') or f"{record['content_id']}:{record['season']}:{record['episode']}"
     else:
@@ -209,6 +224,7 @@ async def push_nuvio_progress(db, conn, record, *, verified=None, auto_approve=F
             await refreshed(session)
             profile = nuvio.parse_profile_id(conn.server_user_id)
             rows = await nuvio._pull_watch_progress(client, conn.url, session.access_token, profile)
+            superseded = obsolete_series_marker(rows, record, verified)
             matches = [row for row in rows if row.get('content_id') == record['content_id']
                 and row.get('season') == record.get('season') and row.get('episode') == record.get('episode')]
             if len(matches) == 1 and same_progress(matches[0], record) and not newer_playback_date(record,matches[0]):
@@ -237,10 +253,36 @@ async def push_nuvio_progress(db, conn, record, *, verified=None, auto_approve=F
             confirmed = [row for row in confirmed_rows if row.get('progress_key') == payload['progress_key']]
             if len(confirmed) != 1 or not same_progress(confirmed[0], record) or not playback_date_confirmed(payload,confirmed[0]):
                 raise nuvio.NuvioAPIError('Nuvio progress write was not confirmed by readback')
+            if superseded and obsolete_series_marker(confirmed_rows, record, verified) == superseded:
+                await nuvio._rpc(client, conn.url, session.access_token, 'sync_delete_watch_progress',
+                    {'p_profile_id': profile, 'p_keys': [superseded]})
             await nuvio.update_next_up_dismissals(client, conn.url, session.access_token,
                 profile, show=_nuvio_action_content_ids(record),
                 on_written=_nuvio_visibility_echo_writer(db, conn))
             return nuvio_resume_signature(confirmed[0])
+
+
+async def valid_forwarded_progress(db, action, entry, deleted):
+    """Validate a resume relay independently of the optional tracked entry."""
+    payload = action.payload or {}
+    if action.action != 'upsert' or not payload.get('source_connection_id') or deleted:
+        return False
+    source = await db.get(MediaServerConnection, payload['source_connection_id'])
+    if not source or source.user_id != action.user_id or source.type not in ('stremio', 'nuvio') or not source.sync_playback:
+        return False
+    if payload.get('source_identity_version') != source.identity_version:
+        return False
+    baseline = await db.get(StreamBaseline, source.id)
+    media = await db.get(Media, action.media_id)
+    if not baseline or not baseline.approved or not media:
+        return False
+    observed_at = provider_changed_at({'updated_at': payload.get('observed_at')})
+    if entry and status_changed_at(entry) and (not observed_at or status_changed_at(entry) > observed_at):
+        return False
+    snapshot = baseline.snapshot or {}
+    mappings = snapshot.get('mappings', {})
+    return any(mappings.get(key) == media.tmdb_id and same_progress(row, payload)
+        for key, row in snapshot.get('progress', {}).items())
 
 
 async def queue_progress_update(db, source, media, record):
@@ -284,6 +326,7 @@ async def queue_progress_update(db, source, media, record):
             **record, 'content_id': key, 'content_type': media.media_type.value,
             'observed_at': _iso_utc(changed_at),
             'source_connection_id': source.id,
+            'source_identity_version': source.identity_version,
         }
         payload.pop('modified_at', None)
         payload.pop('updated_at', None)
@@ -898,7 +941,7 @@ async def _queue_nuvio_next_up_show(db, user_id, media, connections):
                 media_id=media.id, action='upsert', payload=payload))
 
 
-async def queue_restorations(db, user_id, media):
+async def queue_restorations(db, user_id, media, *, exclude_connection_id=None):
     """Queue a fresh resume for eligible providers when a title enters Watching."""
     pending=(await db.execute(select(StreamAction).where(StreamAction.user_id==user_id,
         StreamAction.media_id==media.id,StreamAction.state=='pending',StreamAction.action=='restore'))).scalars().all()
@@ -908,13 +951,14 @@ async def queue_restorations(db, user_id, media):
         action.last_error=None
     entry=(await db.execute(select(TrackedEntry).where(
         TrackedEntry.user_id==user_id,TrackedEntry.media_id==media.id))).scalar_one_or_none()
-    if not entry or entry.status!='watching':
+    from core.series_playback import has_active_playback
+    if not entry or not has_active_playback(entry):
         return
 
     targets=(await db.execute(select(MediaServerConnection).where(MediaServerConnection.user_id==user_id,
         MediaServerConnection.type.in_(['stremio','nuvio'])))).scalars().all()
-    targets = [conn for conn in targets if conn.push_playback
-        or conn.type == 'nuvio' and conn.push_watched]
+    targets = [conn for conn in targets if conn.id != exclude_connection_id and (conn.push_playback
+        or conn.type == 'nuvio' and conn.push_watched)]
     # A local return to Watching supersedes stale hidden-state work even if the
     # catalogue cannot currently supply a safe resume position.
     stale_dismissals=(await db.execute(select(StreamAction).where(
@@ -963,21 +1007,28 @@ async def queue_restorations(db, user_id, media):
             video_id=content_id
             season=episode_number=None
             content_type='movie'
-        provider_time=observed_at
+        provider_time=record.get('activity_at') or observed_at
+        if provider_time.tzinfo is None:
+            provider_time = provider_time.replace(tzinfo=timezone.utc)
         action_record={
             'content_id':content_id,'content_type':content_type,'video_id':video_id,
             'title':media.title,
             'season':season,'episode':episode_number,
             'position':record['position'],'duration':record['duration'],
-            'observed_at':_iso_utc(observed_at),
+            'observed_at':_iso_utc(provider_time),
             'last_watched':(_iso_utc(provider_time) if conn.type=='stremio'
                 else int(provider_time.timestamp()*1000)),
             'progress_key':progress_key,
         }
         if conn.type == 'nuvio' and record.get('synthetic_resume'):
             action_record['synthetic_resume'] = True
+        if record.get('activity_at'):
+            action_record['series_activity'] = True
+            if conn.type == 'stremio' and record.get('synthetic_resume'):
+                action_record['position'] = 1
+                action_record['synthetic_resume'] = True
         if (conn.type == 'nuvio' and media.media_type == MediaType.series
-                and record.get('has_watched_history') and record.get('synthetic_resume')):
+                and record.get('has_watched_history') and record.get('synthetic_resume') and not record.get('activity_at')):
             # Nuvio can surface a watched series through Next Up without a
             # fabricated episode position. Keep this as a durable upsert
             # action so failed visibility writes are retried by the worker.
@@ -1009,6 +1060,7 @@ async def _local_resume_record(db, user_id, media, entry, observed_at):
     """Build local playback in provider units, marking a synthetic fallback."""
     target=media
     has_watched_history=False
+    activity_at = None
     if media.media_type==MediaType.series:
         show_ids=(await db.execute(select(Show.id).where(Show.tmdb_id==media.tmdb_id))).scalars().all()
         if not show_ids:
@@ -1026,7 +1078,17 @@ async def _local_resume_record(db, user_id, media, entry, observed_at):
         ))).scalars().all()
         watched_ids=set(watched)
         has_watched_history=bool(watched_ids)
-        target=next((episode for episode in released if episode.id not in watched_ids),released[0])
+        if getattr(entry, 'latest_episode_activity', None):
+            from core.series_playback import activity_resume
+            target, _, activity_at = activity_resume(entry, released, {})
+            if target is None:
+                return None
+        else:
+            from core.series_playback import watching_episodes
+            released = watching_episodes(entry, released)
+            if not released:
+                return None
+            target=next((episode for episode in released if episode.id not in watched_ids),released[0])
 
     progress=(await db.execute(select(PlaybackProgress).where(
         PlaybackProgress.user_id==user_id,PlaybackProgress.media_id==target.id,
@@ -1038,7 +1100,8 @@ async def _local_resume_record(db, user_id, media, entry, observed_at):
         cutoff=entry.status_changed_at or observed_at
         if cutoff.tzinfo is None:
             cutoff=cutoff.replace(tzinfo=timezone.utc)
-        fresh=updated_at>=cutoff
+        fresh = (0 < progress.progress_percent < 0.9 and progress.progress_seconds > 0
+            if activity_at else updated_at >= cutoff)
     else:
         fresh=False
 
@@ -1062,7 +1125,7 @@ async def _local_resume_record(db, user_id, media, entry, observed_at):
         duration_ms=round(position_ms/max(min(percent,1.0),0.01))
     duration_ms=max(position_ms,duration_ms)
     return {'position':position_ms,'duration':duration_ms,'episode_media':target,
-        'synthetic_resume':synthetic_resume,'has_watched_history':has_watched_history}
+        'synthetic_resume':synthetic_resume,'has_watched_history':has_watched_history,'activity_at':activity_at}
 
 
 async def queue_resets(db,user_id,media,deleted_at):
@@ -1116,8 +1179,12 @@ async def dispatch_stream_actions(db, user_id):
             continue
         entry = (await db.execute(select(TrackedEntry).where(TrackedEntry.user_id == user_id, TrackedEntry.media_id == action.media_id))).scalar_one_or_none()
         deleted = (await db.execute(select(TrackingDeletion).where(TrackingDeletion.user_id == user_id, TrackingDeletion.media_id == action.media_id))).scalar_one_or_none()
-        valid_statuses = ('watching',) if action.action in ('restore','upsert') else ('planning','paused','dropped','completed')
-        invalid=(not deleted or entry is not None) if action.action=='reset' else (deleted or not entry or entry.status not in valid_statuses)
+        from core.series_playback import has_active_playback
+        active = entry is not None and has_active_playback(entry)
+        invalid = ((not deleted or entry is not None) if action.action == 'reset' else
+            (deleted or not entry or active != (action.action in ('restore','upsert'))))
+        if invalid and action.action == 'upsert':
+            invalid = not await valid_forwarded_progress(db, action, entry, deleted)
         if invalid:
             action.state = 'cancelled'; action.payload = {}
             continue
@@ -1202,6 +1269,7 @@ async def dispatch_stream_actions(db, user_id):
                 if verified_resume:
                     snapshot['verified_nuvio_resumes'] = {**snapshot.get('verified_nuvio_resumes', {}), key: {
                         'observed_at': payload.get('observed_at'), 'remote': verified_resume,
+                        **({'series_marker': True} if payload.get('series_activity') and payload.get('synthetic_resume') else {}),
                     }}
                 elif conn.type == 'nuvio' and action.action in ('dismiss', 'reset'):
                     snapshot['verified_nuvio_resumes'] = {
@@ -1226,6 +1294,8 @@ async def dispatch_stream_actions(db, user_id):
                     snapshot['outbound'][key]['action'] = action.action
                     if payload.get('synthetic_resume') is True:
                         snapshot['outbound'][key]['synthetic_resume'] = True
+                    if payload.get('series_activity') is True:
+                        snapshot['outbound'][key]['series_activity'] = True
                 elif action.action in ('dismiss','reset'):
                     for content_id in content_ids:
                         snapshot['outbound'].pop(content_id, None)

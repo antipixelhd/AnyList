@@ -1,0 +1,18 @@
+---
+import Icon from './Icon.astro';
+interface Props {
+  id: string;
+  name: string;
+  label: string;
+  min?: number;
+  max?: number;
+  step?: number | 'any';
+  score?: boolean;
+  value?: number;
+}
+const {id,name,label,min=0,max,step=1,score=false,value}=Astro.props;
+---
+<span class="score-stepper" data-number-stepper={!score||undefined} data-score-stepper={score||undefined}>
+  <input {id} {name} type="number" {min} {max} {step} {value} inputmode={step===1?'numeric':'decimal'} aria-label={label}/>
+  <span class="score-stepper-controls"><button type="button" data-score-step="up" aria-label={score?'Increase score to the next half point':`Increase ${label.toLowerCase()}`}><Icon name="chevron-down" rotate={180}/></button><button type="button" data-score-step="down" aria-label={score?'Decrease score to the previous half point':`Decrease ${label.toLowerCase()}`}><Icon name="chevron-down"/></button></span>
+</span>

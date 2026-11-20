@@ -4,6 +4,7 @@ import importlib
 import unittest
 from datetime import timedelta
 from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
 
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
@@ -17,6 +18,317 @@ from test_contributor_evidence import FILTERS, film
 
 @unittest.skipUnless(fixture.URL, 'Requires explicit disposable PostgreSQL')
 class EvidenceDatabaseTests(unittest.IsolatedAsyncioTestCase):
+    async def test_studio_witness_parks_sample_and_another_viewer_resumes_shared_pages(self):
+        from core import studio_discovery
+        from models import User, UserProfileData
+        async with self.Session() as db:
+            profile = await db.scalar(select(UserProfileData).where(UserProfileData.user_id == self.user_id))
+            profile.excluded_categories = []
+            profile.minimum_movie_runtime = 30
+            other = User(email='witness-reader@example.test', username='witness-reader', api_key='witness-reader-key')
+            db.add(other)
+            await db.commit()
+        key, _ = await self.queue(771)
+        movies = AsyncMock(return_value={'results': [film(runtime=90, genre_ids=[99], popularity=80)], 'total_pages': 2})
+        shows = AsyncMock(return_value={'results': [], 'total_pages': 0})
+        policy = {'studio_filters': FILTERS, 'show_anime': True}
+        async def search(filters=FILTERS, viewer=None):
+            async with self.Session() as db:
+                return await studio_discovery.verified_studios(db, viewer or SimpleNamespace(id=self.user_id),
+                    [{'key': 'tmdb:771', '_native': 771, 'name': 'Witness studio', 'url': '/studio/tmdb:771'}], 'key',
+                    policy={**policy, 'studio_filters': filters})
+        with patch.object(evidence.tmdb, 'discover_movies', movies), patch.object(evidence.tmdb, 'discover_shows', shows), \
+             patch.object(evidence.settings_store, 'get_user_tmdb_key', AsyncMock(return_value='key')):
+            await evidence.run_batch(self.Session)
+            async with self.Session() as db:
+                row = await db.get(ContributorEvidence, key)
+                self.assertFalse(row.payload['complete'])
+                self.assertEqual(row.payload['pages'], {'movie': 2, 'series': None})
+                self.assertIsNone(row.next_attempt_at)
+            # Fresh partial summaries must stay small without claiming complete
+            # coverage or queueing unnecessary pages for the ordinary viewer.
+            for _ in range(2):
+                rows, pending = await search()
+                self.assertEqual(len(rows), 1)
+                self.assertFalse(pending)
+            stricter = {**FILTERS, 'excluded_genres': [99]}
+            ordinary, strict = await asyncio.gather(search(), search(stricter, other))
+            self.assertEqual(len(ordinary[0]), 1)
+            self.assertFalse(strict[0])
+            self.assertTrue(strict[1])
+            movies.return_value = {'results': [film(id=2, runtime=90, genre_ids=[18], popularity=40)], 'total_pages': 2}
+            await asyncio.gather(evidence.run_batch(self.Session), evidence.run_batch(self.Session))
+            rows, pending = await search(stricter, other)
+            self.assertEqual(len(rows), 1)
+            self.assertFalse(pending)
+            self.assertEqual(movies.await_count, 2)
+            self.assertEqual(shows.await_count, 1)
+            self.assertEqual([call.kwargs['page'] for call in movies.await_args_list], [1, 2])
+        async with self.Session() as db:
+            row = await db.get(ContributorEvidence, key)
+            self.assertTrue(row.payload['complete'])
+            self.assertEqual(len(row.payload['works']), 2)
+
+    async def test_studio_without_a_witness_finishes_sample_and_reuses_verified_negative(self):
+        from core import studio_discovery
+        key, _ = await self.queue(772)
+        filters = {**FILTERS, 'excluded_genres': [99]}
+        provider = AsyncMock(return_value={'results': [film(runtime=90, genre_ids=[99])], 'total_pages': 50})
+        async def search():
+            async with self.Session() as db:
+                return await studio_discovery.verified_studios(db, SimpleNamespace(id=self.user_id),
+                    [{'key': 'tmdb:772', '_native': 772, 'name': 'No qualifying works', 'url': '/studio/tmdb:772'}], 'key',
+                    policy={'studio_filters': filters, 'show_anime': True})
+        with patch.object(evidence.tmdb, 'discover_movies', provider), patch.object(evidence.tmdb, 'discover_shows', provider), \
+             patch.object(evidence.settings_store, 'get_user_tmdb_key', AsyncMock(return_value='key')):
+            await evidence.run_batch(self.Session)
+            self.assertEqual(await search(), ([], True))
+            await evidence.run_batch(self.Session)
+            self.assertEqual(await search(), ([], False))
+            self.assertEqual(await search(), ([], False))
+            self.assertEqual(provider.await_count, 4)
+        async with self.Session() as db:
+            self.assertTrue((await db.get(ContributorEvidence, key)).payload['complete'])
+
+    async def test_verification_admits_four_people_or_two_studios_under_same_request_ceiling(self):
+        for kind, natives, expected in (('person', range(781, 786), 4), ('studio', range(791, 796), 2)):
+            async with self.Session() as db:
+                for native in natives:
+                    key, config = evidence.evidence_key(kind, native, FILTERS, True)
+                    db.add(ContributorEvidence(kind=key[0], native_id=key[1], variant=key[2], config=config,
+                        next_attempt_at=evidence.now()))
+                await db.commit()
+            acquired = []
+            async def load(job, key):
+                acquired.append(job['kind'])
+                await asyncio.sleep(.01)
+                return {'complete': True, 'works': []}
+            with patch.object(evidence, 'load_evidence', load), patch.object(evidence.settings_store,
+                    'get_user_tmdb_key', AsyncMock(return_value='key')):
+                self.assertEqual(await evidence.run_batch(self.Session), expected)
+                self.assertEqual(sum(1 if value == 'person' else 2 for value in acquired), 4)
+                # Drain this fixture before checking the next media kind.
+                while await evidence.run_batch(self.Session):
+                    pass
+
+    async def test_failed_partial_sample_keeps_cooldown_and_unknown_coverage(self):
+        key, _ = await self.queue(773)
+        async with self.Session() as db:
+            row = await db.get(ContributorEvidence, key)
+            row.payload = {'works': [film(genre_ids=[99])], 'complete': False, 'pages': {'movie': 2, 'series': None}}
+            row.expires_at = evidence.now() + timedelta(days=7)
+            row.attempts = 4
+            await db.commit()
+        with patch.object(evidence, 'load_evidence', AsyncMock(side_effect=TimeoutError)), patch.object(
+                evidence.settings_store, 'get_user_tmdb_key', AsyncMock(return_value='key')):
+            await evidence.run_batch(self.Session)
+        _, (views, pending) = await self.queue(773)
+        self.assertFalse(pending)
+        self.assertIsNone(evidence.work_summary(views[key], 'studio', {**FILTERS, 'excluded_genres': [99]}, True))
+        async with self.Session() as db:
+            row = await db.get(ContributorEvidence, key)
+            self.assertEqual(row.attempts, 5)
+            self.assertIsNone(row.next_attempt_at)
+            self.assertGreater(row.expires_at, evidence.now() + timedelta(hours=5))
+
+    async def test_studios_with_only_one_media_page_left_fill_four_provider_slots(self):
+        async with self.Session() as db:
+            for native in range(801, 805):
+                key, config = evidence.evidence_key('studio', native, FILTERS, True)
+                db.add(ContributorEvidence(kind=key[0], native_id=key[1], variant=key[2], config=config,
+                    payload={'works': [], 'complete': False, 'pages': {'movie': 2, 'series': None}},
+                    expires_at=evidence.now() + timedelta(days=1), next_attempt_at=evidence.now()))
+            await db.commit()
+        arrived, release = asyncio.Event(), asyncio.Event()
+        calls = []
+        async def movies(**options):
+            calls.append(options)
+            if len(calls) == 4:
+                arrived.set()
+            await release.wait()
+            return {'results': [], 'total_pages': 2}
+        with patch.object(evidence.tmdb, 'discover_movies', movies), patch.object(evidence.tmdb, 'discover_shows',
+                AsyncMock(side_effect=AssertionError('Finished series pages must not be fetched'))), patch.object(
+                evidence.settings_store, 'get_user_tmdb_key', AsyncMock(return_value='key')):
+            task = asyncio.create_task(evidence.run_batch(self.Session))
+            try:
+                await asyncio.wait_for(arrived.wait(), 3)
+            finally:
+                release.set()
+                count = await task
+            self.assertEqual(count, 4)
+        self.assertEqual([call['page'] for call in calls], [2, 2, 2, 2])
+
+    async def test_expired_parked_studio_refreshes_first_pages_without_renewing_old_works(self):
+        key, _ = await self.queue(774)
+        async with self.Session() as db:
+            row = await db.get(ContributorEvidence, key)
+            row.payload = {'works': [film(id=1)], 'complete': False, 'pages': {'movie': 2, 'series': None}}
+            row.expires_at = evidence.now() - timedelta(seconds=1)
+            await db.commit()
+        movies = AsyncMock(return_value={'results': [film(id=2)], 'total_pages': 2})
+        shows = AsyncMock(return_value={'results': [], 'total_pages': 0})
+        with patch.object(evidence.tmdb, 'discover_movies', movies), patch.object(evidence.tmdb, 'discover_shows', shows), \
+             patch.object(evidence.settings_store, 'get_user_tmdb_key', AsyncMock(return_value='key')):
+            await evidence.run_batch(self.Session)
+        self.assertEqual(movies.await_args.kwargs['page'], 1)
+        self.assertEqual(shows.await_args.kwargs['page'], 1)
+        async with self.Session() as db:
+            row = await db.get(ContributorEvidence, key)
+            self.assertEqual([work['id'] for work in row.payload['works']], [2])
+            self.assertFalse(row.payload['complete'])
+
+    async def test_shared_policy_read_matches_existing_policies_and_is_request_scoped(self):
+        from core.catalog_search import result_filters, browse_preferences
+        from models import GlobalSettings, User
+        from models.profile import UserProfileData
+        from models.users import UserSettings
+        statements = []
+        def record(conn, cursor, statement, parameters, context, many):
+            statements.append(statement)
+        async with self.Session() as db:
+            reader = User(email='policy-reader@example.test', username='policy-reader', api_key='policy-reader-key')
+            db.add(reader); await db.flush()
+            db.add(UserSettings(user_id=reader.id, preferences={'minimum_popularity': 12}))
+            profile = await db.scalar(select(UserProfileData).where(UserProfileData.user_id == self.user_id))
+            profile.minimum_movie_runtime = 99
+            profile.excluded_categories = [16, 99]
+            db.add(UserSettings(user_id=self.user_id, preferences={'minimum_popularity': 65,
+                'discovery_tuning': {'search': {'movie': {'min_votes': 0}}}}))
+            (await db.get(GlobalSettings, 1)).show_anime = False
+            await db.commit()
+            for viewer in (None, SimpleNamespace(id=self.user_id), reader):
+                filters = await result_filters(db, viewer)
+                preferences = await browse_preferences(db, viewer, 'movie', 'search')
+                statements.clear()
+                event.listen(self.engine.sync_engine, 'before_cursor_execute', record)
+                try:
+                    policy = await evidence.verification_policy(db, viewer)
+                finally:
+                    event.remove(self.engine.sync_engine, 'before_cursor_execute', record)
+                self.assertEqual(len(statements), 1)
+                self.assertEqual(policy, {'filters': filters,
+                    'studio_filters': {**filters, 'min_popularity': preferences['min_popularity']}, 'show_anime': False})
+            profile.minimum_movie_runtime = 10
+            (await db.get(GlobalSettings, 1)).show_anime = True
+            await db.commit()
+            changed = await evidence.verification_policy(db, SimpleNamespace(id=self.user_id))
+            self.assertEqual(changed['filters']['min_runtime'], 10)
+            self.assertTrue(changed['show_anime'])
+
+    async def test_concurrent_viewers_keep_distinct_eligibility_with_shared_evidence(self):
+        from core import contributor_search as search
+        from models import User
+        from models.profile import UserProfileData
+        key, config = evidence.evidence_key('person', 889, FILTERS, True)
+        async with self.Session() as db:
+            other = User(email='strict-reader@example.test', username='strict-reader', api_key='strict-reader-key')
+            db.add(other); await db.flush()
+            db.add(UserProfileData(user_id=other.id, minimum_movie_runtime=200))
+            db.add(ContributorEvidence(kind=key[0], native_id=key[1], variant=key[2], config=config,
+                payload={'cast': [film(runtime=90)], 'crew': [], 'complete': True},
+                expires_at=evidence.now() + timedelta(days=1)))
+            await db.commit()
+        async def read(viewer):
+            async with self.Session() as db:
+                policy = await evidence.verification_policy(db, viewer)
+                groups = {'actor': [{'key': 'tmdb:889', '_native': 889}], 'staff': [], 'studio': []}
+                await search.verified_people(db, viewer, groups, None, {}, policy=policy)
+                return groups['actor']
+        for _ in range(2):
+            ordinary, strict = await asyncio.gather(read(SimpleNamespace(id=self.user_id)), read(other))
+            self.assertEqual(len(ordinary), 1)
+            self.assertEqual(strict, [])
+
+    async def test_role_projection_preserves_stored_credits_and_other_policy_reads(self):
+        evidence._summary_cache._store.clear()
+        requests, jobs = {}, {}
+        payload = {'cast': [film(runtime=90), film(id=2, runtime=90)], 'crew': [film(job='Director', runtime=90)],
+            'complete': True, 'person_identity': {'name': 'Preserved'},
+            'domain_availability': {'actor': {'movie': 'available'}}}
+        async with self.Session() as db:
+            for native, sections in ((881, ('actor',)), (882, ('staff',)), (883, ('actor', 'staff'))):
+                key, config = evidence.evidence_key('person', native, FILTERS, True)
+                jobs[key] = config
+                requests[key] = [(section, FILTERS, True, True) for section in sections]
+                db.add(ContributorEvidence(kind=key[0], native_id=key[1], variant=key[2], config=config,
+                    payload=payload, expires_at=evidence.now() + timedelta(days=1)))
+            await db.commit()
+        async with self.Session() as db:
+            views, _ = await evidence.cached_evidence(db, jobs, self.user_id, summaries=requests)
+            for key, requested in requests.items():
+                view = views[key]
+                self.assertEqual('cast' in view, any(r[0] == 'actor' for r in requested))
+                self.assertEqual('crew' in view, any(r[0] == 'staff' for r in requested))
+                self.assertNotIn('person_identity', view)
+                for section, filters, anime, existence in requested:
+                    self.assertEqual(evidence.work_summary(view, section, filters, anime,
+                        existence_only=existence)['works'], 1)
+            stored = list(await db.scalars(select(ContributorEvidence)))
+            self.assertTrue(all(row.payload == payload for row in stored))
+        # Different roles and stricter policies must read their own projection,
+        # rather than treating the first viewer's positive as shared eligibility.
+        key = next(iter(jobs))
+        async with self.Session() as db:
+            stricter = {**FILTERS, 'min_runtime': 1000}
+            views, _ = await evidence.cached_evidence(db, {key: jobs[key]}, self.user_id,
+                summaries={key: [('staff', stricter, True, True)]})
+            self.assertIn('crew', views[key])
+            self.assertEqual(evidence.work_summary(views[key], 'staff', stricter, True, existence_only=True)['works'], 0)
+            full, _ = await evidence.cached_evidence(db, {key: jobs[key]}, self.user_id, enqueue=False)
+            self.assertEqual({k: v for k, v in full[key].items() if not k.startswith('_')}, payload)
+
+    async def test_expired_positive_search_evidence_refreshes_without_loading_or_priority(self):
+        from core import contributor_search as search,search_demand
+        from models.search_demand import SearchDemand
+        key,config=evidence.evidence_key('person',887,FILTERS,True)
+        async with self.Session() as db:
+            db.add(ContributorEvidence(kind=key[0],native_id=key[1],variant=key[2],config=config,
+                payload={'cast':[film(runtime=90)],'crew':[],'complete':True},
+                expires_at=evidence.now()-timedelta(days=1)))
+            await db.commit()
+            demand=await search_demand.begin(db,self.user_id,'established-search',1,'performer','movies_series')
+        def groups(native=887):
+            return {'actor':[{'key':f'tmdb:{native}','name':'Performer','_native':native}], 'staff':[],'studio':[]}
+        async with self.Session() as db:
+            with patch.object(search,'result_filters',AsyncMock(return_value=FILTERS)),search_demand.context(demand):
+                ready=groups();sections={}
+                pending=await search.verified_people(db,SimpleNamespace(id=self.user_id),ready,'key',sections)
+            self.assertFalse(pending)
+            self.assertFalse(sections['actor'])
+            self.assertEqual(len(ready['actor']),1)
+            row=await db.scalar(select(ContributorEvidence).where(ContributorEvidence.native_id==887))
+            self.assertIsNotNone(row.next_attempt_at)
+            subscription=await db.get(SearchDemand,demand[0])
+            self.assertNotIn(evidence.demand_scope(*key),subscription.targets)
+        async with self.Session() as db:
+            with patch.object(search,'result_filters',AsyncMock(return_value={**FILTERS,'min_runtime':200})),search_demand.context(demand):
+                filtered=groups();sections={}
+                pending=await search.verified_people(db,SimpleNamespace(id=self.user_id),filtered,'key',sections)
+            self.assertTrue(pending)
+            self.assertTrue(sections['actor'])
+            self.assertFalse(filtered['actor'])
+            subscription=await db.get(SearchDemand,demand[0])
+            self.assertIn(evidence.demand_scope(*key),subscription.targets)
+
+    async def test_last_queue_slot_prefers_unknown_over_established_refresh(self):
+        from core import contributor_search as search
+        key,config=evidence.evidence_key('person',887,FILTERS,True)
+        async with self.Session() as db:
+            db.add(ContributorEvidence(kind=key[0],native_id=key[1],variant=key[2],config=config,
+                payload={'cast':[film(runtime=90)],'crew':[],'complete':True},
+                expires_at=evidence.now()-timedelta(days=1)))
+            await db.commit()
+        groups={'actor':[{'key':f'tmdb:{native}','name':'Performer','_native':native}
+            for native in (887,888)],'staff':[],'studio':[]}
+        async with self.Session() as db:
+            with patch.object(search,'result_filters',AsyncMock(return_value=FILTERS)),patch.object(evidence,'MAX_PENDING',1):
+                self.assertTrue(await search.verified_people(db,SimpleNamespace(id=self.user_id),groups,'key',{}))
+            self.assertEqual([row['key'] for row in groups['actor']],['tmdb:887'])
+            queued=list(await db.scalars(select(ContributorEvidence.native_id).where(
+                ContributorEvidence.next_attempt_at.is_not(None))))
+            self.assertEqual(queued,[888])
+
     async def asyncSetUp(self):
         await fixture.StatisticsDatabaseTests.asyncSetUp(self)
 

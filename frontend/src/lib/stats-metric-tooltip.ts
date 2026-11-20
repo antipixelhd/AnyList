@@ -13,7 +13,7 @@ export function metricTooltipData(key: string, row: MetricGroup) {
   ]};
 }
 
-export function createMetricTooltip(canvas: HTMLCanvasElement, key: string, signal: AbortSignal) {
+export function createMetricTooltip(canvas: HTMLCanvasElement, key: string, signal: AbortSignal,describe:typeof metricTooltipData=metricTooltipData) {
   const scroller = canvas.closest<HTMLElement>('.overview-chart-scroll')!;
   const plot = scroller.parentElement!;
   const lifetime = new AbortController();
@@ -46,7 +46,7 @@ export function createMetricTooltip(canvas: HTMLCanvasElement, key: string, sign
     const entering = tooltip.hidden || index < 0;
     visibilityVersion++;
     if (next !== index || tooltip.hidden) {
-      const data = metricTooltipData(key, rows[next]); heading.textContent = data.title;
+      const data = describe(key, rows[next]); heading.textContent = data.title;
       values.replaceChildren(...data.values.map(value => {
         const pair = document.createElement('div'), label = document.createElement('dt'), number = document.createElement('dd');
         pair.classList.toggle('is-active', value.metric === metric);

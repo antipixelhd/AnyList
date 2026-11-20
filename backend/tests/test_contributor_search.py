@@ -23,21 +23,31 @@ class ContributorSearchTests(unittest.IsolatedAsyncioTestCase):
         search._candidate_cache._store.clear()
         self.db = SimpleNamespace(execute=AsyncMock(), scalar=AsyncMock(), commit=AsyncMock())
         self.db.execute.return_value = SimpleNamespace(all=lambda: [])
-        self.viewer = SimpleNamespace(id=7)
+        self.viewer = SimpleNamespace(id=7, games_access=True)
+        discovery = patch.object(search, 'discover_companies', AsyncMock(
+            return_value={'ids': [], 'pending': False, 'partial': False}))
+        discovery.start(); self.addCleanup(discovery.stop)
+        people_discovery = patch.object(search, 'discover_people', AsyncMock(
+            return_value={'ids': [], 'pending': False, 'partial': False}))
+        people_discovery.start(); self.addCleanup(people_discovery.stop)
         self.local = patch.object(search, 'local_matches', AsyncMock(return_value=empty()))
         self.local_mock = self.local.start()
         self.keys = patch.object(search.settings_store, 'get_user_tmdb_key', AsyncMock(return_value='fixture-key'))
         self.keys.start()
+        policy = patch.object(search, 'verification_policy', AsyncMock(return_value={}))
+        policy.start(); self.addCleanup(policy.stop)
         self.people = patch.object(search.tmdb, 'search_people', AsyncMock(return_value={'results': []}))
         self.people_mock = self.people.start()
         self.companies = patch.object(search.tmdb, 'search_company', AsyncMock(return_value={'results': []}))
         self.company_mock = self.companies.start()
         self.addCleanup(self.local.stop); self.addCleanup(self.keys.stop)
+        games = patch.object(search, 'game_matches', AsyncMock(return_value=empty()))
+        self.games_mock = games.start(); self.addCleanup(games.stop)
         self.addCleanup(self.people.stop); self.addCleanup(self.companies.stop)
         status = patch.object(search, 'known_principal_status', AsyncMock(return_value={}))
         self.principal_status = status.start()
         self.addCleanup(status.stop)
-        verified = patch.object(search, 'verified_studios', AsyncMock(side_effect=lambda db, viewer, rows, key: (rows, False)))
+        verified = patch.object(search, 'verified_studios', AsyncMock(side_effect=lambda db, viewer, rows, key, **options: (rows, False)))
         verified.start()
         self.addCleanup(verified.stop)
         people_verified=patch.object(search,'verified_people',AsyncMock(return_value=False))
@@ -50,6 +60,14 @@ class ContributorSearchTests(unittest.IsolatedAsyncioTestCase):
         self.company_mock.assert_awaited_once()
         self.local_mock.assert_awaited_once()
         self.assertEqual(search.verified_studios.await_count,2)
+
+    async def test_verified_empty_games_never_remove_a_screen_only_performer(self):
+        row={'key':'catalogue:42','name':'TV performer','url':'/actors/catalogue:42',
+             'roles':['Actor'],'_works':1,'_native':None}
+        self.local_mock.return_value={**empty(),'actor':[row]}
+        result=await search.search_contributors(self.db,self.viewer,'TV performer','people')
+        self.assertEqual([item['name'] for item in result['results']['actor']],['TV performer'])
+        self.assertFalse(result['verification_pending'])
 
     async def test_remote_people_and_studios_link_to_details_and_respect_sections(self):
         self.people_mock.return_value = {'results': [
@@ -137,6 +155,66 @@ class ContributorSearchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(data['results']['actor']), 8)
         self.people_mock.assert_not_called(); self.company_mock.assert_not_called()
 
+    async def test_game_only_query_never_fans_out_to_movie_providers_or_verification(self):
+        self.games_mock.return_value={**empty(),'actor':[{'key':'catalogue:5','name':'Game actor',
+            'roles':['Voice actor'],'url':'/actors/catalogue:5?media_type=game','_works':2}]}
+        data=await search.search_contributors(self.db,self.viewer,'Game actor','actor','game')
+        self.assertEqual(data['results']['actor'][0]['url'],'/actors/catalogue:5?media_type=game')
+        search.settings_store.get_user_tmdb_key.assert_not_awaited()
+        self.people_mock.assert_not_awaited();search.verified_people.assert_not_awaited()
+        self.assertEqual(data['game_coverage'],'saved_credits')
+
+    async def test_fresh_game_matches_are_not_hidden_by_cached_movie_candidates(self):
+        self.games_mock.side_effect=[empty(),{**empty(),'actor':[{'key':'catalogue:5','name':'New actor',
+            'roles':['Voice actor'],'url':'/actors/catalogue:5?media_type=game','_works':1}]}]
+        first=await search.search_contributors(self.db,self.viewer,'New actor','actor')
+        second=await search.search_contributors(self.db,self.viewer,'New actor','actor')
+        self.assertFalse(first['results']['actor'])
+        self.assertEqual(second['results']['actor'][0]['key'],'catalogue:5')
+        movie_only=await search.search_contributors(self.db,self.viewer,'New actor','actor','movies_series')
+        self.assertFalse(movie_only['results']['actor'])
+        self.people_mock.assert_awaited_once();self.local_mock.assert_awaited_once()
+        self.assertEqual(self.games_mock.await_count,2)
+
+    async def test_policy_rechecks_do_not_mutate_the_cached_shortlist(self):
+        self.local_mock.return_value={**empty(),'actor':[{'key':'catalogue:5','name':'Saved actor','roles':['Actor']}]}
+        attempts=0
+        async def verify(db,viewer,groups,key,section_pending=None,**options):
+            nonlocal attempts
+            attempts+=1
+            if attempts==1:groups['actor']=[]
+            return False
+        search.verified_people.side_effect=verify
+        first=await search.search_contributors(self.db,self.viewer,'Saved actor','actor','movies_series')
+        second=await search.search_contributors(self.db,self.viewer,'Saved actor','actor','movies_series')
+        self.assertFalse(first['results']['actor'])
+        self.assertEqual(second['results']['actor'][0]['key'],'catalogue:5')
+        self.local_mock.assert_awaited_once()
+
+    async def test_canonical_game_merge_preserves_namesakes_and_fresh_shared_fields(self):
+        self.local_mock.return_value={**empty(),'actor':[{'key':'catalogue:5','name':'Old name','roles':['Actor'],'image':'old.jpg','_works':1}]}
+        self.games_mock.return_value={**empty(),'actor':[
+            {'key':'catalogue:5','name':'Shared name','image':None,'roles':['Voice actor'],'url':'/actors/catalogue:5?media_type=game','_works':2},
+            {'key':'catalogue:6','name':'Shared name','image':None,'roles':['Voice actor'],'url':'/actors/catalogue:6?media_type=game','_works':1}]}
+        data=await search.search_contributors(self.db,self.viewer,'Shared name','actor')
+        self.assertEqual([row['key'] for row in data['results']['actor']],['catalogue:5','catalogue:6'])
+        self.assertEqual(data['results']['actor'][0]['name'],'Shared name')
+        self.assertIsNone(data['results']['actor'][0]['image'])
+
+    async def test_combined_search_publishes_saved_matches_while_game_discovery_is_pending(self):
+        self.local_mock.return_value={**empty(),'actor':[{'key':'catalogue:5','name':'Saved actor','roles':['Actor']}]}
+        search.discover_people.return_value={'ids':[], 'pending':True, 'partial':False, 'retry_after':2}
+        first=await search.search_contributors(self.db,self.viewer,'Saved actor','actor')
+        self.assertEqual([row['key'] for row in first['results']['actor']],['catalogue:5'])
+        self.assertTrue(first['verification_pending'])
+        self.assertFalse(first['partial'])
+        search.discover_people.assert_awaited_once_with(self.db,'Saved actor','actor',progressive=True)
+        search.discover_companies.assert_awaited_once_with(self.db,'Saved actor','actor',progressive=True)
+        search.discover_people.return_value={'ids':[], 'pending':False, 'partial':False}
+        second=await search.search_contributors(self.db,self.viewer,'Saved actor','actor')
+        self.assertFalse(second['verification_pending'])
+        self.assertEqual(second['results'],first['results'])
+
     async def test_endpoint_is_authenticated_validated_and_trims_queries(self):
         app = FastAPI(); app.include_router(router, prefix='/tracking')
         async def database(): yield self.db
@@ -144,13 +222,24 @@ class ContributorSearchTests(unittest.IsolatedAsyncioTestCase):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as client:
             self.assertEqual((await client.get('/tracking/quick-search/contributors?q=Name')).status_code, 401)
             app.dependency_overrides[get_current_user] = lambda: self.viewer
-            for query in ('kind=unknown&q=Name', 'q=' + 'x' * 101):
+            for query in ('kind=unknown&q=Name', 'q=' + 'x' * 101, 'work_domain=unknown&q=Name'):
                 self.assertEqual((await client.get('/tracking/quick-search/contributors?' + query)).status_code, 422)
             response = await client.get('/tracking/quick-search/contributors?q=x')
             self.assertEqual(response.json()['results'], empty())
             self.local_mock.assert_not_called()
             await client.get('/tracking/quick-search/contributors?q=%20Name%20&kind=staff')
             self.local_mock.assert_awaited_once_with(self.db, 'Name', 'staff')
+
+    async def test_revocation_excludes_games_from_a_warm_shared_search(self):
+        self.games_mock.return_value={**empty(),'actor':[{'key':'catalogue:5','name':'Restricted actor',
+            'roles':['Voice actor'],'url':'/actors/catalogue:5?media_type=game','_works':1}]}
+        first=await search.search_contributors(self.db,self.viewer,'Restricted actor','actor')
+        self.assertEqual(len(first['results']['actor']),1)
+        self.viewer.games_access=False
+        second=await search.search_contributors(self.db,self.viewer,'Restricted actor','actor')
+        self.assertFalse(second['results']['actor'])
+        self.assertNotIn('game_coverage',second)
+        self.assertEqual(self.games_mock.await_count,1)
 
 
 class CreditClassificationTests(unittest.TestCase):

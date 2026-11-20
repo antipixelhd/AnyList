@@ -3,7 +3,7 @@ import test from 'node:test';
 import {readFileSync} from 'node:fs';
 import {stripTypeScriptTypes} from 'node:module';
 import vm from 'node:vm';
-import {timelineGroups} from '../src/lib/browse-timeline-data.ts';
+import {compareGamePeriods,compareTimelineYears,timelineGroups} from '../src/lib/browse-timeline-data.ts';
 
 class Element {
   children=[]; dataset={}; className=''; parent=null;
@@ -13,6 +13,10 @@ class Element {
       assert.equal(child.parent,null,'pagination must never move an attached node');
       child.parent=this;this.children.push(child);
     }
+  }
+  insertBefore(child,following){
+    assert.equal(child.parent,null,'pagination must never move an attached node');
+    child.parent=this;this.children.splice(this.children.indexOf(following),0,child);
   }
   contains(node){return this===node||this.children.some(child=>child.contains(node));}
   querySelectorAll(selector){
@@ -51,4 +55,25 @@ test('chronological pagination appends across month/year boundaries without movi
     context.appendBrowseTimeline(root,cards,items,ascending); // Repeat-safe attachment.
     assert.equal(root.querySelectorAll('[data-browse-card]').length,5);
   }
+});
+
+test('later game pages can insert months ahead of a quarter without replacing its cards',()=>{
+  const source=readFileSync(new URL('../src/lib/browse-timeline.ts',import.meta.url),'utf8')
+    .replace(/^import .*;\r?\n/gm,'').replace('export function','function');
+  const context=vm.createContext({compareGamePeriods,compareTimelineYears,timelineGroups,setLocalDateTime(){},
+    document:{createElement:()=>new Element()}});
+  vm.runInContext(stripTypeScriptTypes(source),context);
+  const root=new Element(), quarter=new Element(), year=new Element(), march=new Element();
+  const items=new Map([
+    [quarter,{title:'Quarter',release_date:'2027',release_date_precision:'quarter',release_quarter:1}],
+    [year,{title:'Year only',release_date:'2027'}],
+    [march,{title:'March',release_date:'2027-03-12'}],
+  ]);
+  context.appendBrowseTimeline(root,[quarter,year],items,true,true);
+  const originalHeading=root.querySelector('[data-timeline-month]');
+  context.appendBrowseTimeline(root,[march],items,true,true);
+  const periods=root.querySelectorAll('[data-timeline-month]');
+  assert.deepEqual(periods.map(period=>period.dataset.timelineMonth),['2027-03','2027-Q1','2027-00']);
+  assert.equal(periods[1],originalHeading);
+  assert.ok(originalHeading.contains(quarter));
 });

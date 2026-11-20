@@ -128,7 +128,7 @@ class ChronologicalTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(discovery.audience_relevant({'popularity': 27, 'original_language': 'de', 'origin_country': ['DE']}, 'DE'))
 
     async def test_upcoming_returns_sorted_before_paging_and_reuses_snapshot(self):
-        async def provider(url, *, headers, params):
+        async def provider(url, *, headers, params, cache_ttl=None):
             if '/discover/' in url:
                 self.assertTrue('first_air_date.gte' in params or 'air_date.gte' in params)
                 self.assertEqual(params['sort_by'], 'popularity.desc')
@@ -155,7 +155,7 @@ class ChronologicalTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(data['has_more'])
 
     async def test_show_all_cannot_displace_curated_candidates_at_provider_budget_boundary(self):
-        async def provider(url, *, headers, params):
+        async def provider(url, *, headers, params, cache_ttl=None):
             if '/discover/' in url:
                 self.assertNotIn('without_genres', params)
                 self.assertNotIn('vote_count.gte', params)
@@ -179,7 +179,7 @@ class ChronologicalTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_unfiltered_preserves_explicit_genre_provider_and_country_cinema(self):
         filters = {**self.filters, 'min_popularity': 0, 'audience_curation': False, 'genres': [18], 'provider': 8, 'cinema': True, 'cinema_country': 'DE'}
-        async def provider(url, *, headers, params):
+        async def provider(url, *, headers, params, cache_ttl=None):
             if '/discover/' in url:
                 self.assertEqual(params['with_genres'], '18')
                 self.assertEqual(params['with_watch_providers'], 8)
@@ -195,7 +195,7 @@ class ChronologicalTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_shared_selection_survives_one_cancel_but_cancels_orphaned_work(self):
         entered=asyncio.Event(); finish=asyncio.Event(); cancelled=asyncio.Event()
-        async def selection(*args):
+        async def selection(*args, **kwargs):
             entered.set()
             try:
                 await finish.wait()
@@ -221,7 +221,7 @@ class ChronologicalTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_selection_capacity_is_bounded_without_hidden_extra_work(self):
         entered=asyncio.Event();release=asyncio.Event()
-        async def selection(*args):
+        async def selection(*args, **kwargs):
             entered.set();await release.wait();return {'rows':[],'partial':False}
         with patch.object(discovery,'MAX_SELECTIONS',1),patch.object(discovery,'_selection',side_effect=selection) as build:
             first=asyncio.create_task(discovery.page('series','fixture',self.filters))

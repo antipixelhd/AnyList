@@ -8,7 +8,10 @@ User=@USER@
 Group=@USER@
 WorkingDirectory=/srv/anylist-preview/@BRANCH@/checkout/frontend
 EnvironmentFile=/etc/anylist-preview/@BRANCH@.env
-ExecStart=/usr/bin/node node_modules/astro/bin/astro.mjs dev --host 127.0.0.1 --port @FRONTEND_PORT@
+Environment=NODE_ENV=@NODE_ENV@
+Environment=HOST=127.0.0.1
+Environment=PORT=@FRONTEND_PORT@
+ExecStart=@FRONTEND_COMMAND@
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true

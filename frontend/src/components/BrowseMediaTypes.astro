@@ -1,0 +1,5 @@
+---
+const {active,movieHref='/browse?type=movie',seriesHref='/browse?type=series',gameHref='/browse/games',showMovies=true,showGames=true}=Astro.props;
+const links=[...(showMovies||active==='movie'||active==='series'?[['movie','Movies',movieHref],['series','Series',seriesHref]]:[]),...(showGames||active==='game'?[['game','Games',gameHref]]:[])];
+---
+<nav aria-label="Media type" class="browse-types">{links.map(([type,label,href])=><a {href} data-browse-type={type} aria-current={active===type?'page':undefined}>{label}</a>)}</nav>

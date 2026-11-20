@@ -49,8 +49,12 @@ def _rebuild(row):
 
 
 async def record_streaming_activity(db, user_id, media_id, events, *, score=None, previous_score=None):
+    from core.season_activity import activity_season_number, season_activity_parts
+
     rows = list((await db.execute(select(TrackingActivity).where(
         TrackingActivity.user_id == user_id, TrackingActivity.media_id == media_id,
+        TrackingActivity.payload['season_completion_id'].as_integer().is_(None),
+        TrackingActivity.payload['episode_order'].as_string().is_(None),
     ).order_by(TrackingActivity.created_at, TrackingActivity.id))).scalars().all())
     touched = []
     for event in events:
@@ -66,7 +70,26 @@ async def record_streaming_activity(db, user_id, media_id, events, *, score=None
             existing.payload = details
             _rebuild(existing)
         now = datetime.fromisoformat(event['date'])
-        row = next((r for r in reversed(rows) if activity_window_start(r) <= now < activity_window_start(r) + timedelta(hours=24)), None)
+        position = activity_season_number(event.get('position') or event.get('start_position'))
+        finished = event.get('finished_seasons') or []
+        number = (position[0] if position else event.get('season_number') or
+                  (finished[0] if len(finished) == 1 else None))
+        scope = f'tmdb:aired:{number}' if number else None
+        def compatible(candidate):
+            start = activity_window_start(candidate)
+            if not start <= now < start + timedelta(hours=24):
+                return False
+            payload = candidate.payload or {}
+            existing_scope = payload.get('progress_scope')
+            if existing_scope:
+                return existing_scope == scope or (scope is None and not payload.get('watch_batch')
+                                                    and not event.get('episodes_watched'))
+            if scope is None:
+                return True
+            legacy = {part_scope for _, _, part_scope in season_activity_parts(candidate, payload)}
+            return legacy == {f'watch:{number}'} or legacy == {None} and not payload.get('episodes_watched')
+
+        row = next((r for r in reversed(rows) if compatible(r)), None)
         if row is None:
             row = TrackingActivity(user_id=user_id, media_id=media_id, status=event['status'], created_at=now,
                                    payload={'window_started_at': now.isoformat(), 'streaming_base': {}})
@@ -78,6 +101,9 @@ async def record_streaming_activity(db, user_id, media_id, events, *, score=None
             details['streaming_base_at'] = row.created_at.isoformat()
             details['streaming_base_status'] = row.status
             details['window_started_at'] = activity_window_start(row).isoformat()
+        if scope:
+            details['streaming_base'] = {**details['streaming_base'], 'progress_scope': scope,
+                                         'progress_season': number, 'progress_order': 'tmdb:aired'}
         details['streaming_events'] = {**details.get('streaming_events', {}), event['key']: event}
         row.payload = details
         _rebuild(row)
@@ -97,6 +123,8 @@ async def reschedule_date_activity(db, user_id, media_id, *, start_date, finish_
     """Move date actions and their attached rating, preserving unrelated history."""
     rows = list((await db.execute(select(TrackingActivity).where(
         TrackingActivity.user_id == user_id, TrackingActivity.media_id == media_id,
+        TrackingActivity.payload['season_completion_id'].as_integer().is_(None),
+        TrackingActivity.payload['episode_order'].as_string().is_(None),
     ).order_by(TrackingActivity.created_at.desc(), TrackingActivity.id.desc()))).scalars().all())
     moved = []
     ratings = []

@@ -1,0 +1,207 @@
+{
+  "date": "2026-11-10",
+  "codeRevision": "46a77c09",
+  "environment": "Authenticated beta (Astro dev preview), isolated local Chrome 157, live IGDB CDN; desktop browser CPU/network emulation is not physical-device or production percentile data",
+  "method": "HTTP cache cleared before cold route visits; normal caching retained for warm visits. CPU/network emulation applied after the page settled to isolate viewer work from a full-document Chromium throttling stall. Immediate cases navigate as soon as the open click returns, then ten ArrowRight commands with nominal 100 ms pauses, then traverse every slide after loading. Jump case clicks Artwork 36 and Artwork 2 before rapid traversal. No builds or test suites ran alongside these samples.",
+  "samples": [
+    {
+      "case": "complete-85112-mobile-4x-4Mbps-cold-valid",
+      "gridImages": 36,
+      "gridSourcesBeforeOpening": 2,
+      "retainedImages": 36,
+      "fullSizeRequests": 36,
+      "fullSizeTransferBytes": 5232039,
+      "openAndNavigationImageTransferBytes": 5999750,
+      "initialFullImageReadyMs": 1682,
+      "galleryReadyMs": 12513,
+      "firstSwitchMs": 14798,
+      "navigationPlaceholderStates": 0,
+      "previewStatesDuringNavigation": 0,
+      "maxKeyboardInteractionMs": 72,
+      "maxFrameIntervalAfterOpeningMs": 107,
+      "longTasksAfterOpeningMs": [
+        100,
+        64
+      ],
+      "networkFailures": 0,
+      "decodedPixelBytesEstimate": 234709920
+    },
+    {
+      "case": "complete-85112-mobile-4x-4Mbps-warm-valid",
+      "gridImages": 36,
+      "gridSourcesBeforeOpening": 5,
+      "retainedImages": 36,
+      "fullSizeRequests": 36,
+      "fullSizeTransferBytes": 0,
+      "openAndNavigationImageTransferBytes": 0,
+      "initialFullImageReadyMs": 8,
+      "galleryReadyMs": 8,
+      "firstSwitchMs": 2075,
+      "navigationPlaceholderStates": 0,
+      "previewStatesDuringNavigation": 0,
+      "maxKeyboardInteractionMs": 96,
+      "maxFrameIntervalAfterOpeningMs": 214,
+      "longTasksAfterOpeningMs": [
+        180,
+        61
+      ],
+      "networkFailures": 0,
+      "decodedPixelBytesEstimate": 234709920
+    },
+    {
+      "case": "complete-immediate-84903-desktop-cold",
+      "gridImages": 32,
+      "gridSourcesBeforeOpening": 4,
+      "retainedImages": 32,
+      "fullSizeRequests": 32,
+      "fullSizeTransferBytes": 3938017,
+      "openAndNavigationImageTransferBytes": 4206598,
+      "initialFullImageReadyMs": 58,
+      "galleryReadyMs": 405,
+      "firstSwitchMs": 27,
+      "navigationPlaceholderStates": 0,
+      "previewStatesDuringNavigation": 2,
+      "maxKeyboardInteractionMs": 80,
+      "maxFrameIntervalAfterOpeningMs": 36,
+      "longTasksAfterOpeningMs": [],
+      "networkFailures": 0,
+      "decodedPixelBytesEstimate": 155861280
+    },
+    {
+      "case": "complete-immediate-84903-desktop-warm",
+      "gridImages": 32,
+      "gridSourcesBeforeOpening": 4,
+      "retainedImages": 32,
+      "fullSizeRequests": 32,
+      "fullSizeTransferBytes": 0,
+      "openAndNavigationImageTransferBytes": 0,
+      "initialFullImageReadyMs": 15,
+      "galleryReadyMs": 15,
+      "firstSwitchMs": 46,
+      "navigationPlaceholderStates": 0,
+      "previewStatesDuringNavigation": 0,
+      "maxKeyboardInteractionMs": 72,
+      "maxFrameIntervalAfterOpeningMs": 19,
+      "longTasksAfterOpeningMs": [],
+      "networkFailures": 0,
+      "decodedPixelBytesEstimate": 155861280
+    },
+    {
+      "case": "complete-immediate-85112-mobile-4x-100Mbps-cold",
+      "gridImages": 36,
+      "gridSourcesBeforeOpening": 2,
+      "retainedImages": 36,
+      "fullSizeRequests": 36,
+      "fullSizeTransferBytes": 5232048,
+      "openAndNavigationImageTransferBytes": 5517193,
+      "initialFullImageReadyMs": 230,
+      "galleryReadyMs": 1057,
+      "firstSwitchMs": 156,
+      "navigationPlaceholderStates": 0,
+      "previewStatesDuringNavigation": 4,
+      "maxKeyboardInteractionMs": 192,
+      "maxFrameIntervalAfterOpeningMs": 216,
+      "longTasksAfterOpeningMs": [
+        120,
+        56,
+        107,
+        58
+      ],
+      "networkFailures": 0,
+      "decodedPixelBytesEstimate": 234709920
+    },
+    {
+      "case": "complete-immediate-85112-mobile-4x-100Mbps-warm",
+      "gridImages": 36,
+      "gridSourcesBeforeOpening": 2,
+      "retainedImages": 36,
+      "fullSizeRequests": 36,
+      "fullSizeTransferBytes": 0,
+      "openAndNavigationImageTransferBytes": 0,
+      "initialFullImageReadyMs": 8,
+      "galleryReadyMs": 8,
+      "firstSwitchMs": 243,
+      "navigationPlaceholderStates": 0,
+      "previewStatesDuringNavigation": 0,
+      "maxKeyboardInteractionMs": 72,
+      "maxFrameIntervalAfterOpeningMs": 214,
+      "longTasksAfterOpeningMs": [
+        179,
+        54
+      ],
+      "networkFailures": 0,
+      "decodedPixelBytesEstimate": 234709920
+    },
+    {
+      "case": "complete-jump-immediate-85112-mobile-4x-100Mbps-cold",
+      "gridImages": 36,
+      "gridSourcesBeforeOpening": 2,
+      "retainedImages": 36,
+      "fullSizeRequests": 36,
+      "fullSizeTransferBytes": 5232044,
+      "openAndNavigationImageTransferBytes": 5517188,
+      "initialFullImageReadyMs": 242,
+      "galleryReadyMs": 1009,
+      "firstSwitchMs": 1126,
+      "navigationPlaceholderStates": 0,
+      "previewStatesDuringNavigation": 0,
+      "maxKeyboardInteractionMs": 72,
+      "maxFrameIntervalAfterOpeningMs": 623,
+      "longTasksAfterOpeningMs": [
+        117,
+        72,
+        77,
+        54
+      ],
+      "networkFailures": 0,
+      "decodedPixelBytesEstimate": 234709920
+    },
+    {
+      "case": "complete-repeat-immediate-85112-mobile-4x-100Mbps-cold",
+      "gridImages": 36,
+      "gridSourcesBeforeOpening": 2,
+      "retainedImages": 36,
+      "fullSizeRequests": 36,
+      "fullSizeTransferBytes": 5232041,
+      "openAndNavigationImageTransferBytes": 5517178,
+      "initialFullImageReadyMs": 179,
+      "galleryReadyMs": 1011,
+      "firstSwitchMs": 119,
+      "navigationPlaceholderStates": 0,
+      "previewStatesDuringNavigation": 6,
+      "maxKeyboardInteractionMs": 168,
+      "maxFrameIntervalAfterOpeningMs": 234,
+      "longTasksAfterOpeningMs": [
+        100,
+        54,
+        127,
+        57,
+        50
+      ],
+      "networkFailures": 0,
+      "decodedPixelBytesEstimate": 234709920
+    }
+  ],
+  "validation": {
+    "focusedFrontendTests": 37,
+    "fullFrontendTests": {
+      "total": 941,
+      "passed": 934,
+      "preexistingFailures": 7,
+      "unchangedHeadBaseline": {
+        "total": 929,
+        "passed": 921,
+        "failed": 8,
+        "extraGalleryFixtureFailureCorrected": true
+      }
+    },
+    "typecheck": {
+      "errors": 0,
+      "warnings": 0,
+      "hints": 41
+    },
+    "productionBuild": "passed",
+    "entrySwitches": "Shenmue -> WarioWare -> browser back to Shenmue; selected full images ready; no browser errors",
+    "databaseMigration": "not required"
+  }
+}

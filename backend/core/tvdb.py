@@ -144,7 +144,10 @@ async def _get_token(api_key: str, pin: str | None = None) -> str:
             r.raise_for_status()
             data = r.json()
 
-        token = data["data"]["token"]
+        payload = data.get("data") if isinstance(data, dict) else None
+        token = payload.get("token") if isinstance(payload, dict) else None
+        if not isinstance(token, str) or not token:
+            raise ValueError("Invalid TVDB login response")
         # TVDB tokens last 30 days; cache for 29 days
         expires_at = time.time() + 29 * 86400
         _token_cache[cache_key] = (token, expires_at)
@@ -225,6 +228,15 @@ async def get_series(tvdb_id: int, api_key: str, cache_ttl: float | None = DEFAU
     data = await _get(
         f"/series/{tvdb_id}/extended", api_key, params={"meta": "translations,episodes"}, cache_ttl=cache_ttl,
     )
+    return data.get("data") or {}
+
+
+async def get_series_airtime(tvdb_id: int, api_key: str) -> dict:
+    """Read the extended schedule without asking TVDB for its complete episode list."""
+    path = f"/series/{tvdb_id}/extended"
+    data = _cache.get((path, (("meta", "translations,episodes"),)))
+    if data is None:
+        data = await _get(path, api_key)
     return data.get("data") or {}
 
 

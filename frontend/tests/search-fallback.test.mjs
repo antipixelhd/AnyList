@@ -56,19 +56,37 @@ function fixture(responder) {
 
 test('combined quick search expands both title scopes only after both curated scopes are empty', async () => {
   const f = fixture(({type, broad}) => ({...empty, results: broad ? [type] : []}));
-  assert.deepEqual(await f.run(), {movie: ['movie'], series: ['series'], failed: 0});
+  assert.deepEqual(await f.run(), {movie: ['movie'], series: ['series'], failed: 0, incomplete: false});
   assert.deepEqual(f.calls.map(row => row.broad), [false, false, true, true]);
   assert.equal(f.calls.length, 4, 'people/studio requests are not retried');
 });
 
+test('movie/series opt-out skips the entire fallback batch while Games and shared contributors remain independent',async()=>{
+  const requests=quickSearchRequests('Elden R',undefined,false,true);
+  assert.deepEqual(requests.map(request=>request.kind),['game','contributors','contributors']);
+  const result=await readQuickTitles(requests,new AbortController().signal,async()=>assert.fail('Disabled movie/series provider invoked'));
+  assert.deepEqual(result,{movie:[],series:[],failed:0,incomplete:false});
+});
+
+test('movie/series broadening never requests Games or changes its query or access boundary',async()=>{
+  const requests=quickSearchRequests('Elden R','DE',true,true),calls=[];
+  const game=requests.find(request=>request.kind==='game');
+  await readQuickTitles(requests,new AbortController().signal,async(request,signal,publish)=>{
+    assert.ok(['movie','series'].includes(request.kind));calls.push(request.url);publish(empty);
+  });
+  assert.equal(calls.length,4);
+  assert.equal(game.url,'/api/proxy/tracking/games/search?q=Elden+R');
+  assert.ok(calls.every(url=>new URL(url,'https://anylist.test').searchParams.get('region')==='DE'));
+});
+
 test('one curated hit prevents broadening in combined mode but separate categories expand independently', async () => {
   const f = fixture(({type, broad}) => ({...empty, results: type === 'series' || broad ? [type] : []}));
-  assert.deepEqual(await f.run(), {movie: [], series: ['series'], failed: 0});
+  assert.deepEqual(await f.run(), {movie: [], series: ['series'], failed: 0, incomplete: false});
   assert.equal(f.calls.length, 2);
-  assert.deepEqual(await f.run('Specific title', false), {movie: ['movie'], series: ['series'], failed: 0});
+  assert.deepEqual(await f.run('Specific title', false), {movie: ['movie'], series: ['series'], failed: 0, incomplete: false});
   assert.equal(f.calls.length, 3);
   // Recombining starts with the curated pair, never the expanded movie cache.
-  assert.deepEqual(await f.run(), {movie: [], series: ['series'], failed: 0});
+  assert.deepEqual(await f.run(), {movie: [], series: ['series'], failed: 0, incomplete: false});
 });
 
 test('failed, pending and unscanned curated scopes are never treated as a verified negative', async () => {
@@ -79,7 +97,9 @@ test('failed, pending and unscanned curated scopes are never treated as a verifi
       return {...empty, ...(reason === 'notice' ? {notice: 'Unavailable'} :
         reason === 'pending' ? {verification_pending: true} : {has_more: true})};
     });
-    await f.run();
+    const result = await f.run();
+    assert.equal(result.failed, reason === 'failure' ? 1 : 0);
+    assert.equal(result.incomplete, reason !== 'failure');
     assert.equal(f.calls.length, 2, reason);
   }
 });

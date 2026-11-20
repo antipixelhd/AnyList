@@ -12,3 +12,108 @@
   color: var(--muted);
   margin: 0 5px;
 }
+.tracker .activity-stream .event-footer[hidden],.tracker .activity-stream [data-rating-previous][hidden]{display:none!important}
+.activity-rating{position:relative;width:fit-content}
+.activity-stream .visual-event:has([data-rating-breakdown]){overflow:visible}
+.activity-stream .visual-event:has([data-rating-breakdown]) .event-cover{border-radius:6px 0 0 6px;overflow:hidden}
+.activity-rating .score-pill{padding:0;border:0;font:inherit;cursor:default;outline:none}
+.activity-rating .score-pill:disabled{opacity:1}
+.activity-rating[data-rating-breakdown] .score-pill{cursor:pointer}
+.activity-rating[data-rating-breakdown] .score-pill:focus-visible{color:var(--blue)}
+.season-score-breakdown{
+  position:absolute;
+  inset-inline-end:0;
+  inset-block-end:100%;
+  z-index:5;
+  inline-size:max-content;
+  min-inline-size:17.6rem;
+  max-inline-size:min(34rem,calc(100vw - 3.2rem));
+  max-block-size:min(45dvh,28rem,var(--rating-available-height,100dvh));
+  padding:12px 14px;
+  background:var(--panel);
+  border-radius:8px;
+  box-shadow:0 8px 24px #0005;
+  visibility:hidden;
+  opacity:0;
+  transform:translateY(3px);
+  transition:opacity .14s ease,transform .14s ease,visibility .14s;
+}
+.season-score-breakdown[data-rating-below]{inset-block:100% auto}
+.season-score-rows{
+  --rating-scroll-thumb:color-mix(in srgb,var(--dropdown-scrollbar) 75%,var(--muted));
+  overflow:auto;
+  overscroll-behavior:contain;
+  scrollbar-width:thin;
+  scrollbar-color:var(--rating-scroll-thumb) transparent;
+}
+.season-score-rows:focus-visible{outline:none;background:color-mix(in srgb,var(--panel) 94%,var(--text))}
+.season-score-rows>div{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) max-content;
+  align-items:baseline;
+  gap:1.6rem;
+  font-size:var(--type-meta-size,13px);
+  line-height:1.8;
+}
+.season-score-breakdown>div>span{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.season-score-rows strong{
+  white-space:nowrap;
+  color:var(--bright);
+  font-weight:500;
+  font-variant-numeric:tabular-nums;
+}
+.season-score-rows small{color:var(--muted);font-weight:400;margin-inline-start:3px}
+.season-score-rows strong,.season-score-rows small{overflow-wrap:normal}
+@supports not (scrollbar-color:auto){
+  .season-score-rows{scrollbar-width:auto}
+  .season-score-rows::-webkit-scrollbar{width:8px}
+  .season-score-rows::-webkit-scrollbar-track{background:transparent}
+  .season-score-rows::-webkit-scrollbar-thumb{
+    background:var(--rating-scroll-thumb);
+    background-clip:padding-box;
+    border:2px solid transparent;
+    border-radius:8px;
+  }
+  .season-score-rows::-webkit-scrollbar-button{display:none}
+}
+@media(hover:hover) and (min-width:701px){
+  .activity-rating[data-rating-breakdown]:is(:has([aria-expanded="true"]),[data-rating-hover]:not([data-rating-dismissed]):hover) .season-score-breakdown{
+    visibility:visible;opacity:1;transform:none;
+  }
+}
+.season-rating-dialog{
+  inline-size:min(44.8rem,calc(100% - 3.2rem));
+  max-block-size:min(57.6rem,calc(100dvh - 3.2rem));
+  margin:auto;
+  padding:0;
+  border:0;
+  border-radius:8px;
+  background:var(--panel);
+  color:var(--text);
+  box-shadow:0 12px 36px #0005;
+}
+.season-rating-dialog[open]{display:flex;flex-direction:column}
+.season-rating-dialog:modal{overscroll-behavior:contain}
+.season-rating-dialog::backdrop{background:#0009;overflow:hidden;overscroll-behavior:contain}
+.season-rating-dialog form{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:1rem;
+  padding:6px 8px 0 18px;
+}
+.season-rating-dialog h2{color:var(--bright);font-size:var(--type-panel-size);font-weight:var(--type-panel-weight)}
+.season-rating-dialog button{
+  display:grid;
+  min-inline-size:44px;
+  min-block-size:44px;
+  place-items:center;
+  padding:0;
+  color:var(--muted);
+  cursor:pointer;
+}
+.season-rating-dialog button:is(:hover,:focus-visible){color:var(--bright);outline:none}
+.season-rating-dialog .season-score-rows{min-block-size:0;padding:2px 18px 16px}
+.season-rating-dialog .season-score-rows>div{font-size:var(--type-label-size,14px);padding-block:4px}
+.season-rating-dialog .season-score-rows>div>span{overflow-wrap:anywhere}
+@media(prefers-reduced-motion:reduce){.season-score-breakdown{transition:none}}

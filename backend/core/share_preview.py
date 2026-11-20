@@ -27,15 +27,21 @@ MAX_BYTES = 16 * 1024 * 1024
 def target(path):
     """Accept identities, never arbitrary upstream URLs or viewer query state."""
     path = unquote(path)
-    if match := re.fullmatch(r'/(title)/([1-9][0-9]{0,9})/?', path):
+    if match := re.fullmatch(r'/user/([^/?#]{1,100})/stats/games/?', path):
+        return 'game_statistics', match[1]
+    games = bool(re.fullmatch(r'/(actors|person|studio)/((catalogue|tmdb):)?[1-9][0-9]{0,9}/?\?media_type=game', path))
+    if games:
+        path = path[:-len('?media_type=game')]
+    if match := re.fullmatch(r'/(title|games)/([1-9][0-9]{0,9})/?', path):
         if int(match[2]) <= 2147483647:
             return match[1], match[2]
-    if match := re.fullmatch(r'/user/([^/?#\\]{1,100})(?:/(?:movies|series|list|social|stats|favorites|library))?/?', path):
+    if match := re.fullmatch(r'/user/([^/?#\\]{1,100})(?:/(?:movies|series|games|list|social|stats|favorites|library))?/?', path):
         return 'profile', match[1]
     if match := re.fullmatch(r'/(actors|person|studio)/((?:catalogue|tmdb):[1-9][0-9]{0,9}|[1-9][0-9]{0,9})/?', path):
         key = match[2] if ':' in match[2] else 'tmdb:' + match[2]
         if int(key.split(':')[1]) <= 2147483647:
-            return {'actors':'actor', 'person':'staff', 'studio':'studio'}[match[1]], key
+            kind = {'actors':'actor', 'person':'staff', 'studio':'studio'}[match[1]]
+            return ('game_' + kind if games else kind), key
     raise HTTPException(404, 'Preview not found')
 
 
@@ -52,7 +58,7 @@ def age(birthday, deathday=None):
 
 def media_card(data):
     kind = data['type']
-    metadata = [dict(movie='Movie', series='Series', game='Game', book='Book').get(kind), data.get('year')]
+    metadata = ['Expansion' if kind == 'game' and data.get('game_class') == 'expansion' else dict(movie='Movie', series='Series', game='Game', book='Book').get(kind), data.get('year')]
     if kind == 'movie' and data.get('runtime'):
         minutes = int(data['runtime'])
         metadata.append(f'{minutes // 60}h {minutes % 60}m' if minutes >= 60 else f'{minutes}m')
@@ -71,6 +77,16 @@ def media_card(data):
                 primary=data.get('poster'), background=data.get('backdrop'))
 
 
+def game_preview_artwork(url, *, landscape=False):
+    if not isinstance(url, str):
+        return url
+    parsed = urlsplit(url)
+    if parsed.hostname != 'images.igdb.com' or parsed.scheme != 'https':
+        return url
+    bucket = '1080p' if landscape else 'cover_big_2x'
+    return re.sub(r'/t_[^/]+/', f'/t_{bucket}/', url, count=1)
+
+
 def profile_card(user, overview):
     formats = {row['key']:row['titles'] for row in (overview or {}).get('formats', [])}
     stats = [] if overview is None else [
@@ -78,8 +94,11 @@ def profile_card(user, overview):
         {'value':str(formats.get('series', 0)), 'label':'Series watched'},
         {'value':f"{overview['totals']['watch_days']:.1f}", 'label':'Days watched'},
     ]
+    background=user.profile.background_url if user.profile else None
+    local=bool(getattr(user,'id',None) and background==f'/api/proxy/profile/background/{user.id}')
     return dict(kind='profile', title=user.display_name or user.username, eyebrow=f'@{user.username}', subtitle='',
-                stats=stats, primary=None, background=user.profile.background_url if user.profile else None)
+                stats=stats, primary=None, background=background,
+                **({'background_upload_user_id':user.id} if local else {}))
 
 
 async def card_data(db, path):
@@ -91,6 +110,13 @@ async def card_data(db, path):
     from core.statistics_snapshots import CONTRACT_VERSION
 
     kind, key = target(path)
+    if kind == 'game_statistics':
+        raise HTTPException(403, 'Games access requires approval')
+    game_contributor = kind.startswith('game_')
+    if kind == 'games' or game_contributor or re.fullmatch(r'/user/[^/?#\\]{1,100}/games/?', unquote(path)):
+        raise HTTPException(403, 'Games access requires approval')
+    if game_contributor:
+        kind = kind.removeprefix('game_')
     # This check deliberately runs before every cache lookup, even with a cookie.
     await catalog_access(db, None)
     avatar = None
@@ -119,18 +145,48 @@ async def card_data(db, path):
         from core.media_details import screen_work, work_details
         details = await work_details(db, await screen_work(db, media), extras=False)
         card = media_card({**tracking_projection.media_data(media), **details})
+    elif kind == 'games':
+        from models.catalogue import CatalogueEntity
+        from core.game_types import capabilities
+        from core.media_details import work_details
+        from core.catalogue_normalize import image
+        from core.game_tracking import base_work_id
+        work = await db.get(CatalogueEntity, int(key))
+        if work is None:
+            from core.game_identity_reconciliation import alias_target
+            canonical = await alias_target(db, int(key))
+            if canonical:
+                work = await db.get(CatalogueEntity, canonical)
+        if not work or work.kind != 'game' or not capabilities(work.attributes).searchable:
+            raise HTTPException(404, 'Game not found')
+        attrs = work.attributes or {}
+        details = await work_details(db, work, extras=False)
+        card = media_card({**details, 'type': 'game', 'game_class': attrs.get('game_class'),
+            'title': work.name, 'year': str(attrs.get('release_date') or '')[:4],
+            'poster': game_preview_artwork(image(work.image_url)),
+            'backdrop': game_preview_artwork(next(iter(details.get('artwork') or []), None), landscape=True),
+            'genres': [g if isinstance(g, str) else g['name'] for g in attrs.get('genres') or []
+                       if isinstance(g, str) or isinstance(g, dict) and g.get('name')]})
+        if capabilities(attrs).expansion_page:
+            try:
+                await base_work_id(db, work)
+            except HTTPException:
+                raise HTTPException(404, 'Verified base game not found') from None
     else:
         from core.contributor_details import contributor_page
         async with asyncio.timeout(6):
-            data = await contributor_page(db, None, kind=kind, key=key, source='local', sharing=True)
+            data = await contributor_page(db, None, kind=kind, key=key, source='local', sharing=True,
+                media_type='game' if game_contributor else 'all')
         if not data:
             raise HTTPException(404, 'Contributor not found')
         summary = data['share_summary']
         years = age(data.get('birthday'), data.get('deathday')) if kind != 'studio' else None
         stats = ([{'value':str(years), 'label':'Age at death' if data.get('deathday') else 'Age'}] if years is not None else [])
-        stats += [{'value':str(summary['movies']), 'label':'Movies'}, {'value':str(summary['series']), 'label':'Series'}]
+        stats += ([{'value':str(summary['games']), 'label':'Known games'}] if game_contributor else
+            [{'value':str(summary['movies']), 'label':'Movies'}, {'value':str(summary['series']), 'label':'Series'}])
         card = dict(kind=kind, title=data['name'], eyebrow=' · '.join(data['roles'][:3]) or ('Studio' if kind == 'studio' else 'Actor' if kind == 'actor' else data.get('department') or 'Staff'),
-                    subtitle='', stats=stats, primary=data.get('image'), background=summary['background'])
+                    subtitle='', stats=stats, primary=data.get('image'),
+                    background=game_preview_artwork(summary['background'], landscape=True) if game_contributor else summary['background'])
     return card, avatar
 
 
@@ -186,7 +242,19 @@ async def image_bytes(card, avatar=None):
 
     async def build():
         async with _slots:
-            primary, background = await asyncio.gather(fetch_image(card.get('primary')), fetch_image(card.get('background')))
+            async def background_image():
+                owner=card.get('background_upload_user_id')
+                if card.get('kind')=='profile' and type(owner) is int and owner>0:
+                    # Only profile_card emits this marker after public-profile
+                    # access checks. Generic metadata URLs never read local files.
+                    from core.config import settings
+                    def read():
+                        path=settings.data_dir/'avatars'/f'{owner}.banner.webp'
+                        try:return path.read_bytes() if not path.is_symlink() and path.stat().st_size<=5*1024*1024 else None
+                        except OSError:return None
+                    return await asyncio.to_thread(read)
+                return await fetch_image(card.get('background'))
+            primary, background = await asyncio.gather(fetch_image(card.get('primary')), background_image())
             if avatar:
                 try:
                     primary = await asyncio.to_thread(avatar.read_bytes)

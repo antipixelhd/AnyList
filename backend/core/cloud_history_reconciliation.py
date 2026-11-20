@@ -1,7 +1,7 @@
 """Apply newly imported cloud watch events to existing tracked entries safely."""
 from datetime import date, datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from core.tracking_rules import effective_score
 from core.status_provenance import mark_status_change, status_changed_at
@@ -304,20 +304,32 @@ async def reconcile_cloud_watch_events(
             from core.activity import record_daily_activity, record_progress_activity
             activity_score = effective_score(entry.rating_mode,entry.manual_score,entry.season_scores)
             if media.media_type == MediaType.series:
+                current_ids = watched_ids | {episode.id for episode in inferred_previous}
+                # Only count a provider episode when this import added its first
+                # completed watch. A dated replay cannot recreate old progress.
+                observed_ids = {event_media.id for event, event_media in item['events']
+                                if event.completed and event_media.id in current_ids}
+                if observed_ids:
+                    completed = select(WatchEvent.media_id).where(
+                        WatchEvent.user_id == user_id, WatchEvent.completed.is_(True),
+                        WatchEvent.media_id.in_(observed_ids))
+                    prior = (completed.where(WatchEvent.created_at <= observed_after) if observed_after is not None
+                             else completed.group_by(WatchEvent.media_id).having(func.count() > 1))
+                    observed_ids.difference_update(await db.scalars(prior))
+                added_ids = observed_ids | {episode.id for episode in inferred_previous}
                 await record_progress_activity(db,user_id=user_id,media=media,
                     previous_progress=previous_progress,progress=entry.progress,
                     status=entry.status,score=activity_score,status_changed=changed and not progress_changed,
+                    watched_ids=current_ids, added_episode_ids=added_ids if progress_changed else set(),
                     previous_status=previous_status,
                     first_watching=previous_start_date is None and previous_status != 'watching')
             else:
                 await record_daily_activity(db,user_id=user_id,media_id=root_id,status=entry.status,
                     score=activity_score,status_changed=changed,previous_status=previous_status,
                     first_watching=previous_start_date is None and previous_status != 'watching')
-        if changed and not initial_import:
-            if entry.status == "completed":
-                await queue_sync_completion_rating(
-                    db, user_id=user_id, media=media, entry=entry, source=provider,
-                )
+        if not initial_import and (media.media_type == MediaType.series or changed and entry.status == 'completed'):
+            await queue_sync_completion_rating(db, user_id=user_id, media=media, entry=entry, source=provider,
+                new_episode_ids={event_media.id for _, event_media in item['events']})
         if not initial_import:
             await _add_applied_notification(
                 db,

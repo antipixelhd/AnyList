@@ -1,0 +1,10 @@
+---
+import Icon from './Icon.astro';
+---
+<section class="seasons-section lab-season-panel game-dlc" data-game-dlc>
+  <div class="lab-section-title"><h2>DLC</h2></div>
+  <p class="section-empty" data-game-dlc-status role="status">Loading DLC…</p>
+  <div class="lab-season-cards" data-game-dlc-rows></div>
+  <button type="button" class="lab-text-button" data-game-dlc-more hidden>Show more</button>
+  <template data-game-dlc-arrow><Icon name="chevron-down"/></template>
+</section>

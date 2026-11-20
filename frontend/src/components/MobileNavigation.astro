@@ -2,6 +2,7 @@
 import Icon from './Icon.astro';
 import MobileItem from './MobileNavigationItem.astro';
 import type {MobileNavigationItem, MobileNavigationGroup} from '../lib/mobile-navigation';
+import type {MediaDomains} from '../lib/media-domains';
 import '../styles/mobile-navigation.css';
 interface Props {
   items: MobileNavigationItem[];
@@ -10,12 +11,13 @@ interface Props {
   quiet?: number;
   attention?: number;
   notificationLabel?: string;
+  mediaDomains?:MediaDomains;
 }
-const {items, groups = [], extended = false, quiet = 0, attention = 0, notificationLabel} = Astro.props;
+const {items, groups = [], extended = false, quiet = 0, attention = 0, notificationLabel,mediaDomains} = Astro.props;
 if ((!extended && items.filter(item => !item.hidden).length > 8) || groups.some(group => group.items.length > 7)) throw new Error('Mobile navigation exceeds its 3×3 grid');
 const panelId = extended ? 'dev-navigation-panel' : 'mobile-navigation-panel';
 ---
-<div class:list={['mobile-floating-navigation', {'mobile-navigation-extended': extended}]} data-mobile-navigation data-dev-navigation={extended ? '' : undefined} data-motion-static>
+<div class:list={['mobile-floating-navigation', {'mobile-navigation-extended': extended}]} data-mobile-navigation data-media-domains={mediaDomains?JSON.stringify(mediaDomains):undefined} data-dev-navigation={extended ? '' : undefined} data-motion-static>
   <button class:list={['mobile-navigation-trigger', {'dev-navigation-trigger': extended}]} type="button" popovertarget={panelId} aria-controls={panelId} aria-expanded="false" aria-label="Open navigation">
     <span class="mobile-menu-lines" aria-hidden="true"><span></span><span></span><span></span></span>
     <span class="mobile-navigation-indicator" data-mobile-notification-indicator data-needs-attention={String(attention > 0)} hidden={quiet + attention === 0} aria-hidden="true"></span>
@@ -38,6 +40,7 @@ const panelId = extended ? 'dev-navigation-panel' : 'mobile-navigation-panel';
   </div>
 </div>
 <script>
+  import {mediaDomains,type MediaDomains} from '../lib/media-domains';
   let listeners: AbortController | undefined;
   function initializeNavigation() {
     listeners?.abort();
@@ -78,12 +81,22 @@ const panelId = extended ? 'dev-navigation-panel' : 'mobile-navigation-panel';
         if (focused) document.querySelector<HTMLAnchorElement>('[data-appbar] .brand, .dev-topbar a, [data-legacy-navigation] a')?.focus({preventScroll: true});
       }
     }, {signal});
-    document.addEventListener('anylist:combine-lists-changed', event => {
-      const combined = (event as CustomEvent<{combineLists: boolean}>).detail.combineLists;
-      const link = root.querySelector<HTMLElement>('[data-mobile-item="combined-list"]');
-      const button = root.querySelector<HTMLElement>('[data-mobile-item="split-lists"]');
-      if (link && button) {link.hidden = !combined; button.hidden = combined; view('main', panel.matches(':popover-open'));}
-    }, {signal});
+    const updateDomains=(change:Partial<MediaDomains>)=>{
+      if(!root.dataset.mediaDomains)return;
+      const prefs=mediaDomains({...JSON.parse(root.dataset.mediaDomains),...change});root.dataset.mediaDomains=JSON.stringify(prefs);
+      const hidden:Record<string,boolean>={
+        'combined-list':!prefs.show_movies_series||!prefs.combine_lists||prefs.show_games,
+        'games-list':!prefs.show_games||prefs.show_movies_series,
+        'split-lists':!prefs.show_movies_series||prefs.combine_lists&&!prefs.show_games,
+        'screen-combined':!prefs.show_movies_series||!prefs.combine_lists,
+        'screen-movies':!prefs.show_movies_series||prefs.combine_lists,'screen-series':!prefs.show_movies_series||prefs.combine_lists,
+        'games-sublist':!prefs.show_games,
+      };
+      for(const [id,value] of Object.entries(hidden)){const item=root.querySelector<HTMLElement>(`[data-mobile-item="${id}"]`);if(item)item.hidden=value;}
+      view('main',panel.matches(':popover-open'));
+    };
+    document.addEventListener('anylist:combine-lists-changed',event=>updateDomains({combine_lists:(event as CustomEvent).detail.combineLists}),{signal});
+    document.addEventListener('anylist:media-domains-changed',event=>updateDomains((event as CustomEvent).detail),{signal});
     document.addEventListener('astro:before-swap', () => panel.hidePopover(), {signal});
   }
   initializeNavigation();

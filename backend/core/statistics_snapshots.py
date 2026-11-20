@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from pydantic import ValidationError
-from sqlalchemy import delete, or_, select, update
+from sqlalchemy import BigInteger, cast, delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from core.statistics_facts import build_overviews, load_facts
@@ -14,7 +14,7 @@ from db import AsyncSessionLocal
 from models.statistics import StatsMetadataRevision, UserStatsSnapshot, UserStatsState
 from schemas_statistics import Overview
 
-CONTRACT_VERSION = 13
+CONTRACT_VERSION = 14
 LEASE_TIME = timedelta(minutes=10)
 REFRESH_TIME = timedelta(hours=24)
 log = logging.getLogger(__name__)
@@ -22,6 +22,12 @@ log = logging.getLogger(__name__)
 
 def utcnow():
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+async def metadata_revision(db):
+    # Revisions are transactionally sharded, rather than a lock shared by every
+    # metadata writer. SUM retains the same monotone, committed snapshot cutoff.
+    return await db.scalar(select(cast(func.coalesce(func.sum(StatsMetadataRevision.revision), 0), BigInteger)))
 
 
 async def ensure_state(db, user_id):
@@ -49,9 +55,9 @@ async def claim_next(factory=AsyncSessionLocal, now=None, *, user_ids=None):
         ).order_by(UserStatsState.next_due_at, UserStatsState.user_id).with_for_update(skip_locked=True).limit(1))
         if state is None:
             return None
-        metadata_revision = await db.scalar(select(StatsMetadataRevision.revision).where(StatsMetadataRevision.id == 1))
+        revision = await metadata_revision(db)
         snapshot = await db.get(UserStatsSnapshot, state.active_snapshot_id) if state.active_snapshot_id else None
-        if snapshot and not state.dirty and snapshot.contract_version == CONTRACT_VERSION and snapshot.metadata_revision == metadata_revision:
+        if snapshot and not state.dirty and snapshot.contract_version == CONTRACT_VERSION and snapshot.metadata_revision == revision:
             state.next_due_at = now + REFRESH_TIME
             return {"skipped": True}
         token = str(uuid.uuid4())
@@ -67,11 +73,11 @@ async def compute(claim, factory=AsyncSessionLocal):
         state = await db.get(UserStatsState, claim["user_id"])
         if state is None or state.lease_token != claim["token"]:
             return None
-        metadata_revision = await db.scalar(select(StatsMetadataRevision.revision).where(StatsMetadataRevision.id == 1))
+        revision = await metadata_revision(db)
         source_revision = state.source_revision
         facts, coverage = await load_facts(db, state.user_id)
         payload = build_overviews(facts, coverage)
-        return {"payload": payload, "source_revision": source_revision, "metadata_revision": metadata_revision}
+        return {"payload": payload, "source_revision": source_revision, "metadata_revision": revision}
 
 
 async def publish(claim, result, factory=AsyncSessionLocal, now=None):
@@ -82,7 +88,7 @@ async def publish(claim, result, factory=AsyncSessionLocal, now=None):
             return False
         # Record shared metadata's cutoff. Later ordinary enrichment remains due
         # through this revision; visibility purges serialize on the state row.
-        revision = await db.scalar(select(StatsMetadataRevision.revision).where(StatsMetadataRevision.id == 1))
+        revision = await metadata_revision(db)
         if state.source_revision != result["source_revision"] or revision != result["metadata_revision"]:
             state.lease_token = state.lease_until = None
             state.dirty = True

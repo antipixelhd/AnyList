@@ -1,18 +1,28 @@
-export function mountContributorBiography(root: HTMLElement, signal: AbortSignal) {
+const mounts=new WeakMap<HTMLElement,AbortController>();
+export function unmountContributorBiography(root:HTMLElement){mounts.get(root)?.abort();}
+
+export function mountContributorBiography(root: HTMLElement, parentSignal: AbortSignal, initialExpanded=false) {
+  unmountContributorBiography(root);
+  if(parentSignal.aborted)return;
   const button = root.querySelector<HTMLButtonElement>('[data-biography-toggle]');
   const text = root.querySelector<HTMLElement>('[data-biography-text]');
   const rest = root.querySelector<HTMLElement>('[data-biography-rest]');
   const ellipsis = root.querySelector<HTMLElement>('[data-biography-ellipsis]');
   if (!button || !text || !rest || !ellipsis) return;
+  const controller=new AbortController(),signal=controller.signal;
+  mounts.set(root,controller);
+  const dispose=()=>controller.abort();parentSignal.addEventListener('abort',dispose,{once:true});
+  signal.addEventListener('abort',()=>{parentSignal.removeEventListener('abort',dispose);if(mounts.get(root)===controller)mounts.delete(root);},{once:true});
   const shortened = !ellipsis.hidden;
   const reduced = matchMedia('(prefers-reduced-motion: reduce)');
   let animation: Animation | undefined;
-  let expanded = false;
+  let expanded = initialExpanded;
   const settle = () => {
     animation?.cancel(); animation = undefined;
     rest.hidden = !expanded; ellipsis.hidden = expanded || !shortened;
     text.style.removeProperty('overflow');
   };
+  button.setAttribute('aria-expanded',String(expanded));button.textContent=expanded?'Read less':'Read more';settle();
   button.addEventListener('click', () => {
     const start = text.getBoundingClientRect().height;
     animation?.cancel();

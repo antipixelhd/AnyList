@@ -21,6 +21,7 @@ CATALOGUE_TTL = 24 * 60 * 60
 MAX_STALE = 7 * 24 * 60 * 60
 # Public community catalogues, not user watchlists. Override if a list is retired.
 _cache = {}
+_disk_versions = {}
 _locks = {}
 _retry_after = {}
 
@@ -49,10 +50,18 @@ def _path(identity):
     return Path(settings.data_dir) / "mdblist-discovery" / f"{identity}.json"
 
 
-def _cached(identity):
-    if identity not in _cache:
+def _cached(identity, *, shared=False):
+    path = _path(identity)
+    if shared:
         try:
-            data = json.loads(_path(identity).read_text(encoding="utf-8"))
+            version = path.stat().st_mtime_ns
+        except OSError:
+            version = None
+    else:
+        version = _disk_versions.get(identity)
+    if identity not in _cache or version != _disk_versions.get(identity):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
             stamp, rows = float(data["fetched_at"]), data["rows"]
             if (
                 math.isfinite(stamp)
@@ -65,7 +74,10 @@ def _cached(identity):
                     for row in rows
                 )
             ):
-                _cache[identity] = stamp, rows
+                if identity not in _cache or stamp >= _cache[identity][0]:
+                    _cache[identity] = stamp, rows
+                if shared:
+                    _disk_versions[identity] = version
         except (OSError, ValueError, KeyError, TypeError):
             pass
     cached = _cache.get(identity)
@@ -247,11 +259,11 @@ async def ranked_rows(kind, sort, api_key):
     return _ordered(rows, kind, sort), stale
 
 
-def cached_rows(kind, sort, api_key=None):
+def cached_rows(kind, sort, api_key=None, *, shared=False):
     if not api_key:
         return []
     feed, _ = _feed(kind, sort)
-    cached = _cached(_identity(feed, api_key))
+    cached = _cached(_identity(feed, api_key), shared=shared)
     rows = _ordered(cached[1], kind, sort) if cached else []
     return [
         {**row, "rating": row["imdb_score"], "votes": row["imdb_votes"]} for row in rows

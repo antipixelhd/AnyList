@@ -156,7 +156,7 @@ async def main(args):
         run_native=1000000+int(uuid.uuid4().hex[:6],16)
         async def revision():
             async with sessions() as db:
-                return await db.scalar(text('SELECT revision FROM stats_metadata_revision WHERE id=1'))
+                return await db.scalar(text('SELECT sum(revision) FROM stats_metadata_revision'))
         for size in (1000,3000):
             doc=normalize_tmdb(source(size,run_native+size),'series')
             previous=await revision()

@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from typing import Any, Literal
 
 from dateutil import parser
-from sqlalchemy import DateTime, bindparam, cast, delete, func, select, update
+from sqlalchemy import cast, delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import JSONB, insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -36,6 +36,10 @@ from core import (
 )
 from core.catalog_import import get_or_create_series_media
 from core.connection_identity import refresh_stream_connection
+from core.config import settings
+from core.sync_admission import SyncAdmission
+from core.sync_collection import CollectionMembershipBatch
+from core.sync_collection import collection_added_at_heal_stmt as collection_added_at_heal_stmt
 from core.db_queries import select_in_chunks as _select_in_chunks
 from core.enrichment import (
     apply_media_change_safely,
@@ -91,7 +95,7 @@ async def _record_full_push_visibility_echo(db, conn, written) -> None:
     await db.commit()
 
 
-_sync_semaphore = asyncio.Semaphore(1)
+_sync_admission = SyncAdmission(settings.sync_concurrency)
 
 
 BATCH_SIZE = 500
@@ -172,24 +176,6 @@ def provider_added_at(item: dict, source: CollectionSource) -> datetime | None:
     return None
 
 
-def collection_added_at_heal_stmt():
-    """Lower Collection.added_at towards the provider's date, in SQL.
-
-    LEAST is deliberate. Taking the minimum in Python would go wrong in three
-    ways: a multi-episode file expands into several items sharing one
-    collection, so last-write-wins could raise the value; a preloaded snapshot
-    goes stale after the first batch commit; and a concurrent webhook could
-    interleave. Doing it in the database makes the write monotonic and
-    idempotent, so a run that dies half way just leaves the rest for the next
-    one."""
-    table = Collection.__table__
-    return (
-        update(table)
-        .where(table.c.id == bindparam("b_id"))
-        .values(added_at=func.least(table.c.added_at, bindparam("b_added", type_=DateTime)))
-    )
-
-
 def is_fresh_rewatch_play(
     already_recorded: bool,
     media_type: MediaType,
@@ -233,7 +219,7 @@ async def sync_shows_batch(
     Fetch and insert all shows in parallel (up to TMDB_CONCURRENCY concurrent requests).
     Returns (show_map: source_id→show.id, show_id_to_tmdb: show.id→series_tmdb_id).
     """
-    all_tmdb_ids = list({tid for tid in series_tmdb_map.values() if tid})
+    all_tmdb_ids = sorted({tid for tid in series_tmdb_map.values() if tid})
 
     # Bulk load already-known shows (chunked to stay under asyncpg's 32767-param limit)
     existing_shows: dict[int, Show] = {}
@@ -254,7 +240,7 @@ async def sync_shows_batch(
         tid for tid in all_tmdb_ids
         if tid in existing_shows and existing_shows[tid].status in ACTIVE_STATUSES
     ]
-    to_fetch = list({*missing, *stale})
+    to_fetch = sorted({*missing, *stale})
     print(f"    {len(existing_shows)} shows in DB, fetching {len(missing)} new + {len(stale)} active from TMDB...")
 
     semaphore = asyncio.Semaphore(TMDB_CONCURRENCY)
@@ -277,7 +263,7 @@ async def sync_shows_batch(
         # wants; the rest are left for link_show_ids to sort out later.
         wanted_tvdb: dict[int, int] = {}
         tvdb_claims: dict[int, int] = {}
-        for tmdb_id, d in fetched.items():
+        for tmdb_id, d in sorted(fetched.items()):
             ext_tvdb = coerce_id((d.get("external_ids") or {}).get("tvdb_id"))
             if ext_tvdb:
                 wanted_tvdb.setdefault(ext_tvdb, tmdb_id)
@@ -301,7 +287,7 @@ async def sync_shows_batch(
             return ext_tvdb
 
         values = []
-        for tmdb_id, d in fetched.items():
+        for tmdb_id, d in sorted(fetched.items()):
             values.append({
                 "tmdb_id": tmdb_id,
                 "tvdb_id": _claimable_tvdb_id(tmdb_id, d),
@@ -375,11 +361,18 @@ async def sync_shows_batch(
             stmt = stmt.on_conflict_do_update(
                 index_elements=["tmdb_id"],
                 set_=set_,
+                where=or_(*(getattr(Show, key).is_distinct_from(value) for key, value in set_.items())),
             )
             stmt = stmt.returning(Show)
-            res = await db.execute(stmt)
+            res = await db.execute(stmt.execution_options(populate_existing=True))
             for s in res.scalars().all():
                 existing_shows[s.tmdb_id] = s
+        # A racing insert with identical metadata is a no-op and has no
+        # RETURNING row, but must still appear in the source's show mapping.
+        raced = [native for native in fetched if native not in existing_shows]
+        if raced:
+            for show in await _select_in_chunks(db, lambda chunk: select(Show).where(Show.tmdb_id.in_(chunk)), raced):
+                existing_shows[show.tmdb_id] = show
 
     show_map: dict[str, int] = {}
     show_id_to_tmdb: dict[int, int] = {}
@@ -745,6 +738,14 @@ async def sync_items(
     full_resync: bool = False,
 ) -> list[dict]:  # returns warnings
     items = _expand_multi_episode_items(items, media_type, source)
+    def canonical_order(item):
+        native = (get_jellyfin_tmdb_id(item.get('ProviderIds', {}))
+                  if source in _MEDIA_BROWSER_ITEM_SOURCES else plex.extract_tmdb_id(item.get('Guid', [])))
+        return native or 2**63
+    # Concurrent accounts may import the same public identities in reverse
+    # provider order. Acquire their unique-index/row locks consistently;
+    # the stable sort retains the order of duplicate observations of one title.
+    items = sorted(items, key=canonical_order)
     from core.sync_reconciliation import collecting
     collection_stage = collecting(user_id) if sync_collection and connection_id else None
     if collection_stage:
@@ -935,20 +936,16 @@ async def sync_items(
     new_media_for_enrichment.extend((m, show_id_to_tmdb.get(m.show_id)) for m in moved_rows)
     skipped_warnings: list[dict] = []
 
-    # collection_id → earliest add-date seen this run, applied in batches so a
-    # large library costs one statement per batch rather than one per item.
-    collection_heals: dict[int, datetime] = {}
-
-    async def flush_collection_heals() -> None:
-        if not collection_heals:
-            return
-        await db.execute(
-            collection_added_at_heal_stmt(),
-            [{"b_id": cid, "b_added": dt} for cid, dt in collection_heals.items()],
-        )
-        collection_heals.clear()
+    # Keep allocation, successful-file and date bookkeeping within one batch.
+    memberships = CollectionMembershipBatch(db, user_id, existing_coll_by_media_id, stats, new_collected_ids)
 
     for i, item in enumerate(items):
+        if i % BATCH_SIZE == 0 and sync_collection and connection_id is not None and media_type == MediaType.movie:
+            natives = [get_jellyfin_tmdb_id(row.get('ProviderIds', {})) if source in _MEDIA_BROWSER_ITEM_SOURCES
+                       else plex.extract_tmdb_id(row.get('Guid', [])) for row in items[i:i+BATCH_SIZE]]
+            candidates = {media.id for native in natives if (media := media_by_tmdb.get((native, media_type)))
+                          and media.id not in existing_coll_by_media_id}
+            await memberships.prepare(candidates)
         if (
             i % BATCH_SIZE == 0
             and snapshot_started_at is not None
@@ -1373,6 +1370,7 @@ async def sync_items(
             # Savepoint committed, so queue the collection's add-date only now:
             # an item that rolled back must not leave a heal behind for work
             # that was undone.
+            memberships.record_file(new_file_media_id, added_at)
             if collection_stage and media_id_for_watch is not None:
                 collection_stage.collection_files[(connection_id, media_id_for_watch, source_id)] = (
                     connection_id, media_id_for_watch, source_id, source, added_at, dict(quality))
@@ -1382,10 +1380,7 @@ async def sync_items(
                     stat_key = "movies" if media_type == MediaType.movie else "series" if media_type == MediaType.series else "episodes"
                     stats[stat_key] = stats.get(stat_key, 0) + 1
                     existing_coll_by_media_id[media_id_for_watch] = -1  # Staged, allocated at reconciliation.
-            if heal_collection_id is not None and added_at is not None:
-                queued = collection_heals.get(heal_collection_id)
-                if queued is None or added_at < queued:
-                    collection_heals[heal_collection_id] = added_at
+            memberships.heal_date(heal_collection_id, added_at)
             if rating_observation is not None and observed_ratings is not None:
                 observed_ratings[rating_observation[0]] = rating_observation[1]
 
@@ -1407,7 +1402,7 @@ async def sync_items(
             print(f"    Error syncing item {i}: {e}")
 
         if (i + 1) % BATCH_SIZE == 0:
-            await flush_collection_heals()
+            await memberships.flush()
             await db.commit()
             if job_id:
                 await db.execute(
@@ -1419,7 +1414,7 @@ async def sync_items(
                 await raise_if_cancelled(db, job_id)
             print(f"    Processed {i+1}/{len(items)} items...")
 
-    await flush_collection_heals()
+    await memberships.flush()
     await db.commit()
     processed_remainder = len(items) % BATCH_SIZE
     if job_id and processed_remainder > 0:
@@ -1465,12 +1460,12 @@ async def sync_items(
 
 
 async def run_jellyfin_sync(user_id: int, job_id: int, movie_limit: int, show_limit: int, connection_id: int | None = None):
-    async with _sync_semaphore:
+    async with _sync_admission.slot(user_id):
         await _run_media_browser_sync("jellyfin", user_id, job_id, movie_limit, show_limit, connection_id)
 
 
 async def run_emby_sync(user_id: int, job_id: int, movie_limit: int, show_limit: int, connection_id: int | None = None):
-    async with _sync_semaphore:
+    async with _sync_admission.slot(user_id):
         await _run_media_browser_sync("emby", user_id, job_id, movie_limit, show_limit, connection_id)
 
 
@@ -1518,6 +1513,7 @@ async def _run_media_browser_sync(provider: Literal["jellyfin", "emby"], user_id
                 return
 
             server_url, server_token, server_user = conn.url, conn.token, conn.server_user_id
+            await db.commit()  # Return the connection to the pool before the provider wait.
 
             print(f"  Fetching libraries from {server_url}")
             libraries = await adapter.get_libraries(server_url, server_token, server_user)
@@ -1526,6 +1522,7 @@ async def _run_media_browser_sync(provider: Literal["jellyfin", "emby"], user_id
                 select(selection_model).where(selection_model.connection_id == conn.id)
             )
             selected_ids = {row.library_id for row in sel_result.scalars().all()}
+            await db.commit()
             if selected_ids:
                 libraries = [lib for lib in libraries if lib.get("Id") in selected_ids]
 
@@ -2099,7 +2096,7 @@ def plex_sync_needs_library_scan(conn) -> bool:
 
 
 async def run_plex_sync(user_id: int, job_id: int, movie_limit: int, show_limit: int, connection_id: int | None = None):
-    async with _sync_semaphore:
+    async with _sync_admission.slot(user_id):
         await _run_plex_sync(user_id, job_id, movie_limit, show_limit, connection_id)
 
 
@@ -2611,6 +2608,7 @@ async def _apply_nuvio_watch_history(
     *,
     include_unknown_dates: bool = False,
     dedupe_by_media_id_only: bool = False,
+    episode_state_only: bool = False,
 ) -> set[int]:
     # Only movies are "standalone" watch targets. A show-level row (no
     # season/episode) is a rollup of its episodes and is skipped below, so it
@@ -2711,7 +2709,7 @@ async def _apply_nuvio_watch_history(
         ):
             existing_by_media.setdefault(media.id, []).append(watched_at)
             continue
-        if dedupe_by_media_id_only:
+        if dedupe_by_media_id_only or (episode_state_only and media.media_type == MediaType.episode):
             if times:
                 continue
         elif watched_at is None:
@@ -2886,7 +2884,7 @@ async def run_nuvio_sync(
     full_resync: bool = False,
     *, probe=None, probe_signature=None,
 ):
-    async with _sync_semaphore:
+    async with _sync_admission.slot(user_id):
         await _run_nuvio_sync(user_id, job_id, movie_limit, show_limit, connection_id, full_resync,
             probe=probe, probe_signature=probe_signature)
 
@@ -3176,6 +3174,7 @@ async def _run_nuvio_sync(
                         show_map,
                         tmdb_ids,
                         include_unknown_dates=True,
+                        episode_state_only=not full_resync,
                     )
                 )
 
@@ -3433,7 +3432,11 @@ async def _stremio_records(
         # Stremio can retain a stale timeOffset after the same episode has
         # already been marked watched. That offset is historical residue, not
         # active Continue Watching progress, so it must not recreate Watching.
-        if current_parts and current_video_id not in watched_ids and (position > 0 or watched_time > 0) and duration > 0:
+        native_next = position == 1 and watched_time == 0 and last_watched is not None
+        replaying_episode = (0 < watched_time < duration * 0.9 and 0 < position < duration * 0.9
+                             and not state.get('flaggedWatched'))
+        if (current_parts and duration > 0 and (position > 0 or watched_time > 0)
+                and (current_video_id not in watched_ids or native_next or replaying_episode)):
             season, episode = current_parts
             progress_records.append(
                 {
@@ -3445,6 +3448,7 @@ async def _stremio_records(
                     "watched_time": watched_time,
                     "duration": duration,
                     "last_watched": last_watched,
+                    "synthetic_resume": native_next,
                 }
             )
     return library_records, watched_records, progress_records, removed_ids
@@ -3558,7 +3562,7 @@ async def run_stremio_sync(
     full_resync: bool = False,
     *, probe=None, probe_signature=None,
 ) -> None:
-    async with _sync_semaphore:
+    async with _sync_admission.slot(user_id):
         await _run_stremio_sync(
             user_id,
             job_id,
@@ -4169,7 +4173,7 @@ async def run_arvio_sync(
     show_limit: int,
     connection_id: int | None = None,
 ) -> None:
-    async with _sync_semaphore:
+    async with _sync_admission.slot(user_id):
         await _run_arvio_sync(user_id, job_id, movie_limit, show_limit, connection_id)
 
 
@@ -4518,9 +4522,13 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                                 if conn.push_playback else []
                             )
                             if conn.push_playback and progress_items:
+                                from core.stream_actions import obsolete_series_marker
+                                verified_resumes = (baseline.snapshot or {}).get('verified_nuvio_resumes', {}) if baseline else {}
                                 clear_keys = list(dict.fromkeys([
                                     *clear_keys,
                                     *nuvio_payloads.obsolete_progress_keys(remote_progress, progress_items),
+                                    *(key for item in progress_items if (key := obsolete_series_marker(
+                                        remote_progress, item, verified_resumes.get(str(item['content_id']))))),
                                 ]))
                             if clear_keys:
                                 await nuvio._rpc(client, conn.url, session.access_token,
@@ -4547,12 +4555,15 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                                     )
                             pushed_progress = []
                             synthetic_progress_keys: set[str] = set()
+                            series_activity_keys: set[str] = set()
                             for item in progress_items:
                                 payload = dict(item)
                                 payload.setdefault("progress_key", f"{payload['content_id']}_s{payload['season']}e{payload['episode']}"
                                     if payload.get("season") is not None else payload["content_id"])
                                 if payload.pop("synthetic_resume", False):
                                     synthetic_progress_keys.add(str(payload["progress_key"]))
+                                if payload.pop('series_activity', False):
+                                    series_activity_keys.add(str(payload['progress_key']))
                                 pushed_progress.append(payload)
                             for offset in range(0, len(pushed_progress), nuvio._PAGE_SIZE):
                                 await nuvio._rpc(client, conn.url, session.access_token,
@@ -4597,6 +4608,8 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                                         expected = nuvio_resume_signature(payload)
                                         if remote['last_watched'] == expected['last_watched']:
                                             verified[content_id] = {'observed_at': expected['last_watched'], 'remote': remote}
+                                            if str(payload['progress_key']) in series_activity_keys & synthetic_progress_keys:
+                                                verified[content_id]['series_marker'] = True
                                         outbound[str(payload["content_id"])] = {
                                             field: payload.get(field)
                                             for field in ("position", "duration", "season", "episode", "observed_at")
@@ -4606,6 +4619,8 @@ async def _run_full_push(user_id: int, connection_id: int, job_id: int) -> None:
                                         outbound[str(payload["content_id"])]["synthetic_resume"] = (
                                             str(payload["progress_key"]) in synthetic_progress_keys
                                         )
+                                        if str(payload['progress_key']) in series_activity_keys:
+                                            outbound[content_id]['series_activity'] = True
                                         if payload.get("last_watched") is not None:
                                             outbound[str(payload["content_id"])]["last_watched"] = payload["last_watched"]
                                     snapshot["mappings"] = mappings

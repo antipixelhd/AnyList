@@ -25,8 +25,7 @@ class CatalogPreviewTests(unittest.IsolatedAsyncioTestCase):
         self.viewer = SimpleNamespace(id=1)
         app.dependency_overrides[get_optional_user] = lambda: self.viewer
         self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test')
-        for target, value in [('routers.tracking.catalog_access', None),
-                              ('routers.tracking.anime_is_visible', True),
+        for target, value in [('routers.tracking.anime_is_visible', True),
                               ('core.settings_store.get_user_tmdb_key', 'private-key')]:
             replacement = patch(target, AsyncMock(return_value=value))
             replacement.start()
@@ -37,7 +36,9 @@ class CatalogPreviewTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_anonymous_preview_is_rejected_before_provider_work(self):
         self.viewer = None
-        with patch('core.tmdb.get_movie_light', AsyncMock()) as light:
+        with (patch('core.tracking_access.get_global_settings',
+                    AsyncMock(return_value=SimpleNamespace(enable_logged_out_navigation=False))),
+              patch('core.tmdb.get_movie_light', AsyncMock()) as light):
             response = await self.client.get('/tracking/catalog/movie/123/preview')
         self.assertEqual(response.status_code, 401)
         light.assert_not_awaited()

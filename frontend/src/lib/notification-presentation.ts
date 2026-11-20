@@ -10,6 +10,39 @@ export type NotificationSnapshot = {
 export const isNewSeasonReleaseDate = (event: any) => event.kind === 'new_season_release_date';
 export const isNewSeasonRelease = (event: any) => event.kind === 'new_season_release';
 export const isSeasonReleaseNotification = (event: any) => isNewSeasonReleaseDate(event) || isNewSeasonRelease(event);
+export const isSeasonRating = (event:any) => event.kind==='rating_needed' && Number(event.season_number)>0;
+// Keep each request independently actionable while presenting a final season
+// and its series as one card. Other seasons retain their own cards.
+export function groupRatingNotifications(events:any[]) {
+  const pairs=new Map<any,any>();
+  const grouped=new Set<any>();
+  for(const series of events.filter(event=>event.kind==='rating_needed' && event.media?.type==='series' && !isSeasonRating(event))) {
+    const season=events.filter(event=>isSeasonRating(event) && event.media?.id===series.media.id)
+      .sort((a,b)=>String(b.created_at||'').localeCompare(String(a.created_at||'')) || b.season_number-a.season_number)[0];
+    if(season){pairs.set(season,series);grouped.add(series);}
+  }
+  return events.filter(event=>!grouped.has(event)).map(event=>pairs.has(event)?{...event,series_rating_request:pairs.get(event)}:event);
+}
+export const ratingTargets = (event:any) => [event,...(event.series_rating_request?[event.series_rating_request]:[])];
+export const ratingActionLabel = (event:any) => isSeasonRating(event)?'Rate season':event.media?.type==='series'?'Rate series':'Rate now';
+export const ratingPopupEnabled = (event:any, preferences:any) => isSeasonRating(event)
+  ? preferences.show_season_rating_popup!==false : preferences.show_new_ratings_popup!==false;
+export const ratingMetadata = (event:any) => {
+  if(event.kind!=='rating_needed')return '';
+  const media=event.media||{},data=event.payload?.rating_metadata||{};
+  const facts:string[]=[];
+  const count=(value:any,singular:string)=>Number(value)>0?`${Number(value)} ${singular}${Number(value)===1?'':'s'}`:'';
+  if(media.type==='movie') {
+    const minutes=Number(data.runtime_minutes??media.runtime);
+    if(minutes>0)facts.push([Math.floor(minutes/60)?`${Math.floor(minutes/60)}h`:'',minutes%60?`${minutes%60}m`:''].filter(Boolean).join(' '));
+  } else {
+    if(!isSeasonRating(event))facts.push(count(data.season_count??media.season_count,'season'));
+    facts.push(count(data.episode_count??(isSeasonRating(event)?undefined:media.episode_count),'episode'));
+  }
+  const year=String(data.year??(isSeasonRating(event)?'':media.year)??'');
+  if(/^\d{4}$/.test(year))facts.push(year);
+  return facts.filter(Boolean).join(' · ');
+};
 
 function seasonLabel(event: any) {
   const season = event.payload?.season_number ?? event.season_number;
@@ -23,11 +56,12 @@ function seasonReleaseDate(event: any) {
 }
 
 export const eventTitle = (event: any) => {
-  const title = event.media?.title || event.payload?.title || 'Connection reconciliation';
+  const title = event.payload?.episode_context?.series_title || event.media?.title || event.payload?.title || 'Connection reconciliation';
   const season = seasonLabel(event);
-  return isSeasonReleaseNotification(event) && season ? `${title} : ${season}` : title;
+  return (isSeasonReleaseNotification(event) || isSeasonRating(event)) && season ? `${title} : ${season}` : title;
 };
-export const eventSource = (event: any) => isSeasonReleaseNotification(event) ? undefined
+const watchRemoval = (event: any) => event.payload?.watch_removal;
+export const eventSource = (event: any) => isSeasonReleaseNotification(event) || watchRemoval(event) ? undefined
   : event.provider ? `${event.provider} sync` : event.kind?.startsWith('initial_') ? 'First import' : 'Connection sync';
 export const eventVariant = (event: any) => event.state === 'pending'
   ? (event.kind?.includes('conflict') || event.kind === 'unmatched_import' ? 'warning' : 'info')
@@ -41,14 +75,40 @@ export const eventIcon = (event: any) => event.kind === 'rating_needed' ? 'star'
   : event.state === 'pending' ? 'inbox' : 'check';
 export const eventBadge = (event: any) => isSeasonReleaseNotification(event) ? undefined
   : event.kind === 'connection_failure' ? 'Connection issue' : event.state === 'pending' ? 'Needs review' : undefined;
-export const eventHref = (event: any) => event.media ? `/title/${event.media.id}` : event.payload?.resolve_url;
-export const eventImage = (event: any) => event.payload?.season_poster_path || event.media?.poster || null;
+export const eventHref = (event: any) => event.media?.type === 'episode' ? event.payload?.episode_context?.href
+  : event.media ? `/title/${event.media.id}` : event.payload?.resolve_url;
+export const eventImage = (event: any) => event.payload?.season_poster_path || event.payload?.episode_context?.poster || event.media?.poster || null;
 export const eventCanChooseStatus = (event: any) => Boolean(event.media && event.previous_status && event.proposed_status && event.previous_status !== event.proposed_status && !['rating_conflict', 'deletion_conflict'].includes(event.kind));
 export const eventCanKeepPrevious = (event: any) => event.kind === 'resume_conflict' || Boolean(event.media && !['rating_conflict', 'deletion_conflict'].includes(event.kind));
 export const eventConfirmLabel = (event: any) => event.kind === 'resume_conflict' ? 'Use incoming'
+  : watchRemoval(event) ? 'Remove watched status'
   : event.kind === 'deletion_conflict' ? 'Retry deletion' : event.kind?.startsWith('initial_') ? 'Approve import'
   : event.kind === 'rating_conflict' ? 'Use provider score' : 'Confirm';
-export const eventKeepLabel = (event: any) => event.kind === 'resume_conflict' ? 'Keep current' : 'Keep previous';
+export const eventKeepLabel = (event: any) => watchRemoval(event) ? 'Keep in AnyList'
+  : event.kind === 'resume_conflict' ? 'Keep current' : 'Keep previous';
+
+function watchRemovalMessage(event: any) {
+  const { providers, episodes } = watchRemoval(event);
+  const names: Record<string, string> = { nuvio: 'Nuvio', stremio: 'Stremio' };
+  const sources = providers.map((provider: string) => names[provider] || provider).join(' and ');
+  const episode = episodes[0];
+  const seasons = new Set(episodes.map((item: any) => item.season).filter((season: any) => season != null));
+  let subject = 'this title';
+  if (episodes.length === 1) {
+    const position = episode.season != null && episode.number != null ? `S${episode.season}E${episode.number}` : '';
+    const label = [position, episode.title].filter(Boolean).join(' · ');
+    subject = label ? `1 episode (${label})` : '1 episode';
+  } else if (episodes.length > 1) {
+    const location = seasons.size > 1 ? ` across ${seasons.size} seasons`
+      : seasons.size === 1 ? ` from Season ${episode.season}` : '';
+    subject = `${episodes.length} episodes${location}`;
+  }
+  const observed = `${sources.charAt(0).toUpperCase() + sources.slice(1)} no longer ${providers.length === 1 ? 'lists' : 'list'} ${subject} as watched.`;
+  if (event.state === 'pending') return `${observed} Remove the watched status from AnyList and connections that accept watched updates?`;
+  if (event.state === 'confirmed') return `${observed} Watched status removed from AnyList.`;
+  if (event.state === 'corrected') return `${observed} Watched status kept in AnyList.`;
+  return observed;
+}
 
 export function resumeChoices(event: any) {
   if (event.kind !== 'resume_conflict') return [];
@@ -64,14 +124,15 @@ export function resumeChoices(event: any) {
     return { name, time, position: [episode, position].filter(Boolean).join(' · ') };
   });
 }
-export const eventMessage = (event: any) => isNewSeasonReleaseDate(event)
+export const eventMessage = (event: any) => watchRemoval(event) ? watchRemovalMessage(event) : isNewSeasonReleaseDate(event)
   ? `Release date: ${seasonReleaseDate(event) || 'Date unavailable'}`
   : isNewSeasonRelease(event)
     ? `${seasonLabel(event) || 'New season'} is now releasing`
     : isSeasonReleaseNotification(event) || event.kind === 'rating_needed' || (event.state === 'pending' && (eventCanChooseStatus(event) || event.kind === 'rating_conflict')) ? undefined : event.message;
 export const seasonArtworkFallback = (event: any) => Boolean(isSeasonReleaseNotification(event) && event.payload?.season_artwork_fallback);
 export const seasonArtworkRetry = (event: any) => Boolean(isSeasonReleaseNotification(event) && event.payload?.artwork_retry);
-export const historyChanges = (event: any) => (event.payload?.changes || []).filter((change: any) => change.field !== 'status');
+export const historyChanges = (event: any) => watchRemoval(event) ? []
+  : (event.payload?.changes || []).filter((change: any) => change.field !== 'status');
 export const historyLabel = (field: string) => ({ start_date: 'Start date', finish_date: 'Finish date', progress: 'Progress', season: 'Season', episode: 'Episode', position: 'Playback position (ms)', duration: 'Duration (ms)' } as Record<string, string>)[field] || field;
 export const historyValue = (value: any, field?: string) => value == null || value === '' ? 'Not set'
   : field === 'start_date' || field === 'finish_date' ? formatDate(String(value)) || 'Not set' : String(value);
@@ -92,8 +153,9 @@ export function notificationVersion(value: any, kind: 'event' | 'outbound') {
         id: value.id, kind: value.kind, state: value.state, provider: value.provider,
         message: value.message, previous_status: value.previous_status, proposed_status: value.proposed_status,
         previous_score: value.previous_score, proposed_score: value.proposed_score, season_number: value.season_number,
-        priority: value.priority, dismissible: value.dismissible, payload: value.payload,
-        media: value.media && { id: value.media.id, title: value.media.title, type: value.media.type, poster: value.media.poster },
+        priority: value.priority, dismissible: value.dismissible, payload: value.payload, series_rating_request:value.series_rating_request,
+        media: value.media && { id: value.media.id, title: value.media.title, type: value.media.type, poster: value.media.poster,
+          runtime:value.media.runtime,year:value.media.year,season_count:value.media.season_count,episode_count:value.media.episode_count },
       }
     : {
         media_id: value.media_id, title: value.title, poster: value.poster, state: value.state,

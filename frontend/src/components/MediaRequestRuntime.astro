@@ -10,11 +10,11 @@
       if (!tmdbId || !mediaType) return;
 
       const API = '/api/proxy';
-      const TOKEN = () => (window as any).__AUTH_TOKEN__ ?? '';
+
 
       try {
         const res = await fetch(`${API}/media/request-status?tmdb_id=${tmdbId}&media_type=${mediaType}`, {
-          headers: { Authorization: `Bearer ${TOKEN()}` },
+          headers: { },
         });
         if (!res.ok) return; // service down — keep disabled
         const { monitored } = await res.json();

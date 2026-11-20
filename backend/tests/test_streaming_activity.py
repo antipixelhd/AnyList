@@ -3,6 +3,7 @@ from datetime import datetime
 from types import SimpleNamespace
 from core.streaming_evidence import choose_viewing, completion_evidence, activity_plan
 from core.streaming_activity import record_streaming_activity, reschedule_date_activity
+from models.base import MediaType
 
 
 def viewing(day, seconds=None, completed=False):
@@ -277,9 +278,15 @@ class ActivityTests(unittest.IsolatedAsyncioTestCase):
         ])
         original = db.rows[0]
         episodes = [SimpleNamespace(id=i, season_number=1, episode_number=i) for i in (1, 2, 3)]
+        for ep in episodes:
+            ep.release_date, ep.tmdb_data = '2020-01-01', {}
+        async def groups(*args, display_positions, **kwargs):
+            display_positions.update({ep.id: (1, ep.episode_number) for ep in episodes})
+            return 'tmdb:aired', [(1, episodes, 3)], {}
         with (patch('core.activity._active_activity_card', new=AsyncMock(return_value=original)),
-              patch('core.activity._series_activity_catalog', new=AsyncMock(return_value=(episodes, {1: 3})))):
-            await record_progress_activity(db, user_id=1, media=SimpleNamespace(id=2), previous_progress=1,
+              patch('core.season_activity.record_season_activity', new=AsyncMock(return_value=False)),
+              patch('core.season_completion.season_groups', side_effect=groups)):
+            await record_progress_activity(db, user_id=1, media=SimpleNamespace(id=2,media_type=MediaType.series), previous_progress=1,
                                            progress=2, status='watching', score=8, rating_changed=True,
                                            watched_ids={1, 2}, previous_watched_ids={1}, now=datetime(2020, 1, 1, 12))
         await clear_recent_rating_activity(db, user_id=1, media_id=2, now=datetime(2020, 1, 1, 13))
@@ -446,7 +453,7 @@ class ActivityTests(unittest.IsolatedAsyncioTestCase):
         from datetime import date
         from core.netflix_sessions import _track_imported_root
         entry = SimpleNamespace(status='completed', progress=8, start_date=date(2020, 1, 1),
-                                finish_date=date(2020, 2, 1), initial_import_completed_at=None)
+                                finish_date=date(2020, 2, 1), initial_import_completed_at=None, start_date_source=None)
         class Db:
             async def execute(self, query):
                 return SimpleNamespace(scalar_one_or_none=lambda: entry)

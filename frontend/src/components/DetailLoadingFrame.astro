@@ -1,0 +1,19 @@
+---
+import MediaDetailHeading from './MediaDetailHeading.astro';
+const {kind='unknown'}=Astro.props;
+---
+<section class="detail-loading-frame" data-detail-loading data-loading-kind={kind} aria-busy="true" aria-label="Loading details">
+  <div class="loading-detail-hero">
+    <img data-loading-backdrop alt="" hidden />
+    <div class="loading-detail-shade"></div>
+    <div class="loading-detail-identity">
+      <div class="loading-detail-poster loading-surface"><img data-loading-poster alt="" hidden /></div>
+      <MediaDetailHeading title={{type:kind,title:''}} placeholder/>
+    </div>
+  </div>
+  <div class="loading-detail-feedback"><p role="status" data-loading-status class="loading-announcement">Loading details…</p><button type="button" class="button-secondary" data-loading-retry hidden>Try again</button><a href="/browse" data-loading-back>Back to Browse</a></div>
+  <div class="loading-detail-layout" aria-hidden="true">
+    <aside><div class="loading-tracking"><div class="loading-surface loading-control"></div><div class="loading-surface loading-rating"></div><div class="game-tracking-progress loading-game-progress" data-loading-game-progress hidden><p data-loading-game-hours hidden><span>Total time</span><strong></strong></p><p data-loading-game-achievement hidden><span>Achievements</span><strong></strong></p></div></div><div class="loading-facts"><span></span><span></span><span></span><span></span></div></aside>
+    <div><div class="loading-detail-tabs"><span>Overview</span><span data-loading-series hidden={kind!=='series'}>Seasons</span></div><div class="loading-detail-grid"><div><div class="loading-primary-status" data-loading-primary hidden aria-hidden="true"><span class="loading-surface"></span></div><h2>Overview</h2><div class="loading-lines"><span></span><span></span><span></span></div><div class="loading-secondary"><h2 data-loading-secondary-label>{kind==='game'?'Play time':'Cast & crew'}</h2><div class="loading-surface loading-module"></div></div></div><div class="loading-audience"><h2>Audience score</h2><div class="loading-surface loading-module"></div></div></div></div>
+  </div>
+</section>

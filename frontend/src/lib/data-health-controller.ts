@@ -1,8 +1,8 @@
 import { formatTime } from './date-time';
-import { healthJobMessage, healthSummary, isHealthJobActive } from './data-health';
+import { canReconcileGames, healthJobMessage, healthSummary, isHealthJobActive } from './data-health';
 import type { DataHealth, HealthAction, HealthJob } from './data-health';
 import { createContentTransition, mountDetailsMotion } from './content-motion';
-import { cancelUiMotion, reveal } from './ui-motion';
+import { cancelUiMotion, reveal, showDialog } from './ui-motion';
 
 let dispose: (() => void) | undefined;
 
@@ -20,6 +20,8 @@ export function mountDataHealth() {
   const recheck = root.querySelector<HTMLButtonElement>('#health-recheck')!;
   const showClear = root.querySelector<HTMLInputElement>('#health-show-clear')!;
   const error = root.querySelector<HTMLElement>('#health-error')!;
+  const reconcileButton = root.querySelector<HTMLButtonElement>('#health-game-reconcile')!;
+  const nextButton = root.querySelector<HTMLButtonElement>('#health-game-next')!;
   const write = (id: string, value: string) => { root.querySelector<HTMLElement>(`#${id}`)!.textContent = value; };
   const fail = (message: string) => { error.textContent = message; error.hidden = false; error.setAttribute('data-motion-fade',''); reveal(error); };
 
@@ -28,11 +30,42 @@ export function mountDataHealth() {
       button.disabled = busy || isHealthJobActive(job);
     });
     recheck.disabled = busy;
+    reconcileButton.disabled = busy || !canReconcileGames(job);
+    nextButton.disabled = busy || isHealthJobActive(job);
+  }
+  function renderGames(value: HealthJob | null) {
+    const scan = value?.game_scan;
+    root!.querySelector<HTMLElement>('#health-game-results')!.hidden = !scan;
+    const list = root!.querySelector<HTMLElement>('#health-game-candidates')!;
+    list.replaceChildren();
+    nextButton.hidden = !scan?.next_after_id;
+    if (!scan) return;
+    const scope = [...root!.attributes].find(attribute => attribute.name.startsWith('data-astro-cid-'))?.name;
+    const labels = {match:'Exact match', unknown:'Needs review', unmatched:'No match', ambiguous:'Ambiguous',
+      excluded:'Excluded', failed:'Lookup failed', conflict:'Conflict', reconciled:'Reconciled', already_linked:'Already linked'};
+    for (const candidate of scan.candidates) {
+      const row = document.createElement('li'); row.className = 'health-game-row';
+      const name = document.createElement('a'); name.href = `/games/${candidate.id}`; name.textContent = candidate.name;
+      const state = document.createElement('span'); state.textContent = labels[candidate.status];
+      const detail = document.createElement('small');
+      detail.textContent = [candidate.steam_app_id ? `Steam ${candidate.steam_app_id}` : '',
+        candidate.igdb_id ? `IGDB ${candidate.igdb_id}` : '',
+        candidate.detail === candidate.name ? '' : candidate.detail].filter(Boolean).join(' · ');
+      row.append(name, state, detail);
+      if (candidate.duplicate_id) {
+        const other = document.createElement('a'); other.href = `/games/${candidate.duplicate_id}`; other.textContent = 'Matched entry';
+        row.append(other);
+      }
+      if (scope) [row, ...row.querySelectorAll('*')].forEach(node => node.setAttribute(scope, ''));
+      list.append(row);
+    }
+    if (!scan.candidates.length) list.textContent = 'No orphaned games found.';
   }
   function renderJob(value: HealthJob | null) {
     const appearing = !job && !!value;
     const completed = isHealthJobActive(job) && !isHealthJobActive(value);
     job = value;
+    renderGames(value);
     root!.querySelector<HTMLElement>('#health-job')!.hidden = !job;
     if (job) {
       write('health-job-message', healthJobMessage(job));
@@ -80,7 +113,7 @@ export function mountDataHealth() {
       for (const example of check.examples) {
         const item = element('li');
         // Only allow app-local title links from the diagnostics response.
-        if (example.href && /^\/title\/\d+$/.test(example.href)) {
+        if (example.href && /^\/(?:title|games)\/\d+$/.test(example.href)) {
           const link = element('a', example.name); link.href = example.href; item.append(link);
         } else item.append(element('span', example.name));
         if (example.detail) item.append(element('small', example.detail));
@@ -93,13 +126,16 @@ export function mountDataHealth() {
     root!.querySelector<HTMLElement>('#health-all-clear')!.hidden = data.checks.some(check => check.count > 0);
     filter(); renderJob(data.job);
   }
-  async function request<T>(path: string, action?: HealthAction): Promise<T> {
+  async function request<T>(path: string, action?: HealthAction, options: Record<string, unknown> = {}): Promise<T> {
     const response = await fetch(`/api/proxy/admin/data-health${path}`, {
       signal, cache: 'no-store', method: action ? 'POST' : 'GET',
       headers: action ? { 'Content-Type': 'application/json' } : undefined,
-      body: action ? JSON.stringify({ action }) : undefined,
+      body: action ? JSON.stringify({ action, ...options }) : undefined,
     });
-    if (!response.ok) throw new Error(response.status === 409 ? 'Another repair is already running. Recheck to see its progress.' : 'Data health request failed. Try again.');
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(typeof data.detail === 'string' ? data.detail : 'Data health request failed. Try again.');
+    }
     return response.json() as Promise<T>;
   }
   async function refresh() {
@@ -131,6 +167,33 @@ export function mountDataHealth() {
       finally { busy = false; if (!signal.aborted) { controls(); schedule(); } }
     }, { signal });
   });
+  async function runGameAction(action: HealthAction, options: Record<string, unknown>) {
+    busy = true; controls(); error.hidden = true;
+    try { renderJob(await request<HealthJob>('/repair', action, options)); }
+    catch (failure) { if (!signal.aborted) fail(failure instanceof Error ? failure.message : 'Game operation failed.'); }
+    finally { busy = false; if (!signal.aborted) { controls(); schedule(); } }
+  }
+  nextButton.addEventListener('click', () => {
+    if (!busy && !isHealthJobActive(job) && job?.game_scan?.next_after_id)
+      void runGameAction('game_scan', {after_id: job.game_scan.next_after_id});
+  }, {signal});
+  reconcileButton.addEventListener('click', async () => {
+    if (reconcileButton.disabled || !job) return;
+    const scanId = job.id;
+    const dialog = document.querySelector<HTMLDialogElement>('#health-game-confirm')!;
+    const confirmed = await new Promise<boolean>(resolve => {
+      const cleanup = (value: boolean) => {
+        dialog.removeEventListener('close', closed); signal.removeEventListener('abort', aborted); resolve(value);
+      };
+      const closed = () => cleanup(dialog.returnValue === 'reconcile');
+      const aborted = () => { cleanup(false); dialog.close('cancel'); };
+      dialog.returnValue = '';
+      dialog.addEventListener('close', closed, {once:true}); signal.addEventListener('abort', aborted, {once:true});
+      showDialog(dialog);
+    });
+    if (confirmed && !signal.aborted && !busy && !isHealthJobActive(job))
+      await runGameAction('game_reconcile', {scan_job_id: scanId, confirm:'reconcile'});
+  }, {signal});
   try { const initial = JSON.parse(root.dataset.initial || 'null') as DataHealth | null; if (initial) renderJob(initial.job); } catch { /* Recheck recovers malformed initial state. */ }
   schedule();
   dispose = () => { controller.abort(); clearTimeout(timer); cancelUiMotion(root!); };

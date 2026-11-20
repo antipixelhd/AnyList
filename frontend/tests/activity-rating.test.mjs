@@ -6,10 +6,29 @@ import test from 'node:test';
 
 const trackerSource = readFileSync(new URL('../src/lib/tracker.ts', import.meta.url), 'utf8')
   .replace('"./responsive-artwork"', JSON.stringify(new URL('../src/lib/responsive-artwork.ts', import.meta.url).href))
-  .replace("'./date-time'", JSON.stringify(new URL('../src/lib/date-time.ts', import.meta.url).href));
-const {activityRating, activityAction} = await import(
+  .replace("'./date-time'", JSON.stringify(new URL('../src/lib/date-time.ts', import.meta.url).href))
+  .replaceAll("'./tracking-statuses.ts'", JSON.stringify(new URL('../src/lib/tracking-statuses.ts', import.meta.url).href));
+const {activityRating, activityAction,activityCompletionSuffix,trackedWorkHref} = await import(
   `data:text/javascript;base64,${Buffer.from(stripTypeScriptTypes(trackerSource)).toString('base64')}`
 );
+
+test('completion suffix uses only first completion, including zero, and clears on unknown',()=>{
+  const activity={media:{type:'game'},status:'completed',payload:{status_changed:true,total_seconds:999999,completion_seconds:7200}};
+  assert.equal(activityCompletionSuffix(activity),' with 2 hours');
+  assert.equal(activityCompletionSuffix({...activity,payload:{...activity.payload,completion_seconds:0}}),' with 0 hours');
+  assert.equal(activityCompletionSuffix({...activity,payload:{...activity.payload,completion_seconds:null}}),'');
+  assert.equal(activityCompletionSuffix({...activity,payload:{hours_changed:true,completion_seconds:7200}}),'');
+  assert.equal(activityCompletionSuffix({...activity,media:{type:'movie'}}),'');
+});
+
+test('game activity uses game wording and typed work links even when ids overlap movies',()=>{
+  assert.equal(trackedWorkHref({id:7,type:'game'}),'/games/7');
+  assert.equal(trackedWorkHref({id:7,type:'movie'}),'/title/7');
+  assert.equal(activityAction({media:{type:'game'},status:'planning',payload:{status_changed:true}}),'Plans to play');
+  assert.equal(activityAction({media:{type:'game'},status:'completed',payload:{hours_changed:true}}),'Updated playtime for');
+  assert.equal(activityAction({media:{type:'game'},status:'playing',payload:{achievements_changed:true}}),'Updated achievement progress for');
+  assert.equal(activityAction({media:{type:'game'},score:null,payload:{rating_changed:true}}),'Removed rating for');
+});
 
 test('initial rating corrections show only the final score and Rated headline', () => {
   const activity = {score: 8, payload: {rating_changed: true, rating_first: true}, media: {type: 'movie'}};
@@ -38,9 +57,63 @@ test('season completion takes priority over episode ranges in the combined card'
   const activity = {status: 'watching', media: {type: 'series'}, payload: {
     episodes_watched: 2, position_start: 'S3E7', position: 'S3E8', finished_seasons: [3],
   }};
-  assert.equal(activityAction(activity), 'Watched season 3 of');
-  assert.equal(activityAction({...activity, payload: {...activity.payload, finished_seasons: [2, 3]}}), 'Watched seasons 2 and 3 of');
+  assert.equal(activityAction(activity), 'Completed Season 3 of');
+  assert.equal(activityAction({...activity, payload: {...activity.payload, finished_seasons: [2, 3]}}), 'Completed Seasons 2 and 3 of');
   assert.equal(activityAction({...activity, status: 'completed', payload: {...activity.payload, status_changed: true}}), 'Completed');
+  assert.equal(activityAction({...activity, status: 'completed', payload: {...activity.payload,
+    status_changed: true, season_completion_id: 42}}), 'Completed Season 3 of');
+});
+
+test('season status cards describe the season without episode clutter',()=>{
+  const activity={media:{type:'series'},status:'watching',payload:{season_status:true,season_number:3,status_changed:true,started_watching:true,position:'S3E5'}};
+  assert.equal(activityAction(activity),'Started watching Season 3 of');
+  assert.equal(activityAction({...activity,payload:{...activity.payload,continued_watching:true}}),'Continued watching Season 3 of');
+  assert.equal(activityAction({...activity,status:'paused'}),'Paused Season 3 of');
+  assert.equal(activityAction({...activity,status:'dropped'}),'Dropped Season 3 of');
+  assert.equal(activityAction({...activity,status:'planning'}),'Plans to watch Season 3 of');
+});
+
+test('season names appear in watch, completion and rating cards', () => {
+  const activity = {media: {type: 'series'}, status: 'watching', score: 7};
+  const names = {3: 'The Third Campaign'};
+  assert.equal(activityAction({...activity, payload: {
+    season_names: names, episodes_watched: 2, position_start: 'S3E4', position: 'S3E5',
+  }}), 'Watched The Third Campaign Episode 4–5 of');
+  assert.equal(activityAction({...activity, payload: {
+    season_names: names, finished_seasons: [2, 3], series_completed: true,
+  }}), 'Completed Season 2 and The Third Campaign of');
+  const rated = {...activity, payload: {season_names: names, rating_changed: true, season_rating_group: true, season_ratings: {3: 7}}};
+  assert.equal(activityAction(rated), 'Rated The Third Campaign of');
+  assert.equal(activityRating(rated).breakdown[0].label, 'The Third Campaign');
+});
+
+test('grouped ratings use ranges, average and per-season accessible scores',()=>{
+  const activity={media:{type:'series'},score:7,payload:{season_rating_group:true,rating_changed:true,season_ratings:{1:6,2:8,3:7,5:7,8:7}}};
+  assert.equal(activityAction(activity),'Rated Seasons 1–3, 5, 8 of');
+  const rating=activityRating(activity);
+  assert.equal(rating.current,7);
+  assert.equal(rating.seasons.length,5);
+  assert.match(rating.label,/Average 7 out of 10.*Season 1: 6, Season 2: 8/);
+  assert.equal(activityAction({...activity,payload:{...activity.payload,series_completed:true}}),'Completed');
+  assert.equal(activityRating({...activity,payload:{rating_snapshot:true,season_ratings:{2:7}}}).current,7);
+});
+
+test('rated series cards keep the event score and show the full current breakdown',()=>{
+  const activity={media:{type:'series'},score:7,payload:{rating_snapshot:true,season_ratings:{2:7},previous_score:6},
+    rating_breakdown:{series_score:9,season_scores:{10:8,2:7.5,3:0,4:null,1:6}}};
+  const rating=activityRating(activity);
+  assert.equal(rating.current,7);
+  assert.equal(rating.previous,6);
+  assert.deepEqual(rating.breakdown,[
+    {label:'Series rating',score:9},{label:'Season 1',score:6},{label:'Season 2',score:7.5},{label:'Season 10',score:8},
+  ]);
+  assert.deepEqual(activityRating({...activity,rating_breakdown:{series_score:null,season_scores:{4:8}}}).breakdown,
+    [{label:'Season 4',score:8}]);
+  assert.deepEqual(activityRating({...activity,rating_breakdown:undefined}).breakdown,[{label:'Season 2',score:7}]);
+  assert.deepEqual(activityRating({media:{type:'series'},score:8,payload:{rating_changed:true}}).breakdown,
+    [{label:'Series rating',score:8}]);
+  assert.deepEqual(activityRating({...activity,media:{type:'movie'}}).breakdown,[]);
+  assert.equal(activityRating({...activity,score:null}),null);
 });
 
 test('feed refresh updates scores without changing timestamps or order and removes deleted cards', () => {
@@ -48,16 +121,22 @@ test('feed refresh updates scores without changing timestamps or order and remov
   const reconcileSource = source.slice(source.indexOf('  const reconcile='), source.indexOf('  const refresh=async'));
   const elements = [];
   function card(activity) {
-    const element = {dataset: {activityKey: activity.key, createdAt: activity.created_at}, score: activity.score};
+    const element = {dataset: {activityKey: activity.key, createdAt: activity.created_at}, score: activity.score, querySelector:()=>null};
+    Object.defineProperty(element,'nextSibling',{get:()=>elements[elements.indexOf(element)+1]||null});
     element.remove = () => { const index = elements.indexOf(element); if (index >= 0) elements.splice(index, 1); };
     return element;
   }
   elements.push(card({key: 'newer', created_at: '2026-10-03', score: 7}),
                 card({key: 'original', created_at: '2026-10-01', score: 6}),
                 card({key: 'removed', created_at: '2026-09-30', score: 5}));
+  const retained=[...elements];let renders=0;
   const context = {
-    feed: {querySelector: () => null, querySelectorAll: () => [...elements], append: element => elements.push(element)},
-    render: card, emptyTemplate: null,
+    document:{activeElement:null},
+    signatures:new Map(elements.map(element=>[element.dataset.activityKey,JSON.stringify({key:element.dataset.activityKey,created_at:element.dataset.createdAt,score:element.score})])),
+    feed: {contains:()=>false,querySelector: selector => selector==='[data-activity-card]'?elements[0]||null:null, querySelectorAll: () => [...elements],
+      insertBefore:(element,anchor)=>{element.remove();const index=anchor?elements.indexOf(anchor):elements.length;elements.splice(index,0,element);},append: element => elements.push(element)},
+    reconcileHomePanel:(existing,fresh)=>{existing.score=fresh.score;},
+    render: activity=>{renders++;return card(activity);}, emptyTemplate: null,
   };
   runInNewContext(stripTypeScriptTypes(reconcileSource) + '\nglobalThis.reconcile = reconcile;', context);
   context.reconcile([{key: 'newer', created_at: '2026-10-03', score: 7},
@@ -65,4 +144,8 @@ test('feed refresh updates scores without changing timestamps or order and remov
   assert.deepEqual(elements.map(element => element.dataset.activityKey), ['newer', 'original']);
   assert.equal(elements[1].score, 8);
   assert.equal(elements[1].dataset.createdAt, '2026-10-01');
+  assert.equal(elements[0],retained[0]);assert.equal(elements[1],retained[1]);
+  assert.equal(renders,1);
+  context.reconcile([{key:'newer',created_at:'2026-10-03',score:7},{key:'original',created_at:'2026-10-01',score:8}]);
+  assert.equal(renders,1,'unchanged focus refresh must not recreate cards or images');
 });

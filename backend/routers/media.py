@@ -1,7 +1,9 @@
+from core.api_roles import reader
 from core import media_presentation
 from core import arr_settings
 from core import outbound_sync
 from core import settings_store
+from functools import partial
 import asyncio
 import httpx
 import logging
@@ -64,7 +66,7 @@ async def list_media(
     watched: list[str] = Query(default=[]),
     # in_list = in|out: membership of any of the user's lists (#255).
     in_list: str | None = Query(None),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     offset = (page - 1) * page_size
@@ -160,7 +162,7 @@ async def list_media(
 @router.get("/years")
 async def list_media_years(
     type: MediaType = Query(...),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Distinct release years present in the user's collection, for the year filter."""
@@ -185,7 +187,7 @@ async def list_media_years(
 @router.get("/find-by-imdb")
 async def find_by_imdb(
     imdb_id: str = Query(...),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Resolve an IMDB ID to a TMDB TV show via the TMDB /find endpoint."""
@@ -213,7 +215,7 @@ async def find_by_imdb(
 @router.get("/search-tvdb")
 async def search_tvdb(
     q: str = Query(..., min_length=2),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     from core import tvdb as tvdb_client
@@ -240,13 +242,14 @@ async def _apply_search_translations(db: AsyncSession, user_id: int, items: list
 
 
 @router.get("/search")
+@reader
 async def search_media(
     q: str = Query(..., min_length=2),
     type: str | None = Query(None),
     year: int | None = Query(None),
     page: int = Query(1, ge=1),
     in_library: bool = Query(False),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     if current_user is None:
@@ -481,6 +484,8 @@ async def search_media(
         return {"page": 1, "total_pages": 1, "total_results": len(formatted), "results": formatted}
 
     # 1. Search TMDB (primary source for ordering)
+    # Keep the database pool available while waiting for a cold provider result.
+    await db.commit()
     raw_results = []
     total_pages = 1
     total_results = 0
@@ -686,7 +691,7 @@ class CollectSeasonRequest(PydanticModel):
 @router.post("/collect")
 async def manually_collect(
     body: CollectRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     """Manually add a movie to the user's collection."""
@@ -846,7 +851,7 @@ async def _push_collection_change(
 
 @router.delete("/collect/all")
 async def clear_collection(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     media_ids_q = await db.execute(
@@ -867,7 +872,7 @@ async def manually_uncollect(
     tvdb_id: int | None = Query(None),
     media_id: int | None = Query(None, alias="id"),
     media_type: MediaType = Query(...),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     """Remove a manually-added item from the user's collection."""
@@ -1074,7 +1079,7 @@ async def _collect_episodes(db: AsyncSession, user_id: int, episodes: list) -> i
 @router.post("/collect-season")
 async def collect_season(
     body: CollectSeasonRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     """Manually add all episodes in a season to the user's collection."""
@@ -1185,7 +1190,7 @@ async def collect_season(
 @router.post("/collect-show")
 async def collect_show(
     body: CollectRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     """Manually collect all aired seasons/episodes for a show."""
@@ -1276,7 +1281,7 @@ async def collect_show(
 @router.delete("/collect-show")
 async def uncollect_show(
     tmdb_id: int = Query(...),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     """Remove all collection entries for every episode in a show."""
@@ -1309,7 +1314,7 @@ async def uncollect_season(
     series_tmdb_id: int = Query(...),
     season_number: int = Query(...),
     episode_order: Optional[str] = Query(None),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     """Remove all collection entries for all episodes in a season."""
@@ -1367,7 +1372,7 @@ async def uncollect_season(
 async def get_request_status(
     tmdb_id: int = Query(...),
     media_type: MediaType = Query(...),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Check whether a movie/series is already monitored in Radarr/Sonarr."""
@@ -1432,7 +1437,7 @@ async def get_request_status(
 @router.get("/{type}/customize-options")
 async def get_customize_options(
     type: MediaType,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(require_admin),
 ):
     """Live root folders/quality profiles/tags for the customize-on-add
@@ -1517,7 +1522,7 @@ async def request_media(
     type: MediaType,
     tmdb_id: int,
     overrides: RequestOverrides | None = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     """Request a movie (Radarr) or series (Sonarr)."""
@@ -1638,7 +1643,7 @@ async def request_media(
 @router.post("/movie/{tmdb_id}/refresh")
 async def refresh_movie_metadata(
     tmdb_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user),
 ):
     """Re-fetch TMDB metadata for a movie the user has in their library."""
@@ -1669,10 +1674,11 @@ async def refresh_movie_metadata(
 
 
 @router.get("/{type}/{tmdb_id}")
+@reader(type='movie')
 async def get_media_details(
     type: MediaType,
     tmdb_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Unified endpoint for Movies and Episodes details."""
@@ -1692,7 +1698,11 @@ async def get_media_details(
     try:
         # 1. Fetch from TMDB
         if type == MediaType.movie:
-            data = await tmdb.get_movie(tmdb_id, api_key=tmdb_key, language=metadata_lang)
+            from core.media_details import tmdb_movie_snapshot
+
+            await db.commit()
+            data = await tmdb.get_movie(tmdb_id, api_key=tmdb_key, language=metadata_lang,
+                                        load_local=partial(tmdb_movie_snapshot, db.bind))
         elif type == MediaType.episode:
             # Look up the episode in the local DB to find its show context
             ep_result = await db.execute(
@@ -1717,6 +1727,7 @@ async def get_media_details(
             if show is None:
                 raise HTTPException(status_code=404, detail="Show not found for this episode")
 
+            await db.commit()
             ep_data = await tmdb.get_episode(
                 show.tmdb_id, local_ep.season_number, local_ep.episode_number,
                 api_key=tmdb_key, language=metadata_lang,
@@ -1979,7 +1990,7 @@ async def get_media_details(
 async def get_media_recommendations(
     type: MediaType,
     tmdb_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     current_user: User = Depends(get_current_user_or_api_key),
 ):
     """Fetch movie/series recommendations from TMDB and enrich with state."""
@@ -2031,7 +2042,7 @@ from fastapi.responses import FileResponse, RedirectResponse
 
 async def verify_image_token(
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     api_key: Annotated[str | None, Query(description="AnyList API key")] = None,
     x_api_key: Annotated[str | None, Header(alias="X-Api-Key")] = None,
 ) -> int:
@@ -2061,7 +2072,7 @@ async def verify_image_token(
 async def serve_image(
     size: str,
     path: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     _: int = Depends(verify_image_token),
 ):
     if not path.startswith("/"):
@@ -2070,11 +2081,13 @@ async def serve_image(
     from core.image_cache import (
         ALLOWED_SIZES,
         TVDB_SIZE,
+        ARTWORK_ORIGINS,
         upstream_image_url,
         download_and_cache_image,
         prune_cache_bg,
     )
-    upstream = upstream_image_url(size, path)
+    try:upstream = upstream_image_url(size, path)
+    except ValueError:raise HTTPException(400,'Invalid artwork path') from None
 
     # Check settings
     gs = await settings_store.get_global_settings(db)
@@ -2082,7 +2095,7 @@ async def serve_image(
     if not gs or not gs.image_cache_enabled:
         return RedirectResponse(upstream)
 
-    if size != TVDB_SIZE and size not in ALLOWED_SIZES:
+    if size != TVDB_SIZE and size not in ALLOWED_SIZES and size not in ARTWORK_ORIGINS:
         raise HTTPException(status_code=400, detail="Invalid image size")
     if ".." in path:
         raise HTTPException(status_code=400, detail="Invalid image path")
@@ -2110,7 +2123,7 @@ async def serve_rating_poster(
     provider: str,
     rpdb_id: str,
     fallback: str = Query(...),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     user_id: int | None = Depends(verify_image_token),
 ):
     """RatingPosterDB rating-overlay poster for a movie/show portrait slot

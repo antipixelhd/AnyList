@@ -6,6 +6,12 @@ import { isSameOrigin, requiresSameOrigin } from "./lib/request-security";
 import { crawlerShareResponse, shareLoginPath } from "./lib/share-preview";
 import { legalConfig } from './lib/legal';
 import { publicLegalPage } from './lib/legal-routes';
+import {anonymousGameDiscoveryRoute,approvedGamesPage} from './lib/game-public-routes';
+import {viewerMediaPreferences} from './lib/viewer-media-preferences';
+import {viewerProfilePreferences} from './lib/viewer-profile-preferences';
+import {viewerNotifications} from './lib/viewer-notifications';
+import {needsPageContext,resolveViewerContext} from './lib/viewer-context';
+import {profilePanelRequest,profilePanelHeader,profilePagePath} from './lib/profile-panel-request';
 
 const PUBLIC_ROUTES = ["/login", "/register", "/logout", "/oidc-callback", "/oidc-start", "/link", "/site.webmanifest", "/favicon-96x96.png", "/apple-touch-icon.png", "/sw.js", "/offline.html"];
 // /api/proxy/auth/device/code and /device/token are the RFC 8628 endpoints a
@@ -15,14 +21,17 @@ const PUBLIC_ROUTES = ["/login", "/register", "/logout", "/oidc-callback", "/oid
 const PUBLIC_PREFIXES = ["/api/proxy/sharing/", "/auth/activate/", "/forgot-password", "/reset-password/", "/confirm-email-change/", "/api/proxy/webhooks/", "/api/proxy/auth/has-users", "/api/proxy/auth/bootstrap-restore", "/api/proxy/auth/device/code", "/api/proxy/auth/device/token", "/api/proxy/media/stream/", "/api/proxy/radarr-compat/", "/api/proxy/sonarr-compat/"];
 // Matches /profile/{id} (someone else's public profile page) but not the bare
 // /profile page (the logged-in user's own profile management), which must stay gated.
-const PUBLIC_PROFILE_PAGE_RE = /^(?:\/profile\/\d+|\/user\/[^/]+(?:\/(?:movies|series|list|social|stats))?|\/title\/\d+|\/actors\/(?:catalogue|tmdb)(?:%3[Aa]|:)\d+|\/browse|\/home|\/api\/proxy\/tracking\/(?:catalog(?:\/(?:movie|series)\/[1-9][0-9]*\/preview)?|browse(?:\/facets|\/tags|\/sections)?|people\/[^/]+|title\/\d+(?:\/(?:background|artwork-preview))?|profile\/[^/]+\/(?:movie|series|all|stats\/(?:overview|summary))))\/?$/;
+const PUBLIC_PROFILE_PAGE_RE = /^(?:\/profile\/\d+|\/user\/[^/]+(?:\/(?:movies|series|list|social|stats))?|\/title\/\d+|\/actors\/(?:catalogue|tmdb)(?:%3[Aa]|:)\d+|\/browse|\/home|\/api\/proxy\/tracking\/(?:catalog(?:\/(?:movie|series)\/[1-9][0-9]*\/preview)?|browse(?:\/facets|\/tags|\/sections)?|people\/[^/]+|title\/\d+(?:\/(?:background|artwork-preview))?|profile\/[^/]+\/(?:(?:movie|series|all)(?:\/(?:list|index|rows))?|stats\/(?:overview|summary))))\/?$/;
 // Old numeric Stats bookmarks redirect to the username-based profile Stats
 // route after the same public-profile permission check as /profile/{id}.
 const PUBLIC_LEGACY_STATS_PAGE_RE = /^\/stats\/\d+\/?$/;
 // The profile page's <img> tag hits this proxy path directly. It has no file
 // extension, so it doesn't fall under isStaticAsset below like TMDB poster
 // URLs do, and needs the same admin-gated anonymous allowance as the page itself.
-const PUBLIC_AVATAR_PROXY_RE = /^\/api\/proxy\/profile\/avatar\/\d+$/;
+const PUBLIC_AVATAR_PROXY_RE = /^\/api\/proxy\/profile\/(?:avatar|background)\/\d+$/;
+const PUBLIC_PROFILE_SOCIAL_RE = /^\/api\/proxy\/tracking\/people\/[^/]+\/social\/?$/;
+const PUBLIC_PROFILE_SEASONS_RE = /^\/api\/proxy\/tracking\/profile\/[^/]+\/series\/[1-9]\d*\/seasons\/?$/;
+const PUBLIC_TITLE_SEASONS_RE = /^\/(?:title\/[1-9]\d*\/seasons|api\/proxy\/tracking\/title\/[1-9]\d*\/episode-images)\/?$/;
 // Matches /list/{id} (someone else's public/friends-only list page). The list
 // itself still enforces its own privacy_level server-side; this only decides
 // whether a logged-out visitor gets past the gate at all.
@@ -37,6 +46,8 @@ const PUBLIC_RECENTLY_WATCHED_PAGE_RE = /^\/recently-watched-(?:movies|shows)\/\
 const PUBLIC_EXPLORE_PAGE_RE = /^\/(?:(?:movies|shows|search|lists|airing-today|discover|discover-title)?|trending\/(?:movies|shows))\/?$/;
 const PUBLIC_CATALOG_IMPORT_RE = /^\/api\/proxy\/tracking\/catalog\/(?:movie|series)\/[1-9][0-9]*\/?$/;
 const PUBLIC_PERSON_IMAGES_RE = /^\/api\/proxy\/tracking\/contributors\/(?:actor|staff)\/(?:catalogue|tmdb)(?:%3[Aa]|:)[1-9][0-9]*\/images\/?$/;
+const PUBLIC_GAME_DETAIL_RE = /^\/(?:games\/[1-9][0-9]*|api\/proxy\/catalogue\/entities\/[1-9][0-9]*\/details)\/?$/;
+const PUBLIC_GAME_LIST_RE = /^\/(?:user\/[^/]+\/(?:games|favorites)|api\/proxy\/tracking\/games\/users\/[^/]+\/(?:list|favorites|index|rows)|api\/proxy\/tracking\/people\/[^/]+\/header)\/?$/;
 // Movie/episode and show/season/episode detail pages (TMDB- and TVDB-numbered
 // variants), gated the same way as PUBLIC_EXPLORE_PAGE_RE above.
 const PUBLIC_MEDIA_DETAIL_PAGE_RE =
@@ -61,18 +72,21 @@ const PUBLIC_MEDIA_ROWS_PROXY_RE =
 const ADMIN_ONLY_ROUTES = ["/docs", "/redoc", "/openapi.json"];
 
 // Security headers added to every response.
-// CSP is intentionally omitted — Astro's define:vars emits inline <script>
-// blocks whose hashes change every build, making a static policy impractical.
+// Stage one observes inline scripts and DOM sinks without blocking existing UI.
+// Do not request script samples: inline scripts may contain private page data.
 const SECURITY_HEADERS: Record<string, string> = {
   "X-Frame-Options": "DENY",
   "X-Content-Type-Options": "nosniff",
   "Referrer-Policy": "strict-origin-when-cross-origin",
   "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+  "Content-Security-Policy-Report-Only": "script-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; report-uri /api/csp-report; report-to csp",
 };
 
 export const onRequest = defineMiddleware(async (context, next) => {
   const token = context.cookies.get(sessionCookieName("token"))?.value;
   const { pathname } = context.url;
+  if (pathname === '/api/csp-report') return next();
+  context.locals.profilePanel = profilePanelRequest(context.request);
 
   if (context.request.method === 'GET' || context.request.method === 'HEAD') {
     const preview = await crawlerShareResponse(context.url, context.request.headers.get('User-Agent') || '', process.env.SERVER_URL || context.url.origin);
@@ -110,8 +124,19 @@ export const onRequest = defineMiddleware(async (context, next) => {
   // The proxy prefers the cookie over an API key, so a query key cannot exempt
   // a cookie-authenticated write. Explicit Bearer headers override the cookie.
   if (requiresSameOrigin(context.request.method, pathname, !!token, hasProxyBearer) &&
-      !isSameOrigin(context.request, context.url, process.env.SERVER_URL)) {
+      !isSameOrigin(context.request, context.url, process.env.SERVER_URL,
+        (process.env.ADDITIONAL_PUBLIC_ORIGINS || '').split(',').map(value => value.trim()).filter(Boolean))) {
     return new Response('Cross-site form submissions are forbidden', { status: 403, headers: SECURITY_HEADERS });
+  }
+
+  // API endpoints validate the forwarded session and their own permissions.
+  // A separate /auth/me preflight adds a round trip to every request without
+  // strengthening that check. Keep cookie-write CSRF protection above this.
+  if (token && pathname.startsWith('/api/proxy/')) {
+    context.locals.token = token;
+    const response = await next();
+    for (const [header, value] of Object.entries(SECURITY_HEADERS)) response.headers.set(header, value);
+    return response;
   }
 
   // Skip auth for static assets and public routes
@@ -122,8 +147,8 @@ export const onRequest = defineMiddleware(async (context, next) => {
     (hasApiKey || hasProxyBearer || isStaticAsset || publicLegalPage(pathname) || PUBLIC_ROUTES.includes(pathname) || PUBLIC_PREFIXES.some(p => pathname.startsWith(p)));
 
   // Anonymous access to any of these read-only pages is allowed only when the
-  // admin has enabled logged-out navigation (Admin Settings) and a global
-  // TMDB key is set. Profile/list pages still enforce their own privacy
+  // admin has enabled logged-out navigation (Admin Settings).
+  // Profile/list pages still enforce their own privacy
   // (public/private) server side - this only decides whether a
   // logged-out visitor gets past the gate at all. Fails closed (redirects to
   // login) if the check errors.
@@ -132,13 +157,16 @@ export const onRequest = defineMiddleware(async (context, next) => {
       PUBLIC_PROFILE_PAGE_RE.test(pathname) ||
       PUBLIC_LEGACY_STATS_PAGE_RE.test(pathname) ||
       PUBLIC_AVATAR_PROXY_RE.test(pathname) ||
+      (context.request.method === 'GET' && (PUBLIC_PROFILE_SOCIAL_RE.test(pathname)||PUBLIC_PROFILE_SEASONS_RE.test(pathname)||PUBLIC_TITLE_SEASONS_RE.test(pathname))) ||
       PUBLIC_LIST_PAGE_RE.test(pathname) ||
       PUBLIC_TOP_RATED_PAGE_RE.test(pathname) ||
       PUBLIC_RECENTLY_WATCHED_PAGE_RE.test(pathname) ||
       PUBLIC_EXPLORE_PAGE_RE.test(pathname) ||
+      anonymousGameDiscoveryRoute(context.request.method,pathname) ||
       (context.request.method === 'POST' && PUBLIC_CATALOG_IMPORT_RE.test(pathname)) ||
       PUBLIC_MEDIA_DETAIL_PAGE_RE.test(pathname) ||
       (context.request.method === 'GET' && PUBLIC_PERSON_IMAGES_RE.test(pathname)) ||
+      (['GET','HEAD'].includes(context.request.method) && (PUBLIC_GAME_DETAIL_RE.test(pathname)||PUBLIC_GAME_LIST_RE.test(pathname))) ||
       PUBLIC_RECOMMENDATIONS_PARTIAL_RE.test(pathname) ||
       PUBLIC_PERSON_CREDITS_PARTIAL_RE.test(pathname) ||
       PUBLIC_MEDIA_ROWS_PROXY_RE.test(pathname);
@@ -154,7 +182,10 @@ export const onRequest = defineMiddleware(async (context, next) => {
   if (token) {
     try {
       // Verify token and get user info
-      const user = await api.auth.me(token);
+      const {user,pageContext} = await resolveViewerContext(api.auth, token, {
+        pathname, isStaticAsset, profilePanel: context.locals.profilePanel,
+      });
+      context.locals.pageContext = pageContext;
       context.locals.user = user;
       context.locals.token = token;
 
@@ -190,11 +221,20 @@ export const onRequest = defineMiddleware(async (context, next) => {
     }
   }
 
+  if (approvedGamesPage(context.url) && context.locals.user?.can_access_games!==true) {
+    return context.rewrite('/games-access');
+  }
+
   // Resolve the viewer's settings once per page (reused by the layout and the
   // pages that need them, e.g. the RPDB rating-poster toggle - #377). One
   // failed lookup just leaves the normal artwork and session intact.
-  if (context.locals.user && token && !isStaticAsset && !pathname.startsWith('/api/')) {
-    context.locals.settings = await api.auth.getSettings(token).catch(() => undefined);
+  if (context.locals.user && token && needsPageContext(pathname,isStaticAsset)) {
+    // Start independent page reads together; layouts/components reuse these
+    // request-local promises after the settings needed by middleware arrive.
+    void viewerMediaPreferences(context.locals);
+    void viewerProfilePreferences(context.locals);
+    if (!context.locals.profilePanel) void viewerNotifications(context.locals);
+    context.locals.settings = context.locals.pageContext?.settings ?? await api.auth.getSettings(token).catch(() => undefined);
     context.locals.hasRpdbKey = !!context.locals.settings?.has_rpdb_key;
     for (const [name, value] of displayPreferenceCookies(context.locals.settings)) {
       context.cookies.set(name, value, {
@@ -205,6 +245,17 @@ export const onRequest = defineMiddleware(async (context, next) => {
   }
 
   const response = await next();
+  if (response.headers.get('Content-Type')?.includes('text/html')) {
+    response.headers.set('Reporting-Endpoints', `csp="${context.url.origin}/api/csp-report"`);
+    if (context.locals.pageContext) {
+      response.headers.set('Cache-Control', 'private, no-store');
+      response.headers.append('Vary', 'Cookie');
+    }
+  }
+  if(profilePagePath.test(pathname)){
+    response.headers.append('Vary',profilePanelHeader);
+    response.headers.set('Cache-Control','private, no-store');
+  }
   for (const [header, value] of Object.entries(SECURITY_HEADERS)) {
     response.headers.set(header, value);
   }

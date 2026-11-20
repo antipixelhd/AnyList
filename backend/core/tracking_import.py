@@ -25,6 +25,8 @@ async def import_tracking_history(db, user_id: int, added_media_ids: set[int] | 
     if state:
         state.initial_import = state.initial_import or initial_import
         return 0
+    from core.watch_state_policy import conservative_watch_state
+    conservative = await conservative_watch_state(db, user_id)
     await db.execute(select(User.id).where(User.id==user_id).with_for_update())
     deleted=set((await db.execute(select(TrackingDeletion.media_id).where(TrackingDeletion.user_id==user_id))).scalars())
     existing={e.media_id:e for e in (await db.execute(select(TrackedEntry).where(TrackedEntry.user_id==user_id))).scalars()}
@@ -36,6 +38,16 @@ async def import_tracking_history(db, user_id: int, added_media_ids: set[int] | 
     series=(await db.execute(select(Media).where(Media.media_type==MediaType.series))).scalars().all()
     series_by_tmdb={m.tmdb_id:m for m in series if m.tmdb_id}
     series_by_tvdb={m.tvdb_id:m for m in series if m.tvdb_id}
+    from core.catalog_import import get_or_create_series_from_show
+    for show in sorted(shows.values(), key=lambda show: show.id):
+        if show.tmdb_id in series_by_tmdb or show.tvdb_id in series_by_tvdb:
+            continue
+        root = await get_or_create_series_from_show(db, show)
+        if root is not None:
+            if root.tmdb_id:
+                series_by_tmdb[root.tmdb_id] = root
+            if root.tvdb_id:
+                series_by_tvdb[root.tvdb_id] = root
     def parent(media):
         if media.media_type!=MediaType.episode:return media
         show=shows.get(media.show_id)
@@ -47,6 +59,8 @@ async def import_tracking_history(db, user_id: int, added_media_ids: set[int] | 
         if root is None:continue
         if root.id in deleted:
             await db.delete(event)
+            continue
+        if conservative and not event.completed:
             continue
         item=evidence.setdefault(root.id,{'media':root,'watched':[],'playing':False,'dates':[],'scores':{}})
         if event.completed:
@@ -61,6 +75,8 @@ async def import_tracking_history(db, user_id: int, added_media_ids: set[int] | 
         if root is None:continue
         if root.id in deleted:
             await db.delete(event)
+            continue
+        if conservative:
             continue
         item=evidence.setdefault(root.id,{'media':root,'watched':[],'playing':False,'dates':[],'scores':{}})
         item['playing']=True

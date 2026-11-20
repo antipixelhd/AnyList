@@ -44,3 +44,16 @@ test('upcoming timeline shows nearest releases first and keeps equal-date provid
   assert.deepEqual(timelineGroups(entries, true).flatMap(y => y.months.flatMap(m => m.items)).map(i=>i.title), ['Z','A','Next year']);
   assert.deepEqual(timelineGroups([...entries, {title:'Later page',release_date:'2026-11-02'}], true)[0].months[0].items.map(i=>i.title), ['Z','A','Later page']);
 });
+
+test('game quarters follow their dated months in either direction, with year-only games last', () => {
+  const rows = [
+    {title:'Quarter one',release_date:'2027',release_date_precision:'quarter',release_quarter:1},
+    {title:'Quarter two',release_date:'2027',release_date_precision:'quarter',release_quarter:2},
+    {title:'Year only',release_date:'2027',release_date_precision:'year'},
+    ...['01','02','03','04'].map(month => ({title:month,release_date:`2027-${month}-12`})),
+  ];
+  const labels = ascending => timelineGroups(rows, ascending, true)[0].months.map(group => group.label);
+  const [jan,feb,mar,apr] = ['01','02','03','04'].map(month => monthName(`2027-${month}`));
+  assert.deepEqual(labels(true), [jan,feb,mar,'Q1',apr,'Q2','Year only']);
+  assert.deepEqual(labels(false), [apr,'Q2',mar,feb,jan,'Q1','Year only']);
+});

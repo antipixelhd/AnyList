@@ -6,7 +6,7 @@ import os
 import unittest
 import uuid
 from unittest.mock import AsyncMock, patch
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 os.environ.setdefault("SECRET_KEY", "statistics-test-only")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from core import statistics_snapshots as snapshots
 from db import get_db
 from dependencies import get_current_user, get_current_user_or_api_key, get_optional_user
-from models import Base, GlobalSettings, Media, User, UserProfileData, WatchEvent
+from models import Base, GlobalSettings, Media, Rating, Show, User, UserProfileData, WatchEvent
 from models.base import MediaType, PrivacyLevel
 from models.catalogue import CatalogueEntity, CatalogueCredit, CatalogueLegacyLink, CatalogueIdentity
 from models.statistics import UserStatsSnapshot, UserStatsState
@@ -35,6 +35,179 @@ URL = os.getenv("STATISTICS_TEST_DATABASE_URL") or os.getenv("TRACKING_TEST_DATA
 
 @unittest.skipUnless(URL, "Requires explicit disposable statistics PostgreSQL")
 class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
+    async def test_guest_browse_and_screen_lists_follow_the_public_setting(self):
+        username = self.viewer.username
+        async with self.Session() as db:
+            series = Media(title='Guest series', media_type=MediaType.series, release_date='2020-01-01')
+            db.add(series)
+            await db.flush()
+            db.add(TrackedEntry(user_id=self.user_id, media_id=series.id, status='planning'))
+            series_id = series.id
+            await db.commit()
+
+        self.viewer = None
+        profile = f'/tracking/profile/{username}'
+        lists = {'movie': {self.media_id}, 'series': {series_id}, 'all': {self.media_id, series_id}}
+        for scope, ids in lists.items():
+            response = await self.client.get(f'{profile}/{scope}/list')
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.headers['cache-control'], 'private, no-store')
+            payload = response.json()
+            self.assertFalse(payload['profile']['owner'])
+            self.assertEqual({row['id'] for row in payload['results']}, ids)
+            self.assertTrue(all(not row.get('entry') for row in payload['results']))
+
+        index = await self.client.get(f'{profile}/all/index')
+        self.assertEqual(index.status_code, 200, index.text)
+        rows = await self.client.get(f'{profile}/all/rows', params=[('ids', series_id)])
+        self.assertEqual(rows.status_code, 200, rows.text)
+        self.assertEqual([row['id'] for row in rows.json()], [series_id])
+
+        for scope, media_id in [('movie', self.media_id), ('series', series_id)]:
+            response = await self.client.get('/tracking/browse', params={
+                'media_type': scope, 'source': 'local', 'sort': 'title', 'unfiltered': 'true'})
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertIn(media_id, {row['id'] for row in response.json()['results']})
+
+            with patch('core.settings_store.get_server_tmdb_key', return_value=None):
+                facets = await self.client.get('/tracking/browse/facets', params={'media_type': scope})
+                self.assertEqual(facets.status_code, 200, facets.text)
+                self.assertTrue(facets.json()['genres'])
+                sections = await self.client.get('/tracking/browse/sections', params={
+                    'media_type': scope, 'stream': 'true'})
+                self.assertEqual(sections.status_code, 200, sections.text)
+                self.assertIn('"section":', sections.text)
+                self.assertNotIn('"error":', sections.text)
+
+        async with self.Session() as db:
+            await db.execute(update(GlobalSettings).values(enable_logged_out_navigation=False))
+            await db.commit()
+        for route in ('browse', 'browse/facets', 'browse/sections', f'profile/{username}/all/list'):
+            response = await self.client.get(f'/tracking/{route}')
+            self.assertEqual(response.status_code, 401, response.text)
+
+    async def test_public_series_auto_expansion_uses_the_profile_owners_season_ratings(self):
+        async with self.Session() as db:
+            titles = [Media(title=f'Rating case {number}', media_type=MediaType.series) for number in range(4)]
+            db.add_all(titles)
+            await db.flush()
+            for number, title in enumerate(titles):
+                db.add(TrackedEntry(user_id=self.user_id, media_id=title.id, status='watching',
+                    season_scores={'1': 8} if number == 0 else {}))
+            db.add_all([Rating(user_id=self.user_id, media_id=titles[1].id, season_number=1,
+                              episode_order='tvdb:dvd', rating=7),
+                        Rating(user_id=self.user_id, media_id=titles[2].id, season_number=1, rating=0),
+                        Rating(user_id=self.user_id, media_id=titles[3].id, season_number=None, rating=9)])
+            await db.commit()
+            ids = [title.id for title in titles]
+        username = self.viewer.username
+        owner_page = (await self.client.get(f'/tracking/profile/{username}/series/list')).json()
+        self.assertTrue(all('has_season_ratings' not in row for row in owner_page['results']))
+        self.viewer = User(id=99999, username='another-viewer')
+        public_page = await self.client.get(f'/tracking/profile/{username}/series/list')
+        self.assertEqual(public_page.status_code, 200, public_page.text)
+        self.assertEqual({row['id']: row['has_season_ratings'] for row in public_page.json()['results']},
+                         dict(zip(ids, (True, True, False, False))))
+        rows = (await self.client.get(f'/tracking/profile/{username}/all/rows', params=[('ids', value) for value in ids])).json()
+        self.assertEqual([row['has_season_ratings'] for row in rows], [True, True, False, False])
+
+    async def test_profile_series_seasons_only_show_progress_and_the_next_season_after_completion(self):
+        from core.tracking_metadata import EPISODE_DETAILS_VERSION
+
+        async with self.Session() as db:
+            show = Show(title='Four seasons', tmdb_id=923000)
+            series = Media(title=show.title, tmdb_id=show.tmdb_id, media_type=MediaType.series, status='Returning Series',
+                tmdb_data={'seasons': [dict(season_number=n, episode_count=2, poster_path=f'/s{n}.jpg',
+                    air_date=f'202{n}-01-01') for n in range(5)], 'tracking_episode_details_version': EPISODE_DETAILS_VERSION,
+                    'tracking_catalogue_refreshed_at': datetime.now(timezone.utc).isoformat()})
+            db.add_all([show, series])
+            await db.flush()
+            episodes = {(season, number): Media(title=f'{season}.{number}', media_type=MediaType.episode,
+                show_id=show.id, season_number=season, episode_number=number,
+                release_date='2099-01-01' if (season, number) == (2, 2) else '2020-01-01')
+                for season in range(4) for number in (1, 2)}
+            db.add_all(episodes.values())
+            await db.flush()
+            media_id = series.id
+            db.add_all([TrackedEntry(user_id=self.user_id, media_id=media_id, status='watching', progress=3,
+                season_scores={'1': 8, '2': 3}), Rating(user_id=self.user_id, media_id=media_id, season_number=2, rating=0)])
+            db.add_all(WatchEvent(user_id=self.user_id, media_id=episodes[key].id, completed=True)
+                for key in ((0, 1), (1, 1), (1, 2)))
+            episode_two = episodes[2, 1].id
+            await db.commit()
+
+        url = f'/tracking/profile/{self.viewer.username}/series/{media_id}/seasons'
+        response = await self.client.get(url)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.headers['cache-control'], 'private, no-store')
+        self.assertEqual([(s['number'], s['watched'], s['score'], s['completed'], s['poster']) for s in response.json()['seasons']],
+            [(1, 2, 8, True, '/s1.jpg'), (2, 0, None, False, '/s2.jpg')])
+        self.assertEqual([s['availability_reason'] for s in response.json()['seasons']], [None, 'airing'])
+        async with self.Session() as db:
+            db.add(WatchEvent(user_id=self.user_id, media_id=episode_two, completed=True))
+            await db.commit()
+        self.viewer = None
+        seasons = (await self.client.get(url)).json()['seasons']
+        self.assertEqual([(s['number'], s['watched'], s['total']) for s in seasons], [(1, 2, 2), (2, 1, 2)])
+        async with self.Session() as db:
+            await db.execute(update(UserProfileData).where(UserProfileData.user_id == self.user_id)
+                .values(privacy_level=PrivacyLevel.private))
+            await db.commit()
+        self.assertEqual((await self.client.get(url)).status_code, 403)
+
+    async def test_screen_profile_windows_match_complete_membership_and_project_released_progress(self):
+        async with self.Session() as db:
+            series = Media(title='Later % Series', original_title='Original series name',tagline='A different beginning.', media_type=MediaType.series, release_date='2024-01-01',
+                tmdb_data={'genres': [{'name': 'Adventure'}], 'tracking_catalogue_refreshed_at': '2026-01-01',
+                    'tracking_catalogue_provider': 'tvdb', 'tracking_episode_ids': [91201, 91202]})
+            first = Media(title='Episode 1', media_type=MediaType.episode, tvdb_id=91201,
+                season_number=1, episode_number=1, release_date='2024-01-02')
+            second = Media(title='Episode 2', media_type=MediaType.episode, tvdb_id=91202,
+                season_number=1, episode_number=2, release_date='2024-01-03')
+            anime = Media(title='Hidden anime', media_type=MediaType.series,
+                tmdb_data={'genres':['Animation'], 'original_language':'ja'})
+            db.add_all([series, first, second, anime])
+            await db.flush()
+            db.add_all([TrackedEntry(user_id=self.user_id,media_id=series.id,status='completed',
+                progress=8, rating_mode='average',season_scores={'0':10,'1':6,'2':8},favorite=True,notes='Public note'),
+                TrackedEntry(user_id=self.user_id,media_id=anime.id,status='watching'),
+                WatchEvent(user_id=self.user_id,media_id=first.id,completed=True,watched_at=datetime(2026,1,1))])
+            (await db.get(GlobalSettings,1)).show_anime=False
+            ids=(series.id,first.id,anime.id)
+            await db.commit()
+        root=f'/tracking/profile/{self.viewer.username}'
+        first_page=await self.client.get(f'{root}/all/list',params={'limit':1,'sort':'progress'})
+        self.assertEqual(first_page.status_code,200,first_page.text)
+        self.assertEqual(first_page.json()['total'],2)
+        self.assertEqual(len(first_page.json()['results']),1)
+        self.assertEqual(first_page.json()['group_counts'],{'completed':2})
+        index=(await self.client.get(f'{root}/all/index')).json()
+        self.assertTrue(index['complete'])
+        self.assertEqual({row[0] for row in index['results']},{self.media_id,ids[0]})
+        indexed=next(row for row in index['results'] if row[0]==ids[0])
+        self.assertEqual(indexed[3:5],[7,1])
+        self.assertNotIn('Public note',str(index))
+        filtered=(await self.client.get(f'{root}/all/list',params={'q':'%','genre':'Adventure','year':'2024','favorites':'true'})).json()
+        self.assertEqual([entry['id'] for entry in filtered['results']],[ids[0]])
+        row=filtered['results'][0]
+        self.assertEqual((row['progress'],row['released_episodes'],row['season_position']),(1,2,'S1E1'))
+        self.assertEqual(row['progress_positions'],['S1E1','S1E2'])
+        self.assertEqual(row['notes'],'Public note')
+        self.assertEqual(row['new_episodes'],1)
+        params=[('ids',identifier) for identifier in (ids[2],ids[0],ids[1],self.media_id,ids[0])]
+        rows=(await self.client.get(f'{root}/all/rows',params=params)).json()
+        self.assertEqual([entry['id'] for entry in rows],[ids[0],self.media_id])
+        self.assertEqual((rows[0]['original_title'],rows[0]['tagline']),('Original series name','A different beginning.'))
+        self.assertEqual((await self.client.get(f'{root}/series/rows',params=params)).json(),[row])
+        self.assertEqual((await self.client.get(f'{root}/movie/rows',params=params)).json(),[rows[1]])
+        self.assertEqual((await self.client.get(f'{root}/all/rows',params=[('ids',self.media_id)]*101)).status_code,422)
+        self.assertEqual((await self.client.get(f'{root}/all/list',params={'limit':101})).status_code,422)
+        self.viewer=None
+        async with self.Session() as db:
+            await db.execute(update(GlobalSettings).values(enable_logged_out_navigation=False))
+            await db.commit()
+        self.assertEqual((await self.client.get(f'{root}/all/index')).status_code,401)
+
     async def asyncSetUp(self):
         if not (":55449/catalogue_test" in URL or "/anylist_test" in URL):
             raise RuntimeError("Refusing non-disposable statistics DB")
@@ -48,8 +221,11 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
 
         def setup(conn):
             conn.execute(text(f'SET LOCAL search_path TO "{self.schema}"'))
-            wanted = [t for t in Base.metadata.sorted_tables if not t.name.startswith("user_stats_") and t.name not in ("stats_metadata_revision", "catalogue_contributor_search")]
+            wanted = [t for t in Base.metadata.sorted_tables if not t.name.startswith("user_stats_") and t.name not in ("stats_metadata_revision", "catalogue_contributor_search", "game_stats_state")]
             Base.metadata.create_all(conn, tables=wanted)
+            # This production identity index is created by its data migration,
+            # rather than Base.metadata; exercise real episode conflict handling.
+            conn.execute(text('CREATE UNIQUE INDEX uq_media_tmdb_type ON media (tmdb_id, media_type) WHERE tmdb_id IS NOT NULL'))
             conn.execute(text("ALTER TABLE catalogue_credits DROP COLUMN character_image_url"))
             conn.execute(text("ALTER TABLE catalogue_credits DROP COLUMN screen_character_id"))
             conn.execute(text("DROP TABLE catalogue_screen_characters"))
@@ -63,6 +239,13 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 importlib.import_module("migrations.versions.mt041_actor_role_artwork").upgrade()
                 importlib.import_module("migrations.versions.mt042_screen_characters").upgrade()
                 importlib.import_module("migrations.versions.mt050_contributor_search").upgrade()
+                importlib.import_module("migrations.versions.mt061_game_contributor_search").upgrade()
+                importlib.import_module("migrations.versions.mt064_game_credit_participation").upgrade()
+                importlib.import_module("migrations.versions.mt065_person_credit_scope").upgrade()
+                importlib.import_module("migrations.versions.mt066_game_statistics").upgrade()
+                importlib.import_module("migrations.versions.mt081_game_statistics_totals").upgrade()
+                importlib.import_module("migrations.versions.mt093_playable_bundles").upgrade()
+                importlib.import_module("migrations.versions.mt095_metadata_revision_shards").upgrade()
             self.assertEqual(conn.scalar(text("SELECT count(*) FROM user_stats_state")), 1)
             self.assertEqual(tuple(conn.execute(text(
                 "SELECT condeferrable, condeferred FROM pg_constraint "
@@ -682,7 +865,7 @@ class StatisticsDatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.viewer = await db.get(User, self.user_id)
         self.assertEqual((await self.client.get("/tracking/profile/statistics-fixture/stats/overview")).status_code, 200)
         self.viewer = None
-        self.assertEqual((await self.client.get("/tracking/profile/statistics-fixture/stats/overview")).status_code, 401)
+        self.assertEqual((await self.client.get("/tracking/profile/statistics-fixture/stats/overview")).status_code, 403)
         async with self.Session() as db:
             other = User(email='private-reader@example.test', username='private-reader', api_key='private-reader')
             db.add(other)

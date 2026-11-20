@@ -266,14 +266,22 @@ async def stage_first_snapshot(db, conn, library, watched, progress, mappings, a
             await db.commit()
             return False
     identity_version = conn.identity_version
-    unresolved = {str(row.get('content_id')) for row, _ in observations(watched, progress)
+    from core.watch_state_policy import conservative_watch_state, filter_import_items
+    review_progress = progress
+    if await conservative_watch_state(db, conn.user_id):
+        from core.streaming_evidence import completed_viewing
+        qualified_ids = {str(row.get('content_id')) for row, observation in observations(watched, progress)
+                         if completed_viewing(observation.to_dict())}
+        review_progress = [row for row in progress if str(row.get('content_id')) in qualified_ids]
+    unresolved = {str(row.get('content_id')) for row, _ in observations(watched, review_progress)
                   if re.fullmatch(r'tt\d+|tmdb:\d+', str(row.get('content_id') or ''), re.IGNORECASE)
                   and str(row['content_id']) not in mappings}
     if unresolved:
         # A failed lookup is unknown evidence, not a reviewed skip. Do not
         # establish a baseline that would suppress these rows on a retry.
         raise ValueError(f'{len(unresolved)} watched title(s) could not be verified. Sync again to retry their identities.')
-    items = await prepare_items(watched, progress, mappings, api_key)
+    items = await prepare_items(watched, review_progress, mappings, api_key)
+    items = await filter_import_items(db, conn.user_id, items, conn.type)
     # Admission also covers file uploads and other connections.
     from core.import_admission import require_import_slot
     await require_import_slot(db, conn.user_id, connection_id=conn.id)

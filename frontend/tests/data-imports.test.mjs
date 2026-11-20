@@ -4,7 +4,7 @@ import { createImportUploader, importFormats } from "../src/lib/data-imports.ts"
 
 function session(format = importFormats[0]) {
   const started = [], errors = [];
-  const uploader = createImportUploader(format, "fixture-token", {
+  const uploader = createImportUploader(format, {
     onStarted: data => started.push(data), onError: message => errors.push(message),
   });
   return { uploader, started, errors };
@@ -25,7 +25,7 @@ for (const format of importFormats) {
     const { url, options } = requests[0];
     assert.equal(url, format.endpoint);
     assert.equal(options.method, "POST");
-    assert.deepEqual(options.headers, { Authorization: "Bearer fixture-token" });
+    assert.deepEqual(options.headers, {});
     assert.equal(options.body.get("file").name, `export${format.extension.toUpperCase()}`);
     assert.deepEqual([...options.body.keys()], ["file", ...format.options.map(option => format.fieldPrefix + option.key)]);
     for (const option of format.options) assert.equal(options.body.get(format.fieldPrefix + option.key), String(!option.secret));
@@ -95,4 +95,13 @@ test("navigation aborts uploads and suppresses late success, failure, and furthe
     assert.deepEqual(errors, []);
     fetch.mock.restore();
   }
+});
+
+
+test('AnyList backup picker remains enabled without a TMDB key',async()=>{
+  const {readFileSync}=await import('node:fs');
+  const source=readFileSync(new URL('../src/components/settings/DataImportSettings.astro',import.meta.url),'utf8');
+  const panel=source.slice(source.indexOf('<div data-import-panel="scrob">'),source.indexOf('<div data-import-panel="trakt"'));
+  assert.doesNotMatch(panel,/hasTmdbKey|disabled=|TMDB Read Access Token is required/);
+  assert.match(panel,/id="scrob_export_file"/);
 });

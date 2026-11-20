@@ -58,5 +58,3 @@ class ParsedHistory:
             "excluded_rows": self.excluded_rows,
             "language": self.language,
         }
-
-

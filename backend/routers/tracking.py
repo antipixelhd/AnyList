@@ -1,35 +1,61 @@
 """Tracked lists are independent of connected streaming-library membership."""
+from core.api_roles import reader
+from core.profile_images import background_url as profile_background_url
 import asyncio
 from core.catalog_search import result_filters, browse_preferences
 from core import settings_store, season_releases, tracking_projection
 import base64
 import binascii
+import json
 from datetime import date, datetime, timedelta, timezone
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query, Response
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select, delete, or_, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db import get_db
-from dependencies import get_current_user, get_current_user_or_api_key, get_tracking_write_user, get_optional_user
+from dependencies import get_current_user, get_current_user_or_api_key, get_tracking_write_user, get_optional_user, get_optional_user_or_api_key
 from core.tracking_rules import TrackingStatus, normalize_score, effective_score, default_dates
 from core.status_provenance import mark_status_change
+from core.series_editor import SeriesEditorContext, SeriesEditorPatch, editor_context as series_editor_context, editor_summary
+from core.season_completion import BulkWatch, membership_key
+from core.episode_release import EpisodeRelease
 from models import Media, User, UserSettings, UserProfileData, Follow, Rating, Show, WatchEvent, Collection, CollectionFile, PlaybackProgress, PlaybackSession, MediaServerConnection, List, ListItem, ShowRewatch
 from models.base import MediaType, PrivacyLevel
 from models.tracking import MediaFavorite, TrackedEntry, TrackingActivity, TrackingDeliveryJob, TrackingDeletion, TrackingPreferences, SyncReview, StreamBaseline, ProviderIgnore, ProviderMatch, StreamAction, CloudAction
-from models.sync import SyncJob, SyncStatus
+from models.sync import SyncJob
+from schemas_list_categories import CategoryPatch, CategoryPresentation
 from schemas_statistics import MediaScope, OverviewResponse, StudioDetail, PersonDetail, StatisticsRefresh
-from schemas_contributors import ContributorKind, ContributorPage, ContributorImages, ListScope
+from schemas_contributors import ContributorKind, ContributorMediaScope, ContributorPage, ContributorImages, ContributorAvailability, ListScope
 
 from core.tracking_access import catalog_access, profile_access, anime_is_visible
 
 router = APIRouter()
+CategoryDB = Annotated[AsyncSession, Depends(get_db, scope="function")]
+CategoryViewer = Annotated[User, Depends(get_current_user)]
+
+
+@router.get('/list-categories/{domain}')
+async def category_preferences(domain: Literal['game', 'screen'], db: CategoryDB, viewer: CategoryViewer, response: Response) -> CategoryPresentation:
+    from core import list_categories
+    response.headers['Cache-Control'] = 'private, no-store'
+    counts = await list_categories.membership_counts(db, viewer.id) if domain == 'game' else None
+    return await list_categories.read(db, viewer.id, domain=domain, counts=counts)
+
+
+@router.patch('/list-categories/{domain}')
+async def update_category_preferences(domain: Literal['game', 'screen'], body: CategoryPatch, db: CategoryDB, viewer: CategoryViewer, response: Response) -> CategoryPresentation:
+    from core import list_categories
+    response.headers['Cache-Control'] = 'private, no-store'
+    return await list_categories.save(db, viewer.id, body, domain=domain)
 
 
 @router.delete('/entry/{media_id}')
-async def remove_entry(media_id:int,confirmed:bool=False,db:AsyncSession=Depends(get_db),viewer:User=Depends(get_current_user)):
+async def remove_entry(media_id:int,confirmed:bool=False,db:AsyncSession=Depends(get_db, scope="function"),viewer:User=Depends(get_current_user)):
     if not confirmed:raise HTTPException(409,'Confirm deletion of all personal tracking data for this title')
     media=await db.get(Media,media_id)
     if not media or media.media_type not in (MediaType.movie,MediaType.series):raise HTTPException(404,'Title not found')
@@ -44,6 +70,12 @@ async def remove_entry(media_id:int,confirmed:bool=False,db:AsyncSession=Depends
     episodes=(await db.execute(select(Media).where(Media.id.in_(ids),Media.media_type==MediaType.episode))).scalars().all()
     for model in (WatchEvent,PlaybackProgress,PlaybackSession,Rating,TrackingActivity,SyncReview,TrackedEntry,MediaFavorite):
         await db.execute(delete(model).where(model.user_id==viewer.id,model.media_id.in_(ids)))
+    if media.media_type == MediaType.series:
+        from models.seasons import SeasonReconcileJob, SeasonTracking, SeriesSeason
+        await db.execute(delete(SeasonTracking).where(SeasonTracking.user_id == viewer.id,
+            SeasonTracking.season_id.in_(select(SeriesSeason.id).where(SeriesSeason.media_id == media_id))))
+        await db.execute(delete(SeasonReconcileJob).where(SeasonReconcileJob.user_id == viewer.id,
+            SeasonReconcileJob.media_id == media_id))
     from models.tracking import StreamAction
     await db.execute(delete(StreamAction).where(StreamAction.user_id==viewer.id,StreamAction.media_id.in_(ids)))
     await db.execute(delete(CloudAction).where(CloudAction.user_id==viewer.id,CloudAction.media_id.in_(ids)))
@@ -86,66 +118,86 @@ async def remove_entry(media_id:int,confirmed:bool=False,db:AsyncSession=Depends
 
 
 @router.post('/import-history')
-async def import_history(db:AsyncSession=Depends(get_db),viewer:User=Depends(get_current_user)):
+async def import_history(db:AsyncSession=Depends(get_db, scope="function"),viewer:User=Depends(get_current_user)):
     from core.tracking_import import import_tracking_history
     return {'added':await import_tracking_history(db,viewer.id,initial_import=True)}
 
 
 class PreferencePatch(BaseModel):
-    auto_approve_uncertain_resume: bool | None = None
+    watch_state_sync: Literal['conservative', 'immediate'] | None = None
     auto_confirm: bool | None = None
+    auto_approve_uncertain_resume: bool | None = None
     combine_lists: bool | None = None
+    show_movies_series: bool | None = None
+    show_games: bool | None = None
+    show_game_achievements: bool | None = None
+    hide_erotic_games: bool | None = None
     default_sort: Literal['title', 'score', 'progress', 'updated'] | None = None
     low_priority_notifications: bool | None = None
     low_priority_retention_days: int | None = Field(None, ge=1, le=90)
     show_new_ratings_popup: bool | None = None
+    show_season_rating_popup: bool | None = None
     new_season_release_dates: bool | None = None
     new_season_releases: bool | None = None
     remove_specials_seasons: bool | None = None
     include_rereleases: bool | None = None
     minimum_popularity: float | None = Field(None, ge=0, le=1000000, allow_inf_nan=False)
+    game_min_ratings: int | None = Field(None, ge=0, le=10_000_000, strict=True)
+    game_min_follows: int | None = Field(None, ge=0, le=10_000_000, strict=True)
+    game_upcoming_min_follows: int | None = Field(None, ge=0, le=10_000_000, strict=True)
+    game_released_min_score: int | None = Field(None, ge=0, le=100, strict=True)
+    hide_ai_artwork: bool | None = None
+    hide_ai_voices: bool | None = None
+    hide_ai_music: bool | None = None
 
 
 @router.get('/preferences')
-async def preferences(db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
+async def preferences(db: AsyncSession = Depends(get_db, scope="function"), viewer: User = Depends(get_current_user)):
     row=await db.get(TrackingPreferences,viewer.id)
     from models.users import UserSettings
     settings=await db.scalar(select(UserSettings).where(UserSettings.user_id == viewer.id))
-    return {
-        'minimum_popularity': (settings.preferences or {}).get('minimum_popularity', 25) if settings else 25,
-        'include_rereleases': bool(settings and (settings.preferences or {}).get('include_rereleases', False)),
-        'auto_confirm': bool(row and row.auto_confirm),
-        'auto_approve_uncertain_resume': bool(settings and (settings.preferences or {}).get('auto_approve_uncertain_resume') is True),
-        'combine_lists': True if row is None else row.combine_lists,
-        'default_sort': 'title' if row is None else row.default_sort,
-        'low_priority_notifications': True if row is None else row.low_priority_notifications,
-        'low_priority_retention_days': 7 if row is None else row.low_priority_retention_days,
-        'show_new_ratings_popup': True if row is None else row.show_new_ratings_popup,
-        'new_season_release_dates': True if row is None else row.new_season_release_dates,
-        'new_season_releases': True if row is None else row.new_season_releases,
-        'remove_specials_seasons': True if row is None else row.remove_specials_seasons,
-    }
+    from core.viewer_preferences import preference_data
+    return preference_data(row, settings)
 
 
 @router.patch('/preferences')
-async def set_preferences(body: PreferencePatch, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
-    if 'auto_approve_uncertain_resume' in body.model_fields_set:
+async def set_preferences(body: PreferencePatch, background_tasks: BackgroundTasks,
+                          db: AsyncSession = Depends(get_db, scope="function"), viewer: User = Depends(get_current_user)):
+    from sqlalchemy.dialects.postgresql import JSONB, insert
+    from core.game_browse_policy import AI_KEYWORDS, DEFAULTS
+    from models.users import UserSettings
+
+    json_fields = {'include_rereleases','minimum_popularity','hide_erotic_games','watch_state_sync',
+        'auto_approve_uncertain_resume',*DEFAULTS,*AI_KEYWORDS}
+    changes = body.model_dump(exclude_unset=True)
+    for name, value in changes.items():
+        if value is None:
+            raise HTTPException(422, f'{name} cannot be null')
+    json_changes = {name:value for name,value in changes.items() if name in json_fields}
+    approve_resume = changes.get('auto_approve_uncertain_resume') is True
+    if 'auto_approve_uncertain_resume' in changes:
         await db.execute(select(User.id).where(User.id == viewer.id).with_for_update())
-    row=await db.get(TrackingPreferences,viewer.id)
-    if not row: row=TrackingPreferences(user_id=viewer.id);db.add(row)
-    for name in body.model_fields_set:
-        value=getattr(body,name)
-        if value is None:raise HTTPException(422,f'{name} cannot be null')
-        if name in ('include_rereleases', 'minimum_popularity', 'auto_approve_uncertain_resume'):
-            from models.users import UserSettings
-            settings=await db.scalar(select(UserSettings).where(UserSettings.user_id == viewer.id))
-            if settings is None:
-                settings=UserSettings(user_id=viewer.id)
-                db.add(settings)
-            settings.preferences={**(settings.preferences or {}), name: value}
-        else:
+    if json_changes:
+        from sqlalchemy import case, cast, func
+        statement = insert(UserSettings).values(user_id=viewer.id, preferences=json_changes)
+        current = case((func.jsonb_typeof(UserSettings.preferences)=='object', UserSettings.preferences),
+            else_=cast({}, JSONB))
+        await db.execute(statement.on_conflict_do_update(index_elements=[UserSettings.user_id], set_={
+            'preferences': current.op('||')(statement.excluded.preferences),
+        }))
+    tracking_changes = {name:value for name,value in changes.items() if name not in json_fields}
+    if tracking_changes:
+        row = await db.get(TrackingPreferences,viewer.id)
+        old_retention = row.low_priority_retention_days if row else 7
+        if tracking_changes.get('low_priority_retention_days', old_retention) > old_retention:
+            from core.notification_feed import retire_expired_reviews
+            await retire_expired_reviews(db, viewer.id, old_retention)
+        if row is None:
+            row = TrackingPreferences(user_id=viewer.id)
+            db.add(row)
+        for name,value in tracking_changes.items():
             setattr(row,name,value)
-    if body.auto_approve_uncertain_resume is True:
+    if approve_resume:
         from core.stream_actions import resolve_nuvio_resume_review
         reviews = (await db.execute(select(SyncReview).where(SyncReview.user_id == viewer.id,
             SyncReview.kind == 'resume_conflict', SyncReview.state == 'pending').order_by(SyncReview.id.desc()))).scalars().all()
@@ -159,7 +211,7 @@ async def set_preferences(body: PreferencePatch, background_tasks: BackgroundTas
 
 
 @router.get('/upcoming-seasons')
-async def upcoming_seasons(db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
+async def upcoming_seasons(db: AsyncSession = Depends(get_db, scope="function"), viewer: User = Depends(get_current_user)):
     from core.season_releases import upcoming_seasons_for_user
 
     results = await upcoming_seasons_for_user(db, viewer.id)
@@ -168,69 +220,7 @@ async def upcoming_seasons(db: AsyncSession = Depends(get_db), viewer: User = De
     return {'results': results}
 
 
-def review_priority(review: SyncReview) -> str:
-    if review.kind in {'initial_import','initial_cloud_import','conflict','cloud_conflict','rating_conflict','deletion_conflict','unmatched_import','library_conflict','watch_conflict','progress_conflict','resume_conflict'}:
-        return 'high'
-    if review.kind == 'outbound_pending':
-        return 'medium'
-    return review.priority or 'low'
-
-
-_AUTH_FAILURE_MARKERS = (
-    '401', '403', 'auth', 'forbidden', 'invalid token', 'permission',
-    'refresh token', 'token expired', 'unauthorized',
-)
-
-
-def connection_failure_events(jobs, connection_names):
-    """Project durable job history into one current alert per provider/connection."""
-    groups = {}
-    for job in jobs:
-        source = job.source.value if hasattr(job.source, 'value') else str(job.source)
-        if job.connection_id is not None:
-            key = f'connection:{job.connection_id}'
-            title = connection_names.get(job.connection_id, source.title())
-            resolve_url = f'/connections#conn-body-{job.connection_id}'
-        elif source in {'trakt', 'simkl', 'mdblist'}:
-            key = f'provider:{source}'
-            title = source.title() if source != 'mdblist' else 'MDBList'
-            resolve_url = f'/connections#{source}-body'
-        else:
-            continue
-        group = groups.setdefault(key, {
-            'title': title, 'provider': source, 'resolve_url': resolve_url,
-            'failures': [], 'closed': False,
-        })
-        if group['closed']:
-            continue
-        if job.status == SyncStatus.completed:
-            group['closed'] = True
-        elif job.status == SyncStatus.failed:
-            group['failures'].append(job)
-
-    results = []
-    for key, group in groups.items():
-        failures = group['failures']
-        if not failures:
-            continue
-        error = (failures[0].error_message or '').lower()
-        auth_failure = any(marker in error for marker in _AUTH_FAILURE_MARKERS)
-        if not auth_failure and len(failures) < 2:
-            continue
-        title = group['title']
-        message = (f'{title} needs authorization before AnyList can sync again.' if auth_failure else
-            f'{title} has failed to sync repeatedly. Check the connection and retry it.')
-        results.append({
-            'id': f'connection-failure:{key}', 'kind': 'connection_failure',
-            'state': 'pending', 'provider': group['provider'], 'message': message,
-            'previous_status': None, 'proposed_status': None, 'previous_score': None,
-            'proposed_score': None, 'season_number': None, 'priority': 'high',
-            'dismissible': False, 'payload': {
-                'title': title, 'resolve_url': group['resolve_url'],
-                'reason': 'authorization' if auth_failure else 'repeated_failure',
-            }, 'media': None, 'created_at': failures[0].updated_at,
-        })
-    return results
+from core.notification_feed import review_priority, connection_failure_events, review_data
 
 
 def group_outbound_delivery(stream_actions, cloud_actions, review_rows, markers, connection_names,
@@ -280,8 +270,15 @@ def group_outbound_delivery(stream_actions, cloud_actions, review_rows, markers,
     return outbound
 
 
+@router.get('/notifications')
+async def notifications(db: CategoryDB, viewer: CategoryViewer, response: Response) -> dict:
+    from core.notification_feed import notification_feed
+    response.headers['Cache-Control'] = 'private, no-store'
+    return await notification_feed(db, viewer.id, await db.get(TrackingPreferences, viewer.id))
+
+
 @router.get('/recent-events')
-async def recent_events(db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
+async def recent_events(db: AsyncSession = Depends(get_db, scope="function"), viewer: User = Depends(get_current_user)):
     prefs=await db.get(TrackingPreferences,viewer.id)
     retention=prefs.low_priority_retention_days if prefs else 7
     cutoff=datetime.utcnow()-timedelta(days=retention)
@@ -290,7 +287,7 @@ async def recent_events(db: AsyncSession = Depends(get_db), viewer: User = Depen
     for review in expiring:
         if review_priority(review)=='low':review.dismissed_at=datetime.utcnow()
     query=select(SyncReview,Media).outerjoin(Media,Media.id==SyncReview.media_id).where(
-        SyncReview.user_id==viewer.id,SyncReview.dismissed_at.is_(None)).order_by(SyncReview.created_at.desc()).limit(100)
+        SyncReview.user_id==viewer.id,SyncReview.dismissed_at.is_(None)).order_by(SyncReview.created_at.desc(),SyncReview.id.desc()).limit(100)
     rows=(await db.execute(query)).all()
     if prefs and not prefs.low_priority_notifications:
         rows=[row for row in rows if review_priority(row[0])!='low' or row[0].state=='pending']
@@ -360,21 +357,21 @@ async def recent_events(db: AsyncSession = Depends(get_db), viewer: User = Depen
         |{media.id for _,media,_ in watch_intents})
     markers={row.media_id:row for row in (await db.execute(select(TrackingDeletion).where(
         TrackingDeletion.user_id==viewer.id,TrackingDeletion.media_id.in_(marker_media_ids)))).scalars()} if marker_media_ids else {}
-    connection_names={row.id:row.name for row in (await db.execute(select(MediaServerConnection.id,MediaServerConnection.name).where(
-        MediaServerConnection.user_id==viewer.id))).all()}
+    connections=(await db.execute(select(MediaServerConnection.id,MediaServerConnection.name,MediaServerConnection.type).where(
+        MediaServerConnection.user_id==viewer.id))).all()
+    connection_names={row.id:row.name for row in connections}
     recent_jobs=(await db.execute(select(SyncJob).where(SyncJob.user_id==viewer.id)
         .order_by(SyncJob.updated_at.desc(),SyncJob.id.desc()).limit(200))).scalars().all()
     failure_events=connection_failure_events(recent_jobs,connection_names)
     from core.import_notifications import active_import_events
     import_events = await active_import_events(db, viewer.id, datetime.utcnow())
-    pending=sum(1 for r,_ in rows if r.state=='pending' and r.kind!='outbound_pending')+len(failure_events)+len(import_events)
     outbound=group_outbound_delivery(actions,cloud_actions,outbound_review_rows,markers,connection_names,
         library_actions,watch_intents)
-    return {'pending':pending,'outbound':outbound,
-        'results':import_events+failure_events+[{'id':r.id,'kind':r.kind,'state':r.state,'provider':r.provider,'message':r.message,'previous_status':r.previous_status,'proposed_status':r.proposed_status,
-                    'previous_score':r.previous_score,'proposed_score':r.proposed_score,'season_number':r.season_number,
-                    'priority':review_priority(r),'dismissible':r.state!='pending' or r.kind in {'new_season_release_date','new_season_release'},'payload':r.payload or {},
-                    'media':tracking_projection.media_data(m) if m else None,'created_at':r.created_at} for r,m in rows]}
+    from core.watch_removal_reviews import project_watch_reviews
+    results = await project_watch_reviews(db, rows, [review_data(r,m) for r,m in rows],
+        {row.id: row.type for row in connections})
+    pending = sum(event['state'] == 'pending' for event in results) + len(failure_events) + len(import_events)
+    return {'pending':pending,'outbound':outbound,'results':import_events+failure_events+results}
 
 
 class SeenReviews(BaseModel):
@@ -382,7 +379,7 @@ class SeenReviews(BaseModel):
 
 
 @router.post('/recent-events/seen')
-async def mark_events_seen(body: SeenReviews,db:AsyncSession=Depends(get_db),viewer:User=Depends(get_current_user)):
+async def mark_events_seen(body: SeenReviews,db:AsyncSession=Depends(get_db, scope="function"),viewer:User=Depends(get_current_user)):
     rows=(await db.execute(select(SyncReview).where(SyncReview.user_id==viewer.id,SyncReview.id.in_(body.ids)))).scalars().all()
     now=datetime.utcnow()
     for row in rows:
@@ -393,7 +390,7 @@ async def mark_events_seen(body: SeenReviews,db:AsyncSession=Depends(get_db),vie
 
 
 @router.delete('/recent-events/{event_id}')
-async def dismiss_event(event_id:int,db:AsyncSession=Depends(get_db),viewer:User=Depends(get_current_user)):
+async def dismiss_event(event_id:int,db:AsyncSession=Depends(get_db, scope="function"),viewer:User=Depends(get_current_user)):
     row=(await db.execute(select(SyncReview).where(SyncReview.id==event_id,SyncReview.user_id==viewer.id))).scalar_one_or_none()
     if not row:raise HTTPException(404,'Event not found')
     season_notice = row.kind in {'new_season_release_date','new_season_release'}
@@ -405,13 +402,13 @@ async def dismiss_event(event_id:int,db:AsyncSession=Depends(get_db),viewer:User
 
 
 @router.get('/provider-ignores')
-async def provider_ignores(db:AsyncSession=Depends(get_db),viewer:User=Depends(get_current_user)):
+async def provider_ignores(db:AsyncSession=Depends(get_db, scope="function"),viewer:User=Depends(get_current_user)):
     rows=(await db.execute(select(ProviderIgnore).where(ProviderIgnore.user_id==viewer.id).order_by(ProviderIgnore.provider,ProviderIgnore.title))).scalars().all()
     return {'results':[{'id':r.id,'provider':r.provider,'external_key':r.external_key,'title':r.title,'created_at':r.created_at} for r in rows]}
 
 
 @router.delete('/provider-ignores/{ignore_id}')
-async def remove_provider_ignore(ignore_id:int,db:AsyncSession=Depends(get_db),viewer:User=Depends(get_current_user)):
+async def remove_provider_ignore(ignore_id:int,db:AsyncSession=Depends(get_db, scope="function"),viewer:User=Depends(get_current_user)):
     result=await db.execute(delete(ProviderIgnore).where(ProviderIgnore.id==ignore_id,ProviderIgnore.user_id==viewer.id))
     if not result.rowcount:raise HTTPException(404,'Ignored item not found')
     await db.commit();return {'removed':True}
@@ -421,14 +418,28 @@ class ReviewResolution(BaseModel):
     action: Literal['confirm','keep','change','match','ignore','add_watching','add_planning']
     status: TrackingStatus | None = None
     media_id: int | None = None
+    related_review_ids: list[int] = Field(default_factory=list, max_length=99)
 
 
 @router.post('/recent-events/{event_id}')
-async def resolve_event(event_id:int,body:ReviewResolution,background_tasks:BackgroundTasks,db:AsyncSession=Depends(get_db),viewer:User=Depends(get_current_user)):
+async def resolve_event(event_id:int,body:ReviewResolution,background_tasks:BackgroundTasks,db:AsyncSession=Depends(get_db, scope="function"),viewer:User=Depends(get_current_user)):
     await db.execute(select(User.id).where(User.id == viewer.id).with_for_update())
     event=(await db.execute(select(SyncReview).where(SyncReview.id==event_id,SyncReview.user_id==viewer.id).with_for_update())).scalar_one_or_none()
     if not event:raise HTTPException(404,'Event not found')
     if event.state!='pending':raise HTTPException(409,'This event has already been resolved')
+    related = []
+    if body.related_review_ids:
+        from core.watch_removal_reviews import watch_removal_group
+        group = watch_removal_group(event, await db.get(Media, event.media_id)) if event.media_id else None
+        ids = set(body.related_review_ids)
+        if group is None or event_id in ids or body.action not in {'confirm', 'keep'}:
+            raise HTTPException(422, 'Choose one action for a group of watch removals')
+        pairs = (await db.execute(select(SyncReview, Media).join(Media, Media.id == SyncReview.media_id)
+            .where(SyncReview.user_id == viewer.id, SyncReview.id.in_(ids), SyncReview.state == 'pending')
+            .order_by(SyncReview.id).with_for_update(of=SyncReview))).all()
+        if len(pairs) != len(ids) or any(watch_removal_group(review, media) != group for review, media in pairs):
+            raise HTTPException(409, 'These watch removals changed. Refresh the notifications and try again.')
+        related = [review for review, _ in pairs]
     if event.kind == 'resume_conflict':
         if body.action not in {'confirm', 'keep'}:
             raise HTTPException(422, 'Choose one of the resume positions')
@@ -441,11 +452,17 @@ async def resolve_event(event_id:int,body:ReviewResolution,background_tasks:Back
     if event.provider == 'combined':
         from core.sync_reconciliation import resolve_category_review, deliver_category_review
         if await resolve_category_review(db, event, body.action):
-            event.state = 'confirmed' if body.action == 'confirm' else 'corrected'
+            from core.watch_removal_reviews import watch_removal_sources
+            state = 'confirmed' if body.action == 'confirm' else 'corrected'
+            event.state = state
+            for review in related:
+                await resolve_category_review(db, review, body.action)
+                review.state = state
             await db.commit()
-            background_tasks.add_task(deliver_category_review, viewer.id, event.media_id,
-                                      (event.payload or {}).get('category'))
-            return {'state': event.state}
+            if body.action != 'keep' or not watch_removal_sources(event):
+                background_tasks.add_task(deliver_category_review, viewer.id, event.media_id,
+                    (event.payload or {}).get('category'), additional_media_ids=[review.media_id for review in related])
+            return {'state': state}
     if event.kind in {'new_season_release_date','new_season_release'}:
         if event.kind != 'new_season_release' or body.action not in {'add_watching','add_planning'}:
             raise HTTPException(422,'Dismiss this season notice or choose a release action')
@@ -514,7 +531,7 @@ async def resolve_event(event_id:int,body:ReviewResolution,background_tasks:Back
                 from core.activity import record_daily_activity, suppress_initial_import_rating
                 new_score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores)
                 if old_score != new_score and not suppress_initial_import_rating(entry):
-                    await record_daily_activity(db,user_id=viewer.id,media_id=entry.media_id,status=entry.status,
+                    await record_daily_activity(db,user_id=viewer.id,media_id=entry.media_id,media=await db.get(Media,entry.media_id),status=entry.status,
                         score=new_score,rating_changed=True,previous_score=old_score)
             rating_query=select(Rating).where(Rating.user_id==viewer.id,Rating.media_id==event.media_id,
                 Rating.episode_order.is_(None))
@@ -581,7 +598,7 @@ async def resolve_event(event_id:int,body:ReviewResolution,background_tasks:Back
                 dispatch_hidden_status = True
             from core.activity import record_daily_activity, series_activity_details
             position, finished = await series_activity_details(db, media, entry.progress, user_id=viewer.id)
-            await record_daily_activity(db,user_id=viewer.id,media_id=entry.media_id,status=entry.status,
+            await record_daily_activity(db,user_id=viewer.id,media_id=entry.media_id,media=media,explicit_status=True,status=entry.status,
                 score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores),
                 progress=entry.progress,position=position,finished_seasons=finished,status_changed=status_changed,
                 previous_status=prior_status,first_watching=prior_start_date is None and prior_status!='watching')
@@ -621,7 +638,7 @@ async def resolve_event(event_id:int,body:ReviewResolution,background_tasks:Back
             await queue_restorations(db,viewer.id,await db.get(Media,entry.media_id))
             dispatch_hidden_status = True
         from core.activity import record_daily_activity
-        await record_daily_activity(db,user_id=viewer.id,media_id=entry.media_id,status=status,
+        await record_daily_activity(db,user_id=viewer.id,media_id=entry.media_id,media=media,explicit_status=True,status=status,
             score=effective_score(entry.rating_mode,entry.manual_score,entry.season_scores),status_changed=True,
             previous_status=prior_status,first_watching=prior_start_date is None and prior_status!='watching')
         if (event.kind in {'playback_removed','conflict'} and body.action in {'confirm','change'}
@@ -650,8 +667,71 @@ async def resolve_event(event_id:int,body:ReviewResolution,background_tasks:Back
     return {'state':event.state}
 
 
+@router.get('/people/{username}/header')
+async def person_header(username: str, db: AsyncSession = Depends(get_db, scope="function"), viewer: User | None = Depends(get_optional_user_or_api_key)):
+    from core.tracking_access import profile_header
+    user, owner = await profile_access(db, username, viewer)
+    return await profile_header(db, user, owner, viewer)
+
+
+@router.get('/people/{username}/social')
+async def person_social(
+    username: str,
+    db: Annotated[AsyncSession, Depends(get_db, scope="function")],
+    viewer: Annotated[User | None, Depends(get_optional_user_or_api_key)],
+    response: Response,
+):
+    from core.tracking_access import profile_header
+
+    response.headers['Cache-Control'] = 'private, no-store'
+    user, owner = await profile_access(db, username, viewer)
+    profile = await profile_header(db, user, owner, viewer)
+    following = select(Follow.id).where(Follow.follower_id == user.id, Follow.following_id == User.id).exists()
+    follower = select(Follow.id).where(Follow.following_id == user.id, Follow.follower_id == User.id).exists()
+    followed_ids = select(Follow.following_id).where(Follow.follower_id == user.id)
+    follower_ids = select(Follow.follower_id).where(Follow.following_id == user.id)
+    people = (await db.execute(
+        select(User.id, User.username, (func.coalesce(UserProfileData.avatar_path, '') != '').label('has_avatar'),
+               following.label('following'), follower.label('follower'))
+        .join(UserProfileData, UserProfileData.user_id == User.id)
+        .where(UserProfileData.privacy_level == PrivacyLevel.public,
+               User.id.in_(followed_ids.union(follower_ids)))
+        .order_by(User.id)
+    )).all()
+    profile['people'] = [
+        dict(id=person.id, username=person.username, display_name=person.username,
+             has_avatar=person.has_avatar, following=person.following, follower=person.follower)
+        for person in people
+    ]
+    return profile
+
+
+@router.get('/people/{username}/favorites')
+async def people_favorites(
+    username: str,
+    response: Response,
+    db: Annotated[AsyncSession, Depends(get_db, scope="function")],
+    viewer: Annotated[User | None, Depends(get_optional_user_or_api_key)],
+    show_screen: bool = True,
+    show_games: bool = True,
+    game_offset: Annotated[int, Query(ge=0)] = 0,
+):
+    from core.game_access import allowed as games_allowed
+    from core.profile_favorites import game_cards, screen_cards
+    from core.tracking_access import profile_header
+
+    response.headers['Cache-Control'] = 'private, no-store'
+    user, owner = await profile_access(db, username, viewer)
+    profile = await profile_header(db, user, owner, viewer)
+    screen = await screen_cards(db, user.id, await anime_is_visible(db)) if show_screen or not owner else []
+    games = await game_cards(db, user.id, game_offset) if games_allowed(viewer) and (show_games or not owner) else None
+    return {'profile': profile, 'screen': screen, 'games': games}
+
+
 @router.get("/people/{username}")
-async def person(username: str, db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user_or_api_key)):
+async def person(username: str, db: AsyncSession = Depends(get_db, scope="function"), viewer: User | None = Depends(get_optional_user_or_api_key)):
+    from core.activity_ratings import attach_series_ratings
+
     user, owner = await profile_access(db, username, viewer)
     entries = (await db.execute(select(TrackedEntry, Media).join(Media, Media.id == TrackedEntry.media_id).where(TrackedEntry.user_id == user.id))).all()
     if not await anime_is_visible(db):entries=[row for row in entries if not tracking_projection.is_anime(row[1])]
@@ -675,9 +755,12 @@ async def person(username: str, db: AsyncSession = Depends(get_db), viewer: User
     favorite_order = list((prefs.favorite_order if prefs else None) or [])
     order_index = {media_id: index for index, media_id in enumerate(favorite_order)}
     favorites = sorted(favorite_media.values(), key=lambda m: (order_index.get(m.id, len(order_index)), m.id))
+    recent_activity = tracking_projection.activity_data(activity_rows, limit=12)
+    await attach_series_ratings(db, recent_activity, entries=(entry for entry, _ in entries), owner_id=user.id)
     return {"id":user.id,"username":user.username,"display_name":user.display_name,"bio":user.profile.bio if user.profile else None,
         "profile_color": user.profile.profile_color if user.profile else "#3db4f2",
-        "background_url": user.profile.background_url if user.profile else None,
+        "background_crop": user.profile.background_crop if user.profile else None,
+        "background_url": await profile_background_url(db,user.profile),
         "owner":owner,"following":bool(viewer and viewer.id in followers_ids),
         "follows_you":bool(viewer and not owner and viewer.id in following_ids),
         "has_avatar":bool(user.profile and user.profile.avatar_path),
@@ -687,11 +770,11 @@ async def person(username: str, db: AsyncSession = Depends(get_db), viewer: User
                   "favorites":len(favorites),"rated":len(scores)},
         "average_score":round(sum(scores)/len(scores),1) if scores else None,
         "favorites":[tracking_projection.media_data(m) for m in favorites],"people":visible,
-        "recent_activity":tracking_projection.activity_data(activity_rows,limit=12)}
+        "recent_activity":recent_activity}
 
 
 class FavoriteOrderBody(BaseModel):
-    media_ids: list[int] = Field(max_length=500)
+    media_ids: list[int] = Field(max_length=5000)
 
     @field_validator("media_ids")
     @classmethod
@@ -702,7 +785,7 @@ class FavoriteOrderBody(BaseModel):
 
 
 @router.put('/favorites/order')
-async def reorder_favorites(body: FavoriteOrderBody, db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
+async def reorder_favorites(body: FavoriteOrderBody, db: AsyncSession = Depends(get_db, scope="function"), viewer: User = Depends(get_current_user)):
     favorite_rows = (await db.execute(select(TrackedEntry.media_id, Media).join(
         Media, Media.id == TrackedEntry.media_id
     ).where(TrackedEntry.user_id == viewer.id, TrackedEntry.favorite.is_(True)))).all()
@@ -728,21 +811,41 @@ async def reorder_favorites(body: FavoriteOrderBody, db: AsyncSession = Depends(
 
 
 @router.get('/quick-search/contributors')
+@reader
 async def quick_search_contributors(
-    db: Annotated[AsyncSession, Depends(get_db)],
+    db: Annotated[AsyncSession, Depends(get_db, scope="function")],
     viewer: Annotated[User, Depends(get_current_user)],
     q: Annotated[str, Query(max_length=100)] = '',
     kind: Literal['all', 'people', 'actor', 'staff', 'studio'] = 'all',
+    work_domain: Literal['all', 'movies_series', 'game'] = 'all',
+    search_id: Annotated[str | None, Query(pattern=r'^[a-zA-Z0-9-]{16,64}$')] = None,
+    search_generation: Annotated[int, Query(ge=0, le=9007199254740991)] = 0,
 ) -> dict:
     term = q.strip()
     if len(term) < 2:
         return {'results': {'actor': [], 'staff': [], 'studio': []}}
     from core.contributor_search import search_contributors
-    return await search_contributors(db, viewer, term, kind)
+    from core import search_demand
+    from core.game_work import work_context, Priority
+    value = await search_demand.begin(db, viewer.id, search_id, search_generation, term, work_domain) if search_id else None
+    with search_demand.context(value), work_context(Priority.FINISH, f'search-user:{viewer.id}', replace=True):
+        return await search_contributors(db, viewer, term, kind, work_domain)
+
+
+@router.delete('/quick-search/demand/{search_id}')
+async def release_search_demand(
+    db: Annotated[AsyncSession, Depends(get_db, scope="function")],
+    viewer: Annotated[User, Depends(get_current_user)],
+    search_id: Annotated[str, Path(pattern=r'^[a-zA-Z0-9-]{16,64}$')],
+    generation: Annotated[int, Query(ge=0, le=9007199254740991)],
+) -> dict:
+    from core.search_demand import release
+    await release(db, viewer.id, search_id, generation)
+    return {'released': True}
 
 
 @router.get('/people-search')
-async def people_search(q:str=Query('',max_length=100),db:AsyncSession=Depends(get_db),viewer:User=Depends(get_current_user)):
+async def people_search(q:str=Query('',max_length=100),db:AsyncSession=Depends(get_db, scope="function"),viewer:User=Depends(get_current_user)):
     term=q.strip()
     if not term:return {'results':[]}
     rows=(await db.execute(select(User,UserProfileData).join(UserProfileData,UserProfileData.user_id==User.id).where(
@@ -756,7 +859,7 @@ async def people_search(q:str=Query('',max_length=100),db:AsyncSession=Depends(g
 
 
 @router.post('/people/{username}/follow')
-async def follow_person(username:str,db:AsyncSession=Depends(get_db),viewer:User=Depends(get_current_user)):
+async def follow_person(username:str,db:AsyncSession=Depends(get_db, scope="function"),viewer:User=Depends(get_current_user)):
     target=(await db.execute(select(User).join(UserProfileData,UserProfileData.user_id==User.id).where(
         User.username==username,UserProfileData.privacy_level==PrivacyLevel.public))).scalar_one_or_none()
     if not target:raise HTTPException(404,'Public profile not found')
@@ -767,7 +870,7 @@ async def follow_person(username:str,db:AsyncSession=Depends(get_db),viewer:User
 
 
 @router.delete('/people/{username}/follow')
-async def unfollow_person(username:str,db:AsyncSession=Depends(get_db),viewer:User=Depends(get_current_user)):
+async def unfollow_person(username:str,db:AsyncSession=Depends(get_db, scope="function"),viewer:User=Depends(get_current_user)):
     target=(await db.execute(select(User).where(User.username==username))).scalar_one_or_none()
     if not target:raise HTTPException(404,'Profile not found')
     await db.execute(delete(Follow).where(Follow.follower_id==viewer.id,Follow.following_id==target.id));await db.commit()
@@ -775,7 +878,7 @@ async def unfollow_person(username:str,db:AsyncSession=Depends(get_db),viewer:Us
 
 
 @router.get("/library")
-async def library(db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
+async def library(db: AsyncSession = Depends(get_db, scope="function"), viewer: User = Depends(get_current_user)):
     from models.streaming_library import StreamingLibraryIntent
 
     observed = select(Collection.media_id).join(CollectionFile,
@@ -800,7 +903,7 @@ class LibraryIntentPatch(BaseModel):
 
 
 @router.get("/library/{media_id}")
-async def get_library_state(media_id: int, db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
+async def get_library_state(media_id: int, db: AsyncSession = Depends(get_db, scope="function"), viewer: User = Depends(get_current_user)):
     media = await db.get(Media, media_id)
     if not media or media.media_type not in (MediaType.movie, MediaType.series):
         raise HTTPException(404, "Title not found")
@@ -810,7 +913,7 @@ async def get_library_state(media_id: int, db: AsyncSession = Depends(get_db), v
 
 @router.put("/library/{media_id}")
 async def update_library_state(media_id: int, body: LibraryIntentPatch, background_tasks: BackgroundTasks,
-                               db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
+                               db: AsyncSession = Depends(get_db, scope="function"), viewer: User = Depends(get_current_user)):
     from core.streaming_library import deliver_library_intent, set_library_intent
     state = await set_library_intent(db, viewer.id, media_id, body.in_library)
     should_deliver = state.pop('_delivery_queued', False)
@@ -820,13 +923,14 @@ async def update_library_state(media_id: int, body: LibraryIntentPatch, backgrou
 
 
 @router.post("/library/{media_id}/retry")
-async def retry_library_delivery(media_id: int, db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
+async def retry_library_delivery(media_id: int, db: AsyncSession = Depends(get_db, scope="function"), viewer: User = Depends(get_current_user)):
     from core.streaming_library import dispatch_library_deliveries, library_state
     await dispatch_library_deliveries(db, viewer.id, media_id)
     return await library_state(db, viewer.id, media_id)
 
 
 class EntryPatch(BaseModel):
+    series_editor: SeriesEditorPatch | None = None
     status: TrackingStatus | None = None
     manual_score: float | None = None
     rating_mode: Literal["manual", "average"] | None = None
@@ -881,7 +985,7 @@ class ExternalEntryPatch(BaseModel):
 
 @router.patch("/entry/{media_id}/external")
 async def save_external_entry(media_id: int, body: ExternalEntryPatch, background_tasks: BackgroundTasks,
-                              db: AsyncSession = Depends(get_db), viewer: User = Depends(get_tracking_write_user)):
+                              db: AsyncSession = Depends(get_db, scope="function"), viewer: User = Depends(get_tracking_write_user)):
     return await save_entry(media_id, EntryPatch(**body.model_dump(exclude_unset=True)), background_tasks, db, viewer)
 
 
@@ -893,7 +997,7 @@ async def contributor_portraits(
     kind: Literal['actor', 'staff'],
     contributor_key: Annotated[str, Path(pattern=r'^(catalogue|tmdb):[1-9][0-9]{0,9}$')],
     response: Response,
-    db: Annotated[AsyncSession, Depends(get_db)],
+    db: Annotated[AsyncSession, Depends(get_db, scope="function")],
     viewer: Annotated[User | None, Depends(get_optional_user)],
 ) -> ContributorImages:
     from core.contributor_images import contributor_images
@@ -907,21 +1011,39 @@ async def contributor_portraits(
     return ContributorImages.model_validate(result)
 
 
+@router.get('/contributors/{kind}/{contributor_key}/availability')
+async def contributor_domain_availability(
+    kind: ContributorKind,
+    contributor_key: Annotated[str,Path(pattern=r'^(catalogue|tmdb):[1-9][0-9]{0,9}$')],
+    response: Response,
+    db: Annotated[AsyncSession,Depends(get_db, scope="function")],
+    viewer: Annotated[User,Depends(get_current_user_or_api_key)],
+) -> ContributorAvailability:
+    from core.contributor_availability import availability
+    await catalog_access(db,viewer)
+    if int(contributor_key.split(':')[1])>2147483647:raise HTTPException(422,'Invalid contributor identifier')
+    response.headers['Cache-Control']='private, no-store'
+    result=await availability(db,viewer,kind=kind,key=contributor_key)
+    if result is None:raise HTTPException(404,'Contributor not found')
+    return ContributorAvailability.model_validate(result)
+
+
 @router.get('/contributors/{kind}/{contributor_key}')
 async def contributor_details(
     kind: ContributorKind,
     contributor_key: Annotated[str, Path(pattern=r'^(catalogue|tmdb):[1-9][0-9]{0,9}$')],
     response: Response,
-    db: Annotated[AsyncSession, Depends(get_db)],
+    db: Annotated[AsyncSession, Depends(get_db, scope="function")],
     viewer: Annotated[User, Depends(get_current_user_or_api_key)],
-    media_type: MediaScope = 'all',
+    media_type: ContributorMediaScope = 'all',
     list_scope: ListScope = 'all',
-    status: Literal['', 'watching', 'completed', 'planning', 'paused', 'dropped'] = '',
+    status: Literal['', 'watching', 'playing', 'played', 'completed', 'planning', 'paused', 'dropped'] = '',
     page: Annotated[int, Query(ge=1, le=500)] = 1,
     cursor: Annotated[str | None, Query(max_length=400)] = None,
     source: Literal['', 'local', 'provider'] = '',
 ) -> ContributorPage:
     from core.contributor_details import contributor_page
+    from core.game_contributor_works import GameWorksChanged
 
     await catalog_access(db, viewer)
     if int(contributor_key.split(':')[1]) > 2147483647:
@@ -933,6 +1055,8 @@ async def contributor_details(
         result = await contributor_page(db, viewer, kind=kind, key=contributor_key,
                                         media_type=media_type, list_scope=list_scope, status=status,
                                         page=page, cursor=cursor, source=source)
+    except GameWorksChanged:
+        raise HTTPException(409, 'Game works changed. Refresh the works to continue.') from None
     except ValueError:
         raise HTTPException(422, 'Invalid timeline cursor') from None
     except RuntimeError:
@@ -945,7 +1069,7 @@ async def contributor_details(
 @router.get('/studios/{studio_key}')
 async def studio_metadata(
     studio_key: Annotated[str, Path(pattern=r'^(catalogue|tmdb):[1-9][0-9]{0,9}$')],
-    db: Annotated[AsyncSession, Depends(get_db)],
+    db: Annotated[AsyncSession, Depends(get_db, scope="function")],
     viewer: Annotated[User, Depends(get_current_user_or_api_key)],
 ) -> StudioDetail:
     from core.statistics_studios import studio_detail
@@ -961,7 +1085,7 @@ async def studio_metadata(
 @router.get('/staff/{person_key}')
 async def staff_metadata(
     person_key: Annotated[str, Path(pattern=r'^(catalogue|tmdb):[1-9][0-9]{0,9}$')],
-    db: Annotated[AsyncSession, Depends(get_db)],
+    db: Annotated[AsyncSession, Depends(get_db, scope="function")],
     viewer: Annotated[User, Depends(get_current_user_or_api_key)],
 ) -> PersonDetail:
     from core.statistics_staff import person_detail
@@ -998,128 +1122,16 @@ def decode_activity_cursor(cursor: str) -> tuple[datetime, int]:
 
 
 @router.get("/profile/{username}/{media_type}")
-async def profile_list(username: str, media_type: Literal["movie", "series", "all"], db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user_or_api_key)):
+@reader
+async def profile_list(username: str, media_type: Literal["movie", "series", "all"], db: AsyncSession = Depends(get_db, scope="function"), viewer: User | None = Depends(get_optional_user_or_api_key)):
     user, owner = await profile_access(db, username, viewer)
-    query=select(TrackedEntry,Media,MediaFavorite.media_id).join(Media,Media.id==TrackedEntry.media_id).outerjoin(
-        MediaFavorite,(MediaFavorite.user_id==TrackedEntry.user_id)&(MediaFavorite.media_id==TrackedEntry.media_id)
-    ).where(TrackedEntry.user_id==user.id)
-    if media_type=='all':query=query.where(Media.media_type.in_([MediaType.movie,MediaType.series]))
-    else:query=query.where(Media.media_type==MediaType(media_type))
-    loaded=(await db.execute(query.order_by(Media.title))).all()
-    favorite_ids={identifier for _,_,identifier in loaded if identifier is not None}
-    rows=[(entry,media) for entry,media,_ in loaded]
-    if not await anime_is_visible(db):rows=[row for row in rows if not tracking_projection.is_anime(row[1])]
+    from core.screen_list import rows_for_profile
+    entries = await rows_for_profile(db, user.id, viewer, owner, media_type)
     following = False
     follows_you = False
     if viewer and not owner:
         following = (await db.execute(select(Follow.id).where(Follow.follower_id == viewer.id, Follow.following_id == user.id))).scalar_one_or_none() is not None
         follows_you = (await db.execute(select(Follow.id).where(Follow.follower_id == user.id, Follow.following_id == viewer.id))).scalar_one_or_none() is not None
-    entries = [tracking_projection.entry_data(e, m, owner, favorite=bool(e.favorite or m.id in favorite_ids)) for e, m in rows]
-    movie_ids = [m.id for _, m in rows if m.media_type == MediaType.movie]
-    watched_movies = set((await db.execute(select(WatchEvent.media_id).where(
-        WatchEvent.user_id == user.id, WatchEvent.media_id.in_(movie_ids),
-        WatchEvent.completed.is_(True)))).scalars()) if movie_ids else set()
-    for result, (_, media) in zip(entries, rows):
-        result['availability_dot'], result['availability_reason'] = False, None
-        if media.media_type == MediaType.movie:
-            result['progress'] = int(bool(result['progress'] or result['status'] == 'completed'
-                                          or media.id in watched_movies))
-    if media_type in ('series','all'):
-        # One batched query for all catalogue episode IDs; don't confuse status
-        # Completed with history covering newly released episodes.
-        tmdb_ids = {episode_id for _, m in rows if (m.tmdb_data or {}).get('tracking_catalogue_provider') != 'tvdb'
-                    for episode_id in (m.tmdb_data or {}).get('tracking_episode_ids', [])}
-        tvdb_ids = {episode_id for _, m in rows if (m.tmdb_data or {}).get('tracking_catalogue_provider') == 'tvdb'
-                    for episode_id in (m.tmdb_data or {}).get('tracking_episode_ids', [])}
-        imported_media_ids = {episode_id for _, m in rows
-                              for episode_id in (m.tmdb_data or {}).get('tracking_import_episode_media_ids', [])}
-        identity_filters = []
-        if tmdb_ids:
-            identity_filters.append(Media.tmdb_id.in_(tmdb_ids))
-        if tvdb_ids:
-            identity_filters.append(Media.tvdb_id.in_(tvdb_ids))
-        if imported_media_ids:
-            identity_filters.append(Media.id.in_(imported_media_ids))
-        import_confirmed_release = Media.tmdb_data["tracking_import_released"].as_boolean().is_(True)
-        catalogue = (
-            (await db.execute(select(
-                Media.id, Media.tmdb_id, Media.tvdb_id, Media.season_number,
-                Media.episode_number, Media.release_date, Media.tmdb_data,
-            ).where(
-                Media.media_type == MediaType.episode,
-                or_(*identity_filters),
-                Media.season_number > 0,
-                or_(Media.release_date.is_not(None), import_confirmed_release),
-            ))).all()
-            if identity_filters else []
-        )
-        released = [row for row in catalogue if (
-            (row.tmdb_data or {}).get('tracking_import_released')
-            or row.release_date and row.release_date[:10] <= date.today().isoformat()
-        )]
-        watched = set((await db.execute(select(WatchEvent.media_id).where(WatchEvent.user_id == user.id,
-            WatchEvent.media_id.in_([r.id for r in released]), WatchEvent.completed.is_(True)))).scalars()) if released else set()
-        for result, (_, media) in zip(entries, rows):
-            if media.media_type != MediaType.series:
-                continue
-            show_metadata = media.tmdb_data or {}
-            latest_pointer = show_metadata.get('last_episode_to_air') or {}
-            result['latest_released_position'] = (
-                f"S{latest_pointer['season_number']}E{latest_pointer['episode_number']}"
-                if latest_pointer.get('season_number') is not None and latest_pointer.get('episode_number') is not None
-                else None
-            )
-            next_episode = show_metadata.get('next_episode_to_air') or {}
-            result['next_episode_to_air'] = {
-                'season_number': next_episode.get('season_number'),
-                'episode_number': next_episode.get('episode_number'),
-                'air_date': next_episode.get('air_date'),
-            } if next_episode else None
-            ids = set((media.tmdb_data or {}).get('tracking_episode_ids', []))
-            imported_ids = set((media.tmdb_data or {}).get('tracking_import_episode_media_ids', []))
-            provider = (media.tmdb_data or {}).get('tracking_catalogue_provider', 'tmdb')
-            title_catalogue = [r for r in catalogue if (
-                (r.tvdb_id if provider == 'tvdb' else r.tmdb_id) in ids or r.id in imported_ids
-            )]
-            result['currently_airing'], result['next_release_date'] = season_releases.current_airing_details(
-                {**show_metadata, 'status': show_metadata.get('status') or media.status},
-                [(r.season_number, r.release_date, r.id,
-                  bool((r.tmdb_data or {}).get('tracking_import_released'))) for r in title_catalogue],
-            )
-            dot, reason = season_releases.availability_dot(
-                media.tmdb_data,
-                [(r.season_number, r.release_date, r.id,
-                  bool((r.tmdb_data or {}).get('tracking_import_released'))) for r in title_catalogue],
-                watched,
-                result['status'],
-            )
-            result['availability_dot'], result['availability_reason'] = dot, reason
-            if (media.tmdb_data or {}).get('tracking_catalogue_refreshed_at'):
-                title_episodes = [r for r in released if (
-                    (r.tvdb_id if provider == 'tvdb' else r.tmdb_id) in ids or r.id in imported_ids
-                )]
-                title_episodes.sort(key=lambda episode: (episode.season_number or 0, episode.episode_number or 0))
-                result['released_episodes'] = len(title_episodes)
-                if owner:
-                    result['progress_positions'] = [f'S{episode.season_number}E{episode.episode_number}' for episode in title_episodes]
-                latest_released = max(
-                    title_episodes,
-                    key=lambda episode: (episode.season_number or 0, episode.episode_number or 0),
-                    default=None,
-                )
-                result['latest_released_position'] = (
-                    f'S{latest_released.season_number}E{latest_released.episode_number}'
-                    if latest_released else result['latest_released_position']
-                )
-                unwatched = [r for r in title_episodes if r.id not in watched]
-                result['progress'] = len(title_episodes) - len(unwatched)
-                watched_episodes = [r for r in title_episodes if r.id in watched]
-                latest = max(watched_episodes, key=lambda r: (r.season_number or 0, r.episode_number or 0), default=None)
-                result['season_position'] = f'S{latest.season_number}E{latest.episode_number}' if latest else None
-                result.update(tracking_projection.release_annotations(title_episodes, watched, result['status']))
-    if owner:
-        from core.tracking_editor import attach_editor_context
-        await attach_editor_context(db, viewer, entries, media_rows=[media for _, media in rows])
     prefs=await db.get(TrackingPreferences,user.id)
     return {
         "profile": {"id": user.id, "username": user.username, "display_name": user.display_name,
@@ -1129,6 +1141,88 @@ async def profile_list(username: str, media_type: Literal["movie", "series", "al
         "combine_lists":True if prefs is None else prefs.combine_lists,
         "entries": entries,
     }
+
+
+ScreenListDB = Annotated[AsyncSession, Depends(get_db, scope="function")]
+ScreenListViewer = Annotated[User | None, Depends(get_optional_user_or_api_key)]
+ScreenListScope = Literal['movie', 'series', 'all']
+
+
+@router.get('/profile/{username}/{media_type}/list')
+@reader
+async def profile_list_page(username: str, media_type: ScreenListScope, db: ScreenListDB,
+        viewer: ScreenListViewer, response: Response, status: TrackingStatus | None = None,
+        sort: Literal['title', 'score', 'progress', 'updated'] = 'title',
+        q: Annotated[str, Query(max_length=200)] = '', genre: Annotated[str, Query(max_length=200)] = '',
+        year: Annotated[str | None, Query(pattern=r'^\d{4}$')] = None, favorites: bool = False,
+        offset: Annotated[int, Query(ge=0)] = 0, limit: Annotated[int, Query(ge=1, le=100)] = 100):
+    from core import list_categories, screen_list
+    from core.tracking_access import profile_header
+    user, owner = await profile_access(db, username, viewer)
+    response.headers['Cache-Control'] = 'private, no-store'
+    placements = {}
+    members = await screen_list.members(db, user.id, media_type, progress=sort == 'progress', placements=placements)
+    presentation = await list_categories.read(db, user.id, domain='screen')
+    ids, page = screen_list.select_page(members, status=status, sort=sort, q=q, genre=genre, year=year,
+        favorites=favorites, offset=offset, limit=limit,
+        status_order={category.id: index for index, category in enumerate(presentation.categories)})
+    results = await screen_list.rows_for_profile(db, user.id, viewer, owner, media_type, ids, placements=placements)
+    return {**page, 'results': results, 'profile': await profile_header(db, user, owner, viewer),
+        'category_presentation': presentation}
+
+
+@router.get('/profile/{username}/{media_type}/index')
+@reader
+async def profile_list_index(username: str, media_type: ScreenListScope, db: ScreenListDB,
+        viewer: ScreenListViewer, response: Response):
+    from core import list_categories
+    from core.screen_list import members
+    user, _ = await profile_access(db, username, viewer)
+    response.headers['Cache-Control'] = 'private, no-store'
+    result = await members(db, user.id, media_type, progress=True, cap=10000)
+    return {'complete': result is not None, 'results': [row.index_row() for row in result or []],
+        'category_presentation': await list_categories.read(db, user.id, domain='screen')}
+
+
+@router.get('/profile/{username}/{media_type}/rows')
+@reader
+async def profile_list_rows(username: str, media_type: ScreenListScope, db: ScreenListDB,
+        viewer: ScreenListViewer, response: Response,
+        ids: Annotated[list[Annotated[int, Field(ge=-(1 << 52) + 1, le=2147483647)]], Query(min_length=1, max_length=100)]):
+    from core.screen_list import rows_for_profile
+    if 0 in ids:
+        raise HTTPException(422, 'List row IDs cannot be zero')
+    user, owner = await profile_access(db, username, viewer)
+    response.headers['Cache-Control'] = 'private, no-store'
+    return await rows_for_profile(db, user.id, viewer, owner, media_type, ids)
+
+
+@router.get('/profile/{username}/series/{media_id}/seasons')
+@reader
+async def profile_series_seasons(username: str, media_id: Annotated[int, Path(gt=0, le=2147483647)],
+        db: ScreenListDB, viewer: Annotated[User | None, Depends(get_optional_user_or_api_key)], response: Response):
+    from core import screen_list, tracking_episode_loading
+
+    user, owner = await profile_access(db, username, viewer)
+    user_id = user.id
+    response.headers['Cache-Control'] = 'private, no-store'
+    row = (await db.execute(select(Media, TrackedEntry.season_scores).join(TrackedEntry,
+        TrackedEntry.media_id == Media.id).where(Media.id == media_id, Media.media_type == MediaType.series,
+        TrackedEntry.user_id == user_id))).one_or_none()
+    if row is None or (tracking_projection.is_anime(row[0]) and not await anime_is_visible(db)):
+        raise HTTPException(404, 'Tracked series not found')
+    media, scores = row
+    status = {}
+    if owner and (media.tmdb_id or media.tvdb_id) and not tracking_episode_loading.fresh(media):
+        try:
+            status = await asyncio.wait_for(tracking_episode_loading.ensure(db, media, user_id), timeout=.25)
+        except TimeoutError:
+            status = {'pending': True, 'retry_after': 2}
+        if status.get('ready') and not status.get('pending'):
+            await db.refresh(media)
+    summary = await screen_list.series_seasons(db, media, user_id, scores)
+    return {**summary, 'pending': status.get('pending', False) and not status.get('error'),
+            'retry_after': status.get('retry_after'), 'unavailable': bool(status.get('error') and not summary['seasons'])}
 
 
 @router.post("/stats/refresh")
@@ -1154,11 +1248,12 @@ async def my_statistics_refresh_status(
 
 
 @router.get("/profile/{username}/stats/overview")
+@reader
 async def profile_stats_overview(
     username: str,
     response: Response,
-    db: Annotated[AsyncSession, Depends(get_db)],
-    viewer: Annotated[User, Depends(get_current_user_or_api_key)],
+    db: Annotated[AsyncSession, Depends(get_db, scope="function")],
+    viewer: Annotated[User | None, Depends(get_optional_user_or_api_key)],
     media_type: Annotated[MediaScope, Query()] = "all",
 ) -> OverviewResponse:
     from core.statistics_snapshots import read_overview
@@ -1175,7 +1270,8 @@ async def profile_stats_overview(
                     "bio": user.profile.bio if user.profile else None,
                     "profile_color": user.profile.profile_color if user.profile else "#3db4f2",
                     "has_avatar": bool(user.profile and user.profile.avatar_path),
-                    "background_url": user.profile.background_url if user.profile else None},
+                    "background_crop": user.profile.background_crop if user.profile else None,
+        "background_url": await profile_background_url(db,user.profile)},
         "owner": owner, "following": following, "follows_you": follows_you,
         "combine_lists": True if prefs is None else prefs.combine_lists,
     }
@@ -1183,9 +1279,10 @@ async def profile_stats_overview(
 
 
 @router.get("/profile/{username}/stats/summary")
+@reader
 async def profile_stats(username: str, media_type: Literal["movie", "series", "all"] = "all",
-                        year: int | None = Query(None, ge=1900, le=2200), db: AsyncSession = Depends(get_db),
-                        viewer: User = Depends(get_current_user_or_api_key)):
+                        year: int | None = Query(None, ge=1900, le=2200), db: AsyncSession = Depends(get_db, scope="function"),
+                        viewer: User | None = Depends(get_optional_user_or_api_key)):
     """Current list totals plus documented viewing statistics for a profile."""
     user, owner = await profile_access(db, username, viewer)
     following = False
@@ -1241,7 +1338,7 @@ async def profile_stats(username: str, media_type: Literal["movie", "series", "a
     return {"profile":{"id":user.id,"username":user.username,"display_name":user.display_name,
                        "bio":user.profile.bio if user.profile else None,"profile_color":user.profile.profile_color if user.profile else "#3db4f2",
                        "has_avatar":bool(user.profile and user.profile.avatar_path),
-                       "background_url":user.profile.background_url if user.profile else None},
+                       "background_url":await profile_background_url(db,user.profile)},
             "owner":owner,"following":following,"follows_you":follows_you,
             "combine_lists":True if prefs is None else prefs.combine_lists,"media_type":media_type,"year":year,
             "current":{"total":len(entries),"statuses":statuses},
@@ -1272,7 +1369,7 @@ class BrowseContextRequest(BaseModel):
 
 
 @router.post('/browse/context')
-async def browse_context(body: BrowseContextRequest, response: Response, db: AsyncSession = Depends(get_db),
+async def browse_context(body: BrowseContextRequest, response: Response, db: AsyncSession = Depends(get_db, scope="function"),
                          viewer: User = Depends(get_current_user_or_api_key)):
     """Refresh only viewer-owned state for an already rendered browse selection."""
     response.headers['Cache-Control'] = 'private, no-store'
@@ -1287,13 +1384,14 @@ async def browse_context(body: BrowseContextRequest, response: Response, db: Asy
 
 
 @router.get('/browse/facets')
-async def browse_facets(media_type: Literal['movie', 'series'] = 'movie', region: str | None = Query(None, pattern='^[A-Z]{2}$'), genres: Annotated[str, Query(max_length=200)] = '', db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user_or_api_key)):
+@reader
+async def browse_facets(media_type: Literal['movie', 'series'] = 'movie', region: str | None = Query(None, pattern='^[A-Z]{2}$'), genres: Annotated[str, Query(max_length=200)] = '', db: AsyncSession = Depends(get_db, scope="function"), viewer: User | None = Depends(get_optional_user_or_api_key)):
     from core.browse import GENRES, MOVIE_GENRES, TV_GENRES, local_providers
     from core import tmdb
     await catalog_access(db, viewer)
     country = region or await account_cinema_country(db, viewer)
     region = country or 'US'
-    key = await settings_store.get_user_tmdb_key(db, viewer.id if viewer else -1)
+    key = await settings_store.get_user_tmdb_key(db, viewer.id if viewer else None)
     providers = []
     notice = None
     if key:
@@ -1338,25 +1436,38 @@ def browse_ids(value: str) -> list[int]:
 
 
 @router.get('/browse/sections')
-async def browse_sections(media_type: Literal['movie', 'series'] = 'movie', region: str | None = Query(None, pattern='^[A-Z]{2}$'), min_score: Annotated[float, Query(ge=0, le=10)] = 0, unfiltered: Annotated[bool, Query()] = False, db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user_or_api_key)):
+@reader
+async def browse_sections(media_type: Literal['movie', 'series'] = 'movie', region: str | None = Query(None, pattern='^[A-Z]{2}$'), min_score: Annotated[float, Query(ge=0, le=10)] = 0, unfiltered: Annotated[bool, Query()] = False, stream: Annotated[bool, Query()] = False, db: AsyncSession = Depends(get_db, scope="request"), viewer: User | None = Depends(get_optional_user_or_api_key)):
     from core.browse import browse_sections as sections
     from core.external_scores import effective_mdblist_key
     await catalog_access(db, viewer)
     country = region or await account_cinema_country(db, viewer)
     region = country or 'US'
-    key = await settings_store.get_user_tmdb_key(db, viewer.id if viewer else -1)
+    key = await settings_store.get_user_tmdb_key(db, viewer.id if viewer else None)
     mdblist_key = await effective_mdblist_key(db, None) or (
         await effective_mdblist_key(db, viewer.id) if viewer else None
     )
-    try:
-        return await sections(db, viewer, media_type=media_type, region=region,
+    options = dict(media_type=media_type, region=region,
                               show_anime=await anime_is_visible(db), key=key, mdblist_key=mdblist_key, **({'min_runtime': 0, 'excluded_genres': []} if unfiltered else await result_filters(db, viewer)),
                               unfiltered=unfiltered, min_score=min_score)
+    if stream:
+        from core.browse import iter_browse_sections
+        async def updates():
+            try:
+                async for update in iter_browse_sections(db, viewer, progressive=True, **options):
+                    yield json.dumps(jsonable_encoder(update), separators=(',', ':')) + '\n'
+            except Exception:
+                yield json.dumps({'error': 'Unable to load titles. Try again.'}) + '\n'
+        return StreamingResponse(updates(), media_type='application/x-ndjson',
+            headers={'Cache-Control': 'private, no-store', 'X-Accel-Buffering': 'no'})
+    try:
+        return await sections(db, viewer, **options)
     except Exception:
         raise HTTPException(502, 'Unable to load titles. Try again.')
 
 
 @router.get('/browse')
+@reader
 async def browse(q: str = Query('', max_length=200), media_type: Literal['movie', 'series'] = 'movie',
                  page: int = Query(1, ge=1, le=500), genres: str = Query('', max_length=200),
                  start: date | None = None, end: date | None = None, status: Literal['', 'airing', 'returning', 'finished', 'cancelled', 'upcoming', 'released'] = '',
@@ -1369,7 +1480,7 @@ async def browse(q: str = Query('', max_length=200), media_type: Literal['movie'
                  include_rereleases: Annotated[bool | None, Query()] = None,
                  timeline: Annotated[bool, Query()] = False,
                  cursor: Annotated[str | None, Query(max_length=160)] = None,
-                 db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user_or_api_key)):
+                 db: AsyncSession = Depends(get_db, scope="function"), viewer: User | None = Depends(get_optional_user_or_api_key)):
     from core.browse import browse_page, MOVIE_GENRES, TV_GENRES
     from core.external_scores import effective_mdblist_key
     from core.browse_cursor import decode_search_cursor
@@ -1390,7 +1501,7 @@ async def browse(q: str = Query('', max_length=200), media_type: Literal['movie'
         raise HTTPException(422, 'Check genres and release dates')
     if (media_type == 'movie' and status not in ('', 'released', 'upcoming')) or (media_type == 'series' and status == 'released'):
         raise HTTPException(422, 'Choose a status for this media type')
-    key = await settings_store.get_user_tmdb_key(db, viewer.id if viewer else -1)
+    key = await settings_store.get_user_tmdb_key(db, viewer.id if viewer else None)
     mdblist_key = await effective_mdblist_key(db, None) or (
         await effective_mdblist_key(db, viewer.id) if viewer else None
     )
@@ -1412,11 +1523,11 @@ async def catalog(q: str = "", media_type: Literal["movie", "series"] = "movie",
                   region: str | None = Query(None, pattern='^[A-Z]{2}$'),
                   unfiltered: Annotated[bool, Query()] = False,
                   scan_empty: Annotated[bool, Query()] = False,
-                  db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user_or_api_key)):
+                  db: AsyncSession = Depends(get_db, scope="function"), viewer: User | None = Depends(get_optional_user_or_api_key)):
     from core.browse import browse_page
     await catalog_access(db, viewer)
     term = q.strip()[:200]
-    key = await settings_store.get_user_tmdb_key(db, viewer.id)
+    key = await settings_store.get_user_tmdb_key(db, viewer.id if viewer else None)
     filters = dict(term=term, media_type=media_type, show_anime=await anime_is_visible(db), key=key,
         genres=[], start=None, end=None, status='', provider=None, region=region or 'US',
         sort='popular' if term else 'title', audience_curation=not unfiltered,
@@ -1440,13 +1551,13 @@ async def catalog_preview(
     media_type: Literal['movie', 'series'],
     tmdb_id: Annotated[int, Path(gt=0, le=2147483647)],
     response: Response,
-    db: Annotated[AsyncSession, Depends(get_db)],
-    viewer: Annotated[User, Depends(get_current_user_or_api_key)],
+    db: Annotated[AsyncSession, Depends(get_db, scope="function")],
+    viewer: Annotated[User | None, Depends(get_optional_user_or_api_key)],
 ):
     from core import tmdb
     from core.browse import GENRES
     await catalog_access(db, viewer)
-    key = await settings_store.get_user_tmdb_key(db, viewer.id if viewer else -1)
+    key = await settings_store.get_user_tmdb_key(db, viewer.id if viewer else None)
     if not key:
         raise HTTPException(409, 'A TMDB key is required to load this title')
     response.headers['Cache-Control'] = 'private, no-store'
@@ -1467,10 +1578,10 @@ async def catalog_preview(
 
 
 @router.post("/catalog/{media_type}/{tmdb_id}")
-async def import_catalog_title(media_type: Literal['movie','series'], tmdb_id: Annotated[int, Path(gt=0, le=2147483647)], db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user_or_api_key)):
+async def import_catalog_title(media_type: Literal['movie','series'], tmdb_id: Annotated[int, Path(gt=0, le=2147483647)], db: AsyncSession = Depends(get_db, scope="function"), viewer: User | None = Depends(get_optional_user_or_api_key)):
     from core.enrichment import create_media_safely, enrich_media
     await catalog_access(db, viewer)
-    key = await settings_store.get_user_tmdb_key(db, viewer.id if viewer else -1)
+    key = await settings_store.get_user_tmdb_key(db, viewer.id if viewer else None)
     if not key:
         raise HTTPException(409, 'A TMDB key is required to load this title')
     media = (await db.execute(select(Media).where(Media.tmdb_id == tmdb_id, Media.media_type == MediaType(media_type)))).scalar_one_or_none()
@@ -1480,9 +1591,6 @@ async def import_catalog_title(media_type: Literal['movie','series'], tmdb_id: A
             await enrich_media(media, api_key=key)
             if not media.title:
                 raise ValueError('No title returned')
-            if media.media_type == MediaType.series:
-                from core.tracking_metadata import hydrate_tracking_episodes
-                await hydrate_tracking_episodes(db, media, key)
             await db.commit()
         except Exception:
             await db.rollback()
@@ -1492,7 +1600,7 @@ async def import_catalog_title(media_type: Literal['movie','series'], tmdb_id: A
 
 
 @router.get("/editor/{media_id}")
-async def editor_context(media_id: int, db: Annotated[AsyncSession, Depends(get_db)],
+async def editor_context(media_id: int, db: Annotated[AsyncSession, Depends(get_db, scope="function")],
                          viewer: Annotated[User, Depends(get_current_user)]) -> dict:
     media = await db.get(Media, media_id)
     if not media or media.media_type not in (MediaType.movie, MediaType.series):
@@ -1502,11 +1610,70 @@ async def editor_context(media_id: int, db: Annotated[AsyncSession, Depends(get_
     from core.tracking_editor import attach_editor_context
     rows = [tracking_projection.media_data(media)]
     await attach_editor_context(db, viewer, rows, media_rows=[media])
+    from core.tracking_editor import progress_context
+    rows[0].update(await progress_context(db, media, rows[0]['entry']))
     return rows[0]
 
 
+async def detail_seasons(db, media, viewer, *, include_episodes=True):
+    seasons = [dict(s) for s in (media.tmdb_data or {}).get('seasons', [])]
+    if not include_episodes:
+        return [{**season, 'episodes': [], 'released_count': None, 'watched_count': 0} for season in seasons]
+    from core.tracking_metadata import released_episodes as catalogue_episodes
+    all_episodes = await catalogue_episodes(db, media, include_unreleased=True) if media.media_type == MediaType.series else []
+    release = EpisodeRelease(media.tvdb_air_schedule)
+    released_ids = {episode.id for episode in all_episodes if release.is_released(
+        episode.release_date, (episode.tmdb_data or {}).get('tracking_import_released'))}
+    watched = set()
+    if viewer and all_episodes:
+        watched = set((await db.execute(select(WatchEvent.media_id).where(
+            WatchEvent.user_id == viewer.id, WatchEvent.media_id.in_([e.id for e in all_episodes]),
+            WatchEvent.completed.is_(True)))).scalars())
+    for season in seasons:
+        season_episodes = [e for e in all_episodes if e.season_number == season.get('season_number')]
+        released = [e for e in season_episodes if e.id in released_ids]
+        season['released_count'] = len(released) if (media.tmdb_data or {}).get('tracking_catalogue_refreshed_at') else None
+        season['watched_count'] = sum(e.id in watched for e in released)
+        season['episodes'] = [{'id':episode.id, 'episode_number':episode.episode_number,
+            'title':episode.title, 'air_date':episode.release_date, 'runtime':episode.runtime,
+            'air_at':release.air_at(episode.release_date),
+            'image':episode.poster_path or (episode.tmdb_data or {}).get('still_path'),
+            'watched':episode.id in watched, 'released':episode.id in released_ids}
+            for episode in season_episodes]
+    return seasons
+
+
+@router.get('/title/{media_id}/seasons')
+@reader
+async def title_seasons(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db, scope="function")],
+        viewer: Annotated[User | None, Depends(get_optional_user_or_api_key)], response: Response,
+        revision: Annotated[str | None, Query(max_length=80)] = None):
+    await catalog_access(db, viewer)
+    media = await db.get(Media, media_id)
+    if not media or media.media_type != MediaType.series:
+        raise HTTPException(404, 'Series not found')
+    if tracking_projection.is_anime(media) and not await anime_is_visible(db):
+        raise HTTPException(404, 'Series not found')
+    response.headers['Cache-Control'] = 'private, no-store'
+    from core.tracking_episode_loading import ensure
+    from core.tracking_metadata import airtime_cache_needs_refresh
+    status = await ensure(db, media, viewer.id if viewer else None,
+        wait_for_refresh=airtime_cache_needs_refresh(media, media.status) or
+        bool(revision and revision == (media.tmdb_data or {}).get('tracking_catalogue_refreshed_at')))
+    await db.refresh(media)
+    entry = await db.scalar(select(TrackedEntry).where(TrackedEntry.user_id == viewer.id,
+        TrackedEntry.media_id == media.id)) if viewer else None
+    return {**tracking_projection.media_data(media), 'season_status': status,
+        'catalogue_revision': (media.tmdb_data or {}).get('tracking_catalogue_refreshed_at'),
+        'episodes_loaded': status['ready'], 'seasons': await detail_seasons(db, media, viewer,
+            include_episodes=status['ready']),
+        'entry': tracking_projection.entry_data(entry, media, True) if entry else None}
+
+
 @router.get("/title/{media_id}")
-async def title(media_id: int, db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user_or_api_key)):
+@reader
+async def title(media_id: int, db: AsyncSession = Depends(get_db, scope="function"), viewer: User | None = Depends(get_optional_user_or_api_key),
+        episodes: Annotated[bool, Query()] = True):
     await catalog_access(db, viewer)
     media = await db.get(Media, media_id)
     if not media or media.media_type not in (MediaType.movie, MediaType.series):
@@ -1529,28 +1696,13 @@ async def title(media_id: int, db: AsyncSession = Depends(get_db), viewer: User 
                 friends.append({"id": user.id, "username": user.username, "display_name": profile.display_name,
                     "has_avatar": bool(profile.avatar_path), "score": score, "status": e.status})
         friends.sort(key=lambda person: (-person['score'], (person['display_name'] or person['username']).casefold()))
-    seasons = [dict(s) for s in (media.tmdb_data or {}).get("seasons", [])]
-    episodes = await released_episodes(db, media)
-    from core.tracking_metadata import released_episodes as catalogue_episodes
-    all_episodes = await catalogue_episodes(db, media, include_unreleased=True) if media.media_type == MediaType.series else []
-    released_ids = {episode.id for episode in episodes}
-    watched = set()
-    if viewer and all_episodes:
-        watched = set((await db.execute(select(WatchEvent.media_id).where(
-            WatchEvent.user_id == viewer.id, WatchEvent.media_id.in_([e.id for e in all_episodes]),
-            WatchEvent.completed.is_(True)))).scalars())
-    for season in seasons:
-        released = [e for e in episodes if e.season_number == season.get('season_number')]
-        season['released_count'] = len(released) if (media.tmdb_data or {}).get('tracking_catalogue_refreshed_at') else None
-        season['watched_count'] = sum(e.id in watched for e in released)
-        season['episodes'] = [{'id':episode.id, 'episode_number':episode.episode_number,
-            'title':episode.title, 'air_date':episode.release_date, 'runtime':episode.runtime,
-            'image':episode.poster_path or (episode.tmdb_data or {}).get('still_path'),
-            'watched':episode.id in watched, 'released':episode.id in released_ids}
-            for episode in all_episodes if episode.season_number == season.get('season_number')]
+    seasons = await detail_seasons(db, media, viewer, include_episodes=episodes)
     from core.media_details import screen_work, work_details
     from core.countries import screen_countries
-    details = await work_details(db, await screen_work(db, media))
+    work = await screen_work(db, media)
+    details = await work_details(db, work)
+    from core.screen_primary import screen_primary
+    primary, primary_status = await screen_primary(db, media, work)
     details['countries'] = details.get('countries') or screen_countries(media.tmdb_data or {})['countries']
     from core.media_related import screen_related
     details = await screen_related(db, media, details, **(await result_filters(db, viewer)))
@@ -1561,13 +1713,17 @@ async def title(media_id: int, db: AsyncSession = Depends(get_db), viewer: User 
     from core.external_scores import effective_mdblist_key
     details['scores_pending'] = bool(viewer and await effective_mdblist_key(db, viewer.id))
     favorite = bool(entry and entry.favorite) or bool(viewer and await db.get(MediaFavorite, (viewer.id, media_id)) is not None)
-    return {**tracking_projection.media_data(media), **details, "favorite": favorite, "entry": tracking_projection.entry_data(entry, media, True, favorite=favorite) if entry else None,
-            "seasons": seasons, "friends": friends,
+    editor_entry = tracking_projection.entry_data(entry, media, True, favorite=favorite) if entry else None
+    from core.tracking_editor import progress_context
+    progress = await progress_context(db, media, editor_entry) if not episodes else {}
+    return {**tracking_projection.media_data(media), **details, **primary, **progress, 'primary': primary, 'primary_status': primary_status, "favorite": favorite, "entry": editor_entry,
+            "seasons": seasons, 'episodes_loaded': episodes, "friends": friends,
             "friends_average": sum(f["score"] for f in friends) / len(friends) if friends else None}
 
 
 @router.get('/title/{media_id}/related')
-async def title_related(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db)],
+@reader
+async def title_related(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db, scope="function")],
                         viewer: Annotated[User, Depends(get_current_user)]) -> dict:
     media = await db.get(Media, media_id)
     if not media or media.media_type not in (MediaType.movie, MediaType.series):
@@ -1585,9 +1741,10 @@ async def title_related(media_id: Annotated[int, Path(gt=0)], db: Annotated[Asyn
 
 
 @router.get('/title/{media_id}/episode-images')
+@reader
 async def title_episode_images(media_id: Annotated[int, Path(gt=0)],
-                               db: Annotated[AsyncSession, Depends(get_db)],
-                               viewer: Annotated[User, Depends(get_current_user_or_api_key)]) -> dict:
+                               db: Annotated[AsyncSession, Depends(get_db, scope="function")],
+                               viewer: Annotated[User | None, Depends(get_optional_user_or_api_key)]) -> dict:
     await catalog_access(db, viewer)
     media = await db.get(Media, media_id)
     if not media or media.media_type != MediaType.series:
@@ -1652,9 +1809,12 @@ async def title_episode_images(media_id: Annotated[int, Path(gt=0)],
 
 
 @router.get('/title/{media_id}/social')
+@reader
 async def title_social(media_id: Annotated[int, Path(gt=0)],
-                       db: Annotated[AsyncSession, Depends(get_db)],
+                       db: Annotated[AsyncSession, Depends(get_db, scope="function")],
                        viewer: Annotated[User, Depends(get_current_user)]) -> dict:
+    from core.activity_ratings import attach_series_ratings
+
     media = await db.get(Media, media_id)
     if not media or media.media_type not in (MediaType.movie, MediaType.series):
         raise HTTPException(404, 'Title not found')
@@ -1705,13 +1865,16 @@ async def title_social(media_id: Annotated[int, Path(gt=0)],
         .join(User, User.id == TrackingActivity.user_id)
         .outerjoin(UserProfileData, UserProfileData.user_id == User.id)
         .order_by(TrackingActivity.created_at.desc(), TrackingActivity.id.desc()))).all()
+    activities = tracking_projection.activity_data(activity_rows, include_user=True, limit=30)
+    following_activities = tracking_projection.following_title_activity(following_rows, media)
+    await attach_series_ratings(db, [*activities, *following_activities], entries=(entry for entry, _, _ in entries))
     return {'type': media.media_type.value, 'people': people,
-            'activities': tracking_projection.activity_data(activity_rows, include_user=True, limit=30),
-            'following_activities': tracking_projection.following_title_activity(following_rows, media)}
+            'activities': activities, 'following_activities': following_activities}
 
 
 @router.get('/title/{media_id}/people')
-async def title_people(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db)],
+@reader
+async def title_people(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db, scope="function")],
                        viewer: Annotated[User, Depends(get_current_user)],
                        characters: Annotated[bool, Query()] = False) -> dict:
     media = await db.get(Media, media_id)
@@ -1725,13 +1888,20 @@ async def title_people(media_id: Annotated[int, Path(gt=0)], db: Annotated[Async
     credits = await fill_screen_credits(db, media, viewer.id)
     # Actor credits must not wait for optional TVDB role-art enrichment.
     status = await fill_character_art(db, media, viewer.id) if characters else await cached_character_status(db, media.id)
-    details = await work_details(db, await screen_work(db, media), extras=False)
+    work = await screen_work(db, media)
+    details = await work_details(db, work, extras=False)
+    from core.screen_primary import screen_primary
+    primary, readiness = await screen_primary(db, media, work)
+    primary_status = ({'state': 'deferred', 'pending': True, 'error': 'unavailable', 'retry_after': 60}
+        if credits in ('failed', 'deferred') or (readiness['pending'] and credits != 'unavailable')
+        else {'state': 'unavailable' if credits == 'unavailable' else 'ready', 'pending': False})
     return {'people': details['people'], 'organizations': details['organizations'],
-            'credits_status': credits, 'character_status': status}
+            'credits_status': credits, 'character_status': status, 'primary': primary, 'primary_status': primary_status}
 
 
 @router.get('/title/{media_id}/scores')
-async def title_scores(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db)],
+@reader
+async def title_scores(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db, scope="function")],
                        viewer: Annotated[User, Depends(get_current_user)]) -> dict:
     media = await db.get(Media, media_id)
     if not media or media.media_type not in (MediaType.movie, MediaType.series):
@@ -1746,14 +1916,15 @@ async def title_scores(media_id: Annotated[int, Path(gt=0)], db: Annotated[Async
 
 
 @router.get('/title/{media_id}/background')
-async def title_background(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db)],
-                           viewer: Annotated[User, Depends(get_current_user_or_api_key)]) -> dict:
+@reader
+async def title_background(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db, scope="function")],
+                           viewer: Annotated[User | None, Depends(get_optional_user_or_api_key)]) -> dict:
     await catalog_access(db,viewer)
     media=await db.get(Media,media_id)
     if not media or media.media_type not in (MediaType.movie,MediaType.series):raise HTTPException(404,'Title not found')
     if tracking_projection.is_anime(media) and not await anime_is_visible(db):raise HTTPException(404,'Title not found')
     from core.media_images import fill_screen_backdrop,screen_backdrop
-    key=await settings_store.get_user_tmdb_key(db,viewer.id if viewer else -1)
+    key=await settings_store.get_user_tmdb_key(db,viewer.id if viewer else None)
     await fill_screen_backdrop(db,media,key)
     data=screen_backdrop(media)
     if not key and data['background_status']['state']=='pending':data['background_status']={'state':'unavailable','error':'missing_key','retry_after':0}
@@ -1762,15 +1933,16 @@ async def title_background(media_id: Annotated[int, Path(gt=0)], db: Annotated[A
 
 
 @router.get('/title/{media_id}/artwork-preview')
-async def title_artwork_preview(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db)],
-                                viewer: Annotated[User, Depends(get_current_user_or_api_key)]) -> dict:
+@reader
+async def title_artwork_preview(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db, scope="function")],
+                                viewer: Annotated[User | None, Depends(get_optional_user_or_api_key)]) -> dict:
     await catalog_access(db,viewer)
     media=await db.get(Media,media_id)
     if not media or media.media_type not in (MediaType.movie,MediaType.series):raise HTTPException(404,'Title not found')
     if tracking_projection.is_anime(media) and not await anime_is_visible(db):raise HTTPException(404,'Title not found')
     from core.media_images import fill_artwork_preview,screen_artwork_preview
     viewer_id=viewer.id if viewer else -1
-    key=await settings_store.get_user_tmdb_key(db,viewer_id)
+    key=await settings_store.get_user_tmdb_key(db,viewer.id if viewer else None)
     tvdb_key=await settings_store.get_user_tvdb_key(db,viewer_id)
     await fill_artwork_preview(db,media,key,tvdb_key)
     data=screen_artwork_preview(media)
@@ -1779,7 +1951,8 @@ async def title_artwork_preview(media_id: Annotated[int, Path(gt=0)], db: Annota
 
 
 @router.get('/title/{media_id}/images')
-async def title_images(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db)],
+@reader
+async def title_images(media_id: Annotated[int, Path(gt=0)], db: Annotated[AsyncSession, Depends(get_db, scope="function")],
                        viewer: Annotated[User, Depends(get_current_user)]) -> dict:
     media = await db.get(Media, media_id)
     if not media or media.media_type not in (MediaType.movie, MediaType.series):
@@ -1797,7 +1970,7 @@ async def title_images(media_id: Annotated[int, Path(gt=0)], db: Annotated[Async
 
 
 @router.post('/title/{media_id}/refresh-episodes')
-async def refresh_episodes(media_id: int, db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
+async def refresh_episodes(media_id: int, db: AsyncSession = Depends(get_db, scope="function"), viewer: User = Depends(get_current_user)):
     from core.tracking_metadata import hydrate_tracking_episodes
     media = await db.get(Media, media_id)
     if not media or media.media_type != MediaType.series:
@@ -1834,21 +2007,37 @@ class EpisodeProgressPatch(BaseModel):
     confirm_rollback: bool = False
 
 
+async def refresh_imminent_airtime_for_write(db, media, user_id):
+    from core.tracking_metadata import airtime_cache_needs_refresh
+    if not airtime_cache_needs_refresh(media, media.status):
+        return
+    from core.tracking_episode_loading import ensure
+    try:
+        state = await asyncio.wait_for(ensure(db, media, user_id, wait_for_refresh=True), timeout=12)
+    except TimeoutError:
+        raise HTTPException(409, 'Episode metadata is still loading. Try again shortly.') from None
+    if state.get('ready'):
+        await db.refresh(media)
+    if state.get('pending') and airtime_cache_needs_refresh(media, media.status):
+        raise HTTPException(409, 'Episode metadata is still loading. Try again shortly.')
+
+
 @router.patch('/entry/{media_id}/episode/{episode_id}')
 async def save_episode_progress(media_id: Annotated[int, Path(gt=0)], episode_id: Annotated[int, Path(gt=0)],
         body: EpisodeProgressPatch, background_tasks: BackgroundTasks,
-        db: Annotated[AsyncSession, Depends(get_db)], viewer: Annotated[User, Depends(get_current_user)]) -> dict:
+        db: Annotated[AsyncSession, Depends(get_db, scope="function")], viewer: Annotated[User, Depends(get_current_user)]) -> dict:
     return await _save_entry(media_id, EntryPatch(confirm_rollback=body.confirm_rollback), background_tasks, db, viewer,
-        episode_change=(episode_id, body.watched), preserve_status=True)
+        episode_change=(episode_id, body.watched), preserve_status=True, direct_episode=True)
 
 
 @router.patch('/entry/{media_id}/season/{season_number}')
 async def save_season_progress(media_id: int, season_number: int, body: SeasonProgressPatch,
                                background_tasks: BackgroundTasks,
-                               db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
+                               db: AsyncSession = Depends(get_db, scope="function"), viewer: User = Depends(get_current_user)):
     media = await db.get(Media, media_id)
     if not media or media.media_type != MediaType.series or season_number <= 0:
         raise HTTPException(404, 'Regular season not found')
+    await refresh_imminent_airtime_for_write(db, media, viewer.id)
     await db.execute(select(User.id).where(User.id == viewer.id).with_for_update())
     episodes = await released_episodes(db, media)
     positions = [i for i, e in enumerate(episodes) if e.season_number == season_number]
@@ -1861,21 +2050,46 @@ async def save_season_progress(media_id: int, season_number: int, body: SeasonPr
 
 @router.patch("/entry/{media_id}")
 async def save_entry(media_id: int, body: EntryPatch, background_tasks: BackgroundTasks,
-                     db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
+                     db: AsyncSession = Depends(get_db, scope="function"), viewer: User = Depends(get_current_user)):
+    media = await db.get(Media, media_id)
+    needs_episodes = body.progress is not None or body.mark_released_watched or body.status == 'completed'
+    if (not body.series_editor and media and media.media_type == MediaType.series and needs_episodes
+            and (media.tmdb_id or media.tvdb_id) and not (media.tmdb_data or {}).get('tracking_catalogue_refreshed_at')):
+        # A genuinely uncached title may be edited before its background read
+        # finishes. Join that public acquisition before taking any account lock.
+        from asyncio import get_running_loop, sleep, wait_for
+        from core.tracking_episode_loading import ensure
+        deadline = get_running_loop().time() + 30
+        while True:
+            try:
+                status = await wait_for(ensure(db, media, viewer.id), max(.001, deadline - get_running_loop().time()))
+            except TimeoutError:
+                raise HTTPException(409, 'Episode metadata is still loading. Try again shortly.') from None
+            await db.refresh(media)
+            if (media.tmdb_data or {}).get('tracking_catalogue_refreshed_at'):
+                break
+            if status.get('error') or not status['pending'] or get_running_loop().time() >= deadline:
+                raise HTTPException(409, 'Episode metadata is still loading. Try again shortly.')
+            await db.commit()
+            await sleep(1)
     return await _save_entry(media_id, body, background_tasks, db, viewer)
 
 
 async def _save_entry(media_id: int, body: EntryPatch, background_tasks: BackgroundTasks,
                      db: AsyncSession, viewer: User, *, episode_change: tuple[int, bool] | None = None,
-                     preserve_status: bool = False):
+                     preserve_status: bool = False, direct_episode: bool = False):
     media = await db.get(Media, media_id)
     if not media or media.media_type not in (MediaType.movie, MediaType.series):
         raise HTTPException(404, "Title not found")
     if episode_change and media.media_type != MediaType.series:
         raise HTTPException(404, 'Series not found')
+    if media.media_type == MediaType.series and (episode_change or body.series_editor or body.progress is not None
+                                                or body.mark_released_watched or body.status == 'completed'):
+        await refresh_imminent_airtime_for_write(db, media, viewer.id)
     # Serialize edits for this user, including first insertion of a title.
     await db.execute(select(User.id).where(User.id == viewer.id).with_for_update())
-    entry = (await db.execute(select(TrackedEntry).where(TrackedEntry.user_id == viewer.id, TrackedEntry.media_id == media_id))).scalar_one_or_none()
+    entry = await db.scalar(select(TrackedEntry).where(
+        TrackedEntry.user_id == viewer.id, TrackedEntry.media_id == media_id).with_for_update())
     favorite_row = await db.get(MediaFavorite, (viewer.id, media_id))
     if entry and favorite_row is not None:
         entry.favorite = True
@@ -1905,6 +2119,122 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
     old_progress = entry.progress if entry else 0
     old_score = effective_score(entry.rating_mode, entry.manual_score, entry.season_scores) if entry else None
     old_season_scores = dict(entry.season_scores or {}) if entry else {}
+    series_patch = body.series_editor
+    deleting_season = series_patch is not None and series_patch.action == 'delete_season'
+    scoped_progress = bool(series_patch and series_patch.progress_seasons)
+    if scoped_progress and 'status' not in body.model_fields_set:
+        preserve_status = True
+    season_completion_action = series_patch is not None and series_patch.action in ('complete_season', 'resume_season')
+    date_endpoints = {}
+    observed_season_finishes = set()
+    finish_intent = 'finish_date' in body.model_fields_set and body.finish_date is not None
+    if media.media_type == MediaType.series and finish_intent and series_patch is None:
+        series_patch = SeriesEditorPatch()
+    series_context = None
+    desired_editor = None
+    observed_endpoint = None
+    progress_endpoints = {}
+    alternate_scores = {}
+    old_alternate_scores = {}
+    previous_season_number = None
+    if series_patch and (media.media_type != MediaType.series or
+                         (tracking_projection.is_anime(media) and not await anime_is_visible(db))):
+        raise HTTPException(404, 'Series not found')
+    if deleting_season:
+        if not body.confirm_rollback:
+            raise HTTPException(409, 'Confirm deletion of this season’s tracking history.')
+        if entry is None:
+            raise HTTPException(404, 'Tracked series not found')
+        if (body.model_fields_set - {'series_editor', 'confirm_rollback'}
+                or series_patch.model_fields_set - {'action', 'season_number', 'revision'}):
+            raise HTTPException(422, 'Delete the season separately from other edits.')
+        preserve_status = True
+    if series_patch and (series_patch.action or scoped_progress or series_patch.seasons or series_patch.season_statuses
+                         or body.status is not None or finish_intent or body.progress is not None):
+        series_context = await series_editor_context(db, media, viewer.id)
+        previous_season_number = series_context.progress_season()
+        if series_patch.seasons and series_patch.order != series_context.order:
+            raise HTTPException(409, {'code': 'series_editor_changed', 'airing': series_context.airing()})
+        selected_status = body.status.value if body.status else previous
+        completes_series = selected_status == 'completed' and body.status is not None and not season_completion_action
+        if completes_series or series_patch.action or scoped_progress:
+            if not (media.tmdb_data or {}).get('tracking_catalogue_refreshed_at'):
+                raise HTTPException(409, 'Episode metadata is still loading. Try again shortly.')
+            if deleting_season:
+                season_episode_ids = series_context.season_deletion_ids(series_patch)
+                desired_editor = series_context.watched - season_episode_ids
+            else:
+                desired_editor, observed_endpoint = series_context.resolve(series_patch, selected_status, completes_series)
+            if series_patch.action == 'position' and series_patch.episode_count == 0:
+                observed_endpoint = None  # Prior coverage is not an observation of its finale.
+            if series_patch.season_progress:
+                if (series_patch.progress_season is not None
+                        or series_patch.action not in (None, 'position', 'complete_season', 'resume_season')):
+                    raise HTTPException(422, 'Choose compatible season progress edits.')
+                if series_patch.revision != series_context.revision or series_patch.order != series_context.order:
+                    raise HTTPException(409, {'code': 'series_editor_changed', 'airing': series_context.airing()})
+                desired_editor, progress_endpoints = series_context.apply_season_progress(
+                    series_patch.season_progress, desired_editor)
+                if observed_endpoint not in desired_editor:
+                    observed_endpoint = progress_endpoints[max(progress_endpoints)] if progress_endpoints else None
+        valid_groups = {(n, membership_key(episodes)) for n, episodes, _ in series_context.groups}
+        known_seasons = set(series_context.metadata)
+        if series_patch.season_statuses and (series_patch.order != series_context.order
+                or series_patch.revision != series_context.revision
+                or not series_patch.season_statuses.keys() <= (known_seasons | {n for n, _ in valid_groups})):
+            raise HTTPException(409, {'code': 'series_editor_changed', 'airing': series_context.airing()})
+        seen = set()
+        scores = {series_patch.season_number: None} if deleting_season else {}
+        for edit in series_patch.seasons:
+            key = edit.season_number, edit.membership
+            metadata_score = (edit.season_number in known_seasons and edit.membership == membership_key([])
+                and not {'start_date', 'completion_date'} & edit.model_fields_set)
+            if (key not in valid_groups and not metadata_score) or key in seen:
+                raise HTTPException(409, 'The season grouping changed. Reopen the editor and try again.')
+            seen.add(key)
+            if 'score' in edit.model_fields_set:
+                try:
+                    scores[edit.season_number] = normalize_score(edit.score, 0.1)
+                except ValueError as exc:
+                    raise HTTPException(422, str(exc)) from exc
+        observed_season_finishes = set(series_context.finish_targets(
+            [edit for edit in series_patch.seasons if not edit.completion_preset]))
+        series_date_sets_progress = finish_intent and series_patch.action != 'position' and not scoped_progress
+        date_endpoints = series_context.finish_targets(series_patch.seasons,
+            body.finish_date if series_date_sets_progress else None)
+        if date_endpoints:
+            if not (media.tmdb_data or {}).get('tracking_catalogue_refreshed_at'):
+                raise HTTPException(409, 'Episode metadata is still loading. Try again shortly.')
+            if series_patch.revision and series_patch.revision != series_context.revision:
+                raise HTTPException(409, {'code': 'series_editor_changed', 'airing': series_context.airing()})
+            released = series_context.released
+            observed_endpoint = next(episode.id for episode in reversed(released) if episode.id in date_endpoints)
+            through = {series_context.positions[episode_id] for episode_id in date_endpoints}
+            coverage = {episode.id for episode in released if any(
+                series_context.positions[episode.id][0] == number and series_context.positions[episode.id][1] <= count
+                for number, count in through)}
+            if series_date_sets_progress:
+                coverage.update(episode.id for episode in released)
+            desired_editor = (desired_editor if desired_editor is not None else series_context.watched) | coverage
+        if series_context.order == 'tmdb:aired' and scores:
+            body.season_scores = {**(body.season_scores or {}), **{str(n): score for n, score in scores.items()}}
+        else:
+            alternate_scores = scores
+        if series_patch.action == 'catch_up':
+            body.status = TrackingStatus('watching')
+            body.model_fields_set.discard('finish_date')
+        elif series_patch.action == 'complete_previous':
+            body.status = TrackingStatus('completed')
+        elif season_completion_action:
+            body.status = None
+            body.model_fields_set.discard('status')
+            if (series_patch.action == 'complete_season' and selected_status == 'watching'
+                    and not any(value == 'watching' for key, value in series_context.season_statuses.items()
+                                if key != str(series_patch.season_number))
+                    and all(episode.id in desired_editor for episode in series_context.released)):
+                body.status = TrackingStatus('completed')
+        if series_patch.watch_date and series_patch.watch_date > date.today() + timedelta(days=1):
+            raise HTTPException(422, 'Watch date cannot be in the future')
     added_watched_ids: set[int] = set()
     removed_watched_ids: set[int] = set()
     if entry is None:
@@ -1915,6 +2245,27 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
         entry = TrackedEntry(user_id=viewer.id, media_id=media_id, status="planning", rating_mode="manual", season_scores={}, progress=0, favorite=favorite_row is not None, rewatch_count=0)
         db.add(entry)
     fields = body.model_fields_set
+    reopened_seasons = set()
+    if scoped_progress and series_context.manual_completions:
+        reduced_seasons = {series_context.positions[episode_id][0]
+                           for episode_id in series_context.watched - desired_editor}
+        reopened_seasons = {number for number in series_patch.progress_seasons
+                            if number in reduced_seasons or series_patch.season_statuses.get(number) == 'watching'}
+    if season_completion_action or deleting_season or reopened_seasons:
+        overrides = dict(entry.manual_season_completions or {})
+        dates = dict(series_context.manual_completions)
+        key = str(series_patch.season_number)
+        if series_patch.action == 'complete_season':
+            dates.setdefault(key, (series_patch.watch_date or date.today()).isoformat())
+        elif season_completion_action or deleting_season:
+            dates.pop(key, None)
+        for number in reopened_seasons:
+            dates.pop(str(number), None)
+        if dates:
+            overrides[series_context.order] = dates
+        else:
+            overrides.pop(series_context.order, None)
+        entry.manual_season_completions = overrides or None
     local_status_decision = 'status' in fields
     if body.season_scores is not None and media.media_type != MediaType.series:
         raise HTTPException(422, "Movies do not have season ratings")
@@ -1925,23 +2276,54 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
     status = body.status.value if body.status else entry.status
     today = datetime.now(timezone.utc).date()
     entry.start_date, entry.finish_date = default_dates(previous, status, entry.start_date, entry.finish_date, today)
+    if series_context and series_context.groups and 'start_date' not in fields:
+        # A Watching transition belongs to the selected season, not always S1.
+        entry.start_date = old_start_date
     entry.status = status
+    if series_patch and series_patch.list_placement:
+        if 'status' not in fields or status not in ('paused', 'dropped'):
+            raise HTTPException(422, 'Series list placement requires a paused or dropped status.')
+        entry.series_list_status = status if series_patch.list_placement == 'series' else None
+    elif 'status' in fields and status != previous:
+        entry.series_list_status = None
     for name in ("manual_score", "rating_mode", "favorite", "notes", "start_date", "finish_date", "rewatch_count"):
         if name in fields:
             value = getattr(body, name)
             if value is None and name in ("rating_mode", "favorite", "rewatch_count"):
                 raise HTTPException(422, f"{name} cannot be null")
             setattr(entry, name, value)
+    if series_patch and old_progress == 0 and 'finish_date' in fields:
+        entry.finish_date_source = 'series' if entry.finish_date else None
+    series_start_override = None
+    if media.media_type == MediaType.series and 'start_date' in fields:
+        series_start_override = (entry.start_date,)
+        entry.start_date_source = 'manual'
     if body.season_scores is not None:
         entry.season_scores = {**entry.season_scores, **body.season_scores}
     episodes = []
     completing_series = media.media_type == MediaType.series and status == 'completed' and previous != 'completed'
+    if (series_patch and completing_series and old_progress == 0 and not old_finish_date
+            and 'finish_date' not in fields and series_patch.watch_date):
+        entry.finish_date = series_patch.watch_date
     status_driven_movie = media.media_type == MediaType.movie and 'status' in fields
-    if body.progress is not None or body.mark_released_watched or completing_series or status_driven_movie or episode_change:
+    date_driven_movie = media.media_type == MediaType.movie and finish_intent
+    if body.progress is not None or body.mark_released_watched or completing_series or status_driven_movie or date_driven_movie or episode_change or desired_editor is not None:
         if media.media_type == MediaType.series and not (media.tmdb_data or {}).get('tracking_catalogue_refreshed_at'):
             raise HTTPException(409, 'Refresh episode metadata on the title page before changing progress')
-        episodes = [media] if status_driven_movie else await released_episodes(db, media)
-        target = (1 if status == 'completed' else 0) if status_driven_movie else len(episodes) if body.mark_released_watched or completing_series else body.progress
+        episodes = series_context.released if desired_editor is not None else (
+            [media] if status_driven_movie or date_driven_movie else await released_episodes(db, media))
+        unmapped = set()
+        if desired_editor is not None and series_context.order != 'tmdb:aired':
+            selected_ids = {episode.id for episode in episodes}
+            extras = [episode for episode in await released_episodes(db, media) if episode.id not in selected_ids]
+            episodes = [*episodes, *extras]
+            unmapped = {episode.id for episode in extras}
+        if date_driven_movie:
+            target = 1
+        elif status_driven_movie:
+            target = 1 if status == 'completed' else old_progress if status == previous else 0
+        else:
+            target = len(episodes) if body.mark_released_watched or completing_series else body.progress
         if not episodes or (target is not None and target > len(episodes)):
             raise HTTPException(409, "Released episode metadata is needed before changing progress")
         ids = [m.id for m in episodes]
@@ -1953,11 +2335,23 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
             target = ids.index(episode_id) + int(episode_watched)
             if episode_watched:
                 target = max(target, max((index + 1 for index, mid in enumerate(ids) if mid in watched), default=0))
-        desired = set(ids[:target])
-        marking = [ep for ep in episodes[:target] if not preserve_status or ep.id not in watched]
-        removing = watched.intersection(ids[target:]) if not status_driven_movie else set()
+        if desired_editor is not None:
+            desired = desired_editor.intersection(ids)
+            if unmapped:
+                desired |= unmapped if completes_series and series_patch.action is None else watched & unmapped
+            target = len(desired)
+            marking = [ep for ep in episodes if ep.id in desired and ep.id not in watched]
+            removing = watched - desired
+        else:
+            desired = set(ids[:target])
+            marking = [ep for ep in episodes[:target] if not preserve_status or ep.id not in watched]
+            removing = watched.intersection(ids[target:]) if not status_driven_movie else set()
+            if media.media_type == MediaType.series and target and (
+                    (direct_episode and episode_change and episode_change[1])
+                    or (body.progress is not None and target == old_progress + 1)):
+                observed_endpoint = ids[target - 1] if not episode_change else episode_change[0]
         from core.watch_dates import inferred_watch_datetime
-        completion_evidence_date = entry.finish_date if entry.status == 'completed' and not preserve_status else None
+        completion_evidence_date = body.finish_date if finish_intent else entry.finish_date if entry.status == 'completed' and not preserve_status else None
         inferred_watched_at = inferred_watch_datetime(completion_evidence_date)
         # A user's explicit progress edit is better date evidence than an
         # unrelated episode's title-wide Stremio clock.
@@ -1973,39 +2367,97 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
         # viewing history. An explicit progress rollback still removes history.
         rollback = bool(removing)
         if rollback and not body.confirm_rollback:
+            if scoped_progress:
+                raise HTTPException(409, {'code': 'watch_rollback_required',
+                    'message': 'Confirm removing watched episodes and their recorded dates from the edited seasons.'})
             if preserve_status:
                 raise HTTPException(409, {'code': 'watch_rollback_required',
                     'message': 'This removes watched progress and deletes the recorded watch dates and evidence for this and all later episodes.'})
             raise HTTPException(409, "Confirm marking later episodes unwatched")
+        observed_progress = set(progress_endpoints.values())
         for episode in marking:
             if episode.id not in watched or (media.media_type == MediaType.movie and old_progress == 0 and previous != 'completed'):
+                bulk_series_finish = completing_series and series_patch and series_patch.action is None and finish_intent
+                observed = ((episode.id == observed_endpoint and not bulk_series_finish)
+                            or episode.id in observed_progress or episode.id in observed_season_finishes
+                            or date_driven_movie)
                 db.add(WatchEvent(user_id=viewer.id, media_id=episode.id, completed=True,
-                    watched_at=inferred_watched_at, date_inferred=True))
+                    watched_at=inferred_watch_datetime(date_endpoints.get(episode.id) or (body.finish_date if date_driven_movie else series_patch.watch_date if series_patch else None)) if observed else inferred_watched_at,
+                    date_inferred=not observed))
                 added_watched_ids.add(episode.id)
         if rollback:
             removed_watched_ids = removing
-            await db.execute(delete(WatchEvent).where(WatchEvent.user_id == viewer.id, WatchEvent.media_id.in_(ids[target:])))
+            await db.execute(delete(WatchEvent).where(WatchEvent.user_id == viewer.id,
+                WatchEvent.media_id.in_(removing if desired_editor is not None else ids[target:])))
             from core.activity import reconcile_unwatched_activity
             await reconcile_unwatched_activity(db, user_id=viewer.id, media=media,
                                                episodes=episodes, watched_ids=desired, removed_ids=removing)
         entry.progress = target
-        if 'status' not in fields and target > 0 and (not preserve_status or was_new_entry):
+        if 'status' not in fields and target > 0 and not (date_endpoints or date_driven_movie) and (not preserve_status or was_new_entry):
             # Watching later episodes resumes paused/dropped titles, while a
             # completed title remains completed even when correcting history.
             from core.tracking_rules import observed_status
             complete = target == len(episodes)
-            entry.status = observed_status(previous, complete, True)
+            entry.status = ('watching' if previous in (None, 'planning', 'paused', 'dropped') else previous
+                            ) if series_patch else observed_status(previous, complete, True)
             entry.start_date, entry.finish_date = default_dates(previous, entry.status, entry.start_date, entry.finish_date, today)
+            if series_context and series_context.groups and 'start_date' not in fields:
+                entry.start_date = old_start_date
             local_status_decision = entry.status != previous
     if local_status_decision:
         mark_status_change(entry, 'local')
-    if entry.status in {'planning', 'paused', 'dropped', 'completed'} and (
-            previous != entry.status or was_new_entry or body.status is not None):
+    if series_context:
+        from core.series_editor import update_season_statuses
+        update_season_statuses(entry, series_context, series_patch, desired_editor,
+                               series_status=entry.status if 'status' in fields else None)
+    if series_context and series_patch.action == 'position':
+        cursor = series_context.cursor_for(series_patch)
+        entry.season_cursor = cursor if not series_patch.season_progress and (
+            not date_endpoints or desired_editor == series_context.resolve(series_patch, status, False)[0]) else None
+    if deleting_season:
+        from core.season_completion import clear_season_evidence
+        removed_watched_ids |= await clear_season_evidence(db, entry, series_context.order,
+            series_patch.season_number, season_episode_ids)
+        if (entry.season_cursor or {}).get('season_number') == series_patch.season_number:
+            entry.season_cursor = None
+        if (entry.latest_episode_activity or {}).get('episode_id') in season_episode_ids:
+            entry.latest_episode_activity = None
+        if series_context.groups and series_patch.season_number == series_context.groups[0][0]:
+            entry.start_date = entry.start_date_source = None
+    from core.series_playback import has_active_playback, remember_episode
+    playback_edited = False
+    if series_context:
+        saved_activity = entry.latest_episode_activity or {}
+        activity_season = series_context.positions.get(saved_activity.get('episode_id'), (None,))[0]
+        stops_playback = (series_patch.season_statuses.get(activity_season) in ('paused', 'dropped', 'planning')
+                          or 'status' in fields and entry.status != 'watching')
+        if stops_playback:
+            entry.latest_episode_activity = None
+            playback_edited = bool(saved_activity)
+        elif (observed_endpoint and observed_endpoint not in removed_watched_ids and not season_completion_action
+                and (series_patch.action == 'episode' or scoped_progress
+                     or series_patch.action == 'position' and entry.status == 'watching')):
+            playback_edited = remember_episode(entry, observed_endpoint, datetime.now(timezone.utc), completed=True)
+        elif saved_activity.get('episode_id') in removed_watched_ids:
+            entry.latest_episode_activity = None
+            playback_edited = bool(saved_activity)
+        elif series_patch.season_statuses or series_patch.action == 'resume_season':
+            number = (series_patch.season_number if series_patch.action == 'resume_season' else
+                      next((number for number, state in series_patch.season_statuses.items() if state == 'watching'), None))
+            members = [episode for episode in series_context.released
+                       if series_context.positions[episode.id][0] == number]
+            target = next((episode for episode in members if episode.id not in series_context.watched),
+                          members[0] if members else None)
+            if target:
+                playback_edited = remember_episode(entry, target.id, datetime.now(timezone.utc))
+    if not has_active_playback(entry) and (
+            previous != entry.status or was_new_entry or body.status is not None or playback_edited
+            or series_patch and series_patch.season_statuses):
         from core.stream_actions import queue_local_dismissals
         await queue_local_dismissals(db, viewer.id, media)
     # Mirror the effective value into the existing provider-facing rating rows.
     score = effective_score(entry.rating_mode, entry.manual_score, entry.season_scores)
-    if score is not None:
+    if score is not None and not deleting_season:
         from core.web_push import resolve_rating_prompts
         await resolve_rating_prompts(db, user_id=viewer.id, media_id=media_id)
     scores = {None: score, **{int(k): v for k, v in entry.season_scores.items()}}
@@ -2019,6 +2471,19 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
                 row.rating, row.rated_at = value, datetime.now(timezone.utc).replace(tzinfo=None)
         else:
             db.add(Rating(user_id=viewer.id, media_id=media_id, season_number=season, rating=value))
+    for number, value in alternate_scores.items():
+        row = await db.scalar(select(Rating).where(Rating.user_id == viewer.id, Rating.media_id == media_id,
+            Rating.season_number == number, Rating.episode_order == series_context.order))
+        old_alternate_scores[number] = row.rating if row else None
+        if value is None:
+            if row:
+                await db.delete(row)
+        elif row:
+            if row.rating != value:
+                row.rating, row.rated_at = value, datetime.now(timezone.utc).replace(tzinfo=None)
+        else:
+            db.add(Rating(user_id=viewer.id, media_id=media_id, season_number=number, rating=value,
+                          episode_order=series_context.order))
     changed_dates = {name for name, before, after in (
         ('start_date', old_start_date, entry.start_date), ('finish_date', old_finish_date, entry.finish_date),
     ) if name in fields and before != after}
@@ -2026,29 +2491,145 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
         from core.streaming_activity import reschedule_date_activity
         await reschedule_date_activity(db, viewer.id, media_id, start_date=entry.start_date,
                                        finish_date=entry.finish_date, changed=changed_dates, status=entry.status)
-    progress_changed = entry.progress != old_progress
-    if old_score != score and score is None:
+    progress_changed = entry.progress != old_progress or bool(added_watched_ids or removed_watched_ids)
+    bulk_watch = None
+    if media.media_type == MediaType.series and added_watched_ids and not episode_change and not scoped_progress and (
+            completing_series or body.mark_released_watched or body.progress is not None or
+            (series_patch and series_patch.action in ('position', 'through_season', 'catch_up', 'complete_previous'))):
+        positions = series_context.positions if series_context else {}
+        season_numbers = {positions.get(episode.id, (episode.season_number,))[0]
+                          for episode in marking if episode.id in added_watched_ids}
+        if len(season_numbers) > 1:
+            series_finish_season = None
+            if finish_intent and series_context and series_context.released:
+                number = positions[series_context.released[-1].id][0]
+                if not any(edit.season_number == number and 'completion_date' in edit.model_fields_set
+                           for edit in series_patch.seasons):
+                    series_finish_season = number
+            watch_day = body.finish_date if finish_intent else series_patch.watch_date if series_patch else None
+            bulk_watch = BulkWatch(datetime.now(timezone.utc).replace(tzinfo=None), watch_day or today,
+                                  added_watched_ids, observed_endpoint, series_finish_season)
+    introductory_completion = media.media_type == MediaType.series and old_progress == 0 and entry.status == 'completed'
+    if not deleting_season and old_score != score and score is None:
         from core.activity import clear_recent_rating_activity
         await clear_recent_rating_activity(db, user_id=viewer.id, media_id=media_id)
-    if previous != entry.status or old_score != score or progress_changed:
+    if not deleting_season and (previous != entry.status or old_score != score or progress_changed):
         from core.activity import record_daily_activity, record_progress_activity, series_activity_details, suppress_initial_import_rating
         status_changed = previous != entry.status
         if status_changed:
             entry.initial_import_completed_at = None
         rating_changed = old_score != score and (status_changed or not suppress_initial_import_rating(entry))
-        if media.media_type == MediaType.series and progress_changed:
+        activity_status_changed = status_changed and (not series_patch or series_patch.action != 'complete_previous')
+        if media.media_type == MediaType.series and progress_changed and not introductory_completion:
             await record_progress_activity(db, user_id=viewer.id, media=media,
                 previous_progress=old_progress, progress=entry.progress, status=entry.status, score=score,
-                status_changed=status_changed and 'status' in fields, rating_changed=rating_changed,
+                status_changed=activity_status_changed and 'status' in fields, rating_changed=rating_changed,
                 previous_status=previous, first_watching=old_start_date is None and previous != 'watching',
-                previous_score=old_score, previous_watched_ids=watched, watched_ids=desired)
-        elif status_changed or not suppress_initial_import_rating(entry):
+                previous_score=old_score, previous_watched_ids=watched, watched_ids=desired, season_actions=False,
+                watch_batch=bulk_watch.key if bulk_watch else None)
+        elif not introductory_completion and (status_changed or not suppress_initial_import_rating(entry)):
             position, finished = await series_activity_details(db, media, entry.progress, user_id=viewer.id)
-            await record_daily_activity(db, user_id=viewer.id, media_id=media_id, status=entry.status, score=score,
+            await record_daily_activity(db, user_id=viewer.id, media_id=media_id, media=media, status=entry.status, score=score,
                 progress=entry.progress if media.media_type == MediaType.series else None,
-                position=position, status_changed=status_changed, rating_changed=rating_changed,
+                position=position, status_changed=activity_status_changed, rating_changed=rating_changed,
                 previous_status=previous, first_watching=old_start_date is None and previous != 'watching',
-                previous_score=old_score)
+                previous_score=old_score, season_actions=media.media_type != MediaType.series)
+    if series_context:
+        date_edits = [edit for edit in series_patch.seasons
+                      if {'start_date', 'completion_date'} & edit.model_fields_set]
+        if finish_intent and series_context.released:
+            from core.series_editor import SeasonEdit
+            number = series_context.positions[series_context.released[-1].id][0]
+            if not any(edit.season_number == number and 'completion_date' in edit.model_fields_set for edit in date_edits):
+                members = next(eps for sn, eps, _ in series_context.groups if sn == number)
+                date_edits.append(SeasonEdit(season_number=number, membership=membership_key(members), completion_date=entry.finish_date,
+                    completion_preset=entry.status == 'completed' and old_progress == 0))
+        from core.season_activity import season_target
+        from core.series_editor import intent_date_edits
+        intent_context = SeriesEditorContext(series_context.data, series_context.positions,
+            desired_editor if desired_editor is not None else series_context.watched, entry.season_cursor,
+            release=series_context.release, manual_completions=entry.manual_season_completions,
+            season_statuses=entry.season_list_statuses)
+        number = series_context.positions[observed_endpoint][0] if observed_endpoint else season_target(intent_context)[0]
+        if series_patch.action == 'position' and not date_endpoints:
+            number = series_patch.season_number or number
+        if completing_series and not observed_endpoint and series_context.released:
+            number = series_context.positions[series_context.released[-1].id][0]
+        full_season = next((bool(total and len(eps) == total and all(ep.id in intent_context.watched for ep in eps))
+                            for sn, eps, total in series_context.groups if sn == number), False)
+        date_edits = await intent_date_edits(db, media_id, viewer.id, series_context, date_edits, number=number,
+            start=(bool(added_watched_ids) and not completing_series) or (body.status == 'watching' and previous != 'watching')
+                or (series_patch.action == 'position' and entry.status == 'watching' and
+                    series_patch.season_number is not None and series_patch.season_number > (previous_season_number or 1)),
+            finish=full_season and (bool(added_watched_ids) or completing_series),
+            day=date_endpoints.get(observed_endpoint) or series_patch.watch_date or today)
+        for sn, members, expected in series_context.groups:
+            if sn == number or sn not in progress_endpoints:
+                continue
+            date_edits = await intent_date_edits(db, media_id, viewer.id, series_context, date_edits, number=sn,
+                start=not completing_series, finish=len(members) == (expected or len(members))
+                and all(ep.id in desired_editor for ep in members),
+                day=series_patch.watch_date or today)
+        await db.flush()
+        if desired_editor is not None or date_edits or series_start_override is not None or series_patch.season_statuses:
+            hint = None
+            if entry.status == 'completed' and old_progress == 0 and entry.finish_date:
+                hint = (entry.finish_date, 'series' if entry.finish_date_source == 'series' else 'inferred')
+            from core.season_completion import reconcile
+            await reconcile(db, viewer.id, media_id, groups_data=series_context.data, edits=date_edits,
+                            series_hint=hint, series_start_override=series_start_override, bulk_watch=bulk_watch)
+            if deleting_season:
+                from core.season_activity import clear_season_activity
+                await clear_season_activity(db, user_id=viewer.id, media_id=media_id,
+                    order=series_context.order, number=series_patch.season_number)
+            if 'start_date' not in fields and any('start_date' in edit.model_fields_set and not edit.start_preset for edit in date_edits) and old_start_date != entry.start_date:
+                from core.streaming_activity import reschedule_date_activity
+                await reschedule_date_activity(db, viewer.id, media_id, start_date=entry.start_date,
+                    finish_date=entry.finish_date, changed={'start_date'}, status=entry.status)
+        series_context = intent_context
+        series_summary = await editor_summary(db, media, viewer.id, intent_context)
+    elif media.media_type == MediaType.series and (series_start_override is not None or progress_changed or entry.status == 'completed'):
+        from core.season_completion import reconcile
+        await db.flush()
+        await reconcile(db, viewer.id, media_id, series_start_override=series_start_override, bulk_watch=bulk_watch)
+    if media.media_type == MediaType.series and not deleting_season:
+        from core.activity import suppress_initial_import_rating
+        from core.season_activity import record_season_activity, season_target
+        season_changes = {int(number): (old_season_scores.get(str(number)) or None, value or None)
+                          for number, value in entry.season_scores.items()
+                          if (old_season_scores.get(str(number)) or None) != (value or None)}
+        from core.web_push import resolve_rating_prompts
+        for number, (_, value) in season_changes.items():
+            if value:
+                await resolve_rating_prompts(db, user_id=viewer.id, media_id=media_id, season_number=number)
+        for number, value in alternate_scores.items():
+            if value:
+                await resolve_rating_prompts(db, user_id=viewer.id, media_id=media_id,
+                    season_number=number, episode_order=series_context.order)
+        season_changes.update({int(number): (value, None) for number, value in old_season_scores.items()
+                               if str(number) not in entry.season_scores and value})
+        if series_context and series_context.order != 'tmdb:aired':
+            season_changes = {number: (old_alternate_scores.get(number), value)
+                              for number, value in alternate_scores.items()
+                              if old_alternate_scores.get(number) != value}
+        quiet_rating = previous == entry.status and suppress_initial_import_rating(entry)
+        advanced = False
+        if series_context and not added_watched_ids and series_patch.action in ('position', 'episode'):
+            number, partial = season_target(series_context)
+            advanced = bool(number and number > (previous_season_number or 1) and
+                (partial or series_patch.action == 'position' and entry.season_cursor))
+        handled = await record_season_activity(db, user_id=viewer.id, media=media, status=entry.status, score=score,
+            season_advanced=advanced,
+            status_changed=previous != entry.status and (not series_patch or series_patch.action != 'complete_previous'),
+            explicit_status='status' in fields, previous_status=previous,
+            rating_changed=old_score != score and not quiet_rating and not (season_changes and entry.rating_mode == 'average'), previous_score=old_score,
+            season_changes={} if quiet_rating else season_changes, context=series_context, new_entry=was_new_entry)
+        if not handled:
+            from core.activity import record_daily_activity
+            await record_daily_activity(db, user_id=viewer.id, media_id=media_id, status=entry.status, score=score,
+                status_changed=previous != entry.status, previous_status=previous,
+                first_watching='status' in fields and previous != 'watching',
+                rating_changed=old_score != score and not quiet_rating, previous_score=old_score)
     changed_ratings = {}
     removed_ratings = set()
     before_scores = {None: old_score, **{int(k): v for k, v in old_season_scores.items()}}
@@ -2062,7 +2643,9 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
         else:
             changed_ratings[key] = after
     await db.flush()
-    if entry.status == 'watching' and (previous != 'watching' or entry.progress != old_progress):
+    if not deleting_season and has_active_playback(entry) and (
+            playback_edited or previous != entry.status or entry.progress != old_progress
+            or series_patch and (series_patch.season_statuses or series_patch.action == 'resume_season')):
         # A manual start or episode-progress edit needs a current resume row on
         # approved playback connections. The local outbound job dispatches the
         # durable action immediately after this transaction commits.
@@ -2123,11 +2706,18 @@ async def _save_entry(media_id: int, body: EntryPatch, background_tasks: Backgro
         result["released_episodes"] = len(episodes)
         result.update(tracking_projection.release_annotations(episodes, desired, entry.status))
     result["delivery_job_id"] = job.id
+    if series_context:
+        result['series_editor'] = series_summary
+        result['finish_date_source'] = entry.finish_date_source
+        latest = next((episode for episode in reversed(series_context.released) if episode.id in series_context.watched), None)
+        if latest:
+            season_number, episode_number = series_context.positions[latest.id]
+            result['season_position'] = f'S{season_number}E{episode_number}'
     return result
 
 
 @router.get("/delivery/{job_id}")
-async def tracking_delivery_status(job_id: int, db: AsyncSession = Depends(get_db),
+async def tracking_delivery_status(job_id: int, db: AsyncSession = Depends(get_db, scope="function"),
                                    viewer: User = Depends(get_tracking_write_user)):
     job = (await db.execute(select(TrackingDeliveryJob).where(
         TrackingDeliveryJob.id == job_id,
@@ -2147,7 +2737,10 @@ async def tracking_delivery_status(job_id: int, db: AsyncSession = Depends(get_d
 
 
 @router.get("/activity")
-async def activity(cursor: str | None = None, db: AsyncSession = Depends(get_db), viewer: User = Depends(get_current_user)):
+async def activity(db: Annotated[AsyncSession, Depends(get_db, scope="function")],
+                   viewer: Annotated[User, Depends(get_current_user)], cursor: str | None = None) -> dict:
+    from core.activity_ratings import attach_series_ratings
+
     followed = select(Follow.following_id).where(Follow.follower_id == viewer.id)
     watermark = datetime.now(timezone.utc).replace(tzinfo=None)
     query = (select(TrackingActivity, Media, User, UserProfileData).join(Media, Media.id == TrackingActivity.media_id)
@@ -2172,5 +2765,6 @@ async def activity(cursor: str | None = None, db: AsyncSession = Depends(get_db)
         next_cursor = encode_activity_cursor(rows[-1][0].created_at, rows[-1][0].id)
     else:
         next_cursor = encode_activity_cursor(watermark, 0)
-    return {"results": tracking_projection.activity_data(presentation_rows,include_user=True,limit=60),
-            "cursor":next_cursor,"has_more":has_more}
+    cards = tracking_projection.activity_data(presentation_rows, include_user=True, limit=60)
+    await attach_series_ratings(db, cards)
+    return {"results":cards,"cursor":next_cursor,"has_more":has_more}
