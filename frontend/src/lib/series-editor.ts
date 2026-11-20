@@ -2,6 +2,7 @@ import {localToday} from './date-time';
 import {setupEditorSelect} from './editor-select';
 import {editorStore, type EditorTitle} from './editor-store';
 import {bindProgressRanges, releaseDateLabel, setupSeriesProgressPicker, syncProgressRange} from './series-progress-picker';
+import {createProgressMotion} from './series-progress-motion';
 
 type Episode = {id:number; number:number; watched:boolean};
 type Season = {season_number:number; membership:string; name?:string|null; poster?:string|null; total:number;
@@ -43,8 +44,9 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
   const progressDrafts = new Map<number,number>();
   const previousCounts = new Map<number,number>();
   const watchedCounts = new Map<number,number>();
-  const progressPicker = setupSeriesProgressPicker(panel,dialog,page,editProgress);
-  bindProgressRanges(panel,page);
+  const progressMotion = createProgressMotion(page);
+  const progressPicker = setupSeriesProgressPicker(panel,dialog,page,editProgress,progressMotion);
+  bindProgressRanges(panel,page,progressMotion);
   let writtenStatus:string|undefined;
   let openingStatus:string|undefined;
   let initialStatus = '';
@@ -137,7 +139,7 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     const maximum=current ? total(current) : 0;
     find('total').textContent=current ? `/ ${maximum}` : '';
     find('remaining').textContent=current && maximum>count ? `${maximum-count} left` : '';
-    syncProgressRange(bar,count,available,maximum);
+    syncProgressRange(bar,count,available,maximum,progressMotion);
     steps[0].disabled=input.disabled||count>=Number(input.max);
     steps[1].disabled=input.disabled||count===0;
     refreshScopeMessage();
@@ -299,6 +301,7 @@ export function createSeriesEditor(dialog:HTMLDialogElement, form:HTMLFormElemen
     if (scope) refreshScopeMessage();
   },{signal:page});
   function reset() {
+    progressMotion.reset();
     if(title) {
       form.querySelector('.editor-score-field label')!.textContent='Score';
       field('manual_score').setAttribute('aria-label','Score');

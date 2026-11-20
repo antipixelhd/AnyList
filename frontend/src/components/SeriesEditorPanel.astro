@@ -89,7 +89,7 @@ import Icon from './Icon.astro';
   .editor .series-episode-stepper [data-series-count] {
     field-sizing:content; width:3ch; min-width:1.25ch; max-width:100%;
     margin:0; padding:0; border:0; background:transparent; outline:none;
-    color:var(--bright); font-size:var(--type-control-size); font-weight:600;
+    color:var(--muted); font-size:var(--type-control-size); font-weight:var(--type-control-weight);
   }
   @supports (field-sizing:content) { .editor .series-episode-stepper [data-series-count] { width:auto; } }
   .editor .series-episode-stepper [data-series-count]:focus-visible { color:var(--blue); }
@@ -97,10 +97,11 @@ import Icon from './Icon.astro';
   .series-progress-trigger {
     position:relative; display:flex; align-items:center; justify-content:space-between; gap:8px;
     width:100%; min-height:42px; padding:0 12px 7px; border-radius:4px; text-align:start;
-    border:0; background:var(--field); color:var(--white); font:inherit; font-variant-numeric:tabular-nums;
+    border:0; background:var(--field); color:var(--muted); font:inherit; font-variant-numeric:tabular-nums;
     cursor:pointer;
   }
   .series-progress-trigger:is(:focus-visible,[aria-expanded=true]) { outline:none; color:var(--blue); }
+  .series-progress-trigger strong { font-weight:var(--type-control-weight); }
   .series-progress-trigger:disabled { cursor:default; }
   .series-progress-detail { display:flex; align-items:center; gap:6px; color:var(--muted); font-size:var(--type-caption-size); }
   .series-progress-detail svg { width:10px; height:10px; }
@@ -113,7 +114,7 @@ import Icon from './Icon.astro';
   .series-progress-segments span { flex:1; min-width:0; }
   .editor .series-episode-bar {
     --track-height:2px;
-    position:absolute; inset:auto 0 -4px; height:18px;
+    position:absolute; inset:auto 28px -4px 10px; height:18px;
   }
   .series-episode-stepper .score-stepper-controls { z-index:1; }
   .series-episode-remaining { margin-inline-start:auto; white-space:nowrap; font-size:var(--type-caption-size); }
@@ -187,7 +188,12 @@ import Icon from './Icon.astro';
   }
   .series-progress-step:disabled { opacity:.45; cursor:default; }
   .series-range-target {
-    display:grid; min-width:0; cursor:pointer; touch-action:pan-y pinch-zoom;
+    position:relative; display:grid; min-width:0; cursor:pointer; touch-action:pan-y pinch-zoom;
+  }
+  .series-progress-row .series-range-target::after {
+    content:''; position:absolute; top:50%; left:var(--progress,0%);
+    width:4px; height:4px; border-radius:50%; background:var(--blue);
+    transform:translate(-50%,-50%); pointer-events:none;
   }
   .series-range-target:has(:disabled) { cursor:default; }
   .editor .series-range {
@@ -197,8 +203,8 @@ import Icon from './Icon.astro';
     border:0; outline:none; background:transparent; pointer-events:none;
   }
   .series-progress-row .series-range { block-size:38px; }
-  .editor .series-episode-bar .series-range:not(:focus-visible) { --thumb-color:transparent; --track-color:var(--border); }
-  .editor .series-range:focus-visible { --thumb-size:12px; --track-color:var(--muted); }
+  .editor .series-episode-bar .series-range:not(:focus-visible) { --track-color:var(--border); }
+  .editor .series-range:focus-visible { --track-color:var(--muted); }
   .series-range::-webkit-slider-runnable-track {
     height:var(--track-height,4px); border-radius:999px;
     background:linear-gradient(to right,var(--fill-color) var(--progress),var(--track-color) var(--progress));
@@ -210,13 +216,15 @@ import Icon from './Icon.astro';
   .series-range::-webkit-slider-thumb {
     appearance:none; width:var(--thumb-size,4px); height:var(--thumb-size,4px);
     margin-top:calc((var(--track-height,4px) - var(--thumb-size,4px)) / 2); border:0; border-radius:50%;
-    background:var(--thumb-color,var(--blue));
+    background:transparent;
   }
   .series-range::-moz-range-thumb {
     width:var(--thumb-size,4px); height:var(--thumb-size,4px); border:0; border-radius:50%;
-    background:var(--thumb-color,var(--blue));
+    background:transparent;
   }
-  .editor .series-progress-row[data-empty] .series-range:not(:focus-visible) { --thumb-color:var(--track-color); }
+  .series-progress-row[data-empty] .series-range-target:not(:has(:focus-visible))::after {
+    background:color-mix(in srgb,var(--muted) 85%,var(--field));
+  }
   .series-editor-message { margin:8px 0 0; color:var(--muted); }
   .series-scope-message { color:var(--muted); margin:12px 0 0; font-size:var(--type-label-size); }
   @media(max-width:760px) {

@@ -1,5 +1,6 @@
 import {placeDropdown} from './dropdown-position';
 import {formatDate} from './date-time';
+import type {ProgressMotion} from './series-progress-motion';
 
 const zoomThreshold = 24;
 const zoomSpan = 20;
@@ -16,19 +17,19 @@ type SeasonProgress = {
   canRestore: boolean;
 };
 
-export function progressFill(element: HTMLElement, count: number, total: number) {
-  element.style.setProperty('--progress', `${total ? count / total * 100 : 0}%`);
+export function progressFill(element: HTMLElement, count: number, total: number, motion:ProgressMotion) {
+  motion.fill(element,total ? count / total * 100 : 0);
 }
 
-export function syncProgressRange(slider: HTMLInputElement, count: number, max: number, total: number, min = 0) {
+export function syncProgressRange(slider: HTMLInputElement, count: number, max: number, total: number, motion:ProgressMotion, min = 0) {
   if (slider.min !== String(min)) slider.min = String(min);
   if (slider.max !== String(max)) slider.max = String(max);
   if (slider.valueAsNumber !== count) slider.value = String(count);
   slider.setAttribute('aria-valuetext', `${count} of ${total} episodes watched`);
-  progressFill(slider, count - min, max - min);
+  progressFill(slider.parentElement!, count - min, max - min,motion);
 }
 
-export function bindProgressRanges(panel: HTMLElement, signal: AbortSignal) {
+export function bindProgressRanges(panel: HTMLElement, signal: AbortSignal, motion:ProgressMotion) {
   let drag: {slider: HTMLInputElement; id: number; left: number; width: number;
     x: number; y: number; scrubbing: boolean} | undefined;
 
@@ -38,9 +39,18 @@ export function bindProgressRanges(panel: HTMLElement, signal: AbortSignal) {
     const fraction = Math.min(1, Math.max(0, (event.clientX - left) / width));
     const min = Number(slider.min), max = Number(slider.max);
     const count = Math.round(min + fraction * (max - min));
-    if (slider.valueAsNumber === count) return;
-    slider.valueAsNumber = count;
-    slider.dispatchEvent(new Event('input', {bubbles: true}));
+    if (slider.valueAsNumber !== count) {
+      slider.valueAsNumber = count;
+      slider.dispatchEvent(new Event('input', {bubbles: true}));
+    }
+    motion.fill(slider.parentElement!,fraction*100,true);
+  };
+  const finish = () => {
+    if (!drag) return;
+    const {slider}=drag;
+    const min=Number(slider.min),max=Number(slider.max);
+    motion.endDrag(slider.parentElement!,max>min?(slider.valueAsNumber-min)/(max-min)*100:0);
+    drag=undefined;
   };
   panel.addEventListener('pointerdown', event => {
     if (!event.isPrimary || event.button !== 0) return;
@@ -53,6 +63,7 @@ export function bindProgressRanges(panel: HTMLElement, signal: AbortSignal) {
       scrubbing: event.pointerType === 'mouse'};
     target.setPointerCapture(event.pointerId);
     if (drag.scrubbing) {
+      motion.startDrag(target);
       event.preventDefault();
       slider.focus({preventScroll: true});
       scrub(event);
@@ -64,21 +75,27 @@ export function bindProgressRanges(panel: HTMLElement, signal: AbortSignal) {
       const dx = Math.abs(event.clientX - drag.x), dy = Math.abs(event.clientY - drag.y);
       if (Math.max(dx, dy) < 5) return;
       // Leave vertical movement to the native scroll container without changing the count.
-      if (dy >= dx) { drag = undefined; return; }
+      if (dy >= dx) { finish(); return; }
       drag.scrubbing = true;
+      motion.startDrag(drag.slider.parentElement!);
     }
     scrub(event);
   }, {signal});
   panel.addEventListener('pointerup', event => {
     if (drag?.id !== event.pointerId) return;
-    scrub(event);
-    drag = undefined;
+    if (drag.scrubbing) scrub(event);
+    else {
+      motion.startDrag(drag.slider.parentElement!);
+      scrub(event);
+    }
+    finish();
   }, {signal});
   for (const type of ['pointercancel', 'lostpointercapture'] as const) {
     panel.addEventListener(type, event => {
-      if (drag?.id === event.pointerId) drag = undefined;
+      if (drag?.id === event.pointerId) finish();
     }, {signal});
   }
+  signal.addEventListener('abort',finish,{once:true});
 }
 
 export function releaseDateLabel(value?: string | null) {
@@ -86,7 +103,7 @@ export function releaseDateLabel(value?: string | null) {
 }
 
 export function setupSeriesProgressPicker(panel: HTMLElement, editor: HTMLDialogElement, signal: AbortSignal,
-  edit: (number: number, value: number | 'toggle') => void) {
+  edit: (number: number, value: number | 'toggle') => void, motion:ProgressMotion) {
   const trigger = panel.querySelector<HTMLButtonElement>('[data-series-trigger]')!;
   const picker = panel.querySelector<HTMLDialogElement>('[data-series-picker]')!;
   const scroll = picker.querySelector<HTMLElement>('[data-series-scroll]')!;
@@ -204,7 +221,7 @@ export function setupSeriesProgressPicker(panel: HTMLElement, editor: HTMLDialog
       min = Math.max(0, Math.min(count - zoomSpan / 2, released - zoomSpan));
       max = min + zoomSpan;
     }
-    syncProgressRange(slider, count, max, total, min);
+    syncProgressRange(slider, count, max, total, motion, min);
     row.querySelector('[data-detail-min]')!.textContent = String(min);
     row.querySelector('[data-detail-value]')!.textContent = String(count);
     row.querySelector('[data-detail-max]')!.textContent = String(max);
@@ -276,14 +293,14 @@ export function setupSeriesProgressPicker(panel: HTMLElement, editor: HTMLDialog
       const date = row.querySelector<HTMLElement>('[data-row-release]')!;
       date.hidden = Boolean(released);
       for (const control of [slider.parentElement!, counter, minus, plus]) control.hidden = !released;
-      progressFill(segments.children[index] as HTMLElement, count, total);
+      progressFill(segments.children[index] as HTMLElement, count, total,motion);
       if (!released) {
         date.textContent = releaseDateLabel(releaseDate);
         return;
       }
       slider.disabled = !enabled;
       slider.setAttribute('aria-label', `${name} episode progress`);
-      syncProgressRange(slider, count, released, total);
+      syncProgressRange(slider, count, released, total,motion);
       if (zoomedRow === row) syncZoom(row, slider, total);
       counter.toggleAttribute('data-complete', complete);
       counter.textContent = complete ? `✓ ${count}` : `${count}/${total}`;
