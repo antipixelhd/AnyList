@@ -308,4 +308,7 @@ class EpisodeLoadingTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(public['entry'])
         self.assertFalse(any(ep['watched'] for row in public['seasons'] for ep in row['episodes']))
         self.viewer = None
-        self.assertEqual((await self.client.get(f'/tracking/title/{self.series}/seasons')).status_code, 401)
+        guest = await self.client.get(f'/tracking/title/{self.series}/seasons')
+        self.assertEqual(guest.status_code, 200)
+        self.assertIsNone(guest.json()['entry'])
+        self.assertFalse(any(ep['watched'] for row in guest.json()['seasons'] for ep in row['episodes']))

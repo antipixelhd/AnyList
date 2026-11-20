@@ -65,6 +65,7 @@ __all__ = [
     "EmailActivation",
     "PasswordResetToken",
     "Show",
+    "ScreenActorAppearance",
     "Media",
     "Collection", "CollectionFile",
     "WatchEvent",

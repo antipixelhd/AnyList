@@ -259,7 +259,7 @@ async def reconcile(db, user_id, media_id, *, groups_data=None, edits=(), series
         previous_start = (tracking.start_date, tracking.start_source, tracking.start_manual, tracking.start_evidence)
         previous_finish = (tracking.completion_date, tracking.date_source, tracking.date_manual, tracking.evidence)
         tracking.current = True
-        history = [event for ep in episodes for event in events_by_id[ep.id]]
+        history = [event for ep in episodes for event in events_by_id.get(ep.id, ())]
         complete, watched, day, source, evidence = completion_evidence(episodes, history, expected, release=release)
         if completion:
             complete, day, source, evidence = True, date.fromisoformat(completion), 'manual', {'rule': 'manual_completion'}

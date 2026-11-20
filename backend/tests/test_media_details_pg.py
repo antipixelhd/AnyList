@@ -338,10 +338,11 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
         self.viewer = None
         with patch('core.settings_store.get_user_tmdb_key',AsyncMock(return_value=None)):
             for path in ('', '/background'):
-                self.assertEqual((await self.client.get(f'/tracking/title/{self.media_id}{path}')).status_code,401)
+                self.assertEqual((await self.client.get(f'/tracking/title/{self.media_id}{path}')).status_code,200)
             async with self.Session() as db:
                 settings=await db.get(GlobalSettings,1);settings.enable_logged_out_navigation=False;await db.commit()
-            self.assertEqual((await self.client.get(f'/tracking/title/{self.media_id}/background')).status_code,401)
+            for path in ('', '/background'):
+                self.assertEqual((await self.client.get(f'/tracking/title/{self.media_id}{path}')).status_code,401)
             await self.login()
             self.assertEqual((await self.client.get(f'/tracking/title/{self.media_id}/background')).status_code,200)
 
@@ -425,7 +426,9 @@ class MediaDetailsTests(unittest.IsolatedAsyncioTestCase):
         public=(await self.client.get(f'/tracking/title/{media_id}')).json()
         self.assertEqual([episode['watched'] for episode in public['seasons'][0]['episodes']], [False, True])
         self.viewer=None
-        self.assertEqual((await self.client.get(f'/tracking/title/{media_id}')).status_code,401)
+        guest = await self.client.get(f'/tracking/title/{media_id}')
+        self.assertEqual(guest.status_code, 200)
+        self.assertEqual([episode['watched'] for episode in guest.json()['seasons'][0]['episodes']], [False, False])
 
     async def test_individual_episode_edits_use_contiguous_progress_and_preserve_status(self):
         await self.login()

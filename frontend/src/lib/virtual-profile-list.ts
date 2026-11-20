@@ -26,6 +26,7 @@ export type ListAdapter={
   editorControls:string;
   onClick?(target:Element,title:EditorTitle,state:ListState):void;
   projected?(title:EditorTitle):boolean;
+  revalidateRow?(state:ListState):boolean;
   mountRows?(root:HTMLElement,signal:AbortSignal):{observe?(row:HTMLElement):void;remove(row:HTMLElement):void;resetSnapshot?(target:HTMLElement):void}|undefined;
   removeChildren?:boolean;
 };
@@ -349,7 +350,14 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
         if(!canApply())return;
         if(!snapshot.complete){indexDisabled=true;index.invalidate();reset();return;}
         const changes=index.changedRows(snapshot);
-        if(!changes.length&&(snapshot.category_presentation?.revision??presentationRevision)===presentationRevision)return;
+        if(adapter.revalidateRow)for(const offset of wanted)for(const id of pageIds(offset)??[]){
+          const state=states.get(id);
+          if(state&&adapter.revalidateRow(state))staleRows.add(id);
+        }
+        if(!changes.length&&(snapshot.category_presentation?.revision??presentationRevision)===presentationRevision){
+          if(staleRows.size)schedule();
+          return;
+        }
         for(const id of changes)if(states.has(id))staleRows.add(id);
         index.publish(snapshot);
         defaultPage=undefined;
@@ -362,7 +370,10 @@ export function initializeVirtualList(panel:HTMLElement,lifetime:AbortSignal,ada
       const ids=data.results.map(entryId),before=pageIds(0);
       const changed=data.total!==total||Object.keys({...counts,...data.group_counts}).some(key=>counts[key]!==data.group_counts[key])||
         JSON.stringify(ids)!==JSON.stringify(before)||
-        data.results.some(item=>item.updated_at!==states.get(entryId(item))?.updated_at);
+        data.results.some(item=>{
+          const previous=states.get(entryId(item));
+          return item.updated_at!==previous?.updated_at||item.availability_reason!==previous?.availability_reason;
+        });
       if(data.category_presentation&&data.category_presentation.revision!==presentationRevision){
         applyPresentation(data.category_presentation);
       }else if(changed){

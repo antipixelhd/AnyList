@@ -2,9 +2,10 @@ import type {EditorTitle} from './editor-store';
 import {panelActive} from './profile-panel';
 import {applyResponsiveArtwork} from './responsive-artwork';
 import {scoreLabel} from './tracker';
+import {paintEntryAvailability} from './entry-availability';
 
 type Season = {number:number; name:string|null; poster:string|null; year:string|null;
-  total:number|null; watched:number; score:number|null; completed:boolean; upcoming:boolean};
+  total:number|null; watched:number; score:number|null; completed:boolean; upcoming:boolean; availability_reason?:string|null};
 type Summary = {order:string; seasons:Season[]; pending:boolean; retry_after:number|null; unavailable:boolean};
 type Expansion = {entry:HTMLElement; toggle:HTMLButtonElement; panel:HTMLElement; title:string;
   request?:AbortController; retry?:ReturnType<typeof setTimeout>; loading?:ReturnType<typeof setTimeout>; motion?:Animation; summary?:Summary; filter?:string};
@@ -105,6 +106,8 @@ export function mountScreenListSeasons(root:HTMLElement,profilePanel:HTMLElement
       const year=row.querySelector<HTMLElement>('[data-season-year]')!;
       year.textContent=season.year;year.hidden=!season.year;
       const thumbnail=row.querySelector<HTMLElement>('.entry-thumbnail')!;
+      paintEntryAvailability(thumbnail.querySelector<HTMLElement>('.entry-availability')!,
+        Boolean(season.availability_reason),season.availability_reason);
       const image=thumbnail.querySelector<HTMLImageElement>('img')!;
       if(season.poster){
         thumbnail.dataset.previewSrc=season.poster;
@@ -114,6 +117,8 @@ export function mountScreenListSeasons(root:HTMLElement,profilePanel:HTMLElement
       if(edit){
         edit.dataset.editEntry=item.entry.dataset.listEntry!;
         edit.dataset.editorSeason=String(season.number);
+        edit.dataset.editorSeasonOrder=summary.order;
+        edit.dataset.editorSeasonPoster=season.poster||'';
         edit.setAttribute('aria-label',`Edit ${item.title}, ${label}`);
       }
       row.querySelector('[data-season-progress]')!.textContent=season.total==null?String(season.watched):`${season.watched}/${season.total}`;

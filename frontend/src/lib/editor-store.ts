@@ -463,6 +463,10 @@ export class EditorStore {
     this.artworkListeners.add(listener);
     signal.addEventListener('abort',()=>this.artworkListeners.delete(listener),{once:true});
   }
+  decodedImage(src?:string) { return this.decodedArtwork.get(src); }
+  warmSeasonPoster(src?:string,priority=true) {
+    return src ? this.decodedArtwork.warm(src,priority) : Promise.resolve();
+  }
   private backdropURL(title:EditorTitle,path=title.backdrop) {
     return detailHeroArtwork(path)?.src;
   }

@@ -1,5 +1,5 @@
 import unittest
-from datetime import date
+from datetime import date, datetime, timezone
 from types import SimpleNamespace
 
 from core.season_releases import (
@@ -7,6 +7,7 @@ from core.season_releases import (
     SEASON_RELEASE_KIND,
     _season_art,
     observation_transition,
+    season_availability,
     season_event_dedupe_key,
     season_date_notice_is_current,
     upcoming_season,
@@ -14,6 +15,21 @@ from core.season_releases import (
 
 
 class UpcomingSeasonTests(unittest.TestCase):
+    def test_season_dot_changes_at_the_scheduled_premiere(self):
+        from core.episode_release import EpisodeRelease
+
+        premiere = '2026-10-02'
+        schedule = {'time': '20:00', 'zone': 'UTC'}
+        before = EpisodeRelease(schedule, today=date(2026, 10, 2),
+            now=datetime(2026, 10, 2, 19, 59, tzinfo=timezone.utc))
+        aired = EpisodeRelease(schedule, today=before.today,
+            now=datetime(2026, 10, 2, 20, tzinfo=timezone.utc))
+        episodes = [premiere, '2026-10-09']
+        self.assertEqual(season_availability(premiere, episodes, 0, before), 'upcoming')
+        self.assertEqual(season_availability(premiere, episodes, 1, aired), 'airing')
+        self.assertIsNone(season_availability(None, [], 0, before))
+        self.assertIsNone(season_availability(premiere, episodes, 1, aired, completed=True))
+
     def test_home_progress_uses_current_season_until_increment_wraps(self):
         from core.screen_list import project_series
 

@@ -164,8 +164,9 @@ class EditorDateIntentTests(unittest.IsolatedAsyncioTestCase):
         saved = await self.save(
             status="dropped", season=2, dates={"completion_date": "2024-02-05"}
         )
-        self.assertEqual((saved["status"], saved["progress"]), ("dropped", 3))
+        self.assertEqual((saved["status"], saved["progress"]), ("dropped", 1))
         summary = await self.summary()
+        self.assertFalse(any(episode["watched"] for episode in summary["seasons"][0]["episodes"]))
         self.assertFalse(summary["seasons"][1]["completed"])
         self.assertEqual(summary["seasons"][1]["completion_date"], "2024-02-05")
         self.assertEqual(saved["finish_date"], "2024-02-05")

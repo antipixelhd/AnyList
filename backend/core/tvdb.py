@@ -144,7 +144,10 @@ async def _get_token(api_key: str, pin: str | None = None) -> str:
             r.raise_for_status()
             data = r.json()
 
-        token = data["data"]["token"]
+        payload = data.get("data") if isinstance(data, dict) else None
+        token = payload.get("token") if isinstance(payload, dict) else None
+        if not isinstance(token, str) or not token:
+            raise ValueError("Invalid TVDB login response")
         # TVDB tokens last 30 days; cache for 29 days
         expires_at = time.time() + 29 * 86400
         _token_cache[cache_key] = (token, expires_at)

@@ -34,6 +34,28 @@ def parse_release_day(value: object) -> date | None:
         return None
 
 
+def season_availability(premiere, episode_dates, released_count, release, *, completed=False, next_episode=None):
+    """Project a dot from this season's schedule and released episode evidence."""
+    if completed:
+        return None
+    days = [day for value in episode_dates if (day := parse_release_day(value))]
+    next_day = parse_release_day(next_episode.get('air_date')) if next_episode else None
+    if next_day and next_episode.get('episode_number') == 1:
+        days.append(next_day)
+    first = min(days, default=None) or parse_release_day(premiere)
+    if not released_count:
+        if not first:
+            return None
+        if not release.is_released(first.isoformat()):
+            return 'upcoming'
+    if any(not release.is_released(day.isoformat()) for day in days) or (
+            next_day and not release.is_released(next_day.isoformat())):
+        return 'airing'
+    if first and first >= release.today - timedelta(days=30):
+        return 'new_season'
+    return None
+
+
 def availability_dot(tmdb_data, episodes, watched_episode_ids, status, today=None, *, release=None):
     """Return the availability indicator and reason from cached season/episode data.
 

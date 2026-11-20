@@ -1,0 +1,6 @@
+---
+import {availabilityLabel} from '../lib/entry-availability';
+const {available=false, reason} = Astro.props;
+const label = availabilityLabel(reason);
+---
+<span class="entry-availability" role="img" aria-label={label} title={label} data-availability={reason} hidden={!available}></span>
