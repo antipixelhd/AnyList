@@ -68,12 +68,10 @@ export function paintScreenListRow(container:HTMLElement,state:ListState,templat
       edit.dataset.editorSeason=String(season.number);
       edit.dataset.editorSeasonOrder=season.order;
       edit.dataset.editorSeasonPoster=state.poster||'';
-      edit.dataset.editorSeasonBackdrop=season.backdrop||'';
     }else{
       delete edit.dataset.editorSeason;
       delete edit.dataset.editorSeasonOrder;
       delete edit.dataset.editorSeasonPoster;
-      delete edit.dataset.editorSeasonBackdrop;
     }
   }
   const score=row.querySelector('[data-score-label]')||row.querySelector('.entry-score');

@@ -201,7 +201,6 @@ class SeasonDatabaseTests(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as db:
             media = await db.get(Media, self.series_id)
             media.tmdb_data = {**media.tmdb_data, 'tracking_episode_ids': [923011, 923012, 923021, 923022],
-                'tracking_tvdb_season_artwork': {'2': {'backdrop': 'https://artworks.thetvdb.com/banners/campaign.jpg'}},
                 'seasons': [{'season_number': 1, 'episode_count': 2},
                             {'season_number': 2, 'name': 'The Second Campaign', 'episode_count': 2},
                             {'season_number': 3, 'name': 'Next Campaign', 'episode_count': 3, 'air_date': '2099-03-01'}]}
@@ -216,7 +215,6 @@ class SeasonDatabaseTests(unittest.IsolatedAsyncioTestCase):
         active = next(row for row in page['results'] if row['status'] == 'watching')
         second_id = season_row_id(self.series_id, 2)
         self.assertEqual((active['list_id'], active['list_season']['number'], active['progress']), (second_id, 2, 0))
-        self.assertEqual(active['list_season']['backdrop'], 'https://artworks.thetvdb.com/banners/campaign.jpg')
         self.assertTrue(response.json()['series_editor']['seasons'][0]['completed'])
 
         summary = response.json()['series_editor']
@@ -665,64 +663,17 @@ class SeasonDatabaseTests(unittest.IsolatedAsyncioTestCase):
                     {'season_number': 3, 'episode_count': 1, 'air_date': '2099-02-03'},
                     {'season_number': 4, 'episode_count': 1}]}
             await db.execute(update(Media).where(Media.id.in_(self.episode_ids[2:])).values(release_date='2099-01-02'))
-            await db.execute(update(Media).where(Media.id == self.episode_ids[0]).values(poster_path='/first-season-scene.jpg'))
-            await db.execute(update(Media).where(Media.id == self.episode_ids[2]).values(poster_path='/future-scene.jpg'))
             await db.commit()
 
         response = await self.client.get(f'/tracking/entry/{self.series_id}/series-editor')
         self.assertEqual(response.status_code, 200, response.text)
         released, upcoming, metadata_only, unscheduled = response.json()['seasons']
         self.assertTrue(released['episodes'])
-        self.assertNotIn('backdrop', released)
         self.assertNotIn('release_date', released)
         self.assertEqual(upcoming['episodes'], [])
-        self.assertNotIn('backdrop', upcoming)
         self.assertEqual(upcoming['release_date'], '2099-01-02')
         self.assertEqual(metadata_only['release_date'], '2099-02-03')
         self.assertIsNone(unscheduled['release_date'])
-
-    async def test_season_artwork_publish_preserves_newer_catalogue_metadata(self):
-        from core.season_artwork import CACHE_KEY, publish_season_artwork
-
-        async with self.Session() as db:
-            media = await db.get(Media, self.series_id)
-            async with self.Session() as concurrent:
-                newer = await concurrent.get(Media, self.series_id)
-                newer.tmdb_data = {**newer.tmdb_data, 'tracking_episode_ids': [923011],
-                                   CACHE_KEY: {'2': {'backdrop': '/newer-season.jpg'}}}
-                await concurrent.commit()
-            await publish_season_artwork(db, [(media, {'1': {'backdrop': '/season.jpg'}})])
-            await db.commit()
-            self.assertEqual(media.tmdb_data['tracking_episode_ids'], [923011])
-            self.assertEqual(media.tmdb_data[CACHE_KEY], {'1': {'backdrop': '/season.jpg'},
-                                                       '2': {'backdrop': '/newer-season.jpg'}})
-
-    async def test_alternate_order_ignores_aired_backdrop_and_episode_stills(self):
-        order = 'tmdb:group:test'
-        async with self.Session() as db:
-            series = await db.get(Media, self.series_id)
-            series.tmdb_data = {**series.tmdb_data, 'tracking_tvdb_season_artwork': {'1': {'backdrop': 'https://artworks.thetvdb.com/banners/season1.jpg'}}}
-            tracked = await db.scalar(select(TrackedEntry).where(TrackedEntry.media_id == self.series_id))
-            tracked.status, tracked.progress = 'watching', 1
-            tracked.season_list_statuses = {order: {'1': 'watching'}}
-            await db.execute(delete(WatchEvent).where(WatchEvent.media_id.in_(self.episode_ids[1:])))
-            for position, episode_id in enumerate(reversed(self.episode_ids[:2]), start=1):
-                episode = await db.get(Media, episode_id)
-                episode.poster_path = f'/position-{position}.jpg'
-                db.add(ShowEpisodePosition(series_tmdb_id=series.tmdb_id, order_key=order,
-                    display_season=1, display_episode=position, tmdb_episode_id=episode.tmdb_id,
-                    tmdb_season_number=episode.season_number, tmdb_episode_number=episode.episode_number))
-            db.add(UserShowEpisodeOrder(user_id=self.user_id, series_tmdb_id=series.tmdb_id, episode_order=order))
-            await reconcile(db, self.user_id, self.series_id)
-            await db.commit()
-
-        root = f'/tracking/profile/{self.viewer.username}/series'
-        row_id = season_row_id(self.series_id, 1)
-        rows = (await self.client.get(f'{root}/rows', params={'ids': row_id})).json()
-        summary = (await self.client.get(f'/tracking/entry/{self.series_id}/series-editor')).json()
-        self.assertEqual(rows[0]['list_season']['order'], order)
-        self.assertNotIn('backdrop', rows[0]['list_season'])
-        self.assertNotIn('backdrop', summary['seasons'][0])
 
     async def test_ordinary_activity_never_merges_into_season_cards(self):
         from core.activity import record_daily_activity

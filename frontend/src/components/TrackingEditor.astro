@@ -89,7 +89,7 @@ import {gameDatePatch} from '../lib/game-editor-data';
 import {gameCategoryChoices,showCategoryInfo} from '../lib/game-category-store.ts';
 import {localToday} from '../lib/date-time';
 import {dismissPosterControls} from '../lib/poster-controls';
-import {seasonArtworkHint,seasonArtworkSources,type ArtworkSources} from '../lib/season-editor-artwork';
+import {seasonArtworkHint,seasonPosterSource} from '../lib/season-editor-artwork';
 import {predictionAllowed} from '../lib/predictive-loading';
 import {chooseEntryAction,confirmEntryAction as confirmAction,watchRollbackWarning} from '../lib/entry-confirmation';
 let pageListeners: AbortController;
@@ -114,8 +114,7 @@ document.addEventListener('astro:page-load', () => {
   let artworkTimer:ReturnType<typeof setTimeout>|undefined;
   let artworkPrediction:ReturnType<typeof setTimeout>|undefined;
   let seasonHint:ReturnType<typeof seasonArtworkHint>;
-  let seasonArt:{key:string;sources:ArtworkSources;posterPending:boolean;backdropPending:boolean}|undefined;
-  let warmBaseArtwork:(()=>void)|undefined;
+  let seasonPoster:{number:number;source?:string;pending:boolean}|undefined;
   sessionSignal.addEventListener('abort',()=>{clearTimeout(artworkTimer);clearTimeout(artworkPrediction);loadController?.abort();},{once:true});
   let displayedScore = '';
   let resumeExpansion:{subject:WorkSubject;button:HTMLElement}|null=null;
@@ -232,50 +231,41 @@ document.addEventListener('astro:page-load', () => {
   function paintArtwork(){
     if(!currentTitle)return;
     const base=editorStore.artwork(currentTitle);
-    const preferred=seasonArt?.sources;
-    const poster=editorStore.decodedImage(preferred?.poster);
-    const backdrop=editorStore.decodedImage(preferred?.backdrop)??base.backdropImage;
-    const posterSource=poster?.getAttribute('src')??(!seasonArt?.posterPending?base.poster:undefined);
+    const poster=editorStore.decodedImage(seasonPoster?.source);
+    const posterSource=poster?.getAttribute('src')??(!seasonPoster?.pending?base.poster:undefined);
     paintImage('poster',posterSource,poster??editorStore.decodedImage(posterSource));
-    paintImage('backdrop',backdrop?.getAttribute('src')??undefined,backdrop);
+    paintImage('backdrop',base.backdrop,base.backdropImage);
   }
   function warmNeighbor(){
     clearTimeout(artworkPrediction);
-    if(!dialog.open||currentTitle?.type!=='series'||seasonArt?.posterPending||seasonArt?.backdropPending||!predictionAllowed())return;
+    if(!dialog.open||currentTitle?.type!=='series'||seasonPoster?.pending||!predictionAllowed())return;
     const {number,summary}=seriesFields.artworkScope();
     const choices=[0,...(summary?.seasons.map(season=>season.season_number)??[])];
     const index=choices.indexOf(number);
     if(index<0)return;
     const neighbor=choices[index+1]??choices[index-1];
-    if(neighbor===undefined)return;
+    if(!neighbor)return;
     const title=currentTitle;
     artworkPrediction=setTimeout(()=>{
       if(!dialog.open||currentTitle!==title||seriesFields.artworkScope().number!==number)return;
-      if(neighbor)void editorStore.warmSeasonArtwork(seasonArtworkSources(neighbor,summary,seasonHint),false);
-      else void editorStore.warmArtwork(title);
+      void editorStore.warmSeasonPoster(seasonPosterSource(neighbor,summary,seasonHint),false);
     },180);
   }
   function syncSeasonArtwork(){
     if(currentTitle?.type!=='series')return;
     const {number,summary}=seriesFields.artworkScope();
-    const sources=seasonArtworkSources(number,summary,seasonHint);
-    const key=JSON.stringify([number,sources.poster,sources.backdrop]);
-    if(seasonArt?.key===key)return;
+    const source=seasonPosterSource(number,summary,seasonHint);
+    if(seasonPoster?.number===number&&seasonPoster.source===source)return;
     clearTimeout(artworkPrediction);
-    const attempt={key,sources,posterPending:!!sources.poster&&!editorStore.decodedImage(sources.poster),
-      backdropPending:!!sources.backdrop&&!editorStore.decodedImage(sources.backdrop)};
-    seasonArt=attempt;
+    const attempt={number,source,pending:!!source&&!editorStore.decodedImage(source)};
+    seasonPoster=attempt;
     paintArtwork();
-    if(!sources.backdrop&&dialog.open)warmBaseArtwork?.();
-    for(const slot of ['poster','backdrop'] as const){
-      const pending=`${slot}Pending` as const;
-      if(!attempt[pending])continue;
-      void editorStore.warmSeasonImage(sources[slot]).then(()=>{
-        if(sessionSignal.aborted||seasonArt!==attempt)return;
-        attempt[pending]=false;
+    if(attempt.pending){
+      void editorStore.warmSeasonPoster(source).then(()=>{
+        if(sessionSignal.aborted||seasonPoster!==attempt)return;
+        attempt.pending=false;
         if(!dialog.open)return;
         paintArtwork();
-        if(slot==='backdrop'&&!editorStore.decodedImage(sources.backdrop))warmBaseArtwork?.();
         warmNeighbor();
       });
     }
@@ -285,16 +275,15 @@ document.addEventListener('astro:page-load', () => {
   const scopeMenu=dialog.querySelector('[data-editor-scope]')!;
   const predictScope=(event:Event)=>{
     const option=(event.target as Element).closest<HTMLElement>('[data-editor-option]');
-    if(!option||!dialog.open||!predictionAllowed()||seasonArt?.posterPending||seasonArt?.backdropPending)return;
+    if(!option||!dialog.open||!predictionAllowed()||seasonPoster?.pending)return;
     const number=Number(option.dataset.editorOption),title=currentTitle;
     const {number:current,summary}=seriesFields.artworkScope();
-    if(number===current||!title)return;
+    if(!number||number===current||!title)return;
     clearTimeout(artworkPrediction);
     artworkPrediction=setTimeout(()=>{
       if(!dialog.open||currentTitle!==title||!option.isConnected||
           (document.activeElement!==option&&!option.matches(':hover')))return;
-      if(number)void editorStore.warmSeasonArtwork(seasonArtworkSources(number,summary,seasonHint),false);
-      else void editorStore.warmArtwork(title);
+      void editorStore.warmSeasonPoster(seasonPosterSource(number,summary,seasonHint),false);
     },90);
   };
   scopeMenu.addEventListener('pointerover',predictScope,{signal:sessionSignal});
@@ -383,7 +372,7 @@ document.addEventListener('astro:page-load', () => {
     loadController?.abort();
     clearTimeout(artworkTimer);
     clearTimeout(artworkPrediction);
-    seasonArt=undefined;warmBaseArtwork=undefined;
+    seasonPoster=undefined;
     const hint=seasonArtworkHint(button);
     seasonHint=hint;
     const controller = new AbortController();
@@ -393,39 +382,30 @@ document.addEventListener('astro:page-load', () => {
     try {
       const title = cached || await editorStore.load(mediaId!);
       if(loadController!==controller||opener!==button||sessionSignal.aborted)return;
-      if(hint)void editorStore.warmSeasonArtwork(seasonArtworkSources(hint.number,editorStore.cachedSeries(title.id),hint));
+      if(hint)void editorStore.warmSeasonPoster(seasonPosterSource(hint.number,editorStore.cachedSeries(title.id),hint));
       const seriesSummary=await seriesFields.prepare(title,controller.signal);
       if(loadController!==controller||opener!==button||sessionSignal.aborted)return;
       const image = button.closest('.browse-card, .entry-row, .quick-search-result, .game-progress-card')?.querySelector<HTMLImageElement>('img') || document.querySelector<HTMLImageElement>('.media-cover img');
       const posterSource=button.dataset.editorSeason?undefined:image?.currentSrc||image?.src;
       const heroSource=document.querySelector<HTMLImageElement>('.lab-hero-image')?.currentSrc;
       if(hint){
-        const sources=seasonArtworkSources(hint.number,seriesSummary,hint);
-        const pending=[sources.poster,sources.backdrop].some(src=>src&&!editorStore.decodedImage(src));
-        const fallback=!sources.backdrop&&title.backdrop&&!editorStore.artwork(title).backdropImage;
-        if(pending||fallback){
-          const ready=Promise.all([editorStore.warmSeasonArtwork(sources),
-            fallback?editorStore.warmArtwork(title,undefined,heroSource,true):undefined]);
-          await Promise.race([ready,new Promise<void>(resolve=>setTimeout(resolve,150))]);
-        }
+        const ready=Promise.all([editorStore.warmSeasonPoster(seasonPosterSource(hint.number,seriesSummary,hint)),
+          editorStore.warmArtwork(title,undefined,heroSource,true)]);
+        await Promise.race([ready,new Promise<void>(resolve=>setTimeout(resolve,150))]);
       }
       const prepareArtwork=async()=>{
-        const preferred=seasonArt?.sources.backdrop;
-        if(controller.signal.aborted||!dialog.open||currentTitle!==title||
-            (preferred&&(seasonArt?.backdropPending||editorStore.decodedImage(preferred))))return;
+        if(controller.signal.aborted||!dialog.open||currentTitle!==title)return;
         clearTimeout(artworkTimer);
         await editorStore.prepareArtwork(title,posterSource,heroSource,sessionSignal).catch(()=>{});
         if(controller.signal.aborted||sessionSignal.aborted||!dialog.open||currentTitle!==title)return;
-        warmNeighbor();
         const state=title.background_status?.state;
         if(!editorStore.artwork(title).backdropImage||state==='pending'||state==='deferred')
           artworkTimer=setTimeout(()=>void prepareArtwork(),Math.max(30,title.background_status?.retry_after||0)*1000);
       };
       if (loadController !== controller || opener !== button || sessionSignal.aborted) return;
-      warmBaseArtwork=()=>void prepareArtwork();
       populateEditor(title,seriesSummary,hint?.number);
       showDialog(dialog);
-      warmBaseArtwork();
+      void prepareArtwork();
       warmNeighbor();
     } catch(e) { if ((e as Error).name !== 'AbortError') showActionFailure('open', supplied?.title, e); }
     finally {if(loadController===controller||opener!==button)button.removeAttribute('aria-busy');}
@@ -477,7 +457,7 @@ document.addEventListener('astro:page-load', () => {
     if (dialog.open) return;
     clearTimeout(artworkTimer);
     clearTimeout(artworkPrediction);
-    seasonArt=undefined;seasonHint=undefined;warmBaseArtwork=undefined;
+    seasonPoster=undefined;seasonHint=undefined;
     dismissPosterControls(opener, pageListeners.signal);
     resumeExpansion=null;gameFields.reset();seriesFields.reset();
     loadController?.abort(); loadController = null; libraryButton.hidden = true; current = null; currentTitle = null; displayedScore = ''; form.reset();
@@ -691,11 +671,10 @@ document.addEventListener('astro:page-load', () => {
       const poster=button.dataset.editorSeason?undefined:image?.currentSrc||image?.src,hero=document.querySelector<HTMLImageElement>('.lab-hero-image')?.currentSrc;
       if(!sessionSignal.aborted){
         const hint=seasonArtworkHint(button);
-        const selected=hint&&seasonArtworkSources(hint.number,editorStore.cachedSeries(title.id),hint);
-        if(selected)void editorStore.warmSeasonArtwork(selected);
-        if(!selected?.backdrop)void editorStore.warmArtwork(title,poster,hero,true);
+        if(hint)void editorStore.warmSeasonPoster(seasonPosterSource(hint.number,editorStore.cachedSeries(title.id),hint));
+        void editorStore.warmArtwork(title,poster,hero,true);
         if(title.type==='series'&&title.id)void editorStore.prepareSeries(title.id,sessionSignal).then(summary=>{
-          if(hint&&!sessionSignal.aborted)void editorStore.warmSeasonArtwork(seasonArtworkSources(hint.number,summary,hint));
+          if(hint&&!sessionSignal.aborted)void editorStore.warmSeasonPoster(seasonPosterSource(hint.number,summary,hint));
         }).catch(()=>{});
       }
     };

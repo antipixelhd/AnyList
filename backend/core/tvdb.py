@@ -285,35 +285,6 @@ async def get_season(season_id: int, api_key: str, cache_ttl: float | None = DEF
     return data.get("data") or {}
 
 
-async def season_background_types(api_key: str) -> set[int]:
-    data = await _get("/artwork/types", api_key, cache_ttl=7 * 86400)
-    rows = data.get("data") if isinstance(data, dict) else None
-    if not isinstance(rows, list):
-        raise ValueError("Invalid TVDB artwork types")
-    return {
-        item["id"] for item in rows
-        if isinstance(item, dict) and isinstance(item.get("id"), int)
-        and str(item.get("recordType")).lower() == "season"
-        and ("background" in str(item.get("slug")).lower() or "background" in str(item.get("name")).lower())
-    }
-
-
-def season_background(raw: dict, background_types: set[int]) -> str | None:
-    if not isinstance(raw, dict) or not raw:
-        raise ValueError("Invalid TVDB season")
-    rows = raw.get("artwork")
-    if rows is None:
-        return None
-    if not isinstance(rows, list) or any(not isinstance(item, dict) or not isinstance(item.get("type"), int)
-                                          or not isinstance(item.get("image"), str) for item in rows):
-        raise ValueError("Invalid TVDB season artwork")
-    images = [item for item in rows if item["type"] in background_types and item["image"]]
-    best = max(images, key=lambda item: (item.get("language") in (None, "", "00", "000"),
-                                        item["score"] if isinstance(item.get("score"), (int, float)) else 0),
-               default=None)
-    return _image_url(best["image"]) if best else None
-
-
 def format_season(raw: dict, language: str | None = None) -> dict:
     """Normalise extended TVDB season metadata."""
     translations = raw.get("translations") or {}

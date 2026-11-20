@@ -4,7 +4,7 @@ import {editorStore, type EditorTitle} from './editor-store';
 import {bindProgressRanges, releaseDateLabel, setupSeriesProgressPicker, syncProgressRange} from './series-progress-picker';
 
 type Episode = {id:number; number:number; watched:boolean};
-type Season = {season_number:number; membership:string; name?:string|null; poster?:string|null; backdrop?:string|null; total:number;
+type Season = {season_number:number; membership:string; name?:string|null; poster?:string|null; total:number;
   progress_total?:number; release_date?:string|null;
   episodes:Episode[]; upcoming?:Pick<Episode,'id'|'number'>[]; score?:number|null;
   start_date?:string|null; completion_date?:string|null; start_source?:string|null;

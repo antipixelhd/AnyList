@@ -15,15 +15,6 @@ from core.season_releases import (
 
 
 class UpcomingSeasonTests(unittest.TestCase):
-    def test_editor_uses_only_cached_tvdb_backdrops_for_aired_order(self):
-        from core.season_artwork import stored_backdrop
-
-        data = {'tracking_season_backdrops': {'2': '/legacy-still.jpg'},
-                'tracking_tvdb_season_artwork': {'1': {'backdrop': 'https://artworks.thetvdb.com/banners/season1.jpg'}}}
-        self.assertEqual(stored_backdrop(data, 'tmdb:aired', 1), 'https://artworks.thetvdb.com/banners/season1.jpg')
-        self.assertIsNone(stored_backdrop(data, 'tmdb:aired', 2))
-        self.assertIsNone(stored_backdrop(data, 'tvdb:dvd', 1))
-
     def test_season_dot_changes_at_the_scheduled_premiere(self):
         from core.episode_release import EpisodeRelease
 

@@ -675,8 +675,7 @@ async def _show_metadata_refresher():
                     f"Show metadata refresher: refreshed {refreshed}/{len(shows)} stale shows, "
                     f"{revived} revived"
                 )
-                catalogue = await refresh_tracked_catalogues(
-                    db, api_key, tvdb_api_key=tvdb_key, refresh_artwork=True)
+                catalogue = await refresh_tracked_catalogues(db, api_key, tvdb_api_key=tvdb_key)
                 log.info(
                     "Tracking catalogue refresher: refreshed "
                     f"{catalogue['refreshed']} series / {catalogue['episodes']} episodes, "

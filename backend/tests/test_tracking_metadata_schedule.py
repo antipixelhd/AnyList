@@ -19,61 +19,6 @@ from core.tracking_metadata import refresh_air_schedule
 from core.episode_release import EpisodeRelease, tvdb_schedule
 
 
-class SeasonArtworkTests(unittest.IsolatedAsyncioTestCase):
-    async def test_malformed_tvdb_login_skips_optional_refresh(self):
-        import httpx
-        from core.season_artwork import refresh_tracked_season_artwork
-
-        media = SimpleNamespace(id=1, tvdb_id=3, tvdb_air_schedule=None,
-                                tmdb_data={'seasons': [{'season_number': 1}]})
-        client = httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200, json={'data': []})))
-        with patch('core.tvdb.httpx.AsyncClient', return_value=client):
-            changes = await refresh_tracked_season_artwork(
-                [(media, None)], 'test-malformed-tvdb-login', datetime.now(timezone.utc))
-        self.assertEqual(changes, [])
-
-    async def test_refresh_caches_only_dedicated_backgrounds_and_reuses_a_checked_miss(self):
-        from core.season_artwork import CACHE_KEY, refresh_tracked_season_artwork, stored_backdrop
-
-        now = datetime(2026, 11, 20, tzinfo=timezone.utc)
-        media = SimpleNamespace(id=1, tvdb_id=3, tvdb_air_schedule=None, tmdb_data={
-            'seasons': [{'season_number': 1}, {'season_number': 2}],
-            'tracking_season_backdrops': {'1': '/old-still.jpg'},
-        })
-        series = {'seasons': [
-            {'number': 1, 'id': 11, 'type': {'type': 'official'}},
-            {'number': 2, 'id': 12, 'type': {'type': 'official'}},
-            {'number': 2, 'id': 22, 'type': {'type': 'dvd'}},
-        ]}
-        answers = {
-            11: {'artwork': [{'type': 17, 'image': '/banners/poster.jpg'}]},
-            12: {'artwork': [{'type': 18, 'image': '/banners/season.jpg', 'score': 1},
-                             {'type': 17, 'image': '/banners/poster.jpg', 'score': 10}]},
-        }
-        taxonomy = {'data': [{'id': 18, 'recordType': 'season', 'name': 'Background'},
-                             {'id': 17, 'recordType': 'season', 'name': 'Poster'},
-                             {'id': 3, 'recordType': 'series', 'name': 'Background'}]}
-        with (patch('core.tvdb._get', AsyncMock(return_value=taxonomy)),
-              patch('core.tvdb.get_series_airtime', AsyncMock(return_value=series)) as get_series,
-              patch('core.tvdb.get_season', AsyncMock(side_effect=lambda number, _: answers[number])) as get_season):
-            rows = [(media, None)]
-            [(_, cache)] = await refresh_tracked_season_artwork(rows, 'test', now, limit=1)
-            media.tmdb_data[CACHE_KEY] = cache
-            self.assertEqual([call.args[0] for call in get_season.await_args_list], [12])
-            self.assertEqual(stored_backdrop(media.tmdb_data, 'tmdb:aired', 2),
-                             'https://artworks.thetvdb.com/banners/season.jpg')
-            [(_, misses)] = await refresh_tracked_season_artwork(rows, 'test', now)
-            cache.update(misses)
-            await refresh_tracked_season_artwork(rows, 'test', now + timedelta(days=1))
-            self.assertEqual([call.args[0] for call in get_season.await_args_list], [12, 11])
-            self.assertEqual(get_series.await_count, 2)
-            self.assertIsNone(stored_backdrop(media.tmdb_data, 'tmdb:aired', 1))
-            answers[12] = {'artwork': [{'type': [], 'image': '/invalid.jpg'}]}
-            [(_, retry)] = await refresh_tracked_season_artwork(rows, 'test', now + timedelta(days=31), limit=1)
-            self.assertEqual(retry['2']['backdrop'], cache['2']['backdrop'])
-            self.assertNotEqual(retry['2']['checked_at'], (now + timedelta(days=31)).isoformat())
-
-
 class EpisodeReleaseTests(unittest.IsolatedAsyncioTestCase):
     raw = {'airsTime': '22:00', 'originalCountry': 'usa', 'airsDays': {'thursday': True}}
 

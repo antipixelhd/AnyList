@@ -8,7 +8,6 @@ from core import tmdb, tvdb
 from core.descriptive_metadata import tvdb_fields, tmdb_fields
 from core.episode_release import EpisodeRelease, tvdb_schedule
 from core.identity import external_ids_from_tmdb
-from core.season_artwork import publish_season_artwork, refresh_tracked_season_artwork
 from core.tracking_episode_persistence import persist_tmdb_episodes
 from models import Media, Show
 from models.base import MediaType
@@ -242,7 +241,7 @@ async def hydrate_tracking_episodes(db, media, api_key=None, tvdb_api_key=None):
     return len(fetched)
 
 
-async def refresh_tracked_catalogues(db, api_key, now: datetime | None = None, tvdb_api_key=None, *, refresh_artwork=False):
+async def refresh_tracked_catalogues(db, api_key, now: datetime | None = None, tvdb_api_key=None):
     """Refresh stale episode catalogues shared by any tracked series.
 
     Active shows refresh daily. Ended/canceled shows refresh monthly, but the
@@ -259,11 +258,6 @@ async def refresh_tracked_catalogues(db, api_key, now: datetime | None = None, t
         .where(Media.media_type == MediaType.series, or_(Media.tmdb_id.isnot(None), Media.tvdb_id.isnot(None)))
         .order_by(Media.id)
     )).unique().all()
-    if refresh_artwork:
-        artwork = await refresh_tracked_season_artwork(rows, tvdb_api_key, now or datetime.now(timezone.utc))
-        if artwork:
-            await publish_season_artwork(db, artwork)
-            await db.commit()
     stats = {"refreshed": 0, "episodes": 0, "skipped": 0, "failed": 0}
     for media, show in rows:
         if show is not None and show.canonical_source == "tvdb" and not tvdb_api_key:
