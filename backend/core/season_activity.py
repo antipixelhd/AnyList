@@ -572,12 +572,17 @@ def season_activity_parts(activity, details):
             positions[parsed[0]].add(parsed[1])
             event_times[parsed[0]].append(local_time)
     for event in streaming.values():
-        if event.get('episodes_watched') and (parsed := activity_season_number(event.get('position'))):
-            positions[parsed[0]].add(parsed[1])
-            event_times[parsed[0]].append(datetime.fromisoformat(event['date']))
-        for number in event.get('finished_seasons') or []:
+        position = activity_season_number(event.get('position')) if event.get('episodes_watched') else None
+        finished = event.get('finished_seasons') or []
+        if not position and not finished:
+            continue
+        event_at = datetime.fromisoformat(event['date']) if event.get('date') else activity.created_at
+        if position:
+            positions[position[0]].add(position[1])
+            event_times[position[0]].append(event_at)
+        for number in finished:
             completions.add(number)
-            event_times[number].append(datetime.fromisoformat(event['date']))
+            event_times[number].append(event_at)
     seasons = positions.keys() | completions
     if not seasons or len(seasons) == 1 and not streaming:
         yield details, activity.created_at, f'watch:{next(iter(seasons))}' if seasons else None
