@@ -51,7 +51,7 @@ class GameBackupTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result, {'games':3, 'errors':0})
             row = await db.scalar(select(GameEntry).where(GameEntry.user_id == self.other.id))
             self.assertEqual((row.notes, row.score, row.total_seconds, row.completion_seconds, row.replay_count),
-                ('private backup note', 8.5, 43210, 36000, 2))
+                ('private backup note', 8.5, 43200, 36000, 2))
             self.assertIsNone(row.finish_date)
             self.assertEqual(row.achievement_mode, 'targeted')
             children = list(await db.scalars(select(GameChildState).where(GameChildState.user_id == self.other.id)))

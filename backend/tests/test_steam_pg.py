@@ -129,7 +129,7 @@ class SteamDatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((entry.status,entry.score,entry.start_date,entry.finish_date,entry.total_seconds),
                 ('paused',8.5,date(2020,1,2),date(2020,2,3),3600))
             entry = entries[existing_id]
-            self.assertEqual((entry.status,entry.score,entry.total_seconds,entry.achievement_count),('playing',6,3000,1))
+            self.assertEqual((entry.status,entry.score,entry.total_seconds,entry.achievement_count),('playing',6,2880,1))
             connection = await db.get(SteamConnection,self.id)
             self.assertEqual(set(connection.selection), {'1245620','20','30'})
             self.assertEqual(connection.checkpoints['20']['work_id'],existing_id)
@@ -185,7 +185,7 @@ class SteamDatabaseTests(unittest.IsolatedAsyncioTestCase):
             work = await db.get(CatalogueEntity,work_id)
             self.assertEqual((work.name,work.description),('Canonical game','Existing rich metadata'))
             entry = await db.scalar(select(GameEntry).where(GameEntry.work_id==work_id))
-            self.assertEqual((entry.total_seconds,entry.achievement_count),(4200,1))
+            self.assertEqual((entry.total_seconds,entry.achievement_count),(4320,1))
             self.assertIsNone(await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.kind==IDENTITY_JOB)))
 
     async def test_exact_import_creates_both_identities_before_later_igdb_ingestion(self):
@@ -357,16 +357,20 @@ class SteamDatabaseTests(unittest.IsolatedAsyncioTestCase):
             await steam_sync.apply_games(db,state,games,['1245620','20'],initial=True)
             await db.commit()
             entry=await db.scalar(select(GameEntry).where(GameEntry.user_id==self.user.id,GameEntry.work_id==target))
-            self.assertEqual((entry.total_seconds,entry.achievement_count),(6000,3))
+            self.assertEqual((entry.total_seconds,entry.achievement_count),(6120,3))
             self.assertEqual(game_tracking.achievement_metadata(work)[1],5)
-            await steam_sync.apply_games(db,state,games,['1245620','20'])
-            self.assertEqual(entry.total_seconds,6000)
-            entry.total_seconds+=600
+            revision = entry.revision
+            for minutes in (61, 62, 63, 63):
+                self.assertEqual(await steam_sync.apply_games(db,state,[game('1245620',minutes,2,3)],['1245620','20']), 0)
+                self.assertEqual((entry.total_seconds, entry.revision), (6120, revision))
+            self.assertEqual(state.checkpoints['1245620']['playtime_minutes'],63)
+            entry.total_seconds+=720
             games=[game('1245620',65,2,3),game('20',50,2,2)]
             await steam_sync.apply_games(db,state,games,['1245620','20'])
-            self.assertEqual((entry.total_seconds,entry.achievement_count),(7500,4))
-            await steam_sync.apply_games(db,state,games,['1245620','20'])
-            self.assertEqual(entry.total_seconds,7500)
+            self.assertEqual((entry.total_seconds,entry.achievement_count),(7560,4))
+            revision = entry.revision
+            self.assertEqual(await steam_sync.apply_games(db,state,games,['1245620','20','20']), 0)
+            self.assertEqual((entry.total_seconds, entry.revision), (7560, revision))
             self.assertEqual(state.checkpoints['20']['work_id'],target)
             self.assertEqual(state.checkpoints['20']['playtime_minutes'],50)
             await db.commit()
@@ -394,14 +398,14 @@ class SteamDatabaseTests(unittest.IsolatedAsyncioTestCase):
             state=await db.get(SteamConnection,self.id)
             old=state.checkpoints['20']['work_id']
             row=await db.scalar(select(GameEntry).where(GameEntry.user_id==self.user.id,GameEntry.work_id==old))
-            row.total_seconds=1200;row.notes='component note'
+            row.total_seconds=1080;row.notes='component note'
             await catalogue.write_lock(db)
             work=await steam_targets.assign(db,'20','1245620',evidence={'review':'confirmed component'})
             await steam_sync.apply_games(db,state,[game('1245620',60,0,3),game('20',0,1,3)],['1245620','20'])
             await db.commit()
             self.assertIsNone(await db.scalar(select(GameEntry).where(GameEntry.user_id==self.user.id,GameEntry.work_id==old)))
             entry=await db.scalar(select(GameEntry).where(GameEntry.user_id==self.user.id,GameEntry.work_id==work.id))
-            self.assertEqual(entry.total_seconds,4800)
+            self.assertEqual(entry.total_seconds,4680)
             self.assertEqual(entry.notes,'component note')
             await steam_sync.apply_games(db,state,[game('1245620',60,0,3),game('20',10,1,3)],['1245620','20'])
             self.assertEqual(entry.total_seconds,5400)
@@ -673,13 +677,13 @@ class SteamDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.source.achievements.return_value = {'achievement_count': 2, 'achievement_total': 3}
         async with self.Session() as db:
             entry = await db.scalar(select(GameEntry).where(GameEntry.user_id == self.user.id, GameEntry.work_id == self.base))
-            entry.notes = 'keep'; entry.status = 'completed'; entry.total_seconds += 100
+            entry.notes = 'keep'; entry.status = 'completed'; entry.total_seconds += 360
             await db.commit()
         stats = await self.sync()
         self.assertEqual(stats['achievement_requests'], 1)
         async with self.Session() as db:
             entry = await db.scalar(select(GameEntry).where(GameEntry.user_id == self.user.id, GameEntry.work_id == self.base))
-            self.assertEqual((entry.total_seconds, entry.achievement_count, entry.notes, entry.status), (4000, 2, 'keep', 'completed'))
+            self.assertEqual((entry.total_seconds, entry.achievement_count, entry.notes, entry.status), (4320, 2, 'keep', 'completed'))
         self.assertEqual((await self.sync())['updated'], 0)
         async with self.Session() as db:
             await db.execute(delete(GameEntry).where(GameEntry.user_id == self.user.id, GameEntry.work_id == self.base)); await db.commit()
@@ -763,7 +767,7 @@ class SteamDatabaseTests(unittest.IsolatedAsyncioTestCase):
             entry = await db.scalar(select(GameEntry).join(CatalogueIdentity, CatalogueIdentity.entity_id == GameEntry.work_id)
                 .where(GameEntry.user_id == self.user.id, CatalogueIdentity.namespace == 'steam.app', CatalogueIdentity.external_id == '20'))
             self.assertEqual(entry.achievement_count, 1)
-            self.assertEqual(entry.total_seconds, 60)
+            self.assertEqual(entry.total_seconds, 0)
         self.source.library.side_effect = SteamError('Game details are private')
         async with self.Session() as db:
             job = SyncJob(user_id=self.user.id, connection_id=self.id, source=CollectionSource.steam, job_type='pull', status=SyncStatus.pending)

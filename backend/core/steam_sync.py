@@ -7,6 +7,7 @@ from sqlalchemy import select, update
 
 from core import catalogue, game_activity, game_tracking, steam_cache
 from core.game_access import allowed
+from core.game_time import round_game_seconds
 from core.game_types import capabilities
 from core.steam import SteamError, SteamSource
 from core.sync_jobs import SyncCancelled, mark_job_running_unless_cancelled, raise_if_cancelled
@@ -146,7 +147,7 @@ async def apply_games(db, state, library, selected, *, initial=False, add_apps=N
     # Resolve before creating a Steam-only root. Preparation's exact public
     # evidence is authoritative only while recent, complete and unambiguous.
     public = await steam_cache.public_metadata(db, list(selected))
-    selected = [app for app in selected if public.get(app, {}).get('steam_app_type') != 'software']
+    selected = [app for app in dict.fromkeys(selected) if public.get(app, {}).get('steam_app_type') != 'software']
     mapping = await steam_targets.targets(db, selected)
     canonical_admission = {}
     for target in set(mapping.values()):
@@ -157,7 +158,7 @@ async def apply_games(db, state, library, selected, *, initial=False, add_apps=N
     await steam_targets.retarget(db, state, {app: target for app, target in mapping.items()
         if canonical_admission[target]})
     checkpoints, groups = dict(state.checkpoints), {}
-    for app in dict.fromkeys(selected):
+    for app in selected:
         if app in mapping and not canonical_admission[mapping[app]]:
             continue
         data = by_app.get(app)
@@ -225,6 +226,11 @@ async def apply_games(db, state, library, selected, *, initial=False, add_apps=N
             steam_cache.merge_total(work, app, data['achievement_total'], now())
         groups.setdefault(work.id, (work, []))[1].append(data)
     changed = 0
+    accepted_minutes = {}
+    for app in selected:
+        prior = checkpoints.get(app, {})
+        if 'playtime_minutes' in prior and (work_id := prior.get('work_id')) is not None:
+            accepted_minutes[work_id] = accepted_minutes.get(work_id, 0) + prior['playtime_minutes']
     for work, games in groups.values():
         apps={game['app_id'] for game in games}
         if len(apps)>1 and not (work.attributes or {}).get('steam_progress_apps'):
@@ -281,11 +287,17 @@ async def apply_games(db, state, library, selected, *, initial=False, add_apps=N
                 for prior in priors.values():
                     prior['start_pending'] = False
         if state.sync_playtime:
-            if initial or all('playtime_minutes' not in prior for prior in priors.values()):
-                entry.total_seconds = max(entry.total_seconds or 0, sum(game['playtime_minutes'] for game in games) * 60)
+            prior_minutes = accepted_minutes.get(work.id, 0)
+            if initial or work.id not in accepted_minutes:
+                observed_minutes = prior_minutes + sum(game['playtime_minutes'] - priors[game['app_id']].get('playtime_minutes', 0) for game in games)
+                entry.total_seconds = max(entry.total_seconds or 0, round_game_seconds(observed_minutes * 60))
             else:
                 delta = sum(max(0, game['playtime_minutes'] - priors[game['app_id']].get('playtime_minutes', 0)) for game in games)
-                entry.total_seconds = (entry.total_seconds or 0) + delta * 60
+                # Apply the difference of rounded cumulative counters. Raw checkpoints
+                # carry sub-tenth progress across polls and keep retries idempotent.
+                rounded_delta = round_game_seconds((prior_minutes + delta) * 60) - round_game_seconds(prior_minutes * 60)
+                if rounded_delta:
+                    entry.total_seconds = (entry.total_seconds or 0) + rounded_delta
         if state.sync_achievements:
             counts = [game.get('achievement_count') if game.get('achievement_count') is not None
                       else priors[game['app_id']].get('achievement_count') for game in games]

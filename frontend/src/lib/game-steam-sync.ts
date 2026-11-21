@@ -6,8 +6,9 @@ export function gameSteamSync(dialog:HTMLDialogElement,form:HTMLFormElement,sign
   const achievements=dialog.querySelector<HTMLButtonElement>('[data-game-steam-achievements]')!;
   const total=form.elements.namedItem('game_total_hours') as HTMLInputElement;
   let context:Context|undefined,epoch=0,ready:Promise<void>=Promise.resolve(),active=false;
-  const delta=()=>{try{return context?.playtime_seconds==null?0:(actualSeconds(total.value)||0)-context.playtime_seconds;}catch{return 0;}};
-  const signedHours=(seconds:number)=>`${seconds>=0?'+':'−'}${new Intl.NumberFormat(undefined,{maximumFractionDigits:2}).format(Math.abs(seconds)/3600)} Hours`;
+  const delta=()=>{try{return context?.playtime_seconds==null?0:(actualSeconds(total.value)??0)-(actualSeconds(hoursInput(context.playtime_seconds))??0);}catch{return 0;}};
+  const hourFormat=new Intl.NumberFormat(undefined,{maximumFractionDigits:1});
+  const signedHours=(seconds:number)=>`${seconds>=0?'+':'−'}${hourFormat.format(Math.abs(seconds)/3600)} Hours`;
   const achievementMismatch=()=>{const state=achievementState();return context?.achievement_count!=null&&(state.mode!=='count'||state.count!==context.achievement_count);};
   function paint(){
     time.hidden=!active||!context?.playtime_enabled;achievements.hidden=!active||!context?.achievements_enabled;

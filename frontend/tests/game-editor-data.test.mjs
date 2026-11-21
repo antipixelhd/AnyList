@@ -20,9 +20,15 @@ test('blank-total prefill is limited to first capture and never an existing firs
 test('actual game hours retain unknown and explicit zero without rounding untouched source seconds',()=>{
   assert.equal(actualSeconds(''),null);assert.equal(actualSeconds('0'),0);
   assert.equal(actualSeconds('1.5'),5400);
+  assert.equal(actualSeconds('1.14'),3960);
+  assert.equal(actualSeconds('1.15'),4320);
   assert.throws(()=>actualSeconds('-1'));assert.throws(()=>actualSeconds('Infinity'));
   const current={total_seconds:12345,completion_seconds:8001,replay_count:null};
+  assert.equal(hoursInput(current.total_seconds),'3.4');
+  assert.equal(hoursInput(current.completion_seconds),'2.2');
+  assert.equal(hoursInput(4140),'1.2');
   assert.deepEqual(gameTimePatch(current,'completed',{total:hoursInput(12345),first:hoursInput(8001),replays:''}),{});
+  assert.deepEqual(gameTimePatch(current,'completed',{total:'3.40',first:'2.20',replays:''}),{});
   assert.deepEqual(gameTimePatch(current,'playing',{total:'4',first:'99',replays:'5'}),{total_seconds:14400,replay_count:5});
 });
 

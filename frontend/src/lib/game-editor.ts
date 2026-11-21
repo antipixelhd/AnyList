@@ -1,5 +1,5 @@
 import type {EditorTitle} from './editor-store';
-import {gameTimePatch,hoursInput,achievementCountInput,firstTimeCanFillTotal} from './game-editor-data';
+import {gameTimePatch,hoursInput,roundGameHours,achievementCountInput,firstTimeCanFillTotal} from './game-editor-data';
 import {localToday} from './date-time';
 import {setupEditorSelect} from './editor-select';
 import {watchAchievementCatalogue,type AchievementCatalogue} from './game-achievement-catalogue';
@@ -212,6 +212,12 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
     if(title?.type==='game'&&!child&&status==='completed'&&!firstTouched&&current.completion_seconds==null&&current.completion_source!=='unknown'&&current.status!=='completed')first.value=observedToday?total.value:'';
     if(status==='completed'&&firstTimeCanFillTotal(current,totalTouched)&&first.value)total.value=first.value;
   };
+  for(const field of [total,first])field.addEventListener('change',()=>{
+    if(field.validity.stepMismatch&&!field.validity.rangeUnderflow){
+      field.value=String(roundGameHours(field.valueAsNumber));
+      field.dispatchEvent(new Event('input',{bubbles:true}));
+    }
+  },{signal});
   total.addEventListener('input',()=>{totalTouched=true;syncFirst();},{signal});
   first.addEventListener('input',()=>{firstTouched=true;if(firstTimeCanFillTotal(current,totalTouched))total.value=first.value;},{signal});
   form.addEventListener('input',event=>{

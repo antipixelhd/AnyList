@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from sqlalchemy import String, cast, delete, func, literal, select, text
 from sqlalchemy.orm import defer
 
+from core.game_time import round_game_seconds
 from core.game_types import capabilities,playable_child
 from models import User, UserProfileData
 from models.catalogue import CatalogueEntity, CatalogueRelationship
@@ -296,7 +297,7 @@ async def save_entry(db, user_id, work_id, patch):
         # Only a new completion observed today can capture the current actual
         # total. Historical/imported first-completion measurements stay unknown.
         if row.finish_date == date.today() and row.total_seconds is not None:
-            row.completion_seconds = row.total_seconds
+            row.completion_seconds = round_game_seconds(row.total_seconds)
             row.completion_observed_at = datetime.now(timezone.utc).replace(tzinfo=None)
             row.completion_source = 'current_total'
     if row.status=='completed' and row.completion_seconds is None:
