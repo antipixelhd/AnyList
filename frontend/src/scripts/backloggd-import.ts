@@ -1,8 +1,11 @@
 import {defaultGameCategories} from '../lib/list-categories';
 import {setupScoreSteppers} from '../lib/scoreStepper';
+import {applyResponsiveArtwork} from '../lib/responsive-artwork';
+import {formatDate} from '../lib/date-time';
 
-type Game = {work_id: number; title: string; status: string; score: number | null; total_seconds: number | null};
-type IgnoredGame = {title: string; reason: string};
+type Game = {work_id: number; title: string; status: string; score: number | null; total_seconds: number | null;
+  start_date: string | null; finish_date: string | null; image_url: string | null; existing: boolean};
+type IgnoredGame = {title: string; reason: string; image_url: string | null};
 type Summary = {games: Game[]; ignored: IgnoredGame[]};
 const endpoint = '/api/proxy/tracking/games/import/backloggd';
 const categories = defaultGameCategories().categories;
@@ -57,15 +60,50 @@ export function mountBackloggdImport(root: HTMLElement) {
     return {list: group.querySelector('ul')!, countNode};
   }
 
-  function appendTitle(list: HTMLElement, title: string, reason?: string) {
+  function addPoster(row: HTMLElement, imageUrl: string | null) {
+    const slot = document.createElement('span');
+    slot.className = 'backloggd-poster';
+    slot.setAttribute('aria-hidden', 'true');
+    if (imageUrl) slot.dataset.poster = imageUrl;
+    row.prepend(slot);
+  }
+
+  groups.addEventListener('toggle', event => {
+    const group = event.target;
+    if (!(group instanceof HTMLDetailsElement) || !group.open) return;
+    for (const slot of group.querySelectorAll<HTMLElement>('[data-poster]')) {
+      const img = document.createElement('img');
+      img.alt = '';
+      img.width = 44;
+      img.height = 60;
+      img.loading = 'lazy';
+      img.decoding = 'async';
+      img.addEventListener('error', () => img.remove(), {once: true});
+      applyResponsiveArtwork(img, slot.dataset.poster, {size: 'w92'});
+      slot.append(img);
+      delete slot.dataset.poster;
+    }
+  }, {capture: true, signal});
+
+  function appendTitle(list: HTMLElement, game: {title: string; image_url: string | null}, reason?: string) {
     const row = document.createElement('li');
-    row.textContent = title;
+    const text = document.createElement('span');
+    text.textContent = game.title;
     if (reason) {
       const detail = document.createElement('small');
       detail.textContent = reason;
-      row.append(detail);
+      text.append(detail);
     }
+    row.append(text);
+    addPoster(row, game.image_url);
     list.append(row);
+  }
+
+  function detailsFor(game: Game) {
+    return [game.existing && game.score !== null ? `Score ${game.score} / 10` : '',
+      game.existing && game.total_seconds !== null ? 'Playtime' : '',
+      game.start_date ? `Started ${formatDate(game.start_date)}` : '',
+      game.finish_date ? `Finished ${formatDate(game.finish_date)}` : ''].filter(Boolean).join(' · ');
   }
 
   function render(result: Summary, saved: boolean) {
@@ -76,17 +114,23 @@ export function mountBackloggdImport(root: HTMLElement) {
     groups.replaceChildren();
     const number = games.length;
     const gameCount = `${number} ${number === 1 ? 'game' : 'games'}`;
-    heading.textContent = saved ? `${gameCount} imported` : number ? `${gameCount} ready to import` : 'No games ready to import';
+    const updates = games.filter(game => game.existing);
+    heading.textContent = saved ? updates.length ? `${number - updates.length} added · ${updates.length} updated` : `${gameCount} imported`
+      : number ? `${gameCount} ready to import` : 'No games ready to import';
     for (const category of categories) {
-      const matches = games.filter(game => game.status === category.id);
+      const matches = games.filter(game => !game.existing && game.status === category.id);
       const group = addGroup(category.label, matches.length);
-      if (group) for (const game of matches) appendTitle(group.list, game.title);
+      if (group) for (const game of matches) appendTitle(group.list, game, detailsFor(game));
+    }
+    if (updates.length) {
+      const group = addGroup(saved ? 'Existing games updated' : 'Existing games to update', updates.length)!;
+      for (const game of updates) appendTitle(group.list, game, detailsFor(game));
     }
     const rated = games.filter(game => game.score !== null);
     const scores = addGroup(saved ? 'Scores imported' : 'Scores to import', rated.length);
     if (scores) for (const game of rated) {
       if (saved) {
-        appendTitle(scores.list, game.title, `${game.score} / 10`);
+        appendTitle(scores.list, game, `${game.score} / 10`);
         continue;
       }
       const row = scoreTemplate.content.firstElementChild!.cloneNode(true) as HTMLElement;
@@ -98,10 +142,11 @@ export function mountBackloggdImport(root: HTMLElement) {
       const label = row.querySelector('label')!;
       label.htmlFor = input.id;
       label.textContent = game.title;
+      addPoster(row, game.image_url);
       scores.list.append(row);
     }
     const skipped = addGroup('Ignored games', ignored.length);
-    if (skipped) for (const game of ignored) appendTitle(skipped.list, game.title, game.reason);
+    if (skipped) for (const game of ignored) appendTitle(skipped.list, game, game.reason);
     if (!saved && scores) {
       const inputs = [...scores.list.querySelectorAll<HTMLInputElement>('input')];
       scores.list.addEventListener('input', () => {
@@ -180,8 +225,8 @@ export function mountBackloggdImport(root: HTMLElement) {
       return;
     }
     const scores = new Map(inputs.map(input => [Number(input.dataset.workId), input.valueAsNumber || null]));
-    const games = summary.games.map(({work_id, status, total_seconds}) => ({
-      work_id, status, total_seconds, score: scores.get(work_id) ?? null,
+    const games = summary.games.map(({work_id, status, total_seconds, start_date, finish_date, existing}) => ({
+      work_id, status, total_seconds, start_date, finish_date, existing, score: scores.get(work_id) ?? null,
     }));
     const ignored = summary.ignored;
     busy = true;

@@ -39,7 +39,7 @@
 .backloggd-empty-group { color:var(--muted); }
 .backloggd-groups strong { font-variant-numeric:tabular-nums; }
 .backloggd-group ul {
-  max-block-size:16rem;
+  max-block-size:min(36rem,50vh);
   overflow:auto;
   margin:0;
   padding:4px 12px 6px;
@@ -47,20 +47,21 @@
   scrollbar-gutter:stable;
 }
 .backloggd-group li {
-  display:flex;
-  justify-content:space-between;
+  display:grid;
+  grid-template-columns:44px minmax(0,1fr);
   align-items:center;
-  gap:6px 16px;
-  flex-wrap:wrap;
-  min-height:32px;
-  padding:5px 0;
+  gap:12px;
+  min-height:76px;
+  padding:8px 0;
   overflow-wrap:anywhere;
   font-size:1.3rem;
 }
 .backloggd-group li + li { border-block-start:1px solid color-mix(in srgb,var(--muted) 15%,transparent); }
-.backloggd-group small { color:var(--muted); font-size:1.18rem; }
-.backloggd-group .backloggd-score { flex-wrap:nowrap; min-height:48px; }
-.backloggd-score .score-stepper { flex:0 0 78px; color:var(--text); }
+.backloggd-group small { display:block; margin-top:3px; color:var(--muted); font-size:1.18rem; }
+.backloggd-poster { width:44px; height:60px; border-radius:5px; overflow:hidden; background:var(--field); }
+.backloggd-poster img { display:block; width:100%; height:100%; object-fit:cover; }
+.backloggd-group .backloggd-score { grid-template-columns:44px minmax(0,1fr) 78px; }
+.backloggd-score .score-stepper { color:var(--text); }
 .backloggd-score input {
   width:100%;
   height:38px;
@@ -75,8 +76,8 @@
 .backloggd-actions button { min-height:44px; padding:8px 14px; border-radius:8px; color:var(--text); cursor:pointer; }
 .backloggd-actions button:focus-visible { outline:none; }
 .backloggd-actions button:is(:hover,:focus-visible) { color:var(--bright); background:var(--field); }
-.backloggd-actions button[type=submit] { color:#101726; background:var(--blue); font-weight:650; }
-.backloggd-actions button[type=submit]:is(:hover,:focus-visible) { background:color-mix(in srgb,var(--blue) 75%,white); }
+.backloggd-actions button[type=submit] { color:#fff; background:color-mix(in srgb,var(--blue) 48%,#000); font-weight:650; }
+.backloggd-actions button[type=submit]:is(:hover,:focus-visible) { color:#fff; background:color-mix(in srgb,var(--blue) 56%,#000); }
 .backloggd-actions button:disabled { opacity:.65; cursor:default; }
 .backloggd-error { margin-block:10px; color:#ef9696; }
 @media (prefers-reduced-motion:no-preference) {

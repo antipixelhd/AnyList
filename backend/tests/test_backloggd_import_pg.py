@@ -74,10 +74,10 @@ class BackloggdImportTests(unittest.IsolatedAsyncioTestCase):
         response = await self.client.post(PATH, json={'games': selected})
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(len(response.json()['games']), 6)
-        self.assertEqual(response.json()['ignored'], [{'title': 'Second Game', 'reason': 'Already on your list'}])
+        self.assertEqual(response.json()['ignored'], [])
         repeated = await self.client.post(PATH, json={'games': selected})
         self.assertEqual(repeated.json()['games'], [])
-        self.assertEqual(len(repeated.json()['ignored']), 7)
+        self.assertEqual(repeated.json()['ignored'], [])
 
         async with self.Session() as db:
             first = await db.scalar(select(GameEntry).where(GameEntry.work_id == selected[0]['work_id']))
@@ -90,8 +90,43 @@ class BackloggdImportTests(unittest.IsolatedAsyncioTestCase):
             response = await self.client.post(f'{PATH}/preview', json=records[:6])
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()['games'], [])
-        self.assertEqual(len(response.json()['ignored']), 6)
+        self.assertEqual(response.json()['ignored'], [])
         igdb.assert_not_awaited()
+
+    async def test_existing_entries_only_fill_missing_facts(self):
+        from datetime import date
+        from models.catalogue import CatalogueEntity
+
+        async with self.Session() as db:
+            cover = 'https://images.igdb.com/igdb/image/upload/t_cover_big/front.jpg'
+            work = await db.get(CatalogueEntity, self.base)
+            work.image_url = cover
+            db.add_all([CatalogueIdentity(entity_id=self.base, namespace='igdb.game', external_id='8301', source='igdb'),
+                        CatalogueIdentity(entity_id=self.unknown, namespace='igdb.game', external_id='8302', source='igdb'),
+                        GameEntry(user_id=self.user.id, work_id=self.base, status='playing', total_seconds=0,
+                                  start_date=date(2023, 1, 1)),
+                        GameEntry(user_id=self.user.id, work_id=self.unknown, status='played', score=9)])
+            await db.commit()
+            game = row(8301, work.name, 'completed', rating=8, total_hours=5)
+            game['playthroughs'] = {'1': {'start_date': '2022-12-12', 'finish_date': '2023-01-17'}}
+            full = row(8302, 'No Steam fixture', 'completed', rating=6)
+            result = await backloggd_import.preview(db, self.user.id, [game, full, full])
+            self.assertEqual(result.ignored, [])
+            self.assertEqual(len(result.games), 1)
+            picked = result.games[0]
+            self.assertEqual((picked.existing, picked.status, picked.score, picked.start_date, picked.finish_date,
+                picked.total_seconds, picked.image_url), (True, 'playing', 8, None, date(2023, 1, 17), None, cover))
+            entry = await db.scalar(select(GameEntry).where(GameEntry.work_id == self.base))
+            entry.score = 6.5  # A score saved after the preview is no longer missing.
+            await db.commit()
+            selection = backloggd_import.ImportGame.model_validate(picked.model_dump(exclude={'title', 'image_url'}))
+            applied = await backloggd_import.apply(db, self.user.id, [selection])
+            self.assertIsNone(applied.games[0].score)
+            self.assertEqual((entry.status, entry.score, entry.total_seconds, entry.start_date, entry.finish_date, entry.revision),
+                ('playing', 6.5, 0, date(2023, 1, 1), date(2023, 1, 17), 2))
+            await db.delete(entry)
+            await db.commit()
+            self.assertEqual((await backloggd_import.apply(db, self.user.id, [selection])).games, [])
 
     async def test_optional_logs_and_port_evidence(self):
         export = backloggd_import.parse_export(b'[{"id":"8203","name":"Unlogged","playthroughs":{},"most_recent_playthrough_id":null}]')
