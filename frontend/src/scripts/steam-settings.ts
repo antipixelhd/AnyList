@@ -334,13 +334,22 @@ function init() {
     paintSelections();
   }
   listen(get('more'), 'click', more);
+  const defaultStatus = get<HTMLSelectElement>('default-status');
   function controls() {
     get<HTMLInputElement>('minutes').value = String(draft.minimum_playtime);
     get<HTMLInputElement>('achievements').value = String(draft.minimum_achievements);
     get<HTMLInputElement>('playtime-enabled').checked = draft.playtime_enabled;
     get<HTMLInputElement>('achievements-enabled').checked = draft.achievements_enabled;
     get<HTMLSelectElement>('sort').value = draft.sort;
+    defaultStatus.replaceChildren(...gameCategoryChoices(draft.import_status).map(([value, label]) =>
+      new Option(label, value, false, value === draft.import_status)));
   }
+  listen(defaultStatus, 'change', () => {
+    const status = defaultStatus.value as SteamDraft['import_status'];
+    if (!status || status === draft.import_status) return;
+    draft.import_status = status;
+    changed();
+  });
   for (const [name, field] of [['minutes', 'minimum_playtime'], ['achievements', 'minimum_achievements']] as const) {
     listen(get(name), 'input', () => { const input = get<HTMLInputElement>(name); if (input.validity.valid && input.value !== '') { draft[field] = Number(input.value); changed(); } });
   }

@@ -38,6 +38,10 @@ import GameImportLoading from './GameImportLoading.astro';
         <div data-steam-controls class="steam-controls">
           <div class="steam-toolbar">
             <label class="steam-search"><Icon name="search" /><input data-steam-search type="search" aria-label="Search Steam library" placeholder="Search your library…" autocomplete="off" spellcheck="false" /></label>
+            <label class="steam-default-status" for="steam-default-status">
+              <span>Default import status</span>
+              <select id="steam-default-status" name="import_status" data-steam-default-status></select>
+            </label>
           </div>
           <div class="steam-utility">
           <div class="steam-view-tabs" role="group" aria-label="Show Steam games">

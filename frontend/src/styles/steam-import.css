@@ -34,6 +34,12 @@ html:has(.steam-workflow[open]) { scrollbar-gutter:stable; }
 .steam-review,.steam-picker { display:flex; flex:1; flex-direction:column; min-height:0; }
 .steam-controls { padding:0 32px 16px; flex-shrink:0; }
 .steam-toolbar { display:flex; gap:16px; }
+.steam-controls .steam-toolbar { flex-wrap:wrap; align-items:center; gap:8px 16px; }
+.steam-controls .steam-search { flex-basis:170px; }
+.steam-default-status { display:grid; grid-template-columns:auto minmax(0,1fr); align-items:center; gap:10px; width:min(100%,255px); color:var(--steam-muted); font-size:13px; }
+.steam-default-status .tracker-select { width:100%; min-width:0; }
+.settings-app .steam-settings .steam-default-status select { width:100%; min-height:44px; padding:7px 32px 7px 12px; border:0; border-radius:8px; background:var(--steam-panel); color:var(--steam-text); font-size:13px; }
+.steam-default-status .tracker-select-trigger { min-height:44px; }
 .steam-search { display:flex; flex:1; align-items:center; gap:12px; min-width:0; padding:0 14px; border-radius:8px; background:var(--steam-panel); color:var(--steam-muted); }
 .steam-search:focus-within { background:var(--steam-panel); color:var(--steam-muted); }
 .steam-search .ui-icon { width:16px; height:16px; flex-shrink:0; }
