@@ -1,0 +1,10 @@
+---
+import '../../styles/steam-import.css';
+interface Props { label: string; steam?: boolean }
+const {label, steam = false} = Astro.props;
+---
+<div data-game-import-loading data-steam-loading={steam || undefined} class="steam-loading" hidden>
+  <p role={steam ? undefined : 'status'}>{label}…</p>
+  <progress max="1" aria-label={label}></progress>
+  {steam && <p data-steam-loading-count></p>}
+</div>

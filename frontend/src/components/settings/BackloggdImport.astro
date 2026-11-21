@@ -1,0 +1,60 @@
+---
+import Icon from '../Icon.astro';
+import NumberStepper from '../NumberStepper.astro';
+import GameImportLoading from './GameImportLoading.astro';
+import '../../styles/profile-image-settings.css';
+import '../../styles/backloggd-import.css';
+---
+<section data-backloggd-import aria-labelledby="game-import-heading">
+  <h2 id="game-import-heading" class="section-headline mb-5">Games</h2>
+  <details data-motion-details class="backloggd-disclosure streaming-disclosure rounded-2xl bg-zinc-900/60">
+    <summary class="backloggd-trigger streaming-disclosure-trigger flex cursor-pointer list-none items-center gap-4 rounded-2xl px-5 py-5 text-lg font-semibold transition-colors">
+      <img src="/backloggd.png" width="36" height="36" alt="" />
+      <span>Backloggd</span>
+      <Icon name="chevron-down" class="streaming-disclosure-arrow ml-auto text-zinc-500" />
+    </summary>
+    <div class="backloggd-content px-4 pb-5 sm:px-5">
+      <button type="button" class="profile-upload-zone backloggd-upload" data-backloggd-upload>
+        <strong>Choose a Backloggd export</strong>
+        <span>Drop a Toolkittd JSON file here or click to browse</span>
+      </button>
+      <input type="file" accept=".json,application/json" data-backloggd-file hidden />
+      <GameImportLoading label="Reading your Backloggd export" />
+      <p role="status" class="backloggd-error" data-backloggd-error hidden></p>
+      <form data-backloggd-review novalidate hidden>
+        <h3 tabindex="-1" data-backloggd-heading></h3>
+        <div class="backloggd-groups" data-backloggd-groups></div>
+        <div class="backloggd-actions">
+          <button type="button" data-backloggd-reset>Choose another file</button>
+          <button type="submit" data-backloggd-save>Import games</button>
+        </div>
+      </form>
+    </div>
+  </details>
+  <template data-backloggd-group-template>
+    <details class="backloggd-group">
+      <summary><span data-label></span><strong data-count></strong><Icon name="chevron-down" /></summary>
+      <ul></ul>
+    </details>
+  </template>
+  <template data-backloggd-score-template>
+    <li class="backloggd-score">
+      <label data-score-title></label>
+      <NumberStepper id="" name="score" label="Score" min={0} max={10} step={.5} score />
+    </li>
+  </template>
+</section>
+
+<script>
+  import {mountBackloggdImport} from '../../scripts/backloggd-import';
+
+  let cleanup: (() => void) | undefined;
+  function setup() {
+    cleanup?.();
+    const root = document.querySelector<HTMLElement>('[data-backloggd-import]');
+    cleanup = root ? mountBackloggdImport(root) : undefined;
+  }
+  setup();
+  document.addEventListener('astro:page-load', setup);
+  document.addEventListener('astro:before-swap', () => cleanup?.());
+</script>

@@ -1,7 +1,7 @@
 ---
 import CalendarDateInput from '../CalendarDateInput.astro';
 import Icon from '../Icon.astro';
-import '../../styles/steam-import.css';
+import GameImportLoading from './GameImportLoading.astro';
 ---
 <section data-steam-settings class="steam-settings space-y-4">
   <h2 class="section-headline border-b border-zinc-800 pb-2">Games</h2>
@@ -33,10 +33,7 @@ import '../../styles/steam-import.css';
     </header>
     <div data-steam-review class="steam-review" hidden>
       <p data-steam-review-message class="steam-message" role="status" hidden></p>
-      <div data-steam-loading class="steam-loading" hidden>
-        <p>Loading your Steam library…</p><progress max="1" aria-label="Loading Steam library"></progress>
-        <p data-steam-loading-count></p>
-      </div>
+      <GameImportLoading label="Loading your Steam library" steam />
       <div data-steam-picker class="steam-picker" hidden>
         <div data-steam-controls class="steam-controls">
           <div class="steam-toolbar">

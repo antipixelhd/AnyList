@@ -15,6 +15,7 @@ export function mutationFetch(
       '/api/proxy/tracking/browse/context',
       '/api/proxy/tracking/games/state',
       '/api/proxy/tracking/games/people/images',
+      '/api/proxy/tracking/games/import/backloggd/preview',
     ].includes(url.pathname) || /^\/api\/proxy\/tracking\/(?:catalog\/(?:movie|series)|games\/resolve)\/[1-9]\d*\/?$/.test(url.pathname));
     const mutation = method !== 'GET' && method !== 'HEAD'
       && !preservesViewerState && url.origin === new URL(origin).origin && url.pathname.startsWith('/api/proxy/');

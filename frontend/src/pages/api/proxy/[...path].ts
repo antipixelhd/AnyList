@@ -54,8 +54,10 @@ async function handle({ params, request, locals }: Parameters<APIRoute>[0]): Pro
   const hasBody = request.method !== "GET" && request.method !== "HEAD";
   let body:ArrayBuffer|undefined;
   const profileUpload=request.method==='POST'&&/^profile\/me\/(avatar|background)$/.test(path);
-  if(profileUpload){
-    const megabytes=path.endsWith('/avatar')?3:6,max=megabytes*1024*1024+65536;
+  const backloggdUpload=request.method==='POST'&&path==='tracking/games/import/backloggd/preview';
+  if(profileUpload||backloggdUpload){
+    const megabytes=backloggdUpload?5:path.endsWith('/avatar')?3:6;
+    const max=megabytes*1024*1024+(profileUpload?65536:0);
     const tooLarge=()=>new Response(JSON.stringify({detail:`Maximum upload size is ${megabytes} MB.`}),{status:413,headers:{'Content-Type':'application/json'}});
     if(Number(request.headers.get('Content-Length')||0)>max)return tooLarge();
     const reader=request.body?.getReader(),chunks:Uint8Array[]=[];let size=0;
@@ -70,7 +72,7 @@ async function handle({ params, request, locals }: Parameters<APIRoute>[0]): Pro
       method: request.method,
       headers: forwardHeaders,
       body,
-      ...(creditWait?{signal:request.signal}:{}),
+      ...(creditWait||backloggdUpload?{signal:request.signal}:{}),
       // Some backend routes (e.g. image serving) 3xx-redirect straight to a
       // third-party host (TMDB) when nothing is locally cached. Following
       // that here would make this dev-server process itself open the
@@ -83,7 +85,7 @@ async function handle({ params, request, locals }: Parameters<APIRoute>[0]): Pro
       redirect: "manual",
     });
   } catch (e) {
-    if(creditWait&&request.signal.aborted)return new Response(null,{status:499});
+    if((creditWait||backloggdUpload)&&request.signal.aborted)return new Response(null,{status:499});
     console.error(`Proxy request to /${path} failed (${e instanceof Error ? e.name : 'unknown error'})`);
     return new Response(null, { status: 502 });
   }

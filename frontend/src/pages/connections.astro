@@ -5,6 +5,7 @@ import ImportAdmissionNotice from "../components/settings/ImportAdmissionNotice.
 import StreamingImport from "../components/settings/StreamingImport.astro";
 import DataImportSettings from "../components/settings/DataImportSettings.astro";
 import DataImportDialogs from "../components/settings/DataImportDialogs.astro";
+import BackloggdImport from "../components/settings/BackloggdImport.astro";
 import TraktSettings from "../components/settings/TraktSettings.astro";
 import SimklSettings from "../components/settings/SimklSettings.astro";
 import MdblistSettings from "../components/settings/MdblistSettings.astro";
@@ -847,7 +848,10 @@ const AUTO_SYNC_INTERVAL_OPTIONS = [
         </div>
       </section>
 
-      <div class="settings-stack" hidden={section !== "imports"}><DataImportSettings hasTmdbKey={hasTmdbKey} activeImport={activeImport} /></div>
+      <div class="settings-stack" hidden={section !== "imports"}>
+        <DataImportSettings hasTmdbKey={hasTmdbKey} activeImport={activeImport} />
+        {section === 'imports' && me.can_access_games && <BackloggdImport />}
+      </div>
 
       <!-- API Key -->
       <section hidden={section !== "developer"}>

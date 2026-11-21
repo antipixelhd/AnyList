@@ -6,7 +6,10 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Qu
 from pydantic import BaseModel, Field
 from sqlalchemy import case, func, literal, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.concurrency import run_in_threadpool
 
+from core import backloggd_import
+from core.catalogue_providers import ProviderError
 from core import game_tracking as tracking
 from core import list_categories
 from core.game_types import capabilities
@@ -36,6 +39,35 @@ async def canonical_game_id(work_id: Annotated[int, Path(gt=0)], db: DB) -> int:
 
 WorkId = Annotated[int, Depends(canonical_game_id)]
 Admin = Annotated[User, Depends(require_admin)]
+
+
+def backloggd_preview_owner(request: Request, viewer: Writer) -> User:
+    request.state.backloggd_owner = str(viewer.id)
+    return viewer
+
+
+@router.post('/import/backloggd/preview')
+@limiter.limit('4/minute', key_func=lambda request: request.state.backloggd_owner)
+async def preview_backloggd(request: Request, db: DB,
+                           viewer: Annotated[User, Depends(backloggd_preview_owner)]) -> backloggd_import.ImportSummary:
+    data = bytearray()
+    async for chunk in request.stream():
+        if len(data) + len(chunk) > backloggd_import.MAX_BYTES:
+            raise HTTPException(413, 'Choose a JSON file up to 5 MB.')
+        data.extend(chunk)
+    try:
+        rows = await run_in_threadpool(backloggd_import.parse_export, data)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    try:
+        return await backloggd_import.preview(db, viewer.id, rows)
+    except ProviderError as exc:
+        raise HTTPException(503, 'The Games catalogue is temporarily unavailable. Try the upload again.') from exc
+
+
+@router.post('/import/backloggd')
+async def import_backloggd(body: backloggd_import.ImportSelection, db: DB, viewer: Writer) -> backloggd_import.ImportSummary:
+    return await backloggd_import.apply(db, viewer.id, body.games)
 
 
 class BannerChoice(BaseModel):
