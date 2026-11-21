@@ -283,9 +283,9 @@ import Icon from './Icon.astro';
     .series-progress-header button { inline-size:44px; block-size:44px; }
     .series-progress-picker .series-progress-season, .series-progress-count { min-height:44px; }
     .series-progress-row { min-height:50px; }
-    .series-progress-picker .series-progress-step { position:relative; inline-size:36px; block-size:44px; border-radius:50%; background:none; }
-    /* Use the grid gap for the touch target without giving the buttons wider columns. */
-    .series-progress-step::after { content:''; position:absolute; inset:0 -4px; }
+    .series-progress-picker .series-progress-step { position:relative; }
+    /* Keep a 44px touch target around the shared 26px button. */
+    .series-progress-step::after { content:''; position:absolute; inset:-9px; }
     .series-progress-row .series-range { min-height:44px; }
     .editor .series-progress-count-input { block-size:36px; }
     .editor[data-editor-type=series] .editor-fields > .editor-start-date { grid-column:1; grid-row:3; }
