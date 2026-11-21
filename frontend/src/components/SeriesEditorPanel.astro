@@ -177,7 +177,7 @@ import Icon from './Icon.astro';
   .series-progress-row[data-empty] .series-progress-season { color:var(--muted); }
   .series-progress-release { color:var(--muted); font-size:var(--type-label-size); white-space:nowrap; }
   .series-progress-row[data-unreleased] { grid-template-columns:minmax(0,1fr) auto; gap:12px; }
-  .series-progress-picker button:is(:hover,:focus-visible):not(:disabled) { outline:none; color:var(--blue); }
+  .series-progress-picker button:is(:hover,:focus-visible):not(:disabled,.series-progress-counter) { outline:none; color:var(--blue); }
   .series-progress-picker button:focus-visible:not(.series-progress-counter) { text-decoration:underline; }
   .series-progress-count {
     position:relative; display:grid; align-items:center; min-height:36px; min-inline-size:24px;
@@ -188,7 +188,8 @@ import Icon from './Icon.astro';
   .series-progress-count::before { content:attr(data-row-total) '/' attr(data-row-total); visibility:hidden; }
   .series-progress-count::after { content:'✓ ' attr(data-row-total); visibility:hidden; }
   .series-progress-picker .series-progress-counter { min-height:inherit; text-align:start; }
-  .series-progress-picker .series-progress-counter[data-complete]:not(:is(:hover,:focus-visible)) { color:#72d74f; }
+  .series-progress-picker .series-progress-counter:focus-visible { outline:none; }
+  .series-progress-picker .series-progress-counter[data-complete] { color:#72d74f; }
   .series-progress-counter:disabled { opacity:1; cursor:default; }
   .series-progress-pen {
     position:absolute; z-index:1; inset-inline-end:100%; inset-block-start:50%;
@@ -201,14 +202,14 @@ import Icon from './Icon.astro';
     .series-progress-counter:not(:disabled):is(:hover,:focus-visible) .series-progress-pen { opacity:1; pointer-events:auto; }
   }
   @media(hover:none) {
+    .series-progress-picker .series-progress-counter:focus-visible { background:var(--field); border-radius:4px; }
     .series-progress-row[data-empty] .series-progress-counter:not(:disabled) .series-progress-pen { opacity:1; pointer-events:auto; }
   }
   .editor .series-progress-count-input {
     --editor-input-focus-background:transparent;
     position:absolute; inset:0; margin:auto 0; box-sizing:border-box; inline-size:100%; block-size:30px;
     min-inline-size:0; padding:0; border:0; outline:none; appearance:textfield;
-    background:transparent; color:var(--white); font:inherit; font-size:max(16px,1.2em); text-align:start;
-    transform-origin:left center;
+    background:transparent; color:var(--white); font:inherit; text-align:start;
   }
   .series-progress-count-input::-webkit-inner-spin-button { appearance:none; }
   .series-progress-picker .series-progress-step {
@@ -297,9 +298,7 @@ import Icon from './Icon.astro';
     .series-progress-detail svg { transition:rotate .15s ease; }
     .series-progress-picker:modal { animation:series-progress-enter .16s ease-out; }
     .series-progress-pen { transition:opacity .14s ease; }
-    .series-progress-count-input:focus { animation:series-progress-count-edit .16s ease-out; }
     @keyframes series-progress-enter { from { opacity:0; translate:0 8px; } }
-    @keyframes series-progress-count-edit { from { scale:.82; } }
   }
   @media(max-width:460px) {
     .editor[data-editor-type=series] .editor-heading { right:auto; }
