@@ -27,21 +27,32 @@ import SeriesEditorPanel from './SeriesEditorPanel.astro';
       <div class="editor-status-field"><div class="editor-field-heading"><span class="editor-field-label" id="editor-status-label">Status</span><button type="button" class="editor-category-info" data-game-category-info data-game-only hidden aria-label="Game category meanings"><Icon name="info"/></button></div><EditorSelect id="editor-status" name="status" label="Status" labelledBy="editor-status-label" options={statuses} value="watching"/></div>
       <div class="editor-score-field"><div class="editor-field-heading"><span class="editor-field-label" id="editor-score-label">Score</span></div><NumberStepper id="editor-manual-score" name="manual_score" label="Score" labelledBy="editor-score-label" min={0} max={10} step={0.1} value={0} score/></div>
       <SeriesEditorPanel/>
-      <div class="editor-number-field" data-game-only data-game-main hidden><div class="editor-field-heading"><span class="editor-field-label" id="game-total-hours-label">Total time (hours)</span><button type="button" class="game-steam-sync" data-game-steam-playtime hidden><Icon name="shuffle" /></button></div><NumberStepper id="game-total-hours" name="game_total_hours" label="Total time in hours" labelledBy="game-total-hours-label" step="any"/>
-        <div class="game-first-completion" data-game-first hidden><div class="editor-field-heading"><span class="editor-field-label" id="game-first-hours-label">First completion</span><button type="button" class="game-value-button" data-game-first-edit>Add</button></div><div class="editor-number-field" data-game-first-input hidden><NumberStepper id="game-first-hours" name="game_first_hours" label="First completion time in hours" labelledBy="game-first-hours-label" step="any"/></div></div>
+      <div class="editor-number-field game-playtime" data-game-only hidden>
+        <div class="editor-field-heading"><label class="editor-field-label" id="game-total-hours-label" for="game-total-hours">Total playtime (h)</label><button type="button" class="game-steam-sync" data-game-steam-playtime hidden><Icon name="shuffle" /></button></div>
+        <NumberStepper id="game-total-hours" name="game_total_hours" label="Total playtime" labelledBy="game-total-hours-label" step="any"/>
       </div>
-      <div class="editor-number-field" data-game-only data-game-main hidden><span class="editor-field-label" id="game-replays-label">Replay count</span><NumberStepper id="game-replays" name="game_replays" label="Replay count" labelledBy="game-replays-label" max={2147483647}/></div>
-      <section class="wide game-achievement-editor" data-game-only data-game-main hidden aria-label="Achievement progress">
-        <div class="editor-field-heading"><span>Achievements</span><button type="button" class="game-steam-sync" data-game-steam-achievements hidden><Icon name="shuffle" /></button><button type="button" class="game-value-button" data-game-achievement-add>Add</button><button type="button" class="game-value-button" data-game-achievement-remove hidden aria-label="Remove achievement progress">Remove</button></div>
-        <div data-game-achievement-reveal hidden><div class="game-achievement-controls" data-game-achievement-controls hidden>
+      <div class="editor-number-field game-first-completion" data-game-only hidden>
+        <div class="editor-field-heading"><label class="editor-field-label" id="game-first-hours-label" for="game-first-hours">First completion (h)</label></div>
+        <div data-game-first-input hidden><NumberStepper id="game-first-hours" name="game_first_hours" label="First completion time" labelledBy="game-first-hours-label" step="any"/></div>
+        <input class="game-first-reading" data-game-first-reading type="number" step="any" aria-labelledby="game-first-hours-label" readonly tabindex="-1" hidden/>
+        <span class="game-first-reading" data-game-first-empty hidden></span>
+      </div>
+      <div class="editor-start-date"><span class="editor-field-label" id="editor-start-date-label">Start date</span><CalendarDateInput id="editor-start-date" name="start_date" label="Start date" labelledBy="editor-start-date-label"/></div><div class="editor-finish-date"><span class="editor-field-label" id="editor-finish-date-label">Finish date</span><CalendarDateInput id="editor-finish-date" name="finish_date" label="Finish date" labelledBy="editor-finish-date-label"/></div>
+      <div class="editor-number-field game-replays" data-game-only hidden><label class="editor-field-label" id="game-replays-label" for="game-replays">Replay count</label><NumberStepper id="game-replays" name="game_replays" label="Replay count" labelledBy="game-replays-label" max={2147483647}/></div>
+      <div class="wide editor-notes"><span class="editor-field-label" id="editor-notes-label">Notes</span><textarea name="notes" rows="2" aria-labelledby="editor-notes-label"></textarea></div>
+      <section class="wide game-achievement-editor" data-game-only hidden aria-labelledby="game-achievements-label">
+        <div class="game-achievement-heading">
+          <button type="button" class="game-achievement-toggle" data-game-achievement-toggle aria-expanded="false" aria-controls="game-achievement-panel"><span id="game-achievements-label">Achievements</span><span class="game-achievement-summary" data-game-achievement-summary></span><Icon name="chevron-down" /></button>
+          <button type="button" class="game-steam-sync" data-game-steam-achievements hidden><Icon name="shuffle" /></button>
+        </div>
+        <div id="game-achievement-panel" data-game-achievement-reveal hidden><div class="game-achievement-controls" data-game-achievement-controls hidden>
           <div data-game-achievement-mode-field hidden><EditorSelect id="game-achievement-mode" name="game_achievement_mode" label="Achievement tracking"/></div>
           <input name="game_achievement_count" type="hidden"/><input name="game_achievement_percentage" type="hidden"/>
           <div class="game-achievement-value editor-number-field"><NumberStepper id="game-achievement-value" name="game_achievement_value" label="Achievement progress"/><span id="game-achievement-maximum" data-game-achievement-maximum></span></div>
           <div data-game-targeted hidden><p class="game-achievement-guidance" data-game-achievement-guidance></p><div class="game-achievement-options" data-game-achievement-options></div><p role="status" data-game-achievement-status hidden></p><button type="button" class="lab-text-button" data-game-achievement-more hidden>Load more</button></div>
+          <button type="button" class="game-value-button" data-game-achievement-remove>Remove tracking</button>
         </div></div>
       </section>
-      <div class="editor-start-date"><span class="editor-field-label" id="editor-start-date-label">Start date</span><CalendarDateInput id="editor-start-date" name="start_date" label="Start date" labelledBy="editor-start-date-label"/></div><div class="editor-finish-date"><span class="editor-field-label" id="editor-finish-date-label">Finish date</span><CalendarDateInput id="editor-finish-date" name="finish_date" label="Finish date" labelledBy="editor-finish-date-label"/></div>
-      <div class="wide editor-notes"><span class="editor-field-label" id="editor-notes-label">Notes</span><textarea name="notes" rows="2" aria-labelledby="editor-notes-label"></textarea></div>
       <div class="editor-rewatches editor-number-field"><span class="editor-field-label" id="editor-rewatches-label">Total rewatches</span><NumberStepper id="editor-rewatches" name="rewatch_count" label="Total rewatches" labelledBy="editor-rewatches-label" max={10000}/></div>
     </div>
     <p class="series-scope-message" data-season-field-message role="status" hidden>Season dates and rewatches are preview fields.</p>

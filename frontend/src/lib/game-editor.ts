@@ -16,10 +16,13 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
   const number=input('game_achievement_value');
   const maximum=dialog.querySelector<HTMLElement>('[data-game-achievement-maximum]')!;
   number.setAttribute('aria-describedby','game-achievement-maximum');
-  const add=dialog.querySelector<HTMLButtonElement>('[data-game-achievement-add]')!;
+  const achievements=dialog.querySelector<HTMLElement>('.game-achievement-editor')!;
+  const toggle=dialog.querySelector<HTMLButtonElement>('[data-game-achievement-toggle]')!;
+  const achievementSummary=dialog.querySelector<HTMLElement>('[data-game-achievement-summary]')!;
   const remove=dialog.querySelector<HTMLButtonElement>('[data-game-achievement-remove]')!;
-  const firstEdit=dialog.querySelector<HTMLButtonElement>('[data-game-first-edit]')!;
   const firstInput=dialog.querySelector<HTMLElement>('[data-game-first-input]')!;
+  const firstReading=dialog.querySelector<HTMLInputElement>('[data-game-first-reading]')!;
+  const firstEmpty=dialog.querySelector<HTMLElement>('[data-game-first-empty]')!;
   const list=dialog.querySelector<HTMLElement>('[data-game-achievement-options]')!;
   const guidance=dialog.querySelector<HTMLElement>('[data-game-achievement-guidance]')!;
   const loadMore=dialog.querySelector<HTMLButtonElement>('[data-game-achievement-more]')!;
@@ -29,7 +32,8 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
   let loaded=0,loadedTotal=0,busy=false,generation=0,controller:AbortController|undefined;
   let catalogueController:AbortController|undefined;
   let pendingCatalogue:AchievementCatalogue|undefined;
-  let shownMode='',initialMode='',status='planning';
+  let shownMode='',initialMode='',status='planning',achievementsOpen=false;
+  const achievementFormat=new Intl.NumberFormat(undefined,{maximumFractionDigits:1});
   const updates=new Map<number,boolean>(),originals=new Map<number,boolean>();
   const datesTouched=new Set<string>();
   const exactCount=()=>Number(current.achievements?.exact_count||0)+[...updates].reduce((sum,[id,value])=>sum+(value?1:0)-(originals.get(id)?1:0),0);
@@ -44,10 +48,8 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
     number.step=percent?'0.1':'1';number.inputMode=percent?'decimal':'numeric';
     number.value=String(value);
     maximum.textContent=percent?'%':max==null?'':`/ ${max}`;
-  }
-  function renderFirst() {
-    firstEdit.textContent=first.value?`${first.value} h · Edit`:'Add';
-    firstEdit.setAttribute('aria-label',first.value?`Edit first completion time: ${first.value} hours`:'Add first completion time');
+    const formatted=achievementFormat.format(value);
+    achievementSummary.textContent=!mode.value?'Add':percent?`${formatted}%`:max==null?formatted:`${formatted} / ${achievementFormat.format(max)}`;
   }
   const renderGuidance=()=>{
     const previous=summary().count;
@@ -99,24 +101,24 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
   }
   function renderMode(animate=false) {
     reveal.change(()=>{
-    const selected=mode.value;
-    if(selected==='count'&&!count.value)count.value='0';
-    if(selected==='percentage'&&!percentage.value)percentage.value='0';
-    if(title?.type==='game'&&!child)dialog.querySelector<HTMLElement>('.game-achievement-editor')!.hidden=
-      summary().total===0&&!selected&&!initialMode;
-    setVisible('[data-game-achievement-controls]',!!selected&&!child);
-    add.hidden=!!selected;remove.hidden=!selected;
-    dialog.querySelector<HTMLElement>('[data-game-achievement-mode-field]')!.hidden=[...mode.options].filter(option=>!option.hidden).length<2;
-    // The hidden select must remain readable even while the optional panel is collapsed.
-    mode.disabled=child;modeControl.sync();
-    number.required=!!selected;
-    setVisible('[data-game-targeted]',selected==='targeted');
-    if(selected==='targeted'){
-      count.value=String(exactCount());renderGuidance();
-      if(!loaded)void loadAchievements();
-    }
-    renderProgress();
-    shownMode=selected;
+      const selected=mode.value;
+      const expanded=achievementsOpen&&!!selected&&!child;
+      if(selected==='count'&&!count.value)count.value='0';
+      if(selected==='percentage'&&!percentage.value)percentage.value='0';
+      if(title?.type==='game'&&!child)achievements.hidden=summary().total===0&&!selected&&!initialMode;
+      setVisible('[data-game-achievement-controls]',expanded);
+      toggle.setAttribute('aria-expanded',String(expanded));
+      dialog.querySelector<HTMLElement>('[data-game-achievement-mode-field]')!.hidden=[...mode.options].filter(option=>!option.hidden).length<2;
+      // Keep the tracking mode available to patch() while the panel is collapsed.
+      mode.disabled=child;modeControl.sync();
+      number.required=expanded;
+      setVisible('[data-game-targeted]',expanded&&selected==='targeted');
+      if(selected==='targeted'){
+        count.value=String(exactCount());renderGuidance();
+        if(expanded&&!loaded)void loadAchievements();
+      }
+      renderProgress();
+      shownMode=selected;
     },animate);
   }
   function modeOptions(selected:string){
@@ -140,17 +142,31 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
   }
   const flushCatalogue=()=>{if(pendingCatalogue)applyCatalogue(pendingCatalogue);};
   form.addEventListener('focusout',()=>queueMicrotask(flushCatalogue),{signal});
-  add.addEventListener('click',async()=>{
+  toggle.addEventListener('click',async()=>{
+    if(achievementsOpen){
+      if(progressPending||!number.reportValidity())return;
+      achievementsOpen=false;
+      renderMode(true);
+      return;
+    }
+    if(mode.value){
+      achievementsOpen=true;
+      renderMode(true);
+      return;
+    }
     const active=generation;
     if(initialMode==='targeted'&&!confirmed) {
       if(!await confirm('Switch to simplified tracking? Your saved individual achievements will be kept.')||signal.aborted||active!==generation)return;
       confirmed=true;
     }
     mode.value='count';
-    if(!count.value)count.value='0';if(!percentage.value)percentage.value='0';
-    renderMode(true);number.focus({preventScroll:true});number.select();
+    achievementsOpen=true;
+    renderMode(true);number.focus();number.select();
   },{signal});
-  remove.addEventListener('click',()=>{mode.value='';renderMode(true);add.focus({preventScroll:true});},{signal});
+  remove.addEventListener('click',()=>{
+    if(progressPending)return;
+    mode.value='';achievementsOpen=false;renderMode(true);toggle.focus();
+  },{signal});
   mode.addEventListener('change',async()=>{
     const active=generation;
     const desired=mode.value;
@@ -195,25 +211,9 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
     const observedToday=finish?finish===localToday():!datesTouched.has('finish_date');
     if(title?.type==='game'&&!child&&status==='completed'&&!firstTouched&&current.completion_seconds==null&&current.completion_source!=='unknown'&&current.status!=='completed')first.value=observedToday?total.value:'';
     if(status==='completed'&&firstTimeCanFillTotal(current,totalTouched)&&first.value)total.value=first.value;
-    renderFirst();
   };
-  let firstCorrection: {first:string;total:string;firstTouched:boolean;totalTouched:boolean}|undefined;
-  firstEdit.addEventListener('click',()=>{
-    firstCorrection={first:first.value,total:total.value,firstTouched,totalTouched};
-    firstInput.hidden=false;firstEdit.hidden=true;first.focus();first.select();
-  },{signal});
-  firstInput.addEventListener('focusout',event=>{if(firstInput.contains(event.relatedTarget as Node)||!first.checkValidity())return;firstInput.hidden=true;firstEdit.hidden=false;renderFirst();},{signal});
-  first.addEventListener('keydown',event=>{
-    if(event.key==='Enter' && !event.isComposing && event.keyCode !== 229){event.preventDefault();first.blur();}
-    if(event.key==='Escape'&&firstCorrection){
-      event.preventDefault();event.stopPropagation();
-      first.value=firstCorrection.first;total.value=firstCorrection.total;
-      firstTouched=firstCorrection.firstTouched;totalTouched=firstCorrection.totalTouched;
-      firstInput.hidden=true;firstEdit.hidden=false;renderFirst();firstEdit.focus();
-    }
-  },{signal});
   total.addEventListener('input',()=>{totalTouched=true;syncFirst();},{signal});
-  first.addEventListener('input',()=>{firstTouched=true;if(firstTimeCanFillTotal(current,totalTouched))total.value=first.value;renderFirst();},{signal});
+  first.addEventListener('input',()=>{firstTouched=true;if(firstTimeCanFillTotal(current,totalTouched))total.value=first.value;},{signal});
   form.addEventListener('input',event=>{
     const name=(event.target as HTMLInputElement).name;
     if(title?.type==='game'&&['start_date','finish_date'].includes(name)){datesTouched.add(name);syncFirst();}
@@ -229,15 +229,15 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
     snapshot() {
       const values=[total,first,replays,count,percentage].map(field=>field.value),selected=mode.value;
       const pending=new Map(updates),known=new Map(originals),dates=new Set(datesTouched);
-      const touchedTotal=totalTouched,touchedFirst=firstTouched,simplifiedConfirmed=confirmed;
+      const touchedTotal=totalTouched,touchedFirst=firstTouched,simplifiedConfirmed=confirmed,expanded=achievementsOpen;
       return ()=>{
         [total,first,replays,count,percentage].forEach((field,index)=>field.value=values[index]);
         mode.value=selected;updates.clear();pending.forEach((value,key)=>updates.set(key,value));
         known.forEach((value,key)=>originals.set(key,value));datesTouched.clear();dates.forEach(value=>datesTouched.add(value));
-        totalTouched=touchedTotal;firstTouched=touchedFirst;confirmed=simplifiedConfirmed;renderMode();renderFirst();
+        totalTouched=touchedTotal;firstTouched=touchedFirst;confirmed=simplifiedConfirmed;achievementsOpen=expanded;renderMode();
       };
     },
-    reset(){reveal.reset();steamSync.reset();modeControl.close();generation++;controller?.abort();catalogueController?.abort();pendingCatalogue=undefined;title=null;list.replaceChildren();updates.clear();originals.clear();datesTouched.clear();loaded=loadedTotal=0;busy=false;progressPending=false;},
+    reset(){reveal.reset();steamSync.reset();modeControl.close();generation++;controller?.abort();catalogueController?.abort();pendingCatalogue=undefined;title=null;list.replaceChildren();updates.clear();originals.clear();datesTouched.clear();loaded=loadedTotal=0;busy=false;progressPending=false;achievementsOpen=false;},
     populate(next:EditorTitle) {
       this.reset();title=next;current=next.game_state||next.entry||{};
       child=['expansion','dlc'].includes(next.game_class||'');totalTouched=false;firstTouched=false;confirmed=false;
@@ -248,7 +248,9 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
       if(!game)return;
       if(!child&&next.id)steamSync.load(next.id);
       total.value=hoursInput(current.total_seconds);first.value=hoursInput(current.completion_seconds);replays.value=current.replay_count==null?'':String(current.replay_count);
-      firstInput.hidden=true;firstEdit.hidden=false;renderFirst();
+      // Use the native number rendering for the saved value as well as the editors.
+      firstReading.value=first.value;
+      firstEmpty.textContent=current.completion_source==='unknown'?'Unrecorded':'When completed';
       initialMode=shownMode=summary().mode||'';
       modeOptions(initialMode);
       count.value=summary().count==null?'':String(summary().count);
@@ -264,9 +266,11 @@ export function createGameEditor(dialog:HTMLDialogElement,form:HTMLFormElement,s
     },
     statusChanged(next:string) {
       status=next;
-      const visible=title?.type==='game'&&!child&&status==='completed';
-      setVisible('[data-game-first]',visible);
-      if(visible)syncFirst();
+      const editable=title?.type==='game'&&!child&&status==='completed';
+      firstInput.hidden=!editable;first.disabled=!editable;
+      firstReading.hidden=editable||!firstReading.value;
+      firstEmpty.hidden=editable||!!firstReading.value;
+      if(editable)syncFirst();
     },
     patch() {
       if(child)return {};
