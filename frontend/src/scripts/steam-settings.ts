@@ -270,7 +270,10 @@ function init() {
     get('view-selected').setAttribute('aria-pressed',String(selectedOnly));
     get<HTMLButtonElement>('import').disabled = importing;
     get<HTMLButtonElement>('next').disabled = importing;
-    if (step === 2) get('selected').textContent = `${selectedWishlist().length.toLocaleString()} wishlist games selected`;
+    if (step === 2) {
+      const count = selectedWishlist().length;
+      get('wishlist-count-text').textContent = `${count.toLocaleString()} ${count === 1 ? 'game' : 'games'} planning`;
+    }
     const progressGames = games.filter(game => steamReviewCandidate(game) || game.mapping_state === 'pending');
     const settled = progressGames.filter(game => !steamProgressPending(game)).length;
     get<HTMLProgressElement>('progress').max = progressGames.length || 1; get<HTMLProgressElement>('progress').value = settled;
@@ -359,6 +362,25 @@ function init() {
   }
   listen(get('more'), 'click', more);
   const defaultStatus = get<HTMLSelectElement>('default-status');
+  const mobileControls = matchMedia('(max-width:800px)');
+  function placeDefaultStatus() {
+    const row = get('default-status-row');
+    const rules = get('rule-content');
+    const parent = mobileControls.matches ? rules : get('toolbar');
+    get('rule-label').textContent = mobileControls.matches ? 'Import settings' : 'Auto-select games';
+    if (row.parentElement === parent) return;
+    const focused = document.activeElement;
+    const reference = mobileControls.matches ? get('reset') : null;
+    const target = parent as HTMLElement & {moveBefore?: (node: Element, before: Element | null) => void};
+    if (target.moveBefore) target.moveBefore(row, reference);
+    else parent.insertBefore(row, reference);
+    if (focused instanceof HTMLElement && row.contains(focused)) {
+      const details = rules.closest('details')!;
+      (mobileControls.matches && !details.open ? details.querySelector('summary')! : focused).focus({preventScroll:true});
+    }
+  }
+  placeDefaultStatus();
+  listen(mobileControls, 'change', placeDefaultStatus);
   function controls() {
     get<HTMLInputElement>('minutes').value = String(draft.minimum_playtime);
     get<HTMLInputElement>('achievements').value = String(draft.minimum_achievements);
@@ -484,6 +506,8 @@ function init() {
     get('more').hidden = next !== 0 || limit >= visibleGames.length;
     get('next').hidden = next === 2; get('import').hidden = next !== 2; get('back').hidden = next === 0;
     get('details-more').hidden = next !== 1 || reviewLimit >= (reviewGames?.length || 0);
+    get('selected').hidden = next === 2;
+    get('wishlist-count').hidden = next !== 2;
     get('dialog').querySelector('h2')!.textContent = next === 2 ? 'Choose your wishlist' : next === 1 ? 'Dates & ratings' : 'Choose your games';
     if (next === 0) { reviewGames = null; detailsController.abort(); get('details').replaceChildren(); }
     if (next === 2) renderWishlist();

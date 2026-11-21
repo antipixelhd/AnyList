@@ -36,9 +36,9 @@ import GameImportLoading from './GameImportLoading.astro';
       <GameImportLoading label="Loading your Steam library" steam />
       <div data-steam-picker class="steam-picker" hidden>
         <div data-steam-controls class="steam-controls">
-          <div class="steam-toolbar">
+          <div data-steam-toolbar class="steam-toolbar">
             <label class="steam-search"><Icon name="search" /><input data-steam-search type="search" aria-label="Search Steam library" placeholder="Search your library…" autocomplete="off" spellcheck="false" /></label>
-            <label class="steam-default-status" for="steam-default-status">
+            <label data-steam-default-status-row class="steam-default-status" for="steam-default-status">
               <span>Default import status</span>
               <select id="steam-default-status" name="import_status" data-steam-default-status></select>
             </label>
@@ -51,8 +51,8 @@ import GameImportLoading from './GameImportLoading.astro';
           <label class="steam-sort"><span class="sr-only">Sort Steam games</span><select data-steam-sort aria-label="Sort Steam games"><option value="playtime">Most played</option><option value="alphabetical">Name A–Z</option><option value="completion">Achievement completion</option></select></label>
           </div>
           <div data-steam-rule-row class="steam-rule-row"><details class="steam-selection-rules">
-            <summary><Icon name="sliders" /><span>Auto-select games</span><Icon name="chevron-down" class="steam-disclosure-arrow" /></summary>
-            <div class="steam-rule-content">
+            <summary><Icon name="sliders" /><span data-steam-rule-label>Auto-select games</span><Icon name="chevron-down" class="steam-disclosure-arrow" /></summary>
+            <div data-steam-rule-content class="steam-rule-content">
               <p>Match either minimum. Your individual choices take priority.</p>
               <div class="steam-filters">
                 <label class="steam-threshold"><span><input type="checkbox" data-steam-playtime-enabled checked /> Playtime</span><span><input aria-label="Minimum playtime in minutes" data-steam-minutes type="number" min="0" max="10000000" value="30" /> min</span></label>
@@ -83,7 +83,13 @@ import GameImportLoading from './GameImportLoading.astro';
           <div data-steam-empty class="steam-empty" hidden><Icon name="search" /><h3>No games found</h3><p>Try another name.</p><button type="button" data-steam-clear-search class="steam-text-button">Clear search</button></div>
           <button data-steam-more type="button" class="steam-more steam-text-button" hidden>Show more games</button>
         </div>
-        <footer class="steam-import-bar"><div><strong data-steam-selected></strong></div><div class="steam-footer-actions"><button data-steam-back type="button" class="steam-secondary" hidden>Back</button><button data-steam-next type="button" class="steam-primary">Continue <Icon name="arrow-right" /></button><button type="button" data-steam-import class="steam-primary" hidden>Import selected <Icon name="arrow-right" /></button></div></footer>
+        <footer class="steam-import-bar">
+          <div>
+            <strong data-steam-selected></strong>
+            <strong class="steam-wishlist-count" data-steam-wishlist-count hidden><span data-steam-wishlist-count-text></span> <span>to play</span></strong>
+          </div>
+          <div class="steam-footer-actions"><button data-steam-back type="button" class="steam-secondary" hidden>Back</button><button data-steam-next type="button" class="steam-primary">Continue <Icon name="arrow-right" /></button><button type="button" data-steam-import class="steam-primary" hidden>Import selected <Icon name="arrow-right" /></button></div>
+        </footer>
       </div>
       <button type="button" data-steam-retry class="steam-primary" hidden>Retry loading</button>
     </div>

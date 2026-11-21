@@ -63,6 +63,7 @@ html:has(.steam-workflow[open]) { scrollbar-gutter:stable; }
 .steam-selection-rules[open] .steam-disclosure-arrow { transform:rotate(180deg); }
 .steam-rule-content { padding:8px 0 4px; }
 .steam-rule-content p { margin:0 0 12px; }
+.steam-rule-content .steam-default-status { margin-block:8px; }
 .steam-filters { display:grid; grid-template-columns:repeat(2,minmax(0,320px)); gap:12px 28px; margin-bottom:4px; }
 .steam-threshold { display:grid; grid-template-columns:minmax(0,1fr) 114px; align-items:center; gap:16px; }
 .steam-threshold > span { display:flex; align-items:center; gap:8px; }
@@ -201,6 +202,13 @@ html:has(.steam-workflow[open]) { scrollbar-gutter:stable; }
 .steam-import-bar { padding:10px 24px; }
 .steam-import-bar > div:first-child { flex-direction:row; align-items:center; gap:24px; }
 .steam-import-bar > .steam-footer-actions { flex-direction:row; align-items:center; gap:16px; }
+.steam-import-bar > div:has(.steam-wishlist-count:not([hidden])) { flex:1; min-inline-size:0; }
+/* The optional suffix moves below the clipped first line when it does not fit. */
+.steam-import-bar .steam-wishlist-count {
+  display:flex; flex-wrap:wrap; align-content:start; gap:0 .25em;
+  inline-size:100%; line-height:1.4; max-block-size:1.4em; overflow:hidden; white-space:nowrap;
+}
+.steam-wishlist-count > :first-child { min-inline-size:0; overflow:hidden; text-overflow:ellipsis; }
 .steam-secondary { min-height:44px; padding:10px 16px; background:transparent; color:var(--white); border-radius:6px; }
 .steam-details { display:flex; flex-direction:column; }
 .steam-review-game { display:grid; grid-template-columns:48px minmax(140px,1fr) auto; align-items:center; gap:20px; padding:20px 0; border-bottom:1px solid var(--border); }
@@ -233,6 +241,12 @@ html:has(.steam-workflow[open]) { scrollbar-gutter:stable; }
  .settings-app .steam-settings .steam-rating input { width:80px; }
  .steam-import-bar { padding:10px 20px max(10px,env(safe-area-inset-bottom)); }
  .steam-import-bar > div:first-child { flex-direction:column; align-items:flex-start; gap:0; }
+ .steam-import-bar:has(.steam-wishlist-count:not([hidden])) .steam-footer-actions { flex-shrink:0; gap:8px; }
+ .steam-import-bar:has(.steam-wishlist-count:not([hidden])) .steam-secondary { padding-inline:8px; }
+}
+@media(max-width:400px) {
+ .steam-import-bar:has(.steam-wishlist-count:not([hidden])) { padding-inline:12px; column-gap:8px; }
+ .steam-import-bar:has(.steam-wishlist-count:not([hidden])) .steam-primary { padding-inline:8px; }
 }
 @media(max-width:360px) {
  .settings-app .steam-settings .steam-review-field input { width:145px; }
