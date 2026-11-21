@@ -23,6 +23,13 @@ class SteamProgressEditorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data['playtime_seconds'],3600)
         self.assertEqual(data['achievement_count'],0)
         self.assertEqual(data['acknowledged'],[])
+        async with self.Session() as db:
+            state = await db.get(SteamConnection, self.id)
+            checkpoint = state.checkpoints['1245620']
+            state.checkpoints = {**state.checkpoints, '1245620': {
+                **checkpoint, 'playtime_minutes': 63, 'observed_playtime_minutes': 62}}
+            await db.commit()
+        self.assertEqual((await self.client.get(path)).json()['playtime_seconds'],3960)
         for field in ('playtime','achievements','playtime'):
             result=await self.client.post(f'/tracking/games/steam-progress/warnings/{field}')
             self.assertEqual(result.status_code,200,result.text)

@@ -3,11 +3,12 @@ from schemas_list_categories import CategoryPresentation
 from datetime import date, datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator
+from core.game_time import round_game_seconds
 
 GameStatus = Literal['planning', 'playing', 'played', 'paused', 'completed', 'dropped']
 AchievementMode = Literal['percentage', 'count', 'targeted']
-Seconds = Annotated[int, Field(strict=True, ge=0, le=2**53 - 1)]
+Seconds = Annotated[int, Field(strict=True, ge=0, le=2**53 - 1), AfterValidator(round_game_seconds)]
 
 
 class GameSubject(BaseModel):

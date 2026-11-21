@@ -28,7 +28,7 @@ class BackloggdImportTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_preview_and_import_are_additive(self):
         records = [
-            row(8101, 'First Game', 'completed', rating=8, total_hours=103),
+            row(8101, 'First Game', 'completed', rating=8, total_hours=103, total_minutes=5),
             row(8102, 'Second Game', 'played', rating=0),
             row(8103, 'Third Game', 'shelved'),
             row(8104, 'Fourth Game', 'retired'),
@@ -70,6 +70,7 @@ class BackloggdImportTests(unittest.IsolatedAsyncioTestCase):
             await db.commit()
 
         selected = [{key: g[key] for key in ('work_id', 'status', 'score', 'total_seconds')} for g in result['games']]
+        self.assertEqual(selected[0]['total_seconds'], 371160)
         selected[0]['score'] = 8.5
         response = await self.client.post(PATH, json={'games': selected})
         self.assertEqual(response.status_code, 200, response.text)
@@ -82,7 +83,7 @@ class BackloggdImportTests(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as db:
             first = await db.scalar(select(GameEntry).where(GameEntry.work_id == selected[0]['work_id']))
             self.assertEqual((first.score, first.total_seconds, first.finish_date, first.completion_source),
-                             (8.5, 370800, None, 'unknown'))
+                             (8.5, 371160, None, 'unknown'))
             existing = await db.scalar(select(GameEntry).where(GameEntry.work_id == second))
             self.assertEqual((existing.status, existing.score), ('planning', 5))
 

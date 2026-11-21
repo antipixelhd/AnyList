@@ -89,7 +89,7 @@ class CompanyWorksTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(base.description,'Existing richer synopsis');self.assertEqual(base.image_url,'https://example.test/selected.jpg')
             self.assertEqual(await db.scalar(select(func.count()).select_from(CatalogueEntity).where(CatalogueEntity.kind=='organization')),2)
         tracked=(await self.client.get(f'/tracking/games/works/{self.base}')).json()
-        self.assertEqual((tracked['score'],tracked['total_seconds']),(9,500))
+        self.assertEqual((tracked['score'],tracked['total_seconds']),(9,360))
         response=await self.client.get(f'/tracking/contributors/studio/catalogue:{self.company}',params={'media_type':'game'})
         self.assertEqual(response.status_code,200,response.text)
         self.assertEqual(response.json()['known_works'],2)

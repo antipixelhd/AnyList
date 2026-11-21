@@ -1,5 +1,6 @@
 """Private editor context from the account's last accepted Steam observations."""
 from sqlalchemy import select
+from core.game_time import round_game_seconds
 from models import SteamConnection, UserSettings
 
 
@@ -12,13 +13,15 @@ async def context(db, user_id, work_id):
             checkpoint = row.checkpoints.get(app, {})
             if checkpoint.get('work_id') != work_id:
                 continue
-            if row.sync_playtime and checkpoint.get('observed_playtime_minutes') is not None:
-                playtime[app] = max(playtime.get(app, 0), checkpoint['observed_playtime_minutes'])
+            if row.sync_playtime:
+                minutes = checkpoint.get('playtime_minutes', checkpoint.get('observed_playtime_minutes'))
+                if minutes is not None:
+                    playtime[app] = max(playtime.get(app, 0), minutes)
             if row.sync_achievements:
                 achievements[app] = checkpoint.get('achievement_count')
     settings = await db.scalar(select(UserSettings).where(UserSettings.user_id == user_id))
     acknowledged = (settings.preferences or {}).get('steam_progress_warnings', []) if settings else []
-    return {'playtime_seconds': sum(playtime.values()) * 60 if playtime else None,
+    return {'playtime_seconds': round_game_seconds(sum(playtime.values()) * 60) if playtime else None,
         'achievement_count': sum(achievements.values()) if achievements and all(v is not None for v in achievements.values()) else None,
         'playtime_enabled': bool(playtime), 'achievements_enabled': bool(achievements),
         'acknowledged': acknowledged}

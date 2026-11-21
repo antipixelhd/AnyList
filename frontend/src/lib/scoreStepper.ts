@@ -31,7 +31,12 @@ export function setupScoreSteppers(root: ParentNode, signal?: AbortSignal): void
       const increment = stepper.hasAttribute('data-score-stepper') ? .5 : Number(input.step) || 1;
       const min = input.min === '' ? 0 : Number(input.min);
       const max = input.max === '' ? Infinity : Number(input.max);
-      input.value = String(nextStepperValue(input.valueAsNumber, direction, increment, min, max));
+      const offset = Number(stepper.dataset.stepIncrement);
+      const current = input.valueAsNumber;
+      const next = offset
+        ? Math.max(min, Math.min(max, Number(((Number.isFinite(current) ? current : min) + direction * offset).toFixed(10))))
+        : nextStepperValue(current, direction, increment, min, max);
+      input.value = String(next);
       input.dispatchEvent(new Event('input', { bubbles: true }));
       input.dispatchEvent(new Event('change', { bubbles: true }));
     };

@@ -52,11 +52,11 @@ class SteamRedirectDatabaseTests(unittest.IsolatedAsyncioTestCase):
             await steam_sync.apply_games(db, state, games, ['1245620', '20'], initial=True)
             await db.commit()
             entry = await db.scalar(select(GameEntry).where(GameEntry.work_id == self.base))
-            self.assertEqual((entry.total_seconds, entry.achievement_count), (6000, 3))
+            self.assertEqual((entry.total_seconds, entry.achievement_count), (6120, 3))
             games[1]['playtime_minutes'] = 50
             await steam_sync.apply_games(db, state, games, ['1245620', '20'])
             await db.commit()
-            self.assertEqual(entry.total_seconds, 6600)
+            self.assertEqual(entry.total_seconds, 6480)
             self.assertEqual(state.checkpoints['20']['playtime_minutes'], 50)
             self.assertEqual(state.checkpoints['1245620']['playtime_minutes'], 60)
             self.assertEqual(await db.scalar(select(func.count()).select_from(GameEntry)), 1)
@@ -84,7 +84,7 @@ class SteamRedirectDatabaseTests(unittest.IsolatedAsyncioTestCase):
             old = CatalogueEntity(kind='game', name='Legacy playtest', attributes={'game_class': 'game'})
             db.add(old); await db.flush(); old_id = old.id
             db.add(CatalogueIdentity(entity_id=old_id, namespace='steam.app', external_id='20', source='steam'))
-            db.add(GameEntry(user_id=self.user.id, work_id=old_id, total_seconds=1200, notes='Keep playtest note'))
+            db.add(GameEntry(user_id=self.user.id, work_id=old_id, total_seconds=1080, notes='Keep playtest note'))
             state = await db.get(SteamConnection, self.id)
             state.checkpoints = {'20': {'work_id': old_id, 'playtime_minutes': 20}}
             await db.commit()

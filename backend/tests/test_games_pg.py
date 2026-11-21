@@ -427,13 +427,35 @@ class GamesDatabaseTests(unittest.IsolatedAsyncioTestCase):
         historical = await self.save(self.unknown, status='completed', finish_date=None, total_seconds=8000)
         self.assertIsNone(historical['finish_date'])
         self.assertIsNone(historical['completion_seconds'])
+        self.assertEqual(historical['total_seconds'], 7920)
         known = await self.save(self.unknown, revision=historical['revision'], completion_seconds=7000)
         self.assertFalse(known['completion_comparison_eligible'])
         changed = await self.save(self.unknown, revision=known['revision'], status='playing')
-        self.assertEqual(changed['completion_seconds'], 7000)
+        self.assertEqual(changed['completion_seconds'], 6840)
         refused = await self.client.patch(f'/tracking/games/entries/{self.unknown}', json={
             'revision': changed['revision'], 'completion_seconds': 9000})
         self.assertEqual(refused.status_code, 422)
+
+    async def test_game_time_migration_rounds_legacy_values_once(self):
+        async with self.Session() as db:
+            db.add(GameEntry(user_id=self.user.id, work_id=self.base, total_seconds=4140, completion_seconds=4139))
+            db.add(GameEntry(user_id=self.user.id, work_id=self.unknown, total_seconds=None, completion_seconds=0))
+            await db.commit()
+        migration = importlib.import_module('migrations.versions.mt102_game_time_tenths')
+
+        def migrate(connection):
+            with Operations.context(MigrationContext.configure(connection)):
+                migration.upgrade()
+                migration.upgrade()
+
+        async with self.engine.begin() as connection:
+            await connection.run_sync(migrate)
+        async with self.Session() as db:
+            rows = {row.work_id: row for row in await db.scalars(select(GameEntry).where(GameEntry.user_id == self.user.id))}
+            self.assertEqual((rows[self.base].total_seconds, rows[self.base].completion_seconds, rows[self.base].revision),
+                             (4320, 3960, 2))
+            self.assertEqual((rows[self.unknown].total_seconds, rows[self.unknown].completion_seconds, rows[self.unknown].revision),
+                             (None, 0, 1))
 
     async def test_first_completion_prefills_empty_total_and_stale_edits_rejected(self):
         row = await self.save(status='completed', completion_seconds=0)

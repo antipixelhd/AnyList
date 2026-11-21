@@ -100,7 +100,7 @@ class WishlistDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.source.library.return_value[-1]=fixture.game('40',31)
         await self.sync()
         self.assertEqual((await self.entry()).status,'playing')
-        self.assertEqual((await self.entry()).total_seconds,1860)
+        self.assertEqual((await self.entry()).total_seconds,1800)
 
     async def test_new_wishlist_additions_use_admission_and_preserve_manual_favorites(self):
         await self.import_wishlist(rows=[])

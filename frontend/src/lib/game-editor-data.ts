@@ -1,9 +1,16 @@
 import {categoryChoices,defaultGameCategories} from './list-categories.ts';
 
 export const gameStatuses = categoryChoices(defaultGameCategories());
+const stepsPerHour = 10;
+export const gameHourStep = 1 / stepsPerHour;
+const secondsPerStep = 3600 * gameHourStep;
+
+export function roundGameHours(hours:number):number {
+  return Math.round(hours*stepsPerHour)/stepsPerHour;
+}
 
 export function hoursInput(seconds:number|null|undefined):string {
-  return seconds==null?'':Number((seconds/3600).toFixed(6)).toString();
+  return seconds==null?'':String(Math.round(seconds/secondsPerStep)/stepsPerHour);
 }
 
 export function achievementCountInput(raw:string,total:number|null|undefined):number {
@@ -20,15 +27,19 @@ export function firstTimeCanFillTotal(current:Record<string,any>,totalTouched:bo
 export function actualSeconds(value:string):number|null {
   if(!value.trim())return null;
   const hours=Number(value);
-  const seconds=Math.round(hours*3600);
+  const seconds=Math.round(roundGameHours(hours)*3600);
   if(!Number.isFinite(hours)||hours<0||!Number.isSafeInteger(seconds))throw new Error('Enter a valid number of hours.');
   return seconds;
 }
 
 export function gameTimePatch(current:Record<string,any>,status:string,fields:{total:string;first:string;replays:string}) {
   const patch:Record<string,any>={};
-  if(fields.total!==hoursInput(current.total_seconds))patch.total_seconds=actualSeconds(fields.total);
-  if(status==='completed'&&(fields.first!==hoursInput(current.completion_seconds)||current.status!=='completed'&&current.completion_seconds==null))patch.completion_seconds=actualSeconds(fields.first);
+  const total=actualSeconds(fields.total);
+  if(total!==actualSeconds(hoursInput(current.total_seconds)))patch.total_seconds=total;
+  if(status==='completed') {
+    const first=actualSeconds(fields.first);
+    if(first!==actualSeconds(hoursInput(current.completion_seconds))||current.status!=='completed'&&current.completion_seconds==null)patch.completion_seconds=first;
+  }
   const replays=fields.replays.trim()===''?null:Number(fields.replays);
   if(replays!=null&&(!Number.isInteger(replays)||replays<0||replays>2147483647))throw new Error('Enter a whole replay count.');
   if(replays!==(current.replay_count??null))patch.replay_count=replays;
