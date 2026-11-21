@@ -95,6 +95,61 @@ class SteamDatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(state.imported)
             self.assertEqual(state.selection,['20'])
 
+    async def test_review_hides_existing_games_and_import_links_their_progress(self):
+        async with self.Session() as db:
+            existing = CatalogueEntity(kind='game',name='Already listed via IGDB',attributes={'game_class':'game'})
+            db.add(existing)
+            await db.flush()
+            db.add(CatalogueIdentity(namespace='igdb.game',external_id='900020',entity_id=existing.id,source='igdb'))
+            db.add_all([GameEntry(user_id=self.user.id, work_id=self.base, status='paused', score=8.5,
+                                  start_date=date(2020,1,2), finish_date=date(2020,2,3), total_seconds=1800),
+                        GameEntry(user_id=self.user.id, work_id=existing.id, status='playing', score=6)])
+            await db.commit()
+            existing_id = existing.id
+        self.source.library.return_value[1]['playtime_minutes'] = 50
+        await self.connect()
+        await self.progress()
+        async with self.Session() as db:
+            connection = await db.get(SteamConnection, self.id)
+            connection.wishlist = [game('20', 0)]
+            await db.commit()
+        path = f'/connections/steam/{self.id}'
+        preview = (await self.client.get(path)).json()
+        self.assertEqual([row['app_id'] for row in preview['library']], ['30'])
+        self.assertEqual(preview['wishlist'], [])
+        self.assertTrue(preview['library_ready'])
+        progress = (await self.client.get(path+'/achievement-progress')).json()['games']
+        self.assertEqual({row['app_id'] for row in progress if row['mapping_state']=='listed'}, {'1245620','20'})
+        result = (await self.client.post(path+'/import',json={'generation':1,'selected_apps':['1245620','30'],
+            'ratings':{'1245620':2},'statuses':{'1245620':'completed'},'completion_dates':{'1245620':'2024-05-04'}})).json()
+        self.assertEqual(result, {'imported':1,'selected':1,'wishlist_added':0,'wishlist_removed':0})
+        async with self.Session() as db:
+            entries = {entry.work_id: entry for entry in await db.scalars(select(GameEntry).where(GameEntry.user_id==self.user.id))}
+            entry = entries[self.base]
+            self.assertEqual((entry.status,entry.score,entry.start_date,entry.finish_date,entry.total_seconds),
+                ('paused',8.5,date(2020,1,2),date(2020,2,3),3600))
+            entry = entries[existing_id]
+            self.assertEqual((entry.status,entry.score,entry.total_seconds,entry.achievement_count),('playing',6,3000,1))
+            connection = await db.get(SteamConnection,self.id)
+            self.assertEqual(set(connection.selection), {'1245620','20','30'})
+            self.assertEqual(connection.checkpoints['20']['work_id'],existing_id)
+            self.assertIsNone(await db.scalar(select(GameActivity.id).where(GameActivity.work_id.in_([self.base,existing_id]))))
+
+    async def test_all_existing_library_stays_ready_and_can_connect_without_selection(self):
+        self.source.library.return_value = self.source.library.return_value[:1]
+        async with self.Session() as db:
+            db.add(GameEntry(user_id=self.user.id,work_id=self.base,status='playing'))
+            await db.commit()
+        await self.connect()
+        path = f'/connections/steam/{self.id}'
+        preview = (await self.client.get(path)).json()
+        self.assertEqual(preview['library'], [])
+        self.assertTrue(preview['library_ready'])
+        response = await self.client.post(path+'/import',json={'generation':1,'selected_apps':[]})
+        self.assertEqual(response.json(), {'imported':0,'selected':0})
+        async with self.Session() as db:
+            self.assertEqual((await db.get(SteamConnection,self.id)).selection,['1245620'])
+
     async def test_mapping_status_distinguishes_pending_misses_and_combined_selection(self):
         from core import steam_targets
         await self.connect()

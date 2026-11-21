@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { defaultSteamDraft, sortSteamGames, steamSelected, steamProgressPending, steamStatus, filterSteamGames, reconcileSteamCards, chooseSteamStatus, steamAccentText, steamScrollAnchor, steamWishlistSelected } from '../src/lib/steam-import.ts';
+import { defaultSteamDraft, sortSteamGames, steamSelected, steamProgressPending, steamStatus, filterSteamGames, reconcileSteamCards, chooseSteamStatus, steamAccentText, steamScrollAnchor, steamWishlistSelected, steamReviewCandidate } from '../src/lib/steam-import.ts';
 
 const games = [
   {app_id:'1',name:'Alpha',playtime_minutes:30,achievement_count:null,achievement_total:null},
@@ -98,6 +98,17 @@ test('pending mappings stay selectable; unavailable mappings override saved sele
   assert.equal(draft.overrides['1'],true);
   game.mapping_state='ready';
   assert.equal(steamSelected(game,draft),true);
+});
+test('games identified as already listed leave the import and wishlist selections',()=>{
+  const draft=defaultSteamDraft();
+  draft.overrides['1']=true;draft.wishlist_overrides['1']=true;
+  const game={...games[0],mapping_state:'listed',achievement_refresh_due:true};
+  assert.equal(steamSelected(game,draft),false);
+  assert.equal(steamWishlistSelected(game,draft,true),false);
+  assert.equal(steamProgressPending(game),false);
+  assert.equal(draft.overrides['1'],true);
+  assert.equal(steamReviewCandidate({...game,mapping_state:'pending'}),false);
+  assert.equal(steamProgressPending({...game,mapping_state:'pending'}),true);
 });
 test('combined apps remain independently selectable',()=>{
   const draft=defaultSteamDraft();

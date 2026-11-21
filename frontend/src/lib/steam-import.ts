@@ -1,12 +1,15 @@
 export type SteamGame = {
   app_id: string; name: string; poster: string; release_date: string | null;
   last_played?: number | null;
-  mapping_state?: 'pending' | 'ready' | 'unavailable' | 'software';
+  mapping_state?: 'pending' | 'ready' | 'unavailable' | 'software' | 'listed';
   playtime_minutes: number; achievement_count: number | null; achievement_total: number | null;
   achievement_state?: 'loading' | 'ready' | 'unavailable'; achievement_refresh_due?: boolean; achievement_refreshing?: boolean;
 };
+export function steamReviewCandidate(game: Pick<SteamGame, 'mapping_state'>): boolean {
+  return !game.mapping_state || game.mapping_state === 'ready';
+}
 export function steamProgressPending(game: SteamGame): boolean {
-  if (game.mapping_state === 'software') return false;
+  if (!steamReviewCandidate(game) && game.mapping_state !== 'pending') return false;
   return game.mapping_state === 'pending' || game.achievement_refresh_due !== false || game.achievement_state === 'loading' || game.achievement_refreshing === true;
 }
 export type SteamDraft = {
@@ -25,7 +28,7 @@ export function defaultSteamDraft(): SteamDraft {
     achievements_enabled: true, overrides: {}, sort: 'playtime' };
 }
 export function steamWishlistSelected(game: Pick<SteamGame,'app_id'|'mapping_state'>, draft: SteamDraft, sync: boolean): boolean {
-  return !['software','unavailable'].includes(game.mapping_state || '') && (draft.wishlist_overrides[game.app_id] ?? sync);
+  return !['listed','software','unavailable'].includes(game.mapping_state || '') && (draft.wishlist_overrides[game.app_id] ?? sync);
 }
 export function steamStatus(game: SteamGame, draft: SteamDraft): SteamDraft['import_status'] {
   return draft.statuses[game.app_id] ?? draft.import_status;
@@ -76,7 +79,7 @@ export function steamScrollAnchor(cards: Iterable<HTMLElement>, visible: Readonl
   }
 }
 export function steamSelected(game: SteamGame, draft: SteamDraft): boolean {
-  if (game.mapping_state === 'unavailable' || game.mapping_state === 'software') return false;
+  if (game.mapping_state === 'listed' || game.mapping_state === 'software' || game.mapping_state === 'unavailable') return false;
   if (Object.hasOwn(draft.overrides, game.app_id)) return draft.overrides[game.app_id];
   return (draft.playtime_enabled && game.playtime_minutes >= draft.minimum_playtime)
     || (draft.achievements_enabled && game.achievement_count !== null && game.achievement_count >= draft.minimum_achievements);

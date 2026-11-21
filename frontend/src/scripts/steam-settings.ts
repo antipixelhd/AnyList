@@ -1,12 +1,12 @@
 import {gameCategoryChoices} from '../lib/game-category-store.ts';
-import { defaultSteamDraft, sortSteamGames, steamSelected, steamProgressPending, steamStatus, filterSteamGames, reconcileSteamCards, chooseSteamStatus, steamAccentText, steamScrollAnchor, steamWishlistSelected } from '../lib/steam-import';
+import { defaultSteamDraft, sortSteamGames, steamSelected, steamProgressPending, steamStatus, filterSteamGames, reconcileSteamCards, chooseSteamStatus, steamAccentText, steamScrollAnchor, steamWishlistSelected, steamReviewCandidate } from '../lib/steam-import';
 import type { SteamDraft, SteamGame } from '../lib/steam-import';
 import { showDialog, closeDialog } from '../lib/ui-motion';
 import { setupCalendarDateInputs } from '../lib/calendar-date-input';
 import { formatDate } from '../lib/date-time';
 
 type Connection = { id: number; steam_id: string; imported: boolean; sync_achievements: boolean; sync_playtime: boolean; auto_add_games: boolean; sync_wishlist: boolean; selected_count: number; generation: number };
-type Review = Connection & { wishlist: SteamGame[]; wishlist_error: string | null; library: SteamGame[]; draft: Partial<SteamDraft>; job: { status: string; current: number; total: number; error: string | null; warnings: string[] } | null };
+type Review = Connection & { wishlist: SteamGame[]; wishlist_error: string | null; library: SteamGame[]; library_ready?: boolean; draft: Partial<SteamDraft>; job: { status: string; current: number; total: number; error: string | null; warnings: string[] } | null };
 
 let cleanup: (() => void) | undefined;
 function init() {
@@ -94,7 +94,7 @@ function init() {
   listen(get('keep-editing'),'click',()=>{void closeDialog(exitDialog);});
   async function leave(abort: boolean) {
     if (!active || importing || leaving) return;
-    if (!abort && ((reviewGames && get('details').querySelector('input:invalid')) || (combinedList() && invalidInlineDate()))) {
+    if (!abort && ((reviewGames && get('details').querySelector('.steam-review-game:not([hidden]) input:invalid')) || (combinedList() && invalidInlineDate()))) {
       get('exit-error').textContent='Correct the date before saving. Choose Keep editing to return.';
       get('exit-error').hidden=false; return;
     }
@@ -152,6 +152,26 @@ function init() {
     node.textContent = software ? 'Software' : loading ? '' : game.achievement_total === 0 && game.achievement_count === 0 ? 'No achievements' : game.achievement_count === null ? 'Achievements unavailable'
       : `${game.achievement_count}${game.achievement_total !== null ? `/${game.achievement_total}` : ''} achievements`;
   }
+  function reconcileProgress(values: SteamGame[]) {
+    let membershipChanged = false;
+    for (const value of values) {
+      const game = byId.get(value.app_id);
+      if (!game) continue;
+      const wasCandidate = steamReviewCandidate(game);
+      Object.assign(game, value);
+      membershipChanged ||= wasCandidate !== steamReviewCandidate(game);
+      paintCount(game);
+    }
+    if (!reviewGames && (membershipChanged || draft.sort === 'completion' || selectedOnly)) render();
+    else {
+      if (reviewGames && membershipChanged) for (const row of get('details').querySelectorAll<HTMLElement>('[data-app-id]')) {
+        const hidden = !steamReviewCandidate(byId.get(row.dataset.appId!)!);
+        if (hidden && row.contains(document.activeElement)) get('dialog').querySelector<HTMLElement>('h2')!.focus({preventScroll:true});
+        row.hidden = hidden;
+      }
+      paintSelections();
+    }
+  }
   async function loadProgress(epoch: number, id: number, generation: number) {
     try {
       await request(`/${id}/background`, 'POST');
@@ -159,8 +179,7 @@ function init() {
         const result = await request<{ games: SteamGame[]; wishlist: SteamGame[] }>(`/${id}/achievement-progress`);
         if (epoch !== reviewEpoch || signal.aborted || importing) return;
         if (result.wishlist) { wishlist = result.wishlist; if (step === 2) renderWishlist(); }
-        for (const value of result.games) { const game = byId.get(value.app_id); if (game) { Object.assign(game, value); paintCount(game); } }
-        if (!reviewGames && (draft.sort === 'completion' || selectedOnly)) render(); else paintSelections();
+        reconcileProgress(result.games);
         if (!games.some(steamProgressPending) && !wishlist.some(game => game.mapping_state === 'pending')) return;
         await new Promise<void>(resolve => { const finish = () => { clearTimeout(wait); signal.removeEventListener('abort', finish); resolve(); }; const wait = setTimeout(finish, 1500); signal.addEventListener('abort', finish, {once:true}); });
       }
@@ -177,19 +196,16 @@ function init() {
       try {
         const result = await request<{ games: SteamGame[] }>(`/${id}/achievements`, 'POST', { generation, apps: [...ids] });
         if (epoch !== reviewEpoch || signal.aborted || importing) return;
-        for (const value of result.games) {
-          const game = byId.get(value.app_id);
-          if (!game) continue;
-          Object.assign(game, value); paintCount(game);
-          if (value.achievement_state === 'loading' || value.achievement_refreshing) pending.push(game);
+        reconcileProgress(result.games);
+        for (const game of batch) {
+          if (game.mapping_state === 'pending' || steamReviewCandidate(game) && (game.achievement_state === 'loading' || game.achievement_refreshing)) pending.push(game);
         }
       } catch {
         if (epoch !== reviewEpoch || signal.aborted || importing) return;
         for (const game of batch) { game.achievement_state = 'unavailable'; paintCount(game); }
+        if (!reviewGames && (draft.sort === 'completion' || selectedOnly)) render(); else paintSelections();
       }
-      // Only automatic selections change. Explicit card choices stay in draft.overrides.
-      if (!reviewGames && (draft.sort === 'completion' || selectedOnly)) render(); else paintSelections();
-      if (pending.length && pending.every(game => game.achievement_refresh_due === false)) {
+      if (pending.length && pending.every(game => game.mapping_state === 'pending' || game.achievement_refresh_due === false)) {
         await new Promise<void>(resolve => {
           const finish = () => { clearTimeout(wait); signal.removeEventListener('abort', finish); resolve(); };
           const wait = setTimeout(finish, 1500); signal.addEventListener('abort', finish, { once: true });
@@ -245,19 +261,21 @@ function init() {
       }
 
     }
-    const selected = reviewGames ? reviewGames.filter(game=>game.mapping_state!=='unavailable' && game.mapping_state!=='software').length : games.filter(game => steamSelected(game, draft)).length;
-    get('selected').textContent = reviewGames ? `${selected.toLocaleString()} games` : `${selected.toLocaleString()} of ${games.length.toLocaleString()} selected`;
-    get('total').textContent = games.length.toLocaleString();
+    const candidates = games.filter(steamReviewCandidate);
+    const selected = reviewGames ? reviewGames.filter(steamReviewCandidate).length : candidates.filter(game => steamSelected(game, draft)).length;
+    get('selected').textContent = reviewGames ? `${selected.toLocaleString()} games` : `${selected.toLocaleString()} of ${candidates.length.toLocaleString()} selected`;
+    get('total').textContent = candidates.length.toLocaleString();
     get('selected-total').textContent = selected.toLocaleString();
     get('view-all').setAttribute('aria-pressed',String(!selectedOnly));
     get('view-selected').setAttribute('aria-pressed',String(selectedOnly));
     get<HTMLButtonElement>('import').disabled = importing;
     get<HTMLButtonElement>('next').disabled = importing;
-    if (step === 2) get('selected').textContent = `${wishlist.filter(game => steamWishlistSelected(game, draft, !!active?.sync_wishlist)).length.toLocaleString()} wishlist games selected`;
-    const settled = games.filter(game => game.mapping_state === 'software' || (game.achievement_state !== 'loading' && !game.achievement_refreshing)).length;
-    get<HTMLProgressElement>('progress').max = games.length || 1; get<HTMLProgressElement>('progress').value = settled;
-    get('progress-label').textContent = `${settled} / ${games.length}`;
-    get('progress-region').hidden = settled >= games.length;
+    if (step === 2) get('selected').textContent = `${selectedWishlist().length.toLocaleString()} wishlist games selected`;
+    const progressGames = games.filter(game => steamReviewCandidate(game) || game.mapping_state === 'pending');
+    const settled = progressGames.filter(game => !steamProgressPending(game)).length;
+    get<HTMLProgressElement>('progress').max = progressGames.length || 1; get<HTMLProgressElement>('progress').value = settled;
+    get('progress-label').textContent = `${settled} / ${progressGames.length}`;
+    get('progress-region').hidden = settled >= progressGames.length;
   }
   function card(game: SteamGame) {
     let node = cards.get(game.app_id);
@@ -307,17 +325,23 @@ function init() {
   function render(preservePosition = true) {
     const focused = document.activeElement as HTMLElement | null;
     if (preservePosition || !orderedGames.length) orderedGames = sortSteamGames(games, draft.sort);
-    visibleGames = filterSteamGames(orderedGames, query).filter(game => !selectedOnly || steamSelected(game,draft));
+    const candidates = orderedGames.filter(steamReviewCandidate);
+    visibleGames = filterSteamGames(candidates, query).filter(game => !selectedOnly || steamSelected(game,draft));
     const window = visibleGames.slice(0, limit);
     const bounds = scroller.getBoundingClientRect();
     const anchor = preservePosition ? steamScrollAnchor(cards.values(), new Set(window.map(game=>game.app_id)), bounds) : undefined;
     reconcileSteamCards(get('grid'), window.map(card));
     get('empty').hidden = visibleGames.length > 0;
-    get('empty').querySelector('h3')!.textContent = query.trim() ? 'No games found' : selectedOnly ? 'No selected games' : 'Your library is empty';
-    get('empty').querySelector('p')!.textContent = query.trim() ? 'Try another name.' : selectedOnly ? 'Choose games from your library to import.' : 'No games are available to import.';
+    const checking = !candidates.length && games.some(game => game.mapping_state === 'pending');
+    get('empty').querySelector('h3')!.textContent = checking ? 'Checking your library…' : query.trim() ? 'No games found' : selectedOnly ? 'No selected games' : 'No new games to import';
+    const hint = get('empty').querySelector('p')!;
+    hint.hidden = checking || !query.trim() && !selectedOnly;
+    hint.textContent = query.trim() ? 'Try another name.' : 'Choose games from your library to import.';
     get('clear-search').hidden = !query.trim() && !selectedOnly;
     get('clear-search').textContent = query.trim() ? 'Clear search' : 'View all games';
-    get('results').textContent = query.trim() ? `${visibleGames.length.toLocaleString()} ${visibleGames.length === 1 ? 'game' : 'games'} found` : `${games.length.toLocaleString()} games in your library`;
+    const count = query.trim() ? visibleGames.length : candidates.length;
+    const announcement = `${count.toLocaleString()} ${count === 1 ? 'game' : 'games'} ${query.trim() ? 'found' : 'available to import'}`;
+    if (get('results').textContent !== announcement) get('results').textContent = announcement;
     const moreNode = get('more'); moreNode.hidden = !!reviewGames || limit >= visibleGames.length;
     observer.disconnect(); if (!moreNode.hidden) observer.observe(moreNode);
     paintSelections();
@@ -375,7 +399,7 @@ function init() {
     if (data.imported) return;
     if (!dialog.open) showDialog(dialog);
     const status = data.job?.status;
-    const available = data.library.length > 0 || status === 'completed';
+    const available = data.library_ready || data.library.length > 0 || status === 'completed';
     get('loading').hidden = available;
     get('picker').hidden = !available;
     get('retry').hidden = status !== 'failed' && status !== 'cancelled';
@@ -465,9 +489,12 @@ function init() {
     if (next === 2) renderWishlist();
     scroller.scrollTop = 0; paintSelections();
   }
+  function selectedWishlist() {
+    return wishlist.filter(game => steamReviewCandidate(game) && steamWishlistSelected(game, draft, !!active?.sync_wishlist));
+  }
   function renderWishlist() {
     const query = get<HTMLInputElement>('wishlist-search').value;
-    const visible = filterSteamGames(wishlist, query);
+    const visible = filterSteamGames(wishlist.filter(steamReviewCandidate), query);
     const grid = get('wishlist-grid');
     const nodes: HTMLElement[] = [];
     for (const game of visible.slice(0, wishlistLimit)) {
@@ -503,7 +530,8 @@ function init() {
     reconcileSteamCards(grid, nodes);
     get('wishlist-more').hidden = visible.length <= wishlistLimit;
     get('wishlist-empty').hidden = visible.length !== 0 || !get('wishlist-error').hidden;
-    get('wishlist-empty').textContent = query.trim() ? 'No games found.' : 'Your wishlist is empty.';
+    get('wishlist-empty').textContent = wishlist.some(game => game.mapping_state === 'pending') ? 'Checking your wishlist…'
+      : query.trim() ? 'No games found.' : 'No new wishlist games to import.';
     paintSelections();
   }
   listen(get('wishlist-search'), 'input', () => { wishlistLimit = 80; renderWishlist(); });
@@ -563,6 +591,8 @@ function init() {
     const container = get('details');
     for (const game of reviewGames!.slice(container.children.length, reviewLimit)) {
       const row = document.createElement('article'); row.className = 'steam-review-game';
+      row.dataset.appId = game.app_id;
+      row.hidden = !steamReviewCandidate(game);
       const image = document.createElement('img'); if (game.poster) image.src = game.poster; image.alt = ''; image.loading = 'lazy';
       const info = document.createElement('div'); info.className = 'steam-review-info';
       const title = document.createElement('h3'); title.textContent = game.name;
@@ -593,12 +623,12 @@ function init() {
   }
   listen(get('next'),'click',()=>{
     if (step === 1) {
-      const invalid = get('details').querySelector<HTMLInputElement>('input:invalid');
+      const invalid = get('details').querySelector<HTMLInputElement>('.steam-review-game:not([hidden]) input:invalid');
       if (invalid) { invalid.reportValidity(); return; }
       setStep(2); changed(); get('dialog').querySelector<HTMLElement>('h2')!.focus({preventScroll:true}); return;
     }
     if (combinedList() && !validateInlineDates()) return;
-    reviewGames = sortSteamGames(games.filter(game=>steamSelected(game,draft)),draft.sort);
+    reviewGames = sortSteamGames(games.filter(game=>steamReviewCandidate(game) && steamSelected(game,draft)),draft.sort);
     if (combinedList()) setStep(2); else showDetails();
     changed();
     get('dialog').querySelector<HTMLElement>('h2')!.focus({preventScroll:true});
@@ -609,11 +639,11 @@ function init() {
   listen(get('import'), 'click', () => {
     if (!active || importing) return;
     if (step !== 2 || !reviewGames) { message('Review your selected games before importing.', true); return; }
-    const invalid = get('details').querySelector<HTMLInputElement>('input:invalid');
+    const invalid = get('details').querySelector<HTMLInputElement>('.steam-review-game:not([hidden]) input:invalid');
     if (invalid) { invalid.reportValidity(); return; }
     importing = true; reviewEpoch++;
-    const selectedGames = reviewGames.filter(game => game.mapping_state !== 'unavailable' && game.mapping_state !== 'software');
-    const selection = { ...payload(), selected_wishlist: wishlist.filter(game => steamWishlistSelected(game, draft, !!active?.sync_wishlist)).map(game => game.app_id), selected_apps: selectedGames.map(game => game.app_id),
+    const selectedGames = reviewGames.filter(steamReviewCandidate);
+    const selection = { ...payload(), selected_wishlist: selectedWishlist().map(game => game.app_id), selected_apps: selectedGames.map(game => game.app_id),
       completion_dates: Object.fromEntries(selectedGames.map(game => [game.app_id, finishDate(game)])),
       start_dates:Object.fromEntries(selectedGames.map(game=>[game.app_id,draft.start_dates[game.app_id]||null])) };
     clearTimeout(saveTimer); const button = get<HTMLButtonElement>('import'); button.disabled = true; button.textContent = 'Importing…';
@@ -623,7 +653,7 @@ function init() {
       .then(async result => {
         sessionStorage.removeItem(`steam-import:${active!.id}:${active!.generation}`);
         get('review').hidden = true; get('resume').hidden = true; void closeDialog(dialog); active = undefined; await list();
-        message(`Imported ${result.imported} games. Steam now uses your account sync schedule.`);
+        message(result.imported ? `Imported ${result.imported} ${result.imported === 1 ? 'game' : 'games'}. Steam now uses your account sync schedule.` : 'Steam connected.');
       })
       .catch(async error => { if (active) await load(active.id).catch(fail); fail(error); })
       .finally(() => {

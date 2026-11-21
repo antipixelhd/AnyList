@@ -11,7 +11,7 @@ from sqlalchemy import select, func, true, column
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core import game_tracking, steam_sync, steam_cache
+from core import game_tracking, steam_sync, steam_cache, steam_targets
 from core.account_sync import require_idle_account
 from core.game_access import approved_games_viewer
 from core.import_admission import require_import_slot
@@ -125,16 +125,19 @@ async def background_details(connection_id: int, background: BackgroundTasks, db
 
 @router.get('/{connection_id}/achievement-progress')
 async def detail_progress(connection_id: int, db: DB, viewer: Viewer) -> dict:
-    from core.steam_targets import import_states
     state = await owned(db, viewer.id, connection_id)
     job = await latest_job(db, viewer.id, connection_id)
-    states = await import_states(db, state.library, settled=bool(job and job.status in (SyncStatus.completed, SyncStatus.failed, SyncStatus.cancelled)))
-    games = await steam_cache.read_progress(db, viewer.id, state.steam_id, state.library)
-    from core.steam_wishlist import present as wishlist_view
-    wishlist = await wishlist_view(db, state.wishlist or [],
+    states = await steam_targets.import_states(db, state.library, user_id=viewer.id,
         settled=bool(job and job.status in (SyncStatus.completed, SyncStatus.failed, SyncStatus.cancelled)))
-    return {'wishlist': wishlist, 'games': [{**{key: value for key, value in game.items() if key == 'app_id' or key.startswith('achievement_')},
-        'mapping_state': states[game['app_id']]} for game in games]}
+    visible = [game for game in state.library if states[game['app_id']] not in ('listed', 'software')]
+    games = await steam_cache.read_progress(db, viewer.id, state.steam_id, visible)
+    from core.steam_wishlist import present as wishlist_view
+    wishlist = await wishlist_view(db, state.wishlist or [], user_id=viewer.id,
+        settled=bool(job and job.status in (SyncStatus.completed, SyncStatus.failed, SyncStatus.cancelled)))
+    patches = [{**{key: value for key, value in game.items() if key == 'app_id' or key.startswith('achievement_')},
+                'mapping_state': states[game['app_id']]} for game in games]
+    patches.extend({'app_id': app, 'mapping_state': mapping} for app, mapping in states.items() if mapping in ('listed', 'software'))
+    return {'wishlist': wishlist, 'games': patches}
 
 
 async def latest_job(db, user_id, connection_id):
@@ -202,14 +205,15 @@ async def connect(body: Connect, background: BackgroundTasks, db: DB, viewer: Vi
 async def review(connection_id: int, db: DB, viewer: Viewer) -> dict:
     state = await owned(db, viewer.id, connection_id)
     job = await latest_job(db, viewer.id, connection_id)
-    from core.steam_targets import import_states
-    library = await steam_cache.read_progress(db, viewer.id, state.steam_id, state.library)
-    states = await import_states(db, library, settled=bool(job and job.status in (SyncStatus.completed, SyncStatus.failed, SyncStatus.cancelled)))
-    library = [{**game, 'mapping_state':states[game['app_id']]} for game in library if states[game['app_id']] != 'software']
-    from core.steam_wishlist import present as wishlist_view
-    wishlist = await wishlist_view(db, state.wishlist or [],
+    states = await steam_targets.import_states(db, state.library, user_id=viewer.id,
         settled=bool(job and job.status in (SyncStatus.completed, SyncStatus.failed, SyncStatus.cancelled)))
-    return {**summary(state), 'library': library, 'draft': state.draft,
+    visible = [game for game in state.library if states[game['app_id']] not in ('listed', 'software')]
+    progress = await steam_cache.read_progress(db, viewer.id, state.steam_id, visible)
+    library = [{**game, 'mapping_state': states[game['app_id']]} for game in progress]
+    from core.steam_wishlist import present as wishlist_view
+    wishlist = await wishlist_view(db, state.wishlist or [], user_id=viewer.id,
+        settled=bool(job and job.status in (SyncStatus.completed, SyncStatus.failed, SyncStatus.cancelled)))
+    return {**summary(state), 'library': library, 'library_ready': bool(state.library), 'draft': state.draft,
         'wishlist': wishlist, 'wishlist_error': (state.wishlist_state or {}).get('error'),
         'job': {'status': job.status.value, 'current': job.processed_items, 'total': job.total_items,
                 'error': job.error_message, 'warnings': job.warnings or []} if job else None}
@@ -245,7 +249,10 @@ async def achievements(connection_id: int, body: ProgressBatch, db: DB, viewer: 
     if {game['app_id'] for game in games} != set(body.apps):
         raise HTTPException(422, 'Games must belong to this Steam library')
     values, requests = await steam_cache.load_progress(AsyncSessionLocal, viewer.id, header.steam_id, games, SteamSource(AsyncSessionLocal))
-    return {'games': values, 'provider_requests': requests}
+    job = await latest_job(db, viewer.id, connection_id)
+    states = await steam_targets.import_states(db, games, user_id=viewer.id,
+        settled=bool(job and job.status in (SyncStatus.completed, SyncStatus.failed, SyncStatus.cancelled)))
+    return {'games': [{**value, 'mapping_state': states[value['app_id']]} for value in values], 'provider_requests': requests}
 
 
 @router.post('/{connection_id}/retry')
@@ -294,17 +301,21 @@ async def validate_draft(db, viewer, connection_id, body):
 async def save_draft(connection_id: int, body: Draft, db: DB, viewer: Viewer) -> dict:
     state = await validate_draft(db, viewer, connection_id, body)
     state.draft = body.model_dump(mode='json', exclude={'generation'})
+    selection = selected_games(state.library, body)
+    listed = await steam_targets.listed_apps(db, viewer.id, selection)
     await db.commit()
-    return {'selected_count': len(selected_games(state.library, body))}
+    return {'selected_count': len(selection) - len(listed)}
 
 
 @router.post('/{connection_id}/import')
 async def commit_import(connection_id: int, body: ImportSelection, background: BackgroundTasks, db: DB, viewer: Viewer) -> dict:
     await require_idle_account(db, viewer.id)
     state = await validate_draft(db, viewer, connection_id, body)
-    library = await steam_cache.read_progress(db, viewer.id, state.steam_id, state.library)
-    library = await steam_sync.attach_dates(db, library)
-    selection = selected_games(library, body) if body.selected_apps is None else list(dict.fromkeys(body.selected_apps))
+    library = list(state.library)
+    if body.selected_apps is None:
+        selection = selected_games(await steam_cache.read_progress(db, viewer.id, state.steam_id, library), body)
+    else:
+        selection = list(dict.fromkeys(body.selected_apps))
     if set(selection) - {row['app_id'] for row in library}:
         raise HTTPException(422, 'Selection contains games outside this Steam library.')
     # Finish pending identity checks outside all owner/connection locks. Cached
@@ -317,6 +328,11 @@ async def commit_import(connection_id: int, body: ImportSelection, background: B
     wishlist = list(state.wishlist or [])
     selected_ids = set(selection)
     selected_library = [game for game in library if game['app_id'] in selected_ids]
+    job = await latest_job(db, viewer.id, connection_id)
+    # If the viewer finishes early, the pending identity checks can reveal
+    # additional existing entries even outside the manual selection.
+    if job and job.status in (SyncStatus.pending, SyncStatus.running):
+        selected_library = library
     await db.commit()
     from core.steam_targets import classify
     try:
@@ -327,12 +343,17 @@ async def commit_import(connection_id: int, body: ImportSelection, background: B
     state = await validate_draft(db, viewer, connection_id, body)
     if list(state.wishlist or []) != wishlist:
         raise HTTPException(409, 'Steam wishlist changed. Reload to continue.')
-    await steam_sync.apply_games(db, state, library, selection, initial=True,
+    library = await steam_cache.read_progress(db, viewer.id, state.steam_id, state.library)
+    library = await steam_sync.attach_dates(db, library)
+    existing = await steam_targets.listed_apps(db, viewer.id, [game['app_id'] for game in library])
+    linked = [*selection, *sorted(existing - selected_ids)]
+    created = set()
+    await steam_sync.apply_games(db, state, library, linked, initial=True, progress_only=existing, created_works=created,
         initial_status=body.import_status, statuses=body.statuses, ratings=body.ratings,
         completion_dates=body.completion_dates, start_dates=body.start_dates)
     from core.steam_wishlist import apply as apply_wishlist
     wishlist_result = await apply_wishlist(db, state, wishlist, library, selected=wishlist_ids)
-    accepted = [app for app in selection if app in state.checkpoints]
+    accepted = [app for app in linked if app in state.checkpoints]
     state.selection, state.imported, state.draft = accepted, True, {}
     state.known_apps = sorted(row['app_id'] for row in library)
     # The large review payload is temporary. Recurring sync needs only IDs/checkpoints.
@@ -343,9 +364,10 @@ async def commit_import(connection_id: int, body: ImportSelection, background: B
     await db.commit()
     from core.steam_artwork import refresh as refresh_artwork
     background.add_task(refresh_artwork, AsyncSessionLocal, library)
-    return {'imported': len({state.checkpoints[app]['work_id'] for app in accepted}) + wishlist_result['wishlist_added'],
-        **(wishlist_result if wishlist else {}), 'selected': len(accepted),
-        **({'skipped': len(selection) - len(accepted)} if len(accepted) != len(selection) else {})}
+    skipped = len(selected_ids - existing - state.checkpoints.keys())
+    return {'imported': len(created) + wishlist_result['wishlist_added'],
+        **(wishlist_result if wishlist else {}), 'selected': sum(app not in existing for app in accepted),
+        **({'skipped': skipped} if skipped else {})}
 
 
 @router.post('/{connection_id}/wishlist')
@@ -369,4 +391,4 @@ async def retry_wishlist(connection_id: int, db: DB, viewer: Viewer) -> dict:
     state.wishlist_state = {key:value for key,value in (state.wishlist_state or {}).items() if key != 'error'}
     await db.commit()
     from core.steam_wishlist import present
-    return {'wishlist': await present(db, games, settled=True), 'wishlist_error': None}
+    return {'wishlist': await present(db, games, settled=True, user_id=viewer.id), 'wishlist_error': None}

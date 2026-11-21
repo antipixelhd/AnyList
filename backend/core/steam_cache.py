@@ -35,6 +35,8 @@ def progress_due(row, game, stamp, total=None):
 
 
 async def read_progress(db, user_id, steam_id, games):
+    if not games:
+        return []
     rows = {row.app_id: row for row in await db.scalars(select(SteamPlayerGame).where(
         SteamPlayerGame.user_id == user_id, SteamPlayerGame.steam_id == steam_id,
         SteamPlayerGame.app_id.in_([game['app_id'] for game in games])))}

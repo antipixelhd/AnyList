@@ -83,7 +83,7 @@ class SteamTests(unittest.IsolatedAsyncioTestCase):
         from core.steam_sync import now
         from types import SimpleNamespace
         from unittest.mock import patch
-        db = SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(all=lambda:[('10','100')])))
+        db = SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(all=lambda:[('10',1,'100')])))
         evidence = {'version':1,'state':'bound','igdb_id':'200','game_class':'game','checked_at':now().isoformat()}
         games = [{'app_id':app} for app in ('10','20','30','40','212910')]
         with patch.object(steam_targets,'targets',AsyncMock(return_value={})), patch.object(

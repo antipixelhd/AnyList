@@ -134,7 +134,8 @@ async def attach_dates(db, library):
         if key in ('poster','release_date','game_class','steam_app_type') and value is not None}} for game in library]
 
 
-async def apply_games(db, state, library, selected, *, initial=False, add_apps=None, initial_status='completed', statuses=None, ratings=None, completion_dates=None,start_dates=None):
+async def apply_games(db, state, library, selected, *, initial=False, add_apps=None, initial_status='completed', statuses=None,
+                      ratings=None, completion_dates=None, start_dates=None, progress_only=(), created_works=None):
     """One list write per canonical game; source app counters remain independent."""
     from core import steam_targets
     from core.game_metadata import native_id
@@ -162,6 +163,7 @@ async def apply_games(db, state, library, selected, *, initial=False, add_apps=N
         data = by_app.get(app)
         if data is None:
             continue
+        may_add = app in additions or (initial and app not in progress_only)
         identity = await catalogue.resolve_identity(db, 'steam.app', app)
         if app in mapping:
             work = await db.get(CatalogueEntity, mapping[app])
@@ -193,7 +195,7 @@ async def apply_games(db, state, library, selected, *, initial=False, add_apps=N
         # Every admission path, including combined-app progress targets, must
         # already resolve to a canonical IGDB game. Legacy progress can still
         # sync, but an import/auto-add cannot create another orphan membership.
-        if work and (initial or app in additions):
+        if work and may_add:
             if work.id not in canonical_admission:
                 canonical_admission[work.id] = bool(await native_id(db, work))
             if not canonical_admission[work.id]:
@@ -202,7 +204,7 @@ async def apply_games(db, state, library, selected, *, initial=False, add_apps=N
             catalogue.merge_fields(work,{'attributes':{'game_class':data['game_class']}},'igdb')
         if not work or not capabilities(work.attributes).independent:
             continue
-        if initial or app in additions:
+        if may_add:
             # Display Steam's usable title immediately, including canonical stubs
             # that were admitted before Steam's library name was available.
             name=data.get('name') or ''
@@ -234,9 +236,9 @@ async def apply_games(db, state, library, selected, *, initial=False, add_apps=N
                     steam_cache.merge_total(work,game['app_id'],game['achievement_total'],now())
         entry = await db.scalar(select(GameEntry).where(GameEntry.user_id == state.user_id, GameEntry.work_id == work.id))
         automatic = any(game['app_id'] in additions for game in games)
-        if entry is None and not initial and not automatic:
+        if entry is None and not (automatic or initial and apps.difference(progress_only)):
             continue
-        before = await game_activity.snapshot(db, work, entry, achievements=state.sync_achievements)
+        before = None if initial else await game_activity.snapshot(db, work, entry, achievements=state.sync_achievements)
         created = entry is None
         if created:
             entry = GameEntry(user_id=state.user_id, work_id=work.id, revision=0, status='planning')
@@ -244,7 +246,7 @@ async def apply_games(db, state, library, selected, *, initial=False, add_apps=N
         priors = {game['app_id']: dict(checkpoints.get(game['app_id'], {})) for game in games}
         previous = (entry.status, entry.start_date, entry.finish_date, entry.total_seconds,
                     entry.achievement_mode, entry.achievement_count, entry.achievement_percentage, entry.score)
-        if initial:
+        if initial and created:
             # Several Steam apps can contribute to one canonical game. Prefer
             # its primary app's choice, then a stable app ID, regardless of sort.
             primary = (work.attributes or {}).get('steam_primary_app_id')
@@ -298,8 +300,11 @@ async def apply_games(db, state, library, selected, *, initial=False, add_apps=N
         if created or previous != current:
             entry.revision = (entry.revision or 0) + 1
             await db.flush()
-            if initial:await game_activity.record_import(db,entry,timezone_name=state.timezone or 'UTC')
-            else:
+            if initial and created:
+                await game_activity.record_import(db, entry, timezone_name=state.timezone or 'UTC')
+                if created_works is not None:
+                    created_works.add(work.id)
+            elif not initial:
                 after = await game_activity.snapshot(db, work, entry, achievements=state.sync_achievements)
                 # Late import enrichment establishes source counters; it is not
                 # newly earned progress, even when public game metadata is new.

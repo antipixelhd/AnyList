@@ -13,6 +13,7 @@ from core.catalogue_providers import ProviderError
 from core.config import settings
 from core.game_types import capabilities, canonical_game, igdb_game_class
 from models.catalogue import CatalogueEntity, CatalogueIdentity, MetadataSnapshot
+from models.games import GameEntry
 
 KIND='steam_progress_target'
 # Steam exposes this mode as an advertising app; IGDB represents the main
@@ -26,22 +27,62 @@ async def targets(db, apps):
         MetadataSnapshot.external_id.in_(apps),MetadataSnapshot.entity_id.is_not(None)))).all())
 
 
-async def import_states(db, games, *, settled=False):
+async def work_map(db, apps, *, direct=None, combined=None, public=None):
+    """Resolve the same exact Steam, component and IGDB references as import writes."""
+    if not apps:
+        return {}
+    if direct is None:
+        direct = dict((await db.execute(select(CatalogueIdentity.external_id, CatalogueIdentity.entity_id).where(
+            CatalogueIdentity.namespace == 'steam.app', CatalogueIdentity.external_id.in_(apps)))).all())
+    result = {**direct, **(await targets(db, apps) if combined is None else combined)}
+    missing = set(apps) - result.keys()
+    if not missing:
+        return result
+    from core.steam_sync import verified_import_native
+    if public is None:
+        public = await steam_cache.public_metadata(db, list(missing))
+    candidates = {app: native for app in missing
+                  if (native := verified_import_native(public.get(app, {}).get('igdb_classification')))}
+    if candidates:
+        natives = dict((await db.execute(select(CatalogueIdentity.external_id, CatalogueIdentity.entity_id).where(
+            CatalogueIdentity.namespace == 'igdb.game', CatalogueIdentity.external_id.in_(set(candidates.values()))))).all())
+        result.update({app: natives[native] for app, native in candidates.items() if native in natives})
+    return result
+
+
+async def listed_apps(db, user_id, apps, **mapping):
+    works = await work_map(db, apps, **mapping)
+    if not works:
+        return set()
+    listed = set(await db.scalars(select(GameEntry.work_id).where(
+        GameEntry.user_id == user_id, GameEntry.work_id.in_(set(works.values())))))
+    return {app for app, work_id in works.items() if work_id in listed}
+
+
+async def import_states(db, games, *, settled=False, user_id=None, public=None):
     """Batch indexed identities first; public evidence never contains viewer state."""
     from core.steam_sync import verified_import_native
     apps = [game['app_id'] for game in games]
+    if not apps:
+        return {}
     native = CatalogueIdentity.__table__.alias('native')
-    known = dict((await db.execute(select(CatalogueIdentity.external_id, native.c.external_id).join(
-        native, native.c.entity_id == CatalogueIdentity.entity_id).where(
+    identities = (await db.execute(select(CatalogueIdentity.external_id, CatalogueIdentity.entity_id, native.c.external_id).outerjoin(
+        native, (native.c.entity_id == CatalogueIdentity.entity_id) & (native.c.namespace == 'igdb.game')).where(
         CatalogueIdentity.namespace == 'steam.app', CatalogueIdentity.external_id.in_(apps),
-        native.c.namespace == 'igdb.game'))).all())
+    ))).all()
+    known = {app for app, _, native_id in identities if native_id is not None}
     combined = await targets(db, apps)
-    public = await steam_cache.public_metadata(db, apps)
+    if public is None:
+        public = await steam_cache.public_metadata(db, apps)
+    listed = await listed_apps(db, user_id, apps, direct={app: work for app, work, _ in identities},
+        combined=combined, public=public) if user_id is not None else set()
     result = {}
     for app in apps:
         evidence = public.get(app, {}).get('igdb_classification')
         if public.get(app, {}).get('steam_app_type') == 'software':
             result[app] = 'software'
+        elif app in listed:
+            result[app] = 'listed'
         elif app in known or app in combined:
             result[app] = 'ready'
         elif app in COMPONENTS:

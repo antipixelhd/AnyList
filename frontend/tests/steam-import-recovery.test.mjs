@@ -3,6 +3,7 @@ import test from 'node:test';
 import {readFileSync} from 'node:fs';
 import {stripTypeScriptTypes} from 'node:module';
 import {runInNewContext} from 'node:vm';
+import {steamReviewCandidate} from '../src/lib/steam-import.ts';
 
 test('Steam import can retry after both the import and recovery read fail', async () => {
   const source=readFileSync(new URL('../src/scripts/steam-settings.ts',import.meta.url),'utf8');
@@ -15,7 +16,7 @@ test('Steam import can retry after both the import and recovery read fail', asyn
     step:2,wishlist:[],active:{id:1,generation:1},importing:false,reviewEpoch:0,games:[{app_id:'20'}],
     draft:{start_dates:{}},reviewGames:[{app_id:'20'}],saveTimer:undefined,writes:Promise.resolve(),get,
     listen:(_node,_event,callback)=>{handler=callback;},payload:()=>({generation:1}),
-    steamSelected:()=>true,finishDate:()=>null,clearTimeout,
+    steamSelected:()=>true,steamReviewCandidate,selectedWishlist:()=>[],finishDate:()=>null,clearTimeout,
     request:async()=>{requests++;throw new Error('offline');},
     load:async()=>{throw new Error('recovery offline');},fail:()=>{failures++;},
     list:async()=>{},message:()=>{},closeDialog:()=>{},dialog:{},sessionStorage:{removeItem(){}},

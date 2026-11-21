@@ -4,34 +4,18 @@ from types import SimpleNamespace
 from sqlalchemy import select, or_
 
 from core import steam_cache, steam_targets, game_tracking
-from models.catalogue import CatalogueIdentity
+from core.steam_targets import work_map
 from models.games import GameEntry, GameChildState, GameFavorite
 
 
-async def present(db, games, *, settled=False):
+async def present(db, games, *, settled=False, user_id=None):
     if not games:
         return []
     metadata = await steam_cache.public_metadata(db, [game['app_id'] for game in games])
-    states = await steam_targets.import_states(db, games, settled=settled)
+    states = await steam_targets.import_states(db, games, settled=settled, user_id=user_id, public=metadata)
     return [{**game, **{key: value for key, value in metadata.get(game['app_id'], {}).items()
         if key in ('name', 'poster', 'release_date') and value is not None}, 'mapping_state': states[game['app_id']]}
-        for game in games if states[game['app_id']] != 'software']
-
-
-async def work_map(db, apps):
-    if not apps:
-        return {}
-    result = dict((await db.execute(select(CatalogueIdentity.external_id, CatalogueIdentity.entity_id).where(
-        CatalogueIdentity.namespace == 'steam.app', CatalogueIdentity.external_id.in_(apps)))).all())
-    result.update(await steam_targets.targets(db, apps))
-    # A newly purchased edition may not yet have a published Steam identity.
-    from core.steam_sync import verified_import_native
-    public = await steam_cache.public_metadata(db, list(apps))
-    candidates = {app: verified_import_native(row.get('igdb_classification')) for app, row in public.items() if app not in result}
-    natives = dict((await db.execute(select(CatalogueIdentity.external_id, CatalogueIdentity.entity_id).where(
-        CatalogueIdentity.namespace == 'igdb.game', CatalogueIdentity.external_id.in_([v for v in candidates.values() if v])))).all())
-    result.update({app: natives[native] for app, native in candidates.items() if native in natives})
-    return result
+        for game in games if states[game['app_id']] not in ('listed', 'software')]
 
 
 async def handoff_purchases(db, state, library):
@@ -94,6 +78,7 @@ async def apply(db, state, games, library, *, selected=None):
     additions = {app for app in additions if mapping.get(app) not in owned_works}
     existing = set(await db.scalars(select(GameEntry.work_id).where(GameEntry.user_id == state.user_id,
         GameEntry.work_id.in_(set(mapping.values())))))
+    additions = {app for app in additions if mapping.get(app) not in existing}
     scratch = SimpleNamespace(user_id=state.user_id, checkpoints={}, timezone=state.timezone,
         auto_add_games=False, sync_playtime=False, sync_achievements=False)
     if additions:
