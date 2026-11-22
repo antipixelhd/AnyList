@@ -8,10 +8,12 @@
 @media (max-width: 650px) {
   .media-detail:is([data-media-kind=movie],[data-media-kind=series]) .lab-overview-grid { gap: 22px; }
   .media-detail .mobile-screen-information {
+    --mobile-facts-height: 80px;
+    --mobile-airing-height: 24px;
     display: block;
     order: -1;
     min-inline-size: 0;
-    padding: 12px;
+    padding-inline: 12px;
     border-radius: var(--lab-radius);
     background: var(--panel);
   }
@@ -22,15 +24,16 @@
   .mobile-screen-facts-strip:not(:has(dl > div:not([hidden]))) { display: none; }
   .mobile-screen-information [data-screen-facts=airing] dd {
     margin: 0;
+    padding-block-start: 6px;
     color: var(--blue);
-    font: 600 14px/1.45 var(--font-body);
+    font: 600 14px/18px var(--font-body);
     overflow-wrap: anywhere;
   }
+  .mobile-screen-information:not(:has(.mobile-screen-facts dl > div:not([hidden]))) { padding-block-end: 6px; }
   .mobile-screen-facts-strip {
     display: flex;
     align-items: stretch;
     margin-inline: -12px;
-    margin-block-end: -6px;
   }
   .mobile-screen-facts {
     flex: 1;
@@ -42,30 +45,34 @@
   .mobile-screen-facts::-webkit-scrollbar { display: none; }
   .mobile-screen-fact-track {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     inline-size: max-content;
-    min-block-size: 62px;
+    min-block-size: var(--mobile-facts-height);
     gap: 16px;
-    padding: 9px 12px 10px;
+    padding: 14px 12px;
   }
-  .mobile-screen-facts dl { display: flex; flex: none; align-items: center; gap: 16px; }
+  .mobile-screen-information:has([data-screen-facts=airing] > div) .mobile-screen-fact-track {
+    min-block-size: calc(var(--mobile-facts-height) - var(--mobile-airing-height));
+    padding-block: 4px;
+  }
+  .mobile-screen-facts dl { display: flex; flex: none; align-items: flex-start; gap: 16px; }
   .mobile-screen-facts dl:not(:has(> div:not([hidden]))) { display: none; }
   .mobile-screen-facts dl > div {
     flex: none;
     inline-size: max-content;
-    max-inline-size: 160px;
   }
-  .mobile-screen-facts dt { color: var(--muted); font: 500 11px/1.3 var(--font-body); }
-  .mobile-screen-facts dd { margin: 3px 0 0; color: var(--bright); font: 500 13px/1.4 var(--font-body); overflow-wrap: anywhere; }
-  .mobile-screen-facts dl > div:has(.media-fact-entry:nth-child(4)) { max-inline-size: none; }
-  .mobile-screen-facts dd:has(> .media-fact-entry:nth-child(4)) {
+  .mobile-screen-facts dt { color: var(--muted); font: 500 11px/14px var(--font-body); }
+  .mobile-screen-facts dd { margin: 6px 0 0; color: var(--bright); font: 500 13px/16px var(--font-body); white-space: nowrap; }
+  .mobile-screen-facts dd:has(> .media-fact-entry),
+  .mobile-screen-source-links { display: flex; gap: 10px; }
+  .mobile-screen-facts :is([data-detail-fact=Network] dd:has(> .media-fact-entry:nth-child(5)),
+    [data-detail-fact]:not([data-detail-fact=Network]) dd:has(> .media-fact-entry:nth-child(3))) {
     display: grid;
-    grid-template-rows: repeat(3, auto);
+    grid-template-rows: repeat(2, auto);
     grid-auto-flow: column;
-    gap: 0 14px;
+    gap: 0 12px;
+    margin-block-start: 2px;
   }
-  .mobile-screen-facts .media-fact-entry { max-inline-size: 144px; }
-  .mobile-screen-source-links { display: flex; flex-wrap: wrap; gap: 4px 10px; }
   .mobile-screen-facts-next:not([hidden]) {
     display: grid;
     flex: 0 0 44px;
