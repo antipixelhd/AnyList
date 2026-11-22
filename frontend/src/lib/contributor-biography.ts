@@ -15,8 +15,17 @@ export function mountContributorBiography(root: HTMLElement, parentSignal: Abort
   signal.addEventListener('abort',()=>{parentSignal.removeEventListener('abort',dispose);if(mounts.get(root)===controller)mounts.delete(root);},{once:true});
   const shortened = !ellipsis.hidden;
   const reduced = matchMedia('(prefers-reduced-motion: reduce)');
+  const mobile = root.hasAttribute('data-mobile-screen-synopsis') ? matchMedia('(max-width: 650px)') : null;
   let animation: Animation | undefined;
   let expanded = initialExpanded;
+  if(mobile){
+    root.dataset.mobileSynopsisReady='';
+    const observer=new ResizeObserver(()=>{
+      if(!expanded&&mobile.matches)button.dataset.synopsisFits=String(text.scrollHeight<=text.clientHeight&&!shortened);
+    });
+    observer.observe(text);
+    signal.addEventListener('abort',()=>{observer.disconnect();delete root.dataset.mobileSynopsisReady;},{once:true});
+  }
   const settle = () => {
     animation?.cancel(); animation = undefined;
     rest.hidden = !expanded; ellipsis.hidden = expanded || !shortened;
@@ -34,7 +43,7 @@ export function mountContributorBiography(root: HTMLElement, parentSignal: Abort
     button.textContent = expanded ? 'Read less' : 'Read more';
     rest.hidden = !expanded; ellipsis.hidden = expanded || !shortened;
     const end = text.getBoundingClientRect().height;
-    if (reduced.matches || start === end) { settle(); return; }
+    if (mobile?.matches || reduced.matches || start === end) { settle(); return; }
     // Keep the full paragraph flowing in place while clipping its animated height.
     rest.hidden = false; ellipsis.hidden = true;
     text.style.overflow = 'hidden';

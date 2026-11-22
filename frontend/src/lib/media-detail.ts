@@ -43,6 +43,10 @@ export function mountMediaDetail() {
   const {signal} = pageListeners;
   document.addEventListener('astro:before-swap', () => {pageListeners?.abort();mountedRoot=null;}, {signal,once:true});
   seedEditorPage();
+  root.querySelectorAll('[data-mobile-screen-disclosure]').forEach(button=>button.addEventListener('click',()=>{
+    button.setAttribute('aria-expanded',String(button.getAttribute('aria-expanded')!=='true'));
+  },{signal}));
+  root.dataset.mobileDisclosuresReady='';
   const info = JSON.parse(root.querySelector('#media-detail-data')!.textContent!);
   const loadDlc=mountDetailDlc(root,info.id,signal);
   const loadAchievements=mountDetailAchievements(root,info.id,signal);
@@ -56,6 +60,8 @@ export function mountMediaDetail() {
         const field=node.dataset.detailScore!;
         if(!(field in data))return;
         const value=data[field];node.classList.remove('detail-value-skeleton');
+        const mobileScore=node.closest<HTMLElement>('[data-mobile-score]');
+        if(mobileScore)mobileScore.hidden=value==null||value===0;
         node.textContent=value==null||value===0?'—':field.startsWith('rt_')?`${Math.round(value)}%`:String(Number(value.toFixed(1)));
       });
       return data.score_status as DetailLoadState;

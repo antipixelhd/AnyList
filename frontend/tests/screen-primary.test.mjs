@@ -7,7 +7,7 @@ import test from 'node:test';
 test('late screen copy fills Information while preserving the mounted hero',()=>{
   const original={textContent:'',hidden:true},tagline={textContent:'',hidden:true};
   const children=[];
-  const list={children,get firstChild(){return children[0]||null;},insertBefore(node,anchor){
+  const list={children,dataset:{},get firstChild(){return children[0]||null;},insertBefore(node,anchor){
     const index=children.indexOf(anchor);children.splice(index<0?children.length:index,0,node);
   },removeAttribute(){}};
   const root={dataset:{mediaKind:'series'},querySelectorAll:()=>[list],querySelector:selector=>({

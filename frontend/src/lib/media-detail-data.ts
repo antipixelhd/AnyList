@@ -151,6 +151,17 @@ export function detailOrganizationFacts(media:DetailMedia) {
 }
 export type DetailInformationRow={label:string;value?:string;items?:{name:string;url?:string|null}[];pending?:boolean;
   airing?:{position:string;dateTime:string}};
+export type MobileFactGroup = 'airing' | 'glance' | 'more';
+
+export function mobileFactRows(rows: DetailInformationRow[], group: MobileFactGroup, kind: MediaKind) {
+  const priorities = kind === 'series' ? ['Status', 'Seasons', 'Episode runtime'] : ['Releases', 'Released', 'Runtime'];
+  if (group === 'airing') return rows.filter(row => row.airing);
+  if (group === 'glance') return priorities.flatMap(label => rows.filter(row => row.label === label && !row.airing));
+  const datedMovie = kind === 'movie' && rows.some(row => row.label === 'Released' && row.value);
+  return rows.filter(row => !row.airing && !priorities.includes(row.label)
+    && !(datedMovie && row.label === 'Status' && row.value === 'Released'));
+}
+
 /** Shared SSR/live order; absence becomes a skeleton only while acquisition is pending. */
 export function detailInformationRows(media:DetailMedia,pending=false,facts=detailFacts(media)):DetailInformationRow[] {
   const values=new Map<string,DetailInformationRow>(facts.map(row=>[row.label,row]));

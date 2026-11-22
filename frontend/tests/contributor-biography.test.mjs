@@ -42,7 +42,7 @@ function fixture(){
   const text={style:{removeProperty(){}},getBoundingClientRect:()=>({height:100})};
   const rest={hidden:true},ellipsis={hidden:false};let scrolls=0;
   const nodes={'[data-biography-toggle]':button,'[data-biography-text]':text,'[data-biography-rest]':rest,'[data-biography-ellipsis]':ellipsis};
-  const root={querySelector:key=>nodes[key],getBoundingClientRect:()=>({top:-1}),scrollIntoView(){scrolls++;}};
+  const root={querySelector:key=>nodes[key],hasAttribute:()=>false,getBoundingClientRect:()=>({top:-1}),scrollIntoView(){scrolls++;}};
   return {root,button,rest,ellipsis,scrolls:()=>scrolls};
 }
 

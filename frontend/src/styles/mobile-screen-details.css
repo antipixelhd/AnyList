@@ -1,0 +1,109 @@
+.mobile-screen-information,
+.media-detail button.mobile-screen-disclosure { display: none; }
+
+@media (min-width: 651px) {
+  .media-detail button[data-mobile-synopsis-only] { display: none; }
+}
+
+@media (max-width: 650px) {
+  .media-detail:is([data-media-kind=movie],[data-media-kind=series]) .lab-overview-grid { gap: 22px; }
+  .media-detail .mobile-screen-information {
+    display: block;
+    order: -1;
+    min-inline-size: 0;
+    padding: 12px;
+    border-radius: var(--lab-radius);
+    background: var(--panel);
+  }
+  .mobile-screen-information:not(:has(dl > div:not([hidden]), .detail-load-status:not([hidden]))) { display: none; }
+  .mobile-screen-information dl { margin: 0; }
+  .mobile-screen-information:has(.mobile-screen-facts dl > div:not([hidden])) [data-screen-facts=airing]:has(> div) { margin-block-end: 9px; }
+  .mobile-screen-information [data-screen-facts=airing]:not(:has(> div)),
+  .mobile-screen-information [data-screen-facts=airing] dt,
+  .mobile-screen-facts:not(:has(dl > div:not([hidden]))) { display: none; }
+  .mobile-screen-information [data-screen-facts=airing] dd {
+    margin: 0;
+    color: var(--blue);
+    font: 600 14px/1.45 var(--font-body);
+    overflow-wrap: anywhere;
+  }
+  .mobile-screen-facts {
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+    padding-block-end: 4px;
+  }
+  .mobile-screen-facts dl { display: flex; flex: none; gap: 16px; }
+  .mobile-screen-facts dl:not(:has(> div:not([hidden]))) { display: none; }
+  .mobile-screen-facts dl > div {
+    flex: none;
+    min-inline-size: max-content;
+    scroll-snap-align: start;
+  }
+  .mobile-screen-facts dt { color: var(--muted); font: 500 11px/1.3 var(--font-body); }
+  .mobile-screen-facts dd { margin: 3px 0 0; color: var(--bright); font: 500 13px/1.4 var(--font-body); }
+  .mobile-screen-facts .media-fact-entry, .mobile-screen-source-links a { display: inline; }
+  .mobile-screen-facts .media-fact-entry + .media-fact-entry::before { content: ', '; }
+  .mobile-screen-source-links { display: flex; gap: 10px; }
+
+  .media-detail:is([data-media-kind=movie],[data-media-kind=series]) {
+    .lab-public-score:not(:has([data-detail-score-status]:not([hidden]))) { display: none; }
+    .lab-public-score > :not([data-detail-score-status]) { display: none; }
+    .lab-people-preview > .lab-section-title { justify-content: flex-start; gap: 14px; }
+    .lab-people-preview .media-cast-toggle { display: none; }
+    .lab-people-preview [data-detail-open-tab] { min-block-size: 44px; }
+    [data-credit-preview] {
+      display: grid;
+      grid-template-columns: none;
+      grid-template-rows: repeat(2, auto);
+      grid-auto-columns: clamp(132px, 45%, 195px);
+      grid-auto-flow: column;
+      gap: 8px;
+      padding-block-end: 4px;
+    }
+    [data-credit-preview]:not(:has(> :nth-child(3))) { grid-template-rows: auto; }
+    [data-credit-preview] > * { min-inline-size: 0; scroll-snap-align: start; }
+    [data-credit-preview] .lab-person { display: flex; align-items: center; gap: 8px; }
+    [data-credit-preview] :is(.media-person-art,.lab-person-initials) { flex: 0 0 40px; }
+    [data-credit-preview] :is(img,.lab-person-initials) { width: 40px; height: 58px; }
+    [data-detail-similar-grid] {
+      display: grid;
+      grid-template-columns: none;
+      grid-auto-columns: clamp(92px, 28%, 138px);
+      grid-auto-flow: column;
+      padding-block-end: 4px;
+    }
+    [data-detail-similar-grid] > * { min-inline-size: 0; scroll-snap-align: start; }
+    .lab-friends { order: 7; }
+    &[data-mobile-disclosures-ready] .mobile-screen-disclosure {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-block-size: 44px;
+      color: var(--text);
+    }
+    &[data-mobile-disclosures-ready] :is(.lab-friends,.lab-note):has(.mobile-screen-disclosure) .lab-section-title,
+    &[data-mobile-disclosures-ready] :is(.lab-friends,.lab-note):has(.mobile-screen-disclosure[aria-expanded=false]) > :not(.mobile-screen-disclosure) { display: none; }
+    .lab-note:has(.mobile-screen-disclosure) { padding-block: 4px; }
+    .mobile-screen-disclosure[aria-expanded=true] > .ui-icon { transform: rotate(90deg); }
+    [data-mobile-synopsis-ready]:has([data-biography-toggle][aria-expanded=false]) [data-biography-text] {
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 4;
+      overflow: hidden;
+    }
+    [data-mobile-synopsis-ready] [data-synopsis-fits=true] { display: none; }
+  }
+
+  :is(.mobile-screen-facts,.media-detail:is([data-media-kind=movie],[data-media-kind=series]) :is([data-credit-preview],[data-detail-similar-grid])) {
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scroll-snap-type: inline proximity;
+    scrollbar-width: thin;
+    scrollbar-color: var(--muted) transparent;
+  }
+  :is(.mobile-screen-facts,.media-detail :is([data-credit-preview],[data-detail-similar-grid])):focus-visible {
+    outline: none;
+    background: color-mix(in srgb, var(--panel), var(--blue) 8%);
+  }
+}

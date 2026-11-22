@@ -1,4 +1,4 @@
-import {detailBrowseHref,detailInformationRows,detailSynopsis,prepareDetail,type DetailInformationRow} from './media-detail-data';
+import {detailBrowseHref,detailInformationRows,detailSynopsis,mobileFactRows,prepareDetail,type DetailInformationRow,type MobileFactGroup} from './media-detail-data';
 import {mountContributorBiography,unmountContributorBiography} from './contributor-biography';
 import {type DetailLoadState} from './detail-background';
 import {episodeCountdownLabel} from './episode-countdown';
@@ -46,9 +46,11 @@ export function publishScreenPrimary(root:HTMLElement,data:Record<string,any>,id
     node.append(term,value);return node;
   };
   root.querySelectorAll<HTMLElement>('[data-screen-facts]').forEach(list=>{
+    const group=list.dataset.screenFacts as MobileFactGroup|'';
+    const listRows=group?mobileFactRows(rows,group,title.type):rows;
     const previous=new Map([...list.children].map(node=>[(node as HTMLElement).dataset.detailFact,node as HTMLElement]));
     let anchor:ChildNode|null=list.firstChild;
-    for(const row of rows){
+    for(const row of listRows){
       let node=previous.get(row.label);previous.delete(row.label);
       // A retry cannot blank an already usable fact.
       if(!node||!(row.pending&&node.dataset.factPending!=='true')&&node.dataset.factSignature!==JSON.stringify(row)){
@@ -76,7 +78,12 @@ export function publishScreenPrimary(root:HTMLElement,data:Record<string,any>,id
       rest.dataset.biographyRest='';rest.textContent=copy.rest;rest.hidden=true;text.append(ellipsis,rest);
       text.classList.remove('detail-synopsis-skeleton');text.removeAttribute('aria-busy');
       synopsis.querySelector('[data-biography-toggle]')?.remove();
-      if(copy.expandable){const button=document.createElement('button');button.type='button';button.className='lab-text-button';button.dataset.biographyToggle='';button.textContent='Read more';button.setAttribute('aria-expanded','false');button.setAttribute('aria-controls','detail-synopsis');synopsis.append(button);mountContributorBiography(synopsis,signal);}
+      if(copy.expandable||copy.lead){
+        const button=document.createElement('button');button.type='button';button.className='lab-text-button';button.dataset.biographyToggle='';
+        if(!copy.expandable)button.dataset.mobileSynopsisOnly='';
+        button.textContent='Read more';button.setAttribute('aria-expanded','false');button.setAttribute('aria-controls','detail-synopsis');
+        synopsis.append(button);mountContributorBiography(synopsis,signal);
+      }
       synopsis.dataset.screenSynopsisReady=String(!!title.overview);
     }
   }

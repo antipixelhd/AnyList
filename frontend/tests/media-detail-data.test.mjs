@@ -8,8 +8,25 @@ import {countryLabel} from '../src/lib/stats-overview-data.ts';
 import {episodeCountdownLabel} from '../src/lib/episode-countdown.ts';
 const source=readFileSync(new URL('../src/lib/media-detail-data.ts',import.meta.url),'utf8');
 const context={Intl,Date,URLSearchParams,countryLabel,formatDate,localToday};
-runInNewContext(stripTypeScriptTypes(source.replace(/^import .*$/gm,'').replace(/export /g,''))+';globalThis.api={localMediaId,prepareDetail,detailCredits,detailCreditEpisodes,detailCreditText,detailCreditDescription,detailOrganizationFacts,detailInformationRows,durationLabel,detailDate,detailSynopsis,progressTotal,detailFacts,relationLabel,moneyLabel,detailWorkCaption,detailCastPresentation,detailBrowseHref,detailCreators};',context);
+runInNewContext(stripTypeScriptTypes(source.replace(/^import .*$/gm,'').replace(/export /g,''))+';globalThis.api={localMediaId,prepareDetail,detailCredits,detailCreditEpisodes,detailCreditText,detailCreditDescription,detailOrganizationFacts,detailInformationRows,mobileFactRows,durationLabel,detailDate,detailSynopsis,progressTotal,detailFacts,relationLabel,moneyLabel,detailWorkCaption,detailCastPresentation,detailBrowseHref,detailCreators};',context);
 const {api}=context;
+
+test('mobile facts prioritize useful fields without duplicating the release status',()=>{
+  const rowsFor=(input)=>api.detailInformationRows(api.prepareDetail(input));
+  const series=rowsFor({type:'series',release_status:'Returning Series',series_airing:{season_number:3,episode_number:4},
+    season_count:3,episode_runtime:51,episode_count:21,original_language:'en',release_date:'2021-09-03'});
+  const movie=rowsFor({type:'movie',release_status:'Released',runtime:120,release_date:'2021-09-03',countries:['US']});
+  for(const [kind,rows,labels] of [['series',series,['Seasons','Episode runtime']],['movie',movie,['Released','Runtime']]]){
+    assert.deepEqual(Array.from(api.mobileFactRows(rows,'glance',kind),row=>row.label),labels);
+    const merged=['airing','glance','more'].flatMap(group=>Array.from(api.mobileFactRows(rows,group,kind)));
+    const expected=kind==='movie'?rows.filter(row=>row.label!=='Status'):rows;
+    assert.deepEqual(new Set(merged),new Set(expected));
+    assert.equal(merged.length,expected.length);
+  }
+  assert.equal(api.mobileFactRows(series,'airing','series')[0].airing.position,'S3E4');
+  const upcoming=rowsFor({type:'movie',release_status:'Post Production',release_date:'2099-09-03'});
+  assert.equal(api.mobileFactRows(upcoming,'more','movie').find(row=>row.label==='Status').value,'Post Production');
+});
 
 test('first and later airing seasons show the same status and the known episode position',()=>{
   const status=(data)=>api.detailInformationRows(api.prepareDetail({type:'series',...data})).find(row=>row.label==='Status');
