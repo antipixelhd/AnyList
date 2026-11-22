@@ -17,34 +17,66 @@
   }
   .mobile-screen-information:not(:has(dl > div:not([hidden]), .detail-load-status:not([hidden]))) { display: none; }
   .mobile-screen-information dl { margin: 0; }
-  .mobile-screen-information:has(.mobile-screen-facts dl > div:not([hidden])) [data-screen-facts=airing]:has(> div) { margin-block-end: 9px; }
   .mobile-screen-information [data-screen-facts=airing]:not(:has(> div)),
   .mobile-screen-information [data-screen-facts=airing] dt,
-  .mobile-screen-facts:not(:has(dl > div:not([hidden]))) { display: none; }
+  .mobile-screen-facts-strip:not(:has(dl > div:not([hidden]))) { display: none; }
   .mobile-screen-information [data-screen-facts=airing] dd {
     margin: 0;
     color: var(--blue);
     font: 600 14px/1.45 var(--font-body);
     overflow-wrap: anywhere;
   }
-  .mobile-screen-facts {
+  .mobile-screen-facts-strip {
     display: flex;
-    align-items: flex-start;
-    gap: 16px;
-    padding-block-end: 4px;
+    align-items: stretch;
+    margin-inline: -12px;
+    margin-block-end: -6px;
   }
-  .mobile-screen-facts dl { display: flex; flex: none; gap: 16px; }
+  .mobile-screen-facts {
+    flex: 1;
+    min-inline-size: 0;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: none;
+  }
+  .mobile-screen-facts::-webkit-scrollbar { display: none; }
+  .mobile-screen-fact-track {
+    display: flex;
+    align-items: center;
+    inline-size: max-content;
+    min-block-size: 62px;
+    gap: 16px;
+    padding: 9px 12px 10px;
+  }
+  .mobile-screen-facts dl { display: flex; flex: none; align-items: center; gap: 16px; }
   .mobile-screen-facts dl:not(:has(> div:not([hidden]))) { display: none; }
   .mobile-screen-facts dl > div {
     flex: none;
-    min-inline-size: max-content;
-    scroll-snap-align: start;
+    inline-size: max-content;
+    max-inline-size: 160px;
   }
   .mobile-screen-facts dt { color: var(--muted); font: 500 11px/1.3 var(--font-body); }
-  .mobile-screen-facts dd { margin: 3px 0 0; color: var(--bright); font: 500 13px/1.4 var(--font-body); }
-  .mobile-screen-facts .media-fact-entry, .mobile-screen-source-links a { display: inline; }
-  .mobile-screen-facts .media-fact-entry + .media-fact-entry::before { content: ', '; }
-  .mobile-screen-source-links { display: flex; gap: 10px; }
+  .mobile-screen-facts dd { margin: 3px 0 0; color: var(--bright); font: 500 13px/1.4 var(--font-body); overflow-wrap: anywhere; }
+  .mobile-screen-facts dl > div:has(.media-fact-entry:nth-child(4)) { max-inline-size: none; }
+  .mobile-screen-facts dd:has(> .media-fact-entry:nth-child(4)) {
+    display: grid;
+    grid-template-rows: repeat(3, auto);
+    grid-auto-flow: column;
+    gap: 0 14px;
+  }
+  .mobile-screen-facts .media-fact-entry { max-inline-size: 144px; }
+  .mobile-screen-source-links { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+  .mobile-screen-facts-next:not([hidden]) {
+    display: grid;
+    flex: 0 0 44px;
+    place-items: center;
+    min-block-size: 44px;
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+  }
+  .mobile-screen-facts-next:is(:focus-visible,:active) { outline: none; color: var(--blue); }
+  .mobile-screen-facts-next[data-at-end=true] .ui-icon { transform: rotate(180deg); }
 
   .media-detail:is([data-media-kind=movie],[data-media-kind=series]) {
     .lab-public-score:not(:has([data-detail-score-status]:not([hidden]))) { display: none; }
@@ -95,7 +127,7 @@
     [data-mobile-synopsis-ready] [data-synopsis-fits=true] { display: none; }
   }
 
-  :is(.mobile-screen-facts,.media-detail:is([data-media-kind=movie],[data-media-kind=series]) :is([data-credit-preview],[data-detail-similar-grid])) {
+  .media-detail:is([data-media-kind=movie],[data-media-kind=series]) :is([data-credit-preview],[data-detail-similar-grid]) {
     overflow-x: auto;
     overscroll-behavior-inline: contain;
     scroll-snap-type: inline proximity;

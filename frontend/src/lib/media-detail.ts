@@ -31,6 +31,34 @@ import {mountSeriesSeasons} from './series-seasons';
 
 let pageListeners: AbortController | undefined;
 let mountedRoot: HTMLElement | null = null;
+
+function mountMobileFacts(root: HTMLElement, signal: AbortSignal) {
+  const strip = root.querySelector<HTMLElement>('.mobile-screen-facts-strip');
+  const viewport = strip?.querySelector<HTMLElement>('.mobile-screen-facts');
+  const track = strip?.querySelector<HTMLElement>('.mobile-screen-fact-track');
+  const next = strip?.querySelector<HTMLButtonElement>('[data-mobile-facts-next]');
+  if (!strip || !viewport || !track || !next) return;
+
+  const update = () => {
+    const fits = !strip.clientWidth || track.offsetWidth <= strip.clientWidth;
+    if (next.hidden !== fits) next.hidden = fits;
+    const atEnd = viewport.scrollLeft >= viewport.scrollWidth - viewport.clientWidth - 1;
+    if (next.dataset.atEnd === String(atEnd)) return;
+    next.dataset.atEnd = String(atEnd);
+    next.setAttribute('aria-label', atEnd ? 'Return to the first title facts' : 'Show more title facts');
+  };
+  viewport.addEventListener('scroll', update, {passive:true,signal});
+  next.addEventListener('click', () => {
+    if (next.dataset.atEnd === 'true') viewport.scrollTo({left:0});
+    else viewport.scrollBy({left:viewport.clientWidth - 28});
+  }, {signal});
+  const observer = new ResizeObserver(update);
+  observer.observe(strip);
+  observer.observe(track);
+  signal.addEventListener('abort', () => observer.disconnect(), {once:true});
+  update();
+}
+
 export function mountMediaDetail() {
   const root = document.querySelector<HTMLElement>('[data-media-detail]');
   // The initial module and Astro's page-load event can both arrive for the
@@ -43,6 +71,7 @@ export function mountMediaDetail() {
   const {signal} = pageListeners;
   document.addEventListener('astro:before-swap', () => {pageListeners?.abort();mountedRoot=null;}, {signal,once:true});
   seedEditorPage();
+  mountMobileFacts(root,signal);
   root.querySelectorAll('[data-mobile-screen-disclosure]').forEach(button=>button.addEventListener('click',()=>{
     button.setAttribute('aria-expanded',String(button.getAttribute('aria-expanded')!=='true'));
   },{signal}));

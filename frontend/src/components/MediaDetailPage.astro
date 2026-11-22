@@ -132,12 +132,17 @@ const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
               {gameTitle&&<MediaDetailGameMetadata status={title.game_metadata_status}/>}
               {screenTitle&&<section class="mobile-screen-information lab-module" aria-label="Information">
                 <MediaDetailFacts facts={facts} title={title} pending={screenPrimaryPending} group="airing"/>
-                <div class="mobile-screen-facts" tabindex="0" role="region" aria-label="Title facts and scores">
-                  <MediaDetailFacts facts={facts} title={title} pending={screenPrimaryPending} group="glance"/>
-                  {glanceRating&&<dl><div data-mobile-score hidden={glanceRating.value==null}><dt>{glanceRating.name}</dt><dd data-detail-score={glanceRating.field}>{glanceRating.value}</dd></div></dl>}
-                  <MediaDetailFacts facts={facts} title={title} pending={screenPrimaryPending} group="more"/>
-                  {ratings.length>1&&<dl>{ratings.filter(row=>row!==glanceRating).map(row=><div data-mobile-score hidden={row.value==null}><dt>{row.name}</dt><dd data-detail-score={row.field}>{row.value}</dd></div>)}</dl>}
-                  {!!sources.length&&<dl><div><dt>Sources</dt><dd class="mobile-screen-source-links">{sources.map(source=><a href={source.url} target="_blank" rel="noreferrer">{source.name}</a>)}</dd></div></dl>}
+                <div class="mobile-screen-facts-strip">
+                  <div id="mobile-title-facts" class="mobile-screen-facts" tabindex="0" role="region" aria-label="Title facts and scores">
+                    <div class="mobile-screen-fact-track">
+                    <MediaDetailFacts facts={facts} title={title} pending={screenPrimaryPending} group="glance"/>
+                    {glanceRating&&<dl><div data-mobile-score hidden={glanceRating.value==null}><dt>{glanceRating.name}</dt><dd data-detail-score={glanceRating.field}>{glanceRating.value}</dd></div></dl>}
+                    <MediaDetailFacts facts={facts} title={title} pending={screenPrimaryPending} group="more"/>
+                    {ratings.length>1&&<dl>{ratings.filter(row=>row!==glanceRating).map(row=><div data-mobile-score hidden={row.value==null}><dt>{row.name}</dt><dd data-detail-score={row.field}>{row.value}</dd></div>)}</dl>}
+                    {!!sources.length&&<dl><div><dt>Sources</dt><dd class="mobile-screen-source-links">{sources.map(source=><a href={source.url} target="_blank" rel="noreferrer">{source.name}</a>)}</dd></div></dl>}
+                    </div>
+                  </div>
+                  <button type="button" class="mobile-screen-facts-next" data-mobile-facts-next aria-controls="mobile-title-facts" aria-label="Show more title facts" hidden><Icon name="chevron-right"/></button>
                 </div>
                 <p class="detail-load-status" data-detail-people-status hidden></p>
               </section>}
