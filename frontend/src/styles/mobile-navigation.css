@@ -13,14 +13,21 @@
   @starting-style { .mobile-navigation-panel:popover-open { opacity: 0; transform: translateY(4px) scale(.99); } }
   .mobile-navigation-panel::backdrop { background: transparent; }
   .mobile-navigation-grid { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 2px; margin: 0; font-weight: 500; }
-  .mobile-navigation-grid > :is(a,button), .mobile-navigation-signout > button { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 9px; min-height: 76px; min-width: 0; width: 100%; padding: 8px 2px; border: 0; background: transparent; color: inherit; font-family: var(--font-navigation); font-size: 12px; font-weight: 500; line-height: 1.3; text-align: center; text-decoration: none; cursor: pointer; transition: color .1s ease; }
+  .mobile-floating-navigation:not(.mobile-navigation-extended) .mobile-navigation-grid { grid-template-rows: repeat(3, minmax(76px, 1fr)); }
+  .mobile-navigation-grid > :is(a,button), .mobile-navigation-signout > button { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 9px; min-height: 76px; min-width: 0; width: 100%; padding: 4px 2px; border: 0; background: transparent; color: inherit; font-family: var(--font-navigation); font-size: 12px; font-weight: 500; line-height: 1.3; text-align: center; text-decoration: none; cursor: pointer; transition: color .1s ease; }
   .mobile-navigation-signout { display: flex; margin: 0; }
   .mobile-navigation-close { grid-column: 3; }
+  .mobile-floating-navigation:not(.mobile-navigation-extended) :is([data-mobile-back], .mobile-navigation-close) { grid-row: 3; }
+  .mobile-navigation-grid [data-mobile-back] { grid-column: 2; }
   .mobile-navigation-panel .ui-icon { display: inline-grid; place-items: center; line-height: 1; font-size: 26px; }
   .mobile-navigation-panel .ui-icon-svg { width: 1em; height: 1em; fill: currentColor; }
   .mobile-navigation-icon { position: relative; display: inline-grid; }
-  .mobile-navigation-panel :is(a,button):is(:hover,:active), .mobile-navigation-panel [aria-current] { color: var(--blue, #3db4f2); }
-  .mobile-floating-navigation :is(a,button):focus-visible { outline: 2px solid var(--blue, #3db4f2); outline-offset: -2px; color: var(--blue, #3db4f2); }
+  .mobile-navigation-panel :is(a,button):active { color: var(--blue, #3db4f2); }
+  @media (hover: hover) {
+    .mobile-navigation-panel :is(a,button):hover { color: var(--blue, #3db4f2); }
+  }
+  .mobile-floating-navigation :is(a,button):focus-visible { outline: none; color: var(--blue, #3db4f2); }
+  .mobile-navigation-trigger:focus-visible { background: #23364a; }
   .mobile-navigation-badge { position: absolute; right: -10px; top: -5px; min-width: 15px; padding: 1px 3px; border-radius: 8px; background: #42647f; color: #e6edf6; font: 10px/1.3 var(--font-body); }
   .mobile-navigation-attention { top: auto; bottom: -4px; background: var(--alert, #e85d7d); }
   .mobile-navigation-indicator { position: absolute; top: 6px; right: 6px; width: 6px; height: 6px; border-radius: 50%; background: var(--blue, #3db4f2); }

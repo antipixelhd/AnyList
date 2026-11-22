@@ -51,16 +51,20 @@ const panelId = extended ? 'dev-navigation-panel' : 'mobile-navigation-panel';
     listeners = new AbortController();
     const {signal} = listeners;
     const mobile = matchMedia('(max-width: 1040px)');
+    const focusFirstItem = () => panel.querySelector<HTMLElement>('[data-mobile-view]:not([hidden]) :is(a,button):not([hidden])')?.focus({preventScroll: true});
     const view = (id: string, focus = true) => {
       panel.querySelectorAll<HTMLElement>('[data-mobile-view]').forEach(element => {element.hidden = element.dataset.mobileView !== id;});
-      if (focus) panel.querySelector<HTMLElement>('[data-mobile-view]:not([hidden]) :is(a,button):not([hidden])')?.focus({preventScroll: true});
+      if (focus) focusFirstItem();
     };
+    panel.addEventListener('beforetoggle', event => {
+      // Keep the current grid visible throughout the popover's exit transition.
+      if (event.newState === 'open') view('main', false);
+    }, {signal});
     panel.addEventListener('toggle', () => {
       const open = panel.matches(':popover-open');
       trigger.setAttribute('aria-expanded', String(open));
       trigger.setAttribute('aria-label', open ? 'Close navigation' : 'Open navigation');
-      if (open && document.activeElement === trigger) view('main');
-      if (!open) view('main', false);
+      if (open && document.activeElement === trigger) focusFirstItem();
     }, {signal});
     panel.addEventListener('click', event => {
       const control = (event.target as Element).closest<HTMLElement>('a,button');
@@ -93,7 +97,7 @@ const panelId = extended ? 'dev-navigation-panel' : 'mobile-navigation-panel';
         'games-sublist':!prefs.show_games,
       };
       for(const [id,value] of Object.entries(hidden)){const item=root.querySelector<HTMLElement>(`[data-mobile-item="${id}"]`);if(item)item.hidden=value;}
-      view('main',panel.matches(':popover-open'));
+      if (panel.matches(':popover-open')) view('main');
     };
     document.addEventListener('anylist:combine-lists-changed',event=>updateDomains({combine_lists:(event as CustomEvent).detail.combineLists}),{signal});
     document.addEventListener('anylist:media-domains-changed',event=>updateDomains((event as CustomEvent).detail),{signal});
