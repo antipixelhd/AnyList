@@ -2,17 +2,30 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {watchAchievementCatalogue} from '../src/lib/game-achievement-catalogue.ts';
 
-function fixture(fetcher){
+function fixture(fetcher,options){
   const original={fetch:globalThis.fetch,setTimeout:globalThis.setTimeout,clearTimeout:globalThis.clearTimeout};
   const timers=[],applied=[],controller=new AbortController();
   globalThis.fetch=fetcher;
   globalThis.setTimeout=(callback,ms)=>{const timer={callback,ms};timers.push(timer);return timer;};
   globalThis.clearTimeout=timer=>{const index=timers.indexOf(timer);if(index>=0)timers.splice(index,1);};
   const events=new EventTarget();
-  watchAchievementCatalogue(7,controller.signal,data=>applied.push(data),events);
+  watchAchievementCatalogue(7,controller.signal,data=>applied.push(data),events,options);
   const settle=()=>new Promise(setImmediate);
   return {applied,timers,controller,settle,primary(id=7){events.dispatchEvent(new CustomEvent('anylist:game-primary',{detail:{type:'game',id}}));},async tick(){timers.shift()?.callback();await settle();},cleanup(){controller.abort();Object.assign(globalThis,original);}};
 }
+
+test('only the detail catalogue request opts into the related Steam catalogue',async()=>{
+  for(const includeStore of [false,true]){
+    const f=fixture(async url=>{
+      const query=new URL(url,'https://example.test').searchParams;
+      return Response.json({catalogue:{work_id:7,includeStore:query.has('include_store')},status:{pending:false}});
+    },{includeStore});
+    try{
+      await f.settle();
+      assert.equal(f.applied[0].includeStore,includeStore);
+    }finally{f.cleanup();}
+  }
+});
 
 test('catalogue capabilities arrive independently while the personal draft stays owned by the editor',async()=>{
   let calls=0;

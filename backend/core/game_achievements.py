@@ -9,7 +9,7 @@ from core.config import settings
 from core.game_achievement_source import GameAchievementSource
 from core.game_edition_sources import steam_store
 from core.game_imdb_enrichment import now,request as admit,status as job_status
-from core.game_ratings import GameRatings,run_scheduler
+from core.game_ratings import GameRatings,app_id,run_scheduler
 from core.game_tracking import achievement_metadata
 from core.game_types import capabilities
 from core.steam_cache import PUBLIC_KIND
@@ -20,8 +20,13 @@ JOB='game_achievement_job'
 PREFIX='game_achievement_'
 
 
-async def view(db,work,*,enqueue=False):
-    owner,app=await steam_store(db,work) if capabilities(work.attributes).independent else (work,None)
+async def view(db,work,*,enqueue=False,include_store=False):
+    owner,app=work,None
+    if capabilities(work.attributes).independent:
+        if include_store:
+            owner,app=await steam_store(db,work)
+        else:
+            app=await app_id(db,work)
     availability,total,definitions=achievement_metadata(owner)
     previous=(owner.attributes or {}).get('achievement_catalogue') or {}
     valid=bool(app and (not previous.get('steam_app_id') or previous['steam_app_id']==app))

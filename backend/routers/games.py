@@ -662,13 +662,16 @@ async def set_favorite(work_id: WorkId, body: FavoritePatch, db: DB, viewer: Wri
 @reader
 async def achievement_page(work_id: WorkId, db: DB, viewer: Reader,
                             offset: Annotated[int, Query(ge=0)] = 0,
-                            limit: Annotated[int, Query(ge=1, le=200)] = 50) -> AchievementPage:
+                            limit: Annotated[int, Query(ge=1, le=200)] = 50,
+                            include_store: bool = False) -> AchievementPage:
     work=await tracking.work(db, work_id)
     from core.game_edition_sources import steam_store
-    owner,app=await steam_store(db,work)
+    from core.game_ratings import app_id
+    owner,app=await steam_store(db,work) if include_store else (work,await app_id(db,work))
     query = select(GameAchievement, GameAchievementUnlock.achievement_id).outerjoin(
         GameAchievementUnlock, (GameAchievementUnlock.achievement_id == GameAchievement.id)
-        & (GameAchievementUnlock.user_id == viewer.id)).where(GameAchievement.work_id == owner.id,
+        & (GameAchievementUnlock.user_id == viewer.id)
+        & (GameAchievementUnlock.work_id == work.id)).where(GameAchievement.work_id == owner.id,
             GameAchievement.active.is_(True),GameAchievement.app_id==app)
     total = await db.scalar(select(func.count()).select_from(GameAchievement).where(GameAchievement.work_id==owner.id,
         GameAchievement.active.is_(True),GameAchievement.app_id==app))
@@ -681,9 +684,9 @@ async def achievement_page(work_id: WorkId, db: DB, viewer: Reader,
 
 @router.get('/works/{work_id}/achievement-catalogue')
 @reader
-async def achievement_catalogue(work_id:WorkId,db:DB,viewer:Reader) -> dict:
+async def achievement_catalogue(work_id:WorkId,db:DB,viewer:Reader,include_store:bool=False) -> dict:
     from core.game_achievements import view
-    result=await view(db,await tracking.work(db,work_id),enqueue=True)
+    result=await view(db,await tracking.work(db,work_id),enqueue=True,include_store=include_store)
     await db.commit()
     return result
 

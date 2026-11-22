@@ -54,7 +54,8 @@ export function mountDetailAchievements(root:HTMLElement,id:number,signal:AbortS
     if(signal.aborted||busy||!visible())return;
     busy=true;more.disabled=true;request=new AbortController();const active=generation,reset=needsReset;paintStatus();
     try{
-      const response=await fetch(`/api/proxy/tracking/games/works/${id}/achievements?offset=${reset?0:offset}&limit=50`,{signal:request.signal,cache:'no-store'});
+      const query=new URLSearchParams({offset:String(reset?0:offset),limit:'50',include_store:'true'});
+      const response=await fetch(`/api/proxy/tracking/games/works/${id}/achievements?${query}`,{signal:request.signal,cache:'no-store'});
       if(!response.ok)throw new Error('Achievements are temporarily unavailable.');
       const page=await response.json();if(signal.aborted||active!==generation)return;
       if(reset){rows.replaceChildren();definitions.clear();offset=0;needsReset=false;}
@@ -79,7 +80,7 @@ export function mountDetailAchievements(root:HTMLElement,id:number,signal:AbortS
     }
     paintStatus();
     paint();if(visible()&&!loaded)void load();
-  },root);
+  },root,{includeStore:true});
   more.addEventListener('click',()=>void load(),{signal});
   document.addEventListener('anylist:editor-state',event=>{
     const next=(event as CustomEvent<EditorTitle>).detail;if(next.type!=='game'||next.id!==id)return;

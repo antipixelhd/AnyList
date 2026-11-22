@@ -2,7 +2,8 @@ export type AchievementCatalogue={work_id:number;total:number|null;availability:
 
 /** Upgrade optional capabilities without replacing personal state or drafts. */
 export function watchAchievementCatalogue(id:number,signal:AbortSignal,apply:(data:AchievementCatalogue,status?:{pending?:boolean;error?:string;state?:string})=>void,
-  primaryEvents:EventTarget|undefined=typeof document==='undefined'?undefined:document){
+  primaryEvents:EventTarget|undefined=typeof document==='undefined'?undefined:document,{includeStore=false}={}){
+  const query=includeStore?`?${new URLSearchParams({include_store:'true'})}`:'';
   let timer:ReturnType<typeof setTimeout>|undefined,failures=0,running=false,refreshQueued=false,denied=false;
   const schedule=(seconds:number)=>{
     clearTimeout(timer);
@@ -13,7 +14,7 @@ export function watchAchievementCatalogue(id:number,signal:AbortSignal,apply:(da
     if(running){refreshQueued=true;return;}
     clearTimeout(timer);timer=undefined;running=true;
     try{
-      const response=await fetch(`/api/proxy/tracking/games/works/${id}/achievement-catalogue`,{
+      const response=await fetch(`/api/proxy/tracking/games/works/${id}/achievement-catalogue${query}`,{
         signal:AbortSignal.any([signal,AbortSignal.timeout(30_000)]),cache:'no-store'});
       if(signal.aborted)return;
       if(response.status===401||response.status===403){denied=true;return;}

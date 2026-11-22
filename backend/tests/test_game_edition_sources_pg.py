@@ -13,7 +13,7 @@ from core.game_imdb_enrichment import now
 from core.game_time_to_beat import GameTimeToBeat, JOB as ESTIMATE_JOB, snapshot
 from core.steam_targets import work_map
 from models.catalogue import CatalogueEntity, CatalogueIdentity, MetadataSnapshot, SteamPriceSnapshot
-from models.games import GameAchievement
+from models.games import GameAchievement, GameAchievementUnlock, GameEntry
 
 
 APP = '3240220'
@@ -104,14 +104,22 @@ class EditionSourceTests(unittest.IsolatedAsyncioTestCase):
             }}, 'steam')
             db.add(SteamPriceSnapshot(work_id=owner_id, steam_app_id=APP, country='DE', payload={},
                                      current={'currency': 'EUR', 'amountInt': 2999}, url=STORE_URL))
-            db.add(GameAchievement(work_id=owner_id, app_id=APP, api_name='WIN', name='Win', active=True))
+            achievement = GameAchievement(work_id=owner_id, app_id=APP, api_name='WIN', name='Win', active=True)
+            db.add_all([achievement, GameEntry(user_id=self.viewer.id, work_id=owner_id, status='playing')])
+            await db.flush()
+            db.add(GameAchievementUnlock(user_id=self.viewer.id, work_id=owner_id, achievement_id=achievement.id))
             await db.commit()
 
         self.assertEqual((await self.detail_read(work_id, 'info'))['info']['steam_app_id'], APP)
         self.assertEqual((await self.detail_read(work_id, 'ratings'))['ratings']['all_time']['total'], 10)
         self.assertEqual((await self.detail_read(work_id, 'offers', country='DE'))['offers'][0]['steam_app_id'], APP)
-        self.assertEqual((await self.detail_read(work_id, 'achievement-catalogue'))['catalogue']['total'], 1)
-        self.assertEqual((await self.detail_read(work_id, 'achievements'))['results'][0]['app_id'], APP)
+        self.assertIsNone((await self.detail_read(work_id, 'achievement-catalogue'))['catalogue']['total'])
+        self.assertEqual((await self.detail_read(work_id, 'achievements'))['results'], [])
+        self.assertEqual((await self.detail_read(work_id, 'achievement-catalogue', include_store='true'))['catalogue']['total'], 1)
+        public_row = (await self.detail_read(work_id, 'achievements', include_store='true'))['results'][0]
+        self.assertEqual(public_row['app_id'], APP)
+        self.assertFalse(public_row['unlocked'])
+        self.assertTrue((await self.detail_read(owner_id, 'achievements'))['results'][0]['unlocked'])
         async with self.Session() as db:
             from core.media_details import game_primary_details
             work = await db.get(CatalogueEntity, work_id)
