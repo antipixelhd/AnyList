@@ -66,16 +66,47 @@ jobs:
           version: latest
           log-mode: quiet
       - name: Verify private connectivity
+        timeout-minutes: 2
         env:
           HOST: ${{ secrets.PREVIEW_VPS_HOST }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import os, socket
-          for address in {item[4][0] for item in socket.getaddrinfo(os.environ['HOST'], 22)}:
-              print('::add-mask::' + address)
+          import os
+          import socket
+          import subprocess
+          import time
+
+          host = os.environ['HOST']
+          masked_addresses = set()
+          for attempt in range(1, 7):
+              try:
+                  addresses = {item[4][0] for item in socket.getaddrinfo(host, 22)}
+              except socket.gaierror:
+                  reason = 'private DNS lookup failed'
+              else:
+                  for address in addresses - masked_addresses:
+                      print('::add-mask::' + address, flush=True)
+                  masked_addresses.update(addresses)
+                  try:
+                      ping = subprocess.run(
+                          ['tailscale', 'ping', '--until-direct=false', '--c=1', '--timeout=5s', host],
+                          capture_output=True, text=True, timeout=7,
+                      )
+                  except subprocess.TimeoutExpired:
+                      reason = 'Tailscale probe timed out'
+                  else:
+                      if ping.returncode == 0:
+                          relayed = ' via DERP(' in ping.stdout or ' via peer-relay(' in ping.stdout
+                          route = 'relayed' if relayed else 'direct'
+                          print(f'Private Tailscale connectivity verified ({route}).', flush=True)
+                          break
+                      reason = 'Tailscale probe failed'
+              print(f'Connectivity attempt {attempt}/6: {reason}.', flush=True)
+              if attempt == 6:
+                  raise SystemExit('Could not verify private connectivity.')
+              time.sleep(2)
           PY
-          tailscale ping --timeout=30s "$HOST" >/dev/null
       - name: Verify restricted CI commands
         if: inputs.operation == 'status'
         env:
