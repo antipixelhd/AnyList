@@ -7,8 +7,9 @@ from sqlalchemy.dialects.postgresql import insert,ARRAY,JSONB
 from core import catalogue
 from core.config import settings
 from core.game_achievement_source import GameAchievementSource
+from core.game_edition_sources import steam_store
 from core.game_imdb_enrichment import now,request as admit,status as job_status
-from core.game_ratings import GameRatings,app_id,run_scheduler
+from core.game_ratings import GameRatings,run_scheduler
 from core.game_tracking import achievement_metadata
 from core.game_types import capabilities
 from core.steam_cache import PUBLIC_KIND
@@ -20,9 +21,9 @@ PREFIX='game_achievement_'
 
 
 async def view(db,work,*,enqueue=False):
-    app=await app_id(db,work) if capabilities(work.attributes).independent else None
-    availability,total,definitions=achievement_metadata(work)
-    previous=(work.attributes or {}).get('achievement_catalogue') or {}
+    owner,app=await steam_store(db,work) if capabilities(work.attributes).independent else (work,None)
+    availability,total,definitions=achievement_metadata(owner)
+    previous=(owner.attributes or {}).get('achievement_catalogue') or {}
     valid=bool(app and (not previous.get('steam_app_id') or previous['steam_app_id']==app))
     data={'work_id':work.id,'steam_app_id':app,'availability':availability if valid else 'unknown',
         'total':total if valid else None,'definitions_available':definitions if valid else False}
@@ -31,15 +32,15 @@ async def view(db,work,*,enqueue=False):
     # for a previous keyless capability observation to expire.
     if enqueue and settings.steam_web_api_key and (not previous.get('schema_enabled') or previous.get('definitions_stale')):
         await db.execute(update(MetadataSnapshot).where(MetadataSnapshot.provider=='steam',
-            MetadataSnapshot.entity_id==work.id,MetadataSnapshot.kind.in_((JOB,PREFIX+'schema')),
+            MetadataSnapshot.entity_id==owner.id,MetadataSnapshot.kind.in_((JOB,PREFIX+'schema')),
             MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.next_attempt_at.is_(None),MetadataSnapshot.error_code.is_(None))
             .values(expires_at=None).execution_options(synchronize_session=False))
     if enqueue and previous.get('steam_app_id') and previous['steam_app_id']!=app:
         await db.execute(update(MetadataSnapshot).where(MetadataSnapshot.provider=='steam',
-            MetadataSnapshot.entity_id==work.id,MetadataSnapshot.kind.in_((JOB,PREFIX+'globals',PREFIX+'schema')),
+            MetadataSnapshot.entity_id==owner.id,MetadataSnapshot.kind.in_((JOB,PREFIX+'globals',PREFIX+'schema')),
             MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.next_attempt_at.is_(None))
             .values(expires_at=None).execution_options(synchronize_session=False))
-    state=await (admit(db,work.id,kind=JOB,provider='steam') if enqueue else job_status(db,work.id,kind=JOB,provider='steam'))
+    state=await (admit(db,owner.id,kind=JOB,provider='steam') if enqueue else job_status(db,owner.id,kind=JOB,provider='steam'))
     return {'catalogue':data,'status':state}
 
 

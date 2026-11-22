@@ -4,7 +4,8 @@ from datetime import timedelta
 from sqlalchemy import or_,update
 
 from core import catalogue
-from core.game_ratings import GameRatings,app_id,run_scheduler
+from core.game_edition_sources import edition_sources_unknown, steam_store
+from core.game_ratings import GameRatings,run_scheduler
 from core.game_store_source import GameStoreSource
 from core.game_imdb_enrichment import now,request as admit,status as job_status
 from core.game_types import capabilities
@@ -13,8 +14,8 @@ from models.catalogue import MetadataSnapshot
 JOB='game_info_job'
 
 
-def projection(work,app,identities):
-    stored=(work.attributes or {}).get('game_info')
+def projection(work,app,identities,*,owner=None):
+    stored=((owner or work).attributes or {}).get('game_info')
     data=dict(stored) if app and isinstance(stored,dict) and stored.get('steam_app_id')==app else {}
     # Explicit IGDB work identity and field provenance are required, never a
     # name match. IGDB remains primary; Steam fills missing named boards.
@@ -25,21 +26,24 @@ def projection(work,app,identities):
     return {**data,'steam_app_id':app} if data else None
 
 
-async def view(db,work,*,enqueue=False,identities=None):
+async def view(db,work,*,enqueue=False,identities=None,store=None):
     if not capabilities(work.attributes).searchable:return {'info':None,'status':{'state':'unavailable','pending':False,'complete':False}}
     if identities is None:
         from sqlalchemy import select
         from models.catalogue import CatalogueIdentity
         identities=list(await db.scalars(select(CatalogueIdentity).where(CatalogueIdentity.entity_id==work.id)))
-    app=await app_id(db,work,identities);data=projection(work,app,identities)
-    if not app:return {'info':data,'status':{'state':'ready' if data else 'unavailable','pending':False,'complete':bool(data)}}
-    previous=(work.attributes or {}).get('game_info') or {}
+    owner,app=store if store is not None else await steam_store(db,work,identities)
+    data=projection(work,app,identities,owner=owner)
+    if not app:
+        ready=bool(data) and not edition_sources_unknown(work)
+        return {'info':data,'status':{'state':'ready' if ready else 'unavailable','pending':False,'complete':ready}}
+    previous=(owner.attributes or {}).get('game_info') or {}
     if enqueue and isinstance(previous,dict) and previous.get('steam_app_id') and previous['steam_app_id']!=app:
         await db.execute(update(MetadataSnapshot).where(MetadataSnapshot.provider=='steam',MetadataSnapshot.kind==JOB,
-            MetadataSnapshot.external_id==str(work.id),MetadataSnapshot.coverage['steam_app_id'].astext.is_distinct_from(app),
+            MetadataSnapshot.external_id==str(owner.id),MetadataSnapshot.coverage['steam_app_id'].astext.is_distinct_from(app),
             MetadataSnapshot.next_attempt_at.is_(None),or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=now()))
             .values(expires_at=None).execution_options(synchronize_session=False))
-    state=await (admit(db,work.id,kind=JOB,provider='steam') if enqueue else job_status(db,work.id,kind=JOB,provider='steam'))
+    state=await (admit(db,owner.id,kind=JOB,provider='steam') if enqueue else job_status(db,owner.id,kind=JOB,provider='steam'))
     from core.game_release_dates import steam_release_projection
     return {'info':data,'status':state,'release':steam_release_projection(work)}
 

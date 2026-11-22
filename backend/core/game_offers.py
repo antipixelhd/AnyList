@@ -13,9 +13,10 @@ from core.config import settings
 from core.enrichment_retry import requested_coverage
 from core.catalogue_providers import ProviderError
 from core.countries import country_code
+from core.game_edition_sources import steam_store
 from core.game_types import capabilities
 from models import UserProfileData
-from models.catalogue import CatalogueEntity,CatalogueIdentity,MetadataSnapshot,SteamPriceSnapshot
+from models.catalogue import CatalogueEntity,MetadataSnapshot,SteamPriceSnapshot
 
 log=logging.getLogger(__name__)
 _wake=asyncio.Event()
@@ -70,11 +71,6 @@ async def country(db,user_id,hint=None):
     return {'country':account or detected or 'US','source':'account' if account else 'device' if detected else 'fallback'}
 
 
-def steam_identity(identities,preferred=None):
-    values={row.external_id for row in identities if row.namespace=='steam.app' and re.fullmatch(r'[1-9][0-9]{0,18}',row.external_id)}
-    return preferred if preferred in values else next(iter(values)) if len(values)==1 else None
-
-
 def public_link(value):
     if not isinstance(value,str):return None
     try:
@@ -83,26 +79,22 @@ def public_link(value):
     except ValueError:return None
 
 
-async def view(db,work,user_id,*,hint=None,identities=None,enqueue=False):
+async def view(db,work,user_id,*,hint=None,identities=None,enqueue=False,store=None):
     effective=await country(db,user_id,hint)
     base={'country':effective['country'],'country_source':effective['source'],'steam_app_id':None,'offers':[],
         'status':{'state':'unavailable','pending':False,'retry_after':0}}
-    if work.kind!='game' or not capabilities(work.attributes).searchable:return base
-    if identities is None:
-        identities=list(await db.scalars(select(CatalogueIdentity).where(CatalogueIdentity.entity_id==work.id,
-            CatalogueIdentity.namespace=='steam.app').limit(2)))
-    app=steam_identity(identities,(work.attributes or {}).get('steam_primary_app_id'))
+    owner,app=store if store is not None else await steam_store(db,work,identities)
     if not app:return base
     base['steam_app_id']=app
     # Never hydrate raw provider responses just to render one regional offer.
     rows=(await db.execute(select(SteamPriceSnapshot.steam_app_id,SteamPriceSnapshot.country,SteamPriceSnapshot.current,
         SteamPriceSnapshot.historical_low,SteamPriceSnapshot.historical_low_at,SteamPriceSnapshot.url,
-        SteamPriceSnapshot.fetched_at).where(SteamPriceSnapshot.work_id==work.id,
+        SteamPriceSnapshot.fetched_at).where(SteamPriceSnapshot.work_id==owner.id,
             SteamPriceSnapshot.steam_app_id==app,SteamPriceSnapshot.country==effective['country']))).mappings()
     base['offers']=[{**dict(row),'url':public_link(row['url'])} for row in rows]
     key=f'{app}:{effective["country"]}'
     if enqueue and settings.itad_api_key and effective['source']!='fallback':
-        state=await admit(db,key,work.id)
+        state=await admit(db,key,owner.id)
     elif settings.itad_api_key:
         state=status_view(await price_header(db,key))
     else:

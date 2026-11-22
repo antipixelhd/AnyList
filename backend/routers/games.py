@@ -664,13 +664,13 @@ async def achievement_page(work_id: WorkId, db: DB, viewer: Reader,
                             offset: Annotated[int, Query(ge=0)] = 0,
                             limit: Annotated[int, Query(ge=1, le=200)] = 50) -> AchievementPage:
     work=await tracking.work(db, work_id)
-    from core.game_ratings import app_id
-    app=await app_id(db,work)
+    from core.game_edition_sources import steam_store
+    owner,app=await steam_store(db,work)
     query = select(GameAchievement, GameAchievementUnlock.achievement_id).outerjoin(
         GameAchievementUnlock, (GameAchievementUnlock.achievement_id == GameAchievement.id)
-        & (GameAchievementUnlock.user_id == viewer.id)).where(GameAchievement.work_id == work_id,
+        & (GameAchievementUnlock.user_id == viewer.id)).where(GameAchievement.work_id == owner.id,
             GameAchievement.active.is_(True),GameAchievement.app_id==app)
-    total = await db.scalar(select(func.count()).select_from(GameAchievement).where(GameAchievement.work_id==work_id,
+    total = await db.scalar(select(func.count()).select_from(GameAchievement).where(GameAchievement.work_id==owner.id,
         GameAchievement.active.is_(True),GameAchievement.app_id==app))
     listed = await db.scalar(select(GameEntry.work_id).where(GameEntry.user_id==viewer.id,GameEntry.work_id==work_id))
     order = GameAchievement.sort_order.asc().nulls_last() if listed is not None else GameAchievement.global_percentage.desc().nulls_last()

@@ -8,7 +8,7 @@ from sqlalchemy import or_,select,update
 from core import catalogue
 from core.enrichment_retry import schedule_failure, pause_unused, retain_demand
 from core.game_rating_source import GameRatingSource,PARTS
-from core.game_offers import steam_identity
+from core.game_edition_sources import edition_sources_unknown, steam_identity, steam_store
 from core.game_types import capabilities
 from core.game_imdb_enrichment import now,snapshot as metadata,request as admit,status as job_status
 from models.catalogue import CatalogueEntity,CatalogueIdentity,MetadataSnapshot
@@ -45,20 +45,22 @@ async def critic_fallback(db,work,identities=None):
     return {'score':value,'url':None,'source':'rawg','platform':None}
 
 
-async def view(db,work,*,enqueue=False,identities=None):
-    app=await app_id(db,work,identities)
-    values=projection(work,app)
+async def view(db,work,*,enqueue=False,identities=None,store=None):
+    owner,app=store if store is not None else await steam_store(db,work,identities)
+    values=projection(owner,app)
     if not values or (values.get('critic') or {}).get('score') is None:
         fallback=await critic_fallback(db,work,identities) if work.kind=='game' and capabilities(work.attributes).searchable else None
         if fallback:values={**(values or {'steam_app_id':app}),'critic':fallback}
-    if not app:return {'ratings':values,'status':{'state':'ready' if values else 'unavailable','pending':False,'complete':bool(values)}}
-    previous=(work.attributes or {}).get('game_ratings') or {}
+    if not app:
+        ready=bool(values) and not edition_sources_unknown(work)
+        return {'ratings':values,'status':{'state':'ready' if ready else 'unavailable','pending':False,'complete':ready}}
+    previous=(owner.attributes or {}).get('game_ratings') or {}
     if enqueue and isinstance(previous,dict) and previous.get('steam_app_id') and previous['steam_app_id']!=app:
         await db.execute(update(MetadataSnapshot).where(MetadataSnapshot.provider=='steam',MetadataSnapshot.kind==JOB,
-            MetadataSnapshot.external_id==str(work.id),MetadataSnapshot.coverage['steam_app_id'].astext.is_distinct_from(app),
+            MetadataSnapshot.external_id==str(owner.id),MetadataSnapshot.coverage['steam_app_id'].astext.is_distinct_from(app),
             MetadataSnapshot.next_attempt_at.is_(None),or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=now()))
             .values(expires_at=None).execution_options(synchronize_session=False))
-    state=await (admit(db,work.id,kind=JOB,provider='steam',entity_id=work.id) if enqueue else job_status(db,work.id,kind=JOB,provider='steam'))
+    state=await (admit(db,owner.id,kind=JOB,provider='steam',entity_id=owner.id) if enqueue else job_status(db,owner.id,kind=JOB,provider='steam'))
     from core.game_release_dates import steam_release_projection
     return {'ratings':values,'status':state,'release':steam_release_projection(work)}
 

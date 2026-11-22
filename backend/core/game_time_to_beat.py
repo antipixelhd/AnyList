@@ -8,6 +8,7 @@ from sqlalchemy import or_,select,update
 from core import catalogue
 from core.catalogue_providers import ProviderError
 from core.game_browse_sources import GameBrowseSources,positive
+from core.game_edition_sources import edition_sources_unknown, original_game
 from core.game_imdb_enrichment import now,snapshot as metadata,request as admit,status as job_status
 from core.game_types import capabilities
 from models.catalogue import CatalogueEntity,CatalogueIdentity,MetadataSnapshot
@@ -57,17 +58,40 @@ def projection(work,native):
         **{key:value.get(key) if type(value.get(key)) is int and value[key]>0 else None for key in FIELDS}}
 
 
-async def view(db,work,*,enqueue=False):
-    native=await primary_id(db,work)
-    if not native:return {'estimates':None,'status':{'state':'unavailable','pending':False,'complete':False}}
+async def estimate_status(db, work, native, enqueue):
     previous=(work.attributes or {}).get('completion_estimates') or {}
     if enqueue and isinstance(previous,dict) and previous.get('source_game_id') and previous['source_game_id']!=native:
         await db.execute(update(MetadataSnapshot).where(MetadataSnapshot.provider=='igdb',MetadataSnapshot.kind==JOB,
             MetadataSnapshot.external_id==str(work.id),MetadataSnapshot.coverage['source_game_id'].astext!=native,
             MetadataSnapshot.next_attempt_at.is_(None),
             or_(MetadataSnapshot.lease_until.is_(None),MetadataSnapshot.lease_until<=now())).values(expires_at=None))
-    state=await (admit(db,work.id,kind=JOB,provider='igdb',entity_id=work.id) if enqueue else job_status(db,work.id,kind=JOB,provider='igdb'))
-    return {'estimates':projection(work,native),'status':state}
+    return await (admit(db,work.id,kind=JOB,provider='igdb',entity_id=work.id) if enqueue else job_status(db,work.id,kind=JOB,provider='igdb'))
+
+
+async def view(db,work,*,enqueue=False):
+    native=await primary_id(db,work)
+    if not native:return {'estimates':None,'status':{'state':'unavailable','pending':False,'complete':False}}
+    values=projection(work,native)
+    has_own_result=values is not None
+    state=await estimate_status(db,work,native,enqueue)
+    if values and any(values[key] for key in FIELDS):
+        return {'estimates':values,'status':state}
+
+    original=await original_game(db,work)
+    original_id=await primary_id(db,original) if original else None
+    if original_id and original_id!=native:
+        fallback=projection(original,original_id)
+        if fallback and any(fallback[key] for key in FIELDS):
+            values=fallback
+        # Let a cold edition check its own ID first. Once an empty result is
+        # known, share any pending refresh with the original game's page.
+        if state['complete'] or has_own_result:
+            original_state=await estimate_status(db,original,original_id,enqueue)
+            if original_state['pending'] and not state['pending']:
+                state=original_state
+    if not state['pending'] and not (values and any(values[key] for key in FIELDS)) and edition_sources_unknown(work):
+        state={**state,'state':'unavailable','complete':False}
+    return {'estimates':values,'status':state}
 
 
 class GameTimeToBeat:

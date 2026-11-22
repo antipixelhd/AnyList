@@ -307,7 +307,9 @@ IGDB_FIELDS = (
         )
         for projection in ("platforms.id", "name", "summary", "cover.url", "first_release_date", "game_type.type", "release_dates.date", "release_dates.date_format.format", "release_dates.y", "release_dates.m", "release_dates.d", "release_dates.status.name", "version_parent.name", "version_parent.summary", "version_parent.cover.url", "version_parent.first_release_date", "version_parent.game_type.type")
     )
-    + ',ports.platforms.name,ports.platforms.platform_family.name'
+    + ',ports.platforms.name,ports.platforms.platform_family.name,websites.url,'
+      'bundles.name,bundles.game_type.type,bundles.external_games.uid,bundles.external_games.url,'
+      'bundles.external_games.external_game_source.name'
 )
 
 
@@ -559,6 +561,8 @@ class CatalogueProviders:
         if provider == "igdb":
             from core.game_types import igdb_game_class
             from core.game_release_dates import VERSION as RELEASE_VERSION
+            from core.game_edition_sources import ATTRIBUTE, EDITION_CLASSES, VERSION as EDITION_SOURCE_VERSION, edition_sources
+            from core.catalogue_normalize import entity
             rows = await self.igdb(
                 "games", f"fields {IGDB_FIELDS}; where id = {id}; limit 1;"
             )
@@ -579,8 +583,18 @@ class CatalogueProviders:
                     raise ProviderError("identity_conflict")
             def document():
                 doc=normalize_igdb(raw)
+                if igdb_game_class(raw) in EDITION_CLASSES:
+                    sources, bundle = edition_sources(raw)
+                    doc['work']['attributes'][ATTRIBUTE] = sources
+                    if bundle:
+                        doc['edition_steam_bundle'] = bundle
+                    if igdb_game_class(raw) == 'expanded_game' and sources.get('parent_igdb_id'):
+                        doc['relationships'].append({
+                            'target': entity('game', 'igdb.game', raw['parent_game'], attributes={'game_class': 'game'}),
+                            'relation': 'version',
+                            'attributes': {'edition_type': 'expanded_game', 'source_active': True},
+                        })
                 if version:
-                    from .catalogue_normalize import entity
                     doc['releases'].append({'entity':entity('release','igdb.game_version',version),
                         'platform_namespace':'igdb.version','platform_id':str(version['id'])})
                     doc['work']['identities'].extend(x for x in normalize_igdb(version)['work']['identities']
@@ -591,6 +605,8 @@ class CatalogueProviders:
                 'children_complete':all(isinstance(raw.get(field,[]),list) and all(
                     isinstance(child,dict) and child.get('id') and child.get('name') and igdb_game_class(child)!='unknown'
                     for child in raw.get(field,[])) for field in ('dlcs','expansions'))}
+            if igdb_game_class(raw) in EDITION_CLASSES:
+                raw['_coverage']['edition_source_version'] = EDITION_SOURCE_VERSION
             if primary_only:
                 # Imported membership needs its game header, not a career graph.
                 raw['_coverage'].update(primary_only=True,contributors='not_requested')

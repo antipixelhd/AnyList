@@ -304,11 +304,11 @@ def source_link(provider, url, *, homepage=False):
     return {'name':name or ('Official website' if homepage else provider.upper()), 'url':url}
 
 
-def game_source_links(work, sources, identities):
-    from core.game_offers import steam_identity
+def game_source_links(work, sources, identities, *, app=None):
+    from core.game_edition_sources import steam_identity
     # Merged campaign/multiplayer/edition identities remain available to their
     # owning systems; outbound links represent only the canonical main app.
-    app=steam_identity(identities,(work.attributes or {}).get('steam_primary_app_id'))
+    app=app or steam_identity(identities,(work.attributes or {}).get('steam_primary_app_id'))
     sources=[source for source in sources if urlsplit(source['url']).hostname not in
         {'store.steampowered.com','igdb.com','www.igdb.com','steamgriddb.com','www.steamgriddb.com'}]
     if app:sources.append({'name':'Steam','url':f'https://store.steampowered.com/app/{app}/'})
@@ -329,8 +329,10 @@ async def game_primary_details(db, work):
     identities = list(await db.scalars(select(CatalogueIdentity).where(CatalogueIdentity.entity_id == work.id,
         CatalogueIdentity.namespace == 'steam.app')))
     from core.game_children import has_children
+    from core.game_edition_sources import steam_store
+    _, app = await steam_store(db, work, identities)
     return {**primary_details(work), 'has_game_children':await has_children(db,work),
-        'sources':game_source_links(work,sources,identities), 'releases':await game_releases(db, work)}
+        'sources':game_source_links(work,sources,identities,app=app), 'releases':await game_releases(db, work)}
 
 
 async def catalogue_title(db, work, viewer_id=None, *, store_country=None, enqueue_offers=False,enqueue_ratings=False,enqueue_info=False,identities=None):
@@ -350,6 +352,7 @@ async def catalogue_title(db, work, viewer_id=None, *, store_country=None, enque
     if identities is None:identities = list(await db.scalars(select(CatalogueIdentity).where(CatalogueIdentity.entity_id == work.id)))
     if work.kind == 'game':
         from core.game_types import capabilities
+        from core.game_edition_sources import steam_store
         from core import game_tracking
         from core.game_children import has_children
         caps = capabilities(work.attributes)
@@ -373,7 +376,8 @@ async def catalogue_title(db, work, viewer_id=None, *, store_country=None, enque
             'favorite': bool(state and state.favorite),
             'tracking_available': caps.independent or (caps.expansion_page and base is not None)}
         from core.game_ratings import view as ratings_view
-        ratings=await ratings_view(db,work,identities=identities,enqueue=enqueue_ratings)
+        store=await steam_store(db,work,identities)
+        ratings=await ratings_view(db,work,identities=identities,enqueue=enqueue_ratings,store=store)
         personal['game_ratings']=ratings['ratings'];personal['game_rating_status']=ratings['status']
     if work.kind == 'book':
         rows = (await db.execute(select(BookEdition, CatalogueEntity).join(CatalogueEntity,
@@ -386,10 +390,10 @@ async def catalogue_title(db, work, viewer_id=None, *, store_country=None, enque
     if work.kind == 'game':
         releases = await game_releases(db, work)
         from core.game_offers import view as offers_view
-        offers=await offers_view(db,work,viewer_id,hint=store_country,identities=identities,enqueue=enqueue_offers)
+        offers=await offers_view(db,work,viewer_id,hint=store_country,enqueue=enqueue_offers,store=store)
         prices=offers['offers'];personal['game_offer_context']={key:value for key,value in offers.items() if key!='offers'}
         from core.game_info import view as info_view
-        info=await info_view(db,work,identities=identities,enqueue=enqueue_info)
+        info=await info_view(db,work,identities=identities,enqueue=enqueue_info,store=store)
         personal['game_info']=info['info'];personal['game_info_status']=info['status']
     for identity in identities:
         native = identity.external_id
@@ -397,7 +401,7 @@ async def catalogue_title(db, work, viewer_id=None, *, store_country=None, enque
             details['sources'].append({'name': 'Open Library', 'url': f'https://openlibrary.org/works/{native}'})
         elif identity.namespace == 'steam.app' and native.isdecimal():
             details['sources'].append({'name': 'Steam', 'url': f'https://store.steampowered.com/app/{native}/'})
-    if work.kind=='game':details['sources']=game_source_links(work,details['sources'],identities)
+    if work.kind=='game':details['sources']=game_source_links(work,details['sources'],identities,app=store[1])
     primary=primary_details(work,details['artwork'])
     return {**details, 'id': work.id, 'type': work.kind, 'title': work.name, 'overview': work.description,
         'poster':primary['poster'],'backdrop':primary['backdrop'],
