@@ -60,7 +60,7 @@ def retain_episode_runtime(episode, data):
         episode.runtime = value
 
 
-async def released_episodes(db, media, *, include_unreleased=False, positions_only=False):
+async def released_episodes(db, media, *, include_unreleased=False, positions_only=False, release_details_only=False):
     """Read the same regular-episode catalogue for edits and reconciliation."""
     if media.media_type == MediaType.movie:
         return [media] if not media.release_date or media.release_date[:10] <= date.today().isoformat() else []
@@ -71,8 +71,9 @@ async def released_episodes(db, media, *, include_unreleased=False, positions_on
         terms.append(Show.tvdb_id == media.tvdb_id)
     if not terms:
         return []
-    show_id = await db.scalar(select(Show.id).where(or_(*terms)).limit(1))
-    if not show_id:
+    show_query = select(Show.id).where(or_(*terms)).limit(1)
+    show_id = show_query.scalar_subquery() if release_details_only else await db.scalar(show_query)
+    if show_id is None:
         return []
     imported_release = Media.tmdb_data["tracking_import_released"].as_boolean().is_(True)
     query = select(Media).where(
@@ -91,6 +92,10 @@ async def released_episodes(db, media, *, include_unreleased=False, positions_on
     query = query.order_by(Media.season_number, Media.episode_number)
     if positions_only:
         return (await db.execute(query.with_only_columns(Media.season_number, Media.episode_number))).all()
+    if release_details_only:
+        return (await db.execute(query.with_only_columns(
+            Media.season_number, Media.release_date, Media.id, imported_release, Media.episode_number,
+        ))).all()
     return (await db.execute(query)).scalars().all()
 
 

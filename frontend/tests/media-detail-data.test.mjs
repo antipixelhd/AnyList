@@ -5,10 +5,34 @@ import {runInNewContext} from 'node:vm';
 import test from 'node:test';
 import {formatDate,localToday} from '../src/lib/date-time.ts';
 import {countryLabel} from '../src/lib/stats-overview-data.ts';
+import {episodeCountdownLabel} from '../src/lib/episode-countdown.ts';
 const source=readFileSync(new URL('../src/lib/media-detail-data.ts',import.meta.url),'utf8');
 const context={Intl,Date,URLSearchParams,countryLabel,formatDate,localToday};
 runInNewContext(stripTypeScriptTypes(source.replace(/^import .*$/gm,'').replace(/export /g,''))+';globalThis.api={localMediaId,prepareDetail,detailCredits,detailCreditEpisodes,detailCreditText,detailCreditDescription,detailOrganizationFacts,detailInformationRows,durationLabel,detailDate,detailSynopsis,progressTotal,detailFacts,relationLabel,moneyLabel,detailWorkCaption,detailCastPresentation,detailBrowseHref,detailCreators};',context);
 const {api}=context;
+
+test('first and later airing seasons show the same status and the known episode position',()=>{
+  const status=(data)=>api.detailInformationRows(api.prepareDetail({type:'series',...data})).find(row=>row.label==='Status');
+  for(const season of [1,3]){
+    const row=status({release_status:'Returning Series',
+      series_airing:{season_number:season,episode_number:4,air_date:'2026-11-24',air_at:'2026-11-24T20:00:00Z'}});
+    assert.equal(row.value,'Airing');
+    assert.equal(row.airing.position,`S${season}E4`);
+    assert.equal(row.airing.dateTime,'2026-11-24T20:00:00Z');
+  }
+  assert.equal(status({release_status:'Returning Series',series_airing:null}).value,'Returning Series');
+  assert.equal(status({release_status:'Airing'}).airing.dateTime,'');
+});
+
+test('episode countdowns keep date-only releases on the local calendar and clear expired airtimes',()=>{
+  const now=new Date(2026,10,22,23,59);
+  const relative=new Intl.RelativeTimeFormat(undefined,{numeric:'auto'});
+  assert.equal(episodeCountdownLabel('S3E4','2026-11-22',now),` · S3E4 ${relative.format(0,'day')}`);
+  assert.equal(episodeCountdownLabel('S3E4','2026-11-21',now),'');
+  assert.equal(episodeCountdownLabel('S3E4',now.toISOString(),now),'');
+  const nextMinute=episodeCountdownLabel('S3E4',new Date(now.getTime()+60_000).toISOString(),now);
+  assert.match(nextMinute,/^ · S3E4 in \S/);
+});
 
 test('Games overview collapses at the first paragraph without truncating or losing stored text',()=>{
   for(const separator of ['\n\n','\r\n\r\n','\n \n']){

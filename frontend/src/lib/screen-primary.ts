@@ -1,6 +1,7 @@
 import {detailBrowseHref,detailInformationRows,detailSynopsis,prepareDetail,type DetailInformationRow} from './media-detail-data';
 import {mountContributorBiography,unmountContributorBiography} from './contributor-biography';
 import {type DetailLoadState} from './detail-background';
+import {episodeCountdownLabel} from './episode-countdown';
 
 /** Public-only reconciliation. Editors, season progress and selected art keep their owners. */
 export function publishScreenPrimary(root:HTMLElement,data:Record<string,any>,id:number,status:DetailLoadState,signal:AbortSignal) {
@@ -31,7 +32,17 @@ export function publishScreenPrimary(root:HTMLElement,data:Record<string,any>,id
       if(link){const anchor=document.createElement('a');anchor.href=link.href;anchor.textContent=person.name;entry.append(anchor);}else entry.textContent=person.name;
       value.append(entry);
     });
-    else value.textContent=row.value||'';
+    else if(row.airing){
+      const label=document.createElement('span');
+      label.className='media-airing-status';label.textContent=row.value||'';value.append(label);
+      if(row.airing.dateTime){
+        const countdown=document.createElement('episode-countdown'),time=document.createElement('time');
+        countdown.dataset.position=row.airing.position;countdown.setAttribute('role','timer');
+        time.dateTime=row.airing.dateTime;
+        time.textContent=episodeCountdownLabel(row.airing.position,row.airing.dateTime);
+        countdown.append(time);value.append(countdown);
+      }
+    }else value.textContent=row.value||'';
     node.append(term,value);return node;
   };
   root.querySelectorAll<HTMLElement>('[data-screen-facts]').forEach(list=>{

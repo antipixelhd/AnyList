@@ -227,6 +227,21 @@ class AvailabilityDotTests(unittest.TestCase):
 
 
 class CurrentlyAiringTests(unittest.TestCase):
+    def test_next_airing_episode_uses_catalogue_when_pointer_is_stale(self):
+        from core.season_releases import current_airing_episode
+
+        metadata = {
+            'status': 'Returning Series',
+            'seasons': [{'season_number': 3, 'episode_count': 8, 'air_date': '2026-09-01'}],
+            'last_episode_to_air': {'season_number': 3, 'episode_number': 3},
+            'next_episode_to_air': {'season_number': 3, 'episode_number': 3, 'air_date': '2026-10-01'},
+        }
+        episodes = [(3, '2026-09-23', 3, False, 3), (3, '2026-10-01', 5, False, 5),
+                    (3, '2026-10-01', 4, False, 4)]
+        self.assertEqual(current_airing_episode(metadata, episodes, date(2026, 9, 24)), (
+            True, {'season_number': 3, 'episode_number': 4, 'air_date': '2026-10-01'},
+        ))
+
     def test_requires_returning_status_and_future_episode_in_a_started_season(self):
         from core.season_releases import current_airing_details
 

@@ -2,7 +2,7 @@
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from sqlalchemy import func, select
 
@@ -30,12 +30,18 @@ class MediaCreditTests(unittest.IsolatedAsyncioTestCase):
         self.app.dependency_overrides[get_current_user]=lambda:self.viewer
         for kind,native in [('movie',1492640),('series',1492641)]:
             raw=movie_payload(native)
+            today = date.today()
+            next_air_date = (today + timedelta(days=3)).isoformat()
             raw.update(name='Cold series',overview='Recovered synopsis',release_date='2026-01-01',first_air_date='2026-01-01',
                 status='Released' if kind=='movie' else 'Returning Series',original_language='en',runtime=100,
                 episode_run_time=[42],number_of_seasons=2,number_of_episodes=12,
                 created_by=[{'id':7,'name':'Creator'}],networks=[{'id':8,'name':'Network'}],
                 production_companies=[{'id':9,'name':'Studio'}],genres=[{'id':18,'name':'Drama'}],
                 production_countries=[{'iso_3166_1':'US','name':'United States'}],budget=1000000,revenue=2000000)
+            if kind == 'series':
+                raw['seasons'] = [{'season_number': 2, 'episode_count': 8,
+                                   'air_date': (today - timedelta(days=14)).isoformat()}]
+                raw['next_episode_to_air'] = {'season_number': 2, 'episode_number': 3, 'air_date': next_air_date}
             self.providers.detail.return_value=(normalize_tmdb(raw,kind),raw)
             async with self.Session() as db:
                 media=Media(title='Saved title',media_type=MediaType(kind),tmdb_id=native,tmdb_data={})
@@ -59,6 +65,9 @@ class MediaCreditTests(unittest.IsolatedAsyncioTestCase):
                 if kind=='series':
                     self.assertEqual((primary['season_count'],primary['episode_count'],primary['episode_runtime']),(2,12,42))
                     self.assertEqual(primary['networks'][0]['name'],'Network')
+                    self.assertEqual(primary['series_airing'], {
+                        'season_number': 2, 'episode_number': 3, 'air_date': next_air_date, 'air_at': None,
+                    })
                 else:self.assertEqual(primary['budget'],1000000)
                 warm=(await self.client.get(f'/tracking/title/{identifier}')).json()
                 self.assertEqual(warm['primary_status'],{'state':'ready','pending':False})

@@ -225,6 +225,7 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
       const previous=info.screenPrimary||{};
       const primary={...previous};
       for(const [field,value] of Object.entries(data.primary))if(value!=null&&value!==''&&(!Array.isArray(value)||value.length))primary[field]=value;
+      if ('series_airing' in data.primary) primary.series_airing = data.primary.series_airing;
       info.screenPrimary=primary;
       publishScreenPrimary(root,{...primary,people:data.people,organizations:data.organizations},info.id,data.primary_status,signal);
     }

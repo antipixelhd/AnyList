@@ -37,6 +37,7 @@ export type DetailMedia = EditorTitle & {
   id: number; type: MediaKind; overview?: string | null; year?: string; release_date?: string | null;
   release_date_precision?:string|null; release_quarter?:number|null;
   original_title?: string; tagline?: string; release_status?: string; original_language?: string;
+  series_airing?: {season_number?:number|null;episode_number?:number|null;air_date?:string|null;air_at?:string|null}|null;
   runtime?: number; episode_runtime?: number; season_count?: number; episode_count?: number;
   budget?: number | null; revenue?: number | null;
   genres: string[]; seasons: any[]; episodes_loaded?:boolean; friends: any[]; friends_average?: number | null;
@@ -148,10 +149,17 @@ export function detailOrganizationFacts(media:DetailMedia) {
   }else add('Studios',production);
   return groups;
 }
-export type DetailInformationRow={label:string;value?:string;items?:{name:string;url?:string|null}[];pending?:boolean};
+export type DetailInformationRow={label:string;value?:string;items?:{name:string;url?:string|null}[];pending?:boolean;
+  airing?:{position:string;dateTime:string}};
 /** Shared SSR/live order; absence becomes a skeleton only while acquisition is pending. */
 export function detailInformationRows(media:DetailMedia,pending=false,facts=detailFacts(media)):DetailInformationRow[] {
   const values=new Map<string,DetailInformationRow>(facts.map(row=>[row.label,row]));
+  if (media.type === 'series' && (media.series_airing || media.release_status?.trim().toLowerCase() === 'airing')) {
+    const {season_number:season,episode_number:episode,air_at,air_date}=media.series_airing||{};
+    const position=typeof season==='number'&&Number.isInteger(season)&&season>0
+      &&typeof episode==='number'&&Number.isInteger(episode)&&episode>0?`S${season}E${episode}`:'';
+    values.set('Status',{label:'Status',value:'Airing',airing:{position,dateTime:air_at||air_date||''}});
+  }
   for(const group of detailOrganizationFacts(media))values.set(group.label,{label:group.label,items:group.rows});
   const release=values.has('Releases')?'Releases':'Released';
   const order=[release,'Status',...(media.type==='series'?['Episode runtime','Seasons','Episodes','Created by','Network']:['Runtime']),

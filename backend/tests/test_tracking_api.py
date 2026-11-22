@@ -2808,6 +2808,33 @@ class TrackingApiTests(unittest.IsolatedAsyncioTestCase):
         res=await self.client.get('/tracking/catalog')
         self.assertEqual(res.status_code,401)
 
+    async def test_title_projects_next_airing_episode_without_loading_episode_layout(self):
+        today = date.today()
+        next_day = today + timedelta(days=3)
+        self.show.tmdb_id = 12345
+        self.show.status = 'Returning Series'
+        self.show.tmdb_data = {'seasons': [{'season_number': 3, 'episode_count': 8,
+                                           'air_date': (today - timedelta(days=14)).isoformat()}]}
+        self.show.tvdb_air_schedule = {'time': '20:00', 'zone': 'UTC'}
+        canonical = Show(title=self.show.title, tmdb_id=self.show.tmdb_id)
+        self.db.add(canonical)
+        await self.db.flush()
+        self.db.add(Media(title='Next Episode', media_type=MediaType.episode, show_id=canonical.id,
+                          season_number=3, episode_number=4, release_date=next_day.isoformat()))
+        await self.db.commit()
+
+        response = await self.client.get(f'/tracking/title/{self.show.id}?episodes=false')
+        self.assertEqual(response.status_code, 200, response.text)
+        result = response.json()
+        self.assertFalse(result['episodes_loaded'])
+        self.assertEqual(result['seasons'][0]['episodes'], [])
+        airing = result['primary']['series_airing']
+        self.assertEqual(result['series_airing'], airing)
+        self.assertEqual((airing['season_number'], airing['episode_number']), (3, 4))
+        self.assertEqual(airing['air_date'], next_day.isoformat())
+        self.assertEqual(datetime.fromisoformat(airing['air_at']),
+                         datetime.combine(next_day, datetime.min.time(), timezone.utc) + timedelta(hours=20))
+
     async def test_delete_clears_tracking_but_preserves_library_and_catalogue(self):
         await self.save(self.movie,status='completed',manual_score=8,notes='delete this')
         self.db.add(Collection(user_id=self.owner.id,media_id=self.movie.id))

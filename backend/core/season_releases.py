@@ -124,7 +124,13 @@ def availability_dot(tmdb_data, episodes, watched_episode_ids, status, today=Non
 
 
 def current_airing_details(tmdb_data, episodes, today=None, *, release=None):
-    """Return active-release state and its next known date for a series.
+    """Return active-release state and its next known date for a series."""
+    airing, next_episode = current_airing_episode(tmdb_data, episodes, today, release=release)
+    return airing, next_episode['air_date'] if next_episode else None
+
+
+def current_airing_episode(tmdb_data, episodes, today=None, *, release=None):
+    """Return active-release state and the selected next episode, when known.
 
     TMDB's broad status can stay at ``Returning Series`` between seasons, so
     require both that active status and the episode-level signal used by the
@@ -165,18 +171,21 @@ def current_airing_details(tmdb_data, episodes, today=None, *, release=None):
     next_season = next_episode.get('season_number') if isinstance(next_episode, dict) else None
     next_air_at = release.air_at(next_day.isoformat()) if next_day else None
     if next_day and next_season in regular and (next_air_at > release.now if next_air_at else next_day >= today):
-        return True, next_day.isoformat()
+        return True, {'season_number': next_season, 'episode_number': next_episode.get('episode_number'),
+                      'air_date': next_day.isoformat()}
 
     last_episode = data.get('last_episode_to_air')
     active_season = last_episode.get('season_number') if isinstance(last_episode, dict) else None
-    future = [(row[0], day) for row in episode_rows if row[0] in regular and (day := parse_release_day(row[1]))
+    future = [(row[0], day, row[4] if len(row) > 4 else None)
+              for row in episode_rows if row[0] in regular and (day := parse_release_day(row[1]))
               and not (len(row) > 3 and row[3]) and not release.is_released(row[1])]
     if active_season not in regular:
-        active_season = max((number for number, _ in future), default=None)
-    if active_season not in regular:
+        active_season = max((number for number, _, _ in future), default=None)
+    candidates = [(day, episode) for number, day, episode in future if number == active_season]
+    if not candidates:
         return True, None
-    future_days = [day for number, day in future if number == active_season]
-    return True, min(future_days).isoformat() if future_days else None
+    day, episode = min(candidates, key=lambda candidate: (candidate[0], candidate[1] or 0))
+    return True, {'season_number': active_season, 'episode_number': episode, 'air_date': day.isoformat()}
 
 
 async def media_availability_dot(db, user_id, media, status, today=None):
