@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 import test_games_pg as fixture
 from core import catalogue
 from core.catalogue_providers import CatalogueProviders
-from core.game_edition_sources import edition_sources, steam_store
+from core.game_edition_sources import WORKS_BUNDLE_ATTRIBUTE, edition_sources, steam_store
 from core.game_metadata import request as request_metadata
 from core.game_imdb_enrichment import now
 from core.game_time_to_beat import GameTimeToBeat, JOB as ESTIMATE_JOB, snapshot
@@ -40,6 +40,54 @@ class EditionEvidenceTests(unittest.TestCase):
         self.assertIsNone(edition_sources(raw)[1])
 
 
+class WorksBundleEvidenceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_full_detail_verifies_one_game_family_after_primary_is_ready(self):
+        edition = enhanced()
+        premium = {'id': 98077, 'name': 'Fixture Premium Edition', 'game_type': {'id': 3}, 'version_parent': 1020}
+        unrelated = {'id': 990, 'name': 'Another Game', 'game_type': {'id': 0}}
+        ambiguous = {**edition, 'id': 334600}
+        structured = {**ambiguous, 'websites': [], 'external_games': [
+            {'uid': APP, 'external_game_source': {'name': 'Steam'}},
+        ]}
+        incomplete = {**ambiguous, 'websites': [{'missing_url': True}]}
+
+        for other, expected in ((premium, '334647'), (unrelated, None), (ambiguous, None),
+                (structured, None), (incomplete, None)):
+            providers = CatalogueProviders()
+            primary = AsyncMock()
+
+            async def fetch(endpoint, query):
+                if endpoint == 'characters':
+                    return []
+                if 'where bundles=' in query:
+                    primary.assert_awaited_once()
+                    self.assertIn('where bundles=(334647)', query)
+                    return [edition, other]
+                return [edition]
+
+            providers.igdb = AsyncMock(side_effect=fetch)
+            doc, _ = await providers._detail('igdb', 'game', 334254, on_primary=primary)
+            proof = doc['work']['attributes'][WORKS_BUNDLE_ATTRIBUTE]
+            self.assertEqual(proof.get('bundle_id'), expected)
+            self.assertNotIn(WORKS_BUNDLE_ATTRIBUTE, primary.call_args.args[0]['work']['attributes'])
+            self.assertEqual(providers.igdb.await_count, 3)
+
+    async def test_primary_only_skips_bundle_membership_request(self):
+        providers = CatalogueProviders()
+        providers.igdb = AsyncMock(return_value=[enhanced()])
+        doc, _ = await providers._detail('igdb', 'game', 334254, primary_only=True)
+        providers.igdb.assert_awaited_once()
+        self.assertNotIn(WORKS_BUNDLE_ATTRIBUTE, doc['work']['attributes'])
+
+    async def test_halo_bundle_has_no_redundancy_probe(self):
+        providers = CatalogueProviders()
+        halo = {'id':7348,'name':'Halo: The Master Chief Collection','game_type':{'id':3}}
+        providers.igdb = AsyncMock(side_effect=[[halo], []])
+        doc, _ = await providers._detail('igdb','game',7348)
+        self.assertEqual(providers.igdb.await_count,2)
+        self.assertNotIn(WORKS_BUNDLE_ATTRIBUTE, doc['work']['attributes'])
+
+
 @unittest.skipUnless(fixture.URL, 'Requires explicit disposable Games PostgreSQL')
 class EditionSourceTests(unittest.IsolatedAsyncioTestCase):
     asyncSetUp = fixture.GamesDatabaseTests.asyncSetUp
@@ -54,6 +102,56 @@ class EditionSourceTests(unittest.IsolatedAsyncioTestCase):
             work = await catalogue.ingest_document(db, doc, 'igdb')
             await db.commit()
             return work.id
+
+    async def test_public_bundle_url_uses_edition_completion_estimates(self):
+        from unittest.mock import patch
+        from core import steam_sync
+        from core.game_edition_sources import BUNDLE_ALIAS
+        from core.game_metadata import GameMetadata
+        from sqlalchemy import select
+
+        edition = enhanced()
+        other = {'id':98077,'name':'Premium Edition','game_type':{'id':3},'version_parent':1020}
+        providers = CatalogueProviders()
+        providers.igdb = AsyncMock(side_effect=[[edition], [], [edition, other]])
+        doc, _ = await providers._detail('igdb','game',334254)
+        async with self.Session() as db:
+            work = await catalogue.ingest_document(db,doc,'igdb')
+            work_id = work.id
+            original = await catalogue.resolve_identity(db,'igdb.game','1020')
+            original = await db.get(CatalogueEntity,original.entity_id)
+            catalogue.merge_fields(original,{'attributes':{'completion_estimates':{
+                'source':'igdb','source_game_id':'1020','main_story_seconds':7200,
+            }}},'igdb')
+            bundle = work.attributes[BUNDLE_ALIAS]['work_id']
+            await db.commit()
+        with (
+            patch.object(GameMetadata,'ensure',AsyncMock(return_value=({'primary_ready':True},False))),
+            patch('core.game_background.observe_work',AsyncMock()),
+        ):
+            result = await self.client.get(f'/catalogue/entities/{work_id}/details')
+        self.assertEqual(result.status_code,200,result.text)
+        self.assertEqual(result.json()['subject']['catalogue_id'],bundle)
+        self.assertEqual(result.json()['completion_estimates']['main_story_seconds'],7200)
+
+        state = SimpleNamespace(user_id=self.user.id, timezone='UTC', checkpoints={}, auto_add_games=False,
+                                sync_playtime=True,sync_achievements=False)
+        async with self.Session() as db:
+            await steam_sync.apply_games(db,state,[{'app_id':APP,'name':edition['name'],'playtime_minutes':120,
+                'last_played':0,'poster':None,'release_date':None}],[APP],initial=True)
+            self.assertEqual(list(await db.scalars(select(GameEntry.work_id).where(
+                GameEntry.user_id==self.user.id))),[bundle])
+            self.assertEqual(state.checkpoints[APP]['work_id'],bundle)
+            # A backup or an old client can still save to the edition ID.
+            # Its owner must keep access, even after public consolidation.
+            db.add(GameEntry(user_id=self.user.id,work_id=work_id,status='played'))
+            await db.commit()
+        with (
+            patch.object(GameMetadata,'ensure',AsyncMock(return_value=({'primary_ready':True},False))),
+            patch('core.game_background.observe_work',AsyncMock()),
+        ):
+            private = await self.client.get(f'/catalogue/entities/{work_id}/details')
+        self.assertEqual(private.json()['subject']['catalogue_id'],work_id)
 
     async def detail_read(self, work, endpoint, **params):
         response = await self.client.get(f'/tracking/games/works/{work}/{endpoint}', params=params)

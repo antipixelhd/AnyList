@@ -6,7 +6,7 @@ from sqlalchemy.orm import aliased
 
 from core.game_types import INDEPENDENT,CREDIT_CHILDREN
 from core.game_credit_roles import ACTING
-from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueRelationship
+from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity, CatalogueRelationship
 from models.games import GameChildState, GameEntry
 
 COMPANIES = ('developer', 'publisher', 'supporting', 'porting')
@@ -184,6 +184,61 @@ async def role_captions(db,entity_id,kind,work_ids):
         **({'characters_pending':True} if item['id'] in pending and not item['characters'] else {})} for item in result.values()]
 
 
+def studio_public_credits(credits, viewer):
+    from core.game_edition_sources import BUNDLE_ALIAS
+
+    edition, bundle = aliased(CatalogueEntity), aliased(CatalogueEntity)
+    use_bundle = and_(bundle.id == edition.attributes[BUNDLE_ALIAS]['work_id'].as_integer(),
+        bundle.kind == 'game', bundle.attributes['game_class'].astext == 'bundle',
+        bundle.attributes['adult'].astext.is_distinct_from('true'),
+        bundle.attributes['mobile_only'].astext.is_distinct_from('true'))
+    if viewer:
+        tracked = select(GameEntry.work_id).where(GameEntry.work_id == edition.id, GameEntry.user_id == viewer.id).exists()
+        use_bundle = and_(use_bundle, ~tracked)
+    published = {
+        'id':bundle.id,'title':bundle.name,'poster':bundle.image_url,
+        'backdrop':func.coalesce(bundle.attributes['backdrop_path'].astext,bundle.attributes['artwork'][0].astext),
+        'released':func.coalesce(bundle.attributes['release_date'].astext,''),
+        'game_class':bundle.attributes['game_class'].astext,
+    }
+    columns = [case((bundle.id.is_not(None), published[col.key]),else_=col).label(col.key)
+               if col.key in published else col for col in credits.c]
+    return select(*columns).select_from(credits.join(edition,edition.id == credits.c.id)
+        .outerjoin(bundle,use_bundle)).cte('studio_public_credits')
+
+
+def studio_bundle_choices(titles):
+    """Collapse verified pairs that both appear in this company's portfolio."""
+    from core.game_edition_sources import ATTRIBUTE, WORKS_BUNDLE_ATTRIBUTE, WORKS_BUNDLE_VERSION, WORKS_EDITION_CLASSES
+
+    edition = aliased(CatalogueEntity)
+    bundle_app = aliased(CatalogueIdentity)
+    proof = edition.attributes[WORKS_BUNDLE_ATTRIBUTE]
+    store = edition.attributes[ATTRIBUTE]
+    app, bundle = proof['steam_app_id'].astext, proof['bundle_id'].astext
+    pairs = select(CatalogueIdentity.entity_id.label('bundle_id'), func.min(titles.c.id).label('edition_id')).select_from(
+        titles.join(edition, edition.id == titles.c.id)
+        .join(CatalogueIdentity, and_(CatalogueIdentity.namespace == 'igdb.game', CatalogueIdentity.external_id == bundle))
+        .join(bundle_app, and_(bundle_app.entity_id == CatalogueIdentity.entity_id,
+            bundle_app.namespace == 'steam.app', bundle_app.external_id == app))
+    ).where(titles.c.id != CatalogueIdentity.entity_id, titles.c.game_class.in_(WORKS_EDITION_CLASSES),
+        edition.field_sources[f'attributes.{WORKS_BUNDLE_ATTRIBUTE}'].astext == 'igdb',
+        proof['version'].astext == str(WORKS_BUNDLE_VERSION),
+        bundle == store['steam_bundle_id'].astext, app == store['steam_app_id'].astext,
+        proof['parent_igdb_id'].astext == store['parent_igdb_id'].astext,
+    ).group_by(CatalogueIdentity.entity_id).having(func.count(func.distinct(titles.c.id)) == 1).subquery()
+
+    primary, packaged = titles.alias(), titles.alias()
+    # If the viewer only tracks the bundle, retain the card that owns their entry.
+    keep_bundle = and_(primary.c.list_status.is_(None), packaged.c.list_status.is_not(None))
+    return select(
+        case((keep_bundle, pairs.c.bundle_id), else_=pairs.c.edition_id).label('keep'),
+        case((keep_bundle, pairs.c.edition_id), else_=pairs.c.bundle_id).label('hide'),
+    ).select_from(pairs.join(primary, primary.c.id == pairs.c.edition_id)
+        .join(packaged, and_(packaged.c.id == pairs.c.bundle_id, packaged.c.game_class == 'bundle'))
+    ).cte('studio_bundle_choices')
+
+
 async def works_page(db, viewer, entity_id, kind, *, key, list_scope, status, page, cursor):
     if entity_id is None:
         if cursor:
@@ -191,6 +246,8 @@ async def works_page(db, viewer, entity_id, kind, *, key, list_scope, status, pa
         return {'works': [], 'known_works': 0, 'list_count': 0 if viewer else None, 'roles': [],
             'total': 0, 'page': page, 'has_more': False, 'next_cursor': None, 'source': 'local'}
     credits = game_credits(entity_id, kind)
+    if kind == 'studio':
+        credits=studio_public_credits(credits,viewer)
     public = select(credits.c.id, credits.c.title, credits.c.poster, credits.c.backdrop,
         credits.c.released, credits.c.game_class, credits.c.base_work_id).distinct().cte('game_contributor_titles')
     if viewer:
@@ -209,6 +266,9 @@ async def works_page(db, viewer, entity_id, kind, *, key, list_scope, status, pa
     else:
         titles = select(public, literal(None, String).label('list_status'),
             literal(None).label('score')).cte('game_contributor_state')
+    bundle_choices = studio_bundle_choices(titles) if kind == 'studio' else None
+    if bundle_choices is not None:
+        titles = select(titles).where(titles.c.id.not_in(select(bundle_choices.c.hide))).cte('studio_distinct_works')
     labels = select(func.array_agg(func.distinct(func.coalesce(credits.c.role_label,
         func.initcap(func.replace(credits.c.role, '_', ' ')))))).scalar_subquery()
     counts = (await db.execute(select(func.count(), func.count(titles.c.list_status), labels).select_from(titles))).one()
@@ -255,8 +315,13 @@ async def works_page(db, viewer, entity_id, kind, *, key, list_scope, status, pa
         for item in displayed.values():
             if item['game_class']=='expansion':item['base_listed']=item['base_work_id'] in listed_bases
     if displayed:
-        associations = (await db.execute(select(credits.c.id, credits.c.role, credits.c.role_label,
-            credits.c.character_label,credits.c.credit_kind,credits.c.credit_title).where(credits.c.id.in_(displayed)).distinct())).all()
+        source, identifier = credits, credits.c.id
+        if bundle_choices is not None:
+            source = credits.outerjoin(bundle_choices, credits.c.id == bundle_choices.c.hide)
+            identifier = func.coalesce(bundle_choices.c.keep, credits.c.id)
+        associations = (await db.execute(select(identifier, credits.c.role, credits.c.role_label,
+            credits.c.character_label,credits.c.credit_kind,credits.c.credit_title).select_from(source)
+            .where(identifier.in_(displayed)).distinct())).all()
         for identifier, role, label, character,credit_kind,credit_title in associations:
             item = displayed[identifier]
             if credit_kind:

@@ -51,6 +51,7 @@ async def header(db,native):
         MetadataSnapshot.coverage['primary_only'].as_boolean().label('primary_only'),
         MetadataSnapshot.coverage['release_precision_version'].as_integer().label('release_precision_version'),
         MetadataSnapshot.coverage['edition_source_version'].as_integer().label('edition_source_version'),
+        MetadataSnapshot.coverage['works_bundle_version'].as_integer().label('works_bundle_version'),
         MetadataSnapshot.coverage['artwork_policy_version'].as_integer().label('artwork_policy_version')).where(
             MetadataSnapshot.provider=='igdb',MetadataSnapshot.kind=='game',MetadataSnapshot.external_id==native))).one_or_none()
 
@@ -110,7 +111,7 @@ async def upgrade_cached_artwork(db,work,native):
 
 
 async def request(db,work,*,identities=None):
-    from core.game_edition_sources import EDITION_CLASSES, VERSION
+    from core.game_edition_sources import ATTRIBUTE, EDITION_CLASSES, VERSION, WORKS_BUNDLE_VERSION, works_bundle_candidate
 
     native=await native_id(db,work,identities)
     if not native:return None,{'state':'unavailable','primary_ready':False,'pending':False,'complete':False,
@@ -127,7 +128,9 @@ async def request(db,work,*,identities=None):
     attrs = work.attributes or {}
     needs_edition_sources = (attrs.get('game_class') in EDITION_CLASSES
         and getattr(row, 'edition_source_version', None) != VERSION)
-    if (row and row.fetched_at and (row.release_precision_version!=RELEASE_VERSION or row.artwork_policy_version!=GAME_ARTWORK_VERSION or getattr(row,'primary_only',False) or needs_edition_sources) and not row.next_attempt_at
+    needs_works_bundle = (works_bundle_candidate(attrs.get('game_class'), attrs.get(ATTRIBUTE))
+        and getattr(row, 'works_bundle_version', None) != WORKS_BUNDLE_VERSION)
+    if (row and row.fetched_at and (row.release_precision_version!=RELEASE_VERSION or row.artwork_policy_version!=GAME_ARTWORK_VERSION or getattr(row,'primary_only',False) or needs_edition_sources or needs_works_bundle) and not row.next_attempt_at
             and not (row.lease_until and row.lease_until>stamp) and row.expires_at and row.expires_at>stamp):
         await db.execute(update(MetadataSnapshot).where(MetadataSnapshot.provider=='igdb',MetadataSnapshot.kind=='game',
             MetadataSnapshot.external_id==native,MetadataSnapshot.next_attempt_at.is_(None),

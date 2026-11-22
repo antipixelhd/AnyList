@@ -309,11 +309,18 @@ async def media_detail(entity_id: Annotated[int, Path(gt=0)], db: DB, current_us
     from core.tracking_access import catalog_access
     await catalog_access(db, current_user)
     work = await db.get(CatalogueEntity, entity_id)
+    bundle_redirect = False
     if work is None:
         from core.game_identity_reconciliation import alias_target
         canonical = await alias_target(db, entity_id)
         if canonical:
             work = await db.get(CatalogueEntity, canonical)
+    elif work.kind == 'game':
+        from core.game_edition_sources import BUNDLE_ALIAS, has_private_edition
+        alias = (work.attributes or {}).get(BUNDLE_ALIAS)
+        if alias and (not current_user or not await has_private_edition(db, work.id, current_user.id)):
+            work = await db.get(CatalogueEntity, alias['work_id']) or work
+            bundle_redirect = work.id != entity_id
     if not work or work.kind not in ('game', 'book'):
         raise HTTPException(404, "Game or book not found")
     await authorize_entity(db, work, current_user)
@@ -333,6 +340,7 @@ async def media_detail(entity_id: Annotated[int, Path(gt=0)], db: DB, current_us
     try:data=await catalogue_title(db, work, current_user.id if current_user else None,store_country=country,enqueue_offers=True,enqueue_ratings=True,enqueue_info=True,identities=identities)
     except ProviderError as error:raise safe_error(error) from None
     if work.kind=='game':
+        if bundle_redirect:data['game_bundle_redirect']=True
         data['game_metadata_status']=metadata_status
         data['game_credit_status']=credit_state
         from core.game_time_to_beat import view as time_estimates

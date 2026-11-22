@@ -8,7 +8,7 @@ from sqlalchemy import or_,select,update
 from core import catalogue
 from core.catalogue_providers import ProviderError
 from core.game_browse_sources import GameBrowseSources,positive
-from core.game_edition_sources import edition_sources_unknown, original_game
+from core.game_edition_sources import BUNDLE_EDITION, edition_sources_unknown, original_game
 from core.game_imdb_enrichment import now,snapshot as metadata,request as admit,status as job_status
 from core.game_types import capabilities
 from models.catalogue import CatalogueEntity,CatalogueIdentity,MetadataSnapshot
@@ -69,6 +69,9 @@ async def estimate_status(db, work, native, enqueue):
 
 
 async def view(db,work,*,enqueue=False):
+    edition_id = (work.attributes or {}).get(BUNDLE_EDITION)
+    if edition_id:
+        work = await db.get(CatalogueEntity,edition_id) or work
     native=await primary_id(db,work)
     if not native:return {'estimates':None,'status':{'state':'unavailable','pending':False,'complete':False}}
     values=projection(work,native)

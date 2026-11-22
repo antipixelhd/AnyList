@@ -378,6 +378,9 @@ async def ingest_document(db, doc, provider, *, entities=None, project_screen_ro
     if provider == 'igdb' and work.kind == 'game' and doc.get('edition_steam_bundle'):
         from core.game_edition_sources import ingest_steam_bundle
         await ingest_steam_bundle(db, doc['edition_steam_bundle'])
+    if provider == 'igdb' and work.kind == 'game' and doc['work']['attributes'].get('igdb_works_bundle'):
+        from core.game_edition_sources import publish_bundle_alias
+        await publish_bundle_alias(db, work)
     from core.catalogue_batch import DocumentEntities, write_credits
     entities = entities or DocumentEntities(db, provider)
     source_credits = [c for c in doc['credits'] if not c.get('edition_identity')]

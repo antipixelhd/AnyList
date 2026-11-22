@@ -10,8 +10,11 @@ if (!id) { Astro.response.status=404; error='Game not found.'; }
 else {
   try {
     media=await catalogueDetail(id,'game',Astro.locals.token,streamingCountry(Astro.cookies.get(DEVICE_COUNTRY_COOKIE)?.value));
-    if (media.subject?.kind==='game' && media.subject.catalogue_id!==id)
-      return Astro.redirect(`/games/${media.subject.catalogue_id}${Astro.url.search}`,301);
+    if (media.subject?.kind==='game' && media.subject.catalogue_id!==id) {
+      const redirect=Astro.redirect(`/games/${media.subject.catalogue_id}${Astro.url.search}`,media.game_bundle_redirect?302:301);
+      if(media.game_bundle_redirect)redirect.headers.set('Cache-Control','private, no-store');
+      return redirect;
+    }
   }
   catch (cause) { error=(cause as Error).message; Astro.response.status=error==='Not found.'?404:503; }
 }

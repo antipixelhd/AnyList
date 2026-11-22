@@ -39,6 +39,113 @@ class GameContributorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status_code,200)
         self.assertIn(games[0].id,{row['id'] for row in result.json()['works']})
 
+    async def test_studio_collapses_verified_bundle_before_paging_and_retains_trackable_compilations(self):
+        from datetime import timedelta
+        from importlib import import_module
+        from alembic.migration import MigrationContext
+        from alembic.operations import Operations
+        from core import catalogue
+        from core import game_discovery, steam_targets
+        from core.game_bulk import queue_metadata
+        from core.catalogue_providers import CatalogueProviders
+        from core.game_edition_sources import BUNDLE_ALIAS
+        from core.game_imdb_enrichment import now
+        from models.catalogue import MetadataSnapshot
+        from test_game_edition_sources_pg import enhanced as enhanced_metadata
+
+        _, _, company = await self.seed(24)
+        async with self.Session() as db:
+            release = {'release_date':'2025-03-04'}
+            enhanced = CatalogueEntity(kind='game', name='Fixture Enhanced', attributes={**release,
+                'game_class':'expanded_game', 'igdb_id':'334254'})
+            duplicate = CatalogueEntity(kind='game', name=enhanced.name, attributes={**release,'game_class':'bundle'})
+            halo = CatalogueEntity(kind='game', name='Halo: The Master Chief Collection',
+                attributes={'game_class':'bundle','release_date':'2014-11-11'})
+            db.add_all([enhanced,duplicate,halo]);await db.flush()
+            db.add_all([
+                CatalogueIdentity(entity_id=enhanced.id,namespace='igdb.game',external_id='334254',source='igdb'),
+                CatalogueIdentity(entity_id=duplicate.id,namespace='igdb.game',external_id='334647',source='igdb'),
+                CatalogueIdentity(entity_id=duplicate.id,namespace='steam.app',external_id='3240220',source='igdb'),
+                CatalogueCredit(work_id=enhanced.id,contributor_id=company,provider='igdb',source_key='enhanced',role='developer'),
+                CatalogueCredit(work_id=duplicate.id,contributor_id=company,provider='igdb',source_key='bundle',role='publisher'),
+                CatalogueCredit(work_id=halo.id,contributor_id=company,provider='igdb',source_key='collection',role='publisher'),
+            ])
+            await db.flush()
+            # Company acquisition uses this queue for cold titles after credit publication.
+            await queue_metadata(db,company,'studio')
+            job = await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.provider=='igdb',
+                MetadataSnapshot.kind=='game',MetadataSnapshot.external_id=='334254'))
+            self.assertIsNotNone(job.next_attempt_at)
+            job.fetched_at, job.expires_at, job.next_attempt_at = now(), now()+timedelta(days=5), None
+            await db.commit()
+            enhanced_id, duplicate_id, halo_id = enhanced.id, duplicate.id, halo.id
+
+        key = f'catalogue:{company}'
+        before = (await self.request('studio',key,media_type='game')).json()
+        self.assertEqual(before['total'],27)
+
+        def queue_existing(connection):
+            with Operations.context(MigrationContext.configure(connection)):
+                import_module('migrations.versions.mt103_works_bundle_evidence').upgrade()
+
+        async with self.engine.begin() as connection:
+            await connection.run_sync(queue_existing)
+        providers = CatalogueProviders()
+        edition = enhanced_metadata()
+        providers.igdb = AsyncMock(side_effect=lambda endpoint, query:
+            [] if endpoint == 'characters' else [edition, {'id':98077,'name':'Premium','game_type':{'id':3},
+                'version_parent':1020}] if 'where bundles=' in query else [edition])
+        async with self.Session() as db:
+            job = await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.provider=='igdb',
+                MetadataSnapshot.kind=='game',MetadataSnapshot.external_id=='334254'))
+            self.assertIsNotNone(job.next_attempt_at)
+            self.assertIsNone(job.expires_at)
+            with patch.object(providers,'validate'):
+                refreshed = await catalogue.refresh_metadata(db,providers,'igdb','game','334254',
+                    expected_entity_id=enhanced_id)
+            self.assertEqual(refreshed['status'],'updated')
+
+        response = await self.request('studio',key,media_type='game')
+        self.assertEqual(response.status_code,200,response.text)
+        first = response.json()
+        second = (await self.request('studio',key,media_type='game',page=2,cursor=first['next_cursor'])).json()
+        rows = {row['id']:row for row in first['works'] + second['works']}
+        self.assertEqual((first['known_works'],first['total'],len(rows)),(26,26,26))
+        self.assertNotIn(enhanced_id,rows)
+        self.assertIn(halo_id,rows)
+        self.assertEqual(rows[duplicate_id]['roles'],['Developer','Publisher'])
+
+        async with self.Session() as db:
+            work = await db.get(CatalogueEntity,enhanced_id)
+            self.assertEqual(work.attributes[BUNDLE_ALIAS]['work_id'],duplicate_id)
+            self.assertEqual(await steam_targets.work_map(db,['3240220']), {'3240220':duplicate_id})
+            search_rows = [
+                {'external_id':'334254','name':'Fixture Enhanced','game_class':'expanded_game'},
+                {'external_id':'334647','name':'Fixture Enhanced','game_class':'bundle'},
+            ]
+            with patch.object(game_discovery,'candidates',AsyncMock(return_value=search_rows)):
+                search = await game_discovery.search(db,'Fixture Enhanced')
+            self.assertEqual([(row['id'],row['igdb_id']) for row in search['results']],[(duplicate_id,334647)])
+            search_rows[1]['is_erotic'] = True
+            with patch.object(game_discovery,'candidates',AsyncMock(return_value=search_rows)):
+                self.assertEqual((await game_discovery.search(db,'Fixture Enhanced'))['results'],[])
+            db.add(GameEntry(user_id=self.viewer.id,work_id=duplicate_id,status='playing'))
+            await db.execute(delete(CatalogueCredit).where(CatalogueCredit.work_id==duplicate_id,
+                CatalogueCredit.contributor_id==company))
+            await db.commit()
+        listed = (await self.request('studio',key,media_type='game',list_scope='in')).json()
+        self.assertEqual(listed['list_count'],2)
+        self.assertIn(duplicate_id,{row['id'] for row in listed['works']})
+        self.assertNotIn(enhanced_id,{row['id'] for row in listed['works']})
+
+        async with self.Session() as db:
+            bundle = await db.get(CatalogueEntity,duplicate_id)
+            bundle.attributes={**bundle.attributes,'mobile_only':True}
+            await db.commit()
+        visible = (await self.request('studio',key,media_type='game')).json()
+        self.assertIn(enhanced_id,{row['id'] for row in visible['works']})
+        self.assertNotIn(duplicate_id,{row['id'] for row in visible['works']})
+
     async def asyncSetUp(self):
         await fixture.ContributorDetailsTests.asyncSetUp(self)
         async with self.Session() as db:

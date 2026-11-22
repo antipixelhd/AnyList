@@ -2,7 +2,7 @@
 import asyncio
 from dataclasses import dataclass
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from core.catalogue_providers import CatalogueProviders, ProviderHTTP, ProviderError
 from db import AsyncSessionLocal
@@ -56,12 +56,34 @@ async def candidates(query):
 
 
 async def search(db, query, limit=8,*,hide_erotic_games=True):
-    rows = [row for row in await candidates(query) if not hide_erotic_games or not row.get('is_erotic')][:limit]
-    ids = [row['external_id'] for row in rows]
-    mappings = dict((await db.execute(select(CatalogueIdentity.external_id, CatalogueIdentity.entity_id)
+    from core.game_edition_sources import BUNDLE_ALIAS
+
+    source_rows = await candidates(query)
+    excluded = {row['external_id'] for row in source_rows if hide_erotic_games and row.get('is_erotic')}
+    rows = [row for row in source_rows if row['external_id'] not in excluded]
+    by_native = {row['external_id']:row for row in rows}
+    alias = CatalogueEntity.attributes[BUNDLE_ALIAS]
+    mappings = {native:(owner, canonical, erotic) for native,owner,canonical,erotic in (await db.execute(select(
+        CatalogueIdentity.external_id, func.coalesce(alias['work_id'].as_integer(), CatalogueIdentity.entity_id),
+        alias['igdb_id'].astext, alias['is_erotic'].as_boolean())
         .join(CatalogueEntity, CatalogueEntity.id == CatalogueIdentity.entity_id)
-        .where(CatalogueIdentity.namespace == 'igdb.game', CatalogueIdentity.external_id.in_(ids),
-               CatalogueEntity.kind == 'game'))).all()) if ids else {}
-    return {'results': [dict(id=mappings.get(row['external_id']), igdb_id=int(row['external_id']),
-        type='game', title=row['name'], poster=row.get('image_url'), year=(row.get('release_date') or '')[:4] or None,
-        game_class=row['game_class']) for row in rows]}
+        .where(CatalogueIdentity.namespace == 'igdb.game', CatalogueIdentity.external_id.in_(by_native),
+               CatalogueEntity.kind == 'game'))).all()} if rows else {}
+    results = []
+    seen = set()
+    for row in rows:
+        native = row['external_id']
+        owner, canonical, erotic = mappings.get(native, (None, None, False))
+        if canonical in excluded or hide_erotic_games and erotic:
+            continue
+        key = canonical or native
+        if key in seen:
+            continue
+        seen.add(key)
+        source = by_native.get(canonical, row)
+        results.append(dict(id=owner, igdb_id=int(canonical or native), type='game', title=source['name'],
+            poster=source.get('image_url'), year=(source.get('release_date') or '')[:4] or None,
+            game_class='bundle' if canonical else source['game_class']))
+        if len(results) == limit:
+            break
+    return {'results':results}

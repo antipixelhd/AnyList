@@ -308,7 +308,7 @@ IGDB_FIELDS = (
         for projection in ("platforms.id", "name", "summary", "cover.url", "first_release_date", "game_type.type", "release_dates.date", "release_dates.date_format.format", "release_dates.y", "release_dates.m", "release_dates.d", "release_dates.status.name", "version_parent.name", "version_parent.summary", "version_parent.cover.url", "version_parent.first_release_date", "version_parent.game_type.type")
     )
     + ',ports.platforms.name,ports.platforms.platform_family.name,websites.url,'
-      'bundles.name,bundles.game_type.type,bundles.external_games.uid,bundles.external_games.url,'
+      'bundles.name,bundles.game_type.type,bundles.themes,bundles.external_games.uid,bundles.external_games.url,'
       'bundles.external_games.external_game_source.name'
 )
 
@@ -561,7 +561,10 @@ class CatalogueProviders:
         if provider == "igdb":
             from core.game_types import igdb_game_class
             from core.game_release_dates import VERSION as RELEASE_VERSION
-            from core.game_edition_sources import ATTRIBUTE, EDITION_CLASSES, VERSION as EDITION_SOURCE_VERSION, edition_sources
+            from core.game_edition_sources import (
+                ATTRIBUTE, EDITION_CLASSES, VERSION as EDITION_SOURCE_VERSION, WORKS_BUNDLE_ATTRIBUTE,
+                WORKS_BUNDLE_VERSION, edition_sources, verify_works_bundle, works_bundle_candidate,
+            )
             from core.catalogue_normalize import entity
             rows = await self.igdb(
                 "games", f"fields {IGDB_FIELDS}; where id = {id}; limit 1;"
@@ -581,14 +584,16 @@ class CatalogueProviders:
                 raw = rows[0]
                 if raw.get("version_parent"):
                     raise ProviderError("identity_conflict")
+            game_class = igdb_game_class(raw)
+            sources, bundle = edition_sources(raw) if game_class in EDITION_CLASSES else (None, None)
+
             def document():
                 doc=normalize_igdb(raw)
-                if igdb_game_class(raw) in EDITION_CLASSES:
-                    sources, bundle = edition_sources(raw)
+                if sources is not None:
                     doc['work']['attributes'][ATTRIBUTE] = sources
                     if bundle:
                         doc['edition_steam_bundle'] = bundle
-                    if igdb_game_class(raw) == 'expanded_game' and sources.get('parent_igdb_id'):
+                    if game_class == 'expanded_game' and sources.get('parent_igdb_id'):
                         doc['relationships'].append({
                             'target': entity('game', 'igdb.game', raw['parent_game'], attributes={'game_class': 'game'}),
                             'relation': 'version',
@@ -605,7 +610,7 @@ class CatalogueProviders:
                 'children_complete':all(isinstance(raw.get(field,[]),list) and all(
                     isinstance(child,dict) and child.get('id') and child.get('name') and igdb_game_class(child)!='unknown'
                     for child in raw.get(field,[])) for field in ('dlcs','expansions'))}
-            if igdb_game_class(raw) in EDITION_CLASSES:
+            if sources is not None:
                 raw['_coverage']['edition_source_version'] = EDITION_SOURCE_VERSION
             if primary_only:
                 # Imported membership needs its game header, not a career graph.
@@ -619,7 +624,19 @@ class CatalogueProviders:
                 f"fields id,name,description,mug_shot.url; where games = ({raw['id']}); sort id asc;",
             )
             raw['_coverage']['characters_complete']=complete
-            return document(), {"game": raw, "version": version}
+            doc = document()
+            if works_bundle_candidate(game_class, sources):
+                raw['_coverage']['works_bundle_version'] = WORKS_BUNDLE_VERSION
+                try:
+                    async with asyncio.timeout(8):
+                        proof = await verify_works_bundle(self.igdb, raw, sources)
+                except (ProviderError, TimeoutError):
+                    # Missing evidence leaves Works visible. A provider failure
+                    # does not erase a previous proof for the same store link.
+                    pass
+                else:
+                    doc['work']['attributes'][WORKS_BUNDLE_ATTRIBUTE] = proof
+            return doc, {"game": raw, "version": version}
         if provider == "hardcover":
             d = await self.hardcover(
                 "query($id:Int!){books(where:{id:{_eq:$id}},limit:1){id canonical_id title description release_date pages cached_image}}",
