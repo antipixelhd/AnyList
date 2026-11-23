@@ -61,4 +61,7 @@
     grid-template-rows: auto;
     grid-auto-columns: min(46%, 195px);
   }
+  .media-detail[data-media-kind=game] [data-game-preview-group=studios] [data-game-preview-grid] {
+    grid-auto-columns: clamp(164px, 46%, 195px);
+  }
 }
