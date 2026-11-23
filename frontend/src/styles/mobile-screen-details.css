@@ -142,8 +142,7 @@
     min-block-size: 44px;
     color: var(--text);
   }
-  .media-detail[data-mobile-disclosures-ready] :is(.lab-friends,.lab-note):has(.mobile-screen-disclosure) .lab-section-title,
+  .media-detail[data-mobile-disclosures-ready] :is(.lab-friends,[data-game-releases]):has(.mobile-screen-disclosure) .lab-section-title,
   .media-detail[data-mobile-disclosures-ready] .mobile-screen-disclosure[aria-expanded=false] ~ * { display: none; }
-  .media-detail .lab-note:has(.mobile-screen-disclosure) { padding-block: 4px; }
   .media-detail .mobile-screen-disclosure[aria-expanded=true] > .ui-icon { transform: rotate(90deg); }
 }

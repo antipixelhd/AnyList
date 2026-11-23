@@ -344,7 +344,7 @@ export class EditorStore {
     if (this.episodeCache.size > 96) this.episodeCache.delete(this.episodeCache.keys().next().value!);
     return value;
   }
-  write(title: EditorTitle, patch: Record<string, any>, optimistic?:Record<string,any>) {
+  write(title: EditorTitle, patch: Record<string, any>, optimistic?:Record<string,any>, options?: Pick<RequestInit,'keepalive'>) {
     const viewer = this.viewer;
     const record = this.record(title)!;
     const operation = {patch: {...patch, ...optimistic}};
@@ -362,7 +362,9 @@ export class EditorStore {
         const child=game&&['expansion','dlc'].includes(record.title.game_class||'');
         const path=game?(favoriteOnly?`games/favorites/${id}`:`games/${child?'children':'entries'}/${id}${record.title.game_class==='dlc'?'?listed=false':''}`):`entry/${id}`;
         const body=game&&!favoriteOnly?{...patch,revision:record.committed?.revision??record.title.game_state?.revision??null}:patch;
-        const saved = await this.request(path, {method:favoriteOnly?'PUT':'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+        const payload = JSON.stringify(body);
+        const keepalive = options?.keepalive && new TextEncoder().encode(payload).byteLength <= 64 * 1024;
+        const saved = await this.request(path, {method:favoriteOnly?'PUT':'PATCH', headers:{'Content-Type':'application/json'}, body:payload, ...(keepalive?{keepalive}:{})});
         const {series_editor:seriesSummary, ...entry} = saved;
         record.committed = (game?saved.listed:saved.status) ? entry : null;
         if(game)record.title.game_state=saved;

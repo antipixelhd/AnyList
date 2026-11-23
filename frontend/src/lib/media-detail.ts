@@ -28,6 +28,7 @@ import {mountGameMetadata} from './game-metadata';
 import {localizeDateTimes,setLocalDateTime} from './date-time-dom';
 import {confirmEntryAction,episodeRollbackWarning} from './entry-confirmation';
 import {mountSeriesSeasons} from './series-seasons';
+import {mountDetailNote} from './detail-note';
 
 let pageListeners: AbortController | undefined;
 let mountedRoot: HTMLElement | null = null;
@@ -291,9 +292,11 @@ export function mountMediaDetail() {
 
   const favorite = root.querySelector<HTMLButtonElement>('[data-favorite-toggle]');
   const library = root.querySelector<HTMLButtonElement>('[data-library-toggle]');
-  const note = root.querySelector<HTMLTextAreaElement>('#detail-note');
-  let noteDirty = false;
-  note?.addEventListener('input',()=>{noteDirty=true;},{signal});
+  const syncNote = mountDetailNote(root,async notes=>{
+    if (!title) throw new Error('The entry could not be loaded.');
+    const saved = await editorStore.write(title,{notes},undefined,{keepalive:true});
+    return saved.notes ?? '';
+  },signal);
   let displayedProgress = title?.entry?.progress ?? null;
   let projectedSeasons:DetailSeason[] | null = null;
   let seasonRevision=0;
@@ -354,7 +357,7 @@ export function mountMediaDetail() {
       library.dataset.desired=String(active); setFeedbackPressed(library,active,editorStore.hasPendingWrites(state),signal);
       library.title=active?'Remove from library':'Add to library'; library.setAttribute('aria-label',library.title);
     }
-    if (note && !noteDirty) note.value=state.entry?.notes || '';
+    syncNote?.(state.entry?.notes ?? '');
     root.querySelectorAll<HTMLElement>('[data-season-score]').forEach(score=>score.textContent=String(state.entry?.season_scores?.[score.dataset.seasonScore!] || '—'));
     const average=root.querySelector<HTMLInputElement>('[data-season-average]');
     if(average)average.checked=state.entry?.rating_mode==='average';
@@ -397,14 +400,6 @@ export function mountMediaDetail() {
     void editorStore.writeLibrary(title,desired).then(saved=>{
       if (title?.editor_library?.desired===saved.desired) showToast({message:desired?'Added to library.':'Removed from library.',kind:'success',key:'detail-library'});
     }).catch(error=>showActionFailure('library',title?.title,error));
-  },{signal});
-  root.querySelector<HTMLButtonElement>('[data-detail-save-note]')?.addEventListener('click',async event=>{
-    if (!title || !note) return;
-    const button=event.currentTarget as HTMLButtonElement;
-    const notes=note.value; button.disabled=true; button.setAttribute('aria-busy','true');
-    try { await editorStore.write(title,{notes}); if (note.value===notes) noteDirty=false; showToast('Notes saved.','success'); }
-    catch (error) { showActionFailure('note',null,error); }
-    finally { button.disabled=false; button.removeAttribute('aria-busy'); }
   },{signal});
 
   loadDetailImages=mountDetailImages(root,info,signal);
