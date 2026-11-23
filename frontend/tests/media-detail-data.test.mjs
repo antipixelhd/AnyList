@@ -15,8 +15,9 @@ test('game crew reserves one of four slots for the leading music credit',()=>{
   const crew=['Game Director','Writer','Lead Designer','Producer','Assistant Director','Composer','music_director'].map((role,i)=>({
     id:i+1,kind:'staff',name:role,roles:[role],characters:[],
   }));
-  assert.deepEqual(Array.from(api.gameCrewPreview(crew),row=>row.id),[1,2,3,7]);
-  assert.deepEqual(Array.from(api.gameCrewPreview(crew.slice(0,-1)),row=>row.id),[1,2,3,6]);
+  assert.deepEqual(Array.from(api.gameCrewPreview(crew),row=>row.id),[1,7,2,3]);
+  assert.deepEqual(Array.from(api.gameCrewPreview([crew[1],crew[0],...crew.slice(2)]),row=>row.id),[1,7,2,3]);
+  assert.deepEqual(Array.from(api.gameCrewPreview(crew.slice(0,-1)),row=>row.id),[1,6,2,3]);
   assert.deepEqual(Array.from(api.gameCrewPreview(crew.slice(0,5)),row=>row.id),[1,2,3,4]);
   assert.equal(api.gameCrewPreview([crew[4]]).length,0);
 });

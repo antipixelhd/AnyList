@@ -53,12 +53,7 @@ function mountMobileFacts(root: HTMLElement, signal: AbortSignal) {
       viewport.scrollTo({left:0});
       return;
     }
-    const bounds = viewport.getBoundingClientRect();
-    const firstPartial = root.dataset.mediaKind === 'game'
-      ? [...track.querySelectorAll('dl > div:not([hidden])')].find(fact=>fact.getBoundingClientRect().right > bounds.right + 1)
-      : undefined;
-    const offset = firstPartial ? firstPartial.getBoundingClientRect().left - bounds.left - 12 : 0;
-    viewport.scrollBy({left:offset>0 ? offset : viewport.clientWidth - 28});
+    viewport.scrollBy({left:viewport.clientWidth - 28});
   }, {signal});
   const observer = new ResizeObserver(update);
   observer.observe(strip);

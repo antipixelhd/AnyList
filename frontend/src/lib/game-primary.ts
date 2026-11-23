@@ -93,19 +93,16 @@ export function publishGamePrimary(root:HTMLElement,data:Record<string,any>,id:n
     }
   }
   const facts=detailFacts(title),release=facts.find(fact=>fact.label==='Released'||fact.label==='Releases');
-  if(release)paintMobileRelease(root,release);
+  const releaseSummary=release||facts.find(fact=>fact.label==='Status');
+  if(releaseSummary)paintMobileRelease(root,releaseSummary);
   const platformRow=root.querySelector<HTMLElement>('[data-mobile-game-platforms]');
   const platforms=platformRow?gameMobilePlatforms(title):[];
   if(platformRow&&platforms.length){
-    platformRow.querySelector('dd')!.replaceChildren(...platforms.map(name=>{
-      const entry=document.createElement('span');entry.className='media-fact-entry';entry.textContent=name;return entry;
-    }));
+    platformRow.querySelector('dd')!.textContent=platforms.join(', ');
     platformRow.hidden=false;
   }
-  root.querySelectorAll<HTMLElement>('.lab-facts dl,.lab-inline-facts dl,[data-mobile-game-facts=more]').forEach(list=>{
-    const mobile=list.dataset.mobileGameFacts==='more';
+  root.querySelectorAll<HTMLElement>('.lab-facts dl,.lab-inline-facts dl').forEach(list=>{
     facts.forEach(fact=>{
-      if(mobile&&(fact===release||fact.label==='Platforms'||fact.label==='Status'&&fact.value==='Released'&&release?.label==='Released'))return;
       const row=document.createElement('div'),term=document.createElement('dt'),value=document.createElement('dd');
       term.textContent=fact.label;value.textContent=fact.value;row.append(term,value);
       const old=[...list.children].find(child=>child.querySelector('dt')?.textContent===fact.label);

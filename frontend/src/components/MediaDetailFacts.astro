@@ -8,8 +8,9 @@ interface Props {
   title:DetailMedia;
   pending?:boolean;
   group?:MobileFactGroup;
+  gameSummary?:boolean;
 }
-const {facts,title,pending=false,group}=Astro.props;
+const {facts,title,pending=false,group,gameSummary=false}=Astro.props;
 const screen=title.type==='movie'||title.type==='series';
 const organizations=detailOrganizationFacts(title);
 const lowerFacts=new Set(['Language','Country','Budget','Box office','Platforms']);
@@ -18,11 +19,9 @@ const quarterRelease=title.type==='game'&&title.release_date_precision==='quarte
 const age=title.type==='game'?gameAgeRating(title.game_info,title.game_offer_context?.country||'US'):null;
 const screenRows=screen?detailInformationRows(title,pending,facts):[];
 const rows=group?mobileFactRows(screenRows,group,title.type):screenRows;
-const gameMobile=title.type==='game'&&!!group;
-const gameRelease=gameMobile?facts.find(fact=>fact.label==='Released'||fact.label==='Releases'):undefined;
-const platforms=gameMobile?gameMobilePlatforms(title):[];
-const gameDesktopFacts=gameMobile?facts.filter(fact=>!['Released','Releases','Platforms'].includes(fact.label)&&
-  !(gameRelease?.label==='Released'&&fact.label==='Status'&&fact.value==='Released')):facts;
+const gameRelease=gameSummary?facts.find(fact=>fact.label==='Released'||fact.label==='Releases'):undefined;
+const gameStatus=gameSummary&&!gameRelease?facts.find(fact=>fact.label==='Status'):undefined;
+const platforms=gameSummary?gameMobilePlatforms(title):[];
 ---
 {screen?<><dl data-screen-facts={group||''} aria-busy={pending?'true':undefined}>
   {rows.map(row=><div data-detail-fact={row.label} data-fact-signature={JSON.stringify(row)} data-fact-pending={row.pending?'true':undefined}><dt>{row.label}</dt><dd>
@@ -30,18 +29,19 @@ const gameDesktopFacts=gameMobile?facts.filter(fact=>!['Released','Releases','Pl
       <episode-countdown data-position={row.airing.position} role="timer"><time datetime={row.airing.dateTime}>{episodeCountdownLabel(row.airing.position,row.airing.dateTime)}</time></episode-countdown>}</>
       :row.pending?<span class="detail-value-skeleton" aria-hidden="true"/>:row.items?row.items.map(person=><span class="media-fact-entry">{person.url?<a href={person.url}>{person.name}</a>:person.name}</span>):['Released','Releases'].includes(row.label)?<LocalDateTime value={title.release_date} fallback={row.value}/>:row.value}
   </dd></div>)}
-</dl>{!group&&<p class="detail-load-status" data-detail-people-status hidden/>}</>:gameMobile&&group==='glance'?<dl data-mobile-game-facts="glance">
-  <div data-mobile-game-release hidden={!gameRelease}><dt>{gameRelease?.label||'Released'}</dt><dd>{quarterRelease?gameRelease?.value:<LocalDateTime value={title.release_date} fallback={gameRelease?.value}/>}</dd></div>
-  <div data-mobile-game-platforms data-detail-fact="Platforms" hidden={!platforms.length}><dt>Platforms</dt><dd>{platforms.map(name=><span class="media-fact-entry">{name}</span>)}</dd></div>
-</dl>:<dl data-mobile-game-facts={gameMobile?'more':undefined}>
+</dl>{!group&&<p class="detail-load-status" data-detail-people-status hidden/>}</>:gameSummary?<dl class="game-mobile-facts lab-module" aria-label="Game information">
+  <div data-mobile-game-release hidden={!gameRelease&&!gameStatus}><dt>{(gameRelease||gameStatus)?.label}</dt><dd>{gameRelease&&!quarterRelease?<LocalDateTime value={title.release_date} fallback={gameRelease.value}/>:gameRelease?.value||gameStatus?.value}</dd></div>
+  <div data-mobile-game-platforms hidden={!platforms.length}><dt>Platforms</dt><dd>{platforms.join(', ')}</dd></div>
+  <div data-game-age-rating hidden={!age} title={age?.detail}><dt>Age rating</dt><dd>{age?.label}</dd></div>
+</dl>:<dl>
   {title.type==='game'&&<div data-game-age-rating hidden={!age} title={age?.detail}><dt>Age rating</dt><dd>{age?.label}</dd></div>}
-  {gameDesktopFacts.filter(fact=>!lowerFacts.has(fact.label)).map(fact=><div><dt>{fact.label}</dt><dd>{['Released','Releases','First published'].includes(fact.label)&&!quarterRelease?<LocalDateTime value={title.release_date} fallback={fact.value}/>:fact.value}</dd></div>)}
+  {facts.filter(fact=>!lowerFacts.has(fact.label)).map(fact=><div><dt>{fact.label}</dt><dd>{['Released','Releases','First published'].includes(fact.label)&&!quarterRelease?<LocalDateTime value={title.release_date} fallback={fact.value}/>:fact.value}</dd></div>)}
   {organizations.filter(group=>!finalGroups.has(group.label)).map(group=><div><dt>{group.label}</dt><dd>{group.rows.map(person=><span class="media-fact-entry">{person.url?<a href={person.url}>{person.name}</a>:person.name}</span>)}</dd></div>)}
-  {gameDesktopFacts.filter(fact=>lowerFacts.has(fact.label)).map(fact=><div><dt>{fact.label}</dt><dd>{fact.value}</dd></div>)}
+  {facts.filter(fact=>lowerFacts.has(fact.label)).map(fact=><div><dt>{fact.label}</dt><dd>{fact.value}</dd></div>)}
   {organizations.filter(group=>finalGroups.has(group.label)).map(group=><div><dt>{group.label}</dt><dd>{group.rows.map(person=><span class="media-fact-entry">{person.url?<a href={person.url}>{person.name}</a>:person.name}</span>)}</dd></div>)}
 </dl>}
 
-{!group&&title.type==='game'&&title.game_metadata_status?.primary_ready===false&&!facts.length&&<div class="game-section-skeleton" data-game-primary-facts aria-hidden="true"><span></span><span></span><span></span></div>}
+{!group&&!gameSummary&&title.type==='game'&&title.game_metadata_status?.primary_ready===false&&!facts.length&&<div class="game-section-skeleton" data-game-primary-facts aria-hidden="true"><span></span><span></span><span></span></div>}
 <script>
   import {registerEpisodeCountdown} from '../lib/episode-countdown';
   registerEpisodeCountdown();

@@ -159,9 +159,13 @@ export function gameCrewPreview(people: DetailPerson[]) {
   const credited = people.map(person => ({person, roles:roles(person)}));
   const musicCredit = credited.find(row => row.roles.some(role => /^(?:music director|director of music)$/i.test(role)))
     ?? credited.find(row => row.roles.some(role => music.test(role)));
-  const core = credited.filter(row => row !== musicCredit && !row.roles.some(role => music.test(role))
-    && row.roles.some(role => keyRole.test(role))).slice(0, musicCredit ? 3 : 4);
-  return [...core, ...(musicCredit ? [musicCredit] : [])].map(row => row.person);
+  const candidates = credited.filter(row => row !== musicCredit && !row.roles.some(role => music.test(role))
+    && row.roles.some(role => keyRole.test(role)));
+  const lead = candidates.find(row => row.roles.some(role => /^(?:(?:game|creative) )?director$/i.test(role)));
+  const ordered = lead ? [lead, ...candidates.filter(row => row !== lead)] : candidates;
+  const core = ordered.slice(0, musicCredit ? 3 : 4);
+  if (musicCredit) core.splice(1, 0, musicCredit);
+  return core.map(row => row.person);
 }
 
 export function gameMobilePlatforms(media: Pick<DetailMedia, 'platforms' | 'releases'>) {

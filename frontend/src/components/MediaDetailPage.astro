@@ -133,13 +133,13 @@ const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
           <div class="lab-overview-grid">
             <div class="lab-primary-column">
               {gameTitle&&<MediaDetailGameMetadata status={title.game_metadata_status}/>}
-              {(screenTitle||gameTitle)&&<section class="mobile-screen-information lab-module" aria-label="Information">
-                {screenTitle&&<MediaDetailFacts facts={facts} title={title} pending={screenPrimaryPending} group="airing"/>}
+              {gameTitle&&<MediaDetailFacts {facts} {title} gameSummary/>}
+              {screenTitle&&<section class="mobile-screen-information lab-module" aria-label="Information">
+                <MediaDetailFacts facts={facts} title={title} pending={screenPrimaryPending} group="airing"/>
                 <div class="mobile-screen-facts-strip">
                   <div id="mobile-title-facts" class="mobile-screen-facts" tabindex="0" role="region" aria-label="Title facts and scores">
                     <div class="mobile-screen-fact-track">
                     <MediaDetailFacts facts={facts} title={title} pending={screenPrimaryPending} group="glance"/>
-                    {gameTitle&&<MediaDetailGameOffer data={offers} compact/>}
                     {glanceRating&&<dl><div data-mobile-score hidden={glanceRating.value==null}><dt>{glanceRating.name}</dt><dd data-detail-score={glanceRating.field}>{glanceRating.value}</dd></div></dl>}
                     <MediaDetailFacts facts={facts} title={title} pending={screenPrimaryPending} group="more"/>
                     {ratings.length>1&&<dl>{ratings.filter(row=>row!==glanceRating).map(row=><div data-mobile-score hidden={row.value==null}><dt>{row.name}</dt><dd data-detail-score={row.field}>{row.value}</dd></div>)}</dl>}
@@ -167,7 +167,7 @@ const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
               {gameTitle&&signedIn&&<MediaDetailGameEditions/>}
               {gameTitle&&<MediaDetailGameOffer data={offers} primaryPending={gamePrimaryPending}/>}
               {!!title.friends.length&&<section class="lab-friends lab-module">{screenTitle&&<button type="button" class="lab-text-button mobile-screen-disclosure" data-mobile-screen-disclosure aria-expanded="false" aria-controls="mobile-detail-friends"><Icon name="chevron-right"/>People you follow · {title.friends.length} · {scoreLabel(title.friends_average??null)}/10</button>}<div class="lab-section-title"><h2>People you follow</h2><span><Icon name="star"/>{scoreLabel(title.friends_average??null)}</span></div><div class="lab-friends-grid" id="mobile-detail-friends">{title.friends.map(friend=><a class="lab-friend" href={`/user/${encodeURIComponent(friend.username)}/${title.type==='movie'?'movies':'series'}`}><span class="lab-friend-avatar friend-one" aria-hidden="true">{friend.id&&friend.has_avatar?<img src={`/api/proxy/profile/avatar/${friend.id}`} alt="" loading="lazy"/>:friend.username.slice(0,1).toUpperCase()}</span><div><h3>{friend.display_name||friend.username}</h3><p>{statuses.find(([id])=>id===friend.status)?.[1]||friend.status}</p></div><strong>{scoreLabel(friend.score)}</strong></a>)}</div></section>}
-              {signedIn&&trackable&&!gameChild&&<section class="lab-note lab-module">{screenTitle&&<button type="button" class="lab-text-button mobile-screen-disclosure" data-mobile-screen-disclosure aria-expanded="false" aria-controls="mobile-detail-note"><Icon name="chevron-right"/>Personal note</button>}<div class="lab-section-title"><h2><label for="detail-note">Personal note</label></h2><Icon name="comment"/></div><div id="mobile-detail-note"><textarea aria-label="Personal note" id="detail-note" rows="3" placeholder="Something worth remembering…">{title.entry?.notes||''}</textarea><div class="lab-note-footer"><button class="lab-text-button" type="button" data-detail-save-note>Save <Icon name="check"/></button></div></div></section>}
+              {signedIn&&trackable&&!gameChild&&<section class="lab-note lab-module">{(screenTitle||gameTitle)&&<button type="button" class="lab-text-button mobile-screen-disclosure" data-mobile-screen-disclosure aria-expanded="false" aria-controls="mobile-detail-note"><Icon name="chevron-right"/>Personal note</button>}<div class="lab-section-title"><h2><label for="detail-note">Personal note</label></h2><Icon name="comment"/></div><div id="mobile-detail-note"><textarea aria-label="Personal note" id="detail-note" rows="3" placeholder="Something worth remembering…">{title.entry?.notes||''}</textarea><div class="lab-note-footer"><button class="lab-text-button" type="button" data-detail-save-note>Save <Icon name="check"/></button></div></div></section>}
             </div>
             {gameTitle&&<MediaDetailGameRequirements info={title.game_info} status={title.game_info_status} primaryPending={gamePrimaryPending}/>}
             <section class="lab-related lab-module" data-detail-related hidden={!title.relations.length}><div class="lab-section-title"><h2>Relations</h2></div><div class="lab-related-grid" data-detail-related-grid>{title.relations.map(work=><MediaDetailWork work={work}/>)}</div></section>
