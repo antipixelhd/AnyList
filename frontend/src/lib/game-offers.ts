@@ -10,6 +10,15 @@ import {paintGameSection,gameSectionPending,gameSectionFailure} from './game-sec
 export function mountGameOffers(root:HTMLElement,id:number,signal:AbortSignal,initial?:GameOffers) {
   const section=root.querySelector<HTMLElement>('[data-game-offer]');if(!section)return;
   const node=<T extends HTMLElement=HTMLElement>(selector:string)=>section.querySelector<T>(selector)!;
+  const compact=root.querySelector<HTMLElement>('[data-mobile-game-offer]');
+  const paintCompact=(price:ReturnType<typeof selectedGameOffer>)=>{
+    if(!compact)return;
+    const url=offerLink(price?.url||null);
+    const link=compact.querySelector<HTMLAnchorElement>('a')!;
+    compact.hidden=!url;
+    if(url)link.href=url;else link.removeAttribute('href');
+    compact.querySelector('[data-mobile-game-offer-price]')!.textContent=moneyLabel(price?.current);
+  };
   let lifetime:AbortController|undefined,resource:ReturnType<typeof detailBackground<GameOffers>>|undefined,hint='';
   function start() {
     const detected=deviceStoreCountry();rememberDeviceCountry(undefined,detected);
@@ -17,11 +26,13 @@ export function mountGameOffers(root:HTMLElement,id:number,signal:AbortSignal,in
     lifetime?.abort();lifetime=new AbortController();hint=detected;
     const matches=offerRegionMatches(section!.dataset.gameOfferSource,section!.dataset.gameOfferRegion,detected);
     if(!matches){
+      paintCompact(null);
       paintGameSection(section!,false,{pending:true});
       node('[data-game-offer-low]').hidden=true;node('[data-game-offer-link]').hidden=true;
     }
     resource=detailBackground<GameOffers>(`/api/proxy/tracking/games/works/${id}/offers?country=${detected}`,lifetime.signal,data=>{
       const price=selectedGameOffer(data);section!.dataset.gameOfferSource=data.country_source;section!.dataset.gameOfferRegion=data.country;
+      paintCompact(price);
       const entering=section!.hidden;paintGameSection(section!,!!price,data.status,root.dataset.gamePrimaryPending==='true');
       if(!price){node('[data-game-offer-low]').hidden=true;node('[data-game-offer-link]').hidden=true;}
       if(price){

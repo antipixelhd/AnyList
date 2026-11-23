@@ -8,8 +8,24 @@ import {countryLabel} from '../src/lib/stats-overview-data.ts';
 import {episodeCountdownLabel} from '../src/lib/episode-countdown.ts';
 const source=readFileSync(new URL('../src/lib/media-detail-data.ts',import.meta.url),'utf8');
 const context={Intl,Date,URLSearchParams,countryLabel,formatDate,localToday};
-runInNewContext(stripTypeScriptTypes(source.replace(/^import .*$/gm,'').replace(/export /g,''))+';globalThis.api={localMediaId,prepareDetail,detailCredits,detailCreditEpisodes,detailCreditText,detailCreditDescription,detailOrganizationFacts,detailInformationRows,mobileFactRows,durationLabel,detailDate,detailSynopsis,progressTotal,detailFacts,relationLabel,moneyLabel,detailWorkCaption,detailCastPresentation,detailBrowseHref,detailCreators};',context);
+runInNewContext(stripTypeScriptTypes(source.replace(/^import .*$/gm,'').replace(/export /g,''))+';globalThis.api={localMediaId,prepareDetail,detailCredits,detailCreditEpisodes,detailCreditText,detailCreditDescription,detailOrganizationFacts,detailInformationRows,gameCrewPreview,gameMobilePlatforms,mobileFactRows,durationLabel,detailDate,detailSynopsis,progressTotal,detailFacts,relationLabel,moneyLabel,detailWorkCaption,detailCastPresentation,detailBrowseHref,detailCreators};',context);
 const {api}=context;
+
+test('game crew reserves one of four slots for the leading music credit',()=>{
+  const crew=['Game Director','Writer','Lead Designer','Producer','Assistant Director','Composer','music_director'].map((role,i)=>({
+    id:i+1,kind:'staff',name:role,roles:[role],characters:[],
+  }));
+  assert.deepEqual(Array.from(api.gameCrewPreview(crew),row=>row.id),[1,2,3,7]);
+  assert.deepEqual(Array.from(api.gameCrewPreview(crew.slice(0,-1)),row=>row.id),[1,2,3,6]);
+  assert.deepEqual(Array.from(api.gameCrewPreview(crew.slice(0,5)),row=>row.id),[1,2,3,4]);
+  assert.equal(api.gameCrewPreview([crew[4]]).length,0);
+});
+
+test('mobile game platforms use compact names without repeating aliases',()=>{
+  const title=api.prepareDetail({type:'game',platforms:['PC','PlayStation 5','Xbox Series X|S','Nintendo Switch'],
+    releases:[{platform:'PS5'},{platform:'Xbox Series X/S'}]});
+  assert.deepEqual(Array.from(api.gameMobilePlatforms(title)),['PC','PS5','Series X|S','Switch']);
+});
 
 test('mobile facts prioritize useful fields without duplicating the release status',()=>{
   const rowsFor=(input)=>api.detailInformationRows(api.prepareDetail(input));

@@ -149,6 +149,29 @@ export function detailOrganizationFacts(media:DetailMedia) {
   }else add('Studios',production);
   return groups;
 }
+
+export function gameCrewPreview(people: DetailPerson[]) {
+  const roles = (person: DetailPerson) => [
+    ...person.roles, ...(person.role_codes || []), ...(person.jobs || []).map(job => job.split(':', 1)[0]),
+  ].map(role => role.trim().replace(/[_-]/g, ' '));
+  const music = /^(?:(?:lead|original(?: music)?) )?composer$|^(?:music director|director of music)$/i;
+  const keyRole = /^(?:(?:game|creative|art|design|technical|animation|narrative) director|director|(?:original )?creator|(?:lead )?(?:game )?designer|(?:lead |narrative )?writer|(?:executive |lead )?producer)$/i;
+  const credited = people.map(person => ({person, roles:roles(person)}));
+  const musicCredit = credited.find(row => row.roles.some(role => /^(?:music director|director of music)$/i.test(role)))
+    ?? credited.find(row => row.roles.some(role => music.test(role)));
+  const core = credited.filter(row => row !== musicCredit && !row.roles.some(role => music.test(role))
+    && row.roles.some(role => keyRole.test(role))).slice(0, musicCredit ? 3 : 4);
+  return [...core, ...(musicCredit ? [musicCredit] : [])].map(row => row.person);
+}
+
+export function gameMobilePlatforms(media: Pick<DetailMedia, 'platforms' | 'releases'>) {
+  const platforms = [...(media.platforms || []), ...media.releases.map(release => release.platform)];
+  const shortName = (value: string) => value.trim().replace(/^(?:playstation|ps)\s*([1-5])$/i, 'PS$1')
+    .replace(/^xbox series x\s*(?:\||\/)\s*s$/i, 'Series X|S')
+    .replace(/^nintendo switch$/i, 'Switch');
+  return [...new Map(platforms.filter((value): value is string => typeof value === 'string' && !!value.trim())
+    .map(value => { const name = shortName(value); return [name.toLowerCase(),name]; })).values()];
+}
 export type DetailInformationRow={label:string;value?:string;items?:{name:string;url?:string|null}[];pending?:boolean;
   airing?:{position:string;dateTime:string}};
 export type MobileFactGroup = 'airing' | 'glance' | 'more';

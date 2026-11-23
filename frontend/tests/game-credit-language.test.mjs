@@ -37,13 +37,12 @@ test('no title language or inferred voice fills missing per-performance language
   assert.equal(gameCastLanguage([unknown],'unknown'),'all','a redundant single-bucket control stays hidden');
 });
 
-test('all languages retain independent unvoiced characters and source availability regardless of actor view',()=>{
+test('language filtering retains the full actor source and its availability',()=>{
   const actors=[actor(1,[performance(['A'],['en'])]),actor(2,[performance(['B'])])];
-  const state=gameCastData(actors,[{id:20,name:'Silent hero',image:'art',performers:[]}],{complete:true},{complete:true});
+  const state=gameCastData(actors,{complete:true});
   const view=gameCastRows(state.actors,'en');
   assert.equal(view.length,1);assert.equal(state.actors.length,2);
-  assert.equal(state.characters[0].name,'Silent hero');assert.equal(state.characters[0].image,'art');
-  assert.deepEqual(state.availability,{actors:'available',characters:'available'});
+  assert.equal(state.availability,'available');
 });
 
 test('options distinguish explicit language variants and unknown; invalidated selections recover without a false empty cast',()=>{

@@ -1,12 +1,12 @@
 import {publishScreenPrimary} from './screen-primary';
 import { createContentTransition } from './content-motion';
-import { detailCastPresentation, detailCredits, detailCreators, detailCreditEpisodes, detailCreditText, detailCreditDescription, type DetailPerson, type DetailMedia } from './media-detail-data';
+import { detailCastPresentation, detailCredits, detailCreators, detailCreditEpisodes, detailCreditText, detailCreditDescription, gameCrewPreview, type DetailPerson, type DetailMedia } from './media-detail-data';
 import { responsiveArtwork } from './responsive-artwork';
 import { type DetailLoadState } from './detail-background';
 import { detailPeopleLoading, waitForDetailPortraits } from './detail-people-loading';
 import {createProgressiveCredits} from './progressive-credits';
 import {visibleArtwork} from './visible-artwork';
-import {gameCastData,gameCharacterCards,keepCachedGameCredits,type GameCastData} from './game-cast-data';
+import {gameCastData,keepCachedGameCredits,type GameCastData} from './game-cast-data';
 import {gameCastLanguages,gameCastLanguage,gameCastRows} from './game-credit-language';
 import {mountGamePersonImages} from './game-person-images';
 import {createLoadingReveal} from './loading-reveal';
@@ -35,8 +35,9 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
   const gameSeed=root.querySelector('[data-game-cast-data]');
   const seed=gameSeed?JSON.parse(gameSeed.textContent!):undefined;
   if(gameSeed||info.gameCredits)mountGamePersonImages(root,signal);
-  let gameCast:GameCastData|undefined=seed?{...seed,characters:gameCharacterCards(seed.source_characters,seed.actors)}:undefined;
-  let mode: 'actors' | 'characters' = gameCast?.mode||'actors';
+  const gamePage=root.dataset.mediaKind==='game';
+  let gameCast:GameCastData|undefined=seed;
+  let mode: 'actors' | 'characters' = 'actors';
   let language='all';
   const backgroundAvailable=!!(info.backgroundAvailable||info.gameCredits);
   let metadataPending=backgroundAvailable&&info.characterStatus?.state!=='ready',error='';
@@ -48,7 +49,7 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
   });
   const warmed=new Set<string>();
   const warm=()=>{
-    if(gameCast)return; // Game character art is exposed on demand, not guessed from portraits.
+    if(gamePage)return;
     if(mode!=='actors'||signal.aborted)return;
     root.querySelectorAll<HTMLElement>('[data-credit-preview] [data-cast-person]').forEach(card=>{
       const person=JSON.parse(card.dataset.castPerson!) as DetailPerson;
@@ -102,7 +103,7 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
     next();
   }
   const paint=(container: HTMLElement, selected: typeof mode)=>{
-    if(gameCast)return;
+    if(gamePage)return;
     container.querySelectorAll<HTMLElement>('[data-cast-person]').forEach(card=>{
       const person=JSON.parse(card.dataset.castPerson!) as DetailPerson;
       const view=detailCastPresentation(person,selected);
@@ -145,7 +146,7 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
         if(!count){count=document.createElement('span');count.className='media-credit-episodes';count.dataset.creditEpisodes='';card.querySelector('h3')!.parentElement!.append(count);}
         count.textContent=episodes;
       }else count?.remove();
-      if((gameCast||person.kind!=='actor')&&card.querySelector('.media-person-art'))artwork(card,[person.image].filter((url):url is string=>!!url));
+      if((gamePage||person.kind!=='actor')&&card.querySelector('.media-person-art'))artwork(card,[person.image].filter((url):url is string=>!!url));
       return card;
     });
     // Reuse portraits and cards already on screen instead of reloading them.
@@ -162,7 +163,7 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
       fill(section.querySelector<HTMLElement>('[data-credit-rest]')!,people);
       if(section.matches('[data-credit-section=cast]'))paint(section,mode);
     });
-    deferred.set(section,list);list.replace(gameCast&&section.dataset.creditSection==='cast'?gameCast[mode].slice(Number(section.dataset.creditLimit||8)):JSON.parse(data?.textContent||'[]'));data?.remove();
+    deferred.set(section,list);list.replace(gameCast&&section.dataset.creditSection==='cast'?gameCast.actors.slice(Number(section.dataset.creditLimit||8)):JSON.parse(data?.textContent||'[]'));data?.remove();
     const toggle=section.querySelector('[data-credit-toggle]');
     toggle?.addEventListener('click',()=>{
       list.toggle(toggle.getAttribute('aria-expanded')!=='true');
@@ -174,28 +175,24 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
     const options=gameCastLanguages(current.actors);
     language=gameCastLanguage(current.actors,language);
     root.querySelectorAll<HTMLElement>('[data-game-cast-languages]').forEach(wrapper=>{
-      wrapper.hidden=mode!=='actors'||options.length<=2;
+      wrapper.hidden=options.length<=2;
       const select=wrapper.querySelector<HTMLSelectElement>('[data-game-cast-language]')!;
       if(JSON.stringify([...select.options].map(option=>[option.value,option.text]))!==JSON.stringify(options)){
         select.replaceChildren(...options.map(([value,text])=>new Option(text,value,false,value===language)));
       }
       if(select.value!==language){select.value=language;select.dispatchEvent(new Event('change',{bubbles:true}));}
     });
-    root.querySelectorAll<HTMLButtonElement>('[data-cast-mode]').forEach(control=>{
-      control.disabled=current.availability[control.dataset.castMode as keyof typeof current.availability]==='empty';
-      control.hidden=current.availability[control.dataset.castMode as keyof typeof current.availability]==='unknown';
-      control.setAttribute('aria-pressed',String(control.dataset.castMode===mode));
-      control.closest<HTMLElement>('.media-cast-toggle')!.hidden=Object.values(current.availability).some(value=>value==='unknown')||!current.actors.length&&!current.characters.length;
-    });
   };
-  const showGameCast=(previewFallback:DetailPerson[]=[])=>{
+  const showGameCast=()=>{
     if(!gameCast)return;
     syncGameControls();
-    const rows=mode==='actors'?gameCastRows(gameCast.actors,language):gameCast.characters;
+    const rows=gameCastRows(gameCast.actors,language);
     const preview=root.querySelector<HTMLElement>('[data-credit-preview]');
     if(preview){
-      const displayed=(rows.length?rows:previewFallback).slice(0,8);
-      fill(preview,displayed,metadataPending);preview.closest<HTMLElement>('.lab-people-preview')!.hidden=!displayed.length&&!metadataPending;
+      const displayed=rows.slice(0,8);
+      fill(preview,displayed,metadataPending);
+      const overview=preview.closest<HTMLElement>('.lab-people-preview')!;
+      overview.hidden=!displayed.length&&!metadataPending&&!overview.querySelector('[data-game-preview-group]:not([hidden])');
     }
     const section=root.querySelector<HTMLElement>('[data-credit-section="cast"]');
     if(section){
@@ -203,7 +200,6 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
       fill(section.querySelector<HTMLElement>('[data-credit-visible]')!,rows.slice(0,limit),metadataPending);
       deferred.get(section)?.replace(rows.slice(limit));
       section.hidden=!rows.length&&!metadataPending;
-      section.querySelector<HTMLElement>('[data-credit-heading]')!.textContent=mode==='characters'?'Characters':'Cast';
       section.querySelector<HTMLElement>('[data-credit-toggle]')!.hidden=rows.length<=limit;
     }
   };
@@ -219,9 +215,9 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
     language=gameCastLanguage(gameCast.actors,select.value);
     transitionGameCast();
   },{signal});
-  const update=(data:{people:DetailPerson[];organizations:DetailPerson[];character_status:DetailLoadState&{complete?:boolean};game_credit_status?:DetailLoadState&{complete?:boolean};credits_status?:string;game_characters?:import('./game-cast-data').GameCharacter[];game_character_status?:{complete?:boolean};primary?:Record<string,any>;primary_status?:DetailLoadState})=>{
-    const pendingState=gameCast&&mode==='actors'&&data.game_credit_status?data.game_credit_status:data.character_status;
-    if(!gameCast&&data.primary&&data.primary_status){
+  const update=(data:{people:DetailPerson[];organizations:DetailPerson[];character_status:DetailLoadState&{complete?:boolean};game_credit_status?:DetailLoadState&{complete?:boolean};credits_status?:string;primary?:Record<string,any>;primary_status?:DetailLoadState})=>{
+    const pendingState=gamePage?(data.game_credit_status||data.character_status):data.character_status;
+    if(!gamePage&&data.primary&&data.primary_status){
       const previous=info.screenPrimary||{};
       const primary={...previous};
       for(const [field,value] of Object.entries(data.primary))if(value!=null&&value!==''&&(!Array.isArray(value)||value.length))primary[field]=value;
@@ -229,7 +225,7 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
       info.screenPrimary=primary;
       publishScreenPrimary(root,{...primary,people:data.people,organizations:data.organizations},info.id,data.primary_status,signal);
     }
-    if(gameCast&&keepCachedGameCredits(data,gameCast,!!root.querySelector('[data-credit-section="crew"] [data-person-id],[data-credit-section="studios"] [data-person-id]'))){metadataPending=true;return data.character_status;}
+    if(gameCast&&keepCachedGameCredits({...data,character_status:pendingState},gameCast,!!root.querySelector('[data-credit-section="crew"] [data-person-id],[data-credit-section="studios"] [data-person-id]'))){metadataPending=true;return pendingState;}
     metadataPending=!pendingState.error&&(pendingState.pending===true||['partial','pending','deferred'].includes(pendingState.state||''));
     const groups=detailCredits({people:data.people,organizations:data.organizations,type:info.type} as DetailMedia);
     if(!groups.cast.length&&['failed','deferred'].includes(data.credits_status||''))return {state:'deferred',pending:true,retry_after:60,error:'unavailable'};
@@ -244,13 +240,18 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
       });
       creatorRow.replaceChildren(...nodes);creatorRow.hidden=false;
     }
-    if(gameCast){
-      gameCast=gameCastData(groups.cast,data.game_characters||[],data.game_credit_status||data.character_status,data.game_character_status);
-      if(gameCast.availability[mode]==='empty'||!gameCast[mode].length&&gameCast[mode==='actors'?'characters':'actors'].length)mode=mode==='actors'?'characters':'actors';
-      showGameCast(groups.preview);
+    if(gamePage){
+      const previews={crew:gameCrewPreview(groups.principal),studios:groups.studios};
+      root.querySelectorAll<HTMLElement>('[data-game-preview-group]').forEach(group=>{
+        const people=previews[group.dataset.gamePreviewGroup as keyof typeof previews];
+        fill(group.querySelector<HTMLElement>('[data-game-preview-grid]')!,people);
+        group.hidden=!people.length;
+      });
+      gameCast=gameCastData(groups.cast,pendingState);
+      showGameCast();
       const tab=root.querySelector<HTMLButtonElement>('[data-detail-tab="people"]');
       if(tab){
-        tab.disabled=gameCast.availability.actors==='empty'&&gameCast.availability.characters==='empty'&&!data.people.length&&!data.organizations.length;
+        tab.disabled=gameCast.availability==='empty'&&!data.people.length&&!data.organizations.length;
         if(tab.disabled&&tab.getAttribute('aria-selected')==='true')root.querySelector<HTMLButtonElement>('[data-detail-tab="overview"]')?.click();
       }
     }else{
@@ -268,7 +269,7 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
     });
     metadataPending=!pendingState.error&&(pendingState.pending===true||['partial','pending','deferred'].includes(pendingState.state||''));
     containers.forEach(container=>paint(container,mode));
-    status();return data.character_status;
+    status();return pendingState;
   };
   const background=detailPeopleLoading(info.id,signal,update,(state,message)=>{
     error=state==='retry'?(message?.includes('Sign in')||message?.includes('Access to')?message:'Couldn’t refresh cast and crew. We’ll try again shortly.'):'';
@@ -277,23 +278,19 @@ export function mountDetailCast(root: HTMLElement, signal: AbortSignal, info:any
       if(gameCast)showGameCast();
     }
     status();
-  },{selected:()=>mode==='characters',needed:()=>metadataPending,
-    ...(info.gameCredits?{source:{people:`/api/proxy/tracking/games/works/${info.id}/credits`}}:{}),
+  },{selected:()=>!gamePage&&mode==='characters',needed:()=>metadataPending,
+    ...(gamePage?{source:{people:`/api/proxy/tracking/games/works/${info.id}/credits`}}:{}),
     primaryReady:()=>waitForDetailPortraits([...root.querySelectorAll<HTMLImageElement>('[data-credit-preview] img')],signal),warm});
   if(backgroundAvailable)background.start(!!info.gameCredits||!!info.screenPrimaryPending||!root.querySelector('[data-credit-preview] [data-person-id]'));
   root.addEventListener('click',event=>{
     const button=(event.target as Element).closest<HTMLButtonElement>('[data-cast-mode]');
     if((event.target as Element).closest('[data-detail-people-retry]')){void background.retry();return;}
-    if(!button||button.disabled||button.dataset.castMode===mode)return;
+    if(gamePage||!button||button.disabled||button.dataset.castMode===mode)return;
     mode=button.dataset.castMode==='characters'?'characters':'actors';
     if(mode==='characters'&&metadataPending&&backgroundAvailable)void background.characters();
     root.querySelectorAll<HTMLButtonElement>('[data-cast-mode]').forEach(control=>control.setAttribute('aria-pressed',String(control.dataset.castMode===mode)));
     const selected=mode;
-    if(gameCast){
-      // Both controls share one authoritative view and progressive range.
-      // The common content transition owns motion without replacing portraits.
-      transitionGameCast();
-    }else transitions.forEach((transition,container)=>void transition(()=>paint(container,selected)));
+    transitions.forEach((transition,container)=>void transition(()=>paint(container,selected)));
     status();
   },{signal});
 }

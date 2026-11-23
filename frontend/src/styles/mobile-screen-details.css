@@ -70,7 +70,7 @@
     display: grid;
     grid-template-rows: repeat(2, auto);
     grid-auto-flow: column;
-    gap: 0 12px;
+    gap: 0 var(--mobile-fact-column-gap, 12px);
     margin-block-start: 2px;
   }
   .mobile-screen-facts-next:not([hidden]) {

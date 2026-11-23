@@ -32,13 +32,14 @@ import {scoreLabel,statuses} from '../lib/tracker';
 import {responsiveArtwork,artworkIdentity} from '../lib/responsive-artwork';
 import {detailHeroArtwork,detailSceneArtwork} from '../lib/detail-artwork';
 import {mediaShareDescription} from '../lib/share-preview';
-import {prepareDetail,detailCredits,detailFacts,detailSynopsis,detailBrowseHref,detailCreators} from '../lib/media-detail-data';
+import {prepareDetail,detailCredits,detailFacts,detailSynopsis,detailBrowseHref,detailCreators,gameCrewPreview} from '../lib/media-detail-data';
 import '../styles/dev-details.css';
 import '../styles/dev-marquee.css';
 import '../styles/dev-marquee-25.css';
 import '../styles/detail-background.css';
 import '../styles/media-details.css';
 import '../styles/mobile-screen-details.css';
+import '../styles/game-overview-details.css';
 import '../styles/activity-card-rating.css';
 const {media,library=null,libraryError='',canUseLibrary=false,error=''}=Astro.props;
 const title=media?prepareDetail(media):null;
@@ -62,10 +63,12 @@ const facts=title?detailFacts(title):[];
 const synopsis=detailSynopsis(title?.overview,gameTitle);
 const people=title?[...title.people,...title.organizations]:[];
 const credits=title?detailCredits(title):null;
-const gameCast=gameTitle&&credits?gameCastData(credits.cast,title?.game_characters||[],title?.game_credit_status,title?.game_character_status):null;
-const gamePeoplePending=gameTitle&&!!(title.game_credit_status?.pending||title.game_character_status?.pending||!title.game_metadata_status?.primary_ready);
-const gamePeopleEmpty=!!gameCast&&gameCast.availability.actors==='empty'&&gameCast.availability.characters==='empty'&&!people.length;
-const preview=gameCast?.[gameCast.mode].length?gameCast[gameCast.mode].slice(0,8):credits?.preview||[];
+const gameCast=gameTitle&&credits?gameCastData(credits.cast,title?.game_credit_status):null;
+const gamePeoplePending=gameTitle&&!!(title.game_credit_status?.pending||!title.game_metadata_status?.primary_ready);
+const gamePeopleEmpty=gameCast?.availability==='empty'&&!people.length;
+const preview=gameCast?gameCast.actors.slice(0,8):credits?.preview||[];
+const crewPreview=gameTitle?gameCrewPreview(credits?.principal||[]):[];
+const studioPreview=gameTitle?credits?.studios||[]:[];
 const allArtwork=[...new Set((title?.artwork||[]).filter(Boolean))] as string[];
 const artwork=gameTitle?allArtwork:allArtwork.slice(0,10);
 const scenes=artwork.filter(url=>url!==title?.backdrop);
@@ -130,12 +133,13 @@ const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
           <div class="lab-overview-grid">
             <div class="lab-primary-column">
               {gameTitle&&<MediaDetailGameMetadata status={title.game_metadata_status}/>}
-              {screenTitle&&<section class="mobile-screen-information lab-module" aria-label="Information">
-                <MediaDetailFacts facts={facts} title={title} pending={screenPrimaryPending} group="airing"/>
+              {(screenTitle||gameTitle)&&<section class="mobile-screen-information lab-module" aria-label="Information">
+                {screenTitle&&<MediaDetailFacts facts={facts} title={title} pending={screenPrimaryPending} group="airing"/>}
                 <div class="mobile-screen-facts-strip">
                   <div id="mobile-title-facts" class="mobile-screen-facts" tabindex="0" role="region" aria-label="Title facts and scores">
                     <div class="mobile-screen-fact-track">
                     <MediaDetailFacts facts={facts} title={title} pending={screenPrimaryPending} group="glance"/>
+                    {gameTitle&&<MediaDetailGameOffer data={offers} compact/>}
                     {glanceRating&&<dl><div data-mobile-score hidden={glanceRating.value==null}><dt>{glanceRating.name}</dt><dd data-detail-score={glanceRating.field}>{glanceRating.value}</dd></div></dl>}
                     <MediaDetailFacts facts={facts} title={title} pending={screenPrimaryPending} group="more"/>
                     {ratings.length>1&&<dl>{ratings.filter(row=>row!==glanceRating).map(row=><div data-mobile-score hidden={row.value==null}><dt>{row.name}</dt><dd data-detail-score={row.field}>{row.value}</dd></div>)}</dl>}
@@ -147,9 +151,13 @@ const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
                 <p class="detail-load-status" data-detail-people-status hidden></p>
               </section>}
               <section class="lab-story lab-module" data-detail-synopsis data-mobile-screen-synopsis={screenTitle||undefined} data-screen-synopsis-ready={screenTitle&&!!title.overview?true:undefined}><div class="lab-section-title"><h2>Overview</h2></div><p id="detail-synopsis" data-biography-text class:list={{'detail-synopsis-skeleton':(gamePrimaryPending||screenPrimaryPending)&&!title.overview}} aria-busy={(gamePrimaryPending||screenPrimaryPending)&&!title.overview?true:undefined}>{(gamePrimaryPending||screenPrimaryPending)&&!title.overview?'Loading overview…':synopsis.lead||'No synopsis available yet.'}<span data-biography-ellipsis hidden={!synopsis.shortened}>…</span><span data-biography-rest hidden>{synopsis.rest}</span></p>{(synopsis.expandable||screenTitle&&!!synopsis.lead)&&<button data-mobile-synopsis-only={!synopsis.expandable||undefined} class="lab-text-button" type="button" data-biography-toggle aria-expanded="false" aria-controls="detail-synopsis">Read more</button>}<noscript><style>{`.media-detail [data-biography-rest][hidden] { display:inline!important; } .media-detail [data-biography-toggle],.media-detail [data-biography-ellipsis] { display:none!important; }`}</style></noscript></section>
-              {!screenTitle&&<section class="lab-inline-facts lab-module"><h2>Information</h2><MediaDetailFacts facts={facts} title={title} pending={screenPrimaryPending}/></section>}
+              {!screenTitle&&!gameTitle&&<section class="lab-inline-facts lab-module"><h2>Information</h2><MediaDetailFacts facts={facts} title={title} pending={screenPrimaryPending}/></section>}
               {gameTitle&&<MediaDetailGameTimes estimates={title.completion_estimates} status={title.game_estimate_status} primaryPending={gamePrimaryPending}/>}
-              {(trackable||!!preview.length)&&<section class="lab-people-preview lab-module" hidden={gameTitle&&!preview.length&&!gamePeoplePending}><div class="lab-section-title"><h2>{trackable?'Cast & crew':'Creators'}</h2><div class="media-cast-controls">{(trackable||!!credits?.cast.length)&&<MediaDetailCastToggle gameCast={gameCast}/>}<button class="lab-text-button" type="button" data-detail-open-tab="people">View all <Icon name="arrow-right"/></button></div></div><p class="detail-load-status" data-detail-people-status hidden></p><div class="lab-person-grid" data-cast-content data-credit-preview>{preview.map(person=><MediaDetailPerson person={person} primary/>)}{!preview.length&&(screenTitle||gamePeoplePending)&&Array.from({length:8},()=> <div class="detail-person-skeleton" aria-hidden="true"><span></span><div></div></div>)}</div></section>}
+              {(trackable||!!preview.length||!!crewPreview.length||!!studioPreview.length)&&<section class="lab-people-preview lab-module" hidden={gameTitle&&!preview.length&&!crewPreview.length&&!studioPreview.length&&!gamePeoplePending}><div class="lab-section-title"><h2>{trackable?'Cast & crew':'Creators'}</h2><div class="media-cast-controls">{(!gameTitle&&(trackable||!!credits?.cast.length))&&<MediaDetailCastToggle/>}<button class="lab-text-button" type="button" data-detail-open-tab="people">View all <Icon name="arrow-right"/></button></div></div><p class="detail-load-status" data-detail-people-status hidden></p>{gameTitle&&<h3 class="game-overview-actors-label">Actors</h3>}<div class="lab-person-grid" data-cast-content data-credit-preview>{preview.map(person=><MediaDetailPerson person={person} primary/>)}{!preview.length&&(screenTitle||gamePeoplePending)&&Array.from({length:8},()=> <div class="detail-person-skeleton" aria-hidden="true"><span></span><div></div></div>)}</div>
+                {gameTitle&&[{id:"crew",label:"Crew",rows:crewPreview},{id:"studios",label:"Studios",rows:studioPreview}].map(group=><section class="game-overview-credit-group" data-game-preview-group={group.id} hidden={!group.rows.length}>
+                  <h3>{group.label}</h3><div class="lab-person-grid" data-game-preview-grid>{group.rows.map(person=><MediaDetailPerson person={person} primary/>)}</div>
+                </section>)}
+              </section>}
               {(screenTitle||gameTitle||!!scene)&&<section class="lab-art-preview lab-module" hidden={gameTitle&&!scene&&!gamePrimaryPending}><div class="lab-section-title"><h2>In the frame</h2></div><button class:list={['lab-art-image',{'detail-image-skeleton':!scene}]} type="button" data-detail-image={scene||''} data-detail-caption={`${title.title} · Scene`} aria-label={`Expand ${title.title} scene`}><picture>{mobileScene&&<source media="(max-width:650px)" srcset={mobileScene}/>}<img {...(detailSceneArtwork(scene,backdrop,'direct',sceneThumbnail)||{})} hidden={!scene} alt={`${title.title} scene`} loading="lazy"/></picture></button></section>}
               {!!title.editions.length&&<section class="lab-module"><div class="lab-section-title"><h2>Editions</h2></div><div class="media-editions">{title.editions.map(edition=><article>{edition.image&&<img src={edition.image} alt="" loading="lazy"/>}<div><h3>{edition.name}</h3><p>{[edition.format,edition.language,edition.pages?`${edition.pages} pages`:null].filter(Boolean).join(' · ')}{edition.release_date&&<>{edition.format||edition.language||edition.pages?' · ':''}<LocalDateTime value={edition.release_date}/></>}</p></div></article>)}</div></section>}
               {(gameTitle||!!title.releases.length)&&<section class="lab-module" data-game-releases hidden={!title.releases.length}><div class="lab-section-title"><h2>Releases</h2></div><div class="media-releases">{title.releases.map(release=><p><strong>{release.platform}</strong><span>{release.region}{release.region&&release.release_date?' · ':''}{release.release_date&&(release.release_quarter?`Q${release.release_quarter} ${release.release_date}`:<LocalDateTime value={release.release_date}/>)}</span></p>)}</div></section>}
@@ -170,7 +178,7 @@ const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
         {gameTitle&&!gameChild&&trackable&&signedIn&&<section class="lab-panel" id="detail-panel-achievements" role="tabpanel" aria-labelledby="detail-tab-achievements" data-detail-panel="achievements" hidden={initialTab!=='achievements'}><MediaDetailAchievements id={title.id}/></section>}
         {title.type==='series'&&<section class="lab-panel" id="detail-panel-seasons" role="tabpanel" aria-labelledby="detail-tab-seasons" data-detail-panel="seasons" hidden={initialTab!=='seasons'}><MediaDetailSeasons title={title} signedIn={signedIn} removeSpecials={removeSpecials}/></section>}
         {signedIn&&trackable&&<section class="lab-panel" id="detail-panel-social" role="tabpanel" aria-labelledby="detail-tab-social" data-detail-panel="social" hidden={initialTab!=='social'}><div data-detail-social><p class="section-empty">Loading social activity…</p></div></section>}
-        {(trackable||!!people.length)&&<section class="lab-panel" id="detail-panel-people" role="tabpanel" aria-labelledby="detail-tab-people" data-detail-panel="people" hidden={initialTab!=='people'}><p class="detail-load-status" data-detail-people-status hidden></p>{credits&&<><MediaDetailCredits label={gameCast?.mode==='characters'?'Characters':'Cast'} rows={gameCast?gameCast[gameCast.mode]:credits.cast} id="cast" gameCast={gameCast} gameCharacters={title.game_characters} loading={(screenTitle||gamePeoplePending)&&!credits.cast.length}/><MediaDetailCredits label={trackable?'Crew':'Creators'} rows={credits.principal} id="crew"/><MediaDetailCredits label="Studios" rows={credits.studios} id="studios" limit={6}/></>}</section>}
+        {(trackable||!!people.length)&&<section class="lab-panel" id="detail-panel-people" role="tabpanel" aria-labelledby="detail-tab-people" data-detail-panel="people" hidden={initialTab!=='people'}><p class="detail-load-status" data-detail-people-status hidden></p>{credits&&<><MediaDetailCredits label={'Cast'} rows={gameCast?gameCast.actors:credits.cast} id="cast" gameCast={gameCast} loading={(screenTitle||gamePeoplePending)&&!credits.cast.length}/><MediaDetailCredits label={trackable?'Crew':'Creators'} rows={credits.principal} id="crew"/><MediaDetailCredits label="Studios" rows={credits.studios} id="studios" limit={6}/></>}</section>}
         {(screenTitle||gameTitle||!!artwork.length)&&<section class="lab-panel" id="detail-panel-artwork" role="tabpanel" aria-labelledby="detail-tab-artwork" data-detail-panel="artwork" hidden={initialTab!=='artwork'}><p class="section-empty" data-detail-artwork-status hidden></p><div class="lab-gallery" data-detail-artwork-grid>{gamePrimaryPending&&!artwork.length&&Array.from({length:8},()=> <button type="button" class="detail-image-skeleton" disabled aria-hidden="true" tabindex="-1"></button>)}{artwork.map((url,index)=><button type="button" data-detail-image={url} data-detail-caption={`${title.title} · Artwork ${index+1}`} aria-label={`Expand artwork ${index+1}`}><img data-gallery-src={detailSceneArtwork(url,null,'direct',title.artwork_thumbnails?.[url])?.src} alt={`${title.title}, artwork ${index+1}`} loading="lazy"/></button>)}</div></section>}
       </div>
     </div>
