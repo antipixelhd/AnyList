@@ -123,6 +123,7 @@ const encode=(value:unknown)=>JSON.stringify(value).replaceAll('<','\\u003c');
         {gameTitle&&!gameChild&&<GameProgress state={title.entry} showAchievements={showGameAchievements}/>}
       </section>}
       <section class="lab-facts"><h2>Information</h2><MediaDetailFacts facts={facts} title={title} pending={screenPrimaryPending}/></section>
+      {gameTitle&&<MediaDetailGameTimes estimates={title.completion_estimates} status={title.game_estimate_status} primaryPending={gamePrimaryPending} sidebar/>}
       <nav class="lab-source-links" data-detail-sources hidden={!sources.length} aria-label="Metadata sources">{sources.map(source=><a href={source.url} target="_blank" rel="noreferrer">{source.name}<Icon name="external"/></a>)}</nav>
     </aside>
     <div class="lab-main">

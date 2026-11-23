@@ -15,10 +15,22 @@
 .game-overview-credit-group [data-person-kind=studio] h3 { overflow-wrap: anywhere; }
 
 @media (min-width: 651px) {
+  .media-detail .lab-game-times:not([data-times-sidebar]) { display: none; }
+  .media-detail .lab-game-times[data-times-sidebar] {
+    margin-block-start: 16px;
+    padding: 20px;
+    border-radius: var(--lab-radius);
+    background: var(--panel);
+  }
+  .media-detail .lab-game-times[data-times-sidebar] :is(dl,.game-section-skeleton-times) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .media-detail .lab-game-times[data-times-sidebar] h2 { font-size: 1.3rem; }
   [data-game-preview-group=studios] [data-game-preview-grid] > :nth-child(n+5) { display: none; }
 }
 
 @media (max-width: 650px) {
+  .media-detail .lab-game-times[data-times-sidebar] { display: none; }
   .media-detail[data-media-kind=game] [data-game-offer] { display: none; }
   .game-mobile-facts:has(> div:not([hidden])) {
     display: flex;
