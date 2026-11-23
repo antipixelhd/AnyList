@@ -12,7 +12,7 @@ import test_statistics_pg as fixture
 from core import catalogue
 from core.catalogue_additive import fill_document
 from core.catalogue_normalize import normalize_tmdb
-from core.contributor_search import local_matches, known_principal_status
+from core.contributor_search import local_matches
 from core.screen_characters import character_images
 from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity, ContributorSearch, ScreenCharacter
 
@@ -54,10 +54,12 @@ class CreditAccessTests(unittest.IsolatedAsyncioTestCase):
                 credit.attributes={**credit.attributes,'principal':False}
             await db.commit()
             self.assertEqual((await local_matches(db,'Projection','actor'))['actor'],[])
-            self.assertEqual(await known_principal_status(db,{actor}),{actor:False})
+            summary = await db.get(ContributorSearch, actor, populate_existing=True)
+            self.assertEqual((summary.screen_count, summary.work_count), (1, 0))
             await db.execute(delete(CatalogueCredit).where(CatalogueCredit.work_id==work.id))
             await db.commit()
-            self.assertEqual(await known_principal_status(db,{actor}),{})
+            summary = await db.get(ContributorSearch, actor, populate_existing=True)
+            self.assertEqual((summary.screen_count, summary.work_count), (0, 0))
         async with self.engine.begin() as conn:
             def migrate(connection):
                 with Operations.context(MigrationContext.configure(connection)):

@@ -129,7 +129,8 @@ async def verification_policy(db, viewer):
         'show_anime': row.show_anime is not False}
 
 
-async def cached_evidence(db, jobs, viewer_id, *, enqueue=True, summaries=None, established=None):
+async def cached_evidence(db, jobs, viewer_id, *, enqueue=True, summaries=None, established=None,
+                          skip_settled_initial=False):
     """Read headers once, uncached payloads only, and admit bounded refresh work."""
     if not jobs:
         if established:await established({})
@@ -189,8 +190,10 @@ async def cached_evidence(db, jobs, viewer_id, *, enqueue=True, summaries=None, 
     # A useful partial studio sample can rest without acquiring more pages.
     # A different viewer whose policy has no witness resumes the same public
     # sample. Failed checks retain their ordinary cooldown, never a negative.
-    due = [key for key in jobs if key not in existing or
-           ((existing[key].expires_at is None or existing[key].expires_at <= current or
+    due = [key for key in jobs if
+           (key not in existing and (not skip_settled_initial or key not in settled)) or
+           (key in existing and
+            (existing[key].expires_at is None or existing[key].expires_at <= current or
              (key not in settled and (payloads.get(key) or {}).get('complete') is False and existing[key].attempts == 0
               and existing[key].next_attempt_at is None))
             and (existing[key].next_attempt_at is None or existing[key].next_attempt_at <= current)
@@ -255,6 +258,9 @@ async def local_evidence(db, rows, section, filters, show_anime, *, limit=8):
     if section == 'staff':
         from core.principal_credits import PRINCIPAL_JOBS
         statement = statement.where(func.lower(func.coalesce(credit.role_label, credit.role)).in_(PRINCIPAL_JOBS))
+    if section != 'studio':
+        from core.principal_credits import principal_clause
+        statement = statement.where(principal_clause(credit, work.kind))
     if not show_anime:
         def contains(path):
             return func.coalesce(func.jsonb_path_exists(data, cast(path, JSONPATH)), False)

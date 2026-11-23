@@ -529,7 +529,8 @@ async def main(args):
                     return {'total_pages':1,'results':[]}
                 return {'total_pages': 1, 'results': [
                     {'id': 700000 + i, 'name': f'Benchmark {i}', 'known_for_department': 'Directing' if current_case == 'crew' or (current_case in ('people_combined', 'all_contributors') and i % 2) else 'Acting',
-                     'popularity': 80, 'known_for': [title(1000 + i, search=True)], 'logo_path': '/logo.jpg'} for i in range(8)]}
+                     'popularity': 80, 'known_for': [dict(title(1000 + i, search=True), media_type='movie')],
+                     'logo_path': '/logo.jpg'} for i in range(8)]}
             if path[0] == 'person':
                 if native == 9900010:
                     series = [dict(title(9910000 + i, 'tv', search=True), media_type='tv',

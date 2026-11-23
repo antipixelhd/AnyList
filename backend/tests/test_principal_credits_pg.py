@@ -12,9 +12,9 @@ from sqlalchemy import func, select, text
 import test_statistics_pg as fixture
 from core import catalogue
 from core.catalogue_normalize import normalize_tmdb, normalize_tvdb
-from core.contributor_search import local_matches, known_principal_status
+from core.contributor_search import local_matches
 from core.media_details import work_details
-from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity, CatalogueLegacyLink, MetadataSnapshot
+from models.catalogue import CatalogueCredit, CatalogueEntity, CatalogueIdentity, CatalogueLegacyLink, ContributorSearch, MetadataSnapshot
 from models import Media
 
 
@@ -45,7 +45,8 @@ class PrincipalCreditDatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await local_matches(db,'Minor','staff'))['staff'],[])
             self.assertEqual(len((await local_matches(db,'Producer','staff'))['staff']),2)
             minor=await db.scalar(select(CatalogueEntity.id).where(CatalogueEntity.name=='Minor 0'))
-            self.assertFalse((await known_principal_status(db,{minor}))[minor])
+            summary = await db.get(ContributorSearch, minor)
+            self.assertEqual((summary.screen_count, summary.work_count), (1, 0))
 
     async def test_cached_reprojection_updates_existing_counts_and_selection_without_provider_io(self):
         from core.media_credits import fill_screen_credits

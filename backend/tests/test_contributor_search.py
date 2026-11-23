@@ -44,9 +44,6 @@ class ContributorSearchTests(unittest.IsolatedAsyncioTestCase):
         games = patch.object(search, 'game_matches', AsyncMock(return_value=empty()))
         self.games_mock = games.start(); self.addCleanup(games.stop)
         self.addCleanup(self.people.stop); self.addCleanup(self.companies.stop)
-        status = patch.object(search, 'known_principal_status', AsyncMock(return_value={}))
-        self.principal_status = status.start()
-        self.addCleanup(status.stop)
         verified = patch.object(search, 'verified_studios', AsyncMock(side_effect=lambda db, viewer, rows, key, **options: (rows, False)))
         verified.start()
         self.addCleanup(verified.stop)
@@ -111,17 +108,6 @@ class ContributorSearchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([p['key'] for p in data['results']['actor']],['tmdb:4','tmdb:3'])
         self.assertEqual(data['results']['staff'],[])
         self.assertFalse(any(key.startswith('_') for p in data['results']['actor'] for key in p))
-
-    async def test_remote_results_do_not_reintroduce_known_supporting_crew(self):
-        person=SimpleNamespace(id=5,kind='person',canonical_person_id=None,canonical_company_id=None,
-            name='Minor Producer',image_url=None)
-        self.db.execute.return_value=SimpleNamespace(all=lambda:[(SimpleNamespace(
-            namespace='tmdb.person',external_id='11'),person)])
-        self.principal_status.return_value={5:False}
-        self.people_mock.return_value={'results':[{'id':11,'name':'Minor Producer',
-            'known_for_department':'Production','known_for':[{'id':1}]}]}
-        data=await search.search_contributors(self.db,self.viewer,'Minor')
-        self.assertEqual(data['results'],empty())
 
     async def test_canonical_identity_deduplicates_provider_results_without_merging_namesakes(self):
         person = SimpleNamespace(id=5, kind='person', canonical_person_id=None, name='Canonical', image_url=None)

@@ -143,9 +143,12 @@ class EvidenceTests(unittest.IsolatedAsyncioTestCase):
             person(3,'Unknown',[film(runtime=2)]),person(4,'Known',[film()])], 'staff':[]}
         key=lambda native:evidence.evidence_key('person',native,FILTERS,True)[0]
         payloads={key(1):{'cast':[], 'complete':True},key(2):{'cast':[film()], 'complete':True}}
+        async def read(db, jobs, viewer, *, established, **options):
+            await established(payloads)
+            return payloads, True
         with patch.object(search,'result_filters',AsyncMock(return_value=FILTERS)),patch.object(
             search,'local_evidence',AsyncMock(return_value={})),patch.object(
-            search,'cached_evidence',AsyncMock(return_value=(payloads,True))),patch.object(
+            search,'cached_evidence',AsyncMock(side_effect=read)),patch.object(
             search.tmdb,'get_person',AsyncMock(side_effect=AssertionError('No inline verification'))):
             pending=await search.verified_people(SimpleNamespace(get=AsyncMock(return_value=None)),SimpleNamespace(id=1),groups,'key')
         self.assertTrue(pending)
@@ -155,6 +158,7 @@ class EvidenceTests(unittest.IsolatedAsyncioTestCase):
         from core import contributor_search as search
         groups = {section: [{'key': f'tmdb:{i}', '_native': i, '_known_for': [film(job='Director')]}
                            for i in range(1, 31)] for section in ('actor', 'staff')}
+        groups['staff'][0]['_known_for'] = [film(runtime=2)]
         async def read(db,jobs,viewer,**options):
             await options['established']({})
             return {},True
@@ -164,5 +168,5 @@ class EvidenceTests(unittest.IsolatedAsyncioTestCase):
             await search.verified_people(SimpleNamespace(get=AsyncMock(return_value=None)),
                 SimpleNamespace(id=1), groups, 'key')
         self.assertEqual(len(cached.await_args.args[1]), 8)
-        self.assertEqual([len(call.args[1]) for call in local.await_args_list], [8, 8])
-        self.assertEqual([len(group) for group in groups.values()], [8, 8])
+        self.assertEqual([len(call.args[1]) for call in local.await_args_list], [1])
+        self.assertEqual([len(group) for group in groups.values()], [8, 7])

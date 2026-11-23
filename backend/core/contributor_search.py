@@ -161,13 +161,6 @@ def ranked_results(groups, term):
             for section, rows in groups.items()}
 
 
-async def known_principal_status(db, ids):
-    if not ids:
-        return {}
-    return dict((await db.execute(select(ContributorSearch.entity_id, ContributorSearch.work_count > 0)
-        .where(ContributorSearch.entity_id.in_(ids), ContributorSearch.screen_count > 0))).all())
-
-
 async def verified_people(db, viewer, groups, api_key, section_pending=None, *, policy=None):
     if not groups['actor'] and not groups['staff']:
         return False
@@ -190,32 +183,40 @@ async def verified_people(db, viewer, groups, api_key, section_pending=None, *, 
     async def established(evidence):
         settled=set(jobs)
         for section in ('actor','staff'):
-            unresolved=[row for row in groups[section] if not (row.get('_native') and
-                (evidence.get(evidence_key('person',row['_native'],filters,show_anime)[0]) or {}).get('_fresh') and
-                (evidence.get(evidence_key('person',row['_native'],filters,show_anime)[0]) or {}).get('complete'))]
-            local_by_section[section]=await local_evidence(db,unresolved,section,filters,show_anime) if unresolved else {}
+            local_candidates = []
+            needs_witness = []
             for row in groups[section]:
-                if not row.get('_native'):continue
+                if not row.get('_native'):
+                    local_candidates.append(row)
+                    continue
                 key=evidence_key('person',row['_native'],filters,show_anime)[0]
-                value=work_summary(evidence.get(key),section,filters,show_anime,existence_only=True)
+                saved = evidence.get(key)
+                value=work_summary(saved,section,filters,show_anime,existence_only=True)
+                # A known-for work can establish eligibility before we need
+                # a filmography. An inconclusive shortlist leaves it unknown.
+                if value is None and row.get('_known_for'):
+                    field = 'cast' if section == 'actor' else 'crew'
+                    value = work_summary({field: row['_known_for']}, section, filters, show_anime,
+                                         existence_only=True)
                 values_by_section[section][key]=value
-                if not local_by_section[section].get(row['key']) and not (value and value['works']):settled.discard(key)
+                if value and value['works']:
+                    continue
+                if not (saved and saved.get('_fresh') and saved.get('complete')):
+                    local_candidates.append(row)
+                needs_witness.append((key, row['key']))
+            if local_candidates:
+                local_by_section[section] = await local_evidence(db, local_candidates, section, filters, show_anime)
+            settled.difference_update(key for key, identity in needs_witness if identity not in local_by_section[section])
         return settled
     evidence, pending = await cached_evidence(db, jobs, viewer.id, enqueue=bool(api_key),
-        summaries=summaries,established=established)
+        summaries=summaries, established=established, skip_settled_initial=True)
     for section in ('actor', 'staff'):
         local=local_by_section[section]
         waiting=False
         output = []
         for row in groups[section]:
             key = evidence_key('person', row['_native'], filters, show_anime)[0] if row.get('_native') else None
-            value = (values_by_section[section][key] if key in values_by_section[section]
-                     else work_summary(evidence.get(key), section, filters, show_anime, existence_only=True))
-            # known_for is positive evidence only. A failed shortlist is unknown,
-            # not proof of an empty filmography. Full cached credits take priority.
-            if value is None and row.get('_known_for'):
-                shortlist = {'cast' if section == 'actor' else 'crew':row['_known_for']}
-                value = work_summary(shortlist, section, filters, show_anime, existence_only=True)
+            value = values_by_section[section].get(key)
             if local.get(row['key']) or (value and value['works']):
                 output.append(row)
             if key and (evidence.get(key) or {}).get('_pending') and not local.get(row['key']) and not (value and value['works']):
@@ -251,7 +252,6 @@ async def _discover_candidates(db, viewer, term, kind, key):
             CatalogueEntity.canonical_person_id,CatalogueEntity.canonical_company_id)))).all() if native_ids else []
     roots = await canonical_people(db, [person for _, person in mappings], lightweight=True)
     known = {(identity.namespace, identity.external_id): roots[person.id] for identity, person in mappings}
-    principal_status = await known_principal_status(db, {person.id for person in known.values() if person.kind == 'person'})
     seen = {section: {row['key'] for row in rows} for section, rows in groups.items()}
     for provider_kind, raw in sources:
         native = positive_id(raw.get('id'))
@@ -263,8 +263,6 @@ async def _discover_candidates(db, viewer, term, kind, key):
         if kind not in ('all', 'people') and section != kind:
             continue
         person = known.get((f'tmdb.{provider_kind}', str(native)))
-        if person and section != 'studio' and principal_status.get(person.id) is False:
-            continue
         identity = f'catalogue:{person.id}' if person else f'tmdb:{native}'
         if identity in seen[section]:
             for item in groups[section]:

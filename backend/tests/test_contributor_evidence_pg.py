@@ -18,6 +18,66 @@ from test_contributor_evidence import FILTERS, film
 
 @unittest.skipUnless(fixture.URL, 'Requires explicit disposable PostgreSQL')
 class EvidenceDatabaseTests(unittest.IsolatedAsyncioTestCase):
+    async def test_search_uses_tmdb_shortlist_when_local_credits_are_nonprincipal(self):
+        from core import catalogue, contributor_search as search
+        from core.catalogue_normalize import normalize_tmdb
+        from models import UserProfileData
+
+        native = 19292
+        name = 'Adam Sandler'
+        viewer = SimpleNamespace(id=self.user_id)
+        with patch.object(search.settings_store, 'get_user_tmdb_key', AsyncMock(return_value='key')), \
+             patch.object(search.tmdb, 'search_people', AsyncMock(return_value={'results': [{
+                 'id': native, 'name': name, 'known_for_department': 'Acting',
+                 'known_for': [film(id=42, genre_ids=[18])],
+             }]})) as discover, \
+             patch.object(search.tmdb, 'get_person', AsyncMock(return_value={
+                 'id': native, 'combined_credits': {'cast': [film(character='Self (archive footage)')], 'crew': []},
+             })) as filmography:
+            async with self.Session() as db:
+                for title in (
+                    {'id': 13, 'title': 'Marty Supreme', 'credits': {'crew': [
+                        {'id': native, 'name': name, 'job': 'Thanks', 'credit_id': 'thanks'},
+                    ]}},
+                    {'id': 14, 'name': 'The Oscars', 'aggregate_credits': {'cast': [
+                        {'id': native, 'name': name, 'order': 1810, 'roles': [
+                            {'character': 'Self', 'credit_id': 'guest'}]},
+                    ]}},
+                ):
+                    await catalogue.ingest_document(
+                        db, normalize_tmdb(title, 'movie' if 'title' in title else 'series'), 'tmdb')
+                await db.execute(update(CatalogueCredit).where(CatalogueCredit.source_key == 'guest')
+                    .values(attributes={'principal': False}))
+                profile = await db.get(UserProfileData, self.user_id)
+                profile.excluded_categories = []
+                await db.commit()
+                search._candidate_cache._store.clear()
+                self.assertEqual((await search.local_matches(db, name, 'actor'))['actor'], [])
+
+                for _ in range(2):
+                    groups, failed, pending = await search.screen_matches(db, viewer, name, 'actor')
+                    self.assertEqual([row['name'] for row in groups['actor']], [name])
+                    self.assertFalse(failed or pending)
+                discover.assert_awaited_once()
+                filmography.assert_not_awaited()
+                key, _ = evidence.evidence_key('person', native, FILTERS, True)
+                self.assertIsNone(await db.get(ContributorEvidence, key))
+
+                profile.excluded_categories = [18]
+                await db.commit()
+                groups, _, pending = await search.screen_matches(db, viewer, name, 'actor', {})
+                self.assertEqual(groups['actor'], [])
+                self.assertTrue(pending)
+                filmography.assert_not_awaited()
+
+            await evidence.run_batch(self.Session)
+            async with self.Session() as db:
+                for _ in range(2):
+                    groups, _, pending = await search.screen_matches(db, viewer, name, 'actor', {})
+                    self.assertEqual(groups['actor'], [])
+                    self.assertFalse(pending)
+            filmography.assert_awaited_once()
+
     async def test_studio_witness_parks_sample_and_another_viewer_resumes_shared_pages(self):
         from core import studio_discovery
         from models import User, UserProfileData
