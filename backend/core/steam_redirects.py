@@ -21,6 +21,34 @@ KIND = 'steam_app_redirect'
 STORE = 'https://store.steampowered.com'
 WAIT_SECONDS = 12
 
+# Reviewed against Steam's redirect and IGDB's exact edition-parent relation.
+# Only these two app IDs have been verified to represent the same game here.
+STORE_REPLACEMENTS = {'500': ('35010', '35140')}
+
+
+async def publish_store_replacement(db, work, identities):
+    """Bind a reviewed replacement to its original work during IGDB ingestion."""
+    replacement = next((STORE_REPLACEMENTS[row['external_id']] for row in identities
+        if row['namespace'] == 'igdb.game' and row['external_id'] in STORE_REPLACEMENTS), None)
+    if replacement is None:
+        return
+    old_app, new_app = replacement
+    field = 'attributes.steam_primary_app_id'
+    attrs = work.attributes or {}
+    sources = work.field_sources or {}
+    if (attrs.get('game_class') != 'game' or attrs.get('steam_primary_app_id') not in (None, old_app, new_app)
+            or field in (work.protected_fields or []) or sources.get(field) == 'manual'):
+        return
+    owner = await catalogue.resolve_identity(db, 'steam.app', new_app)
+    if owner is not None and owner.entity_id != work.id:
+        return
+    if owner is None:
+        await catalogue.bind_identity(db, work.id, 'steam.app', new_app, 'reviewed',
+            {'source': 'steam_store_replacement', 'replaces': old_app})
+    if attrs.get('steam_primary_app_id') != new_app:
+        work.attributes = {**attrs, 'steam_primary_app_id': new_app}
+        work.field_sources = {**sources, field: 'reviewed'}
+
 
 async def wait_for_lookup(factory, app, *, probe=None):
     deadline = monotonic() + WAIT_SECONDS

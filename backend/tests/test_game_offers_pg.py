@@ -1,13 +1,17 @@
 """Approved regional offers, durable shared refresh and country isolation."""
 import asyncio
+import importlib
 import unittest
 from datetime import timedelta
 from unittest.mock import AsyncMock,patch
 
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
 from sqlalchemy import select,delete,func,event
 
 import test_games_pg as fixture
-from core import game_offers as offers
+from core import catalogue, game_offers as offers
+from core.catalogue_normalize import normalize_igdb
 from core.catalogue_providers import ProviderError
 from core.config import settings
 from models import UserProfileData
@@ -49,6 +53,59 @@ class GameOffersDatabaseTests(unittest.IsolatedAsyncioTestCase):
         async with self.Session() as db:
             row=await db.scalar(select(MetadataSnapshot).where(MetadataSnapshot.provider=='itad',MetadataSnapshot.external_id==f'1245620:{country}'))
             row.expires_at=offers.now()-timedelta(seconds=1);row.next_attempt_at=None;await db.commit()
+
+    async def test_replacement_uses_goty_for_prices_and_links_on_original_work(self):
+        app='35140'
+        store=f'https://store.steampowered.com/app/{app}/'
+        raw={'id':500,'name':'Batman: Arkham Asylum','game_type':{'id':0},
+             'external_games':[{'uid':'35010','url':'https://store.steampowered.com/app/35010/',
+                                'external_game_source':{'name':'Steam'}}]}
+        async with self.Session() as db:
+            work=await catalogue.ingest_document(db,normalize_igdb(raw),'igdb')
+            work_id=work.id
+            await db.commit()
+            apps=[await catalogue.resolve_identity(db,'steam.app',candidate) for candidate in ('35010',app)]
+            self.assertEqual([identity.entity_id for identity in apps],[work_id,work_id])
+
+        pending=(await self.request('DE',work_id)).json()
+        self.assertEqual((pending['steam_app_id'],pending['status']['pending']),(app,True))
+        provider=AsyncMock()
+        provider.steam_prices.return_value={**source_price(),'url':store}
+        self.assertEqual(await offers.run_due(self.Session,client=provider),1)
+        provider.steam_prices.assert_awaited_once_with(app,'DE')
+        result=(await self.request('DE',work_id)).json()
+        self.assertEqual([(row['country'],row['current']['currency']) for row in result['offers']],[('DE','EUR')])
+        self.assertEqual((await self.request('GB',work_id)).json()['offers'],[])
+        details=(await self.client.get(f'/catalogue/entities/{work_id}/details?country=DE')).json()
+        self.assertEqual([row['url'] for row in details['sources'] if row['name']=='Steam'],[store])
+        self.assertEqual(details['subject'],{'kind':'game','catalogue_id':work_id})
+
+    async def test_migration_backfills_the_exact_original_game_once(self):
+        async with self.Session() as db:
+            work=CatalogueEntity(kind='game',name='Batman: Arkham Asylum',attributes={'game_class':'game'})
+            db.add(work)
+            await db.flush()
+            work_id=work.id
+            await catalogue.bind_identity(db,work_id,'igdb.game','500','igdb')
+            await catalogue.bind_identity(db,work_id,'steam.app','35010','igdb')
+            db.add(GameEntry(user_id=self.user.id,work_id=work_id,status='completed',total_seconds=7200))
+            await db.commit()
+
+        migration=importlib.import_module('migrations.versions.mt104_arkham_steam_replacement')
+        def migrate(connection):
+            with Operations.context(MigrationContext.configure(connection)):
+                migration.upgrade()
+                migration.upgrade()
+
+        async with self.engine.begin() as connection:
+            await connection.run_sync(migrate)
+        async with self.Session() as db:
+            replacement=await catalogue.resolve_identity(db,'steam.app','35140')
+            self.assertEqual(replacement.entity_id,work_id)
+            work=await db.get(CatalogueEntity,work_id)
+            self.assertEqual(work.attributes['steam_primary_app_id'],'35140')
+            entry=await db.scalar(select(GameEntry).where(GameEntry.work_id==work_id))
+            self.assertEqual(entry.total_seconds,7200)
 
     async def test_account_wins_hint_and_region_does_not_modify_saved_country(self):
         await self.set_country('DE')

@@ -338,26 +338,6 @@ async def upsert(db, model, values, keys, preserve_missing=False):
     ).scalar_one()
 
 
-async def upsert_game_release(db, work_id, data, provider):
-    release = await upsert_entity(db, data["entity"], provider)
-    old = await db.get(GameRelease, release.id)
-    if old and old.work_id != work_id:
-        raise IdentityConflict("Release already belongs to another game work")
-    values = {
-        "entity_id": release.id,
-        "work_id": work_id,
-        **{key: data.get(key) for key in (
-            "platform_namespace", "platform_id", "platform_name", "region", "release_date",
-        )},
-    }
-    if old:
-        values = {key: value for key, value in values.items() if has_value(value)}
-    if provider == 'igdb' and (release.attributes or {}).get('release_date_projection') in (1, 2, 3):
-        values['release_date'] = (release.attributes or {}).get('release_date')
-    await upsert(db, GameRelease, values, ["entity_id"])
-    return release
-
-
 async def ingest_document(db, doc, provider, *, entities=None, project_screen_roles=True):
     await write_lock(db)
     if doc["work"]["kind"] == "book":
@@ -395,6 +375,9 @@ async def ingest_document(db, doc, provider, *, entities=None, project_screen_ro
         return work
     if work.kind not in ("movie", "series", "game", "book", "person"):
         raise IdentityConflict("Invalid catalogue work kind")
+    if provider == 'igdb' and work.kind == 'game':
+        from core.steam_redirects import publish_store_replacement
+        await publish_store_replacement(db, work, doc['work']['identities'])
     if provider == 'igdb' and work.kind == 'game' and doc.get('edition_steam_bundle'):
         from core.game_edition_sources import ingest_steam_bundle
         await ingest_steam_bundle(db, doc['edition_steam_bundle'])
@@ -554,9 +537,31 @@ async def ingest_document(db, doc, provider, *, entities=None, project_screen_ro
     for r in doc["releases"]:
         if work.kind != "game":
             raise IdentityConflict("Release requires a game work")
-        release = await upsert_game_release(db, work.id, r, provider)
+        release = await upsert_entity(db, r["entity"], provider)
         if r.get('platform_namespace') == 'igdb.platform':
             current_releases.add(release.id)
+        old = await db.get(GameRelease, release.id)
+        if old and old.work_id != work.id:
+            raise IdentityConflict("Release already belongs to another game work")
+        values = {
+            "entity_id": release.id,
+            "work_id": work.id,
+            **{
+                k: r.get(k)
+                for k in (
+                    "platform_namespace",
+                    "platform_id",
+                    "platform_name",
+                    "region",
+                    "release_date",
+                )
+            },
+        }
+        if old:
+            values = {k: v for k, v in values.items() if has_value(v)}
+        if provider=='igdb' and (release.attributes or {}).get('release_date_projection') in (1,2,3):
+            values['release_date']=(release.attributes or {}).get('release_date')
+        await upsert(db, GameRelease, values, ["entity_id"])
     if provider == 'igdb' and work.kind == 'game' and doc.get('coverage', {}).get('release_dates') == 'provider_projection':
         # A provider may replace release IDs when postponing a game. Retaining
         # superseded rows makes the earliest-per-platform view show old dates.
