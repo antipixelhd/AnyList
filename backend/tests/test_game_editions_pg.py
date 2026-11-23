@@ -6,13 +6,19 @@ from sqlalchemy import select,func
 import test_games_pg as fixture
 from core.game_editions import GameEditions,candidates
 from core.game_types import capabilities,search_candidate
-from models.catalogue import CatalogueEntity,CatalogueIdentity,CatalogueRelationship
+from models.catalogue import CatalogueEntity,CatalogueIdentity,CatalogueRelationship,GameRelease
 from models.games import GameEntry
 
 
 def source():
     return {'id':100,'first_release_date':1500000000,'expanded_games':[
         {'id':200,'name':'Expanded edition','cover':{'url':'https://images.igdb.com/igdb/image/upload/t_thumb/cover.jpg'},'first_release_date':1600000000,'game_type':{'id':10},'parent_game':{'id':100}}]}
+
+
+def version():
+    return {'id':27862,'name':'Batman: Arkham Asylum - Game of the Year Edition',
+            'slug':'batman-arkham-asylum-game-of-the-year-edition',
+            'first_release_date':1550000000,'game_type':{'id':3},'version_parent':100}
 
 
 class EditionPolicyTests(unittest.TestCase):
@@ -24,6 +30,12 @@ class EditionPolicyTests(unittest.TestCase):
             row={**source()['expanded_games'][0],**change}
             self.assertEqual(candidates({**source(),'expanded_games':[row]}),[])
         self.assertEqual(candidates({'id':100}),[])
+
+    def test_version_parent_requires_explicit_matching_evidence(self):
+        self.assertEqual([row['native'] for row in candidates(source(),versions=[version()])],['200','27862'])
+        for change in ({'version_parent':999},{'parent_game':{'id':999}},{'game_type':{'id':1}},
+                       {'first_release_date':None},{'platforms':[{'id':34}]},{'slug':'../another-game'}):
+            self.assertEqual([row['native'] for row in candidates(source(),versions=[{**version(),**change}])],['200'])
 
     def test_compilations_are_independent_but_packs_and_software_are_not(self):
         self.assertTrue(capabilities({'game_class':'bundle'}).independent)
@@ -78,6 +90,26 @@ class EditionDatabaseTests(unittest.IsolatedAsyncioTestCase):
             work=await db.get(CatalogueEntity,target.id)
             self.assertEqual(work.attributes['release_date'],'2020-09-13')
             self.assertEqual(work.attributes['release_date_precision'],'day')
+
+    async def test_version_parent_release_is_returned_without_a_duplicate_game(self):
+        provider=SimpleNamespace(igdb=AsyncMock(return_value=[source(),version()]))
+        with patch('core.game_editions.CatalogueProviders',return_value=provider):
+            response=await self.client.get(f'/tracking/games/works/{self.base}/editions')
+            repeat=await self.client.get(f'/tracking/games/works/{self.base}/editions')
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertEqual(repeat.json(),response.json())
+        provider.igdb.assert_awaited_once()
+        self.assertIn('version_parent=100',provider.igdb.call_args.args[1])
+        expanded,goty=response.json()['editions']
+        self.assertEqual(expanded['title'],'Expanded edition')
+        self.assertEqual(goty['title'],version()['name'])
+        self.assertEqual(goty['igdb_slug'],version()['slug'])
+        async with self.Session() as db:
+            release=await db.get(GameRelease,goty['id'])
+            self.assertEqual((release.work_id,release.platform_namespace,release.platform_id),(self.base,'igdb.version','27862'))
+            identity=await db.scalar(select(CatalogueIdentity).where(CatalogueIdentity.external_id=='27862'))
+            self.assertEqual((identity.namespace,identity.entity_id),('igdb.game_version',goty['id']))
+            self.assertEqual(await db.scalar(select(func.count()).select_from(GameEntry)),1)
 
     async def test_compilation_database_tracking_and_favorites_accept_but_packs_reject(self):
         from models.games import GameFavorite

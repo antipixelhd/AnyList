@@ -14,7 +14,9 @@ export function mountGameEditions(root:HTMLElement,id:number,signal:AbortSignal,
     heading.textContent=rows.length>1?'New versions available':'New version available';
     links.replaceChildren(...rows.map((row:any)=>{
       const link=template.content.firstElementChild!.cloneNode(true) as HTMLAnchorElement;
-      link.href=`/games/${row.id}`;
+      link.href=typeof row.igdb_slug==='string'
+        ? new URL(`/games/${encodeURIComponent(row.igdb_slug)}`,'https://www.igdb.com').href
+        : `/games/${row.id}`;
       const poster=link.querySelector<HTMLImageElement>('[data-game-edition-poster]')!;
       if(typeof row.poster==='string'&&row.poster){
         applyResponsiveArtwork(poster,row.poster,{size:'w185',sizes:'56px',route:'direct',compactIgdbCover:true});
